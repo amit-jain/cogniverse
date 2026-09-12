@@ -12,6 +12,10 @@ its selections cover nothing on the commit that introduced a regression.
 Path filters decide whether a workflow fires at all: a selection that would run
 a test is inert on a commit whose files match none of the workflow's
 ``on.<trigger>.paths`` patterns.
+
+A selection's ``env`` is what CI runs it under: the workflow, job and step
+``env`` blocks, then any ``NAME=value`` prefix on the command. Values GitHub
+evaluates (``${{ ... }}``) have no local meaning and are left out.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ class Selection:
     paths: tuple[str, ...]
     marker_expr: str | None
     ignores: tuple[str, ...] = ()
+    env: tuple[tuple[str, str], ...] = ()
 
     def names(self, test_path: str) -> bool:
         return any(test_path == p or test_path.startswith(p + "/") for p in self.paths)
@@ -125,16 +130,29 @@ def _ignored_paths(args: Sequence[str]) -> tuple[str, ...]:
     return tuple(path.rstrip("/") for path in ignored)
 
 
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _parse_invocation(
     line: str,
-) -> tuple[tuple[str, ...], str | None, tuple[str, ...]] | None:
-    """``(test paths, marker expression, ignored paths)`` for a pytest call."""
+) -> (
+    tuple[tuple[str, ...], str | None, tuple[str, ...], tuple[tuple[str, str], ...]]
+    | None
+):
+    """``(test paths, marker expression, ignored paths, prefix env)`` for a
+    pytest call."""
     try:
         tokens = shlex.split(line, comments=True)
     except ValueError:
         return None
     if not tokens or tokens[0] == "echo":
         return None
+    prefix_env = []
+    for token in tokens:
+        if not _ASSIGNMENT.match(token):
+            break
+        name, value = token.split("=", 1)
+        prefix_env.append((name, value))
     for index, token in enumerate(tokens):
         if token != "pytest":
             continue
@@ -147,8 +165,18 @@ def _parse_invocation(
             marker_index = args.index("-m")
             if marker_index + 1 < len(args):
                 marker_expr = args[marker_index + 1]
-        return paths, marker_expr, _ignored_paths(args)
+        return paths, marker_expr, _ignored_paths(args), tuple(prefix_env)
     return None
+
+
+def _env_block(block: object) -> dict[str, str]:
+    if not isinstance(block, dict):
+        return {}
+    return {
+        str(name): str(value)
+        for name, value in block.items()
+        if "${{" not in str(value)
+    }
 
 
 def _trigger_filters(on: object) -> tuple[bool, tuple[tuple[str, ...] | None, ...]]:
@@ -172,16 +200,30 @@ def _trigger_filters(on: object) -> tuple[bool, tuple[tuple[str, ...] | None, ..
 
 def _selections(name: str, doc: dict) -> tuple[Selection, ...]:
     found: list[Selection] = []
+    workflow_env = _env_block(doc.get("env"))
     for job_name, job in (doc.get("jobs") or {}).items():
+        job_env = {**workflow_env, **_env_block(job.get("env"))}
         for step in job.get("steps") or []:
             script = step.get("run")
             if not isinstance(script, str):
                 continue
+            step_env = {**job_env, **_env_block(step.get("env"))}
             for line in _logical_lines(script):
                 parsed = _parse_invocation(line)
                 if parsed is None or not parsed[0]:
                     continue
-                found.append(Selection(name, job_name, parsed[0], parsed[1], parsed[2]))
+                paths, marker_expr, ignores, prefix_env = parsed
+                env = {**step_env, **dict(prefix_env)}
+                found.append(
+                    Selection(
+                        name,
+                        job_name,
+                        paths,
+                        marker_expr,
+                        ignores,
+                        tuple(env.items()),
+                    )
+                )
     return tuple(found)
 
 

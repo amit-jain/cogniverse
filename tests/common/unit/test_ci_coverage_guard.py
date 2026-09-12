@@ -474,6 +474,76 @@ def test_parser_ignores_echoed_command_hints(workflows) -> None:
     ]
 
 
+def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> None:
+    """runtime-tests.yml's integration job: the workflow env on every step, a
+    step env on two, and the command's own ``JAX_PLATFORM_NAME`` prefix."""
+    runtime = _workflow(workflows, "runtime-tests.yml")
+    workflow_env = {"CARGO_NET_RETRY": "10", "CARGO_HTTP_MULTIPLEXING": "false"}
+    assert [
+        (s.paths, dict(s.env))
+        for s in runtime.selections
+        if s.job == "integration-tests"
+    ] == [
+        (
+            ("tests/runtime/integration",),
+            {
+                **workflow_env,
+                "TEST_LLM_MODEL": "qwen2.5:0.5b",
+                "JAX_PLATFORM_NAME": "cpu",
+            },
+        ),
+        (
+            ("tests/admin",),
+            {
+                **workflow_env,
+                "TEST_LLM_MODEL": "qwen2.5:0.5b",
+                "JAX_PLATFORM_NAME": "cpu",
+            },
+        ),
+        (
+            ("tests/events/integration", "tests/foundation/integration"),
+            {**workflow_env, "JAX_PLATFORM_NAME": "cpu"},
+        ),
+    ]
+
+
+_LAYERED_ENV_WORKFLOW = """\
+on:
+  push:
+env:
+  LAYER: workflow
+  WORKFLOW_ONLY: w
+jobs:
+  integration-tests:
+    env:
+      LAYER: job
+      JOB_ONLY: j
+      FROM_GITHUB: ${{ github.sha }}
+    steps:
+      - env:
+          STEP_ONLY: s
+        run: uv run python -m pytest tests/synth/unit
+      - env:
+          LAYER: step
+        run: LAYER=prefix uv run python -m pytest tests/synth/integration
+"""
+
+
+def test_parser_layers_environment_and_drops_github_expressions(tmp_path) -> None:
+    (tmp_path / "synth-tests.yml").write_text(_LAYERED_ENV_WORKFLOW)
+    (workflow,) = load_workflows(tmp_path)
+    assert [(s.paths, dict(s.env)) for s in workflow.selections] == [
+        (
+            ("tests/synth/unit",),
+            {"LAYER": "job", "WORKFLOW_ONLY": "w", "JOB_ONLY": "j", "STEP_ONLY": "s"},
+        ),
+        (
+            ("tests/synth/integration",),
+            {"LAYER": "prefix", "WORKFLOW_ONLY": "w", "JOB_ONLY": "j"},
+        ),
+    ]
+
+
 def test_tag_only_workflow_gates_no_commit(workflows) -> None:
     """publish-packages.yml runs on ``v*`` tags, long after the regression."""
     publish = _workflow(workflows, "publish-packages.yml")

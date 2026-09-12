@@ -11,6 +11,11 @@ that follows a tier change proves the write invalidated the cached read --
 waiting out the TTL would prove only that entries expire. The expected
 decision, model and reasoning flag for a tier are read from the router config
 the stack runs, never restated here.
+
+The router caches each response under the decision and the tenant identity on
+the exact request, so returning to the first tier with the same prompt is
+answered from that entry: no new decision is logged and the upstream is not
+called. A different prompt at that tier is routed again.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import dspy
 import httpx
 import pytest
 import yaml
+from prometheus_client.parser import text_string_to_metric_families
 
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
@@ -35,6 +41,7 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.semantic_router_stack import CHART_VALUES
 
 pytestmark = pytest.mark.integration
 
@@ -44,6 +51,7 @@ SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 TENANT_ID = "tierjoin:production"
 CREATED_AT = 1757000000000
 PROMPT = "summarise this paragraph"
+FRESH_PROMPT = "summarise the next paragraph"
 
 
 def _decisions_by_tier() -> dict[str, dict]:
@@ -137,21 +145,64 @@ def tier_stack(semantic_router_stack, shared_vespa):
     BackendRegistry.get_instance().clear_instances()
 
 
-def _routing_decisions(container: str) -> list[dict]:
-    """Every ``routing_decision`` the stack's router has logged so far."""
+def _router_events(container: str, msg: str) -> list[dict]:
+    """Every ``msg`` event the stack's router has logged so far."""
     logs = subprocess.run(
         ["docker", "logs", container], capture_output=True, text=True, timeout=60
     )
-    decisions = []
+    events = []
     for line in (logs.stdout + logs.stderr).splitlines():
         line = line.strip()
-        if '"msg":"routing_decision"' not in line:
+        if f'"msg":"{msg}"' not in line:
             continue
         try:
-            decisions.append(json.loads(line[line.index("{") :]))
+            events.append(json.loads(line[line.index("{") :]))
         except ValueError:
             continue
-    return decisions
+    return events
+
+
+def _router_counts(container: str) -> dict[str, float]:
+    """Routed calls and response-cache hits from the router's metrics endpoint."""
+    port = yaml.safe_load(CHART_VALUES.read_text())["semanticRouter"]["router"][
+        "metricsPort"
+    ]
+    response = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container,
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "10",
+            f"http://localhost:{port}/metrics",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    samples = [
+        sample
+        for family in text_string_to_metric_families(response.stdout)
+        for sample in family.samples
+    ]
+    return {
+        "routed": sum(
+            sample.value
+            for sample in samples
+            if sample.name == "llm_model_routing_modifications_total"
+        ),
+        "cache_hits": sum(
+            sample.value
+            for sample in samples
+            if sample.name == "llm_cache_plugin_hits_total"
+            and sample.labels["plugin_type"] == "response_cache"
+        ),
+    }
 
 
 async def _set_tier(tenant_manager, tier: str) -> dict:
@@ -166,20 +217,29 @@ async def _set_tier(tenant_manager, tier: str) -> dict:
     return response.json()
 
 
-def _route_one_completion(config_manager) -> dict:
-    """One completion through the production seam; the stub's reflection."""
+def _route_one_completion(config_manager, prompt: str) -> tuple[dict, dict]:
+    """One completion through the production seam.
+
+    Returns the stub's reflection and the router's own account of the
+    response: the path it was served from, the cache-hit flag and the decision.
+    """
     endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
     with routed_lm_context_for(
         config_manager, TENANT_ID, "summarizer_agent", endpoint=endpoint
     ):
         lm = dspy.settings.lm
         lm.cache = False
-        out = lm(PROMPT)
+        out = lm(prompt)
+        headers = lm.history[-1]["response"]._hidden_params["additional_headers"]
     item = out[0] if isinstance(out, list) else out
     content = (
         item.get("text") or item.get("content") if isinstance(item, dict) else item
     )
-    return json.loads(content)
+    return json.loads(content), {
+        "response_path": headers["llm_provider-x-vsr-response-path"],
+        "cache_hit": headers.get("llm_provider-x-vsr-cache-hit"),
+        "decision": headers["llm_provider-x-vsr-selected-decision"],
+    }
 
 
 async def test_the_stored_tier_decides_the_router(tier_stack):
@@ -193,42 +253,96 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
     # runtime can emit -- otherwise a tier below would route by fall-through.
     assert set(expected_by_tier) == set(ROUTER_TIERS)
 
-    # Every tier in turn, then back to the first, so the last leg is a change
-    # away from a tier that was already cached.
+    # Every tier in turn, then back to the first: that leg repeats the first
+    # request byte for byte, so the router answers it from its response cache.
     walk = sorted(ROUTER_TIERS)
     walk.append(walk[0])
 
-    before = len(_routing_decisions(container))
+    decisions_before = len(_router_events(container, "routing_decision"))
+    usage_before = len(_router_events(container, "llm_usage"))
+    counts = [_router_counts(container)]
     started = time.monotonic()
-    observed = []
+    legs = []
     for tier in walk:
         assert await _set_tier(tenant_manager, tier) == {
             "tenant_id": TENANT_ID,
             "tier": tier,
         }
-        reflection = _route_one_completion(config_manager)
-        observed.append(
-            {
-                "tier": reflection["routing_headers"]["x-authz-user-groups"],
-                "model": reflection["served_model"],
-                "reasoning": reflection["reasoning"],
-                "user_id": reflection["routing_headers"]["x-authz-user-id"],
-            }
-        )
+        legs.append(_route_one_completion(config_manager, PROMPT))
+        counts.append(_router_counts(container))
     elapsed = time.monotonic() - started
 
-    assert observed == [
+    # Same tenant, same tier, a different prompt: routed, not served from cache.
+    legs.append(_route_one_completion(config_manager, FRESH_PROMPT))
+    counts.append(_router_counts(container))
+    tiers = [*walk, walk[0]]
+    prompts = [PROMPT] * len(walk) + [FRESH_PROMPT]
+    reflections = [reflection for reflection, _ in legs]
+    served = [served_leg for _, served_leg in legs]
+    cached_leg = len(walk) - 1
+    deltas = [
+        {name: after[name] - before[name] for name in before}
+        for before, after in zip(counts, counts[1:])
+    ]
+    assert deltas[cached_leg]["cache_hits"] == 1
+    assert deltas[-1]["routed"] == 1
+    assert deltas == [
+        {"routed": int(index != cached_leg), "cache_hits": int(index == cached_leg)}
+        for index in range(len(tiers))
+    ]
+
+    assert [
+        {
+            "tier": reflection["routing_headers"]["x-authz-user-groups"],
+            "model": reflection["served_model"],
+            "reasoning": reflection["reasoning"],
+            "user_id": reflection["routing_headers"]["x-authz-user-id"],
+            "echo": reflection["echo"],
+        }
+        for reflection in reflections
+    ] == [
         {
             "tier": tier,
             "model": expected_by_tier[tier]["model"],
             "reasoning": expected_by_tier[tier]["reasoning"],
             "user_id": TENANT_ID,
+            "echo": prompt,
         }
-        for tier in walk
+        for tier, prompt in zip(tiers, prompts)
     ]
 
-    # The router's own account of the same requests.
-    logged = _routing_decisions(container)[before:]
+    # The router's response headers: every leg names its tier's decision, and
+    # only the repeated first request comes from the cache.
+    assert served == [
+        {
+            "response_path": "cache" if index == cached_leg else "upstream",
+            "cache_hit": "true" if index == cached_leg else None,
+            "decision": expected_by_tier[tier]["decision"],
+        }
+        for index, tier in enumerate(tiers)
+    ]
+
+    # A cache hit replays the stored body verbatim, including the stub's
+    # per-process call counter; every other leg is one fresh upstream call.
+    assert reflections[cached_leg] == reflections[0]
+    first_call = reflections[0]["call_index"]
+    routed_calls = iter(range(first_call, first_call + len(tiers) - 1))
+    assert [reflection["call_index"] for reflection in reflections] == [
+        first_call if index == cached_leg else next(routed_calls)
+        for index in range(len(tiers))
+    ]
+
+    # No other tier is answered out of the first tier's entry.
+    assert [
+        (tier, reflection["served_model"], served_leg["response_path"])
+        for tier, reflection, served_leg in zip(tiers, reflections, served)
+        if tier != walk[0]
+    ] == [(tier, expected_by_tier[tier]["model"], "upstream") for tier in walk[1:-1]]
+
+    # The router's own log: a decision for every routed leg and none for the
+    # cache hit, whose usage record is the only one marked as served from cache.
+    routed_tiers = [*walk[:-1], walk[0]]
+    logged = _router_events(container, "routing_decision")[decisions_before:]
     assert [
         {
             "decision": entry["decision"],
@@ -246,7 +360,23 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
             "reason_code": "entrypoint_routing",
             "reasoning_enabled": expected_by_tier[tier]["reasoning"],
         }
-        for tier in walk
+        for tier in routed_tiers
+    ]
+    usage = _router_events(container, "llm_usage")[usage_before:]
+    assert [
+        {
+            "model": entry["model"],
+            "cache_hit": entry.get("cache_hit", False),
+            "from_cache": entry.get("from_cache", False),
+        }
+        for entry in usage
+    ] == [
+        {
+            "model": expected_by_tier[tier]["model"],
+            "cache_hit": index == cached_leg,
+            "from_cache": index == cached_leg,
+        }
+        for index, tier in enumerate(tiers)
     ]
 
     # Every tier change was read back inside one reader TTL, so the in-process
