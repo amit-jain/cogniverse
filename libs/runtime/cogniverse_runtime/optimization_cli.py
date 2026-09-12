@@ -47,6 +47,7 @@ from cogniverse_agents.optimizer.example_selection import (
     embed_texts,
     select_training_records,
 )
+from cogniverse_core.agents.base import require_config_manager
 from cogniverse_core.durable import (
     PipelineCheckpoint,
     PipelineCheckpointStatus,
@@ -5388,6 +5389,15 @@ def _synthetic_aggregate_status(results: dict[str, dict[str, Any]]) -> str:
     return "no_data"
 
 
+def _prepare_cli_agent(agent, *, config_manager, telemetry_manager, tenant_id: str):
+    """Wire a CLI-built agent the way the dispatcher wires a served one."""
+    agent.telemetry_manager = telemetry_manager
+    agent.bind_config_manager(config_manager)
+    agent._artifact_tenant_id = tenant_id
+    agent._load_artifact()
+    return agent
+
+
 async def _build_cli_entity_extractor(
     *,
     config_manager,
@@ -5401,6 +5411,7 @@ async def _build_cli_entity_extractor(
         EntityExtractionInput,
     )
 
+    require_config_manager(config_manager, owner="EntityExtractionAgent")
     system_config = config_manager.get_system_config()
     service_urls = system_config.inference_service_urls
     gliner_url = service_urls.get("gliner") if isinstance(service_urls, dict) else None
@@ -5411,14 +5422,14 @@ async def _build_cli_entity_extractor(
         )
 
     def build_agent():
-        agent = EntityExtractionAgent(
-            deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+        return _prepare_cli_agent(
+            EntityExtractionAgent(
+                deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+            ),
+            config_manager=config_manager,
+            telemetry_manager=telemetry_manager,
+            tenant_id=tenant_id,
         )
-        agent.telemetry_manager = telemetry_manager
-        agent._config_manager = config_manager
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-        return agent
 
     try:
         agent = await asyncio.to_thread(build_agent)
@@ -5455,6 +5466,7 @@ async def _build_cli_routing_decider(
     """Build a tenant-bound production GatewayAgent routing callback."""
     from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
+    require_config_manager(config_manager, owner="GatewayAgent")
     system_config = config_manager.get_system_config()
     service_urls = system_config.inference_service_urls
     gliner_url = service_urls.get("gliner") if isinstance(service_urls, dict) else None
@@ -5465,12 +5477,12 @@ async def _build_cli_routing_decider(
         )
 
     def build_agent():
-        agent = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
-        agent.telemetry_manager = telemetry_manager
-        agent._config_manager = config_manager
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-        return agent
+        return _prepare_cli_agent(
+            GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url)),
+            config_manager=config_manager,
+            telemetry_manager=telemetry_manager,
+            tenant_id=tenant_id,
+        )
 
     try:
         agent = await asyncio.to_thread(build_agent)
@@ -5509,11 +5521,13 @@ async def _build_cli_query_enhancer(
         QueryEnhancementInput,
     )
 
-    agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
-    agent.telemetry_manager = telemetry_manager
-    agent._config_manager = config_manager
-    agent._artifact_tenant_id = tenant_id
-    agent._load_artifact()
+    require_config_manager(config_manager, owner="QueryEnhancementAgent")
+    agent = _prepare_cli_agent(
+        QueryEnhancementAgent(deps=QueryEnhancementDeps()),
+        config_manager=config_manager,
+        telemetry_manager=telemetry_manager,
+        tenant_id=tenant_id,
+    )
 
     async def enhance_query(query: str, request_tenant_id: str, source_text: str):
         if request_tenant_id != tenant_id:
@@ -5548,13 +5562,15 @@ async def _build_cli_profile_labeler(
         ProfileSelectionInput,
     )
 
+    require_config_manager(config_manager, owner="ProfileSelectionAgent")
+
     def build_agent():
-        agent = ProfileSelectionAgent(deps=ProfileSelectionDeps(available_profiles=[]))
-        agent.telemetry_manager = telemetry_manager
-        agent._config_manager = config_manager
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-        return agent
+        return _prepare_cli_agent(
+            ProfileSelectionAgent(deps=ProfileSelectionDeps(available_profiles=[])),
+            config_manager=config_manager,
+            telemetry_manager=telemetry_manager,
+            tenant_id=tenant_id,
+        )
 
     try:
         agent = await asyncio.to_thread(build_agent)

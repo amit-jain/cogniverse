@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 import pytest
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_runtime.optimization_cli import build_parser
 from cogniverse_sdk.interfaces.workflow_store import WorkflowLearningState
 from tests.utils.vespa_test_helpers import shipped_profile
@@ -1139,7 +1140,7 @@ class TestSyntheticEntityExtractorWiring:
             path_used="gliner",
         )
 
-        class RecordingAgent:
+        class RecordingAgent(ConfigManagerAware):
             def __init__(self, *, deps):
                 self.deps = deps
                 self.artifact_loads = 0
@@ -1168,7 +1169,7 @@ class TestSyntheticEntityExtractorWiring:
         agent = built_agents[0]
         assert agent.deps.gliner_inference_url == "http://gliner.test:8010"
         assert agent.telemetry_manager is telemetry
-        assert agent._config_manager is config_manager
+        assert agent.config_manager is config_manager
         assert agent._artifact_tenant_id == "acme:science"
         assert agent.artifact_loads == 1
         assert len(process_inputs) == 1
@@ -1209,7 +1210,7 @@ class TestSyntheticEntityExtractorWiring:
             )
         )
 
-        class FailingAgent:
+        class FailingAgent(ConfigManagerAware):
             def __init__(self, *, deps):
                 pass
 
@@ -1259,7 +1260,7 @@ class TestSyntheticEntityExtractorWiring:
             complexity="medium",
         )
 
-        class RecordingAgent:
+        class RecordingAgent(ConfigManagerAware):
             def __init__(self, *, deps):
                 self.deps = deps
                 self.artifact_loads = 0
@@ -1292,7 +1293,7 @@ class TestSyntheticEntityExtractorWiring:
         agent = built_agents[0]
         assert agent.deps.available_profiles == []
         assert agent.telemetry_manager is telemetry
-        assert agent._config_manager is config_manager
+        assert agent.config_manager is config_manager
         assert agent._artifact_tenant_id == "acme:science"
         assert agent.artifact_loads == 1
         assert len(process_inputs) == 1
