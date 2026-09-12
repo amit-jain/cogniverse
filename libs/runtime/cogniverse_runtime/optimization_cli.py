@@ -1265,9 +1265,15 @@ class BootstrapErrorLog(logging.Handler):
     def __init__(self) -> None:
         super().__init__(level=logging.ERROR)
         self.causes: List[str] = []
+        self.recorded_errors = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         self.causes.append(record.getMessage())
+
+    def record_cause(self, message: str) -> None:
+        """Keep a cause raised outside dspy's own walk, and count it."""
+        self.causes.append(message)
+        self.recorded_errors += 1
 
 
 @contextlib.contextmanager
@@ -1288,6 +1294,7 @@ def _bootstrap_report(
     compiled,
     trainset_size: int,
     error_causes: Optional[List[str]] = None,
+    extra_errors: int = 0,
 ) -> Dict[str, Any]:
     """What the bootstrap walk cost and what the compiled module carries."""
     scores = [score for _, score in recorder.attempts]
@@ -1302,7 +1309,7 @@ def _bootstrap_report(
         "max_rounds": teleprompter.max_rounds,
         "metric_threshold": teleprompter.metric_threshold,
         "attempts": len(scores),
-        "errors": teleprompter.error_count,
+        "errors": teleprompter.error_count + extra_errors,
         # The causes dspy logged for those errors, so a count is never the
         # only record of what a run lost.
         "error_causes": list(error_causes or []),
@@ -3176,6 +3183,144 @@ def _project_approved_optimizer_example(
     raise ValueError(
         f"optimizer {optimizer_type!r} has no approved DSPy example projection"
     )
+
+
+def _approval_storage(config_manager, telemetry_manager, tenant_id: str):
+    """The store every review batch a run produces is persisted through."""
+    from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+    system_config = config_manager.get_system_config()
+    if not system_config.redis_url:
+        raise ValueError("redis_url is required to persist synthetic review batches")
+    grpc_endpoint = system_config.telemetry_collector_endpoint
+    if not grpc_endpoint.startswith("http"):
+        grpc_endpoint = f"http://{grpc_endpoint}"
+    return ApprovalStorageImpl(
+        grpc_endpoint=grpc_endpoint,
+        http_endpoint=system_config.telemetry_url,
+        tenant_id=tenant_id,
+        telemetry_manager=telemetry_manager,
+        redis_url=system_config.redis_url,
+    )
+
+
+async def _queue_entity_self_consistency_review(
+    rows,
+    *,
+    storage_factory,
+    tenant_id: str,
+    record_cause,
+) -> Dict[str, Any]:
+    """Queue every sampled example the teacher was not unanimous on.
+
+    A row whose mentions were all unanimous holds no question for a reviewer
+    and is not queued. A row the teacher agreed on nothing in carries no
+    training example, so its cause is recorded instead. The review store is
+    built only when there is something to persist, so a run that produced no
+    question does not depend on it.
+    """
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_METADATA_KEY,
+        row_confidence,
+        row_needs_review,
+    )
+    from cogniverse_core.approval.interfaces import (
+        ApprovalBatch,
+        ApprovalStatus,
+        ReviewItem,
+    )
+    from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+
+    optimizer_type = "entity_extraction"
+    agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[optimizer_type]
+    flagged = []
+    for row in rows:
+        if not row_needs_review(row):
+            continue
+        if not row["data"]["entities"]:
+            record_cause(
+                "self-consistency found no unanimous entity for query "
+                f"{row['data']['query']!r}"
+            )
+            continue
+        flagged.append(row)
+    if not flagged:
+        return {"batch_id": None, "rows_queued": 0}
+
+    batch_id = f"self_consistency_{optimizer_type}_{uuid.uuid4().hex}"
+    batch = ApprovalBatch(
+        batch_id=batch_id,
+        items=[
+            ReviewItem(
+                item_id=f"{batch_id}_{index}",
+                data=row["data"],
+                confidence=row_confidence(row),
+                status=ApprovalStatus.PENDING_REVIEW,
+                metadata={
+                    "agent_type": agent_type,
+                    "optimizer_type": optimizer_type,
+                    SELF_CONSISTENCY_METADATA_KEY: row["metadata"],
+                },
+            )
+            for index, row in enumerate(flagged)
+        ],
+        context={
+            "tenant_id": tenant_id,
+            "agent_type": agent_type,
+            "optimizer": optimizer_type,
+            "purpose": "optimizer_training",
+        },
+    )
+    persisted_batch_id = await storage_factory().save_batch(batch)
+    return {"batch_id": persisted_batch_id, "rows_queued": len(flagged)}
+
+
+async def _sample_entity_self_consistency(
+    train_records,
+    *,
+    tenant_id: str,
+    llm_config,
+    config_manager,
+    telemetry_manager,
+    record_cause,
+) -> Dict[str, Any]:
+    """Draw the teacher repeatedly per example and queue what it disagreed on."""
+    from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_SAMPLES,
+        SELF_CONSISTENCY_TEMPERATURE,
+        collect_self_consistency_rows,
+        row_needs_review,
+    )
+    from cogniverse_foundation.config.llm_factory import create_sampling_dspy_lm
+
+    sampling_lm = create_sampling_dspy_lm(
+        resolve_teacher_endpoint(llm_config),
+        temperature=SELF_CONSISTENCY_TEMPERATURE,
+    )
+    rows = await collect_self_consistency_rows(
+        train_records,
+        EntityExtractionModule,
+        lm=sampling_lm,
+        samples=SELF_CONSISTENCY_SAMPLES,
+        record_cause=record_cause,
+    )
+    queued = await _queue_entity_self_consistency_review(
+        rows,
+        storage_factory=lambda: _approval_storage(
+            config_manager, telemetry_manager, tenant_id
+        ),
+        tenant_id=tenant_id,
+        record_cause=record_cause,
+    )
+    return {
+        "samples": SELF_CONSISTENCY_SAMPLES,
+        "temperature": SELF_CONSISTENCY_TEMPERATURE,
+        "examples_sampled": len(rows),
+        "examples_requested": len(train_records),
+        "rows_needing_review": sum(1 for row in rows if row_needs_review(row)),
+        **queued,
+    }
 
 
 async def _load_approved_synthetic_data(
@@ -5120,6 +5265,7 @@ async def run_entity_extraction_optimization(
 
         compiled = None
         bootstrap = None
+        self_consistency: Dict[str, Any] = {}
         if trainset:
             recorder = BootstrapMetricRecorder(
                 _entity_extraction_quality,
@@ -5133,6 +5279,14 @@ async def run_entity_extraction_optimization(
                 metric_threshold=recorder.threshold,
             )
             with bootstrap_error_log() as error_log:
+                self_consistency = await _sample_entity_self_consistency(
+                    train_records,
+                    tenant_id=tenant_id,
+                    llm_config=llm_config,
+                    config_manager=config_manager,
+                    telemetry_manager=telemetry_manager,
+                    record_cause=error_log.record_cause,
+                )
                 compiled = teleprompter.compile(
                     EntityExtractionModule(), trainset=trainset
                 )
@@ -5142,6 +5296,7 @@ async def run_entity_extraction_optimization(
                 compiled,
                 len(trainset),
                 error_causes=error_log.causes,
+                extra_errors=error_log.recorded_errors,
             )
             logger.info("Entity extraction bootstrap for %s: %s", tenant_id, bootstrap)
 
@@ -5204,6 +5359,7 @@ async def run_entity_extraction_optimization(
         "holdout_source": "ground_truth",
         **selection_summary,
         "bootstrap": bootstrap,
+        "self_consistency": self_consistency,
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,
@@ -5630,9 +5786,6 @@ async def run_synthetic_generation(
                 response = await service.generate(request)
 
             if response.data:
-                from cogniverse_agents.approval.approval_storage import (
-                    ApprovalStorageImpl,
-                )
                 from cogniverse_core.approval.interfaces import (
                     ApprovalBatch,
                     ApprovalStatus,
@@ -5642,20 +5795,8 @@ async def run_synthetic_generation(
                     SyntheticDataConfidenceExtractor,
                 )
 
-                system_config = config_manager.get_system_config()
-                if not system_config.redis_url:
-                    raise ValueError(
-                        "redis_url is required to persist synthetic review batches"
-                    )
-                grpc_endpoint = system_config.telemetry_collector_endpoint
-                if not grpc_endpoint.startswith("http"):
-                    grpc_endpoint = f"http://{grpc_endpoint}"
-                storage = ApprovalStorageImpl(
-                    grpc_endpoint=grpc_endpoint,
-                    http_endpoint=system_config.telemetry_url,
-                    tenant_id=tenant_id,
-                    telemetry_manager=telemetry_manager,
-                    redis_url=system_config.redis_url,
+                storage = _approval_storage(
+                    config_manager, telemetry_manager, tenant_id
                 )
                 batch_id = f"synthetic_{opt_type}_{uuid.uuid4().hex}"
                 agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[opt_type]

@@ -420,7 +420,25 @@ row becomes `dspy.Example(query, entities=[EntityMention(text, type), ...])` via
 `_entity_extraction_example`, which raises `ValueError` naming the record when an entity's type is
 outside `EntityType`. The metric (`entity_extraction.pair_set_f1.v1`) is F1 over the
 `(casefold stripped text, type)` pairs of the typed mentions (`_entity_extraction_pair_set`); an
-empty recorded label set raises. Bootstrap uses `BootstrapMetricRecorder` with
+empty recorded label set raises. Before the bootstrap walk, `_sample_entity_self_consistency` draws the teacher
+`SELF_CONSISTENCY_SAMPLES` (3) times per training record through
+`create_sampling_dspy_lm(..., temperature=SELF_CONSISTENCY_TEMPERATURE)` — an LM with the
+cache off and no seed, so each draw is an independent request. Per `(casefold text, type)`
+mention, `agreement` is the fraction of draws carrying it; a mention below 1.0 carries
+`needs_review`. `review_row` builds the approval-queue payload: `data` is the query with the
+unanimous mentions only, `metadata.self_consistency` carries `samples` and one
+`{text, type, agreement, needs_review}` record per mention. Rows with at least one flagged
+mention are queued as a `PENDING_REVIEW` `ApprovalBatch` through `ApprovalStorageImpl`, with
+`confidence` the mean agreement; the approval queue tab renders one agreement line per
+mention. A record whose draws did not all complete, and a record with no unanimous mention,
+are recorded through `BootstrapErrorLog.record_cause` and contribute no row. The run reports
+the pass under `self_consistency`. Approved rows re-enter training the same way every
+approved synthetic row does — through `approved_synthetic_data-{tenant}`; ground truth is
+never rewritten. `validate_approved_training_values` refuses an entity whose type is outside
+`ENTITY_TYPES` (`cogniverse_foundation.common.entity_types`), so a human correction naming an
+unknown type is refused at approval time rather than at the next optimization.
+
+Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
 JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is

@@ -22,6 +22,15 @@ from cogniverse_agents.approval import (
     HumanApprovalAgent,
     ReviewDecision,
 )
+from cogniverse_agents.optimizer.entity_self_consistency import (
+    AGREEMENT_KEY,
+    ENTITIES_KEY,
+    ENTITY_TEXT_KEY,
+    ENTITY_TYPE_KEY,
+    NEEDS_REVIEW_KEY,
+    SAMPLES_KEY,
+    SELF_CONSISTENCY_METADATA_KEY,
+)
 from cogniverse_core.approval.training_schema import (
     validate_approved_training_values,
 )
@@ -65,6 +74,20 @@ def _schema_for_item_data(data: dict) -> type[BaseModel]:
     if "enhanced_query" in data:
         return QueryEnhancementExampleSchema
     raise ValueError("item data does not match an advertised synthetic example schema")
+
+
+def _self_consistency_lines(metadata: dict) -> list[str]:
+    """One line per sampled mention, carrying its agreement and review flag."""
+    block = (metadata or {}).get(SELF_CONSISTENCY_METADATA_KEY)
+    if not block:
+        return []
+    samples = block[SAMPLES_KEY]
+    return [
+        f"**Agreement ({samples} samples):** {entity[ENTITY_TEXT_KEY]} "
+        f"({entity[ENTITY_TYPE_KEY]}) {entity[AGREEMENT_KEY]:.2f}"
+        + (" — needs review" if entity[NEEDS_REVIEW_KEY] else "")
+        for entity in block[ENTITIES_KEY]
+    ]
 
 
 def _review_reasoning(data: dict) -> str:
@@ -395,6 +418,8 @@ def _render_review_item(item, idx: int):
         if reasoning:
             st.markdown(f"**Reasoning:** {reasoning}")
         st.markdown(f"**Entities:** {', '.join([str(e) for e in entities])}")
+        for line in _self_consistency_lines(item.metadata):
+            st.markdown(line)
 
     with col2:
         st.metric("Confidence", f"{item.confidence:.2f}")

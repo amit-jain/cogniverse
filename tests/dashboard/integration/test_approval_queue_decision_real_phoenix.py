@@ -456,3 +456,154 @@ def test_concurrent_decisions_persist_without_cross_talk(
     )
     assert _wait_training_rows(storage, approve_id, 1) == 1
     assert _training_rows(storage, reject_id) == 0
+
+
+def test_self_consistency_row_round_trips_through_the_pending_queue(
+    phoenix_container,
+    telemetry_manager_with_phoenix,
+    workflow_state_redis_url,
+):
+    """What the optimizer queued is what the reviewer's queue serves back."""
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_METADATA_KEY,
+        review_row,
+        row_confidence,
+    )
+    from cogniverse_runtime.optimization_cli import (
+        _queue_entity_self_consistency_review,
+    )
+
+    tenant_id = f"selfcons{uuid4().hex[:8]}"
+    storage = _storage(
+        phoenix_container,
+        telemetry_manager_with_phoenix,
+        tenant_id,
+        workflow_state_redis_url,
+    )
+    row = review_row(
+        "a man riding a dirt bike",
+        [
+            [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+            ],
+            [{"text": "man", "type": "PERSON"}],
+            [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+            ],
+        ],
+    )
+    causes: list[str] = []
+
+    queued = _run(
+        _queue_entity_self_consistency_review(
+            [row],
+            storage_factory=lambda: storage,
+            tenant_id=canonical_tenant_id(tenant_id),
+            record_cause=causes.append,
+        )
+    )
+
+    assert causes == []
+    assert queued["rows_queued"] == 1
+    batch_id = queued["batch_id"]
+
+    batches = _run(storage.get_pending_batches(None))
+    items = [item for batch in batches for item in batch.pending_review]
+    assert [item.item_id for item in items] == [f"{batch_id}_0"]
+    served = items[0]
+
+    assert served.data == {
+        "query": "a man riding a dirt bike",
+        "entities": [{"text": "man", "type": "PERSON"}],
+        "relationships": [],
+    }
+    assert served.metadata[SELF_CONSISTENCY_METADATA_KEY] == row["metadata"]
+    assert served.metadata["agent_type"] == "entity_extraction"
+    assert served.metadata["optimizer_type"] == "entity_extraction"
+    assert served.confidence == pytest.approx(row_confidence(row))
+    assert served.status is ApprovalStatus.PENDING_REVIEW
+
+
+def test_unanimous_rows_are_not_queued_for_review(
+    phoenix_container,
+    telemetry_manager_with_phoenix,
+    workflow_state_redis_url,
+):
+    """A row the teacher agreed on holds no question, so nothing is queued."""
+    from cogniverse_agents.optimizer.entity_self_consistency import review_row
+    from cogniverse_runtime.optimization_cli import (
+        _queue_entity_self_consistency_review,
+    )
+
+    tenant_id = f"selfcons{uuid4().hex[:8]}"
+    storage = _storage(
+        phoenix_container,
+        telemetry_manager_with_phoenix,
+        tenant_id,
+        workflow_state_redis_url,
+    )
+    row = review_row(
+        "interns working at Nokia",
+        [[{"text": "interns", "type": "PERSON"}]] * 3,
+    )
+    causes: list[str] = []
+
+    queued = _run(
+        _queue_entity_self_consistency_review(
+            [row],
+            storage_factory=lambda: storage,
+            tenant_id=canonical_tenant_id(tenant_id),
+            record_cause=causes.append,
+        )
+    )
+
+    assert queued == {"batch_id": None, "rows_queued": 0}
+    assert causes == []
+    assert _run(storage.get_pending_batches(None)) == []
+
+
+def test_a_row_with_no_unanimous_mention_is_recorded_not_queued(
+    phoenix_container,
+    telemetry_manager_with_phoenix,
+    workflow_state_redis_url,
+):
+    """No agreed mention means no training example, so the cause is recorded."""
+    from cogniverse_agents.optimizer.entity_self_consistency import review_row
+    from cogniverse_runtime.optimization_cli import (
+        _queue_entity_self_consistency_review,
+    )
+
+    tenant_id = f"selfcons{uuid4().hex[:8]}"
+    storage = _storage(
+        phoenix_container,
+        telemetry_manager_with_phoenix,
+        tenant_id,
+        workflow_state_redis_url,
+    )
+    row = review_row(
+        "a man riding a dirt bike",
+        [
+            [{"text": "man", "type": "PERSON"}],
+            [{"text": "dirt bike", "type": "CONCEPT"}],
+            [{"text": "bike", "type": "CONCEPT"}],
+        ],
+    )
+    causes: list[str] = []
+
+    queued = _run(
+        _queue_entity_self_consistency_review(
+            [row],
+            storage_factory=lambda: storage,
+            tenant_id=canonical_tenant_id(tenant_id),
+            record_cause=causes.append,
+        )
+    )
+
+    assert queued == {"batch_id": None, "rows_queued": 0}
+    assert causes == [
+        "self-consistency found no unanimous entity for query "
+        "'a man riding a dirt bike'"
+    ]
+    assert _run(storage.get_pending_batches(None)) == []
