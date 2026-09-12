@@ -46,6 +46,21 @@ PROFILE_TYPES = {
 }
 
 
+def _failed_steps(result) -> dict:
+    """Agent name -> failure message for every dispatched step that failed.
+
+    ``_execute_plan`` records a failed HTTP dispatch as
+    ``{"status": "error", "message": ...}`` under the agent's name, so a plan
+    whose every step 4xx'd still produces a full ``agent_results`` map. Tests
+    that assert only the plan shape or ``len(agent_results)`` pass on that.
+    """
+    return {
+        name: payload.get("message", "")
+        for name, payload in result.agent_results.items()
+        if isinstance(payload, dict) and payload.get("status") == "error"
+    }
+
+
 @pytest.fixture
 def real_dspy_lm(gemma_inference_endpoint):
     """Real DSPy LM against the endpoint provisioned by the session fixture.
@@ -120,6 +135,17 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
     from cogniverse_runtime.routers import agents as agents_router
 
     config_manager = vespa_with_schema["manager"].config_manager
+    # profile_selection refuses a tenant with no servable profile, so the
+    # orchestrated step 400s unless the tenant these dispatches run as owns a
+    # profile backed by the schema this module deployed for it.
+    config_manager.add_backend_profile(
+        BackendProfileConfig(
+            profile_name=vespa_with_schema["default_schema"],
+            type="video",
+            schema_name=vespa_with_schema["default_schema"],
+        ),
+        tenant_id=PROFILE_TENANT,
+    )
     schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
@@ -742,14 +768,15 @@ class TestOrchestratorAgentIntegration:
             f"Step 2 should depend on both parallel steps, got: {result.plan_steps[2]['depends_on']}"
         )
 
-        # VALIDATE: All agents executed
-        assert len(result.agent_results) == 3, (
-            f"Should execute all 3 agents, got: {len(result.agent_results)}"
-        )
-
-        # VALIDATE: Each agent produced results
-        for agent_name, agent_result in result.agent_results.items():
-            assert agent_result is not None, f"Agent {agent_name} should produce result"
+        # VALIDATE: exactly the planned agents ran, and every one of them
+        # completed. A step that 4xx'd is recorded under the same key with
+        # {"status": "error"}, so the key set alone proves nothing.
+        assert set(result.agent_results) == {
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+        }
+        assert _failed_steps(result) == {}
 
 
 @pytest.mark.integration
@@ -913,10 +940,14 @@ class TestOrchestratorComplexPatterns:
             f"Step 3 should depend on steps 0,1, got: {result.plan_steps[3]['depends_on']}"
         )
 
-        # VALIDATE: All 4 agents executed
-        assert len(result.agent_results) == 4, (
-            f"Should execute all 4 agents, got: {len(result.agent_results)}"
-        )
+        # VALIDATE: exactly the planned agents ran and every one completed
+        assert set(result.agent_results) == {
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+            "search",
+        }
+        assert _failed_steps(result) == {}
 
     @pytest.mark.asyncio
     async def test_mixed_parallel_sequential_validates_dependencies(
@@ -957,6 +988,16 @@ class TestOrchestratorComplexPatterns:
         # VALIDATE: Second parallel group depends on sequential step
         assert result.plan_steps[3]["depends_on"] == [2]
         assert result.plan_steps[4]["depends_on"] == [2]
+
+        # VALIDATE: the five planned steps ran and every one completed
+        assert set(result.agent_results) == {
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+            "search",
+            "summarizer",
+        }
+        assert _failed_steps(result) == {}
 
     @pytest.mark.asyncio
     async def test_repeated_agent_collapses_plan_and_remaps_groups(
@@ -1001,6 +1042,15 @@ class TestOrchestratorComplexPatterns:
             [0, 1],
             [2],
         ]
+
+        # VALIDATE: the surviving steps ran once each and all completed
+        assert set(result.agent_results) == {
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+            "search",
+        }
+        assert _failed_steps(result) == {}
 
     @pytest.mark.asyncio
     async def test_cascading_failure_validates_degradation(
