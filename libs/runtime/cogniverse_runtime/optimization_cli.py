@@ -1682,9 +1682,7 @@ async def _optimize_agent(
                 query=query,
                 modality="video",
                 top_k=10,
-                search_strategy="colpali",
                 enhanced_query=str(output.get("enhanced_query") or query),
-                confidence=row.get("score", 0.8),
             ).with_inputs("query", "modality", "top_k")
         elif agent_name == "summary":
             example = dspy.Example(

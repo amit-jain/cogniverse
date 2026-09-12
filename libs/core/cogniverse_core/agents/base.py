@@ -276,9 +276,8 @@ def _signature_predictor(attr: Any) -> Any:
     ``dspy.ChainOfThought`` (and other Predict wrappers) keep the
     underlying ``Predict`` — and thus the signature — on ``.predict``.
     The overlay must reach that inner predictor, otherwise a
-    ChainOfThought-based agent (which is every optimization-served agent:
-    search_optimizer / summarizer / report_generator) silently ignores
-    the dispatched prompt.
+    ChainOfThought-based agent (summarizer / report_generator) silently
+    ignores the dispatched prompt.
     """
     if attr is None:
         return None

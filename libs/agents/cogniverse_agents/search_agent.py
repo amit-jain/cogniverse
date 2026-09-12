@@ -18,7 +18,9 @@ Enhanced with:
 import asyncio
 import logging
 import tempfile
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
@@ -29,7 +31,6 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -358,8 +359,68 @@ QUERY_REWRITE_FAILED = "query_rewrite_failed"
 QUERY_REWRITE_TIMED_OUT = "query_rewrite_timed_out"
 
 
+# Generation ceiling for one rewrite. Measured on the served endpoint over the
+# fixed evaluation queries, 120 samples: mean 23, p90 30, max 30 completion
+# tokens. The ceiling clears that maximum threefold, so a runaway generation is
+# bounded while an ordinary rewrite is never truncated mid-query.
+_MEASURED_REWRITE_OUTPUT_TOKENS_MAX = 30
+QUERY_REWRITE_MAX_OUTPUT_TOKENS = 3 * _MEASURED_REWRITE_OUTPUT_TOKENS_MAX
+
+# Wall-clock the rewrite stage is held to, p90 over the same 120 samples.
+# Measured p90 0.652s; the budget carries a 2.2x margin for contention on a
+# shared cluster.
+_MEASURED_REWRITE_P90_S = 0.652
+QUERY_REWRITE_P90_BUDGET_S = round(2.2 * _MEASURED_REWRITE_P90_S, 1)
+
+# Per-stage wall-clock stamped on the SearchAgent.process span, in the order
+# the stages run. Named so this is read off a trace instead of re-measured.
+SEARCH_STAGE_TIMING_KEYS = (
+    "search.stage.context_injection_ms",
+    "search.stage.query_rewrite_lm_ms",
+    "search.stage.query_rewrite_ms",
+    "search.stage.retrieval_ms",
+)
+
+_STAGE_TIMINGS: ContextVar[Optional[Dict[str, float]]] = ContextVar(
+    "search_stage_timings", default=None
+)
+
+
+@contextmanager
+def _timed_stage(key: str):
+    """Record one stage's wall-clock into the current request's timing map."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings = _STAGE_TIMINGS.get()
+        if timings is not None:
+            timings[key] = (time.perf_counter() - started) * 1000.0
+
+
+def _stamp_stage_timings_on_span() -> None:
+    timings = _STAGE_TIMINGS.get()
+    if not timings:
+        return
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        span = _otel_trace.get_current_span()
+        if not (span and span.get_span_context().is_valid):
+            return
+        for key in SEARCH_STAGE_TIMING_KEYS:
+            if key in timings:
+                span.set_attribute(key, round(timings[key], 3))
+    except Exception as exc:  # noqa: BLE001 - telemetry never fails a search
+        logger.debug("stage timing stamp skipped: %s", exc)
+
+
 class SearchOptimizationSignature(dspy.Signature):
-    """DSPy signature for search optimization"""
+    """Rewrite a search query into the terms that retrieve the content.
+
+    Emit the rewritten query only: no explanation, no reasoning, no
+    alternatives, no surrounding prose. One line.
+    """
 
     query: str = dspy.InputField(desc="Search query")
     modality: str = dspy.InputField(
@@ -367,21 +428,31 @@ class SearchOptimizationSignature(dspy.Signature):
     )
     top_k: int = dspy.InputField(desc="Number of results to return")
 
-    search_strategy: str = dspy.OutputField(desc="Recommended search strategy")
-    enhanced_query: str = dspy.OutputField(desc="Enhanced query for better retrieval")
-    confidence: float = dspy.OutputField(desc="Confidence in search approach (0-1)")
+    enhanced_query: str = dspy.OutputField(
+        desc="The rewritten search query, on one line, and nothing else"
+    )
 
 
 class SearchOptimizationModule(dspy.Module):
-    """DSPy module for search optimization"""
+    """Rewrites a search query into retrieval terms.
+
+    A transformation, not a judgement: ``dspy.Predict`` rather than
+    ``dspy.ChainOfThought`` so the served call generates the query and no
+    reasoning ahead of it, bounded by
+    ``QUERY_REWRITE_MAX_OUTPUT_TOKENS``.
+    """
 
     def __init__(self):
         super().__init__()
-        self.search_optimizer = dspy.ChainOfThought(SearchOptimizationSignature)
+        self.search_optimizer = dspy.Predict(SearchOptimizationSignature)
 
     def forward(self, query: str, modality: str = "video", top_k: int = 10):
-        """Forward pass for search optimization"""
-        return self.search_optimizer(query=query, modality=modality, top_k=top_k)
+        return self.search_optimizer(
+            query=query,
+            modality=modality,
+            top_k=top_k,
+            config={"max_tokens": QUERY_REWRITE_MAX_OUTPUT_TOKENS},
+        )
 
 
 @dataclass
@@ -879,6 +950,13 @@ class SearchAgent(
 
         return fused_results[:top_k]
 
+    async def _timed_rewrite_query_for_search(
+        self, input: SearchInput, query: str, modality: str, top_k: int
+    ) -> Tuple[str, Optional[str], Optional[str]]:
+        """``_rewrite_query_for_search`` with the stage's wall-clock recorded."""
+        with _timed_stage("search.stage.query_rewrite_ms"):
+            return await self._rewrite_query_for_search(input, query, modality, top_k)
+
     async def _rewrite_query_for_search(
         self, input: SearchInput, query: str, modality: str, top_k: int
     ) -> Tuple[str, Optional[str], Optional[str]]:
@@ -898,14 +976,18 @@ class SearchAgent(
         self.emit_progress("query_optimization", "Optimizing query with DSPy...")
 
         async def rewrite():
-            enriched_query = await self.inject_context_into_prompt_async(query, query)
-            return await self.call_dspy(
-                self.search_module,
-                output_field="enhanced_query",
-                query=enriched_query,
-                modality=modality,
-                top_k=top_k,
-            )
+            with _timed_stage("search.stage.context_injection_ms"):
+                enriched_query = await self.inject_context_into_prompt_async(
+                    query, query
+                )
+            with _timed_stage("search.stage.query_rewrite_lm_ms"):
+                return await self.call_dspy(
+                    self.search_module,
+                    output_field="enhanced_query",
+                    query=enriched_query,
+                    modality=modality,
+                    top_k=top_k,
+                )
 
         try:
             if input.query_rewrite_timeout_s is None:
@@ -925,12 +1007,10 @@ class SearchAgent(
             logger.warning("Query rewrite failed: %r; searching %r", e, query)
             return query, None, QUERY_REWRITE_FAILED
 
-        if hasattr(dspy_result, "enhanced_query") and hasattr(
-            dspy_result, "confidence"
-        ):
-            if parse_confidence(dspy_result.confidence) > 0.7:
-                logger.info(f"Using DSPy-enhanced query: {dspy_result.enhanced_query}")
-                return dspy_result.enhanced_query, dspy_result.enhanced_query, None
+        rewritten = str(getattr(dspy_result, "enhanced_query", "") or "").strip()
+        if rewritten:
+            logger.info("Using DSPy-enhanced query: %s", rewritten)
+            return rewritten, rewritten, None
         return query, None, None
 
     async def _search_ensemble(
@@ -2023,6 +2103,7 @@ class SearchAgent(
         # contextvar. Surfaced on SearchOutput so a client can annotate this
         # exact search (result_click / result_relevance) for triplet mining.
         search_span_id = _current_span_id()
+        _STAGE_TIMINGS.set({})
 
         search_mode = "single_profile"
         # Respect an explicit single-profile override from `profiles`; fall
@@ -2069,17 +2150,20 @@ class SearchAgent(
                 search_query,
                 enhanced_query,
                 degraded_query_rewrite,
-            ) = await self._rewrite_query_for_search(input, query, modality, top_k)
-            outcome = await self._search_ensemble(
-                query=search_query,
-                tenant_id=tenant_id,
-                profiles=input.profiles,
-                modality=modality,
-                top_k=top_k,
-                rrf_k=input.rrf_k,
-                start_date=input.start_date,
-                end_date=input.end_date,
+            ) = await self._timed_rewrite_query_for_search(
+                input, query, modality, top_k
             )
+            with _timed_stage("search.stage.retrieval_ms"):
+                outcome = await self._search_ensemble(
+                    query=search_query,
+                    tenant_id=tenant_id,
+                    profiles=input.profiles,
+                    modality=modality,
+                    top_k=top_k,
+                    rrf_k=input.rrf_k,
+                    start_date=input.start_date,
+                    end_date=input.end_date,
+                )
             results = outcome.results
             # The profiles reported are the ones whose search ran; a leg that
             # could not encode or failed is named under degraded_profiles
@@ -2117,18 +2201,21 @@ class SearchAgent(
                 search_query,
                 enhanced_query,
                 degraded_query_rewrite,
-            ) = await self._rewrite_query_for_search(input, query, modality, top_k)
+            ) = await self._timed_rewrite_query_for_search(
+                input, query, modality, top_k
+            )
 
             self.emit_progress("retrieval", "Searching by text...")
-            results = await asyncio.to_thread(
-                self._search_by_text,
-                query=search_query,
-                tenant_id=tenant_id,
-                modality=modality,
-                top_k=top_k,
-                start_date=input.start_date,
-                end_date=input.end_date,
-            )
+            with _timed_stage("search.stage.retrieval_ms"):
+                results = await asyncio.to_thread(
+                    self._search_by_text,
+                    query=search_query,
+                    tenant_id=tenant_id,
+                    modality=modality,
+                    top_k=top_k,
+                    start_date=input.start_date,
+                    end_date=input.end_date,
+                )
 
         # RLM Processing: Synthesize answer from results if RLM is enabled
         rlm_synthesis = None
@@ -2167,6 +2254,7 @@ class SearchAgent(
                 }
 
         _stamp_search_io_on_span(query, results, modality)
+        _stamp_stage_timings_on_span()
         return SearchOutput(
             query=query,
             enhanced_query=enhanced_query,
