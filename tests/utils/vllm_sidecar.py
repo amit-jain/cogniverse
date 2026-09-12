@@ -194,6 +194,77 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> list[str]:
     return removed
 
 
+def reap_dead_owner_networks(label: str = OWNER_LABEL) -> list[str]:
+    """Remove networks labelled with an owner pid that no longer exists.
+
+    A stack fixture creates a network per run and removes it in a ``finally``,
+    where the removal races the endpoint release of the containers just torn
+    down. The container reaper cannot see what is left: networks are a
+    separate namespace. Networks belonging to LIVE pids are never touched.
+    Returns the names this call removed. Raises when docker cannot list the
+    networks or remove one that is still present afterwards.
+    """
+    listing = subprocess.run(
+        [
+            "docker",
+            "network",
+            "ls",
+            "--filter",
+            f"label={label}",
+            "--format",
+            '{{.Name}}\t{{.Label "' + label + '"}}',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if listing.returncode != 0:
+        detail = "\n".join(
+            part for part in (listing.stdout, listing.stderr) if part
+        ).strip()
+        raise RuntimeError(
+            f"docker could not list networks labelled {label}: "
+            f"{detail or f'exit {listing.returncode}'}"
+        )
+    removed: list[str] = []
+    failures: list[str] = []
+    for line in listing.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 2:
+            continue
+        name, owner_pid = parts
+        if owner_pid.isdigit() and os.path.exists(f"/proc/{owner_pid}"):
+            continue
+        result = subprocess.run(
+            ["docker", "network", "rm", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0:
+            removed.append(name)
+            continue
+        present = subprocess.run(
+            ["docker", "network", "ls", "--format", "{{.Name}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if name in present.stdout.split():
+            detail = "\n".join(
+                part for part in (result.stdout, result.stderr) if part
+            ).strip()
+            failures.append(f"{name}: {detail or f'exit {result.returncode}'}")
+    if failures:
+        raise RuntimeError(
+            "docker could not remove dead-owner networks: " + "; ".join(failures)
+        )
+    return removed
+
+
 # Exact-model sidecars (see tests/utils/hermetic_llm.py) are reused across
 # pytest sessions on purpose, because re-provisioning one reloads multi-GB
 # weights. They therefore carry a marker of their own instead of OWNER_LABEL:

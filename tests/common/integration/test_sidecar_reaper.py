@@ -21,7 +21,11 @@ from pathlib import Path
 import pytest
 
 from tests.fixtures.sidecars import reap_at_session_start
-from tests.utils.vllm_sidecar import OWNER_LABEL, reap_dead_owner_containers
+from tests.utils.vllm_sidecar import (
+    OWNER_LABEL,
+    reap_dead_owner_containers,
+    reap_dead_owner_networks,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -342,3 +346,61 @@ def test_concurrent_reapers_remove_a_dead_owner_container_exactly_once():
         assert not _exists(name)
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+
+def _network_exists(name: str) -> bool:
+    listing = subprocess.run(
+        ["docker", "network", "ls", "--format", "{{.Name}}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return name in listing.stdout.split()
+
+
+def _create_owned_network(name: str, owner_pid: int) -> None:
+    subprocess.run(
+        [
+            "docker",
+            "network",
+            "create",
+            "--label",
+            f"{OWNER_LABEL}={owner_pid}",
+            name,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+
+
+class TestDeadOwnerNetworksAreReclaimed:
+    """A stack fixture creates a network per run. Containers carry the owner
+    label and are reaped; a network that outlives its teardown is invisible to
+    the container reaper and accumulates on the host for good."""
+
+    def test_removes_a_network_whose_owner_pid_is_gone(self):
+        name = f"cog-sr-net-reaptest-dead-{uuid.uuid4().hex[:8]}"
+        _create_owned_network(name, _dead_owner_pid())
+        try:
+            removed = reap_dead_owner_networks()
+            assert name in removed
+            assert _network_exists(name) is False
+        finally:
+            subprocess.run(
+                ["docker", "network", "rm", name], capture_output=True, timeout=30
+            )
+
+    def test_keeps_a_network_whose_owner_is_alive(self):
+        name = f"cog-sr-net-reaptest-live-{uuid.uuid4().hex[:8]}"
+        _create_owned_network(name, os.getpid())
+        try:
+            removed = reap_dead_owner_networks()
+            assert name not in removed
+            assert _network_exists(name) is True
+        finally:
+            subprocess.run(
+                ["docker", "network", "rm", name], capture_output=True, timeout=30
+            )

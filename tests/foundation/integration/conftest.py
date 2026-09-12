@@ -4,14 +4,15 @@ Launches Envoy + vLLM Semantic Router + a reflecting stub upstream as three
 docker containers on a private network and tears them down afterwards. This is
 the ``shared_vespa`` idiom (``docker run``, unique per-process names, a
 health-wait loop, ``docker rm -f`` cleanup in ``finally``) — the test owns its
-infrastructure. There is no docker-compose file, no pre-started service, and no
-manual environment variable: running the module launches the stack, and the
-suite skips cleanly when the Docker daemon is absent.
+infrastructure. There is no docker-compose file, no pre-started service and no
+manual environment variable: running the module launches the stack.
 
-The container config (``_sr_stack/{envoy.yaml,sr-config.yaml,stub_upstream.py}``)
-addresses peers by the docker network aliases ``semantic-router`` and
-``stub-upstream``, so only the container names and the published Envoy port vary
-per process.
+Envoy runs the chart's own data plane, rendered for the local peers by
+``tests.utils.semantic_router_stack``; the router and stub answer on the docker
+network aliases that rendering addresses. The router's config
+(``_sr_stack/sr-config.yaml``) and the stub (``_sr_stack/stub_upstream.py``)
+are the stack's own, so only the container names and the published Envoy port
+vary per process.
 
 The router's classifier bundle and embedding model are cached in persistent
 named volumes (``cog-sr-models`` / ``cog-sr-hf-cache``) so the multi-GB download
@@ -28,14 +29,25 @@ import time
 from pathlib import Path
 
 import pytest
-import requests
 import yaml
 
-_STACK_DIR = Path(__file__).resolve().parent / "_sr_stack"
-_CHART_VALUES = (
-    Path(__file__).resolve().parents[3] / "charts" / "cogniverse" / "values.yaml"
+from tests.utils.semantic_router_stack import (
+    CHART_VALUES,
+    ROUTER_ALIAS,
+    UPSTREAM_ALIAS,
+    envoy_listener_port,
+    render_envoy_config,
+    wait_for_routed_chat,
 )
+
+_STACK_DIR = Path(__file__).resolve().parent / "_sr_stack"
 _STUB_IMAGE = "python:3.12-slim"
+
+# The tier the readiness probe presents and the model the router must rewrite
+# ``auto`` to for it, per the ``free-default`` decision in ``sr-config.yaml``.
+_PROBE_TENANT = "readiness-probe-tenant"
+_PROBE_TIER = "free"
+_PROBE_MODEL = "basic-chat"
 
 
 def _shipped_image(*path: str) -> str:
@@ -45,7 +57,7 @@ def _shipped_image(*path: str) -> str:
     re-serialization drops ``response_format.json_schema`` passes a stack
     pinned to some other tag while every served structured call 400s.
     """
-    node = yaml.safe_load(_CHART_VALUES.read_text())
+    node = yaml.safe_load(CHART_VALUES.read_text())
     for key in path:
         node = node[key]
     digest = node.get("digest")
@@ -75,18 +87,6 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _docker_daemon_up() -> bool:
-    try:
-        return (
-            subprocess.run(
-                ["docker", "info"], capture_output=True, timeout=10
-            ).returncode
-            == 0
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
 def _docker(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", *args], capture_output=True, text=True, timeout=timeout
@@ -110,8 +110,25 @@ def _sr_models_cached() -> bool:
     return probe.returncode == 0
 
 
+def _remove_network(name: str, *, attempts: int = 10, pause_s: float = 1.0) -> None:
+    """Remove a stack network, retrying while docker releases its endpoints.
+
+    ``network rm`` races the endpoint teardown of the containers just removed
+    and fails with the network still present; an unremoved network carries the
+    owner label, so the next session's reaper collects whatever survives this.
+    """
+    for attempt in range(attempts):
+        if _docker("network", "rm", name, timeout=30).returncode == 0:
+            return
+        listing = _docker("network", "ls", "--format", "{{.Name}}", timeout=30)
+        if name not in listing.stdout.split():
+            return
+        if attempt < attempts - 1:
+            time.sleep(pause_s)
+
+
 @pytest.fixture(scope="module")
-def semantic_router_stack():
+def semantic_router_stack(tmp_path_factory):
     """Yield ``{"base_url", "host_port"}`` for a live Envoy->SR->stub chain."""
     uid = f"{os.getpid()}-{int(time.time() * 1000)}"
     net = f"cog-sr-net-{uid}"
@@ -124,9 +141,14 @@ def semantic_router_stack():
     # Reap stack containers whose owning pytest was SIGKILLed before the
     # finally-teardown could run — an orphaned router holds its classifier
     # models in host RAM indefinitely.
-    from tests.utils.vllm_sidecar import OWNER_LABEL, reap_dead_owner_containers
+    from tests.utils.vllm_sidecar import (
+        OWNER_LABEL,
+        reap_dead_owner_containers,
+        reap_dead_owner_networks,
+    )
 
     reap_dead_owner_containers()
+    reap_dead_owner_networks()
     owner_label = f"{OWNER_LABEL}={os.getpid()}"
 
     # Provision persistent model caches before starting the router so the
@@ -142,7 +164,7 @@ def semantic_router_stack():
 
     created: list[tuple[str, str]] = []
     try:
-        r = _docker("network", "create", net)
+        r = _docker("network", "create", "--label", owner_label, net)
         if r.returncode != 0:
             pytest.fail(f"cannot create docker network: {r.stderr.strip()}")
         created.append(("network", net))
@@ -158,7 +180,7 @@ def semantic_router_stack():
             "--network",
             net,
             "--network-alias",
-            "stub-upstream",
+            UPSTREAM_ALIAS,
             "-v",
             f"{_STACK_DIR / 'stub_upstream.py'}:/app/stub.py:ro",
             _STUB_IMAGE,
@@ -183,7 +205,7 @@ def semantic_router_stack():
             "--network",
             net,
             "--network-alias",
-            "semantic-router",
+            ROUTER_ALIAS,
             "-v",
             f"{_STACK_DIR / 'sr-config.yaml'}:/app/config.yaml:ro",
             "-v",
@@ -197,7 +219,10 @@ def semantic_router_stack():
             pytest.fail(f"semantic-router failed to start: {r.stderr}")
         created.append(("container", router))
 
-        # Envoy front proxy — the OpenAI-compatible entry point.
+        # Envoy front proxy — the OpenAI-compatible entry point, running the
+        # chart's data plane with the local peers substituted in.
+        envoy_config = tmp_path_factory.mktemp("sr-envoy") / "envoy.yaml"
+        envoy_config.write_text(render_envoy_config())
         r = _docker(
             "run",
             "-d",
@@ -208,9 +233,9 @@ def semantic_router_stack():
             "--network",
             net,
             "-p",
-            f"{host_port}:8801",
+            f"{host_port}:{envoy_listener_port()}",
             "-v",
-            f"{_STACK_DIR / 'envoy.yaml'}:/etc/envoy/envoy.yaml:ro",
+            f"{envoy_config}:/etc/envoy/envoy.yaml:ro",
             _ENVOY_IMAGE,
             "-c",
             "/etc/envoy/envoy.yaml",
@@ -243,20 +268,25 @@ def semantic_router_stack():
                 f"(warm_start={warm_start})\nrouter logs:\n{logs}"
             )
 
-        # Then confirm the Envoy -> ext_proc -> stub path answers end to end.
-        deadline = time.time() + 60
-        while time.time() < deadline:
-            try:
-                if (
-                    requests.get(
-                        f"http://localhost:{host_port}/v1/models", timeout=3
-                    ).status_code
-                    < 500
-                ):
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(3)
+        # Then wait on a real routed completion. Envoy answers /v1/models
+        # without ever carrying a body to the router, so that endpoint is up
+        # while every completion still times out — the state this refuses to
+        # hand to the tests. A routed chat takes 0.30s here (measured), so a
+        # stack that has not served one in 60s is not slow, it is broken.
+        try:
+            wait_for_routed_chat(
+                base_url,
+                tenant_id=_PROBE_TENANT,
+                tenant_tier=_PROBE_TIER,
+                expected_model=_PROBE_MODEL,
+                budget_s=60,
+            )
+        except RuntimeError as error:
+            pytest.fail(
+                f"{error}\nenvoy log:\n{_docker('logs', '--tail', '20', envoy).stdout}"
+                f"{_docker('logs', '--tail', '20', envoy).stderr}"
+                f"\nrouter log:\n{_docker('logs', '--tail', '20', router).stdout}"
+            )
 
         yield {"base_url": base_url, "host_port": host_port}
     finally:
@@ -264,7 +294,7 @@ def semantic_router_stack():
             if kind == "container":
                 _docker("rm", "-f", name, timeout=30)
             else:
-                _docker("network", "rm", name, timeout=30)
+                _remove_network(name)
         for var, val in zip(("NO_PROXY", "no_proxy"), prev_no_proxy):
             if val is None:
                 os.environ.pop(var, None)
