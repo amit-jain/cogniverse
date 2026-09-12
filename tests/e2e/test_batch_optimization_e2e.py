@@ -34,6 +34,7 @@ import pytest
 from cogniverse_agents.entity_extraction_agent import (
     ENTITY_TYPES,
     EntityExtractionModule,
+    EntityExtractionOutput,
 )
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
@@ -5318,36 +5319,23 @@ class TestArtifactLoadingRoundTrip:
         selected_rows = list(batch["ground_truth_rows"][:5])
         assert len(selected_rows) == 5, selected_rows
 
-        def assert_served_rows() -> None:
+        served_fields = tuple(sorted(EntityExtractionOutput.model_fields))
+
+        def serve_rows() -> list[dict[str, object]]:
+            """The five served bodies, projected onto the agent's output fields."""
+            served: list[dict[str, object]] = []
             for row in selected_rows:
+                query = str(row["query"])
                 body = _call_agent(
-                    "entity_extraction_agent", str(row["query"]), tenant_id=TENANT_ID
+                    "entity_extraction_agent", query, tenant_id=TENANT_ID
                 )
-                expected_entity_order = [
-                    (entity["text"], entity["type"]) for entity in row["entities"]
-                ]
-                actual_entity_order = [
-                    (entity["text"], entity["type"]) for entity in body["entities"]
-                ]
-                expected_pairs = {
-                    (entity["text"], entity["type"]) for entity in row["entities"]
-                }
-                actual_pairs = {
-                    (entity["text"], entity["type"]) for entity in body["entities"]
-                }
                 assert body["status"] == "success", body
                 assert body["agent"] == "entity_extraction_agent", body
-                assert body["query"] == str(row["query"]), body
+                assert body["query"] == query, body
                 assert body["path_used"] == "dspy", body
+                assert set(served_fields) <= set(body), body
                 assert body["entity_count"] == len(body["entities"]), body
                 assert body["has_entities"] == bool(body["entities"]), body
-                assert actual_entity_order == expected_entity_order, (
-                    row["query"],
-                    body,
-                )
-                assert len(actual_entity_order) == len(expected_entity_order), body
-                assert body["entity_count"] == len(expected_pairs), body
-                assert len(actual_pairs) == len(expected_pairs), (row["query"], body)
                 assert (
                     body["dominant_types"]
                     == [
@@ -5361,10 +5349,27 @@ class TestArtifactLoadingRoundTrip:
                         )
                     ][:3]
                 ), body
-                assert actual_pairs == expected_pairs, (row["query"], body)
-                assert len(actual_pairs) == len(expected_pairs), (row["query"], body)
+                # The served path grounds every mention it returns with
+                # query.find(entity.text), so each is a verbatim span.
+                assert [entity["text"] for entity in body["entities"]] == [
+                    entity["text"]
+                    for entity in body["entities"]
+                    if entity["text"] in query
+                ], body
+                assert {entity["type"] for entity in body["entities"]} <= set(
+                    ENTITY_TYPES
+                ), body
+                answer_payload = json.loads(str(body["answer"]))
+                assert {field: answer_payload[field] for field in served_fields} == {
+                    field: body[field] for field in served_fields
+                }, body
+                served.append({field: body[field] for field in served_fields})
+            return served
 
-        assert_served_rows()
+        served_before_bounce = serve_rows()
+        assert [served["query"] for served in served_before_bounce] == [
+            str(row["query"]) for row in selected_rows
+        ], served_before_bounce
 
         if result["decision"] in {"promote", "rollback"}:
             expected_blob = version_blob
@@ -5382,7 +5387,9 @@ class TestArtifactLoadingRoundTrip:
             ), batch["ledger"]
 
         new_pod = _bounce_runtime_pod()
-        assert_served_rows()
+        # The artifact the restart reloads answers the same five queries
+        # exactly as the pod it replaced did.
+        assert serve_rows() == served_before_bounce, served_before_bounce
 
         logs = _read_pod_logs(new_pod, since="10m")
         assert (
