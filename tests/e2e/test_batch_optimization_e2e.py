@@ -4838,6 +4838,7 @@ class TestEntityExtractionOptimization:
             "version",
             "selection",
             "bootstrap",
+            "self_consistency",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -4900,6 +4901,58 @@ class TestEntityExtractionOptimization:
                 list(batch["ground_truth_rows"]), approved_examples
             )
         ), result
+
+        from cogniverse_agents.optimizer.entity_self_consistency import (
+            NO_UNANIMOUS_KEY,
+            SELF_CONSISTENCY_SAMPLES,
+            SELF_CONSISTENCY_TEMPERATURE,
+        )
+
+        self_consistency = result["self_consistency"]
+        assert set(self_consistency) == {
+            "samples",
+            "temperature",
+            "examples_sampled",
+            "examples_requested",
+            "rows_needing_review",
+            "batch_id",
+            "rows_queued",
+            NO_UNANIMOUS_KEY,
+        }, self_consistency
+        assert self_consistency["samples"] == SELF_CONSISTENCY_SAMPLES, self_consistency
+        assert self_consistency["temperature"] == SELF_CONSISTENCY_TEMPERATURE, (
+            self_consistency
+        )
+        # The pass draws the teacher for exactly the examples the bootstrap
+        # trains on, and a healthy run completes every draw.
+        assert self_consistency["examples_requested"] == result["training_examples"], (
+            self_consistency
+        )
+        assert (
+            self_consistency["examples_sampled"]
+            == self_consistency["examples_requested"]
+        ), self_consistency
+        # Every example the teacher was not unanimous on reaches a reviewer,
+        # including the ones it agreed on no mention in.
+        assert (
+            self_consistency["rows_queued"] == self_consistency["rows_needing_review"]
+        ), self_consistency
+        if self_consistency["rows_queued"] == 0:
+            assert self_consistency["batch_id"] is None, self_consistency
+        else:
+            assert self_consistency["batch_id"].startswith(
+                "self_consistency_entity_extraction_"
+            ), self_consistency
+        # Which queries the teacher splits on is the model's choice; that they
+        # are training queries, distinct, and queued rather than errored is not.
+        no_unanimous = self_consistency[NO_UNANIMOUS_KEY]
+        assert sorted(set(no_unanimous)) == sorted(no_unanimous), self_consistency
+        assert len(no_unanimous) <= self_consistency["rows_queued"], self_consistency
+        population_queries = {
+            str(row["query"])
+            for row in [*batch["ground_truth_rows"], *approved_examples]
+        }
+        assert set(no_unanimous) <= population_queries, self_consistency
 
         assert set(ledger) == {
             "version",

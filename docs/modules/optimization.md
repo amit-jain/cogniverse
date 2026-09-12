@@ -430,8 +430,10 @@ unanimous mentions only, `metadata.self_consistency` carries `samples` and one
 `{text, type, agreement, needs_review}` record per mention. Rows with at least one flagged
 mention are queued as a `PENDING_REVIEW` `ApprovalBatch` through `ApprovalStorageImpl`, with
 `confidence` the mean agreement; the approval queue tab renders one agreement line per
-mention. A record whose draws did not all complete, and a record with no unanimous mention,
-are recorded through `BootstrapErrorLog.record_cause` and contribute no row. The run reports
+mention. A record with no unanimous mention is queued the same way, carrying an empty
+training example and every mention flagged, and its query is listed under
+`NO_UNANIMOUS_KEY` (`no_unanimous_examples`). A record whose draws did not all complete is
+recorded through `BootstrapErrorLog.record_cause` and contributes no row. The run reports
 the pass under `self_consistency`. Approved rows re-enter training the same way every
 approved synthetic row does — through `approved_synthetic_data-{tenant}`; ground truth is
 never rewritten. `validate_approved_training_values` refuses an entity whose type is outside

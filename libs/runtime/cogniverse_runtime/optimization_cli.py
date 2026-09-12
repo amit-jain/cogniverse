@@ -3208,17 +3208,20 @@ async def _queue_entity_self_consistency_review(
     *,
     storage_factory,
     tenant_id: str,
-    record_cause,
 ) -> Dict[str, Any]:
     """Queue every sampled example the teacher was not unanimous on.
 
     A row whose mentions were all unanimous holds no question for a reviewer
     and is not queued. A row the teacher agreed on nothing in carries no
-    training example, so its cause is recorded instead. The review store is
-    built only when there is something to persist, so a run that produced no
-    question does not depend on it.
+    training example; it is queued with every mention flagged and its query
+    is reported under ``NO_UNANIMOUS_KEY``. The review store is built only
+    when there is something to persist, so a run that produced no question
+    does not depend on it.
     """
     from cogniverse_agents.optimizer.entity_self_consistency import (
+        ENTITIES_KEY,
+        NO_UNANIMOUS_KEY,
+        QUERY_KEY,
         SELF_CONSISTENCY_METADATA_KEY,
         row_confidence,
         row_needs_review,
@@ -3233,18 +3236,15 @@ async def _queue_entity_self_consistency_review(
     optimizer_type = "entity_extraction"
     agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[optimizer_type]
     flagged = []
+    no_unanimous = []
     for row in rows:
         if not row_needs_review(row):
             continue
-        if not row["data"]["entities"]:
-            record_cause(
-                "self-consistency found no unanimous entity for query "
-                f"{row['data']['query']!r}"
-            )
-            continue
+        if not row["data"][ENTITIES_KEY]:
+            no_unanimous.append(row["data"][QUERY_KEY])
         flagged.append(row)
     if not flagged:
-        return {"batch_id": None, "rows_queued": 0}
+        return {"batch_id": None, "rows_queued": 0, NO_UNANIMOUS_KEY: no_unanimous}
 
     batch_id = f"self_consistency_{optimizer_type}_{uuid.uuid4().hex}"
     batch = ApprovalBatch(
@@ -3271,7 +3271,11 @@ async def _queue_entity_self_consistency_review(
         },
     )
     persisted_batch_id = await storage_factory().save_batch(batch)
-    return {"batch_id": persisted_batch_id, "rows_queued": len(flagged)}
+    return {
+        "batch_id": persisted_batch_id,
+        "rows_queued": len(flagged),
+        NO_UNANIMOUS_KEY: no_unanimous,
+    }
 
 
 async def _sample_entity_self_consistency(
@@ -3310,7 +3314,6 @@ async def _sample_entity_self_consistency(
             config_manager, telemetry_manager, tenant_id
         ),
         tenant_id=tenant_id,
-        record_cause=record_cause,
     )
     return {
         "samples": SELF_CONSISTENCY_SAMPLES,
