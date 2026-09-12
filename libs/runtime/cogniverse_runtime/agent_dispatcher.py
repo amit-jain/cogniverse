@@ -53,6 +53,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _store_failure_status(exc: BaseException) -> str:
+    """``store_unavailable`` for a store that could not answer, else ``error``."""
+    return (
+        ARTIFACT_LOAD_STORE_UNAVAILABLE
+        if isinstance(exc, DatasetStoreUnavailableError)
+        else ARTIFACT_LOAD_ERROR
+    )
+
+
 # How long a cached GatewayAgent serves its loaded thresholds before a cache
 # hit re-reads the artifact. Bounds post-recalibration staleness on a warm pod
 # (the optimization crons run on 15-minute cadences) without putting the
@@ -1134,11 +1144,11 @@ class AgentDispatcher:
 
         Returns ``{"served_from": "active|canary|default", "version": int|None,
         "prompts": {...}|None, "variant_id": str|None,
-        "artifact_load_status": str}`` when an ``artifact_manager_factory`` was
-        provided to the dispatcher; otherwise returns ``None``. The caller
-        passes the result down to the agent constructor (or stashes it in
-        the dispatch context) so the agent uses the chosen variant of the
-        compiled prompts.
+        "artifact_load_status": str, "variant_lookup_status": str}`` when an
+        ``artifact_manager_factory`` was provided to the dispatcher; otherwise
+        returns ``None``. The caller passes the result down to the agent
+        constructor (or stashes it in the dispatch context) so the agent uses
+        the chosen variant of the compiled prompts.
 
         The request is served on defaults when the artefact store cannot
         answer — raising would fail every request for the outage's duration —
@@ -1146,6 +1156,13 @@ class AgentDispatcher:
         ``artifact_load_status == "store_unavailable"`` and the error text, so
         "the store is down" is never read as "this tenant selected no variant
         and promoted nothing".
+
+        The variant lookup is reported separately in
+        ``variant_lookup_status``: it reads the admin config store, which is
+        wired independently of the artefact manager, and a tenant's canary
+        split must keep running when only that read is unavailable. The served
+        variant is then whatever this replica last cached (``default`` when it
+        has cached nothing), and the status says the selection is unconfirmed.
         """
         if self._artifact_manager_factory is None:
             return None
@@ -1158,6 +1175,7 @@ class AgentDispatcher:
         # falls back to default when no admin selection exists. Warm the
         # blob-backed cache first (TTL-bounded) so the selection an admin
         # persisted reaches this replica, not just the one that served the PUT.
+        variant_lookup_status = ARTIFACT_LOAD_LOADED
         try:
             from cogniverse_runtime.routers.admin import load_signature_variants
 
@@ -1165,7 +1183,15 @@ class AgentDispatcher:
         except ImportError as exc:
             logger.debug("signature-variant cache warm skipped: %s", exc)
         except Exception as exc:
-            return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
+            variant_lookup_status = _store_failure_status(exc)
+            logger.warning(
+                "Signature-variant lookup for agent=%s tenant=%s failed (%s) — "
+                "serving the last cached selection: %s",
+                agent_name,
+                tenant_id,
+                variant_lookup_status,
+                exc,
+            )
         variant_id = self._resolve_signature_variant(tenant_id, agent_name)
 
         try:
@@ -1176,9 +1202,14 @@ class AgentDispatcher:
             )
         except Exception as exc:
             return self._degraded_artefact_overlay(
-                agent_name, tenant_id, exc, variant_id=variant_id
+                agent_name,
+                tenant_id,
+                exc,
+                variant_id=variant_id,
+                variant_lookup_status=variant_lookup_status,
             )
         overlay["artifact_load_status"] = ARTIFACT_LOAD_LOADED
+        overlay["variant_lookup_status"] = variant_lookup_status
         return overlay
 
     @staticmethod
@@ -1188,13 +1219,10 @@ class AgentDispatcher:
         exc: BaseException,
         *,
         variant_id: Optional[str] = None,
+        variant_lookup_status: str = ARTIFACT_LOAD_LOADED,
     ) -> Dict[str, Any]:
         """The overlay served when the artefact store could not answer."""
-        status = (
-            ARTIFACT_LOAD_STORE_UNAVAILABLE
-            if isinstance(exc, DatasetStoreUnavailableError)
-            else ARTIFACT_LOAD_ERROR
-        )
+        status = _store_failure_status(exc)
         logger.warning(
             "Artefact resolution for agent=%s tenant=%s failed (%s) — serving "
             "default prompts: %s",
@@ -1209,6 +1237,7 @@ class AgentDispatcher:
             "version": None,
             "variant_id": variant_id,
             "artifact_load_status": status,
+            "variant_lookup_status": variant_lookup_status,
             "error": f"{type(exc).__name__}: {exc}",
         }
 
