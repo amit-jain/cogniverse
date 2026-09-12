@@ -10,11 +10,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from cogniverse_core.approval.training_schema import (
+    validate_approved_training_values,
+)
+from cogniverse_foundation.common.entity_types import ENTITY_TYPES
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     BackendProfileConfig,
 )
 from cogniverse_synthetic import api as synthetic_api
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_SCHEMA
 from cogniverse_synthetic.schemas import (
     EntityExtractionExampleSchema,
     ProfileSelectionExampleSchema,
@@ -874,6 +879,55 @@ class TestSyntheticDataResponse:
             "backend_query_strategy": "diverse",
             "generation_time_ms": 1250,
         }
+
+
+class TestAdvertisedExampleMatchesApprovalGate:
+    """``model_json_schema()`` is the contract the regenerating LM is handed.
+
+    ``SyntheticDataFeedbackHandler.process_rejection`` passes it as
+    ``schema_contract`` and judges the answer with
+    ``validate_approved_training_values``; an example the gate refuses steers
+    every regeneration of that schema into a refusal.
+    """
+
+    @staticmethod
+    def _gate_verdict(schema, example) -> str:
+        try:
+            validate_approved_training_values(
+                example,
+                APPROVED_TRAINING_AGENT_BY_SCHEMA[schema],
+                context=f"{schema.__name__} advertised example",
+            )
+        except ValueError as exc:
+            return str(exc)
+        return ""
+
+    @pytest.mark.parametrize(
+        "schema",
+        sorted(APPROVED_TRAINING_AGENT_BY_SCHEMA, key=lambda item: item.__name__),
+        ids=lambda schema: schema.__name__,
+    )
+    def test_advertised_example_passes_the_gate_that_judges_regeneration(self, schema):
+        example = schema.model_json_schema()["example"]
+
+        assert self._gate_verdict(schema, example) == ""
+
+    def test_gate_verdict_names_an_entity_type_outside_the_shipped_vocabulary(self):
+        schema = EntityExtractionExampleSchema
+        example = schema.model_json_schema()["example"]
+        drifted = {
+            **example,
+            "entities": [
+                {**example["entities"][0], "type": "ORG"},
+                *example["entities"][1:],
+            ],
+        }
+
+        assert self._gate_verdict(schema, drifted) == (
+            "EntityExtractionExampleSchema advertised example entity at "
+            "position 0 has unsupported type 'ORG'; allowed types are "
+            + ", ".join(sorted(ENTITY_TYPES))
+        )
 
 
 if __name__ == "__main__":

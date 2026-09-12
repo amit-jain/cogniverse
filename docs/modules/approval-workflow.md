@@ -611,8 +611,11 @@ correction:
 | `RoutingExperienceSchema` | Declared fields plus prompt-only `topics` | Regenerate schema fields, derive `enhanced_query`, reset outcome values to unobserved sentinels, copy structured corrections exactly, and reject unchanged output |
 | `WorkflowExecutionSchema` | Declared workflow fields | Merge the explicit reviewed values and validate the complete result |
 
-Entity records must be non-empty `{"text", "type"}` objects. Every relationship
-must contain non-empty `source`, `target`, and `type` strings, and both endpoints
+Entity records must be non-empty `{"text", "type"}` objects whose `type` is one
+of `cogniverse_foundation.common.entity_types.ENTITY_TYPES`; the schema contract
+handed to the regenerator advertises that vocabulary in its `entities` field
+description and example. Every relationship must contain non-empty `source`,
+`target`, and `type` strings, and both endpoints
 must exactly equal an entity `text` in the regenerated example. If regeneration
 retains a relationship made stale by corrected entities, validation raises with
 the item, schema, relationship index, endpoint, and value. `HumanApprovalAgent`

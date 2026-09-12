@@ -14,6 +14,7 @@ from cogniverse_core.approval.training_schema import (
     PROFILE_QUERY_INTENT_VALUES,
     ProfileQueryIntent,
 )
+from cogniverse_foundation.common.entity_types import ENTITY_TYPES
 from cogniverse_foundation.common.tenant_utils import (
     require_tenant_id,
     validate_tenant_id,
@@ -127,7 +128,11 @@ class EntityExtractionExampleSchema(BaseModel):
 
     query: str = Field(..., description="Text to extract entities from (DSPy input)")
     entities: List[Dict[str, str]] = Field(
-        ..., description="Extracted entities, each with 'text' and 'type'"
+        ...,
+        description=(
+            "Extracted entities, each with 'text' and a 'type' drawn from "
+            + ", ".join(sorted(ENTITY_TYPES))
+        ),
     )
     relationships: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -140,8 +145,8 @@ class EntityExtractionExampleSchema(BaseModel):
             "example": {
                 "query": "PyTorch was created by Meta AI in Menlo Park",
                 "entities": [
-                    {"text": "PyTorch", "type": "PRODUCT"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "PyTorch", "type": "TECHNOLOGY"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                     {"text": "Menlo Park", "type": "PLACE"},
                 ],
                 "relationships": [
