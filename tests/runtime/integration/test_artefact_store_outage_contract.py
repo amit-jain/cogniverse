@@ -262,7 +262,7 @@ class TestDispatchOverlayNamesTheOutage:
     """The per-request overlay says which state it is serving default on."""
 
     @pytest.mark.asyncio
-    async def test_outage_overlay_is_store_unavailable_with_no_variant(
+    async def test_outage_overlay_names_both_reads_as_store_unavailable(
         self, dead_manager, tenant_id
     ):
         admin_router.set_phoenix_endpoints(DEAD_ENDPOINT, DEAD_ENDPOINT)
@@ -273,12 +273,37 @@ class TestDispatchOverlayNamesTheOutage:
         )
 
         assert overlay["artifact_load_status"] == ARTIFACT_LOAD_STORE_UNAVAILABLE
+        assert overlay["variant_lookup_status"] == ARTIFACT_LOAD_STORE_UNAVAILABLE
         assert overlay["served_from"] == "default"
         assert overlay["prompts"] is None
         assert overlay["version"] is None
-        assert overlay["variant_id"] is None
+        assert overlay["variant_id"] == DEFAULT_VARIANT_ID
         assert overlay["error"].startswith("DatasetStoreUnavailableError:")
         assert DEAD_ENDPOINT in overlay["error"]
+
+    @pytest.mark.asyncio
+    async def test_variant_store_outage_alone_keeps_the_artefact_decision(
+        self, live_manager, tenant_id
+    ):
+        """The canary split keeps running when only the variant read is down."""
+        admin_router.set_phoenix_endpoints(DEAD_ENDPOINT, DEAD_ENDPOINT)
+        await live_manager.save_prompts(
+            "entity_extraction_agent", {"system": "PROMOTED"}
+        )
+        dispatcher = _dispatcher(lambda t: live_manager)
+
+        overlay = await dispatcher.resolve_artefact_for_request(
+            "entity_extraction_agent", tenant_id, "seed-1"
+        )
+
+        assert overlay == {
+            "prompts": {"system": "PROMOTED"},
+            "served_from": "default",
+            "version": None,
+            "variant_id": DEFAULT_VARIANT_ID,
+            "artifact_load_status": ARTIFACT_LOAD_LOADED,
+            "variant_lookup_status": ARTIFACT_LOAD_STORE_UNAVAILABLE,
+        }
 
     @pytest.mark.asyncio
     async def test_live_store_without_artefacts_is_loaded_on_the_default_variant(
@@ -299,6 +324,7 @@ class TestDispatchOverlayNamesTheOutage:
             "version": None,
             "variant_id": DEFAULT_VARIANT_ID,
             "artifact_load_status": ARTIFACT_LOAD_LOADED,
+            "variant_lookup_status": ARTIFACT_LOAD_LOADED,
         }
 
     @pytest.mark.asyncio
@@ -323,6 +349,7 @@ class TestDispatchOverlayNamesTheOutage:
             "version": None,
             "variant_id": DEFAULT_VARIANT_ID,
             "artifact_load_status": ARTIFACT_LOAD_LOADED,
+            "variant_lookup_status": ARTIFACT_LOAD_LOADED,
         }
 
 
@@ -437,4 +464,7 @@ class TestArtefactManagerCacheUnderConcurrency:
         assert [o["artifact_load_status"] for o in overlays] == [
             ARTIFACT_LOAD_STORE_UNAVAILABLE
         ] * 16
-        assert {o["variant_id"] for o in overlays} == {None}
+        assert [o["variant_lookup_status"] for o in overlays] == [
+            ARTIFACT_LOAD_STORE_UNAVAILABLE
+        ] * 16
+        assert {o["variant_id"] for o in overlays} == {DEFAULT_VARIANT_ID}

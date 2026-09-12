@@ -13,6 +13,7 @@ import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import (
     ARTIFACT_LOAD_ERROR,
+    ARTIFACT_LOAD_LOADED,
     ARTIFACT_LOAD_STORE_UNAVAILABLE,
 )
 from cogniverse_foundation.telemetry.providers.base import (
@@ -49,6 +50,7 @@ async def test_factory_outage_returns_store_unavailable_overlay(caplog):
         "version": None,
         "variant_id": None,
         "artifact_load_status": ARTIFACT_LOAD_STORE_UNAVAILABLE,
+        "variant_lookup_status": ARTIFACT_LOAD_LOADED,
         "error": "DatasetStoreUnavailableError: store down",
     }
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
@@ -83,6 +85,7 @@ async def test_load_failure_returns_error_overlay_with_the_resolved_variant(
         "version": None,
         "variant_id": "variant-b",
         "artifact_load_status": ARTIFACT_LOAD_ERROR,
+        "variant_lookup_status": ARTIFACT_LOAD_LOADED,
         "error": "RuntimeError: Phoenix read failed",
     }
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [

@@ -999,10 +999,14 @@ tenant has promoted is unknown — distinct from `no_artifact`, which means the
 store answered and holds nothing. The dispatcher's per-request overlay
 (`resolve_artefact_for_request`) carries the same field: on a store outage it
 returns `{"served_from": "default", "prompts": None, "version": None,
-"variant_id": None, "artifact_load_status": "store_unavailable", "error": ...}`
-so a request served on defaults during an outage is distinguishable from one
-served on defaults because nothing was promoted and no signature variant was
-selected.
+"variant_id": ..., "artifact_load_status": "store_unavailable",
+"variant_lookup_status": ..., "error": ...}` so a request served on defaults
+during an outage is distinguishable from one served on defaults because
+nothing was promoted. The signature-variant lookup reads the admin config
+store, which is wired independently, and reports itself in
+`variant_lookup_status`: when only that read fails the canary/variant decision
+still runs on the selection this replica last cached, and the status says the
+selection is unconfirmed.
 
 Because any DSPy failure falls through to the GLiNER path, the
 `cogniverse.entity_extraction` span names which failure it was.
