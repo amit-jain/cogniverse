@@ -237,6 +237,38 @@ def test_every_decision_caches_on_exact_request_identity_only():
     ] * len(decisions)
 
 
+def test_decisions_declare_their_model_reasoning_and_admitting_tier_exactly():
+    """Which catalog model each decision serves, whether it reasons, and the
+    condition that admits it - a tier change is a deliberate edit here."""
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    decisions = cfg["routing"]["decisions"]
+    assert [decision["priority"] for decision in decisions] == [300, 250, 200, 100, 50]
+    assert [
+        [ref["model"] for ref in decision["modelRefs"]] for decision in decisions
+    ] == [
+        ["pro-reasoning"],
+        ["pro-reasoning"],
+        ["pro-reasoning"],
+        ["basic-chat"],
+        ["basic-chat"],
+    ]
+    assert [
+        [ref["use_reasoning"] for ref in decision["modelRefs"]]
+        for decision in decisions
+    ] == [[True], [True], [False], [False], [False]]
+    assert [
+        [(cond["type"], cond["name"]) for cond in decision["rules"]["conditions"]]
+        for decision in decisions
+    ] == [
+        [("authz", "pro_tier"), ("keyword", "technical")],
+        [("authz", "pro_tier"), ("domain", "technical")],
+        [("authz", "pro_tier")],
+        [("authz", "free_tier")],
+        [("authz", "base_tier")],
+    ]
+    assert sorted(cfg["global"]["stores"]) == ["response_cache"]
+
+
 def test_router_image_pinned_by_digest():
     # A moving `latest` left an older image cached whose embedding runtime never
     # reached ready; the digest pin makes the deployed router reproducible.
