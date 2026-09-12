@@ -100,6 +100,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: pro-technical-domain
       priority: 250
       rules:
@@ -112,6 +122,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: pro-default
       priority: 200
       rules:
@@ -122,6 +142,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: free-default
       priority: 100
       rules:
@@ -132,6 +162,16 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
 
     - name: base-default
       priority: 50
@@ -143,6 +183,16 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
 global:
   services:
     authz:
@@ -158,8 +208,17 @@ global:
       tracing:
         enabled: false
   stores:
-    semantic_cache:
-      enabled: false
+    # Exact-match response reuse. The router keys an exact entry on a SHA-256
+    # over the whole normalized request - messages, response_format, tools,
+    # temperature, max_tokens, model - combined with the decision's policy
+    # fingerprint, partitioned by the tenant identity in x-authz-user-id.
+    # Similarity matching is off on every decision (mode: exact): below 1.0 the
+    # router answers one query out of a different query's entry.
+    response_cache:
+      backend_type: memory
+      enabled: true
+      max_entries: {{ int .Values.semanticRouter.router.responseCache.maxEntries }}
+      ttl_seconds: {{ int .Values.semanticRouter.router.responseCache.ttlSeconds }}
   model_catalog:
     embeddings:
       semantic:

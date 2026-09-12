@@ -91,6 +91,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: pro-technical-domain
       priority: 250
       rules:
@@ -103,6 +113,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: pro-default
       priority: 200
       rules:
@@ -113,6 +133,16 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
     - name: free-default
       priority: 100
       rules:
@@ -123,6 +153,16 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
 
     - name: base-default
       priority: 50
@@ -134,6 +174,16 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
+      plugins:
+        - type: response_cache
+          configuration:
+            enabled: true
+            mode: exact
+            scope: user
+            request_controls:
+              enabled: true
+              header: x-vsr-cache-control
+              allowed: [max-age]
 global:
   services:
     authz:
@@ -149,8 +199,11 @@ global:
       tracing:
         enabled: false
   stores:
-    semantic_cache:
-      enabled: false
+    response_cache:
+      backend_type: memory
+      enabled: true
+      max_entries: 1024
+      ttl_seconds: 3600
   model_catalog:
     embeddings:
       semantic:
