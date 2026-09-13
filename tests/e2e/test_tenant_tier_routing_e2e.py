@@ -58,7 +58,10 @@ from cogniverse_foundation.config.unified_config import (
     ROUTER_TIERS,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
-from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
+from cogniverse_foundation.telemetry.span_contract import (
+    LLM_SERVED_MODEL_ATTRIBUTE,
+    read_span_attributes,
+)
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     RUNTIME,
@@ -479,7 +482,6 @@ def _served_models(
     returns what it saw with the seconds it took; a Phoenix read that keeps
     failing raises with the last error rather than reading as no spans.
     """
-    column = f"attributes.{LLM_SERVED_MODEL_ATTRIBUTE}"
     started = time.monotonic()
     deadline = started + SERVED_MODEL_READ_BUDGET_S
     found: set[str] = set()
@@ -493,8 +495,14 @@ def _served_models(
                 timeout=30,
             )
             last_error = None
-            if frame is not None and column in frame.columns:
-                found = {str(value) for value in frame[column].dropna()}
+            # Phoenix flattens only the OpenInference llm.* keys into columns;
+            # this one arrives inside the nested ``attributes.llm`` column.
+            spans = [] if frame is None else [row for _, row in frame.iterrows()]
+            found = {
+                str(attributes[LLM_SERVED_MODEL_ATTRIBUTE])
+                for attributes in map(read_span_attributes, spans)
+                if LLM_SERVED_MODEL_ATTRIBUTE in attributes
+            }
         except Exception as exc:  # noqa: BLE001 - re-raised at the deadline
             last_error = exc
         if found == expected or time.monotonic() >= deadline:
