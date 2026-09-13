@@ -57,6 +57,8 @@ def _unwrap(expression: str) -> str:
 
 def _resolve(expression: str, helpers: dict[str, str], values: dict[str, Any]) -> str:
     text = _unwrap(expression)
+    if text.endswith(" | quote"):
+        return json.dumps(_resolve(text[: -len(" | quote")], helpers, values))
     if text.startswith(".Values."):
         node: Any = values
         for key in text[len(".Values.") :].split("."):
@@ -76,6 +78,8 @@ def _resolve(expression: str, helpers: dict[str, str], values: dict[str, Any]) -
 
 
 def _condition(rest: str, helpers: dict[str, str], values: dict[str, Any]) -> bool:
+    if rest.startswith("include "):
+        return bool(_resolve(rest, helpers, values))
     match = _EQUALITY.match(rest)
     if match is None:
         raise ChartRenderError(
@@ -109,10 +113,36 @@ def render_envoy_config(
         'include "cogniverse.srTeacherPort" .': str(teacher_port),
         'include "cogniverse.srTeacherProtocol" .': "http",
         'include "cogniverse.fullname" .': release,
+        'include "cogniverse.srProCluster" .': TEACHER_CLUSTER,
     }
+    return _render_template(CHART_ENVOY_TEMPLATE, helpers, values)
+
+
+def render_router_config() -> str:
+    """The chart's router configuration with both local backends served."""
+    values = yaml.safe_load(CHART_VALUES.read_text())
+    helpers = {
+        'include "cogniverse.primaryLLMModelBare" .': "basic-chat",
+        'include "cogniverse.srProModelBare" .': "pro-reasoning",
+        'include "cogniverse.srUpstreamHost" .': UPSTREAM_ALIAS,
+        'include "cogniverse.srUpstreamPort" .': str(UPSTREAM_PORT),
+        'include "cogniverse.srUpstreamProtocol" .': "http",
+        'include "cogniverse.srTeacherHost" .': TEACHER_ALIAS,
+        'include "cogniverse.srTeacherPort" .': str(UPSTREAM_PORT),
+        'include "cogniverse.srTeacherProtocol" .': "http",
+        'include "cogniverse.srTierDegraded" .': "",
+    }
+    return _render_template(
+        CHART_DIR / "files" / "semantic-router" / "config.yaml", helpers, values
+    )
+
+
+def _render_template(
+    template: Path, helpers: dict[str, str], values: dict[str, Any]
+) -> str:
     emit: list[bool] = []
     rendered: list[str] = []
-    for line in CHART_ENVOY_TEMPLATE.read_text().splitlines():
+    for line in template.read_text().splitlines():
         control = _CONTROL.match(line)
         if control is not None:
             keyword = control["keyword"]

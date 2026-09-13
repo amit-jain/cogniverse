@@ -523,6 +523,13 @@ When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLME
 
 Each call site names its router entry. `CLASSIFICATION_CALL_SITES` (entity extraction, gateway, orchestrator, profile selection, query enhancement, search) produce a bounded output and send `classification_model`, which names the chart router's `cogniverse-classification` entrypoint: its recipe chooses the decision from the tenant tier alone, so no domain classifier runs; every tier's bounded call is served by `basic-chat` (it never crosses to the teacher), and the decision's exact response cache still applies. `FREE_FORM_CALL_SITES` send `routed_model` (the `auto` alias), where the router classifies the content and may promote the call to the reasoning model; a call site in neither set takes `auto`. Every decision in every routing profile caches with `mode: exact`: on the router's embedding model the closest different-content pair in the evaluation corpus scores higher than the weakest equivalent pair, so no similarity threshold is admissible.
 
+When the router is enabled but `inference.vllm_llm_teacher` is neither enabled
+nor external, the chart serves `pro-reasoning` from the student's Envoy
+cluster and provider model. Helm NOTES and the rendered manifest name
+`pro_model_unavailable`; each pro decision carries
+`tier_degraded: pro_model_unavailable`. A served teacher uses its own cluster
+and has neither warning nor degradation marker.
+
 | Function | Description |
 |----------|-------------|
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |

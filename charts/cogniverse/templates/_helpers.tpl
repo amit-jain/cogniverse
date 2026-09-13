@@ -395,17 +395,54 @@ endpoint. */}}
 {{- include "cogniverse.srEndpointProtocol" (include "cogniverse.primaryLLMEndpoint" .) -}}
 {{- end -}}
 
+{{/* A missing teacher serves pro decisions on the student and names why. */}}
+{{- define "cogniverse.srTierDegraded" -}}
+{{- if and .Values.semanticRouter.enabled (not .Values.inference.vllm_llm_teacher.enabled) (not .Values.inference.vllm_llm_teacher.externalUrl) -}}
+pro_model_unavailable
+{{- end -}}
+{{- end -}}
+
+{{- define "cogniverse.srTierWarning" -}}
+{{- if include "cogniverse.srTierDegraded" . -}}
+WARNING: pro_model_unavailable: pro-reasoning uses the student because inference.vllm_llm_teacher.enabled=false and inference.vllm_llm_teacher.externalUrl is empty.
+{{- end -}}
+{{- end -}}
+
+{{- define "cogniverse.srProCluster" -}}
+{{- if include "cogniverse.srTierDegraded" . -}}
+llm_upstream
+{{- else -}}
+llm_teacher
+{{- end -}}
+{{- end -}}
+
+{{- define "cogniverse.srProEndpoint" -}}
+{{- if include "cogniverse.srTierDegraded" . -}}
+{{- include "cogniverse.primaryLLMEndpoint" . -}}
+{{- else -}}
+{{- include "cogniverse.llmTeacherEndpoint" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cogniverse.srProModelBare" -}}
+{{- if include "cogniverse.srTierDegraded" . -}}
+{{- include "cogniverse.primaryLLMModelBare" . -}}
+{{- else -}}
+{{- include "cogniverse.teacherLLMModelBare" . -}}
+{{- end -}}
+{{- end -}}
+
 {{/* The teacher backend Envoy serves pro-reasoning from. */}}
 {{- define "cogniverse.srTeacherHost" -}}
-{{- include "cogniverse.srEndpointHost" (include "cogniverse.llmTeacherEndpoint" .) -}}
+{{- include "cogniverse.srEndpointHost" (include "cogniverse.srProEndpoint" .) -}}
 {{- end -}}
 
 {{- define "cogniverse.srTeacherPort" -}}
-{{- include "cogniverse.srEndpointPort" (include "cogniverse.llmTeacherEndpoint" .) -}}
+{{- include "cogniverse.srEndpointPort" (include "cogniverse.srProEndpoint" .) -}}
 {{- end -}}
 
 {{- define "cogniverse.srTeacherProtocol" -}}
-{{- include "cogniverse.srEndpointProtocol" (include "cogniverse.llmTeacherEndpoint" .) -}}
+{{- include "cogniverse.srEndpointProtocol" (include "cogniverse.srProEndpoint" .) -}}
 {{- end -}}
 
 {{/*

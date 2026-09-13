@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -30,13 +29,11 @@ from cogniverse_foundation.config.semantic_router import (
     routed_model_for,
 )
 from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+from tests.utils.semantic_router_stack import render_router_config
 
 pytestmark = [pytest.mark.unit]
 
 _REPO = Path(__file__).resolve().parents[3]
-_CHART_ROUTER_CONFIG = (
-    _REPO / "charts" / "cogniverse" / "files" / "semantic-router" / "config.yaml"
-)
 _SHIPPED_CONFIG = _REPO / "configs" / "config.json"
 _LIBS = _REPO / "libs"
 
@@ -46,11 +43,9 @@ _NON_AGENT_CALL_SITES = frozenset(
     {"dynamic_dspy_module", "rlm_inference", "vlm_interface"}
 )
 
-_TEMPLATE = re.compile(r"\{\{-?\s*.*?\s*-?\}\}")
-
 
 def _chart_router_config() -> dict:
-    return yaml.safe_load(_TEMPLATE.sub("templated", _CHART_ROUTER_CONFIG.read_text()))
+    return yaml.safe_load(render_router_config())
 
 
 def _shipped_agents() -> set[str]:

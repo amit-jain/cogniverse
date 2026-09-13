@@ -37,7 +37,7 @@ providers:
           type: chat
     - name: pro-reasoning
       reasoning_family: qwen3
-      provider_model_id: {{ include "cogniverse.teacherLLMModelBare" . | quote }}
+      provider_model_id: {{ include "cogniverse.srProModelBare" . | quote }}
       api_format: openai
       backend_refs:
         - name: llm-pro
@@ -92,6 +92,9 @@ routing:
     # Deterministic keyword trigger for reasoning; the domain classifier
     # (below) catches technical prompts the keyword list misses.
     - name: pro-technical-keyword
+{{- if include "cogniverse.srTierDegraded" . }}
+      tier_degraded: pro_model_unavailable
+{{- end }}
       priority: 300
       rules:
         operator: AND
@@ -114,6 +117,9 @@ routing:
               header: x-vsr-cache-control
               allowed: [max-age]
     - name: pro-technical-domain
+{{- if include "cogniverse.srTierDegraded" . }}
+      tier_degraded: pro_model_unavailable
+{{- end }}
       priority: 250
       rules:
         operator: AND
@@ -127,6 +133,9 @@ routing:
           use_reasoning: true
       plugins: *exact_cache
     - name: pro-default
+{{- if include "cogniverse.srTierDegraded" . }}
+      tier_degraded: pro_model_unavailable
+{{- end }}
       priority: 200
       rules:
         operator: AND

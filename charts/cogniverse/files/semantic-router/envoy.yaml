@@ -56,7 +56,7 @@ static_resources:
                               - name: x-selected-model
                                 string_match: { exact: pro-reasoning }
                           route:
-                            cluster: llm_teacher
+                            cluster: {{ include "cogniverse.srProCluster" . }}
 {{- if eq (include "cogniverse.srTeacherProtocol" .) "https" }}
                             auto_host_rewrite: true
 {{- end }}

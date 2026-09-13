@@ -14,13 +14,13 @@ rather than restating it.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 import yaml
 
 from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+from tests.utils.semantic_router_stack import render_router_config
 
 pytestmark = [pytest.mark.unit]
 
@@ -32,28 +32,11 @@ _STACK_ROUTER_CONFIG = (
     _REPO / "tests" / "foundation" / "integration" / "_sr_stack" / "sr-config.yaml"
 )
 
-# Helm expressions are opaque to the YAML parser. A ``.Values`` lookup is
-# resolved against values.yaml so the twin can be compared against the numbers
-# the chart really renders; anything else is neutralised to load the file.
-_TEMPLATE = re.compile(r"\{\{-?\s*(?P<body>.*?)\s*-?\}\}")
-_VALUES_LOOKUP = re.compile(r"^(?:int\s+)?\.Values\.(?P<path>[\w.]+)$")
-_CHART_VALUES = _REPO / "charts" / "cogniverse" / "values.yaml"
-
-
-def _chart_value(dotted: str) -> str:
-    node = yaml.safe_load(_CHART_VALUES.read_text())
-    for key in dotted.split("."):
-        node = node[key]
-    return str(node)
-
-
-def _resolve(match: re.Match) -> str:
-    lookup = _VALUES_LOOKUP.match(match["body"])
-    return _chart_value(lookup["path"]) if lookup else "templated"
-
 
 def _load(path: Path) -> dict:
-    return yaml.safe_load(_TEMPLATE.sub(_resolve, path.read_text()))
+    if path == _CHART_ROUTER_CONFIG:
+        return yaml.safe_load(render_router_config())
+    return yaml.safe_load(path.read_text())
 
 
 def _bound_groups(config: dict) -> set[str]:
