@@ -930,6 +930,11 @@ curl "http://localhost:8000/agents/routing_agent/sessions/sess-123?tenant_id=acm
 
 `AgentDispatcher` (`agent_dispatcher.py`) is the class behind `/agents/{agent_name}/process` — it holds the per-capability dispatch logic described above. Before dispatching to `search_agent`, `routing_agent`, `summarizer_agent`, `coding_agent`, or `orchestrator_agent` it calls `consult_egress_policy(agent_name)` to look up that agent's OpenShell egress allow-list (from `configs/agent_policies/`), then `_verify_egress(agent_name, tenant_id)` to confirm every resolved endpoint (LLM, inference service, etc.) the agent is about to call is within that allow-list. Which endpoint kinds an agent may reach is derived from the capabilities it is registered with: every agent reaches the LM, and a retrieval or coding capability adds Vespa (`egress_endpoint_kinds()` returns the map). A resolved endpoint outside the allow-list logs an "egress policy DRIFT" warning rather than failing the request — the check is a drift detector for policy authors, not a hard block. An unreadable system config or an address that does not parse logs the skip and drops that endpoint from the check, so the pre-flight never turns a dispatch into an error. The runtime response's `gateway` block carries `complexity`, `modality`, `generation_type`, `routed_to`, `confidence`, `fast_path_confidence_threshold`, and `gliner_threshold`.
 
+Each dispatch binds the canonical request tenant through
+`cogniverse_foundation.telemetry.tenant_context.tenant_span_context`, so DSPy
+spans reach that tenant's project. The enclosing tenant is restored when the
+call returns or raises; concurrent dispatches keep their own context.
+
 #### Answer grounding
 
 A summary, detailed report or deep-research answer is grounded in search hits.
