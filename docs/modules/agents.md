@@ -1012,10 +1012,13 @@ Because any DSPy failure falls through to the GLiNER path, the
 `cogniverse.entity_extraction` span names which failure it was.
 `entity_extraction.fallback_reason` is `schema_refused` when an
 `AdapterParseError` appears anywhere in the cause chain,
-`request_rejected:<status>` when an exception in that chain carries a 4xx
-`status_code` (the engine refused the request — a body it would not accept, a
-credential, a quota), `grounding_failed` when the LM answered and no entity it
-returned is a span of the raw query, and `lm_unavailable` otherwise. The
+`request_rejected:<status>` when the chain carries a `RoutedLMCallFailed`
+other than `UpstreamUnavailable` (the routed LM's own `status`) or an exception
+with a 4xx `status_code` (the engine refused the request — a body it would not
+accept, a credential, a quota), `grounding_failed` when the LM answered and no
+entity it returned is a span of the raw query, and `lm_unavailable` otherwise —
+including an `UpstreamUnavailable`, a timeout or a refused connection, whose
+synthetic 408 / 500 is never read as a refusal. The
 exception is in `entity_extraction.fallback_error`. A span that served the DSPy
 answer carries neither attribute.
 
