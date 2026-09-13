@@ -257,8 +257,11 @@ to misread as a failure:
 curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=true" | jq .
 ```
 
-All three response lists (`orphan_schemas`, `orphan_tenants`,
-`unrecovered_schemas`) empty means nothing to do. Any name in
+All five response lists (`orphan_schemas`, `orphan_tenants`,
+`unrecovered_schemas`, `tenant_orphan_schemas`, `tenant_orphan_tenants`)
+empty means nothing to do. Names under `tenant_orphan_schemas` are
+carried by every deploy; clear them with
+`?dry_run=false&remove_tenant_orphans=true`. Any name in
 `unrecovered_schemas` must be resolved before the next tenant delete:
 the schema redeploy refuses (raises rather than drops) while a deployed
 schema cannot be confirmed as an orphan, so one unattributable schema

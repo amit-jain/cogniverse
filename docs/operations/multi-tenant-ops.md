@@ -373,12 +373,22 @@ schema_manager.delete_tenant_schemas_bulk(["acme:prod", "globex:dev"])
 
 ## Orphan reconciliation
 
-A schema is an **orphan** when it exists in Vespa's deployed application
-package but has no active record in the SchemaRegistry. Orphans
-accumulate from interrupted deploy paths — a SIGKILL between
-`backend.deploy_schemas` and `register_schema`, a power loss
-mid-cleanup, or pre-`assert_tenant_exists` code paths that bypassed
-`POST /admin/tenants`.
+There are two orphan classes.
+
+A **registry-orphan** exists in Vespa's deployed application package but
+has no active record in the SchemaRegistry. These accumulate from
+interrupted deploy paths — a SIGKILL between `backend.deploy_schemas`
+and `register_schema`, a power loss mid-cleanup, or pre-
+`assert_tenant_exists` code paths that bypassed `POST /admin/tenants`.
+
+A **tenant-orphan** is deployed *and* registered, but its registry row
+names a tenant with no `tenant_metadata` document. The registry diff
+cannot see it, so it survives every deploy and costs a schema slot in
+each one, while its documents stay readable under a tenant id that no
+longer resolves. These accumulate from schema auto-deploy paths that
+never create a tenant — memory lazy-init deploying
+`agent_memories_<tenant>` and `provenance_<tenant>`, ingestion upload —
+and from tenant records removed outside `DELETE /admin/tenants`.
 
 Production runtimes do not auto-drop orphans (they may represent
 half-completed deploys of real customer data). Recovery is operator-
@@ -397,8 +407,11 @@ an offboarding fails.
 # Dry-run (default): list every orphan schema and the implied tenant
 cogniverse admin reconcile-orphans
 
-# Confirm: drop every orphan tenant in a single atomic redeploy
+# Confirm: drop every registry-orphan in a single atomic redeploy
 cogniverse admin reconcile-orphans --confirm
+
+# Also drop the tenant-orphans (schemas whose tenant record is gone)
+cogniverse admin reconcile-orphans --confirm --tenant-orphans
 
 # Point at a non-default runtime
 cogniverse admin reconcile-orphans --runtime-url http://runtime.cogniverse.svc:28000
@@ -409,18 +422,27 @@ includes:
 
 - `orphan_schemas` — full schema names found in Vespa but not in the registry
 - `orphan_tenants` — tenant ids recovered by stripping known base prefixes
-- `unrecovered_schemas` — orphan names whose base prefix isn't in the
-  built-in `KNOWN_BASES` list (operator review required before forcing
-  removal)
+- `unrecovered_schemas` — orphan names whose base prefix isn't a shipped
+  schema (operator review required before forcing removal)
+- `tenant_orphan_schemas` — deployed, registered schemas whose tenant has
+  no `tenant_metadata` document
+- `tenant_orphan_tenants` — the owning tenant ids, read from the registry rows
+- `tenant_orphans_deleted` — what `--tenant-orphans` actually dropped
+- `orphan_details` — when `include_document_counts=true`, one row per tenant
+  orphan with `schema`, `tenant`, `tenant_exists`, and `document_count`. The
+  CLI requests these counts. Failed counts return 503.
 
 ### `POST /admin/reconcile-orphans?dry_run={true|false}`
 
 ```bash
 # Dry-run
-curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=true" | jq .
+curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=true&include_document_counts=true" | jq .
 
-# Confirm — drops every orphan tenant in one Vespa redeploy
+# Confirm — drops every registry-orphan in one Vespa redeploy
 curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=false" | jq .
+
+# Also drop the tenant-orphans
+curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=false&remove_tenant_orphans=true" | jq .
 ```
 
 Response body:
@@ -431,9 +453,18 @@ Response body:
   "deleted": ["knowledge_graph_acme_dev", "video_colpali_smol500_mv_frame_globex_test"],
   "orphan_schemas": ["knowledge_graph_acme_dev", "video_colpali_smol500_mv_frame_globex_test"],
   "orphan_tenants": ["acme:dev", "globex:test"],
-  "unrecovered_schemas": []
+  "unrecovered_schemas": [],
+  "tenant_orphan_schemas": ["agent_memories_dead_t1", "provenance_dead_t1"],
+  "tenant_orphan_tenants": ["dead:t1"],
+  "tenant_orphans_deleted": [],
+  "orphan_details": []
 }
 ```
+
+Removing tenant-orphans refuses an empty selection (409) and reads the
+deployed set back after the redeploy, reporting 502 if a target survived.
+An unreachable or page-saturated tenant registry returns 503 rather than
+marking live tenants as orphans.
 
 A schema another process is deploying right now (activated in Vespa, its
 registry record not yet written — the state every new schema is in during
