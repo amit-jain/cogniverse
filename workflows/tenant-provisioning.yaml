@@ -16,6 +16,9 @@ spec:
       value: ""
     - name: profiles
       value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
+    # Semantic-router tier the tenant is provisioned on (default | free | pro).
+    - name: tier
+      value: "default"
     - name: storage-quota
       value: "100Gi"
     - name: cpu-quota
@@ -41,6 +44,8 @@ spec:
         template: create-storage
     - - name: initialize-memory
         template: initialize-memory
+    - - name: set-tier
+        template: set-tier
     - - name: verify-tenant
         template: verify-tenant
     - - name: notify-completion
@@ -221,6 +226,37 @@ spec:
         limits:
           memory: "4Gi"
           cpu: "2"
+
+  # Store the tenant's semantic-router tier through the same seam the admin
+  # route writes, so the router serves the tenant on it from the first request.
+  - name: set-tier
+    container:
+      image: "{{workflow.parameters.runtime-image}}"
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Setting router tier for tenant..."
+
+          cd /app
+          uv run python scripts/provision_tenant.py \
+            --step tier \
+            --tier "{{workflow.parameters.tier}}" \
+            --tenant-id "{{workflow.parameters.tenant-id}}"
+
+          echo "Router tier set"
+      env:
+      - name: BACKEND_URL
+        value: "http://cogniverse-vespa"
+      - name: BACKEND_PORT
+        value: "8080"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "500m"
+        limits:
+          memory: "2Gi"
+          cpu: "1"
 
   # Verify tenant provisioning
   - name: verify-tenant

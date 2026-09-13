@@ -504,20 +504,22 @@ for the full operator workflow and JSON shapes.
 
 ### 4. provision_tenant.py
 
-**Purpose:** Cold-bootstrap a tenant's backend resources (Mem0 memory schema and Phoenix telemetry project) without a live runtime. Used by the tenant-provisioning WorkflowTemplate as a pre-step before schema deployment.
+**Purpose:** Cold-bootstrap a tenant's backend resources (Mem0 memory schema, Phoenix telemetry project, semantic-router tier) without a live runtime. Used by the tenant-provisioning WorkflowTemplate as a pre-step before schema deployment.
 
 **Location:** `scripts/provision_tenant.py`
 
 **Command Line Arguments:**
 ```bash
 --tenant-id TENANT   # Tenant identifier (required)
---step STEP          # Provisioning step: memory|telemetry (required)
+--step STEP          # Provisioning step: memory|telemetry|tier (required)
+--tier TIER          # Router tier to store (required by --step tier)
 ```
 
 **Steps:**
 
 - `memory` — Creates the tenant's Mem0 memory schema via `lazy_init_memory`
 - `telemetry` — Emits a probe span via `TelemetryManager.span(...)` to create the Phoenix project
+- `tier` — Stores the tenant's semantic-router tier via `set_tenant_tier`; a tier outside `ROUTER_TIERS` is refused before any store is built
 
 **Usage:**
 ```bash
@@ -530,6 +532,11 @@ uv run python scripts/provision_tenant.py \
 uv run python scripts/provision_tenant.py \
   --tenant-id acme:production \
   --step telemetry
+
+# Store the router tier for tenant
+uv run python scripts/provision_tenant.py \
+  --tenant-id acme:production \
+  --step tier --tier pro
 ```
 
 **Implementation:**

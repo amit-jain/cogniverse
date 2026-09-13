@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / "workflows" / "tenant-provisioning.yaml"
@@ -90,3 +91,50 @@ def test_resolver_cli_prints_schema_name_and_fails_on_unknown():
     # Nothing printed to stdout on failure — command substitution must not get
     # a bogus schema name.
     assert bad.stdout.strip() == ""
+
+
+def _provisioning_shape(document: dict) -> dict:
+    """What the template runs, in order, and how its tier step is wired."""
+    template = document["spec"]
+    (pipeline,) = [
+        t for t in template["templates"] if t["name"] == "provisioning-pipeline"
+    ]
+    steps = [step["template"] for group in pipeline["steps"] for step in group]
+    (tier_step,) = [t for t in template["templates"] if t["name"] == "set-tier"]
+    (script,) = tier_step["container"]["args"]
+    parameters = {
+        entry["name"]: entry["value"] for entry in template["arguments"]["parameters"]
+    }
+    return {
+        "steps": steps,
+        "tier_invocation": " ".join(script.replace("\\\n", " ").split()),
+        "tier_default": parameters["tier"],
+    }
+
+
+@pytest.mark.unit
+def test_provisioning_sets_the_router_tier_before_verifying():
+    (document,) = [
+        d
+        for d in yaml.safe_load_all(WORKFLOW.read_text())
+        if d["kind"] == "WorkflowTemplate"
+    ]
+    shape = _provisioning_shape(document)
+    assert shape["steps"] == [
+        "validate-tenant",
+        "create-namespace",
+        "deploy-schemas",
+        "create-phoenix-project",
+        "setup-resource-quotas",
+        "create-storage",
+        "initialize-memory",
+        "set-tier",
+        "verify-tenant",
+        "notify-completion",
+    ]
+    assert (
+        "scripts/provision_tenant.py --step tier "
+        '--tier "{{workflow.parameters.tier}}" '
+        '--tenant-id "{{workflow.parameters.tenant-id}}"'
+    ) in shape["tier_invocation"]
+    assert shape["tier_default"] == "default"
