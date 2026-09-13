@@ -1,11 +1,7 @@
-"""Unit tests for the runtime's semantic-router env-var wiring.
+"""Runtime router configuration comes from the enable and URL environment values.
 
-``_semantic_router_config_from_env`` is what makes a DEPLOYED runtime boot
-with semantic routing on: the chart sets SEMANTIC_ROUTER_ENABLED +
-SEMANTIC_ROUTER_URL (+ an optional JSON tenant-tier map) and this builds the
-``SemanticRouterConfig`` that gets persisted into SystemConfig. These pin the
-exact config produced for each env shape, including the fail-loud path (a
-malformed tier map raises rather than silently emptying).
+Tenant tiers remain in their per-tenant store. The serialized router config
+names the free-form, classification, and vision entrypoints.
 """
 
 import pytest
@@ -82,15 +78,16 @@ class TestSemanticRouterConfigFromEnv:
 
         assert not hasattr(cfg, "tenant_tiers")
         assert not hasattr(cfg, "default_tier")
-        assert set(cfg.to_dict()) == {
-            "enabled",
-            "semantic_router_url",
-            "tier_header",
-            "user_id_header",
-            "routed_model",
-            "response_cache_ttl_seconds",
-            "response_cache_max_entries",
-            "classification_model",
+        assert cfg.to_dict() == {
+            "enabled": True,
+            "semantic_router_url": "http://cogniverse-gateway:8801/v1",
+            "tier_header": "x-authz-user-groups",
+            "user_id_header": "x-authz-user-id",
+            "routed_model": "openai/auto",
+            "response_cache_ttl_seconds": 3600,
+            "response_cache_max_entries": 1024,
+            "classification_model": "openai/cogniverse-classification",
+            "vision_model": "openai/cogniverse-vision",
         }
 
     def test_a_stale_tenant_tiers_env_changes_nothing(self, monkeypatch):
