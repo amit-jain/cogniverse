@@ -47,10 +47,16 @@ import yaml
 from cogniverse_agents.search_agent import SearchOptimizationSignature
 from cogniverse_agents.summarizer_agent import SummaryGenerationSignature
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
-from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+from cogniverse_foundation.config.unified_config import (
+    DEFAULT_ROUTER_TIER,
+    ROUTER_TIERS,
+)
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     RUNTIME,
+    SEEDED_TENANT_TIER,
+    TENANT_ID,
+    bootstrap_seeded_tenant_tier,
     register_tenant_and_wait,
     unique_id,
 )
@@ -316,6 +322,37 @@ def _set_tier(tenant_id: str, tier: str) -> dict:
         )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _get_tier(tenant_id: str) -> dict:
+    with httpx.Client(timeout=60.0) as client:
+        response = client.get(f"{RUNTIME}/admin/tenants/{tenant_id}/tier")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_bootstrap_declares_the_seeded_tenant_tier():
+    """The session bootstrap leaves the seeded tenant on SEEDED_TENANT_TIER;
+    re-running the bootstrap's tier step restores it after an operator moved
+    it, and a tenant the bootstrap never touched reads the default."""
+    canonical = canonical_tenant_id(TENANT_ID)
+    declared = {"tenant_id": canonical, "tier": SEEDED_TENANT_TIER}
+    assert _get_tier(TENANT_ID) == declared
+
+    (moved,) = sorted(ROUTER_TIERS - {SEEDED_TENANT_TIER, DEFAULT_ROUTER_TIER})
+    assert _set_tier(TENANT_ID, moved) == {"tenant_id": canonical, "tier": moved}
+    assert _get_tier(TENANT_ID) == {"tenant_id": canonical, "tier": moved}
+    assert bootstrap_seeded_tenant_tier() == declared
+    assert _get_tier(TENANT_ID) == declared
+    assert bootstrap_seeded_tenant_tier() == declared
+    assert _get_tier(TENANT_ID) == declared
+
+    fresh = unique_id("tier")
+    register_tenant_and_wait(fresh)
+    assert _get_tier(fresh) == {
+        "tenant_id": canonical_tenant_id(fresh),
+        "tier": DEFAULT_ROUTER_TIER,
+    }
 
 
 def _dispatch_one_query(tenant_id: str, query: str) -> None:

@@ -33,6 +33,7 @@ from typing import Callable, Iterator
 
 import httpx
 import pytest
+import yaml
 from cogniverse_cli.argo import (
     ARGO_NAMESPACE,
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
@@ -47,6 +48,7 @@ from cogniverse_foundation.config.inference_auth import (
     endpoint_root,
     is_modal_inference_url,
 )
+from cogniverse_foundation.config.tenant_tiers import validate_router_tier
 from tests.e2e import backend_env, cron_guard
 from tests.e2e.tab_selection import tab_candidates_in_scope
 
@@ -337,7 +339,24 @@ sweep load; the convergence gate alone may hold up to 120 s."""
 DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
 PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 GLINER_URL = "http://localhost:33907"  # gliner NodePort 29007 via E2E_HOST_PORTS
-TENANT_ID = "flywheel_org:production"
+K3S_VALUES = Path(__file__).resolve().parents[2] / "charts/cogniverse/values.k3s.yaml"
+
+
+def seeded_tenant_id(values_path: Path = K3S_VALUES) -> str:
+    """The tenant the e2e cluster is seeded with: the k3s overlay's
+    quality-monitor tenant, so the session seeds the tenant the chart's own
+    CronJobs run against."""
+    values = yaml.safe_load(values_path.read_text())
+    tenant_id = values["runtime"]["qualityMonitor"]["tenantId"]
+    if not isinstance(tenant_id, str) or not tenant_id:
+        raise ValueError(f"{values_path} sets no runtime.qualityMonitor.tenantId")
+    return tenant_id
+
+
+TENANT_ID = seeded_tenant_id()
+# The router tier the seeded tenant is declared on: the production/e2e tenant
+# is pro; every other tenant reads the default until an operator sets one.
+SEEDED_TENANT_TIER = validate_router_tier("pro")
 IN_POD_TELEMETRY_PRELUDE = (
     "from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults; "
     "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
@@ -1217,10 +1236,37 @@ def _expected_sample_documents_fed(path: Path, profile: str, media_type: str) ->
     )
 
 
-def _bootstrap_tenant_and_schemas() -> None:
-    """Create the E2E tenant and deploy schemas if not already done.
+def bootstrap_seeded_tenant_tier() -> dict:
+    """Declare the seeded tenant's router tier through the admin route.
 
-    Called once per session. Idempotent — 409 (already exists) is fine.
+    Set on every bootstrap, like the profiles re-applied below: the tier is
+    the e2e stack's declared state, so a re-run restores it after an operator
+    moved it. Returns the route's body.
+    """
+    try:
+        resp = httpx.put(
+            f"{RUNTIME}/admin/tenants/{TENANT_ID}/tier",
+            json={"tier": SEEDED_TENANT_TIER},
+            timeout=30,
+        )
+    except (httpx.HTTPError, OSError) as exc:
+        pytest.fail(
+            f"e2e tenant {TENANT_ID!r} tier could not be set: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    if resp.status_code != 200:
+        pytest.fail(
+            f"e2e tenant {TENANT_ID!r} tier could not be set to "
+            f"{SEEDED_TENANT_TIER!r}: HTTP {resp.status_code}: {resp.text[:400]}"
+        )
+    return resp.json()
+
+
+def _bootstrap_tenant_and_schemas() -> None:
+    """Create the E2E tenant, declare its router tier, and deploy schemas.
+
+    Called once per session. Idempotent — 409 (already exists) is fine, and
+    the tier and profiles are re-declared on every run.
     """
     # Read profile definitions from config.json
     config_path = DATA_ROOT.parent / "configs" / "config.json"
@@ -1265,6 +1311,7 @@ def _bootstrap_tenant_and_schemas() -> None:
         pytest.fail(
             f"e2e tenant {TENANT_ID!r} creation failed: {type(exc).__name__}: {exc}"
         )
+    bootstrap_seeded_tenant_tier()
 
     # Delete-then-create so config.json edits take effect: POST rejects
     # re-creation and PUT can't change embedding_model. delete_schema=false
