@@ -124,12 +124,22 @@ class TestEveryCallSiteInLibsIsClassified:
 
 
 class TestTheModelNameMatchesTheChart:
-    def test_the_classification_model_names_the_charts_entrypoint(self):
+    def test_the_configured_entries_name_the_charts_entrypoints(self):
+        """The runtime's two virtual model names are exactly the chart's two
+        entrypoints: bounded calls on classification, image-bearing calls on
+        vision, both sent with litellm's openai/ prefix."""
         entrypoints = _chart_router_config()["entrypoints"]
         served = {name for e in entrypoints for name in e["model_names"]}
-        configured = SemanticRouterConfig().classification_model
-        assert configured.split("/", 1) == ["openai", "cogniverse-classification"]
-        assert served == {configured.split("/", 1)[1]}
+        config = SemanticRouterConfig()
+        assert config.classification_model.split("/", 1) == [
+            "openai",
+            "cogniverse-classification",
+        ]
+        assert config.vision_model.split("/", 1) == ["openai", "cogniverse-vision"]
+        assert served == {
+            config.classification_model.split("/", 1)[1],
+            config.vision_model.split("/", 1)[1],
+        }
 
     def test_the_free_form_model_is_the_routers_auto_alias(self):
         assert SemanticRouterConfig().routed_model == "openai/auto"
@@ -160,4 +170,5 @@ class TestTheModelNameMatchesTheChart:
             "user_id_header": "x-authz-user-id",
             "routed_model": "openai/auto",
             "classification_model": "openai/cogniverse-classification",
+            "vision_model": "openai/cogniverse-vision",
         }
