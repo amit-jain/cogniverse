@@ -209,6 +209,21 @@ def test_response_cache_store_is_memory_backed_with_the_configured_bounds():
     assert bounds["maxEntries"] not in (0, None)
 
 
+def test_the_agent_side_cache_reads_the_same_bounds():
+    """The LM cache in the agents inherits these, so the two must agree."""
+    from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+
+    bounds = yaml.safe_load((CHART_PATH / "values.yaml").read_text())["semanticRouter"][
+        "router"
+    ]["responseCache"]
+    declared = SemanticRouterConfig()
+
+    assert (bounds["ttlSeconds"], bounds["maxEntries"]) == (
+        declared.response_cache_ttl_seconds,
+        declared.response_cache_max_entries,
+    )
+
+
 def test_semantic_cache_embedding_runtime_configured():
     # Without mmbert_model_path + preload the embedding runtime never reaches
     # ready and the router silently bypasses the cache.
@@ -653,3 +668,16 @@ def test_envoy_access_log_names_the_reason_for_every_local_reply():
         "upstream": "%UPSTREAM_HOST%",
         "request_id": "%REQ(X-REQUEST-ID)%",
     }, fields
+
+
+@pytest.mark.parametrize("ttl,capacity", [(3600, 1024), (17, 9)])
+def test_rendered_lm_cache_bounds_follow_chart_values(ttl, capacity):
+    docs = _render(
+        f"semanticRouter.router.responseCache.ttlSeconds={ttl}",
+        f"semanticRouter.router.responseCache.maxEntries={capacity}",
+    )
+    bounds = _runtime_config(docs)["semantic_router"]
+    assert bounds == {
+        "response_cache_ttl_seconds": ttl,
+        "response_cache_max_entries": capacity,
+    }

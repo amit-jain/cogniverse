@@ -1,4 +1,8 @@
 {
+  "semantic_router": {
+    "response_cache_ttl_seconds": {{ int .Values.semanticRouter.router.responseCache.ttlSeconds }},
+    "response_cache_max_entries": {{ int .Values.semanticRouter.router.responseCache.maxEntries }}
+  },
   "harness": {
     "api_keys": {
       "$COGNIVERSE_HARNESS_API_KEY": "default"

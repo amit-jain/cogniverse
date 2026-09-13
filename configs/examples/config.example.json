@@ -1,4 +1,8 @@
 {
+  "semantic_router": {
+    "response_cache_ttl_seconds": 3600,
+    "response_cache_max_entries": 1024
+  },
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
     "search_agent": {

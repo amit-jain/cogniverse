@@ -555,7 +555,8 @@ class TestPrimaryKnobsCarryIntoAgentLM:
 
         captured = {}
 
-        def _capture(endpoint):
+        def _capture(endpoint, *, tenant_id):
+            captured["tenant_id"] = tenant_id
             captured["endpoint"] = endpoint
             return MagicMock()
 
@@ -567,6 +568,7 @@ class TestPrimaryKnobsCarryIntoAgentLM:
             pass
 
         host = Host()
+        host.tenant_id = "acme:prod"
         host.system_config = MagicMock()
         host.system_config.get_llm_config.return_value.primary = LLMEndpointConfig(
             model="openai/google/gemma-4-e4b-it",
@@ -596,6 +598,7 @@ class TestPrimaryKnobsCarryIntoAgentLM:
         host._configure_dspy_lm(config)
 
         ep = captured["endpoint"]
+        assert captured["tenant_id"] == "acme:prod"
         assert ep.model == "openai/google/gemma-4-e4b-it"
         assert ep.api_base == "http://vllm:8000/v1"
         assert ep.seed == 42

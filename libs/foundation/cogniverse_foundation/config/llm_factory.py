@@ -150,15 +150,24 @@ def dspy_lm_kwargs(config: LLMEndpointConfig) -> dict:
     return kwargs
 
 
-def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
-    """Create a dspy.LM instance from an LLMEndpointConfig."""
+def create_dspy_lm(
+    config: LLMEndpointConfig, *, tenant_id: str | None = None
+) -> dspy.LM:
+    """Create an LM with tenant-scoped response caching and DSPy caching off.
+
+    Without a tenant, every call reaches the provider.
+    """
 
     from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 
-    return BodyBoundedLM(config.model, **dspy_lm_kwargs(config))
+    return BodyBoundedLM(
+        config.model, cache_tenant_id=tenant_id, **dspy_lm_kwargs(config)
+    )
 
 
-def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
+def create_budgeted_dspy_lm(
+    config: LLMEndpointConfig, *, tenant_id: str | None = None
+) -> dspy.LM:
     """Create an LM that fits each request inside the window its endpoint serves.
 
     ``config.max_tokens`` is the completion reservation; the input allowance
@@ -174,6 +183,7 @@ def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     return BudgetedLM(
         config.model,
         declared_context_window=config.context_window,
+        cache_tenant_id=tenant_id,
         **dspy_lm_kwargs(config),
     )
 
@@ -185,7 +195,8 @@ def create_sampling_dspy_lm(
 
     Self-consistency needs the endpoint asked more than once. A cached call
     replays the first response and a pinned seed regenerates it, so both are
-    dropped here and the temperature must be above zero.
+    dropped here and the temperature must be above zero. No tenant is bound,
+    so the tenant-scoped response cache is off as well.
     """
 
     from cogniverse_foundation.config.budgeted_lm import BudgetedLM

@@ -372,13 +372,18 @@ class TestSamplingReachesTheTeacherThreeTimes:
         ]
 
     def test_the_budgeted_teacher_lm_serves_repeats_from_cache(self):
-        """Control: the LM the compile step uses answers three asks with one call."""
+        """A tenant-bound teacher answers repeated requests from its cache."""
         with _SamplingTeacher(self.SCRIPT) as teacher:
-            lm = create_budgeted_dspy_lm(_endpoint(teacher.api_base))
-            sample_entity_extraction(
+            lm = create_budgeted_dspy_lm(
+                _endpoint(teacher.api_base), tenant_id="acme:prod"
+            )
+            drawn = sample_entity_extraction(
                 EntityExtractionModule, QUERY, lm=lm, samples=SELF_CONSISTENCY_SAMPLES
             )
         assert len(teacher.chat_posts) == 1
+        assert drawn == [self.SCRIPT[QUERY][0]] * SELF_CONSISTENCY_SAMPLES
+        assert lm.cache is False
+        assert lm.cache_tenant_id == "acme:prod"
 
     def test_sampling_lm_refuses_a_temperature_that_cannot_sample(self):
         with pytest.raises(ValueError, match="temperature above zero"):

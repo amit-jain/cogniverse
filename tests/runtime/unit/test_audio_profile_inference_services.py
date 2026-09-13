@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
-import re
 from pathlib import Path
 
 import pytest
@@ -20,6 +18,7 @@ from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_gener
     create_embedding_generator,
 )
 from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+from tests.fixtures.shipped_config import load_shipped_config
 from tests.utils.memory_store import InMemoryConfigStore
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -27,13 +26,6 @@ CONFIG_PATHS = [
     REPO_ROOT / "configs" / "config.json",
     REPO_ROOT / "charts" / "cogniverse" / "files" / "config.json",
 ]
-
-
-def _load_config(path: Path) -> dict:
-    raw = path.read_text(encoding="utf-8")
-    if "{{" in raw:
-        raw = re.sub(r"\{\{[^}]*\}\}", "http://rendered.invalid", raw)
-    return json.loads(raw)
 
 
 def _service_urls_from_config(config: dict) -> dict[str, str]:
@@ -69,7 +61,7 @@ def _strategy_requirements(profile_config: dict) -> dict[str, dict]:
 def test_audio_profile_declares_and_resolves_clap_embed(
     config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = _load_config(config_path)
+    config = load_shipped_config(config_path)
     profiles = config["backend"]["profiles"]
     audio_profile = profiles["audio_clap_semantic"]
     assert audio_profile["inference_services"] == {
@@ -131,7 +123,7 @@ def test_audio_profile_declares_and_resolves_clap_embed(
 def test_audio_profile_missing_clap_embed_url_raises_profile_and_service(
     config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = _load_config(config_path)
+    config = load_shipped_config(config_path)
     audio_profile = copy.deepcopy(config["backend"]["profiles"]["audio_clap_semantic"])
     audio_profile.setdefault("inference_services", {})["acoustic_embedding"] = (
         "clap_embed"
