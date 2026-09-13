@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 from cogniverse_foundation.config.llm_factory import (
     create_budgeted_dspy_lm,
     create_dspy_lm,
+    dspy_lm_kwargs,
 )
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
@@ -127,9 +128,14 @@ def create_routed_lm(
     """Build a ``dspy.LM`` for ``tenant_id`` on ``tier``, routed through the
     router when ``config.enabled``.
 
-    Composes ``apply_semantic_routing`` + ``create_dspy_lm`` — the single way
+    Composes ``apply_semantic_routing`` + the LM constructor — the single way
     an agent builds a semantic-router-aware LM. When routing is disabled the LM
     targets the endpoint's own ``api_base`` unchanged.
+
+    On the routed path the LM is a ``RoutedLM``: a failed completion raises a
+    ``RoutedLMCallFailed`` subclass naming the tenant, the tier, the routed
+    model and the upstream status, so a credential refusal is distinguishable
+    from a quota, an outage and a request the router would not accept.
     """
     routed = apply_semantic_routing(
         endpoint=endpoint,
@@ -137,7 +143,17 @@ def create_routed_lm(
         tenant_id=tenant_id,
         tier=tier,
     )
-    return create_dspy_lm(routed)
+    if not config.enabled:
+        return create_dspy_lm(routed)
+
+    from cogniverse_foundation.config.routed_lm import RoutedLM
+
+    return RoutedLM(
+        routed.model,
+        tenant_id=tenant_id,
+        tier=tier,
+        **dspy_lm_kwargs(routed),
+    )
 
 
 def ingest_lm_context_for(endpoint: LLMEndpointConfig):

@@ -132,6 +132,43 @@ def envoy_listener_port() -> int:
     return int(values["semanticRouter"]["envoy"]["service"]["port"])
 
 
+_DURATION = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>ms|s|m)$")
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0}
+
+
+def _seconds(duration: str) -> float:
+    match = _DURATION.match(duration.strip())
+    if match is None:
+        raise ChartRenderError(
+            f"{CHART_ENVOY_TEMPLATE.name} has duration {duration!r}, which the "
+            f"local stack cannot read as seconds"
+        )
+    return float(match["value"]) * _UNIT_SECONDS[match["unit"]]
+
+
+def ext_proc_message_timeouts() -> tuple[float, float]:
+    """``(message_timeout, max_message_timeout)`` of the chart's ext_proc filter.
+
+    The per-message deadline Envoy gives the router to answer one ext_proc
+    exchange, in seconds, read from the chart rather than restated: a test
+    that hardcodes it stops tracking the deadline production runs.
+    """
+    for filter_chain in yaml.safe_load(render_envoy_config())["static_resources"][
+        "listeners"
+    ][0]["filter_chains"]:
+        for filter_ in filter_chain["filters"]:
+            for http_filter in filter_["typed_config"].get("http_filters", []):
+                config = http_filter.get("typed_config", {})
+                if "message_timeout" in config:
+                    return (
+                        _seconds(config["message_timeout"]),
+                        _seconds(config["max_message_timeout"]),
+                    )
+    raise ChartRenderError(
+        f"{CHART_ENVOY_TEMPLATE.name} declares no ext_proc message_timeout"
+    )
+
+
 def routed_chat(
     base_url: str,
     *,

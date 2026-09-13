@@ -358,7 +358,10 @@ class TestRoutedLMContextFor:
         assert routed_lm.model == "openai/auto"
         assert routed_lm.kwargs["api_base"] == SR_URL
         assert routed_lm.kwargs["timeout"] == 120.0
-        assert routed_lm.num_retries == 1
+        # The routed LM spends the endpoint's one retry itself, on retryable
+        # statuses only; litellm is left to retry nothing.
+        assert routed_lm.call_attempts == 2
+        assert routed_lm.num_retries == 0
 
     def test_config_error_propagates(self, monkeypatch):
         # No silent fallback: a broken config store surfaces, even with an
@@ -405,3 +408,111 @@ class TestRoutedLMContextFor:
         assert lm.model == "openai/tuned"
         assert lm.kwargs["api_base"] == DIRECT  # not routed
         assert "extra_headers" not in lm.kwargs
+
+
+class TestARoutedFailureIsClassifiedByWhatHappened:
+    """Timeouts and transport failures are outages, whatever litellm's synthetic status.
+
+    litellm stamps ``408`` on a timeout and ``500`` on a refused connection;
+    neither is a status the router answered with, so neither may be read as
+    the router refusing the request.
+    """
+
+    KW = {"tenant_id": "acme:prod", "tier": "free", "routed_model": "openai/auto"}
+
+    def test_a_timeout_is_an_outage_not_a_router_refusal(self):
+        import litellm
+
+        from cogniverse_foundation.config.routed_lm import (
+            UpstreamUnavailable,
+            classify_routed_failure,
+        )
+
+        failure = classify_routed_failure(
+            litellm.Timeout(message="timed out", model="auto", llm_provider="openai"),
+            **self.KW,
+        )
+
+        assert type(failure) is UpstreamUnavailable
+        assert failure.status == 408
+        assert str(failure) == (
+            "the model endpoint did not answer: tenant=acme:prod tier=free "
+            "routed_model=openai/auto status=408 router_code=None"
+        )
+
+    def test_a_refused_connection_is_an_outage(self):
+        import litellm
+
+        from cogniverse_foundation.config.routed_lm import (
+            UpstreamUnavailable,
+            classify_routed_failure,
+        )
+
+        failure = classify_routed_failure(
+            litellm.APIConnectionError(
+                message="connection refused", model="auto", llm_provider="openai"
+            ),
+            **self.KW,
+        )
+
+        assert type(failure) is UpstreamUnavailable
+        assert failure.status == 500
+
+    def test_a_timeout_is_retried_and_a_refusal_is_not(self):
+        from cogniverse_foundation.config.routed_lm import (
+            RoutedLM,
+            RouterDecodeFailed,
+            UpstreamAuthRejected,
+            UpstreamRateLimited,
+            UpstreamUnavailable,
+        )
+
+        lm = RoutedLM(
+            "openai/auto",
+            tenant_id="acme:prod",
+            tier="free",
+            api_base="http://127.0.0.1:29071/v1",
+            api_key="unused",
+            num_retries=1,
+        )
+        assert lm.call_attempts == 2
+
+        def failure(kind, status):
+            return kind("s", status=status, router_code=None, **self.KW)
+
+        assert lm._retryable(failure(UpstreamUnavailable, 408), 1) is True
+        assert lm._retryable(failure(UpstreamUnavailable, 503), 1) is True
+        assert lm._retryable(failure(UpstreamRateLimited, 429), 1) is True
+        assert lm._retryable(failure(UpstreamAuthRejected, 401), 1) is False
+        assert lm._retryable(failure(RouterDecodeFailed, 400), 1) is False
+        # The last allowed attempt is never followed by another.
+        assert lm._retryable(failure(UpstreamUnavailable, 503), 2) is False
+
+    def test_a_routed_lm_on_a_dead_port_raises_an_outage(self):
+        import openai
+
+        from cogniverse_foundation.config.routed_lm import (
+            RoutedLM,
+            UpstreamUnavailable,
+        )
+
+        # A port the test suite guarantees nothing listens on.
+        lm = RoutedLM(
+            "openai/auto",
+            tenant_id="acme:prod",
+            tier="free",
+            api_base="http://127.0.0.1:29071/v1",
+            api_key="unused",
+            cache=False,
+            num_retries=0,
+            timeout=3,
+        )
+
+        with pytest.raises(UpstreamUnavailable) as excinfo:
+            lm("hello")
+
+        assert excinfo.value.status == 500
+        assert excinfo.value.tenant_id == "acme:prod"
+        assert excinfo.value.routed_model == "openai/auto"
+        assert isinstance(excinfo.value.__cause__, openai.APIError)
+        assert type(excinfo.value.__cause__).__name__ == "InternalServerError"

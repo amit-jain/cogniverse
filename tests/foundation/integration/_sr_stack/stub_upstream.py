@@ -29,6 +29,18 @@ When reasoning is requested it also fills ``message.reasoning_content`` and
 ``usage.completion_tokens_details.reasoning_tokens`` so a client can assert
 the reasoning path was taken.
 
+A user message beginning with ``FAULT:`` makes this backend fail in a named
+way instead of answering, so the fault contract of everything in front of it
+is exercised against one running stack:
+
+  - ``FAULT:status:<code>`` — answer ``<code>`` with an OpenAI-shaped error
+    body (the shape a real provider sends for 401/403/429/503)
+  - ``FAULT:reset``         — close the connection with no response
+  - ``FAULT:trickle:<s>``   — hold the request open ``<s>`` seconds, then answer
+
+The sentinel travels in the request body, so it survives the router's request
+re-serialization without depending on any header being forwarded.
+
 Pure standard library — the container needs only ``python:3.12-slim`` with
 this file mounted; no pip install, nothing to break on first run.
 """
@@ -38,6 +50,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND_TAG = os.environ.get("BACKEND_TAG", "stub")
@@ -48,6 +61,41 @@ _ROUTING_HEADER_PREFIXES = ("x-vsr-", "x-authz-", "x-tenant-", "x-task")
 
 _CALLS_LOCK = threading.Lock()
 _CALLS = 0
+
+
+_FAULT_PREFIX = "FAULT:"
+
+# The error body shape a real OpenAI-compatible provider sends on a refusal:
+# a single ``error`` object carrying message/type/code. The per-status values
+# mirror what an upstream that rejects the key, the tenant or the rate sends.
+_REFUSALS = {
+    401: ("Incorrect API key provided", "invalid_request_error", "invalid_api_key"),
+    403: (
+        "You are not allowed to access this model",
+        "invalid_request_error",
+        "model_not_permitted",
+    ),
+    429: (
+        "Rate limit reached for this model",
+        "rate_limit_error",
+        "rate_limit_exceeded",
+    ),
+    503: ("The engine is currently overloaded", "server_error", "engine_overloaded"),
+}
+
+
+def refusal_body(status: int) -> dict:
+    """The OpenAI-shaped error body this backend answers ``status`` with."""
+    message, kind, code = _REFUSALS[status]
+    return {"error": {"message": message, "type": kind, "param": None, "code": code}}
+
+
+def parse_fault(text: str) -> tuple[str, str] | None:
+    """``(kind, argument)`` for a ``FAULT:`` sentinel message, else ``None``."""
+    if not text.startswith(_FAULT_PREFIX):
+        return None
+    parts = text[len(_FAULT_PREFIX) :].split(":", 1)
+    return (parts[0], parts[1] if len(parts) > 1 else "")
 
 
 def _next_call_index() -> int:
@@ -109,6 +157,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": {"message": "invalid JSON body"}})
             return
 
+        fault = parse_fault(_last_user_message(body))
+        if fault is not None:
+            # Counted like any other request that reached this backend, so a
+            # caller can measure how many attempts a failure consumed.
+            _next_call_index()
+            self._serve_fault(*fault)
+            return
+
         routing_headers = {
             k.lower(): v
             for k, v in self.headers.items()
@@ -145,6 +201,42 @@ class _Handler(BaseHTTPRequestHandler):
                 "usage": usage,
             },
         )
+
+    def _serve_fault(self, kind: str, argument: str) -> None:
+        """Fail the request in the named way instead of answering it."""
+        if kind == "status":
+            status = int(argument)
+            self._send_json(status, refusal_body(status))
+            return
+        if kind == "reset":
+            self.close_connection = True
+            self.wfile.close()
+            return
+        if kind == "trickle":
+            time.sleep(float(argument))
+            self._send_json(
+                200,
+                {
+                    "id": "chatcmpl-stub-trickle",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": BACKEND_TAG,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "late"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+            return
+        self._send_json(400, {"error": {"message": f"unknown fault {kind!r}"}})
 
     def log_message(self, *args):  # silence per-request logging noise
         return
