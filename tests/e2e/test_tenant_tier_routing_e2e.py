@@ -1,31 +1,36 @@
 """A tenant's stored tier steers the deployed router on the production path.
 
 Set the tier through the deployed runtime's admin route, send one real query
-through the dispatch route, and reconcile what the deployed semantic router
-recorded: the per-decision counters it exports against the routed calls its own
-log attributes to this tenant. The runtime resolves the tier itself from its
-config store, so this exercises the whole chain the cluster runs: admin write
--> the runtime's per-tenant reader (and its in-process invalidation) -> the
-router's decision.
+through the dispatch route, and reconcile what the deployed stack recorded:
+the router's per-decision counters against its own routed-call log, Envoy's
+access log for which cluster served each call, and the runtime's spans for
+which model answered. The runtime resolves the tier itself from its config
+store, so this exercises the whole chain the cluster runs: admin write -> the
+runtime's per-tenant reader (and its in-process invalidation) -> the router's
+decision -> the backend Envoy dials -> the model the backend reports.
 
 One summarizer dispatch makes one routed LM call per DSPy signature it runs -
-the search-query rewrite and the summary - so the counter moves by that many,
-derived from those signatures rather than restated. A decision whose only rule
-is an authz role matches exactly the calls carrying that role, so every
-counter movement in the window is attributable, this tenant's and anyone
-else's, and a concurrent tenant cannot move a pin.
+the search-query rewrite and the summary - so the routed count is derived from
+those signatures rather than restated. The rewrite is a bounded call and enters
+on the classification entrypoint, whose decisions serve basic-chat for every
+tier; the summary enters on the auto alias, where a pro tenant's decision
+serves pro-reasoning. Every counter movement in the window is attributable per
+decision, this tenant's and anyone else's, so a concurrent tenant cannot move
+a pin.
+
+The deployed chart binds each catalog model to a backend - basic-chat to the
+student, pro-reasoning to the teacher - on their own Envoy clusters. Beyond
+the decision name, a tier change is observed as the cluster Envoy logs for the
+call and the served model the runtime stamps on its span from the completion's
+own ``model`` field. Both expectations are read from the ConfigMaps the
+cluster runs, never restated here.
 
 Each leg carries its own query text. Identical messages with identical routing
 headers hit the runtime's DSPy cache, which answers without reaching the router
 at all; the last leg repeats the previous leg's query verbatim to pin that -
-zero routed calls, and no movement in the router's own response-cache counter,
-which is a different layer.
-
-On this chart both catalog models resolve to the same upstream and the same
-``provider_model_id`` (``charts/cogniverse/files/semantic-router/config.yaml``
-lines 25-44), so promoting a tenant does NOT change which model answers. What
-it changes is the decision the router matches and the reasoning flag it sends,
-which is what this reads.
+zero routed calls and no movement in the router's own response-cache counter,
+which is a different layer - while the replayed completion still names the
+model that produced it.
 """
 
 from __future__ import annotations
@@ -36,9 +41,10 @@ import socket
 import subprocess
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 import httpx
 import pytest
@@ -51,6 +57,8 @@ from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     ROUTER_TIERS,
 )
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     RUNTIME,
@@ -68,6 +76,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.integration]
 NAMESPACE = "cogniverse"
 _ROUTER_SVC = "cogniverse-semantic-router"
 _ROUTER_DEPLOY = f"deploy/{_ROUTER_SVC}"
+_ENVOY_DEPLOY = f"deploy/{_ROUTER_SVC}-envoy"
 _ROUTER_METRICS_PORT = 9190
 CHART_ROUTER_CONFIG = (
     Path(__file__).resolve().parents[2]
@@ -79,6 +88,10 @@ CHART_ROUTER_CONFIG = (
 )
 QUERY = "summarise what this tenant has ingested"
 AGENT = "summarizer_agent"
+# Spans reach Phoenix through the runtime's batch exporter; measured on this
+# cluster the served-model attribute is readable 4-9 s after the dispatch
+# returns, so the read polls up to this long before it reports what it saw.
+SERVED_MODEL_READ_BUDGET_S = 90.0
 
 # The input-field sets of the DSPy signatures one summarizer dispatch runs, as
 # the served modules declare them. The router logs each request's rendered user
@@ -107,12 +120,27 @@ _PROMPT_FIELD = re.compile(r"\[\[ ## ([a-zA-Z0-9_]+) ## \]\]")
 
 @dataclass(frozen=True)
 class RouterPolicy:
-    """What the chart's routing section binds, keyed the way the router reports."""
+    """What the chart's routing section binds, keyed the way the router reports.
+
+    Every decision the router can name - the auto alias's and every recipe's.
+    """
 
     role_by_tier: dict[str, str]
     tier_by_decision: dict[str, str]
     model_by_decision: dict[str, str]
-    default_decision_by_tier: dict[str, str]
+    decisions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DeployedRouting:
+    """What the ConfigMaps the cluster runs bind each catalog model to."""
+
+    cluster_by_model: dict[str, str]
+    default_cluster: str
+    served_model_by_catalog: dict[str, str]
+
+    def cluster_for(self, catalog_model: str) -> str:
+        return self.cluster_by_model.get(catalog_model, self.default_cluster)
 
 
 def _free_port() -> int:
@@ -122,42 +150,96 @@ def _free_port() -> int:
 
 
 def _router_policy() -> RouterPolicy:
-    """Read the chart's own role bindings and decisions.
+    """Read the chart's own role bindings and decisions, recipes included.
 
-    The Go templating in the model blocks is irrelevant to the routing section,
-    which is literal.
+    The Go templating in the model blocks is irrelevant to the routing
+    sections, which are literal.
     """
     text = "\n".join(
         line
         for line in CHART_ROUTER_CONFIG.read_text().splitlines()
         if "{{" not in line
     )
-    routing = yaml.safe_load(text)["routing"]
+    document = yaml.safe_load(text)
+    routing = document["routing"]
     tier_by_role = {
         binding["role"]: subject["name"]
         for binding in routing["signals"]["role_bindings"]
         for subject in binding["subjects"]
         if subject["kind"] == "Group"
     }
+    decisions = list(routing["decisions"]) + [
+        decision
+        for recipe in document.get("recipes", [])
+        for decision in recipe["routing"]["decisions"]
+    ]
     tier_by_decision: dict[str, str] = {}
     model_by_decision: dict[str, str] = {}
-    default_decision_by_tier: dict[str, str] = {}
-    for decision in routing["decisions"]:
+    for decision in decisions:
         conditions = decision["rules"]["conditions"]
         roles = {c["name"] for c in conditions if c["type"] == "authz"}
-        if not roles:
-            continue
         (role,) = roles
         name = decision["name"]
         tier_by_decision[name] = tier_by_role[role]
-        model_by_decision[name] = decision["modelRefs"][0]["model"]
-        if len(conditions) == 1:
-            default_decision_by_tier[tier_by_role[role]] = name
+        (ref,) = decision["modelRefs"]
+        model_by_decision[name] = ref["model"]
     return RouterPolicy(
         role_by_tier={tier: role for role, tier in tier_by_role.items()},
         tier_by_decision=tier_by_decision,
         model_by_decision=model_by_decision,
-        default_decision_by_tier=default_decision_by_tier,
+        decisions=tuple(tier_by_decision),
+    )
+
+
+def _kubectl(*args: str, timeout: int = 60) -> str:
+    proc = subprocess.run(
+        ["kubectl", "--context", KUBECTL_CONTEXT, "-n", NAMESPACE, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"kubectl {' '.join(args)} failed (rc={proc.returncode}): "
+            f"{proc.stderr.strip()[:400]}"
+        )
+    return proc.stdout
+
+
+def _deployed_configmap(name: str, key: str) -> str:
+    return _kubectl(
+        "get",
+        "configmap",
+        name,
+        "-o",
+        "jsonpath={.data." + key.replace(".", r"\.") + "}",
+    )
+
+
+def _deployed_routing() -> DeployedRouting:
+    """The clusters and served models the cluster's own ConfigMaps bind."""
+    envoy = yaml.safe_load(_deployed_configmap(f"{_ROUTER_SVC}-envoy", "envoy.yaml"))
+    listener = envoy["static_resources"]["listeners"][0]
+    hcm = listener["filter_chains"][0]["filters"][0]["typed_config"]
+    (vhost,) = hcm["route_config"]["virtual_hosts"]
+    cluster_by_model: dict[str, str] = {}
+    default_cluster: str | None = None
+    for route in vhost["routes"]:
+        headers = route["match"].get("headers", [])
+        if not headers:
+            default_cluster = route["route"]["cluster"]
+            continue
+        (header,) = headers
+        cluster_by_model[header["string_match"]["exact"]] = route["route"]["cluster"]
+    assert default_cluster is not None, vhost["routes"]
+    config = yaml.safe_load(_deployed_configmap(f"{_ROUTER_SVC}-config", "config.yaml"))
+    return DeployedRouting(
+        cluster_by_model=cluster_by_model,
+        default_cluster=default_cluster,
+        served_model_by_catalog={
+            model["name"]: model["provider_model_id"]
+            for model in config["providers"]["models"]
+        },
     )
 
 
@@ -232,41 +314,32 @@ def _counter(samples: dict, name: str, **labels: str) -> int:
     return int(samples.get((name, tuple(sorted(labels.items()))), 0.0))
 
 
-def _router_entries(start: datetime, end: datetime) -> list[dict]:
-    """The router's own JSON log lines stamped inside ``[start, end]``."""
-    since = (start - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    proc = subprocess.run(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "-n",
-            NAMESPACE,
-            "logs",
-            _ROUTER_DEPLOY,
-            f"--since-time={since}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
+def _router_stamp(entry: dict) -> datetime:
+    return datetime.strptime(entry["ts"], "%Y-%m-%dT%H:%M:%S.%f").replace(
+        tzinfo=timezone.utc
     )
-    if proc.returncode != 0:
-        raise AssertionError(
-            f"reading {_ROUTER_DEPLOY} logs since {since} failed "
-            f"(rc={proc.returncode}): {proc.stderr.strip()[:400]}"
-        )
+
+
+def _envoy_stamp(entry: dict) -> datetime:
+    return datetime.fromisoformat(entry["ts"].replace("Z", "+00:00"))
+
+
+def _json_log_entries(
+    deploy: str, start: datetime, end: datetime, stamp: Callable[[dict], datetime]
+) -> list[dict]:
+    """A deployment's JSON log lines stamped inside ``[start, end]``."""
+    since = (start - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stdout = _kubectl("logs", deploy, f"--since-time={since}", timeout=180)
     entries = []
-    for raw in proc.stdout.splitlines():
+    for raw in stdout.splitlines():
         if not raw.startswith("{"):
             continue
         try:
             entry = json.loads(raw)
-            stamp = datetime.strptime(entry["ts"], "%Y-%m-%dT%H:%M:%S.%f").replace(
-                tzinfo=timezone.utc
-            )
+            at = stamp(entry)
         except (json.JSONDecodeError, KeyError, ValueError):
             continue
-        if start <= stamp <= end:
+        if start <= at <= end:
             entries.append(entry)
     return entries
 
@@ -278,6 +351,8 @@ class RoutedTraffic:
     roles: list[tuple[str, str]]
     prompt_by_request: dict[str, str]
     call_by_request: dict[str, tuple[str, str]]
+    decision_counts: Counter
+    latency_ms_by_request: dict[str, int]
     cache_hits: int
 
 
@@ -285,6 +360,8 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     roles: list[tuple[str, str]] = []
     prompt_by_request: dict[str, str] = {}
     call_by_request: dict[str, tuple[str, str]] = {}
+    decision_counts: Counter = Counter()
+    latency_ms_by_request: dict[str, int] = {}
     cache_hits = 0
     pending_prompt: str | None = None
     for entry in entries:
@@ -298,9 +375,15 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
                 entry["decision"],
                 entry["selected_model"],
             )
+            decision_counts[entry["decision"]] += 1
             continue
-        if event == "llm_usage" and entry.get("cache_hit"):
-            cache_hits += 1
+        if event == "llm_usage":
+            if entry.get("cache_hit"):
+                cache_hits += 1
+            elif "completion_latency_ms" in entry:
+                latency_ms_by_request[entry["request_id"]] = int(
+                    entry["completion_latency_ms"]
+                )
             continue
         updated = _CACHE_UPDATED.match(message)
         if updated is not None:
@@ -312,7 +395,67 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
         if matched is not None:
             for role in matched.group("roles").split(","):
                 roles.append((matched.group("user"), role.strip()))
-    return RoutedTraffic(roles, prompt_by_request, call_by_request, cache_hits)
+    return RoutedTraffic(
+        roles,
+        prompt_by_request,
+        call_by_request,
+        decision_counts,
+        latency_ms_by_request,
+        cache_hits,
+    )
+
+
+def _envoy_calls(entries: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
+    """request_id -> (cluster, duration_ms) for every completion Envoy proxied."""
+    cluster_by_request: dict[str, str] = {}
+    duration_ms_by_request: dict[str, int] = {}
+    for entry in entries:
+        if not str(entry.get("path", "")).endswith("/chat/completions"):
+            continue
+        request_id = entry.get("request_id")
+        if not request_id or not entry.get("cluster"):
+            continue
+        cluster_by_request[request_id] = entry["cluster"]
+        duration_ms_by_request[request_id] = int(entry["duration_ms"])
+    return cluster_by_request, duration_ms_by_request
+
+
+def _served_models(
+    phoenix_client, project: str, start: datetime, end: datetime, expected: set[str]
+) -> tuple[set[str], float]:
+    """The served-model values stamped on this tenant's spans in the window.
+
+    Polls until ``expected`` is observed or the read budget lapses, and
+    returns what it saw with the seconds it took; a Phoenix read that keeps
+    failing raises with the last error rather than reading as no spans.
+    """
+    column = f"attributes.{LLM_SERVED_MODEL_ATTRIBUTE}"
+    started = time.monotonic()
+    deadline = started + SERVED_MODEL_READ_BUDGET_S
+    found: set[str] = set()
+    last_error: Exception | None = None
+    while True:
+        try:
+            frame = phoenix_client.spans.get_spans_dataframe(
+                project_identifier=project,
+                start_time=start,
+                end_time=end + timedelta(seconds=SERVED_MODEL_READ_BUDGET_S),
+                timeout=30,
+            )
+            last_error = None
+            if frame is not None and column in frame.columns:
+                found = {str(value) for value in frame[column].dropna()}
+        except Exception as exc:  # noqa: BLE001 - re-raised at the deadline
+            last_error = exc
+        if found == expected or time.monotonic() >= deadline:
+            break
+        time.sleep(2)
+    if last_error is not None:
+        raise AssertionError(
+            f"Phoenix read of {project!r} kept failing for "
+            f"{SERVED_MODEL_READ_BUDGET_S}s: {type(last_error).__name__}: {last_error}"
+        )
+    return found, time.monotonic() - started
 
 
 def _set_tier(tenant_id: str, tier: str) -> dict:
@@ -355,12 +498,13 @@ def test_the_bootstrap_declares_the_seeded_tenant_tier():
     }
 
 
-def _dispatch_one_query(tenant_id: str, query: str) -> None:
-    """One real query through the production dispatch route.
+def _dispatch_one_query(tenant_id: str, query: str) -> float:
+    """One real query through the production dispatch route; seconds it took.
 
     Body shape is the route's ``AgentTask``: agent_name + query, tenant inside
     ``context``.
     """
+    started = time.monotonic()
     with httpx.Client(timeout=300.0) as client:
         response = client.post(
             f"{RUNTIME}/agents/{AGENT}/process",
@@ -371,11 +515,12 @@ def _dispatch_one_query(tenant_id: str, query: str) -> None:
             },
         )
     assert response.status_code == 200, response.text[:600]
+    return time.monotonic() - started
 
 
 @dataclass(frozen=True)
 class Leg:
-    """One dispatch, as the router's counters and its log both describe it."""
+    """One dispatch, as the router, Envoy and the runtime's spans describe it."""
 
     deltas: dict[str, int]
     expected_deltas: dict[str, int]
@@ -384,89 +529,168 @@ class Leg:
     mine_by_role: Counter
     decisions: list[str]
     selected_models: list[str]
+    clusters: list[str]
+    served_models: set[str]
     prompt_fields: set[frozenset[str]]
+    timings: dict
 
     def __str__(self) -> str:
         return (
             f"counter deltas {self.deltas} vs {self.expected_deltas} derived from "
             f"the log; this tenant's routed calls {self.mine_by_role} -> "
-            f"decisions {self.decisions} on models {self.selected_models} with "
+            f"decisions {self.decisions} on models {self.selected_models} via "
+            f"clusters {self.clusters}, served models {sorted(self.served_models)}, "
             f"signature inputs {sorted(sorted(f) for f in self.prompt_fields)}; "
             f"router response-cache hits {self.cache_hit_delta} counted / "
-            f"{self.logged_cache_hits} logged"
+            f"{self.logged_cache_hits} logged; timings {self.timings}"
         )
 
 
 def _run_leg(
     metrics_url: str,
+    phoenix_client,
     tenant_id: str,
     canonical: str,
     query: str,
     policy: RouterPolicy,
+    routing: DeployedRouting,
+    expected_served: set[str] | None,
 ) -> Leg:
-    tiers = sorted(ROUTER_TIERS)
     start = datetime.now(timezone.utc)
     before = _samples(metrics_url)
-    _dispatch_one_query(tenant_id, query)
+    dispatch_s = _dispatch_one_query(tenant_id, query)
     after = _samples(metrics_url)
     end = datetime.now(timezone.utc)
 
-    traffic = _routed_traffic(_router_entries(start, end))
-    mine = {
+    traffic = _routed_traffic(
+        _json_log_entries(_ROUTER_DEPLOY, start, end, _router_stamp)
+    )
+    cluster_by_request, duration_by_request = _envoy_calls(
+        _json_log_entries(_ENVOY_DEPLOY, start, end, _envoy_stamp)
+    )
+    mine = sorted(
         request_id
         for request_id, prompt in traffic.prompt_by_request.items()
         if query in prompt
-    }
-    calls = [
-        traffic.call_by_request[r] for r in sorted(mine) if r in traffic.call_by_request
-    ]
-    role_counts = Counter(role for _, role in traffic.roles)
-
-    def decision(tier: str) -> str:
-        return policy.default_decision_by_tier[tier]
+    )
+    calls = [traffic.call_by_request[r] for r in mine if r in traffic.call_by_request]
+    selected_models = [model for _, model in calls]
+    if expected_served is None:
+        expected_served = {routing.served_model_by_catalog[m] for m in selected_models}
+    project = TelemetryConfig().get_project_name(canonical)
+    served, served_read_s = _served_models(
+        phoenix_client, project, start, end, expected_served
+    )
 
     return Leg(
         deltas={
-            tier: _counter(
-                after, "llm_decision_match_total", decision_name=decision(tier)
+            decision: _counter(
+                after, "llm_decision_match_total", decision_name=decision
             )
-            - _counter(before, "llm_decision_match_total", decision_name=decision(tier))
-            for tier in tiers
+            - _counter(before, "llm_decision_match_total", decision_name=decision)
+            for decision in policy.decisions
         },
         expected_deltas={
-            tier: role_counts[policy.role_by_tier[tier]] for tier in tiers
+            decision: traffic.decision_counts[decision] for decision in policy.decisions
         },
         cache_hit_delta=sum(
             _counter(
                 after,
                 "llm_cache_plugin_hits_total",
-                decision_name=decision(tier),
+                decision_name=decision,
                 plugin_type="response_cache",
             )
             - _counter(
                 before,
                 "llm_cache_plugin_hits_total",
-                decision_name=decision(tier),
+                decision_name=decision,
                 plugin_type="response_cache",
             )
-            for tier in tiers
+            for decision in policy.decisions
         ),
         logged_cache_hits=traffic.cache_hits,
         mine_by_role=Counter(role for user, role in traffic.roles if user == canonical),
         decisions=[name for name, _ in calls],
-        selected_models=[model for _, model in calls],
+        selected_models=selected_models,
+        clusters=[cluster_by_request[r] for r in mine if r in cluster_by_request],
+        served_models=served,
         prompt_fields={
             frozenset(_PROMPT_FIELD.findall(traffic.prompt_by_request[r])) for r in mine
+        },
+        timings={
+            "dispatch_s": round(dispatch_s, 2),
+            "backend_completion_ms": [
+                traffic.latency_ms_by_request.get(r) for r in mine
+            ],
+            "envoy_duration_ms": [duration_by_request.get(r) for r in mine],
+            "served_model_read_s": round(served_read_s, 2),
         },
     )
 
 
-def test_the_stored_tier_steers_the_deployed_router(router_metrics_url):
+def _leg_verdict(
+    leg: Leg,
+    *,
+    tier: str,
+    repeat: bool,
+    policy: RouterPolicy,
+    routing: DeployedRouting,
+    routed: int,
+    expected_served: set[str],
+) -> list[str]:
+    """Every way the leg departs from what the tier and the deployed routing
+    require; empty when the leg is exactly as expected."""
+    problems: list[str] = []
+
+    def check(name: str, actual, expected) -> None:
+        if actual != expected:
+            problems.append(f"{name}: {actual!r} != {expected!r}")
+
+    check(
+        "this tenant's authz matches",
+        leg.mine_by_role,
+        Counter() if repeat else Counter({policy.role_by_tier[tier]: routed}),
+    )
+    check(
+        "decision tiers",
+        [policy.tier_by_decision[name] for name in leg.decisions],
+        [] if repeat else [tier] * routed,
+    )
+    check(
+        "selected models",
+        leg.selected_models,
+        [policy.model_by_decision[name] for name in leg.decisions],
+    )
+    check(
+        "clusters",
+        leg.clusters,
+        [routing.cluster_for(model) for model in leg.selected_models],
+    )
+    check("served models", leg.served_models, expected_served)
+    check(
+        "signature inputs",
+        leg.prompt_fields,
+        set() if repeat else set(DISPATCH_SIGNATURE_INPUTS),
+    )
+    check("counter deltas", leg.deltas, leg.expected_deltas)
+    check("response-cache hits", leg.cache_hit_delta, leg.logged_cache_hits)
+    return problems
+
+
+def test_the_stored_tier_steers_the_deployed_router(
+    router_metrics_url, phoenix_client_session
+):
     """Each tier set through the admin route changes the decision the deployed
-    router matches for the next query on the production dispatch path, and a
-    repeated query never reaches the router at all."""
+    router matches, the cluster Envoy dials and the model that answers, for
+    the next query on the production dispatch path; a repeated query never
+    reaches the router at all."""
     policy = _router_policy()
-    assert set(policy.default_decision_by_tier) == set(ROUTER_TIERS)
+    routing = _deployed_routing()
+    assert set(policy.tier_by_decision.values()) == set(ROUTER_TIERS)
+    assert set(routing.cluster_by_model) < set(routing.served_model_by_catalog)
+    assert len(set(routing.served_model_by_catalog.values())) == len(
+        routing.served_model_by_catalog
+    )
 
     tenant_id = unique_id("tier")
     register_tenant_and_wait(tenant_id)
@@ -478,26 +702,140 @@ def test_the_stored_tier_steers_the_deployed_router(router_metrics_url):
     legs.append(legs[-1])
 
     routed = len(DISPATCH_SIGNATURE_INPUTS)
+    timings: list[dict] = []
+    previous: Leg | None = None
     for index, (tier, query) in enumerate(legs):
         repeat = index == len(legs) - 1
         assert _set_tier(tenant_id, tier) == {
             "tenant_id": canonical,
             "tier": tier,
         }
-        leg = _run_leg(router_metrics_url, tenant_id, canonical, query, policy)
-        where = f"leg {index} on tier {tier!r} (repeat={repeat}): {leg}"
+        expected_served = previous.served_models if repeat and previous else None
+        leg = _run_leg(
+            router_metrics_url,
+            phoenix_client_session,
+            tenant_id,
+            canonical,
+            query,
+            policy,
+            routing,
+            expected_served,
+        )
+        timings.append({"leg": index, "tier": tier, "repeat": repeat, **leg.timings})
+        print(f"\nTIER LEG TIMING {json.dumps(timings[-1])}")
+        verdict = _leg_verdict(
+            leg,
+            tier=tier,
+            repeat=repeat,
+            policy=policy,
+            routing=routing,
+            routed=routed,
+            expected_served=(
+                expected_served
+                if expected_served is not None
+                else {routing.served_model_by_catalog[m] for m in leg.selected_models}
+            ),
+        )
+        assert verdict == [], f"leg {index} on tier {tier!r} (repeat={repeat}): {leg}"
+        if not repeat:
+            assert leg.served_models == {
+                routing.served_model_by_catalog[policy.model_by_decision[name]]
+                for name in leg.decisions
+            }, f"leg {index}: {leg}"
+        previous = leg
+    print(f"\nTIER LEG TIMINGS {json.dumps(timings)}")
 
-        assert leg.mine_by_role == (
-            Counter() if repeat else Counter({policy.role_by_tier[tier]: routed})
-        ), where
-        assert [policy.tier_by_decision[name] for name in leg.decisions] == (
-            [] if repeat else [tier] * routed
-        ), where
-        assert leg.selected_models == [
-            policy.model_by_decision[name] for name in leg.decisions
-        ], where
-        assert leg.prompt_fields == (
-            set() if repeat else set(DISPATCH_SIGNATURE_INPUTS)
-        ), where
-        assert leg.deltas == leg.expected_deltas, where
-        assert leg.cache_hit_delta == leg.logged_cache_hits, where
+
+_SYNTHETIC_POLICY = RouterPolicy(
+    role_by_tier={"pro": "pro_tier", "default": "base_tier"},
+    tier_by_decision={
+        "pro-default": "pro",
+        "classification-pro": "pro",
+        "base-default": "default",
+        "classification-base": "default",
+    },
+    model_by_decision={
+        "pro-default": "pro-reasoning",
+        "classification-pro": "basic-chat",
+        "base-default": "basic-chat",
+        "classification-base": "basic-chat",
+    },
+    decisions=(
+        "pro-default",
+        "classification-pro",
+        "base-default",
+        "classification-base",
+    ),
+)
+_SYNTHETIC_ROUTING = DeployedRouting(
+    cluster_by_model={"pro-reasoning": "llm_teacher"},
+    default_cluster="llm_upstream",
+    served_model_by_catalog={
+        "basic-chat": "student-model",
+        "pro-reasoning": "teacher-model",
+    },
+)
+
+
+def _synthetic_pro_leg() -> Leg:
+    """A pro leg exactly as the deployed routing must produce it."""
+    deltas = {
+        "pro-default": 1,
+        "classification-pro": 1,
+        "base-default": 0,
+        "classification-base": 0,
+    }
+    return Leg(
+        deltas=deltas,
+        expected_deltas=dict(deltas),
+        cache_hit_delta=0,
+        logged_cache_hits=0,
+        mine_by_role=Counter({"pro_tier": 2}),
+        decisions=["classification-pro", "pro-default"],
+        selected_models=["basic-chat", "pro-reasoning"],
+        clusters=["llm_upstream", "llm_teacher"],
+        served_models={"student-model", "teacher-model"},
+        prompt_fields=set(DISPATCH_SIGNATURE_INPUTS),
+        timings={},
+    )
+
+
+def _synthetic_verdict(leg: Leg) -> list[str]:
+    return _leg_verdict(
+        leg,
+        tier="pro",
+        repeat=False,
+        policy=_SYNTHETIC_POLICY,
+        routing=_SYNTHETIC_ROUTING,
+        routed=2,
+        expected_served={"student-model", "teacher-model"},
+    )
+
+
+def test_the_verdict_accepts_a_pro_leg_served_as_the_chart_binds():
+    assert _synthetic_verdict(_synthetic_pro_leg()) == []
+
+
+def test_the_verdict_rejects_a_pro_call_dialled_to_the_student_cluster():
+    leg = replace(_synthetic_pro_leg(), clusters=["llm_upstream", "llm_upstream"])
+    assert _synthetic_verdict(leg) == [
+        "clusters: ['llm_upstream', 'llm_upstream'] != ['llm_upstream', 'llm_teacher']"
+    ]
+
+
+def test_the_verdict_rejects_a_pro_call_answered_by_the_student_model():
+    leg = replace(_synthetic_pro_leg(), served_models={"student-model"})
+    assert _synthetic_verdict(leg) == [
+        "served models: {'student-model'} != {'student-model', 'teacher-model'}"
+    ]
+
+
+def test_the_verdict_rejects_a_decision_the_counters_did_not_record():
+    leg = replace(
+        _synthetic_pro_leg(), deltas={**_synthetic_pro_leg().deltas, "pro-default": 0}
+    )
+    assert _synthetic_verdict(leg) == [
+        "counter deltas: {'pro-default': 0, 'classification-pro': 1, "
+        "'base-default': 0, 'classification-base': 0} != {'pro-default': 1, "
+        "'classification-pro': 1, 'base-default': 0, 'classification-base': 0}"
+    ]
