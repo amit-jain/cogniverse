@@ -4,7 +4,8 @@
 Used by the tenant-provisioning WorkflowTemplate as a cold-bootstrap step that
 talks directly to the data-plane backends (Vespa/Phoenix), so it does not need
 the runtime API. Schema deployment is handled separately by
-``deploy_json_schema.py``; this script covers the memory and telemetry steps.
+``deploy_json_schema.py``; this script covers the memory, telemetry and
+router-tier steps.
 """
 
 from __future__ import annotations
@@ -36,7 +37,24 @@ def init_telemetry(tenant_id: str) -> None:
         pass
 
 
-_STEPS = {"memory": init_memory, "telemetry": init_telemetry}
+def init_tier(tenant_id: str, tier: str) -> str:
+    """Store the tenant's semantic-router tier, the seam the admin route writes.
+
+    The tier is validated before any store is built, so a value outside the
+    router's vocabulary fails with the vocabulary and never touches a backend.
+    Returns the stored tier.
+    """
+    from cogniverse_foundation.config.tenant_tiers import (
+        set_tenant_tier,
+        validate_router_tier,
+    )
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    validate_router_tier(tier)
+    return set_tenant_tier(create_default_config_manager(), tenant_id, tier)
+
+
+_STEPS = {"memory": init_memory, "telemetry": init_telemetry, "tier": init_tier}
 
 
 def main() -> int:
@@ -45,8 +63,17 @@ def main() -> int:
     parser.add_argument(
         "--step", required=True, choices=sorted(_STEPS), help="Provisioning step"
     )
+    parser.add_argument("--tier", help="Router tier to store; required by --step tier")
     args = parser.parse_args()
-    _STEPS[args.step](args.tenant_id)
+    if args.step == "tier":
+        if not args.tier:
+            parser.error("--step tier requires --tier")
+        try:
+            init_tier(args.tenant_id, args.tier)
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        _STEPS[args.step](args.tenant_id)
     print(f"Provisioned {args.step} for tenant {args.tenant_id}")
     return 0
 

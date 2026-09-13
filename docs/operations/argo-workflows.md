@@ -286,7 +286,7 @@ Cold-bootstrap a new tenant's full backend footprint (K8s namespace, Vespa schem
 
 ### How it works
 
-The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisioning-pipeline` entrypoint) runs nine sequential steps:
+The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisioning-pipeline` entrypoint) runs ten sequential steps:
 
 1. `validate-tenant` — regex-checks the tenant ID format (lowercase alphanumeric + underscores).
 2. `create-namespace` — creates a `cogniverse-<tenant-id>` `Namespace` (`resource: action: create`).
@@ -295,15 +295,17 @@ The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisi
 5. `setup-resource-quotas` — creates a `ResourceQuota` in the tenant namespace from the `cpu-quota` / `memory-quota` / `storage-quota` parameters.
 6. `create-storage` — creates a `PersistentVolumeClaim` in the tenant namespace sized to `storage-quota`.
 7. `initialize-memory` — runs `scripts/provision_tenant.py --step memory --tenant-id <id>`.
-8. `verify-tenant` — checks the namespace, each schema, and the PVC exist.
-9. `notify-completion` — logs a completion summary (webhook call commented out).
+8. `set-tier` — runs `scripts/provision_tenant.py --step tier --tier <tier> --tenant-id <id>` with the `tier` parameter (default `default`).
+9. `verify-tenant` — checks the namespace, each schema, and the PVC exist.
+10. `notify-completion` — logs a completion summary (webhook call commented out).
 
-`scripts/provision_tenant.py` (used by steps 4 and 7) supports two `--step` values:
+`scripts/provision_tenant.py` (used by steps 4, 7 and 8) supports three `--step` values:
 
 | Step | What it does |
 |---|---|
 | `memory` | Creates the tenant's Mem0 memory schema via `Mem0MemoryManager` + `lazy_init_memory` |
 | `telemetry` | Emits a probe span so the tenant's Phoenix project is created |
+| `tier` | Stores the tenant's semantic-router tier (`--tier`, one of `ROUTER_TIERS`) via `set_tenant_tier`, the seam `PUT /admin/tenants/{id}/tier` writes |
 
 If a runtime is already live for the target cluster, the lighter-weight alternative is to skip this Argo template and drive the same two `provision_tenant.py` steps plus schema deployment through the runtime admin API — see [Register the tenant and deploy schemas](#register-the-tenant-and-deploy-schemas) below.
 
@@ -327,6 +329,9 @@ uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step memory
 
 # Create telemetry project
 uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step telemetry
+
+# Store the router tier
+uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step tier --tier pro
 ```
 
 ### Register the tenant and deploy schemas

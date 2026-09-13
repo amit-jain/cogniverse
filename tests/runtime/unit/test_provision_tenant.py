@@ -118,3 +118,49 @@ def test_cli_help_loads():
     )
     assert proc.returncode == 0
     assert "--tenant-id" in proc.stdout and "--step" in proc.stdout
+
+
+class TestTheTierStep:
+    """``--step tier`` stores the tenant's router tier through the same seam
+    the admin route uses; the vocabulary is checked before any store exists."""
+
+    def test_help_lists_the_tier_argument(self):
+        proc = subprocess.run(
+            [sys.executable, str(_SCRIPT), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 0
+        assert "--tier" in proc.stdout
+        assert "tier" in proc.stdout.split("--step")[1]
+
+    def test_the_tier_step_without_a_tier_is_an_argument_error(self):
+        proc = subprocess.run(
+            [sys.executable, str(_SCRIPT), "--tenant-id", "acme", "--step", "tier"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 2
+        assert "--step tier requires --tier" in proc.stderr
+
+    def test_a_tier_outside_the_vocabulary_is_refused_before_any_store(
+        self, monkeypatch
+    ):
+        from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+
+        pt = _load()
+
+        def _no_store():
+            raise AssertionError("the store must not be built for a refused tier")
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.create_default_config_manager",
+            _no_store,
+        )
+        with pytest.raises(ValueError) as raised:
+            pt.init_tier("acme", "platinum")
+        assert str(raised.value) == (
+            f"Unknown router tier 'platinum'. Valid tiers: {sorted(ROUTER_TIERS)}"
+        )
