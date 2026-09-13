@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import dspy
 import pytest
 
 from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -32,6 +33,7 @@ from cogniverse_runtime.optimization_cli import (
     _profile_selection_pairs,
     _query_enhancement_pairs,
 )
+from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 
 pytestmark = pytest.mark.integration
 
@@ -276,6 +278,8 @@ async def test_orchestration_span_carries_canonical_workflow(real_telemetry):
     results = {"search_agent": {"status": "success", "results": []}}
 
     with (
+        recorded_completion_lm(RECORDED_REFUSAL) as lm,
+        dspy.context(lm=lm),
         patch.object(agent, "_create_plan", return_value=plan),
         patch.object(agent, "_execute_plan", return_value=results),
     ):
