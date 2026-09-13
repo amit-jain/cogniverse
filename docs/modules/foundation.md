@@ -518,10 +518,21 @@ When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLME
 |----------|-------------|
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
 | `apply_semantic_routing(endpoint, config, tenant_id)` | Return a routed copy of `endpoint`, or the original when disabled |
-| `create_routed_lm(endpoint, config, tenant_id)` | `apply_semantic_routing` + `create_dspy_lm` in one call |
+| `create_routed_lm(endpoint, config, tenant_id, tier)` | `apply_semantic_routing` + the LM in one call; routed, the LM is a `RoutedLM` |
 | `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
 | `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents — the entry point agents use |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |
+
+A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniverse_foundation.config.routed_lm`, chained from the litellm error and carrying `status`, `router_code` (the provider's error `code`), `tenant_id`, `tier` and `routed_model`. The router passes the upstream status through, so the class follows it:
+
+| Status | Raised | Retried |
+|--------|--------|---------|
+| 401, 403 | `UpstreamAuthRejected` | never |
+| 429 | `UpstreamRateLimited` | up to `num_retries` |
+| 5xx, reset, timeout | `UpstreamUnavailable` | up to `num_retries` |
+| any other 4xx | `RouterDecodeFailed` | never |
+
+`RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
 
 ### Configuration Scopes
 

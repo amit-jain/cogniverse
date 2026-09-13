@@ -129,7 +129,7 @@ def _remove_network(name: str, *, attempts: int = 10, pause_s: float = 1.0) -> N
 
 @pytest.fixture(scope="module")
 def semantic_router_stack(tmp_path_factory):
-    """Yield ``{"base_url", "host_port"}`` for a live Envoy->SR->stub chain."""
+    """Yield the base URL, host port and container names of a live Envoy->SR->stub chain."""
     uid = f"{os.getpid()}-{int(time.time() * 1000)}"
     net = f"cog-sr-net-{uid}"
     stub = f"cog-sr-stub-{uid}"
@@ -292,6 +292,7 @@ def semantic_router_stack(tmp_path_factory):
             "base_url": base_url,
             "host_port": host_port,
             "router_container": router,
+            "stub_container": stub,
         }
     finally:
         for kind, name in reversed(created):
