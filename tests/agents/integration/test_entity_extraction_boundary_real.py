@@ -21,6 +21,9 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionOutput,
     EntityMention,
 )
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    SpaCyDependencyAnalyzer,
+)
 from cogniverse_foundation.dspy import signature_response_format
 from cogniverse_foundation.telemetry.span_contract import read_span_io
 
@@ -340,7 +343,11 @@ async def test_confidence_is_served_only_by_the_path_that_scores(entity_agent):
 async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monkeypatch):
     capture = _telemetry_capture()
     entity_agent.set_telemetry_manager(capture.manager)
-    monkeypatch.setattr(entity_agent, "_spacy_analyzer", None)
+    monkeypatch.setattr(
+        entity_agent,
+        "_spacy_analyzer",
+        SpaCyDependencyAnalyzer(model_name="absent_pipeline"),
+    )
 
     queries = [
         "Barack Obama in Chicago",
@@ -624,7 +631,7 @@ async def test_served_student_returns_the_exact_typed_entities(ensure_host_ollam
     agent.bind_config_manager(ConfigManager(store=store))
     # No fast path: a DSPy failure raises here instead of being served by GLiNER.
     agent._gliner_extractor = None
-    agent._spacy_analyzer = None
+    agent._spacy_analyzer = SpaCyDependencyAnalyzer(model_name="absent_pipeline")
     agent.set_telemetry_manager(_telemetry_capture().manager)
 
     async def _one(index: int):
@@ -728,7 +735,7 @@ async def test_served_student_types_an_organization_it_happens_at_as_organizatio
         agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19152)
     agent.bind_config_manager(ConfigManager(store=store))
     agent._gliner_extractor = None
-    agent._spacy_analyzer = None
+    agent._spacy_analyzer = SpaCyDependencyAnalyzer(model_name="absent_pipeline")
     agent.set_telemetry_manager(_telemetry_capture().manager)
 
     async def _one(index: int):

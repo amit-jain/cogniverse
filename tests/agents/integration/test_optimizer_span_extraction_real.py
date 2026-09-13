@@ -21,6 +21,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    SpaCyDependencyAnalyzer,
+)
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.span_contract import read_span_io
@@ -120,7 +123,7 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
     store.initialize()
     agent.bind_config_manager(ConfigManager(store=store))
     agent._gliner_extractor = None
-    agent._spacy_analyzer = None
+    agent._spacy_analyzer = SpaCyDependencyAnalyzer(model_name="absent_pipeline")
     agent.set_telemetry_manager(real_telemetry)
 
     mock_prediction = MagicMock()
