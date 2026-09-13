@@ -233,6 +233,9 @@ def create_routed_lm(
         cache_tenant_id=tenant_id,
         tier=tier,
         vision_model=config.vision_model,
+        student_model=(
+            config.classification_model if routed.model == config.routed_model else None
+        ),
         **dspy_lm_kwargs(routed),
     )
 

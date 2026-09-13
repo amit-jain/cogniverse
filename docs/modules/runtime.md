@@ -934,6 +934,10 @@ Each dispatch binds the canonical request tenant through
 `cogniverse_foundation.telemetry.tenant_context.tenant_span_context`, so DSPy
 spans reach that tenant's project. The enclosing tenant is restored when the
 call returns or raises; concurrent dispatches keep their own context.
+If a pro LM call uses the student after a teacher outage, the dispatch response
+also carries `tier_degraded: pro_model_unavailable`, `upstream_status`, and
+`upstream_exception_type`. These fields come from that request's LM calls,
+including those executed on worker threads.
 
 #### Answer grounding
 

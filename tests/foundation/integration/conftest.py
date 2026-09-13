@@ -129,7 +129,7 @@ def _remove_network(name: str, *, attempts: int = 10, pause_s: float = 1.0) -> N
 
 
 @pytest.fixture(scope="module")
-def semantic_router_stack(tmp_path_factory):
+def semantic_router_stack(tmp_path_factory, request):
     """Yield the base URL, host port and container names of a live Envoy->SR->stub chain."""
     uid = f"{os.getpid()}-{int(time.time() * 1000)}"
     net = f"cog-sr-net-{uid}"
@@ -232,7 +232,10 @@ def semantic_router_stack(tmp_path_factory):
         # Envoy front proxy — the OpenAI-compatible entry point, running the
         # chart's data plane with the local peers substituted in.
         envoy_config = tmp_path_factory.mktemp("sr-envoy") / "envoy.yaml"
-        envoy_config.write_text(render_envoy_config())
+        parameters = getattr(request, "param", {})
+        envoy_config.write_text(
+            render_envoy_config(teacher_port=parameters.get("teacher_port", 8000))
+        )
         r = _docker(
             "run",
             "-d",
@@ -303,6 +306,7 @@ def semantic_router_stack(tmp_path_factory):
             "host_port": host_port,
             "router_container": router,
             "stub_container": stub,
+            "teacher_container": teacher,
         }
     finally:
         for kind, name in reversed(created):

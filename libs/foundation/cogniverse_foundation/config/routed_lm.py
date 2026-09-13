@@ -23,15 +23,27 @@ inputs are what travels with the error.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Optional
 
 import openai
+from opentelemetry import trace
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.request_body import (
-    http_status_of, messages_from, request_body_metrics,
+    http_status_of,
+    messages_from,
+    request_body_metrics,
 )
 from cogniverse_foundation.config.semantic_router import record_served_model
+from cogniverse_foundation.telemetry.span_contract import (
+    LLM_TIER_DEGRADED_ATTRIBUTE,
+    LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE,
+    LLM_UPSTREAM_STATUS_ATTRIBUTE,
+    PRO_MODEL_UNAVAILABLE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +163,42 @@ def classify_routed_failure(
 RETRYABLE = (UpstreamRateLimited, UpstreamUnavailable)
 
 
+_request_degradation: ContextVar[dict[str, Any] | None] = ContextVar(
+    "routed_lm_degradation", default=None
+)
+
+
+@contextmanager
+def tier_degradation_context() -> Iterator[dict[str, Any]]:
+    """Collect degradation fields for one response, including worker-thread calls."""
+    metadata: dict[str, Any] = {}
+    token = _request_degradation.set(metadata)
+    try:
+        yield metadata
+    finally:
+        _request_degradation.reset(token)
+
+
+def _record_degradation(failure: RoutedLMCallFailed) -> dict[str, Any]:
+    metadata = {
+        LLM_TIER_DEGRADED_ATTRIBUTE: PRO_MODEL_UNAVAILABLE,
+        LLM_UPSTREAM_STATUS_ATTRIBUTE: failure.status,
+        LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE: type(failure).__name__,
+    }
+    trace.get_current_span().set_attributes(
+        {key: value for key, value in metadata.items() if value is not None}
+    )
+    request = _request_degradation.get()
+    if request is not None:
+        request.update(metadata)
+    logger.warning("pro model unavailable; trying the student: %s", failure)
+    return metadata
+
+
+def _annotate_completion(response, metadata: dict[str, Any]):
+    return response.model_copy(update=metadata)
+
+
 class RoutedLM(BodyBoundedLM):
     """A ``dspy.LM`` addressing the semantic router that names its failures.
 
@@ -166,6 +214,7 @@ class RoutedLM(BodyBoundedLM):
         tenant_id: str,
         tier: str,
         vision_model: str | None = None,
+        student_model: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(model, **kwargs)
@@ -176,9 +225,19 @@ class RoutedLM(BodyBoundedLM):
         # credential.
         self.call_attempts = self.num_retries + 1
         self.num_retries = 0
+        self._student: RoutedLM | None = None
+        if tier == "pro" and student_model and student_model != model:
+            self._student = RoutedLM(
+                student_model,
+                tenant_id=tenant_id,
+                tier=tier,
+                **{**kwargs, "num_retries": 0},
+            )
         self._vision: RoutedLM | None = None
         if vision_model and vision_model != model:
-            self._vision = RoutedLM(vision_model, tenant_id=tenant_id, tier=tier, **kwargs)
+            self._vision = RoutedLM(
+                vision_model, tenant_id=tenant_id, tier=tier, **kwargs
+            )
 
     def _carrier(self, prompt, messages):
         if self._vision is None:
@@ -198,6 +257,13 @@ class RoutedLM(BodyBoundedLM):
             logger.error("routed LM call failed: %s", failure)
         return failure
 
+    def _can_use_student(self, failure: RoutedLMCallFailed) -> bool:
+        return (
+            self._student is not None
+            and isinstance(failure, UpstreamUnavailable)
+            and failure.status in (None, 408, 500, 502, 503, 504)
+        )
+
     def _retryable(self, failure: RoutedLMCallFailed, attempt: int) -> bool:
         return isinstance(failure, RETRYABLE) and attempt < self.call_attempts
 
@@ -214,6 +280,14 @@ class RoutedLM(BodyBoundedLM):
                 failure = self._classified(exc)
                 if failure is None:
                     raise
+                if self._can_use_student(failure):
+                    metadata = _record_degradation(failure)
+                    response = self._student.forward(
+                        prompt=prompt,
+                        messages=messages,
+                        **{"cache": self.cache, **kwargs},
+                    )
+                    return _annotate_completion(response, metadata)
                 if self._retryable(failure, attempt):
                     continue
                 raise failure from exc
@@ -233,6 +307,14 @@ class RoutedLM(BodyBoundedLM):
                 failure = self._classified(exc)
                 if failure is None:
                     raise
+                if self._can_use_student(failure):
+                    metadata = _record_degradation(failure)
+                    response = await self._student.aforward(
+                        prompt=prompt,
+                        messages=messages,
+                        **{"cache": self.cache, **kwargs},
+                    )
+                    return _annotate_completion(response, metadata)
                 if self._retryable(failure, attempt):
                     continue
                 raise failure from exc

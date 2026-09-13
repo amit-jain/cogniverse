@@ -30,6 +30,10 @@ OP_GATEWAY = "gateway"
 # The model the backend reports having served a routed LM call, as the
 # completion's ``model`` field; stamped on the span the call ran under.
 LLM_SERVED_MODEL_ATTRIBUTE = "llm.served_model"
+LLM_TIER_DEGRADED_ATTRIBUTE = "tier_degraded"
+LLM_UPSTREAM_STATUS_ATTRIBUTE = "upstream_status"
+LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE = "upstream_exception_type"
+PRO_MODEL_UNAVAILABLE = "pro_model_unavailable"
 
 # Query enhancement path marker — every query_enhancement span sets this so
 # served rows stay machine-readable even when the LM falls back.

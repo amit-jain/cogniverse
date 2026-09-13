@@ -552,6 +552,17 @@ A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniver
 
 `RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
 
+A pro free-form call whose teacher raises `UpstreamUnavailable` with status
+502, 503, 504, a timeout (408), or a transport failure (500 or no status) gets
+one attempt on `classification_model`, which serves the student. The LM
+completion and current span carry `tier_degraded: pro_model_unavailable`,
+`upstream_status`, and `upstream_exception_type`. The exception type and its
+status determine eligibility; message text never does. A permanent refusal
+propagates, and default, bounded-output, and vision calls carry no degradation
+marker. If the student fails too, its typed failure propagates without another
+attempt. `tier_degradation_context()` collects these fields for one dispatch,
+including calls on worker threads, and restores the enclosing scope on exit.
+
 ### Configuration Scopes
 
 Configurations are organized by scope for isolation:
