@@ -138,13 +138,23 @@ def test_default_runs_colbert_pylate_and_denseon_services():
     (zero-shot NER), and vllm_asr (Whisper transcription). Mem0 needs
     denseon for memory embeddings, the slim runtime image excludes
     torch+gliner, and the default video-ingestion profiles hard-require
-    vllm_asr for transcription, so all four ship enabled by default."""
+    vllm_asr for transcription, so all four ship enabled by default. The
+    teacher (vllm_llm_teacher) also renders by default, at scale-to-zero,
+    because the semantic router serves pro-reasoning from it."""
     deps = _inference_deployments(_render())
-    assert set(deps.keys()) == {"colbert_pylate", "denseon", "gliner", "vllm_asr"}
+    assert set(deps.keys()) == {
+        "colbert_pylate",
+        "denseon",
+        "gliner",
+        "vllm_asr",
+        "vllm_llm_teacher",
+    }
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
     assert deps["denseon"]["metadata"]["name"] == "cogniverse-denseon"
     assert deps["gliner"]["metadata"]["name"] == "cogniverse-gliner"
     assert deps["vllm_asr"]["metadata"]["name"] == "cogniverse-vllm-asr"
+    assert deps["vllm_llm_teacher"]["metadata"]["name"] == "cogniverse-vllm-llm-teacher"
+    assert deps["vllm_llm_teacher"]["spec"]["replicas"] == 0
 
 
 def test_default_gliner_deployment_uses_the_pinned_production_model():
@@ -401,6 +411,7 @@ def test_default_inference_service_urls_contains_colbert_pylate_and_denseon():
         "denseon": "http://cogniverse-denseon:8000",
         "gliner": "http://cogniverse-gliner:8080",
         "vllm_asr": "http://cogniverse-vllm-asr:8000",
+        "vllm_llm_teacher": "http://cogniverse-vllm-llm-teacher:8000",
     }
 
 
@@ -413,6 +424,7 @@ def test_enabling_code_runs_three_parallel_services():
         "denseon",
         "gliner",
         "vllm_asr",
+        "vllm_llm_teacher",
         "code_colbert_pylate",
     }
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
@@ -430,6 +442,7 @@ def test_enabling_code_adds_to_url_map():
         "denseon": "http://cogniverse-denseon:8000",
         "gliner": "http://cogniverse-gliner:8080",
         "vllm_asr": "http://cogniverse-vllm-asr:8000",
+        "vllm_llm_teacher": "http://cogniverse-vllm-llm-teacher:8000",
     }
 
 
@@ -980,6 +993,7 @@ def test_external_url_replaces_the_cluster_internal_url_in_both_url_maps():
         "denseon": "http://cogniverse-denseon:8000",
         "gliner": "http://cogniverse-gliner:8080",
         "vllm_asr": "http://cogniverse-vllm-asr:8000",
+        "vllm_llm_teacher": "http://cogniverse-vllm-llm-teacher:8000",
     }
     assert _service_urls(docs) == expected
     assert json.loads(_ingestor_env(docs)["INFERENCE_SERVICE_URLS"]) == expected
@@ -987,8 +1001,18 @@ def test_external_url_replaces_the_cluster_internal_url_in_both_url_maps():
 
 def test_external_url_skips_the_local_deployment_and_service():
     docs = _render(f"inference.colbert_pylate.externalUrl={_COLBERT_MODAL_URL}")
-    assert set(_inference_deployments(docs)) == {"denseon", "gliner", "vllm_asr"}
-    assert set(_inference_services(docs)) == {"denseon", "gliner", "vllm_asr"}
+    assert set(_inference_deployments(docs)) == {
+        "denseon",
+        "gliner",
+        "vllm_asr",
+        "vllm_llm_teacher",
+    }
+    assert set(_inference_services(docs)) == {
+        "denseon",
+        "gliner",
+        "vllm_asr",
+        "vllm_llm_teacher",
+    }
 
 
 def test_no_external_url_renders_the_default_env_byte_identical():
@@ -1000,7 +1024,8 @@ def test_no_external_url_renders_the_default_env_byte_identical():
         '  "colbert_pylate": "http://cogniverse-colbert-pylate:8000",\n'
         '  "denseon": "http://cogniverse-denseon:8000",\n'
         '  "gliner": "http://cogniverse-gliner:8080",\n'
-        '  "vllm_asr": "http://cogniverse-vllm-asr:8000"}'
+        '  "vllm_asr": "http://cogniverse-vllm-asr:8000",\n'
+        '  "vllm_llm_teacher": "http://cogniverse-vllm-llm-teacher:8000"}'
     )
     assert _runtime_env(docs)["INFERENCE_SERVICE_URLS"] == expected
     assert _ingestor_env(docs)["INFERENCE_SERVICE_URLS"] == expected
@@ -1358,12 +1383,14 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "denseon": "vllm-embed",
             "gliner": "gliner",
             "vllm_asr": "vllm-transcription",
+            "vllm_llm_teacher": "vllm-chat",
         },
         "devMode": {
             "colbert_pylate": "pylate",
             "denseon": "vllm-embed",
             "gliner": "gliner",
             "vllm_asr": "vllm-transcription",
+            "vllm_llm_teacher": "vllm-chat",
         },
         "k3s": {
             "clap_embed": "clap-embed",
@@ -1372,6 +1399,7 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "gliner": "gliner",
             "video_embed": "video-embed",
             "vllm_asr": "vllm-transcription",
+            "vllm_llm_teacher": "vllm-chat",
         },
         "modal-llm": {
             "code_colbert_pylate": "pylate",

@@ -49,6 +49,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
 )
 from cogniverse_foundation.dspy.structured_json_adapter import signature_response_format
+from tests.utils.semantic_router_stack import TEACHER_CLUSTER, render_envoy_config
 
 
 @pytest.fixture(scope="module")
@@ -236,6 +237,48 @@ def test_pro_tier_non_technical_keeps_reasoning_off(sr_base_url):
     reflected = _call(sr_base_url, "pro-tenant", "what's a fun weekend activity?")
     assert reflected["served_model"] == "pro-reasoning"
     assert reflected["reasoning"] is False
+
+
+def _teacher_route_match() -> tuple[str, str]:
+    """The (header, value) the chart's Envoy routes to the teacher cluster on.
+
+    Read from the same rendered data plane the stack runs, so the header the
+    router sets and the value Envoy matches are never restated here.
+    """
+    document = yaml.safe_load(render_envoy_config())
+    listener = document["static_resources"]["listeners"][0]
+    routes = listener["filter_chains"][0]["filters"][0]["typed_config"]["route_config"][
+        "virtual_hosts"
+    ][0]["routes"]
+    (teacher,) = [r for r in routes if r["route"]["cluster"] == TEACHER_CLUSTER]
+    (header,) = teacher["match"]["headers"]
+    return header["name"], header["string_match"]["exact"]
+
+
+class TestEachCatalogModelIsAnsweredByItsOwnBackend:
+    """pro-reasoning is bound to the teacher backend and basic-chat to the
+    student. The router names the model it chose in a header and Envoy routes
+    on it, so which stub answers is the observable - ``served_model`` alone
+    would pass with both models on one backend."""
+
+    def test_a_pro_free_form_call_is_answered_by_the_teacher(self, sr_base_url):
+        header, value = _teacher_route_match()
+        reflected = _reflected(
+            _post(sr_base_url, "pro-tenant", _chat_body("what colour is the sky"))
+        )
+        assert reflected["served_model"] == "pro-reasoning"
+        assert reflected["routing_headers"][header] == value
+        assert reflected["backend_tag"] == "teacher"
+
+    def test_a_free_call_is_answered_by_the_student(self, sr_base_url):
+        header, value = _teacher_route_match()
+        reflected = _reflected(
+            _post(sr_base_url, "free-tenant", _chat_body("what colour is the sky"))
+        )
+        assert reflected["served_model"] == "basic-chat"
+        assert reflected["routing_headers"][header] == "basic-chat"
+        assert reflected["routing_headers"][header] != value
+        assert reflected["backend_tag"] == "student"
 
 
 def test_the_semantic_cache_never_answers_one_tenant_from_another(sr_base_url):

@@ -31,7 +31,7 @@ providers:
       api_format: openai
       backend_refs:
         - name: stub-pro
-          endpoint: stub-upstream:8000
+          endpoint: stub-teacher:8000
           protocol: http
           weight: 100
           type: chat

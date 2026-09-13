@@ -5,9 +5,9 @@
 # on the `auto` alias are additionally classified by content (domain
 # classifier) to pick the model + reasoning mode. Requests naming the
 # `cogniverse-classification` entrypoint take the recipe at the bottom of this
-# file, whose decisions test the tier only, so no classifier runs. Both catalog
-# models resolve to the chart's in-cluster LLM backend by default — add
-# distinct backend_refs when you deploy more models.
+# file, whose decisions test the tier only, so no classifier runs. basic-chat
+# is the student the runtime's own LLM endpoint serves; pro-reasoning is the
+# teacher (inference.vllm_llm_teacher), which Envoy reaches on its own cluster.
 version: v0.3
 
 listeners:
@@ -37,12 +37,12 @@ providers:
           type: chat
     - name: pro-reasoning
       reasoning_family: qwen3
-      provider_model_id: {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+      provider_model_id: {{ include "cogniverse.teacherLLMModelBare" . | quote }}
       api_format: openai
       backend_refs:
         - name: llm-pro
-          endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
-          protocol: {{ include "cogniverse.srUpstreamProtocol" . }}
+          endpoint: {{ include "cogniverse.srTeacherHost" . }}:{{ int (include "cogniverse.srTeacherPort" .) }}
+          protocol: {{ include "cogniverse.srTeacherProtocol" . }}
           weight: 100
           type: chat
 

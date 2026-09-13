@@ -1405,8 +1405,11 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 8
 
+  # Served by default at scale-to-zero (replicaCount: 0 below): the semantic
+  # router serves pro-reasoning from it, and a render with the router on and
+  # no teacher (enabled or externalUrl) fails.
   vllm_llm_teacher:
-    enabled: false
+    enabled: true
     externalUrl: ""
     engine: vllm_chat
     type: chat

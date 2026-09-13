@@ -2,9 +2,10 @@
 #
 # Clients (the runtime's agents) hit Envoy on the listener port. Envoy calls
 # the semantic-router ext_proc service (gRPC) for a routing decision on every
-# request, then forwards the (possibly rewritten) request to the in-cluster
-# LLM backend. This is the canonical SR + Envoy wiring; it does not change
-# between SR versions.
+# request, then forwards the (possibly rewritten) request to the backend that
+# serves the catalog model the router selected: the teacher cluster for
+# pro-reasoning, the student cluster for everything else. The router names
+# its choice in the x-selected-model header it adds to the request.
 static_resources:
   listeners:
     - name: main
@@ -48,6 +49,17 @@ static_resources:
                     - name: backend
                       domains: ["*"]
                       routes:
+                        - match:
+                            prefix: "/"
+                            headers:
+                              - name: x-selected-model
+                                string_match: { exact: pro-reasoning }
+                          route:
+                            cluster: llm_teacher
+{{- if eq (include "cogniverse.srTeacherProtocol" .) "https" }}
+                            auto_host_rewrite: true
+{{- end }}
+                            timeout: 300s
                         - match: { prefix: "/" }
                           route:
                             cluster: llm_upstream
@@ -107,6 +119,23 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
           sni: {{ include "cogniverse.srUpstreamHost" . }}
+{{- end }}
+    - name: llm_teacher
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: llm_teacher
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: {{ include "cogniverse.srTeacherHost" . }}, port_value: {{ int (include "cogniverse.srTeacherPort" .) }} }
+{{- if eq (include "cogniverse.srTeacherProtocol" .) "https" }}
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: {{ include "cogniverse.srTeacherHost" . }}
 {{- end }}
 
     - name: semantic_router

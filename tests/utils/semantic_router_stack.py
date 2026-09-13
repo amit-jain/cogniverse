@@ -31,7 +31,9 @@ CHART_VALUES = CHART_DIR / "values.yaml"
 RELEASE = "cogniverse"
 ROUTER_ALIAS = f"{RELEASE}-semantic-router"
 UPSTREAM_ALIAS = "stub-upstream"
+TEACHER_ALIAS = "stub-teacher"
 UPSTREAM_PORT = 8000
+TEACHER_CLUSTER = "llm_teacher"
 
 _EXPRESSION = re.compile(r"\{\{-?\s*(?P<body>.*?)\s*-?\}\}")
 _CONTROL = re.compile(
@@ -87,19 +89,25 @@ def render_envoy_config(
     *,
     upstream_host: str = UPSTREAM_ALIAS,
     upstream_port: int = UPSTREAM_PORT,
+    teacher_host: str = TEACHER_ALIAS,
+    teacher_port: int = UPSTREAM_PORT,
     release: str = RELEASE,
 ) -> str:
     """The chart's Envoy config with the local stack's peers substituted.
 
-    The local upstream is a plain-HTTP stub, so the chart's TLS-only blocks
-    (upstream TLS context, ``auto_host_rewrite``) render out exactly as they
-    do for an in-cluster HTTP backend.
+    Both local backends (the student stub and the teacher stub) are plain
+    HTTP, so the chart's TLS-only blocks (upstream TLS context,
+    ``auto_host_rewrite``) render out exactly as they do for in-cluster
+    backends.
     """
     values = yaml.safe_load(CHART_VALUES.read_text())
     helpers = {
         'include "cogniverse.srUpstreamHost" .': upstream_host,
         'include "cogniverse.srUpstreamPort" .': str(upstream_port),
         'include "cogniverse.srUpstreamProtocol" .': "http",
+        'include "cogniverse.srTeacherHost" .': teacher_host,
+        'include "cogniverse.srTeacherPort" .': str(teacher_port),
+        'include "cogniverse.srTeacherProtocol" .': "http",
         'include "cogniverse.fullname" .': release,
     }
     emit: list[bool] = []
