@@ -270,7 +270,8 @@
       "temperature": 0.1,
       "max_tokens": 1000,
       "adapter_path": null,
-      "api_base": "http://localhost:29010/v1"
+      "api_base": "http://localhost:29010/v1",
+      "request_timeout": 180.0
     },
     "teacher": {
       "model": "openai/Qwen/Qwen3-14B-AWQ",
