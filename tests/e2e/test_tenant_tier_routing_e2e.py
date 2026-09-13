@@ -223,15 +223,15 @@ def _deployed_routing() -> DeployedRouting:
     hcm = listener["filter_chains"][0]["filters"][0]["typed_config"]
     (vhost,) = hcm["route_config"]["virtual_hosts"]
     cluster_by_model: dict[str, str] = {}
-    default_cluster: str | None = None
+    catch_all: list[str] = []
     for route in vhost["routes"]:
         headers = route["match"].get("headers", [])
         if not headers:
-            default_cluster = route["route"]["cluster"]
+            catch_all.append(route["route"]["cluster"])
             continue
         (header,) = headers
         cluster_by_model[header["string_match"]["exact"]] = route["route"]["cluster"]
-    assert default_cluster is not None, vhost["routes"]
+    (default_cluster,) = catch_all
     config = yaml.safe_load(_deployed_configmap(f"{_ROUTER_SVC}-config", "config.yaml"))
     return DeployedRouting(
         cluster_by_model=cluster_by_model,
