@@ -36,10 +36,16 @@ import dspy
 import pytest
 import requests
 import yaml
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.semantic_router import (
     apply_semantic_routing,
+    create_routed_lm,
     resolve_semantic_router_headers,
 )
 from cogniverse_foundation.config.unified_config import (
@@ -49,6 +55,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
 )
 from cogniverse_foundation.dspy.structured_json_adapter import signature_response_format
+from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
 from tests.utils.semantic_router_stack import TEACHER_CLUSTER, render_envoy_config
 
 
@@ -279,6 +286,49 @@ class TestEachCatalogModelIsAnsweredByItsOwnBackend:
         assert reflected["routing_headers"][header] == "basic-chat"
         assert reflected["routing_headers"][header] != value
         assert reflected["backend_tag"] == "student"
+
+
+_SR_STACK_CONFIG = Path(__file__).resolve().parent / "_sr_stack" / "sr-config.yaml"
+
+
+def _provider_model_id(catalog_model: str) -> str:
+    """The served model name the stack's router sends the backend for a catalog model."""
+    models = yaml.safe_load(_SR_STACK_CONFIG.read_text())["providers"]["models"]
+    (model,) = [entry for entry in models if entry["name"] == catalog_model]
+    return model["provider_model_id"]
+
+
+class TestTheRoutedLmRecordsTheServedModel:
+    """The completion's ``model`` field is the backend's own account of what
+    answered. The routed LM stamps it on the span it was called under, so a
+    tier change is observable in telemetry - not only in the router's log."""
+
+    def test_each_tier_stamps_the_model_its_backend_served(self, sr_base_url):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("served-model-test")
+        config = _semantic_router_config(sr_base_url)
+        for tenant in ("pro-tenant", "free-tenant"):
+            lm = create_routed_lm(
+                LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1"),
+                config,
+                tenant,
+                _tier_for(tenant),
+                call_site="summarizer_agent",
+            )
+            lm.cache = False
+            with tracer.start_as_current_span(f"agent.call.{tenant}"):
+                lm(f"what colour is the sky ({tenant})")
+        served = [
+            (span.name, span.attributes[LLM_SERVED_MODEL_ATTRIBUTE])
+            for span in exporter.get_finished_spans()
+        ]
+        assert served == [
+            ("agent.call.pro-tenant", _provider_model_id("pro-reasoning")),
+            ("agent.call.free-tenant", _provider_model_id("basic-chat")),
+        ]
+        assert _provider_model_id("pro-reasoning") != _provider_model_id("basic-chat")
 
 
 def test_the_semantic_cache_never_answers_one_tenant_from_another(sr_base_url):

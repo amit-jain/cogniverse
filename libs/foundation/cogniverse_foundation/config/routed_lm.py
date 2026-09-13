@@ -29,6 +29,7 @@ import openai
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.request_body import http_status_of
+from cogniverse_foundation.config.semantic_router import record_served_model
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,9 @@ class RoutedLM(BodyBoundedLM):
     def forward(self, prompt=None, messages=None, **kwargs):
         for attempt in range(1, self.call_attempts + 1):
             try:
-                return super().forward(prompt=prompt, messages=messages, **kwargs)
+                response = super().forward(prompt=prompt, messages=messages, **kwargs)
+                record_served_model(response)
+                return response
             except Exception as exc:
                 failure = self._classified(exc)
                 if failure is None:
@@ -202,9 +205,11 @@ class RoutedLM(BodyBoundedLM):
     async def aforward(self, prompt=None, messages=None, **kwargs):
         for attempt in range(1, self.call_attempts + 1):
             try:
-                return await super().aforward(
+                response = await super().aforward(
                     prompt=prompt, messages=messages, **kwargs
                 )
+                record_served_model(response)
+                return response
             except Exception as exc:
                 failure = self._classified(exc)
                 if failure is None:

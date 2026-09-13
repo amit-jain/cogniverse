@@ -527,7 +527,8 @@ Each call site names its router entry. `CLASSIFICATION_CALL_SITES` (entity extra
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
 | `apply_semantic_routing(endpoint, config, tenant_id, tier, call_site)` | Return a routed copy of `endpoint`, or the original when disabled |
 | `routed_model_for(config, call_site)` | `classification_model` for a call site in `CLASSIFICATION_CALL_SITES`, `routed_model` otherwise |
-| `create_routed_lm(endpoint, config, tenant_id, tier, call_site)` | `apply_semantic_routing` + the LM in one call; routed, the LM is a `RoutedLM` |
+| `create_routed_lm(endpoint, config, tenant_id, tier, call_site)` | `apply_semantic_routing` + the shared LM construction; returns a `RoutedLM` (`cogniverse_foundation.config.routed_lm`), which records the completion's `model` on the current span as `llm.served_model` (`LLM_SERVED_MODEL_ATTRIBUTE`) |
+| `record_served_model(response)` | Stamp a completion's `model` on the current span; a no-op outside any span |
 | `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
 | `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents, tenant-bound either way — the entry point agents use |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |

@@ -574,3 +574,186 @@ class TestARoutedFailureIsClassifiedByWhatHappened:
         assert excinfo.value.routed_model == "openai/auto"
         assert isinstance(excinfo.value.__cause__, openai.APIError)
         assert type(excinfo.value.__cause__).__name__ == "InternalServerError"
+
+
+class TestRecordServedModel:
+    """Outside any span the served model has nowhere to go; the call must
+    still succeed, and nothing else may be touched."""
+
+    def test_no_active_span_records_nothing_and_does_not_raise(self):
+        from opentelemetry import trace
+
+        from cogniverse_foundation.config.semantic_router import record_served_model
+
+        assert not trace.get_current_span().get_span_context().is_valid
+        record_served_model({"model": "Qwen/Qwen3-14B-AWQ"})
+
+    def test_an_active_span_receives_the_completion_model(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        from cogniverse_foundation.config.semantic_router import record_served_model
+        from cogniverse_foundation.telemetry.span_contract import (
+            LLM_SERVED_MODEL_ATTRIBUTE,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        with provider.get_tracer("t").start_as_current_span("agent.call"):
+            record_served_model({"model": "Qwen/Qwen3-14B-AWQ"})
+        (span,) = exporter.get_finished_spans()
+        assert dict(span.attributes) == {
+            LLM_SERVED_MODEL_ATTRIBUTE: "Qwen/Qwen3-14B-AWQ"
+        }
+
+
+class _EchoingChatEndpoint:
+    """A chat-completions endpoint whose reply's ``model`` echoes the request's,
+    or that refuses every request with the status asked for."""
+
+    def __init__(self, status: int = 200):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        wanted = status
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if wanted != 200:
+                    payload = json.dumps({"error": {"message": "refused"}}).encode()
+                else:
+                    payload = json.dumps(
+                        {
+                            "id": "stub",
+                            "object": "chat.completion",
+                            "created": 0,
+                            "model": body["model"],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 1,
+                                "completion_tokens": 1,
+                                "total_tokens": 2,
+                            },
+                        }
+                    ).encode()
+                self.send_response(wanted)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=10)
+
+    @property
+    def api_base(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+
+
+def _routed_lm_to(api_base: str, model: str):
+    from cogniverse_foundation.config.semantic_router import create_routed_lm
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    lm = create_routed_lm(
+        LLMEndpointConfig(
+            model="openai/auto",
+            api_base="http://unused:1/v1",
+            api_key="stub-key",
+            temperature=0.0,
+            max_tokens=8,
+            num_retries=0,
+        ),
+        SemanticRouterConfig(
+            enabled=True, semantic_router_url=api_base, routed_model=model
+        ),
+        "tenant-a:prod",
+        "default",
+        call_site="summarizer_agent",
+    )
+    lm.cache = False
+    return lm
+
+
+class TestRoutedLmUnderFaultAndConcurrency:
+    def _tracing(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return exporter, provider.get_tracer("routed-lm-test")
+
+    def test_a_refused_call_raises_and_stamps_nothing(self):
+        """A backend failure propagates as the error it is; the span never
+        claims a served model for a call that was not served."""
+        from cogniverse_foundation.telemetry.span_contract import (
+            LLM_SERVED_MODEL_ATTRIBUTE,
+        )
+
+        exporter, tracer = self._tracing()
+        with _EchoingChatEndpoint(status=503) as endpoint:
+            lm = _routed_lm_to(endpoint.api_base, "openai/served-a")
+            with tracer.start_as_current_span("agent.call"):
+                with pytest.raises(Exception) as raised:
+                    lm("hello")
+        assert "503" in str(raised.value) or "refused" in str(raised.value)
+        (span,) = exporter.get_finished_spans()
+        assert LLM_SERVED_MODEL_ATTRIBUTE not in span.attributes
+
+    def test_concurrent_calls_each_stamp_their_own_span(self):
+        """Eight calls under eight spans, released together: every span carries
+        the model its own call was answered with and no other's."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        from cogniverse_foundation.telemetry.span_contract import (
+            LLM_SERVED_MODEL_ATTRIBUTE,
+        )
+
+        exporter, tracer = self._tracing()
+        barrier = threading.Barrier(8)
+
+        def call(index: int) -> None:
+            lm = _routed_lm_to(endpoint.api_base, f"openai/served-{index}")
+            with tracer.start_as_current_span(f"agent.call.{index}"):
+                barrier.wait(timeout=30)
+                lm(f"hello {index}")
+
+        with _EchoingChatEndpoint() as endpoint:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(call, range(8)))
+        stamped = {
+            span.name: span.attributes[LLM_SERVED_MODEL_ATTRIBUTE]
+            for span in exporter.get_finished_spans()
+        }
+        assert stamped == {f"agent.call.{i}": f"served-{i}" for i in range(8)}
