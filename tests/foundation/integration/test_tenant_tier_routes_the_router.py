@@ -31,6 +31,10 @@ import pytest
 import yaml
 from prometheus_client.parser import text_string_to_metric_families
 
+from cogniverse_foundation.config.lm_response_cache import (
+    TenantScopedLMCache,
+    lm_response_cache,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 from cogniverse_foundation.config.tenant_tiers import TENANT_TIER_TTL_S
@@ -52,6 +56,7 @@ TENANT_ID = "tierjoin:production"
 CREATED_AT = 1757000000000
 PROMPT = "summarise this paragraph"
 FRESH_PROMPT = "summarise the next paragraph"
+IN_PROCESS_PROMPT = "summarise this paragraph once per process"
 
 
 def _decisions_by_tier() -> dict[str, dict]:
@@ -217,8 +222,11 @@ async def _set_tier(tenant_manager, tier: str) -> dict:
     return response.json()
 
 
-def _route_one_completion(config_manager, prompt: str) -> tuple[dict, dict]:
-    """One completion through the production seam.
+def _route_one_completion(
+    config_manager, prompt: str, in_process_cache: TenantScopedLMCache
+) -> tuple[dict, dict]:
+    """One completion through the production seam, answered in process only
+    from ``in_process_cache``.
 
     Returns the stub's reflection and the router's own account of the
     response: the path it was served from, the cache-hit flag and the decision.
@@ -228,7 +236,7 @@ def _route_one_completion(config_manager, prompt: str) -> tuple[dict, dict]:
         config_manager, TENANT_ID, "summarizer_agent", endpoint=endpoint
     ):
         lm = dspy.settings.lm
-        lm.cache = False
+        lm.response_cache = in_process_cache
         out = lm(prompt)
         headers = lm.history[-1]["response"]._hidden_params["additional_headers"]
     item = out[0] if isinstance(out, list) else out
@@ -240,6 +248,11 @@ def _route_one_completion(config_manager, prompt: str) -> tuple[dict, dict]:
         "cache_hit": headers.get("llm_provider-x-vsr-cache-hit"),
         "decision": headers["llm_provider-x-vsr-selected-decision"],
     }
+
+
+def _leg_cache() -> TenantScopedLMCache:
+    """An empty in-process cache, so the leg's request reaches the router."""
+    return TenantScopedLMCache(ttl_seconds=3600, max_entries=1024)
 
 
 async def test_the_stored_tier_decides_the_router(tier_stack):
@@ -268,12 +281,12 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
             "tenant_id": TENANT_ID,
             "tier": tier,
         }
-        legs.append(_route_one_completion(config_manager, PROMPT))
+        legs.append(_route_one_completion(config_manager, PROMPT, _leg_cache()))
         counts.append(_router_counts(container))
     elapsed = time.monotonic() - started
 
     # Same tenant, same tier, a different prompt: routed, not served from cache.
-    legs.append(_route_one_completion(config_manager, FRESH_PROMPT))
+    legs.append(_route_one_completion(config_manager, FRESH_PROMPT, _leg_cache()))
     counts.append(_router_counts(container))
     tiers = [*walk, walk[0]]
     prompts = [PROMPT] * len(walk) + [FRESH_PROMPT]
@@ -382,3 +395,36 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
     # Every tier change was read back inside one reader TTL, so the in-process
     # invalidation is what carried it -- not an entry that happened to expire.
     assert elapsed < TENANT_TIER_TTL_S
+
+
+async def test_a_repeat_answered_in_process_never_reaches_the_router(tier_stack):
+    """The process LM response cache answers a tenant's byte-identical repeat,
+    so the router records neither a routed call nor a cache hit for it."""
+    config_manager = tier_stack["config_manager"]
+    container = tier_stack["router_container"]
+    tier = sorted(ROUTER_TIERS)[0]
+    assert await _set_tier(tier_stack["tenant_manager"], tier) == {
+        "tenant_id": TENANT_ID,
+        "tier": tier,
+    }
+    counts = [_router_counts(container)]
+    legs = []
+    for _ in range(2):
+        legs.append(
+            _route_one_completion(
+                config_manager, IN_PROCESS_PROMPT, lm_response_cache()
+            )
+        )
+        counts.append(_router_counts(container))
+    deltas = [
+        {name: after[name] - before[name] for name in before}
+        for before, after in zip(counts, counts[1:])
+    ]
+    assert deltas == [{"routed": 1, "cache_hits": 0}, {"routed": 0, "cache_hits": 0}]
+    assert legs[0][0]["echo"] == IN_PROCESS_PROMPT
+    assert legs[0][1] == {
+        "response_path": "upstream",
+        "cache_hit": None,
+        "decision": _decisions_by_tier()[tier]["decision"],
+    }
+    assert legs[1] == legs[0]
