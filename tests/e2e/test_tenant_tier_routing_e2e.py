@@ -133,6 +133,9 @@ class RouterPolicy:
     model_by_decision: dict[str, str]
     metric_label_by_decision: dict[str, str]
     decisions: tuple[str, ...]
+    conditions_by_decision: dict[str, frozenset[tuple[str, str]]]
+    priority_by_decision: dict[str, int]
+    section_by_decision: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -174,30 +177,46 @@ def _router_policy() -> RouterPolicy:
     }
     # The router's counters label a recipe's decision as ``<recipe>::<name>``
     # and the auto alias's decisions by bare name.
-    decisions = [(decision, decision["name"]) for decision in routing["decisions"]]
+    decisions = [(decision, decision["name"], "") for decision in routing["decisions"]]
     for recipe in document.get("recipes", []):
         decisions += [
-            (decision, f"{recipe['name']}::{decision['name']}")
+            (decision, f"{recipe['name']}::{decision['name']}", recipe["name"])
             for decision in recipe["routing"]["decisions"]
         ]
     tier_by_decision: dict[str, str] = {}
     model_by_decision: dict[str, str] = {}
     metric_label_by_decision: dict[str, str] = {}
-    for decision, metric_label in decisions:
+    conditions_by_decision: dict[str, frozenset[tuple[str, str]]] = {}
+    priority_by_decision: dict[str, int] = {}
+    section_by_decision: dict[str, str] = {}
+    for decision, metric_label, section in decisions:
+        name = decision["name"]
+        # _matched_decisions relies on AND rules and pure priority selection.
+        if decision["rules"]["operator"] != "AND" or "tier" in decision:
+            raise AssertionError(
+                f"decision {name} is not an AND rule under priority selection"
+            )
         conditions = decision["rules"]["conditions"]
         roles = {c["name"] for c in conditions if c["type"] == "authz"}
         (role,) = roles
-        name = decision["name"]
         tier_by_decision[name] = tier_by_role[role]
         (ref,) = decision["modelRefs"]
         model_by_decision[name] = ref["model"]
         metric_label_by_decision[name] = metric_label
+        conditions_by_decision[name] = frozenset(
+            (c["type"], c["name"]) for c in conditions
+        )
+        priority_by_decision[name] = decision["priority"]
+        section_by_decision[name] = section
     return RouterPolicy(
         role_by_tier={tier: role for role, tier in tier_by_role.items()},
         tier_by_decision=tier_by_decision,
         model_by_decision=model_by_decision,
         metric_label_by_decision=metric_label_by_decision,
         decisions=tuple(tier_by_decision),
+        conditions_by_decision=conditions_by_decision,
+        priority_by_decision=priority_by_decision,
+        section_by_decision=section_by_decision,
     )
 
 
@@ -369,9 +388,9 @@ class RoutedTraffic:
     user_by_request: dict[str, str]
     prompt_by_request: dict[str, str]
     call_by_request: dict[str, tuple[str, str]]
-    decision_counts: Counter
     latency_ms_by_request: dict[str, int]
     cache_hits: int
+    roles_by_request: dict[str, frozenset[str]]
 
 
 def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
@@ -379,11 +398,12 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     user_by_request: dict[str, str] = {}
     prompt_by_request: dict[str, str] = {}
     call_by_request: dict[str, tuple[str, str]] = {}
-    decision_counts: Counter = Counter()
+    roles_by_request: dict[str, frozenset[str]] = {}
     latency_ms_by_request: dict[str, int] = {}
     cache_hits = 0
     pending_prompt: str | None = None
     pending_user: str | None = None
+    pending_roles: frozenset[str] = frozenset()
     for entry in entries:
         event = entry.get("event")
         message = entry.get("msg", "")
@@ -395,10 +415,11 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
                 entry["decision"],
                 entry["selected_model"],
             )
-            decision_counts[entry["decision"]] += 1
+            roles_by_request[entry["request_id"]] = pending_roles
             if pending_user is not None:
                 user_by_request[entry["request_id"]] = pending_user
             pending_user = None
+            pending_roles = frozenset()
             continue
         if event == "llm_usage":
             if entry.get("cache_hit"):
@@ -417,6 +438,9 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
         matched = _AUTHZ_MATCHED.match(message)
         if matched is not None:
             pending_user = matched.group("user")
+            pending_roles = frozenset(
+                role.strip() for role in matched.group("roles").split(",")
+            ) - {""}
             for role in matched.group("roles").split(","):
                 roles.append((matched.group("user"), role.strip()))
     return RoutedTraffic(
@@ -424,10 +448,62 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
         user_by_request,
         prompt_by_request,
         call_by_request,
-        decision_counts,
         latency_ms_by_request,
         cache_hits,
+        roles_by_request,
     )
+
+
+def _matched_decisions(
+    policy: RouterPolicy, selected: str, roles: frozenset[str]
+) -> set[str]:
+    """Every decision the router matched on a call that selected ``selected``.
+
+    The router counts each decision whose rules hold, then serves the matched
+    one with the highest priority. Within the selected decision's routing
+    section, a decision matched when its conditions are among the selected
+    decision's and the caller's roles, and did not when it names a role the
+    caller lacks or outranks the selected decision. The log settles nothing
+    else, so anything else is refused.
+    """
+    selected_conditions = policy.conditions_by_decision[selected]
+    held_roles = roles | {
+        value for kind, value in selected_conditions if kind == "authz"
+    }
+    known = selected_conditions | {("authz", role) for role in held_roles}
+    priority = policy.priority_by_decision[selected]
+    matched: set[str] = set()
+    for name in policy.decisions:
+        if policy.section_by_decision[name] != policy.section_by_decision[selected]:
+            continue
+        conditions = policy.conditions_by_decision[name]
+        outranks = policy.priority_by_decision[name] > priority
+        if name == selected or (conditions <= known and not outranks):
+            matched.add(name)
+        elif any(
+            kind == "authz" and value not in held_roles for kind, value in conditions
+        ):
+            continue
+        elif outranks and not conditions <= known:
+            continue
+        else:
+            raise AssertionError(
+                f"the router log cannot settle whether {name} matched a call "
+                f"that selected {selected}"
+            )
+    return matched
+
+
+def _expected_match_deltas(
+    policy: RouterPolicy, traffic: RoutedTraffic
+) -> dict[str, int]:
+    """The decision-match counter deltas the logged calls account for."""
+    counts: Counter = Counter()
+    for request_id, (decision, _) in traffic.call_by_request.items():
+        counts.update(
+            _matched_decisions(policy, decision, traffic.roles_by_request[request_id])
+        )
+    return {decision: counts[decision] for decision in policy.decisions}
 
 
 @dataclass(frozen=True)
@@ -650,9 +726,7 @@ def _run_leg(
             )
             for decision in policy.decisions
         },
-        expected_deltas={
-            decision: traffic.decision_counts[decision] for decision in policy.decisions
-        },
+        expected_deltas=_expected_match_deltas(policy, traffic),
         cache_hit_delta=sum(
             _counter(
                 after,
@@ -824,29 +898,54 @@ def test_the_stored_tier_steers_the_deployed_router(
 _SYNTHETIC_POLICY = RouterPolicy(
     role_by_tier={"pro": "pro_tier", "default": "base_tier"},
     tier_by_decision={
+        "pro-technical": "pro",
         "pro-default": "pro",
         "classification-pro": "pro",
         "base-default": "default",
         "classification-base": "default",
     },
     model_by_decision={
+        "pro-technical": "pro-reasoning",
         "pro-default": "pro-reasoning",
         "classification-pro": "basic-chat",
         "base-default": "basic-chat",
         "classification-base": "basic-chat",
     },
     metric_label_by_decision={
+        "pro-technical": "pro-technical",
         "pro-default": "pro-default",
         "classification-pro": "classification::classification-pro",
         "base-default": "base-default",
         "classification-base": "classification::classification-base",
     },
     decisions=(
+        "pro-technical",
         "pro-default",
         "classification-pro",
         "base-default",
         "classification-base",
     ),
+    conditions_by_decision={
+        "pro-technical": frozenset({("authz", "pro_tier"), ("domain", "technical")}),
+        "pro-default": frozenset({("authz", "pro_tier")}),
+        "classification-pro": frozenset({("authz", "pro_tier")}),
+        "base-default": frozenset({("authz", "base_tier")}),
+        "classification-base": frozenset({("authz", "base_tier")}),
+    },
+    priority_by_decision={
+        "pro-technical": 250,
+        "pro-default": 200,
+        "classification-pro": 200,
+        "base-default": 50,
+        "classification-base": 50,
+    },
+    section_by_decision={
+        "pro-technical": "",
+        "pro-default": "",
+        "classification-pro": "classification",
+        "base-default": "",
+        "classification-base": "classification",
+    },
 )
 _SYNTHETIC_ROUTING = DeployedRouting(
     cluster_by_model={"pro-reasoning": "llm_teacher"},
@@ -915,6 +1014,76 @@ def test_the_verdict_rejects_a_pro_call_answered_by_the_student_model():
 def test_the_verdict_rejects_a_call_the_client_cut_before_it_completed():
     leg = replace(_synthetic_pro_leg(), timed_out=1)
     assert _synthetic_verdict(leg) == ["calls cut by the client's timeout: 1 != 0"]
+
+
+def test_a_selected_decision_also_counts_the_catch_all_beneath_it():
+    assert _matched_decisions(
+        _SYNTHETIC_POLICY, "pro-technical", frozenset({"pro_tier"})
+    ) == {"pro-technical", "pro-default"}
+
+
+def test_a_selected_catch_all_counts_only_itself():
+    assert _matched_decisions(
+        _SYNTHETIC_POLICY, "pro-default", frozenset({"pro_tier"})
+    ) == {"pro-default"}
+
+
+def test_a_recipe_selection_counts_only_its_own_section():
+    assert _matched_decisions(
+        _SYNTHETIC_POLICY, "classification-pro", frozenset({"pro_tier"})
+    ) == {"classification-pro"}
+
+
+def test_a_match_the_log_cannot_settle_is_refused():
+    policy = replace(
+        _SYNTHETIC_POLICY,
+        decisions=(*_SYNTHETIC_POLICY.decisions, "pro-keyword"),
+        conditions_by_decision={
+            **_SYNTHETIC_POLICY.conditions_by_decision,
+            "pro-keyword": frozenset({("authz", "pro_tier"), ("keyword", "technical")}),
+        },
+        priority_by_decision={
+            **_SYNTHETIC_POLICY.priority_by_decision,
+            "pro-keyword": 220,
+        },
+        section_by_decision={
+            **_SYNTHETIC_POLICY.section_by_decision,
+            "pro-keyword": "",
+        },
+    )
+    with pytest.raises(AssertionError) as raised:
+        _matched_decisions(policy, "pro-technical", frozenset({"pro_tier"}))
+    assert str(raised.value) == (
+        "the router log cannot settle whether pro-keyword matched a call "
+        "that selected pro-technical"
+    )
+
+
+def test_the_counter_deltas_count_every_decision_each_logged_call_matched():
+    authz = '[Authz Signal] Matched 1 roles for user "t:t": [pro_tier]'
+    entries = [
+        {"msg": authz},
+        {
+            "event": "routing_decision",
+            "request_id": "r1",
+            "decision": "pro-technical",
+            "selected_model": "pro-reasoning",
+        },
+        {"msg": authz},
+        {
+            "event": "routing_decision",
+            "request_id": "r2",
+            "decision": "classification-pro",
+            "selected_model": "basic-chat",
+        },
+    ]
+    assert _expected_match_deltas(_SYNTHETIC_POLICY, _routed_traffic(entries)) == {
+        "pro-technical": 1,
+        "pro-default": 1,
+        "classification-pro": 1,
+        "base-default": 0,
+        "classification-base": 0,
+    }
 
 
 def test_the_verdict_rejects_a_decision_the_counters_did_not_record():
