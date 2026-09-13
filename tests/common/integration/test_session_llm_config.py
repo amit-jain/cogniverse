@@ -12,6 +12,8 @@ pointed diagnostic.
 
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 
@@ -33,8 +35,10 @@ def _served_model_ids(api_base: str) -> set[str]:
     base = api_base.rstrip("/")
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
+    api_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
-        resp = httpx.get(f"{base}/v1/models", timeout=10.0)
+        resp = httpx.get(f"{base}/v1/models", timeout=10.0, headers=headers)
     except httpx.HTTPError as exc:
         pytest.fail(f"LM endpoint {base} unreachable: {exc!r}")
     assert resp.status_code == 200, (
