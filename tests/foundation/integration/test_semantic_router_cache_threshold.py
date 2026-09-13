@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import itertools
 import json
-import re
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+
+from tests.utils.semantic_router_stack import render_router_config
 
 pytestmark = [pytest.mark.integration]
 
@@ -33,10 +34,6 @@ _REPO = Path(__file__).resolve().parents[3]
 _CORPUS = (
     _REPO / "data" / "testset" / "evaluation" / "sample_videos_retrieval_queries.json"
 )
-_CHART_ROUTER_CONFIG = (
-    _REPO / "charts" / "cogniverse" / "files" / "semantic-router" / "config.yaml"
-)
-_TEMPLATE = re.compile(r"\{\{-?\s*.*?\s*-?\}\}")
 
 # The pair that produced the incident: a near match served the answer to one
 # numbered topic for another.
@@ -141,15 +138,29 @@ class TestNoThresholdSeparatesTheTwoPopulations:
     def test_the_shipped_configuration_matches_the_derivation(self):
         """The conclusion is wired, not just recorded: every decision in every
         routing profile keys on the exact request."""
-        config = yaml.safe_load(_TEMPLATE.sub("t", _CHART_ROUTER_CONFIG.read_text()))
-        profiles = [config["routing"]] + [
-            recipe["routing"] for recipe in config["recipes"]
+        config = yaml.safe_load(render_router_config())
+        profiles = [("auto", config["routing"])] + [
+            (recipe["name"], recipe["routing"]) for recipe in config["recipes"]
         ]
-        modes = [
-            plugin["configuration"]["mode"]
-            for profile in profiles
+        modes = {
+            f"{name}/{decision['name']}": [
+                plugin["configuration"]["mode"]
+                for plugin in decision["plugins"]
+                if plugin["type"] == "response_cache"
+            ]
+            for name, profile in profiles
             for decision in profile["decisions"]
-            for plugin in decision["plugins"]
-            if plugin["type"] == "response_cache"
-        ]
-        assert modes == ["exact"] * 8
+        }
+        assert modes == {
+            "auto/pro-technical-keyword": ["exact"],
+            "auto/pro-technical-domain": ["exact"],
+            "auto/pro-default": ["exact"],
+            "auto/free-default": ["exact"],
+            "auto/base-default": ["exact"],
+            "classification/classification-pro": ["exact"],
+            "classification/classification-free": ["exact"],
+            "classification/classification-base": ["exact"],
+            "vision/vision-pro": ["exact"],
+            "vision/vision-free": ["exact"],
+            "vision/vision-base": ["exact"],
+        }

@@ -322,33 +322,67 @@ class TestTheAgentLmTimeoutCoversATeacherColdStart:
         assert primary["request_timeout"] < 300.0
 
 
-class TestAnUnservedTeacherFailsTheRender:
-    """The router sends every pro decision to the teacher, so a chart with the
-    router on and nothing serving the teacher is refused at render time rather
-    than answering 'no healthy upstream' on the first pro request."""
-
+class TestAnUnservedTeacherUsesTheStudentWithAWarning:
     UNSERVED = (
         "inference.vllm_llm_teacher.enabled=false",
         "inference.vllm_llm_teacher.externalUrl=",
     )
+    WARNING = (
+        "WARNING: pro_model_unavailable: pro-reasoning uses the student because "
+        "inference.vllm_llm_teacher.enabled=false and "
+        "inference.vllm_llm_teacher.externalUrl is empty."
+    )
 
-    def test_router_on_and_teacher_unserved_is_refused_naming_both_values(self):
+    def test_an_unserved_teacher_names_the_student_substitution(self):
         result = _helm_template(*self.UNSERVED)
-        assert result.returncode != 0
-        assert "inference.vllm_llm_teacher.enabled" in result.stderr
-        assert "inference.vllm_llm_teacher.externalUrl" in result.stderr
-        assert "semanticRouter.enabled" in result.stderr
-
-    def test_an_external_teacher_renders(self):
-        result = _helm_template(
-            "inference.vllm_llm_teacher.enabled=false",
-            "inference.vllm_llm_teacher.externalUrl=https://teacher.example.modal.run",
-        )
         assert result.returncode == 0, result.stderr
+        docs = list(filter(None, yaml.safe_load_all(result.stdout)))
+        assert _envoy_routes(docs)[0]["route"]["cluster"] == "llm_upstream"
+        assert (
+            _backend_endpoints(_sr_config(docs))["pro-reasoning"]
+            == (_backend_endpoints(_sr_config(docs))["basic-chat"])
+        )
+        models = {
+            m["name"]: m["provider_model_id"]
+            for m in _sr_config(docs)["providers"]["models"]
+        }
+        assert models["pro-reasoning"] == models["basic-chat"]
+        assert [line for line in result.stdout.splitlines() if "WARNING:" in line] == [
+            "# " + self.WARNING
+        ]
+        assert {
+            decision["name"]: decision["tier_degraded"]
+            for decision in _sr_config(docs)["routing"]["decisions"]
+            if "tier_degraded" in decision
+        } == {
+            "pro-technical-keyword": "pro_model_unavailable",
+            "pro-technical-domain": "pro_model_unavailable",
+            "pro-default": "pro_model_unavailable",
+        }
+
+    @pytest.mark.parametrize(
+        "teacher",
+        [
+            TEACHER_SERVED,
+            "inference.vllm_llm_teacher.externalUrl=https://teacher.example.modal.run",
+        ],
+    )
+    def test_a_served_teacher_has_no_degradation(self, teacher):
+        result = _helm_template(teacher)
+        assert result.returncode == 0, result.stderr
+        docs = list(filter(None, yaml.safe_load_all(result.stdout)))
+        assert _envoy_routes(docs)[0]["route"]["cluster"] == "llm_teacher"
+        assert [line for line in result.stdout.splitlines() if "WARNING:" in line] == []
+        assert {
+            decision["name"]: decision["tier_degraded"]
+            for decision in _sr_config(docs)["routing"]["decisions"]
+            if "tier_degraded" in decision
+        } == {}
 
     def test_router_off_renders_without_a_teacher(self):
         result = _helm_template(*self.UNSERVED, "semanticRouter.enabled=false")
         assert result.returncode == 0, result.stderr
+        assert [line for line in result.stdout.splitlines() if "WARNING:" in line] == []
 
 
 def _envoy_config(docs: list[dict]) -> dict:
