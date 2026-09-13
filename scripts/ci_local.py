@@ -18,6 +18,7 @@ Usage:
     uv run python scripts/ci_local.py                # every CI selection
     uv run python scripts/ci_local.py --unit         # unit jobs only
     uv run python scripts/ci_local.py -m evaluation  # one workflow
+    uv run python scripts/ci_local.py -m chart-validation  # chart rendering
     uv run python scripts/ci_local.py -m foundation -m runtime  # several
     uv run python scripts/ci_local.py --list         # show the commands, run nothing
 
@@ -69,7 +70,11 @@ def discover(workflows_dir: Path = WORKFLOWS) -> list[dict]:
     selections: list[dict] = []
     seen: set[tuple] = set()
     for workflow in _load_workflows(workflows_dir):
-        if not workflow.name.endswith(_SUFFIX):
+        if workflow.name.endswith(_SUFFIX):
+            module = workflow.name[: -len(_SUFFIX)]
+        elif workflow.name == "chart-validation.yml":
+            module = "chart-validation"
+        else:
             continue
         for selection in workflow.selections:
             key = (
@@ -83,7 +88,7 @@ def discover(workflows_dir: Path = WORKFLOWS) -> list[dict]:
             seen.add(key)
             selections.append(
                 {
-                    "module": workflow.name[: -len(_SUFFIX)],
+                    "module": module,
                     "paths": list(selection.paths),
                     "ignores": list(selection.ignores),
                     "marker": selection.marker_expr,

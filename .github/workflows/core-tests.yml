@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
+      - 'scripts/ci_local.py'
+      - '.github/workflows/chart-validation.yml'
       - 'libs/core/**'
       - 'libs/sdk/**'
       - 'libs/foundation/**'
@@ -27,6 +29,8 @@ on:
   pull_request:
     branches: [ main, develop ]
     paths:
+      - 'scripts/ci_local.py'
+      - '.github/workflows/chart-validation.yml'
       - 'libs/core/**'
       - 'libs/sdk/**'
       - 'libs/foundation/**'

@@ -179,6 +179,7 @@ _CI_SELECTION_COMMANDS = [
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
     " COVERAGE_FILE=.coverage JAX_PLATFORM_NAME=cpu uv run python -m pytest"
     " tests/agents/integration -m ci_fast -v -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/charts -v -p no:cacheprovider --tb=long",
     "JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/cli/unit"
     " tests/cli/integration -v -p no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
