@@ -21,6 +21,7 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorOutput,
 )
 from cogniverse_foundation.config.unified_config import SystemConfig
+from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 
 
 def _make_mock_config_manager() -> Mock:
@@ -100,7 +101,13 @@ def mock_registry():
 
 @pytest.fixture
 def orchestrator(mock_registry):
-    """OrchestratorAgent with mock registry."""
+    """OrchestratorAgent with mock registry.
+
+    The retrieval loop's reformulation step runs the real analysis module
+    against a recorded LM that declines, so each iteration re-runs the
+    seeded query through the named ``schema_refused`` fallback; an LM that
+    cannot answer would raise out of the loop instead.
+    """
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
         mock_config_manager = _make_mock_config_manager()
@@ -111,7 +118,8 @@ def orchestrator(mock_registry):
             port=8013,
         )
         agent.telemetry_manager = _RecordingTelemetryManager()
-        return agent
+    with recorded_completion_lm(RECORDED_REFUSAL) as lm, dspy.context(lm=lm):
+        yield agent
 
 
 def _make_httpx_mock(response_factory):

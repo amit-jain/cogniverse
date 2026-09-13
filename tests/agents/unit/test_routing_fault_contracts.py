@@ -35,6 +35,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
 )
 from tests.utils.recorded_endpoints import (
+    RECORDED_REFUSAL,
     recorded_completion_lm,
     recorded_gliner_extractor,
 )
@@ -48,10 +49,6 @@ DEAD_LM_BASE = f"http://127.0.0.1:{DEAD_PORT}/v1"
 MISSING_PIPELINE = "xx_not_a_pipeline"
 SHIPPED_PIPELINE = SpaCyDependencyAnalyzer().model_name
 GLINER_TEST_MODEL = "urchade/gliner_small-v2.1"
-
-# One recorded completion whose body the signature's adapter cannot parse: a
-# refusal, which is what a served model actually returns when it declines.
-RECORDED_UNPARSEABLE = "I'm sorry, I cannot help with that request."
 
 
 def _dead_lm() -> dspy.LM:
@@ -149,7 +146,7 @@ class TestAMalformedLMAnswerIsAMarkedFallback:
     def test_the_unified_path_marks_the_refusal_it_could_not_parse(self):
         with (
             _no_entities_module() as module,
-            recorded_completion_lm(RECORDED_UNPARSEABLE) as lm,
+            recorded_completion_lm(RECORDED_REFUSAL) as lm,
         ):
             with dspy.context(lm=lm):
                 prediction = module(query=QUERY)
@@ -239,7 +236,7 @@ class TestTheIterativeLoopDoesNotReformulateAroundAnOutage:
 
         with (
             _no_entities_module() as module,
-            recorded_completion_lm(RECORDED_UNPARSEABLE) as lm,
+            recorded_completion_lm(RECORDED_REFUSAL) as lm,
         ):
 
             class _ReformulationHarness:
