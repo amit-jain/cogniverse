@@ -128,6 +128,7 @@ class RouterPolicy:
     role_by_tier: dict[str, str]
     tier_by_decision: dict[str, str]
     model_by_decision: dict[str, str]
+    metric_label_by_decision: dict[str, str]
     decisions: tuple[str, ...]
 
 
@@ -168,14 +169,18 @@ def _router_policy() -> RouterPolicy:
         for subject in binding["subjects"]
         if subject["kind"] == "Group"
     }
-    decisions = list(routing["decisions"]) + [
-        decision
-        for recipe in document.get("recipes", [])
-        for decision in recipe["routing"]["decisions"]
-    ]
+    # The router's counters label a recipe's decision as ``<recipe>::<name>``
+    # and the auto alias's decisions by bare name.
+    decisions = [(decision, decision["name"]) for decision in routing["decisions"]]
+    for recipe in document.get("recipes", []):
+        decisions += [
+            (decision, f"{recipe['name']}::{decision['name']}")
+            for decision in recipe["routing"]["decisions"]
+        ]
     tier_by_decision: dict[str, str] = {}
     model_by_decision: dict[str, str] = {}
-    for decision in decisions:
+    metric_label_by_decision: dict[str, str] = {}
+    for decision, metric_label in decisions:
         conditions = decision["rules"]["conditions"]
         roles = {c["name"] for c in conditions if c["type"] == "authz"}
         (role,) = roles
@@ -183,10 +188,12 @@ def _router_policy() -> RouterPolicy:
         tier_by_decision[name] = tier_by_role[role]
         (ref,) = decision["modelRefs"]
         model_by_decision[name] = ref["model"]
+        metric_label_by_decision[name] = metric_label
     return RouterPolicy(
         role_by_tier={tier: role for role, tier in tier_by_role.items()},
         tier_by_decision=tier_by_decision,
         model_by_decision=model_by_decision,
+        metric_label_by_decision=metric_label_by_decision,
         decisions=tuple(tier_by_decision),
     )
 
@@ -346,9 +353,17 @@ def _json_log_entries(
 
 @dataclass(frozen=True)
 class RoutedTraffic:
-    """Every routed call the router logged in one window, by who made it."""
+    """Every routed call the router logged in one window, by who made it.
+
+    The router logs a request's authz match (which names the user) and its
+    routing decision (which names the request id) as adjacent lines on one
+    goroutine, so the user of each request is the last authz match before
+    its decision. That attributes every attempt to its tenant, including one
+    the client gave up on before it completed.
+    """
 
     roles: list[tuple[str, str]]
+    user_by_request: dict[str, str]
     prompt_by_request: dict[str, str]
     call_by_request: dict[str, tuple[str, str]]
     decision_counts: Counter
@@ -358,12 +373,14 @@ class RoutedTraffic:
 
 def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     roles: list[tuple[str, str]] = []
+    user_by_request: dict[str, str] = {}
     prompt_by_request: dict[str, str] = {}
     call_by_request: dict[str, tuple[str, str]] = {}
     decision_counts: Counter = Counter()
     latency_ms_by_request: dict[str, int] = {}
     cache_hits = 0
     pending_prompt: str | None = None
+    pending_user: str | None = None
     for entry in entries:
         event = entry.get("event")
         message = entry.get("msg", "")
@@ -376,6 +393,9 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
                 entry["selected_model"],
             )
             decision_counts[entry["decision"]] += 1
+            if pending_user is not None:
+                user_by_request[entry["request_id"]] = pending_user
+            pending_user = None
             continue
         if event == "llm_usage":
             if entry.get("cache_hit"):
@@ -393,10 +413,12 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
             continue
         matched = _AUTHZ_MATCHED.match(message)
         if matched is not None:
+            pending_user = matched.group("user")
             for role in matched.group("roles").split(","):
                 roles.append((matched.group("user"), role.strip()))
     return RoutedTraffic(
         roles,
+        user_by_request,
         prompt_by_request,
         call_by_request,
         decision_counts,
@@ -405,19 +427,47 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     )
 
 
-def _envoy_calls(entries: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
-    """request_id -> (cluster, duration_ms) for every completion Envoy proxied."""
-    cluster_by_request: dict[str, str] = {}
-    duration_ms_by_request: dict[str, int] = {}
+@dataclass(frozen=True)
+class EnvoyCall:
+    cluster: str
+    duration_ms: int
+    flags: str
+    status: int
+
+
+def _envoy_calls(entries: list[dict]) -> dict[str, EnvoyCall]:
+    """request_id -> what Envoy logged for every completion it proxied."""
+    calls: dict[str, EnvoyCall] = {}
     for entry in entries:
         if not str(entry.get("path", "")).endswith("/chat/completions"):
             continue
         request_id = entry.get("request_id")
         if not request_id or not entry.get("cluster"):
             continue
-        cluster_by_request[request_id] = entry["cluster"]
-        duration_ms_by_request[request_id] = int(entry["duration_ms"])
-    return cluster_by_request, duration_ms_by_request
+        calls[request_id] = EnvoyCall(
+            cluster=entry["cluster"],
+            duration_ms=int(entry["duration_ms"]),
+            flags=str(entry.get("flags", "")),
+            status=int(entry.get("status", 0)),
+        )
+    return calls
+
+
+# Envoy writes a request's access line when its stream ends, which for the
+# dispatch's last LM call is within the same second the dispatch returns;
+# the read retries for this long before it reports a call as unlogged.
+ENVOY_ACCESS_LOG_BUDGET_S = 15.0
+
+
+def _envoy_calls_for(
+    request_ids: list[str], start: datetime, end: datetime
+) -> dict[str, EnvoyCall]:
+    deadline = time.monotonic() + ENVOY_ACCESS_LOG_BUDGET_S
+    while True:
+        calls = _envoy_calls(_json_log_entries(_ENVOY_DEPLOY, start, end, _envoy_stamp))
+        if all(r in calls for r in request_ids) or time.monotonic() >= deadline:
+            return calls
+        time.sleep(1)
 
 
 def _served_models(
@@ -530,6 +580,7 @@ class Leg:
     decisions: list[str]
     selected_models: list[str]
     clusters: list[str]
+    timed_out: int
     served_models: set[str]
     prompt_fields: set[frozenset[str]]
     timings: dict
@@ -539,7 +590,8 @@ class Leg:
             f"counter deltas {self.deltas} vs {self.expected_deltas} derived from "
             f"the log; this tenant's routed calls {self.mine_by_role} -> "
             f"decisions {self.decisions} on models {self.selected_models} via "
-            f"clusters {self.clusters}, served models {sorted(self.served_models)}, "
+            f"clusters {self.clusters} ({self.timed_out} cut by the client), "
+            f"served models {sorted(self.served_models)}, "
             f"signature inputs {sorted(sorted(f) for f in self.prompt_fields)}; "
             f"router response-cache hits {self.cache_hit_delta} counted / "
             f"{self.logged_cache_hits} logged; timings {self.timings}"
@@ -565,15 +617,9 @@ def _run_leg(
     traffic = _routed_traffic(
         _json_log_entries(_ROUTER_DEPLOY, start, end, _router_stamp)
     )
-    cluster_by_request, duration_by_request = _envoy_calls(
-        _json_log_entries(_ENVOY_DEPLOY, start, end, _envoy_stamp)
-    )
-    mine = sorted(
-        request_id
-        for request_id, prompt in traffic.prompt_by_request.items()
-        if query in prompt
-    )
-    calls = [traffic.call_by_request[r] for r in mine if r in traffic.call_by_request]
+    mine = [r for r, user in traffic.user_by_request.items() if user == canonical]
+    envoy = _envoy_calls_for(mine, start, end)
+    calls = [traffic.call_by_request[r] for r in mine]
     selected_models = [model for _, model in calls]
     if expected_served is None:
         expected_served = {routing.served_model_by_catalog[m] for m in selected_models}
@@ -585,9 +631,15 @@ def _run_leg(
     return Leg(
         deltas={
             decision: _counter(
-                after, "llm_decision_match_total", decision_name=decision
+                after,
+                "llm_decision_match_total",
+                decision_name=policy.metric_label_by_decision[decision],
             )
-            - _counter(before, "llm_decision_match_total", decision_name=decision)
+            - _counter(
+                before,
+                "llm_decision_match_total",
+                decision_name=policy.metric_label_by_decision[decision],
+            )
             for decision in policy.decisions
         },
         expected_deltas={
@@ -597,13 +649,13 @@ def _run_leg(
             _counter(
                 after,
                 "llm_cache_plugin_hits_total",
-                decision_name=decision,
+                decision_name=policy.metric_label_by_decision[decision],
                 plugin_type="response_cache",
             )
             - _counter(
                 before,
                 "llm_cache_plugin_hits_total",
-                decision_name=decision,
+                decision_name=policy.metric_label_by_decision[decision],
                 plugin_type="response_cache",
             )
             for decision in policy.decisions
@@ -612,17 +664,23 @@ def _run_leg(
         mine_by_role=Counter(role for user, role in traffic.roles if user == canonical),
         decisions=[name for name, _ in calls],
         selected_models=selected_models,
-        clusters=[cluster_by_request[r] for r in mine if r in cluster_by_request],
+        clusters=[envoy[r].cluster for r in mine if r in envoy],
+        timed_out=sum(1 for r in mine if r in envoy and "DC" in envoy[r].flags),
         served_models=served,
         prompt_fields={
-            frozenset(_PROMPT_FIELD.findall(traffic.prompt_by_request[r])) for r in mine
+            frozenset(_PROMPT_FIELD.findall(traffic.prompt_by_request[r]))
+            for r in mine
+            if r in traffic.prompt_by_request
         },
         timings={
             "dispatch_s": round(dispatch_s, 2),
             "backend_completion_ms": [
                 traffic.latency_ms_by_request.get(r) for r in mine
             ],
-            "envoy_duration_ms": [duration_by_request.get(r) for r in mine],
+            "envoy_duration_ms": [
+                envoy[r].duration_ms if r in envoy else None for r in mine
+            ],
+            "envoy_flags": [envoy[r].flags if r in envoy else None for r in mine],
             "served_model_read_s": round(served_read_s, 2),
         },
     )
@@ -646,6 +704,7 @@ def _leg_verdict(
         if actual != expected:
             problems.append(f"{name}: {actual!r} != {expected!r}")
 
+    check("calls cut by the client's timeout", leg.timed_out, 0)
     check(
         "this tenant's authz matches",
         leg.mine_by_role,
@@ -760,6 +819,12 @@ _SYNTHETIC_POLICY = RouterPolicy(
         "base-default": "basic-chat",
         "classification-base": "basic-chat",
     },
+    metric_label_by_decision={
+        "pro-default": "pro-default",
+        "classification-pro": "classification::classification-pro",
+        "base-default": "base-default",
+        "classification-base": "classification::classification-base",
+    },
     decisions=(
         "pro-default",
         "classification-pro",
@@ -794,6 +859,7 @@ def _synthetic_pro_leg() -> Leg:
         decisions=["classification-pro", "pro-default"],
         selected_models=["basic-chat", "pro-reasoning"],
         clusters=["llm_upstream", "llm_teacher"],
+        timed_out=0,
         served_models={"student-model", "teacher-model"},
         prompt_fields=set(DISPATCH_SIGNATURE_INPUTS),
         timings={},
@@ -828,6 +894,11 @@ def test_the_verdict_rejects_a_pro_call_answered_by_the_student_model():
     assert _synthetic_verdict(leg) == [
         "served models: {'student-model'} != {'student-model', 'teacher-model'}"
     ]
+
+
+def test_the_verdict_rejects_a_call_the_client_cut_before_it_completed():
+    leg = replace(_synthetic_pro_leg(), timed_out=1)
+    assert _synthetic_verdict(leg) == ["calls cut by the client's timeout: 1 != 0"]
 
 
 def test_the_verdict_rejects_a_decision_the_counters_did_not_record():
