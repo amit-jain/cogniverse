@@ -31,6 +31,9 @@ from uuid import uuid4
 
 import pytest
 
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    SpaCyDependencyAnalyzer,
+)
 from cogniverse_core.agents.base import (
     AgentBase,
     AgentDeps,
@@ -603,7 +606,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19010)
         agent.bind_config_manager(_memory_config_manager())
         agent._gliner_extractor = None
-        agent._spacy_analyzer = None
+        agent._spacy_analyzer = SpaCyDependencyAnalyzer(model_name="absent_pipeline")
         agent.set_telemetry_manager(real_telemetry)
 
         query = "PyTorch and Meta AI in Menlo Park"

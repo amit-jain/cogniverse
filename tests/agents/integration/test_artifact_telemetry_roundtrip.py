@@ -17,6 +17,9 @@ from cogniverse_agents.optimizer.artifact_manager import (
     ArtifactManager,
     ExperimentMetrics,
 )
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    SpaCyDependencyAnalyzer,
+)
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import make_dspy_lm
 
@@ -1631,7 +1634,7 @@ class TestArtifactAffectsBehavior:
         agent = EntityExtractionAgent(deps=EntityExtractionDeps())
         agent.bind_config_manager(ConfigManager(store=store))
         agent._gliner_extractor = None
-        agent._spacy_analyzer = None
+        agent._spacy_analyzer = SpaCyDependencyAnalyzer(model_name="absent_pipeline")
 
         # Load artifact
         tm = get_telemetry_manager()
