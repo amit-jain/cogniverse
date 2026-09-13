@@ -194,7 +194,8 @@ class TenantScopedLMCache:
             self._finish(key, pending, value)
             return value
         except BaseException as exc:
-            self._report_failure(exc, tenant_id=tenant_id, model=model, key=key)
+            if not isinstance(exc, asyncio.CancelledError):
+                self._report_failure(exc, tenant_id=tenant_id, model=model, key=key)
             self._fail(key, pending, exc)
             raise
 
@@ -215,7 +216,8 @@ class TenantScopedLMCache:
             self._finish(key, pending, value)
             return value
         except BaseException as exc:
-            self._report_failure(exc, tenant_id=tenant_id, model=model, key=key)
+            if not isinstance(exc, asyncio.CancelledError):
+                self._report_failure(exc, tenant_id=tenant_id, model=model, key=key)
             self._fail(key, pending, exc)
             raise
 
