@@ -17,9 +17,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
+from dspy.utils.exceptions import AdapterParseError
 
 from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
+    ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
 )
 
 from .dspy_routing_signatures import (
@@ -103,7 +105,15 @@ class ComposableQueryAnalysisModule(dspy.Module):
 
         Returns:
             dspy.Prediction with entities, relationships, enhanced_query,
-            query_variants, confidence, path_used, domain_classification
+            query_variants, confidence, path_used, domain_classification. A
+            fallback prediction always names why in ``fallback_reason``.
+
+        Raises:
+            GLiNEREntityExtractionUnavailableError: never -- an extractor
+                outage becomes the named fallback below.
+            SpaCyModelUnavailableError: the spaCy pipeline is not loadable.
+            Exception: an LM that could not be reached, and anything else,
+                propagates -- an outage is not a query holding no entities.
         """
         try:
             # Step 1: Try GLiNER entity extraction (sync, fast)
@@ -139,9 +149,6 @@ class ComposableQueryAnalysisModule(dspy.Module):
                 fallback_model=exc.model_name,
                 fallback_inference_url=exc.inference_url,
             )
-        except Exception as e:
-            logger.error(f"ComposableQueryAnalysisModule failed: {e}")
-            return self._fallback_prediction(query)
 
     def _path_a(
         self,
@@ -193,9 +200,13 @@ class ComposableQueryAnalysisModule(dspy.Module):
 
             return prediction
 
-        except Exception as e:
-            logger.warning(f"Path A reformulation failed: {e}")
-            raise
+        except AdapterParseError as exc:
+            logger.warning(
+                "Path A reformulation returned an unparseable answer: %s", exc
+            )
+            return self._fallback_prediction(
+                query, fallback_reason=ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+            )
 
     def _path_b(self, query: str, search_context: str) -> dspy.Prediction:
         """
@@ -228,9 +239,13 @@ class ComposableQueryAnalysisModule(dspy.Module):
 
             return prediction
 
-        except Exception as e:
-            logger.warning(f"Path B unified extraction failed: {e}")
-            return self._fallback_prediction(query)
+        except AdapterParseError as exc:
+            logger.warning(
+                "Path B unified extraction returned an unparseable answer: %s", exc
+            )
+            return self._fallback_prediction(
+                query, fallback_reason=ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+            )
 
     def _deduplicate_relationships(
         self, relationships: List[Dict[str, Any]]
@@ -273,16 +288,16 @@ class ComposableQueryAnalysisModule(dspy.Module):
         self,
         query: str,
         *,
-        fallback_reason: Optional[str] = None,
+        fallback_reason: str,
         fallback_model: Optional[str] = None,
         fallback_inference_url: Optional[str] = None,
     ) -> dspy.Prediction:
-        """Return safe fallback prediction when all paths fail.
+        """An analysis that did not happen, saying why.
 
-        ``fallback_reason`` carries the entity-extraction reason vocabulary the
-        served agent records, so an extractor outage is queryable here under
-        the same value rather than an empty analysis that reads as a query
-        holding no entities.
+        ``fallback_reason`` is required and carries the entity-extraction
+        reason vocabulary the served agent records, so a fallback is always
+        queryable under a named reason rather than an empty analysis that
+        reads as a query holding no entities.
         """
         prediction = dspy.Prediction()
         prediction.entities = []
@@ -322,40 +337,25 @@ class DSPyBasicRoutingModule(dspy.Module):
 
         Returns:
             DSPy prediction with routing analysis
+
+        Raises:
+            TypeError, ValueError: ``available_agents`` is not a non-empty
+                list of names.
         """
         agents = _validate_available_agents(available_agents)
-        try:
-            # Analyze query characteristics
-            analysis_result = self._analyze_query_characteristics(
-                query, context, agents
-            )
+        analysis_result = self._analyze_query_characteristics(query, context, agents)
 
-            prediction = dspy.Prediction()
-            prediction.primary_intent = analysis_result["intent"]
-            prediction.complexity_level = analysis_result["complexity"]
-            prediction.needs_video_search = analysis_result["needs_video"]
-            prediction.needs_text_search = analysis_result["needs_text"]
-            prediction.needs_multimodal = analysis_result["needs_multimodal"]
-            prediction.recommended_agent = analysis_result["agent"]
-            prediction.confidence_score = analysis_result["confidence"]
-            prediction.reasoning = analysis_result["reasoning"]
+        prediction = dspy.Prediction()
+        prediction.primary_intent = analysis_result["intent"]
+        prediction.complexity_level = analysis_result["complexity"]
+        prediction.needs_video_search = analysis_result["needs_video"]
+        prediction.needs_text_search = analysis_result["needs_text"]
+        prediction.needs_multimodal = analysis_result["needs_multimodal"]
+        prediction.recommended_agent = analysis_result["agent"]
+        prediction.confidence_score = analysis_result["confidence"]
+        prediction.reasoning = analysis_result["reasoning"]
 
-            return prediction
-
-        except Exception as e:
-            logger.error(f"Basic routing analysis failed: {e}")
-
-            prediction = dspy.Prediction()
-            prediction.primary_intent = "search"
-            prediction.complexity_level = "moderate"
-            prediction.needs_video_search = True
-            prediction.needs_text_search = False
-            prediction.needs_multimodal = True
-            prediction.recommended_agent = "search_agent"
-            prediction.confidence_score = 0.5
-            prediction.reasoning = f"Fallback routing for query: {query[:50]}..."
-
-            return prediction
+        return prediction
 
     def _analyze_query_characteristics(
         self,
@@ -539,105 +539,80 @@ class DSPyAdvancedRoutingModule(dspy.Module):
 
         Returns:
             DSPy prediction with comprehensive routing decision
+
+        Raises:
+            SpaCyModelUnavailableError: the spaCy pipeline is not loadable.
+            Exception: an unreachable LM, and anything else the analysis
+                raises, propagates rather than becoming a routing decision
+                made on an empty analysis.
         """
         _validate_available_agents(available_agents)
-        try:
-            # Step 1: Basic query analysis
-            basic_analysis = self.basic_module.forward(
-                query, context, available_agents=available_agents
+        # Step 1: Basic query analysis
+        basic_analysis = self.basic_module.forward(
+            query, context, available_agents=available_agents
+        )
+
+        # Step 2: Composable query analysis (entities + relationships + enhancement)
+        analysis_result = self.analysis_module(
+            query=query,
+            search_context="general",
+        )
+
+        # Step 3: Routing decision — the LM predictor decides, fed the
+        # relationship analysis through its context input; the deterministic
+        # assembly is the validated fallback for a malformed LM decision.
+        routing_decision = self._llm_routing_decision(
+            query=query,
+            context=context,
+            user_preferences=user_preferences,
+            system_state=system_state,
+            analysis_result=analysis_result,
+        )
+        if routing_decision is None:
+            routing_decision = self._create_routing_decision(
+                basic_analysis,
+                analysis_result,
+                user_preferences,
+                system_state,
             )
 
-            # Step 2: Composable query analysis (entities + relationships + enhancement)
-            analysis_result = self.analysis_module(
-                query=query,
-                search_context="general",
-            )
+        # Step 4: Create agent workflow
+        agent_workflow = self._create_agent_workflow(routing_decision)
 
-            # Step 3: Routing decision — the LM predictor decides, fed the
-            # relationship analysis through its context input; the
-            # deterministic assembly is the validated fallback for a
-            # malformed or failed LM decision.
-            routing_decision = self._llm_routing_decision(
-                query=query,
-                context=context,
-                user_preferences=user_preferences,
-                system_state=system_state,
-                analysis_result=analysis_result,
-            )
-            if routing_decision is None:
-                routing_decision = self._create_routing_decision(
-                    basic_analysis,
-                    analysis_result,
-                    user_preferences,
-                    system_state,
-                )
+        # Step 5: Generate optimization suggestions
+        optimization_suggestions = self._generate_optimization_suggestions(
+            query, analysis_result
+        )
 
-            # Step 4: Create agent workflow
-            agent_workflow = self._create_agent_workflow(routing_decision)
+        prediction = dspy.Prediction()
 
-            # Step 5: Generate optimization suggestions
-            optimization_suggestions = self._generate_optimization_suggestions(
-                query, analysis_result
-            )
+        # Query analysis
+        prediction.query_analysis = {
+            "primary_intent": basic_analysis.primary_intent,
+            "complexity_level": basic_analysis.complexity_level,
+            "domain_classification": analysis_result.domain_classification,
+            "confidence": basic_analysis.confidence_score,
+        }
 
-            prediction = dspy.Prediction()
+        # Extracted information
+        prediction.extracted_entities = analysis_result.entities
+        prediction.extracted_relationships = analysis_result.relationships
+        prediction.enhanced_query = analysis_result.enhanced_query
 
-            # Query analysis
-            prediction.query_analysis = {
-                "primary_intent": basic_analysis.primary_intent,
-                "complexity_level": basic_analysis.complexity_level,
-                "domain_classification": analysis_result.domain_classification,
-                "confidence": basic_analysis.confidence_score,
-            }
+        # Routing decision
+        prediction.routing_decision = routing_decision
+        prediction.agent_workflow = agent_workflow
+        prediction.optimization_suggestions = optimization_suggestions
 
-            # Extracted information
-            prediction.extracted_entities = analysis_result.entities
-            prediction.extracted_relationships = analysis_result.relationships
-            prediction.enhanced_query = analysis_result.enhanced_query
+        # Overall confidence and reasoning
+        prediction.overall_confidence = self._calculate_overall_confidence(
+            basic_analysis, analysis_result
+        )
+        prediction.reasoning_chain = self._generate_reasoning_chain(
+            query, basic_analysis, analysis_result
+        )
 
-            # Routing decision
-            prediction.routing_decision = routing_decision
-            prediction.agent_workflow = agent_workflow
-            prediction.optimization_suggestions = optimization_suggestions
-
-            # Overall confidence and reasoning
-            prediction.overall_confidence = self._calculate_overall_confidence(
-                basic_analysis, analysis_result
-            )
-            prediction.reasoning_chain = self._generate_reasoning_chain(
-                query, basic_analysis, analysis_result
-            )
-
-            return prediction
-
-        except Exception as e:
-            logger.error(f"Advanced routing failed: {e}")
-
-            # Fallback to basic routing
-            basic_prediction = self.basic_module.forward(
-                query, context, available_agents=available_agents
-            )
-
-            prediction = dspy.Prediction()
-            prediction.query_analysis = {"error": str(e)}
-            prediction.extracted_entities = []
-            prediction.extracted_relationships = []
-            prediction.enhanced_query = query
-            prediction.routing_decision = {
-                "search_modality": "multimodal",
-                "generation_type": "raw_results",
-                "primary_agent": basic_prediction.recommended_agent,
-                "secondary_agents": [],
-                "execution_mode": "sequential",
-                "confidence": 0.3,
-                "reasoning": f"Fallback due to error: {e}",
-            }
-            prediction.agent_workflow = []
-            prediction.optimization_suggestions = []
-            prediction.overall_confidence = 0.3
-            prediction.reasoning_chain = [f"Error in advanced routing: {e}"]
-
-            return prediction
+        return prediction
 
     _ROUTING_DECISION_KEYS = frozenset(
         {
@@ -670,6 +645,9 @@ class DSPyAdvancedRoutingModule(dspy.Module):
         the exact decision shape ``_create_routing_decision`` produces —
         anything malformed falls back to the deterministic assembly rather
         than letting a free-form LM dict leak into the workflow builder.
+
+        An LM that could not be reached is not a malformed decision and
+        propagates.
         """
         try:
             enriched_context = "\n".join(
@@ -724,9 +702,10 @@ class DSPyAdvancedRoutingModule(dspy.Module):
                 return None
             decision["confidence"] = round(min(1.0, max(0.0, confidence)), 3)
             return decision
-        except Exception as e:  # noqa: BLE001 — any LM failure falls back
+        except AdapterParseError as exc:
             logger.warning(
-                "LM routing predictor failed (%s); using deterministic path", e
+                "LM routing decision was unparseable (%s); using deterministic path",
+                exc,
             )
             return None
 

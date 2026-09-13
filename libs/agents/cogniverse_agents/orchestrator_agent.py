@@ -2174,6 +2174,11 @@ class OrchestratorAgent(
         reformulator works from the original query alone. On subsequent
         iterations the missing aspects are appended so the reformulator
         targets the gaps the gate identified.
+
+        A malformed LM answer comes back from the analysis module as its
+        named fallback, whose enhanced query is the seeded query. An LM or
+        extractor that could not answer raises: the loop does not re-run a
+        search on a reformulation that never happened.
         """
         seeded_query = query
         if missing_aspects:
@@ -2182,19 +2187,11 @@ class OrchestratorAgent(
                 seeded_query = f"{query} (focus on: {joined})"
 
         analysis_module = self._get_query_analysis_module()
-        try:
-            prediction = await asyncio.to_thread(
-                analysis_module,
-                query=seeded_query,
-                search_context="general",
-            )
-        except Exception as exc:
-            logger.warning(
-                "Query reformulation failed in iterative loop (%s); "
-                "falling back to seeded query",
-                exc,
-            )
-            return seeded_query, ""
+        prediction = await asyncio.to_thread(
+            analysis_module,
+            query=seeded_query,
+            search_context="general",
+        )
 
         reformulated_query = getattr(prediction, "enhanced_query", None) or seeded_query
         rationale = getattr(prediction, "reasoning", "") or ""

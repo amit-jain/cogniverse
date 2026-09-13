@@ -1,6 +1,7 @@
 """Unit tests for DSPy integration across all agents."""
 
 import asyncio
+import contextlib
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -18,9 +19,9 @@ from cogniverse_agents.optimizer.dspy_agent_optimizer import (
 from cogniverse_agents.routing.dspy_relationship_router import (
     ComposableQueryAnalysisModule,
     DSPyAdvancedRoutingModule,
-    create_composable_query_analysis_module,
 )
 from cogniverse_agents.routing.dspy_routing_signatures import (
+    AdvancedRoutingSignature,
     BasicQueryAnalysisSignature,
 )
 from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -38,6 +39,67 @@ from tests.agents.unit._recording_telemetry import (
     FailingTelemetryManager,
     RecordingTelemetryManager,
 )
+from tests.utils.recorded_endpoints import (
+    recorded_completion_lm,
+    recorded_gliner_extractor,
+)
+
+# The analysis module reaches two services. Both answer from a recording here,
+# through the production client classes, so the module runs end to end and
+# every field it produces can be pinned exactly.
+GLINER_TEST_MODEL = "urchade/gliner_small-v2.1"
+RECORDED_ANALYSIS_ANSWER = json.dumps(
+    {
+        "reasoning": "The query names two entities and one action.",
+        "entities": json.dumps(
+            [{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.91}]
+        ),
+        "relationships": json.dumps(
+            [
+                {
+                    "subject": "robots",
+                    "relation": "play",
+                    "object": "soccer",
+                    "confidence": 0.8,
+                }
+            ]
+        ),
+        "enhanced_query": "footage of humanoid robots competing in soccer matches",
+        "query_variants": json.dumps([{"name": "broad", "query": "robot soccer"}]),
+        "domain_classification": "robotics",
+        "confidence": "0.87",
+    }
+)
+RECORDED_ENTITIES = [{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.91}]
+RECORDED_RELATIONSHIPS = [
+    {
+        "subject": "robots",
+        "relation": "play",
+        "object": "soccer",
+        "confidence": 0.8,
+    }
+]
+RECORDED_ENHANCED_QUERY = "footage of humanoid robots competing in soccer matches"
+RECORDED_VARIANTS = [{"name": "broad", "query": "robot soccer"}]
+HIGH_CONFIDENCE_GLINER_ANSWER = [
+    {"text": "robots", "label": "TECHNOLOGY", "score": 0.91, "start": 22, "end": 28}
+]
+
+
+@contextlib.contextmanager
+def recorded_analysis_module(gliner_entities=()):
+    """Yield the real ``ComposableQueryAnalysisModule`` over recorded services."""
+    with (
+        recorded_gliner_extractor(
+            list(gliner_entities), model_name=GLINER_TEST_MODEL
+        ) as extractor,
+        recorded_completion_lm(RECORDED_ANALYSIS_ANSWER) as lm,
+    ):
+        module = ComposableQueryAnalysisModule(
+            gliner_extractor=extractor, spacy_analyzer=SpaCyDependencyAnalyzer()
+        )
+        with dspy.context(lm=lm):
+            yield module
 
 
 # Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
@@ -558,77 +620,82 @@ class TestDSPyModules:
 
     @pytest.mark.ci_fast
     def test_composable_module_forward_output_shape(self):
-        """Test ComposableQueryAnalysisModule.forward() output shape"""
+        """Every field of one analysis, against a recorded LM answer."""
 
-        module = create_composable_query_analysis_module()
         test_query = "Show me videos of robots playing soccer"
-        result = module.forward(test_query)
+        with recorded_analysis_module() as module:
+            result = module.forward(test_query)
 
-        # Both paths must produce these fields
-        assert hasattr(result, "entities")
-        assert hasattr(result, "relationships")
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "query_variants")
-        assert hasattr(result, "confidence")
-        assert hasattr(result, "path_used")
-        assert hasattr(result, "domain_classification")
-
-        # Verify types
-        assert isinstance(result.entities, list)
-        assert isinstance(result.relationships, list)
-        assert isinstance(result.enhanced_query, str)
-        assert isinstance(result.query_variants, list)
-        assert isinstance(result.confidence, (int, float))
-        assert isinstance(result.path_used, str)
-        assert result.path_used in [
-            "gliner_fast_path",
-            "gliner_fast_path_degraded",
-            "llm_unified_path",
-            "fallback",
-        ]
+        assert result.entities == RECORDED_ENTITIES
+        assert result.relationships == RECORDED_RELATIONSHIPS
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.query_variants == RECORDED_VARIANTS
+        assert result.confidence == 0.87
+        assert result.path_used == "llm_unified_path"
+        assert result.domain_classification == "robotics"
+        assert result.reasoning == "The query names two entities and one action."
+        # A completed analysis carries no fallback marker at all.
+        assert hasattr(result, "fallback_reason") is False
+        assert result.entities[0]["text"] == "robots"
+        assert result.entities[0]["label"] == "TECHNOLOGY"
+        assert result.entities[0]["confidence"] == 0.91
+        assert result.relationships[0]["relation"] == "play"
+        assert result.query_variants[0]["name"] == "broad"
+        assert result.query_variants[0]["query"] == "robot soccer"
+        assert len(result.entities) == 1
 
     @pytest.mark.ci_fast
     def test_composable_module_query_variants_format(self):
-        """Test that query_variants match [{'name': str, 'query': str}] format"""
+        """query_variants is exactly [{'name': str, 'query': str}]."""
 
-        module = create_composable_query_analysis_module()
-        result = module.forward("Show me videos of robots playing soccer")
+        with recorded_analysis_module() as module:
+            result = module.forward("Show me videos of robots playing soccer")
 
-        for variant in result.query_variants:
-            assert isinstance(variant, dict)
-            assert "name" in variant
-            assert "query" in variant
-            assert isinstance(variant["name"], str)
-            assert isinstance(variant["query"], str)
+        assert result.query_variants == RECORDED_VARIANTS
+        assert [sorted(variant) for variant in result.query_variants] == [
+            ["name", "query"]
+        ]
+        assert result.query_variants[0]["name"] == "broad"
+        assert result.query_variants[0]["query"] == "robot soccer"
+        assert len(result.query_variants) == 1
 
     @pytest.mark.ci_fast
-    def test_composable_module_fallback_on_error(self):
-        """Test ComposableQueryAnalysisModule returns fallback on error"""
+    def test_composable_module_fallback_names_the_extractor_outage(self):
+        """An extractor outage is the only extraction failure that degrades."""
 
-        # Create module with broken GLiNER extractor
-        gliner = GLiNERRelationshipExtractor()
-        spacy = SpaCyDependencyAnalyzer()
+        gliner = GLiNERRelationshipExtractor(
+            model_name=GLINER_TEST_MODEL, inference_url="http://127.0.0.1:29071"
+        )
         module = ComposableQueryAnalysisModule(
             gliner_extractor=gliner,
-            spacy_analyzer=spacy,
+            spacy_analyzer=SpaCyDependencyAnalyzer(),
         )
-
-        # Mock extract_entities to raise
-        original_extract = gliner.extract_entities
-        gliner.extract_entities = Mock(side_effect=RuntimeError("GLiNER crashed"))
 
         result = module.forward("test query")
 
-        # Should return safe fallback
         assert result.entities == []
         assert result.relationships == []
         assert result.enhanced_query == "test query"
         assert result.query_variants == []
         assert result.confidence == 0.0
         assert result.path_used == "fallback"
+        assert result.fallback_reason == "extractor_unavailable"
+        assert result.fallback_model == GLINER_TEST_MODEL
+        assert result.fallback_inference_url == "http://127.0.0.1:29071"
 
-        # Restore
-        gliner.extract_entities = original_extract
+    @pytest.mark.ci_fast
+    def test_composable_module_raises_when_no_lm_is_configured(self):
+        """An unconfigured LM is a fault, not an analysis holding no entities."""
+
+        with recorded_gliner_extractor([], model_name=GLINER_TEST_MODEL) as gliner:
+            module = ComposableQueryAnalysisModule(
+                gliner_extractor=gliner,
+                spacy_analyzer=SpaCyDependencyAnalyzer(),
+            )
+            with dspy.context(lm=None), pytest.raises(ValueError) as excinfo:
+                module.forward("test query")
+
+        assert str(excinfo.value).startswith("No LM is loaded.")
 
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
@@ -725,17 +792,18 @@ class TestDSPyModules:
             min_entities_for_fast_path=1,
         )
 
-        # Mock GLiNER to return low-confidence entities
-        mock_entities = [
-            {"text": "things", "label": "MISC", "confidence": 0.3},
+        del gliner, spacy, module
+        low_confidence = [
+            {"text": "things", "label": "MISC", "score": 0.3, "start": 8, "end": 14}
         ]
-        gliner.extract_entities = Mock(return_value=mock_entities)
-        gliner.gliner_model = Mock()  # Model is loaded but low confidence
 
-        result = module.forward("show me things")
+        with recorded_analysis_module(low_confidence) as recorded:
+            result = recorded.forward("show me things")
 
-        # Should use Path B (LLM unified path) or fallback
-        assert result.path_used in ["llm_unified_path", "fallback"]
+        # Below the fast-path threshold, so the LM path runs and answers.
+        assert result.path_used == "llm_unified_path"
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.entities == RECORDED_ENTITIES
 
     def test_composable_module_path_b_no_entities(self):
         """Test Path B is taken when GLiNER returns no entities"""
@@ -747,22 +815,28 @@ class TestDSPyModules:
             spacy_analyzer=spacy,
         )
 
-        # Mock GLiNER to return empty
-        gliner.extract_entities = Mock(return_value=[])
+        del gliner, spacy, module
 
-        result = module.forward("hello world")
+        with recorded_analysis_module([]) as recorded:
+            result = recorded.forward("hello world")
 
-        # Should use Path B or fallback
-        assert result.path_used in ["llm_unified_path", "fallback"]
+        assert result.path_used == "llm_unified_path"
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.confidence == 0.87
 
     def test_advanced_routing_module_integration(self):
         """Test advanced routing module end-to-end integration"""
 
-        module = DSPyAdvancedRoutingModule()
-
-        # Test with complex query
         test_query = "Find videos showing robots playing soccer and explain the AI algorithms used"
-        result = module.forward(test_query)
+        with (
+            recorded_analysis_module() as analysis,
+            recorded_completion_lm(RECORDED_ANALYSIS_ANSWER) as lm,
+        ):
+            module = DSPyAdvancedRoutingModule(analysis_module=analysis)
+            with dspy.context(lm=lm):
+                result = module.forward(
+                    test_query, available_agents=["video_search_agent"]
+                )
 
         # Verify comprehensive prediction structure
         required_fields = [
@@ -824,36 +898,28 @@ class TestDSPyIntegrationReadiness:
     """Test composable module readiness for query enhancement and routing."""
 
     def test_composable_module_ready_for_query_enhancement(self):
-        """Test that composable module produces outputs suitable for query enhancement"""
+        """The analysis an enhancer consumes, field by field."""
 
-        module = create_composable_query_analysis_module()
-
-        # Test query that should produce entities and relationships
         test_query = (
             "Show videos of autonomous vehicles using computer vision for navigation"
         )
 
-        result = module.forward(test_query)
+        with recorded_analysis_module() as module:
+            result = module.forward(test_query)
 
-        # Verify outputs contain entities, relationships, and enhanced query
-        assert hasattr(result, "entities")
-        assert hasattr(result, "relationships")
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "query_variants")
-
-        # Verify entity structure
-        for entity in result.entities:
-            if isinstance(entity, dict):
-                assert "text" in entity
-                assert "label" in entity
-                assert "confidence" in entity
-
-        # Verify relationship structure
-        for relationship in result.relationships:
-            if isinstance(relationship, dict):
-                assert "subject" in relationship
-                assert "relation" in relationship
-                assert "object" in relationship
+        assert result.entities == RECORDED_ENTITIES
+        assert result.relationships == RECORDED_RELATIONSHIPS
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.query_variants == RECORDED_VARIANTS
+        assert [sorted(entity) for entity in result.entities] == [
+            ["confidence", "label", "text"]
+        ]
+        assert [sorted(rel) for rel in result.relationships] == [
+            ["confidence", "object", "relation", "subject"]
+        ]
+        assert result.relationships[0]["subject"] == "robots"
+        assert result.relationships[0]["object"] == "soccer"
+        assert result.entities[0]["confidence"] == 0.91
 
 
 # Query Enhancement System Tests
@@ -864,54 +930,50 @@ class TestQueryEnhancement:
     """Test composable query analysis module enhancement functionality."""
 
     def test_composable_module_basic_enhancement(self):
-        """Test basic query enhancement through composable module"""
+        """The enhanced query is the LM's, not an echo of the input."""
 
-        module = create_composable_query_analysis_module()
-
-        # Test with simple query
         original_query = "Show me videos of robots playing soccer"
-        result = module.forward(original_query)
+        with recorded_analysis_module() as module:
+            result = module.forward(original_query)
 
-        # Verify result structure
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "entities")
-        assert hasattr(result, "relationships")
-        assert hasattr(result, "query_variants")
-        assert hasattr(result, "confidence")
-        assert hasattr(result, "path_used")
-
-        # Verify data types
-        assert isinstance(result.enhanced_query, str)
-        assert isinstance(result.entities, list)
-        assert isinstance(result.relationships, list)
-        assert isinstance(result.query_variants, list)
-        assert isinstance(result.confidence, (int, float))
-
-        # Verify confidence bounds
-        assert 0.0 <= result.confidence <= 1.0
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.enhanced_query != original_query
+        assert result.entities == RECORDED_ENTITIES
+        assert result.relationships == RECORDED_RELATIONSHIPS
+        assert result.query_variants == RECORDED_VARIANTS
+        assert result.confidence == 0.87
+        assert result.path_used == "llm_unified_path"
+        assert result.domain_classification == "robotics"
+        assert len(result.relationships) == 1
+        assert len(result.query_variants) == 1
+        assert result.reasoning == "The query names two entities and one action."
+        assert result.entities[0]["label"] == "TECHNOLOGY"
 
     def test_composable_module_with_search_context(self):
-        """Test composable module with different search contexts"""
+        """Every search context reaches the LM and returns its answer."""
 
-        module = create_composable_query_analysis_module()
+        with recorded_analysis_module() as module:
+            results = {
+                context: module.forward("machine learning tutorial", context)
+                for context in ("general", "video", "text", "multimodal")
+            }
 
-        for context in ["general", "video", "text", "multimodal"]:
-            result = module.forward("machine learning tutorial", context)
-
-            assert hasattr(result, "enhanced_query")
-            assert hasattr(result, "entities")
-            assert hasattr(result, "confidence")
+        assert sorted(results) == ["general", "multimodal", "text", "video"]
+        assert {result.enhanced_query for result in results.values()} == {
+            RECORDED_ENHANCED_QUERY
+        }
+        assert {result.confidence for result in results.values()} == {0.87}
+        assert {result.path_used for result in results.values()} == {"llm_unified_path"}
 
     def test_composable_module_empty_query_handling(self):
-        """Test composable module handles empty query gracefully"""
+        """An empty query still runs the LM path and returns its answer."""
 
-        module = create_composable_query_analysis_module()
-        result = module.forward("")
+        with recorded_analysis_module() as module:
+            result = module.forward("")
 
-        # Should return valid result even with empty input
-        assert hasattr(result, "enhanced_query")
-        assert hasattr(result, "confidence")
-        assert result.confidence >= 0.0
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.confidence == 0.87
+        assert result.path_used == "llm_unified_path"
 
 
 @pytest.mark.unit
@@ -920,18 +982,15 @@ class TestQueryVariants:
 
     @pytest.mark.ci_fast
     def test_composable_module_produces_variants(self):
-        """Test composable module produces query variants"""
-        module = create_composable_query_analysis_module()
-
+        """The variants are the LM's, in full."""
         query = "Show me videos of robots playing soccer"
-        result = module.forward(query)
+        with recorded_analysis_module() as module:
+            result = module.forward(query)
 
-        # query_variants should be a list of dicts with name and query
-        for v in result.query_variants:
-            assert "name" in v
-            assert "query" in v
-            assert isinstance(v["name"], str)
-            assert isinstance(v["query"], str)
+        assert result.query_variants == RECORDED_VARIANTS
+        assert result.query_variants[0]["name"] == "broad"
+        assert result.query_variants[0]["query"] == "robot soccer"
+        assert len(result.query_variants) == 1
 
 
 @pytest.mark.unit
@@ -944,24 +1003,18 @@ class TestQueryEnhancementIntegration:
     """Test composable module integration readiness with routing."""
 
     def test_enhanced_queries_ready_for_routing(self):
-        """Test that composable module enhanced queries are ready for routing"""
+        """What routing reads off an analysis, pinned exactly."""
 
-        module = create_composable_query_analysis_module()
-
-        # Test query enhancement produces routing-ready output
         test_query = "Find educational videos about machine learning algorithms"
-        result = module.forward(test_query)
+        with recorded_analysis_module() as module:
+            result = module.forward(test_query)
 
-        # Should be a valid string suitable for search
-        assert isinstance(result.enhanced_query, str)
-        assert len(result.enhanced_query) > 0
-
-        # Should have confidence for routing decisions
-        assert isinstance(result.confidence, (int, float))
-        assert 0.0 <= result.confidence <= 1.0
-
-        # Should have path info for routing optimization
-        assert isinstance(result.path_used, str)
+        assert result.enhanced_query == RECORDED_ENHANCED_QUERY
+        assert result.confidence == 0.87
+        assert result.path_used == "llm_unified_path"
+        assert result.domain_classification == "robotics"
+        assert result.entities == RECORDED_ENTITIES
+        assert result.relationships == RECORDED_RELATIONSHIPS
 
 
 @pytest.mark.unit
@@ -2184,24 +2237,30 @@ class TestAdvancedRoutingLMPredictor:
             "reasoning": "LM chose the video path",
         }
 
+    @contextlib.contextmanager
     def _module_with_stub_router(self, decision=None, error=None):
-        import dspy
+        """The real module with only its decision predictor's answer recorded."""
+        with (
+            recorded_analysis_module() as analysis,
+            recorded_completion_lm(RECORDED_ANALYSIS_ANSWER) as lm,
+        ):
+            module = DSPyAdvancedRoutingModule(analysis_module=analysis)
 
-        module = DSPyAdvancedRoutingModule()
+            def fake_router(**kwargs):
+                del kwargs
+                if error is not None:
+                    raise error
+                prediction = dspy.Prediction()
+                prediction.routing_decision = decision
+                return prediction
 
-        def fake_router(**kwargs):
-            if error is not None:
-                raise error
-            prediction = dspy.Prediction()
-            prediction.routing_decision = decision
-            return prediction
-
-        module.router = fake_router
-        return module
+            module.router = fake_router
+            with dspy.context(lm=lm):
+                yield module
 
     def test_valid_lm_decision_is_used(self):
-        module = self._module_with_stub_router(decision=self._valid_decision())
-        result = module.forward("show me soccer videos")
+        with self._module_with_stub_router(decision=self._valid_decision()) as module:
+            result = module.forward("show me soccer videos")
         assert result.routing_decision == {
             "search_modality": "video_only",
             "generation_type": "summary",
@@ -2219,8 +2278,8 @@ class TestAdvancedRoutingLMPredictor:
     def test_malformed_lm_decision_falls_back_to_deterministic(self):
         bad = self._valid_decision()
         bad["search_modality"] = "hologram"
-        module = self._module_with_stub_router(decision=bad)
-        result = module.forward("show me soccer videos")
+        with self._module_with_stub_router(decision=bad) as module:
+            result = module.forward("show me soccer videos")
         assert result.routing_decision["search_modality"] in {
             "multimodal",
             "video_only",
@@ -2230,18 +2289,36 @@ class TestAdvancedRoutingLMPredictor:
         assert result.routing_decision["reasoning"].startswith("Routing based on")
 
     def test_missing_keys_falls_back(self):
-        module = self._module_with_stub_router(decision={"primary_agent": "x"})
-        result = module.forward("show me soccer videos")
+        with self._module_with_stub_router(decision={"primary_agent": "x"}) as module:
+            result = module.forward("show me soccer videos")
         assert result.routing_decision["reasoning"].startswith("Routing based on")
 
-    def test_router_exception_falls_back(self):
-        module = self._module_with_stub_router(error=RuntimeError("no LM configured"))
-        result = module.forward("show me soccer videos")
+    def test_an_unparseable_lm_decision_falls_back(self):
+        """The only decision failure the deterministic path answers for."""
+        from dspy.utils.exceptions import AdapterParseError
+
+        parse_error = AdapterParseError(
+            adapter_name="JSONAdapter",
+            signature=AdvancedRoutingSignature,
+            lm_response="I cannot help with that.",
+        )
+        with self._module_with_stub_router(error=parse_error) as module:
+            result = module.forward("show me soccer videos")
         assert result.routing_decision["reasoning"].startswith("Routing based on")
+
+    def test_a_failed_decision_predictor_is_not_a_decision(self):
+        """A predictor that could not answer propagates; it is not a fallback."""
+        with self._module_with_stub_router(
+            error=RuntimeError("decision predictor is down")
+        ) as module:
+            with pytest.raises(RuntimeError) as excinfo:
+                module.forward("show me soccer videos")
+
+        assert str(excinfo.value) == "decision predictor is down"
 
     def test_nonnumeric_confidence_falls_back(self):
         bad = self._valid_decision()
         bad["confidence"] = "very high"
-        module = self._module_with_stub_router(decision=bad)
-        result = module.forward("show me soccer videos")
+        with self._module_with_stub_router(decision=bad) as module:
+            result = module.forward("show me soccer videos")
         assert result.routing_decision["reasoning"].startswith("Routing based on")
