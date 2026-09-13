@@ -63,6 +63,7 @@ _ROUTING_HEADER_PREFIXES = ("x-",)
 
 _CALLS_LOCK = threading.Lock()
 _CALLS = 0
+_REQUESTS: list[dict] = []
 
 
 _FAULT_PREFIX = "FAULT:"
@@ -71,6 +72,10 @@ _FAULT_PREFIX = "FAULT:"
 # a single ``error`` object carrying message/type/code. The per-status values
 # mirror what an upstream that rejects the key, the tenant or the rate sends.
 _REFUSALS = {
+    400: ("Malformed completion", "invalid_request_error", "invalid_request"),
+    422: ("Invalid completion fields", "invalid_request_error", "invalid_fields"),
+    502: ("Bad gateway", "server_error", "bad_gateway"),
+    504: ("Gateway timeout", "server_error", "gateway_timeout"),
     401: ("Incorrect API key provided", "invalid_request_error", "invalid_api_key"),
     403: (
         "You are not allowed to access this model",
@@ -138,6 +143,10 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (http.server API)
         if self.path.rstrip("/") in ("/health", "/healthz", ""):
             self._send_json(200, {"status": "ok", "backend_tag": BACKEND_TAG})
+        elif self.path.rstrip("/") == "/requests":
+            with _CALLS_LOCK:
+                records = list(_REQUESTS)
+            self._send_json(200, {"requests": records})
         elif self.path.rstrip("/").endswith("/models"):
             self._send_json(
                 200,
@@ -159,7 +168,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": {"message": "invalid JSON body"}})
             return
 
-        fault = parse_fault(_last_user_message(body))
+        prompt = _last_user_message(body)
+        with _CALLS_LOCK:
+            _REQUESTS.append({"prompt": prompt, "model": body.get("model")})
+        fault = parse_fault(prompt)
+        if BACKEND_TAG == "teacher" and prompt.startswith("TEACHER_FAULT:"):
+            fault = parse_fault(prompt.removeprefix("TEACHER_").split("|", 1)[0])
         if fault is not None:
             # Counted like any other request that reached this backend, so a
             # caller can measure how many attempts a failure consumed.
@@ -206,6 +220,19 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve_fault(self, kind: str, argument: str) -> None:
         """Fail the request in the named way instead of answering it."""
+        if kind == "misleading":
+            status = int(argument)
+            self._send_json(
+                status,
+                {
+                    "error": {
+                        "message": "503 timeout no healthy upstream connection refused",
+                        "type": "invalid_request_error",
+                        "code": "invalid_api_key",
+                    }
+                },
+            )
+            return
         if kind == "status":
             status = int(argument)
             self._send_json(status, refusal_body(status))

@@ -823,3 +823,59 @@ class TestTheVisionEntry:
             ]
         assert served == ["text-entry", "vision-entry", "text-entry"]
         assert lm.model == "openai/text-entry"
+
+
+class TestStudentRetryRequiresAnOutageType:
+    def test_an_auth_rejection_with_an_outage_status_cannot_use_the_student(self):
+        from cogniverse_foundation.config.routed_lm import (
+            RoutedLM,
+            UpstreamAuthRejected,
+        )
+
+        lm = RoutedLM(
+            "openai/auto",
+            tenant_id="acme:prod",
+            tier="pro",
+            student_model="openai/cogniverse-classification",
+            num_retries=0,
+        )
+        failure = UpstreamAuthRejected(
+            "503 timeout no healthy upstream",
+            status=503,
+            router_code=None,
+            tenant_id="acme:prod",
+            tier="pro",
+            routed_model="openai/auto",
+        )
+        assert lm._can_use_student(failure) is False
+
+    def test_an_outage_type_with_a_permanent_status_cannot_use_the_student(self):
+        from cogniverse_foundation.config.routed_lm import RoutedLM, UpstreamUnavailable
+
+        lm = RoutedLM(
+            "openai/auto",
+            tenant_id="acme:prod",
+            tier="pro",
+            student_model="openai/cogniverse-classification",
+            num_retries=0,
+        )
+        failure = UpstreamUnavailable(
+            "503 timeout no healthy upstream",
+            status=401,
+            router_code=None,
+            tenant_id="acme:prod",
+            tier="pro",
+            routed_model="openai/auto",
+        )
+        assert lm._can_use_student(failure) is False
+
+    def test_a_local_bug_with_outage_words_keeps_its_original_type(self):
+        from cogniverse_foundation.config.routed_lm import classify_routed_failure
+
+        failure = classify_routed_failure(
+            RuntimeError("503 timeout no healthy upstream"),
+            tenant_id="acme:prod",
+            tier="pro",
+            routed_model="openai/auto",
+        )
+        assert failure is None
