@@ -166,6 +166,16 @@ def _make_extraction_agent(config_manager=None):
         return agent
 
 
+def _unavailable_spacy():
+    """A real analyzer whose pipeline is not installed: the shape production has
+    when spaCy cannot parse, so the agent's own availability check is what runs."""
+    from cogniverse_agents.routing.relationship_extraction_tools import (
+        SpaCyDependencyAnalyzer,
+    )
+
+    return SpaCyDependencyAnalyzer(model_name="xx_not_a_pipeline")
+
+
 def _messages(caplog, logger_name: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == logger_name]
 
@@ -383,7 +393,7 @@ def entity_agent():
         agent.bind_config_manager(_memory_config_manager())
         # Force DSPy fallback path for existing tests
         agent._gliner_extractor = None
-        agent._spacy_analyzer = None
+        agent._spacy_analyzer = _unavailable_spacy()
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
@@ -585,7 +595,7 @@ class TestEntityExtractionAgent:
         entity_agent.dspy_module = EntityExtractionModule()
         gliner = _CountingExtractor()
         entity_agent._gliner_extractor = gliner
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
         lm = _CountingDummyLM(
             [
                 {
@@ -745,7 +755,7 @@ class TestEntityExtractionAgent:
         entity_agent._gliner_extractor = _CountingExtractor(
             result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
 
         with dspy.context(lm=_EmptyObjectLM()):
             result = await entity_agent._process_impl(
@@ -789,7 +799,7 @@ class TestEntityExtractionAgent:
         entity_agent._gliner_extractor = _CountingExtractor(
             result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
         lm = _StatusRaisingDummyLM(
             litellm.BadRequestError(
                 message=(
@@ -840,7 +850,7 @@ class TestEntityExtractionAgent:
         entity_agent._gliner_extractor = _CountingExtractor(
             result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
         lm = _StatusRaisingDummyLM(
             litellm.InternalServerError(
                 message="upstream connect error",
@@ -871,7 +881,7 @@ class TestEntityExtractionAgent:
         entity_agent._gliner_extractor = _CountingExtractor(
             result=[{"text": "Barack Obama", "label": "PERSON"}]
         )
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
 
         with dspy.context(lm=_RaisingDummyLM("engine down")):
             with pytest.raises(RuntimeError) as excinfo:
@@ -946,7 +956,7 @@ class TestEntityExtractionAgent:
         entity_agent._gliner_extractor = _CountingExtractor(
             exc=RuntimeError("gliner boom")
         )
-        entity_agent._spacy_analyzer = None
+        entity_agent._spacy_analyzer = _unavailable_spacy()
         lm = _RaisingDummyLM("dspy boom")
 
         with (
@@ -1532,7 +1542,7 @@ class TestTelemetrySpanEmission:
             agent = EntityExtractionAgent(deps=deps, port=8010)
             agent.bind_config_manager(_memory_config_manager())
             agent._gliner_extractor = None
-            agent._spacy_analyzer = None
+            agent._spacy_analyzer = _unavailable_spacy()
 
             agent.telemetry_manager = RecordingTelemetryManager()
             return agent
@@ -1585,7 +1595,7 @@ class TestTelemetrySpanEmission:
         """No manager: the request continues; the loss is a WARNING, never silent."""
         agent = _make_extraction_agent()
         agent._gliner_extractor = None
-        agent._spacy_analyzer = None
+        agent._spacy_analyzer = _unavailable_spacy()
         agent.telemetry_manager = None
 
         with caplog.at_level(
@@ -1612,7 +1622,7 @@ class TestTelemetrySpanEmission:
         """A telemetry enqueue failure never fails the request; it is a WARNING."""
         agent = _make_extraction_agent()
         agent._gliner_extractor = None
-        agent._spacy_analyzer = None
+        agent._spacy_analyzer = _unavailable_spacy()
         telemetry = FailingTelemetryManager(RuntimeError("telemetry boom"))
         agent.telemetry_manager = telemetry
 
@@ -1678,7 +1688,7 @@ class TestUngroundedMemoryEntityIsDroppedIndividually:
     def _agent(self, *, spacy_analyzer=None):
         agent = _make_extraction_agent(_instructions_manager(self.REMEMBERED))
         agent.dspy_module = EntityExtractionModule()
-        agent._spacy_analyzer = spacy_analyzer
+        agent._spacy_analyzer = spacy_analyzer or _unavailable_spacy()
         agent._gliner_extractor = _CountingExtractor(result=[])
         return agent
 
@@ -1697,8 +1707,8 @@ class TestUngroundedMemoryEntityIsDroppedIndividually:
     async def test_ungrounded_mention_is_dropped_and_the_rest_is_served(self):
         """Three mentions, one only in the prompt: two survive, the span counts one.
 
-        ``_spacy_analyzer`` is None so the drop cannot be riding on the
-        relationship pass, which returns early without one.
+        The spaCy pipeline is unavailable, so the drop cannot be riding on
+        the relationship pass, which is skipped without one.
         """
         agent = self._agent()
         lm = self._lm(
@@ -1774,6 +1784,35 @@ class TestUngroundedMemoryEntityIsDroppedIndividually:
         ]
         ((span,),) = (agent.telemetry_manager.spans,)
         assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_missing_spacy_pipeline_serves_entities_without_relationships(
+        self,
+    ):
+        """The same survivors as above, with the pipeline genuinely absent.
+
+        The agent asks the analyzer whether it can parse instead of calling
+        into it, so an uninstalled pipeline is a skipped relationship pass,
+        not a raise and not a parse that found nothing.
+        """
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            SpaCyDependencyAnalyzer,
+        )
+
+        agent = self._agent(
+            spacy_analyzer=SpaCyDependencyAnalyzer(model_name="xx_not_a_pipeline")
+        )
+        lm = self._lm(("Barack Obama", "PERSON"), ("Chicago", "PLACE"))
+
+        result = await self._run(agent, lm)
+
+        assert [e.text for e in result.entities] == ["Barack Obama", "Chicago"]
+        assert result.entity_count == 2
+        assert result.path_used == "dspy"
+        assert result.relationships == []
+        assert agent._spacy_analyzer.is_available() is False
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert set(span.attributes) == {"input.value", "operation", "output.value"}
 
     @pytest.mark.asyncio
     async def test_an_entity_free_answer_is_not_a_grounding_failure(self):
