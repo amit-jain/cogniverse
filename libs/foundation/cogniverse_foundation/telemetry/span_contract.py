@@ -27,6 +27,10 @@ OP_ORCHESTRATION = "orchestration"
 OP_PROFILE_SELECTION = "profile_selection"
 OP_GATEWAY = "gateway"
 
+# The model the backend reports having served a routed LM call, as the
+# completion's ``model`` field; stamped on the span the call ran under.
+LLM_SERVED_MODEL_ATTRIBUTE = "llm.served_model"
+
 # Query enhancement path marker — every query_enhancement span sets this so
 # served rows stay machine-readable even when the LM falls back.
 QUERY_ENHANCEMENT_PATH_ATTRIBUTE = "enhancement.path"

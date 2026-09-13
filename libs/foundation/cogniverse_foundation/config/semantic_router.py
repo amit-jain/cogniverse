@@ -36,6 +36,7 @@ from cogniverse_foundation.config.unified_config import (
     RouterTier,
     SemanticRouterConfig,
 )
+from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
 
 if TYPE_CHECKING:
     import dspy
@@ -175,6 +176,25 @@ def resolve_semantic_router_config(config_accessor: object) -> SemanticRouterCon
     )
 
 
+def record_served_model(response: object) -> None:
+    """Stamp the completion's ``model`` on the current span, when there is one.
+
+    ``response`` is what ``dspy.LM.forward`` returns: a litellm response whose
+    ``model`` attribute is the backend's served model name, or a mapping with
+    the same key. Outside any span there is nowhere to record it.
+    """
+    from opentelemetry import trace
+
+    model = getattr(response, "model", None)
+    if model is None and isinstance(response, dict):
+        model = response.get("model")
+    if not model:
+        return
+    span = trace.get_current_span()
+    if span.get_span_context().is_valid:
+        span.set_attribute(LLM_SERVED_MODEL_ATTRIBUTE, str(model))
+
+
 def create_routed_lm(
     endpoint: LLMEndpointConfig,
     config: SemanticRouterConfig,
@@ -182,8 +202,8 @@ def create_routed_lm(
     tier: RouterTier,
     call_site: str,
 ) -> "dspy.LM":
-    """Build a ``dspy.LM`` for ``tenant_id`` on ``tier``, routed through the
-    router when ``config.enabled``.
+    """Build the LM for ``tenant_id`` on ``tier``, routed through the router
+    when ``config.enabled``.
 
     Composes ``apply_semantic_routing`` + the LM constructor — the single way
     an agent builds a semantic-router-aware LM. When routing is disabled the LM
@@ -193,6 +213,7 @@ def create_routed_lm(
     ``RoutedLMCallFailed`` subclass naming the tenant, the tier, the routed
     model and the upstream status, so a credential refusal is distinguishable
     from a quota, an outage and a request the router would not accept.
+    Successful completions record their served model on the current span.
     """
     routed = apply_semantic_routing(
         endpoint=endpoint,
