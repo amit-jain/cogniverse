@@ -40,6 +40,18 @@ class GLiNEREntityExtractionUnavailableError(RuntimeError):
         self.inference_url = inference_url
 
 
+class SpaCyModelUnavailableError(RuntimeError):
+    """The spaCy pipeline could not be loaded, so the text was never parsed.
+
+    Carries the model name the load targeted, so a caller names the missing
+    pipeline instead of reading an unparsed query as "no relationships".
+    """
+
+    def __init__(self, message: str, *, model_name: str) -> None:
+        super().__init__(message)
+        self.model_name = model_name
+
+
 class GLiNERRelationshipExtractor:
     """
     GLiNER-based relationship extractor for entity recognition and relationship inference.
@@ -373,18 +385,38 @@ class SpaCyDependencyAnalyzer:
         self.nlp = None
 
     def _load_spacy_model(self):
-        """Load spaCy model with error handling"""
+        """Load the spaCy pipeline, or raise naming the model.
+
+        Raises:
+            SpaCyModelUnavailableError: The pipeline is not installed or could
+                not be loaded, so whether the text holds relationships is
+                unknown rather than known to be nothing.
+        """
         try:
             self.nlp = spacy.load(self.model_name)
-            logger.info(f"Loaded spaCy model: {self.model_name}")
-        except IOError:
-            logger.warning(
-                f"spaCy model {self.model_name} not found. Operating without spaCy dependency analysis."
-            )
-            self.nlp = None
-        except Exception as e:
-            logger.warning(f"spaCy model unavailable: {e}")
-            self.nlp = None
+        except OSError as e:
+            raise SpaCyModelUnavailableError(
+                f"spaCy model {self.model_name!r} could not be loaded: "
+                f"{type(e).__name__}: {e}",
+                model_name=self.model_name,
+            ) from e
+        logger.info(f"Loaded spaCy model: {self.model_name}")
+
+    def is_available(self) -> bool:
+        """Whether the pipeline can parse, loading it on first call.
+
+        For a caller whose contract is to run without relationships when the
+        pipeline is absent: it asks, instead of reading an empty result.
+        """
+        try:
+            self._ensure_loaded()
+        except SpaCyModelUnavailableError:
+            return False
+        return True
+
+    def _ensure_loaded(self):
+        if self.nlp is None:
+            self._load_spacy_model()
 
     def analyze_dependencies(self, text: str) -> Dict[str, Any]:
         """
@@ -396,43 +428,30 @@ class SpaCyDependencyAnalyzer:
         Returns:
             Dictionary with dependency analysis results
         """
-        if self.nlp is None:
-            self._load_spacy_model()
-        if not self.nlp:
-            logger.warning("spaCy model not available")
-            return {"dependencies": [], "structure": "unknown"}
+        self._ensure_loaded()
 
-        try:
-            doc = self.nlp(text)
+        doc = self.nlp(text)
 
-            dependencies = []
-            for token in doc:
-                dependencies.append(
-                    {
-                        "text": token.text,
-                        "lemma": token.lemma_,
-                        "pos": token.pos_,
-                        "tag": token.tag_,
-                        "dep": token.dep_,
-                        "head": token.head.text,
-                        "children": [child.text for child in token.children],
-                    }
-                )
-
-            # Analyze overall structure
-            structure = self._analyze_sentence_structure(doc)
-
-            return {
-                "dependencies": dependencies,
-                "structure": structure,
-                "entities": [(ent.text, ent.label_) for ent in doc.ents],
-                "noun_phrases": [chunk.text for chunk in doc.noun_chunks],
-                "complexity_score": self._calculate_complexity_score(doc),
+        dependencies = [
+            {
+                "text": token.text,
+                "lemma": token.lemma_,
+                "pos": token.pos_,
+                "tag": token.tag_,
+                "dep": token.dep_,
+                "head": token.head.text,
+                "children": [child.text for child in token.children],
             }
+            for token in doc
+        ]
 
-        except Exception as e:
-            logger.error(f"spaCy dependency analysis failed: {e}")
-            return {"dependencies": [], "structure": "error"}
+        return {
+            "dependencies": dependencies,
+            "structure": self._analyze_sentence_structure(doc),
+            "entities": [(ent.text, ent.label_) for ent in doc.ents],
+            "noun_phrases": [chunk.text for chunk in doc.noun_chunks],
+            "complexity_score": self._calculate_complexity_score(doc),
+        }
 
     def extract_semantic_relationships(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -444,53 +463,43 @@ class SpaCyDependencyAnalyzer:
         Returns:
             List of semantic relationship tuples
         """
-        if self.nlp is None:
-            self._load_spacy_model()
-        if not self.nlp:
-            return []
+        self._ensure_loaded()
 
-        try:
-            doc = self.nlp(text)
-            relationships = []
+        doc = self.nlp(text)
+        relationships = []
 
-            # Extract verb-based relationships
-            for token in doc:
-                if token.pos_ == "VERB":
-                    subject, obj = self._find_subject_object(token)
-                    if subject and obj:
-                        relationships.append(
-                            {
-                                "subject": subject.text,
-                                "relation": token.lemma_,
-                                "object": obj.text,
-                                "confidence": 0.8,
-                                "grammatical_pattern": f"{subject.dep_}-{token.dep_}-{obj.dep_}",
-                            }
-                        )
+        # Extract verb-based relationships
+        for token in doc:
+            if token.pos_ == "VERB":
+                subject, obj = self._find_subject_object(token)
+                if subject and obj:
+                    relationships.append(
+                        {
+                            "subject": subject.text,
+                            "relation": token.lemma_,
+                            "object": obj.text,
+                            "confidence": 0.8,
+                            "grammatical_pattern": f"{subject.dep_}-{token.dep_}-{obj.dep_}",
+                        }
+                    )
 
-            # Extract noun-based relationships through prepositions
-            for token in doc:
-                if token.dep_ == "prep":
-                    head = token.head
-                    prep_obj = [
-                        child for child in token.children if child.dep_ == "pobj"
-                    ]
-                    if head and prep_obj:
-                        relationships.append(
-                            {
-                                "subject": head.text,
-                                "relation": token.text,  # preposition as relation
-                                "object": prep_obj[0].text,
-                                "confidence": 0.7,
-                                "grammatical_pattern": f"prep-{token.text}",
-                            }
-                        )
+        # Extract noun-based relationships through prepositions
+        for token in doc:
+            if token.dep_ == "prep":
+                head = token.head
+                prep_obj = [child for child in token.children if child.dep_ == "pobj"]
+                if head and prep_obj:
+                    relationships.append(
+                        {
+                            "subject": head.text,
+                            "relation": token.text,  # preposition as relation
+                            "object": prep_obj[0].text,
+                            "confidence": 0.7,
+                            "grammatical_pattern": f"prep-{token.text}",
+                        }
+                    )
 
-            return relationships
-
-        except Exception as e:
-            logger.error(f"Semantic relationship extraction failed: {e}")
-            return []
+        return relationships
 
     def _find_subject_object(
         self, verb_token: Token
@@ -624,7 +633,13 @@ class RelationshipExtractorTool:
             entity_labels: Optional entity labels for GLiNER
 
         Returns:
-            Comprehensive relationship analysis
+            Comprehensive relationship analysis, or a degraded result naming
+            ``fallback_reason`` when the entity extractor could not answer.
+
+        Raises:
+            SpaCyModelUnavailableError: The spaCy pipeline is not loadable.
+            Exception: Anything else the extractors raise propagates -- a
+                failure that is not a named degrade is not an empty analysis.
         """
         try:
             # Extract entities with GLiNER
@@ -684,23 +699,20 @@ class RelationshipExtractorTool:
                 fallback_model=exc.model_name,
                 fallback_inference_url=exc.inference_url,
             )
-        except Exception as e:
-            logger.error(f"Comprehensive relationship extraction failed: {e}")
-            return self._degraded_result()
 
     @staticmethod
     def _degraded_result(
         *,
-        fallback_reason: Optional[str] = None,
+        fallback_reason: str,
         fallback_model: Optional[str] = None,
         fallback_inference_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """An extraction that did not happen, saying why.
 
-        ``fallback_reason`` carries the entity-extraction reason vocabulary, so
-        an extractor outage is told apart from a text that genuinely holds no
-        relationships. ``query_structure`` reports the parse, never the
-        failure.
+        ``fallback_reason`` is required and carries the entity-extraction
+        reason vocabulary, so an extraction that did not happen is always told
+        apart from a text that genuinely holds no relationships.
+        ``query_structure`` reports the parse, never the failure.
         """
         return {
             "entities": [],

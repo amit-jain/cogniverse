@@ -397,6 +397,13 @@ module also defines:
   (`_analyze_query_characteristics`) — no LLM call
 - **`DSPyAdvancedRoutingModule`**: LLM-based routing over `AdvancedRoutingSignature` for more nuanced decisions
 
+Failures are handled by class. A malformed LM answer (`AdapterParseError`) is the only one that
+degrades: `ComposableQueryAnalysisModule` returns its fallback prediction with
+`fallback_reason: "schema_refused"`, and `DSPyAdvancedRoutingModule` takes the deterministic
+routing decision. A GLiNER outage returns the `"extractor_unavailable"` fallback. An unreachable
+LM, a missing spaCy pipeline and any other error propagate from all three modules; every
+fallback prediction carries a `fallback_reason`.
+
 Both routing modules accept `available_agents` only as `list[str]` (or `None`
 when the caller has no registry). An explicit list must contain at least one
 non-empty agent name with no surrounding whitespace; CSV strings and other
@@ -651,11 +658,14 @@ Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
   `extract_entities` raises `GLiNEREntityExtractionUnavailableError` (naming the model and the
   inference URL) when the model cannot be loaded or the prediction fails, so a GLiNER outage is
   never returned as an empty entity list. `EntityExtractionAgent` then reports the failed fast
-  path instead of an empty extraction; `ComposableQueryAnalysisModule` takes its fallback
-  prediction and `RelationshipExtractorTool.extract_relationships` its `query_structure: "error"`
-  result.
+  path instead of an empty extraction; `ComposableQueryAnalysisModule` and
+  `RelationshipExtractorTool.extract_comprehensive_relationships` return their fallback with
+  `fallback_reason: "extractor_unavailable"`.
 - **`SpaCyDependencyAnalyzer`**: `analyze_dependencies(text)`, `extract_semantic_relationships(text)`
-  (dependency-parse-based relationship extraction, enriches the GLiNER fast path)
+  (dependency-parse-based relationship extraction, enriches the GLiNER fast path). Both raise
+  `SpaCyModelUnavailableError` (naming the model) when the pipeline cannot be loaded;
+  `is_available()` answers the same question without raising, for callers that serve entities
+  without relationships when the pipeline is absent.
 - **`RelationshipExtractorTool`**: combines both extractors, deduplicates relationships, and computes an
   overall confidence score
 

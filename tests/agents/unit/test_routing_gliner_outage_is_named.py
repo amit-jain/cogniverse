@@ -6,6 +6,9 @@ ComposableQueryAnalysisModule and RelationshipExtractorTool -- carry the
 entity-extraction reason vocabulary on what they return, so an outage is told
 apart from a query that genuinely holds no entities.
 
+A failure that is NOT an outage is not degraded at all: it propagates, so a
+defect in the extractor cannot arrive as a query holding no entities.
+
 The boundary is real: the extractor talks to an inference URL that is either a
 port nothing listens on or a paused HTTP peer.
 """
@@ -51,10 +54,15 @@ class _PlainFailureExtractor:
     """An extractor that fails for a reason that is not an outage."""
 
     gliner_model = object()
+    MESSAGE = "planned non-outage failure"
+
+    def __init__(self):
+        self.calls = 0
 
     def extract_entities(self, text, labels=None):
         del text, labels
-        raise RuntimeError("planned non-outage failure")
+        self.calls += 1
+        raise RuntimeError(self.MESSAGE)
 
     def infer_relationships_from_entities(self, text, entities):
         del text, entities
@@ -90,14 +98,22 @@ class TestQueryAnalysisNamesTheOutage:
         assert prediction.entities == []
         assert prediction.enhanced_query == QUERY
 
-    def test_a_non_outage_failure_is_not_reported_as_one(self):
-        """The control: the broad fallback leaves the reason unset."""
-        prediction = self._module(_PlainFailureExtractor())(query=QUERY)
+    def test_a_non_outage_failure_is_not_degraded_at_all(self):
+        """Only the typed outage degrades; a plain failure raises."""
+        failing = _PlainFailureExtractor()
+        with pytest.raises(RuntimeError) as excinfo:
+            self._module(failing)(query=QUERY)
 
-        assert prediction.fallback_reason is None
-        assert prediction.fallback_model is None
-        assert prediction.fallback_inference_url is None
-        assert prediction.path_used == "fallback"
+        assert type(excinfo.value) is RuntimeError
+        assert str(excinfo.value) == _PlainFailureExtractor.MESSAGE
+        assert failing.calls == 1
+        # A consumer raising on every failure passes the lines above; the typed
+        # outage on the same consumer must still degrade.
+        degraded = self._module(_dead_port_extractor())(query=QUERY)
+        assert degraded.fallback_reason == (
+            ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE
+        )
+        assert degraded.path_used == "fallback"
 
 
 class TestRelationshipToolNamesTheOutage:
@@ -123,12 +139,19 @@ class TestRelationshipToolNamesTheOutage:
         assert result["query_structure"] == "unknown"
 
     @pytest.mark.asyncio
-    async def test_a_non_outage_failure_is_not_reported_as_one(self):
-        result = await self._run(_PlainFailureExtractor())
+    async def test_a_non_outage_failure_is_not_degraded_at_all(self):
+        failing = _PlainFailureExtractor()
+        with pytest.raises(RuntimeError) as excinfo:
+            await self._run(failing)
 
-        assert result["fallback_reason"] is None
-        assert result["fallback_model"] is None
-        assert result["query_structure"] == "unknown"
+        assert type(excinfo.value) is RuntimeError
+        assert str(excinfo.value) == _PlainFailureExtractor.MESSAGE
+        assert failing.calls == 1
+        degraded = await self._run(_dead_port_extractor())
+        assert degraded["fallback_reason"] == (
+            ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE
+        )
+        assert degraded["entities"] == []
 
 
 _STUB_SERVER = r"""
