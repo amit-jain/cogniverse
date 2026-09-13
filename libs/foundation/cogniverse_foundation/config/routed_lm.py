@@ -28,7 +28,9 @@ from typing import Any, Optional
 import openai
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
-from cogniverse_foundation.config.request_body import http_status_of
+from cogniverse_foundation.config.request_body import (
+    http_status_of, messages_from, request_body_metrics,
+)
 from cogniverse_foundation.config.semantic_router import record_served_model
 
 logger = logging.getLogger(__name__)
@@ -163,6 +165,7 @@ class RoutedLM(BodyBoundedLM):
         *,
         tenant_id: str,
         tier: str,
+        vision_model: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(model, **kwargs)
@@ -173,6 +176,16 @@ class RoutedLM(BodyBoundedLM):
         # credential.
         self.call_attempts = self.num_retries + 1
         self.num_retries = 0
+        self._vision: RoutedLM | None = None
+        if vision_model and vision_model != model:
+            self._vision = RoutedLM(vision_model, tenant_id=tenant_id, tier=tier, **kwargs)
+
+    def _carrier(self, prompt, messages):
+        if self._vision is None:
+            return self
+        if request_body_metrics(messages_from(prompt, messages)).image_part_count:
+            return self._vision
+        return self
 
     def _classified(self, exc: BaseException) -> Optional[RoutedLMCallFailed]:
         failure = classify_routed_failure(
@@ -189,6 +202,9 @@ class RoutedLM(BodyBoundedLM):
         return isinstance(failure, RETRYABLE) and attempt < self.call_attempts
 
     def forward(self, prompt=None, messages=None, **kwargs):
+        carrier = self._carrier(prompt, messages)
+        if carrier is not self:
+            return carrier.forward(prompt=prompt, messages=messages, **kwargs)
         for attempt in range(1, self.call_attempts + 1):
             try:
                 response = super().forward(prompt=prompt, messages=messages, **kwargs)
@@ -203,6 +219,9 @@ class RoutedLM(BodyBoundedLM):
                 raise failure from exc
 
     async def aforward(self, prompt=None, messages=None, **kwargs):
+        carrier = self._carrier(prompt, messages)
+        if carrier is not self:
+            return await carrier.aforward(prompt=prompt, messages=messages, **kwargs)
         for attempt in range(1, self.call_attempts + 1):
             try:
                 response = await super().aforward(

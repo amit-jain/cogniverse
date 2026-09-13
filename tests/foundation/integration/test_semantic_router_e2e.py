@@ -262,6 +262,71 @@ def _teacher_route_match() -> tuple[str, str]:
     return header["name"], header["string_match"]["exact"]
 
 
+_IMAGE_PART = {
+    "type": "image_url",
+    "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+}
+
+
+class TestImageBearingCallsStayOnTheMultimodalStudent:
+    """The teacher is a text-only model (Qwen3-14B-AWQ answers 400
+    "is not a multimodal model" to any image part), so a routed call that
+    carries an image part enters on the vision entry and the student answers
+    it for every tier; the same tenant's text-only call still reaches the
+    teacher."""
+
+    def _routed(self, base_url: str, tenant: str):
+        lm = create_routed_lm(
+            LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1"),
+            _semantic_router_config(base_url),
+            tenant,
+            _tier_for(tenant),
+            call_site="summarizer_agent",
+        )
+        lm.cache = False
+        return lm
+
+    def _reflection(self, out) -> dict:
+        item = out[0] if isinstance(out, list) else out
+        content = (
+            item.get("text") or item.get("content") if isinstance(item, dict) else item
+        )
+        return json.loads(content)
+
+    def test_a_pro_call_with_an_image_part_is_answered_by_the_student(
+        self, sr_base_url
+    ):
+        header, teacher_value = _teacher_route_match()
+        lm = self._routed(sr_base_url, "pro-tenant")
+        reflected = self._reflection(
+            lm(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "what is in this picture"},
+                            _IMAGE_PART,
+                        ],
+                    }
+                ]
+            )
+        )
+        assert reflected["served_model"] == "basic-chat"
+        assert reflected["routing_headers"][header] == "basic-chat"
+        assert reflected["routing_headers"][header] != teacher_value
+        assert reflected["backend_tag"] == "student"
+
+    def test_the_same_tenants_text_only_call_still_reaches_the_teacher(
+        self, sr_base_url
+    ):
+        header, teacher_value = _teacher_route_match()
+        lm = self._routed(sr_base_url, "pro-tenant")
+        reflected = self._reflection(lm("what colour is the sky, in words"))
+        assert reflected["served_model"] == "pro-reasoning"
+        assert reflected["routing_headers"][header] == teacher_value
+        assert reflected["backend_tag"] == "teacher"
+
+
 class TestEachCatalogModelIsAnsweredByItsOwnBackend:
     """pro-reasoning is bound to the teacher backend and basic-chat to the
     student. The router names the model it chose in a header and Envoy routes

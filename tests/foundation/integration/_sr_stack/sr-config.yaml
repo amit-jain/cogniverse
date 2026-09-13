@@ -157,9 +157,14 @@ routing:
 # the routing decision costs no measurable time. Every tier's bounded call is
 # served by basic-chat - it never crosses to the teacher - while the tier
 # gate and the response cache still apply.
+# A call carrying image parts enters on this virtual model name whatever its
+# call site: pro-reasoning is served by a text-only teacher, so the vision
+# recipe serves basic-chat - the multimodal student - for every tier.
 entrypoints:
   - model_names: [cogniverse-classification]
     recipe: classification
+  - model_names: [cogniverse-vision]
+    recipe: vision
 
 recipes:
   - name: classification
@@ -191,6 +196,45 @@ recipes:
               use_reasoning: false
           plugins: *exact_cache
         - name: classification-base
+          priority: 50
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: base_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+  - name: vision
+    description: Tier-gated routing of image-bearing calls to the multimodal student.
+    routing:
+      signals:
+        role_bindings: *role_bindings
+      decisions:
+        - name: vision-pro
+          priority: 200
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: pro_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: vision-free
+          priority: 100
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: free_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: vision-base
           priority: 50
           rules:
             operator: AND

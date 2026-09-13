@@ -232,6 +232,7 @@ def create_routed_lm(
         tenant_id=tenant_id,
         cache_tenant_id=tenant_id,
         tier=tier,
+        vision_model=config.vision_model,
         **dspy_lm_kwargs(routed),
     )
 

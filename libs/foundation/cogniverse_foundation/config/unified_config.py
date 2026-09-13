@@ -289,6 +289,11 @@ class SemanticRouterConfig:
     # `cogniverse-classification` entrypoint, whose recipe tests the tenant
     # tier only, so the decision costs no classification.
     classification_model: str = "openai/cogniverse-classification"
+    # Model name sent on a call that carries image parts, whatever its call
+    # site. It names the router's `cogniverse-vision` entrypoint, whose recipe
+    # serves the multimodal student for every tier: the teacher behind
+    # pro-reasoning is a text-only model.
+    vision_model: str = "openai/cogniverse-vision"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -300,6 +305,7 @@ class SemanticRouterConfig:
             "response_cache_ttl_seconds": self.response_cache_ttl_seconds,
             "response_cache_max_entries": self.response_cache_max_entries,
             "classification_model": self.classification_model,
+            "vision_model": self.vision_model,
         }
 
     @classmethod
@@ -319,6 +325,7 @@ class SemanticRouterConfig:
             classification_model=data.get(
                 "classification_model", "openai/cogniverse-classification"
             ),
+            vision_model=data.get("vision_model", "openai/cogniverse-vision"),
         )
 
 
