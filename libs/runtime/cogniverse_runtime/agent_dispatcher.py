@@ -1382,11 +1382,13 @@ class AgentDispatcher:
         )
 
         from cogniverse_agents.memory_aware_mixin import clear_request_tenant
+        from cogniverse_foundation.telemetry.tenant_context import tenant_span_context
 
         try:
-            return await self._dispatch_for_tenant(
-                agent, agent_name, query, context, tenant_id, top_k
-            )
+            with tenant_span_context(canonical_tenant_id(tenant_id)):
+                return await self._dispatch_for_tenant(
+                    agent, agent_name, query, context, tenant_id, top_k
+                )
         finally:
             # The request-scoped tenant bound during this dispatch must not
             # survive into a later caller on the same context.
