@@ -54,6 +54,16 @@ jobs:
       with:
         python-version: '3.12'
 
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: v3.15.4
+
+    - name: Install chart dependencies
+      run: |
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm dependency build charts/cogniverse
+
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
