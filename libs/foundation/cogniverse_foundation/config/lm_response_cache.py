@@ -6,13 +6,11 @@ import asyncio
 import copy
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from dspy.clients.cache import Cache
@@ -233,7 +231,14 @@ def lm_response_cache() -> TenantScopedLMCache:
         return _PROCESS_CACHE
     with _PROCESS_CACHE_LOCK:
         if _PROCESS_CACHE is None:
-            path = Path(os.environ.get("COGNIVERSE_CONFIG", "configs/config.json"))
+            from cogniverse_foundation.config.utils import ConfigUtils
+
+            path = ConfigUtils._discover_config_file()
+            if path is None:
+                raise FileNotFoundError(
+                    "LM response cache configuration: no config.json in the "
+                    "standard locations"
+                )
             try:
                 bounds = json.loads(path.read_text())["semantic_router"]
                 cache = TenantScopedLMCache(
