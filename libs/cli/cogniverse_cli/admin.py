@@ -1,14 +1,17 @@
 """Admin-side CLI commands.
 
-Currently exposes ``cogniverse admin reconcile-orphans`` which discovers
-Vespa-only schema orphans (in Vespa, not in the SchemaRegistry) and
-optionally drops them in one redeploy.
+``cogniverse admin reconcile-orphans`` reports two orphan classes and
+optionally drops each in one redeploy: registry-orphans (deployed in
+Vespa, absent from the SchemaRegistry) and tenant-orphans (deployed and
+registered, but the registry row names a tenant with no tenant_metadata
+record, so they ride along in every application package).
 
-Orphans accumulate from interrupted deploy paths — a SIGKILL between
-``backend.deploy_schemas`` and ``register_schema``, a power loss
-mid-cleanup, or any code path that bypassed ``POST /admin/tenants``
-before the recent ``assert_tenant_exists`` guard was added. The
-production-safe recovery is operator-triggered, never automatic.
+Registry-orphans accumulate from interrupted deploy paths — a SIGKILL
+between ``backend.deploy_schemas`` and ``register_schema``, a power loss
+mid-cleanup. Tenant-orphans accumulate from schema auto-deploy paths that
+never created a tenant (memory lazy-init, ingestion upload) and from
+tenant records removed outside ``DELETE /admin/tenants``. Recovery is
+operator-triggered, never automatic.
 """
 
 from __future__ import annotations
@@ -22,13 +25,23 @@ from rich.table import Table
 console = Console()
 
 
-def cmd_reconcile_orphans(runtime_url: str, *, confirm: bool) -> int:
+def cmd_reconcile_orphans(
+    runtime_url: str, *, confirm: bool, tenant_orphans: bool = False
+) -> int:
     """List orphans (default) or drop them when ``confirm`` is True.
+
+    ``tenant_orphans`` additionally drops the schemas of tenants with no
+    tenant_metadata record; it needs ``confirm`` to take effect and the
+    runtime refuses an empty selection with 409.
 
     Returns the process exit code (0 success, non-zero on error).
     """
     url = f"{runtime_url.rstrip('/')}/admin/reconcile-orphans"
-    params = {"dry_run": "false" if confirm else "true"}
+    params = {
+        "dry_run": "false" if confirm else "true",
+        "remove_tenant_orphans": "true" if tenant_orphans else "false",
+        "include_document_counts": "true",
+    }
     try:
         with httpx.Client(timeout=300.0) as client:
             resp = client.post(url, params=params)
@@ -48,9 +61,47 @@ def cmd_reconcile_orphans(runtime_url: str, *, confirm: bool) -> int:
     orphan_tenants = data.get("orphan_tenants") or []
     unrecovered = data.get("unrecovered_schemas") or []
     deleted = data.get("deleted") or []
+    try:
+        tenant_orphan_schemas = data["tenant_orphan_schemas"]
+        tenant_orphan_tenants = data["tenant_orphan_tenants"]
+        tenant_orphans_deleted = data["tenant_orphans_deleted"]
+        orphan_details = data["orphan_details"]
+    except KeyError as exc:
+        console.print(f"[red]reconcile-orphans response is missing {exc}[/red]")
+        return 3
+
+    if not orphan_schemas and not tenant_orphan_schemas:
+        console.print("[green]No orphan schemas found. Cluster is clean.[/green]")
+        return 0
+
+    if tenant_orphan_schemas:
+        tenant_table = Table(
+            title="Tenant-orphan schemas (registered, but the tenant is gone)"
+        )
+        tenant_table.add_column("Schema", style="cyan")
+        tenant_table.add_column("Owning tenant", style="yellow")
+        tenant_table.add_column("Tenant exists?")
+        tenant_table.add_column("Documents", justify="right")
+        for row in orphan_details:
+            tenant_table.add_row(
+                row["schema"],
+                row["tenant"],
+                str(row["tenant_exists"]),
+                str(row["document_count"]),
+            )
+        console.print(tenant_table)
+        if tenant_orphans_deleted:
+            console.print(
+                f"[green]Dropped {len(tenant_orphans_deleted)} tenant-orphan "
+                f"schema(s) across {len(tenant_orphan_tenants)} tenant(s).[/green]"
+            )
+        else:
+            console.print(
+                "[cyan]Re-run with[/cyan] [bold]--confirm --tenant-orphans[/bold] "
+                "[cyan]to drop them.[/cyan]"
+            )
 
     if not orphan_schemas:
-        console.print("[green]No orphan schemas found. Cluster is clean.[/green]")
         return 0
 
     table = Table(title="Orphan schemas (in Vespa, not in SchemaRegistry)")
@@ -95,9 +146,11 @@ def cmd_reconcile_orphans(runtime_url: str, *, confirm: bool) -> int:
     return 0
 
 
-def run(runtime_url: str, *, confirm: bool) -> None:
+def run(runtime_url: str, *, confirm: bool, tenant_orphans: bool = False) -> None:
     """Entry point used by the click command in main.py."""
-    code = cmd_reconcile_orphans(runtime_url, confirm=confirm)
+    code = cmd_reconcile_orphans(
+        runtime_url, confirm=confirm, tenant_orphans=tenant_orphans
+    )
     if code != 0:
         sys.exit(code)
 

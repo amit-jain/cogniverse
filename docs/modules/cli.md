@@ -27,7 +27,7 @@ Key responsibilities:
 - **Cluster bootstrap** — creates/deletes a local k3d cluster, checks and installs prerequisites (`docker`, `kubectl`, `helm`)
 - **Image handling** — detects the host's torch backend (cpu/cuda/rocm), builds workspace images, pre-pulls third-party images one at a time, and imports every image into k3d independently with `k3d image import --mode direct` to bound peak memory; any failed pull or import stops the remaining image operations and aborts deployment
 - **Secrets sync** — pushes the local HuggingFace token, Telegram token, and inference API key into cluster Secrets
-- **Client commands** — `code` (interactive coding agent REPL), `index` (index a directory into Vespa for agent context search), `graph` (query the knowledge graph), `admin` (tenant/orphan reconciliation), `sandbox` (OpenShell gateway management), `inference modal` (Modal service lifecycle)
+- **Client commands** — `code` (interactive coding agent REPL), `index` (index a directory into Vespa for agent context search), `graph` (query the knowledge graph), `admin` (tenant/orphan reconciliation, including tenant-orphan removal), `sandbox` (OpenShell gateway management), `inference modal` (Modal service lifecycle)
 
 ---
 
@@ -191,12 +191,19 @@ Every `graph` subcommand resolves the tenant from `--tenant`, falling back to `$
 
 ### Admin
 
+`libs/cli/cogniverse_cli/admin.py` implements the commands wired by
+`libs/cli/cogniverse_cli/main.py`. Incomplete reconciliation responses return
+exit code 3 rather than a clean-cluster report.
+
 ```bash
-# List Vespa schema orphans without dropping them (dry-run)
+# List both orphan classes and tenant-orphan document counts (dry-run)
 cogniverse admin reconcile-orphans
 
-# Actually drop them
+# Drop the registry-orphans
 cogniverse admin reconcile-orphans --confirm --runtime-url http://localhost:28000
+
+# Also drop schemas whose tenant no longer has a tenant_metadata record
+cogniverse admin reconcile-orphans --confirm --tenant-orphans
 
 # Mint a messaging invite token for a tenant
 cogniverse admin invite acme:alice

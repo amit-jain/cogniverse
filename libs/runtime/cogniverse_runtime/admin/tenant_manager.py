@@ -33,7 +33,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from typing import Dict, Iterator, List, Optional
+from typing import Annotated, Dict, Iterator, List, Optional
 
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -1138,25 +1138,125 @@ def _known_base_schemas() -> tuple[str, ...]:
     return names
 
 
-def _list_orphan_schemas() -> Dict[str, list]:
-    """Diff Vespa-deployed schemas against the registry's active set.
+_TENANT_SWEEP_HITS = 400
 
-    Returns a dict with two lists: ``orphan_schemas`` (Vespa-only full
-    schema names) and ``orphan_tenants`` (tenants implied by stripping
-    known base prefixes from those names). Names whose base is not a
-    shipped schema are reported in ``unrecovered_schemas``. A schema whose
-    activation is in flight in another process (a pending deployment intent)
-    is live-but-unregistered for the whole convergence wait and is never an
-    orphan.
+_EMPTY_TENANT_ORPHAN_SELECTION = (
+    "No tenant-orphan schemas to remove: every schema registered in Vespa "
+    "belongs to a tenant that still has a tenant_metadata record. Refusing "
+    "an empty selection."
+)
+
+
+def _live_tenant_ids(backend: Backend) -> set:
+    """Canonical ids of every tenant that still has a tenant_metadata record.
+
+    Raises 503 on failed reads or truncated results; an empty successful
+    read represents a registry with no tenants.
+    """
+    try:
+        documents = backend.query_metadata_documents(
+            schema="tenant_metadata",
+            yql="select * from tenant_metadata where true",
+            hits=_TENANT_SWEEP_HITS,
+        )
+    except Exception as exc:
+        logger.error(f"Tenant registry read failed during reconciliation: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cannot read the tenant registry; refusing to reconcile orphans "
+                f"because every schema would read as a tenant-orphan: {exc}"
+            ),
+        ) from exc
+
+    if len(documents) >= _TENANT_SWEEP_HITS:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Tenant registry returned {len(documents)} rows, at or above "
+                f"the {_TENANT_SWEEP_HITS}-row page limit; refusing to reconcile "
+                "orphans because a truncated tenant list marks live tenants as "
+                "orphans"
+            ),
+        )
+
+    if any(not fields.get("tenant_full_id") for fields in documents):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tenant registry contains a row without tenant_full_id; "
+                "refusing to reconcile orphans"
+            ),
+        )
+    return {canonical_tenant_id(fields["tenant_full_id"]) for fields in documents}
+
+
+def _remove_tenant_orphans(tenants: list, expected_schemas: list) -> list:
+    """Drop every schema owned by a tenant with no tenant_metadata record.
+
+    One redeploy covers all named tenants, then the deployed set is read
+    back: a target still present means the drop did not take, which must
+    not report success.
+    """
+    if not tenants:
+        raise HTTPException(status_code=409, detail=_EMPTY_TENANT_ORPHAN_SELECTION)
+
+    with metadata_backend() as backend:
+        schema_manager = backend.schema_manager
+        dropped = sorted(schema_manager.delete_tenant_schemas_bulk(list(tenants)))
+        still_deployed = set(
+            schema_manager.list_deployed_document_types(raise_on_failure=True)
+        )
+        survivors = sorted(set(expected_schemas) & still_deployed)
+        if survivors:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Tenant-orphan removal did not take for {survivors}; they "
+                    "are still deployed after the redeploy"
+                ),
+            )
+    return dropped
+
+
+def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, list]:
+    """Diff Vespa-deployed schemas against the registry and the tenant set.
+
+    Reports two independent orphan classes. ``orphan_schemas`` are
+    Vespa-only names with no registry record, grouped into
+    ``orphan_tenants`` by stripping known base prefixes; names whose base
+    is not a shipped schema go to ``unrecovered_schemas``. A schema whose
+    activation is in flight in another process is live-but-unregistered for
+    the whole convergence wait and is never an orphan.
+
+    ``tenant_orphan_schemas`` are deployed AND registered, but their
+    registry row names a tenant with no tenant_metadata record, so the
+    registry diff alone cannot see them: they survive every deploy and cost
+    a schema in each one. Their owner comes from the registry row, not from
+    stripping the name.
+
+    A tenant registry that reads successfully but holds nothing is a real
+    state, not a failed read: schema auto-deploy paths create schemas
+    without creating a tenant, so a cluster can hold only orphans, and that
+    is exactly the cluster reconciliation exists to clean. The reads that
+    CAN fabricate orphans -- an outage, a truncated page -- raise instead
+    (``_live_tenant_ids``).
     """
     with metadata_backend() as backend:
         schema_manager = backend.schema_manager
         schema_registry = schema_manager._schema_registry
 
-        deployed = set(schema_manager.list_deployed_document_types())
-        registered = {
-            info.full_schema_name for info in (schema_registry._get_all_schemas() or [])
-        }
+        try:
+            deployed = set(
+                schema_manager.list_deployed_document_types(raise_on_failure=True)
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cannot enumerate deployed schemas during reconciliation: {exc}",
+            ) from exc
+        registry_infos = list(schema_registry._get_all_schemas() or [])
+        registered = {info.full_schema_name for info in registry_infos}
 
         # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
         # schemas deployed, the registry almost certainly failed to load from
@@ -1206,53 +1306,119 @@ def _list_orphan_schemas() -> Dict[str, list]:
                     break
             else:
                 unrecovered.append(orphan)
+        live_tenants = _live_tenant_ids(backend)
+        tenant_orphans: Dict[str, list] = {}
+        for info in registry_infos:
+            if info.full_schema_name not in deployed:
+                continue
+            owner = canonical_tenant_id(info.tenant_id)
+            if owner == SYSTEM_TENANT_ID or owner in live_tenants:
+                continue
+            tenant_orphans.setdefault(owner, []).append(info.full_schema_name)
+
+        tenant_orphan_schemas = sorted(
+            name for names in tenant_orphans.values() for name in names
+        )
+        details = []
+        if include_document_counts:
+            for tenant, names in sorted(tenant_orphans.items()):
+                for name in sorted(names):
+                    try:
+                        [count_row] = backend.query_metadata_documents(
+                            schema=name,
+                            yql=f"select * from {name} where true limit 0 | all(output(count()))",
+                            hits=0,
+                        )
+                        count = count_row["count()"]
+                        if type(count) is not int or count < 0:
+                            raise ValueError(f"Invalid document count: {count!r}")
+                    except Exception as exc:
+                        raise HTTPException(
+                            status_code=503,
+                            detail=f"Cannot count documents in orphan schema {name}: {exc}",
+                        ) from exc
+                    details.append(
+                        {
+                            "schema": name,
+                            "tenant": tenant,
+                            "tenant_exists": tenant in live_tenants,
+                            "document_count": count,
+                        }
+                    )
         return {
+            "orphan_details": sorted(details, key=lambda row: row["schema"]),
             "orphan_schemas": orphans,
             "orphan_tenants": sorted(orphan_tenants),
             "unrecovered_schemas": unrecovered,
+            "tenant_orphan_schemas": tenant_orphan_schemas,
+            "tenant_orphan_tenants": sorted(tenant_orphans),
         }
 
 
 @router.post("/reconcile-orphans")
 async def reconcile_orphans(
-    dry_run: bool = Query(
-        default=True,
-        description=(
-            "When true (default), report orphans without modifying state. "
-            "Pass dry_run=false to actually drop the orphan schemas."
+    dry_run: Annotated[
+        bool, Query(description="Report orphans without modifying state.")
+    ] = True,
+    remove_tenant_orphans: Annotated[
+        bool,
+        Query(description="With dry_run=false, remove schemas whose tenant is gone."),
+    ] = False,
+    include_document_counts: Annotated[
+        bool,
+        Query(
+            description="Include owning tenant and document counts for tenant orphans."
         ),
-    ),
+    ] = False,
 ) -> Dict:
-    """List Vespa-only orphan schemas, optionally drop them in one redeploy.
+    """Report both orphan classes, optionally drop them.
 
-    Diffs Vespa's deployed schemas against the SchemaRegistry's active
-    set. Orphans (Vespa has, registry doesn't) are grouped by the
-    implied tenant_id by stripping known base prefixes.
+    ``dry_run=true`` returns the diff for operator review and changes
+    nothing. ``dry_run=false`` drops the registry-orphans in one redeploy
+    (required because an individual tenant delete refuses while a
+    peer-tenant unreconstructable orphan exists). Adding
+    ``remove_tenant_orphans=true`` then drops the tenant-orphans in a
+    second redeploy and reads the deployed set back.
 
-    With ``dry_run=true`` returns the diff for operator review. With
-    ``dry_run=false`` calls ``delete_orphan_schemas`` so every orphan is
-    dropped atomically (single redeploy) — required because individual
-    tenant deletes refuse when a peer-tenant unreconstructable orphan
-    exists. Both the enumeration and the redeploy block for seconds on
-    Vespa, so they run off the event loop.
+    Registry-orphans go first: they are unreconstructable survivors, and a
+    redeploy that has to carry them refuses.
     """
-    diff = await asyncio.to_thread(_list_orphan_schemas)
-    if dry_run or not diff["orphan_tenants"]:
-        return {
-            "dry_run": dry_run,
-            "deleted": [],
-            **diff,
-        }
+    diff = await asyncio.to_thread(_list_orphan_schemas, include_document_counts)
 
-    with metadata_backend() as backend:
-        deleted = await asyncio.to_thread(
-            backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]
+    deleted: list = []
+    if not dry_run and diff["orphan_tenants"]:
+        with metadata_backend() as backend:
+            deleted = await asyncio.to_thread(
+                backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]
+            )
+
+    tenant_orphans_deleted: list = []
+    if not dry_run and remove_tenant_orphans:
+        logger.info(
+            f"Removing schemas of {len(diff['tenant_orphan_tenants'])} tenant(s) "
+            f"with no tenant_metadata record: {diff['tenant_orphan_tenants']}"
         )
-        return {
-            "dry_run": False,
-            "deleted": deleted,
-            **diff,
-        }
+        tenant_orphans_deleted = await asyncio.to_thread(
+            _remove_tenant_orphans,
+            diff["tenant_orphan_tenants"],
+            diff["tenant_orphan_schemas"],
+        )
+
+    if diff["tenant_orphan_schemas"] and not tenant_orphans_deleted:
+        logger.warning(
+            f"{len(diff['tenant_orphan_schemas'])} schema(s) belong to tenants "
+            f"with no tenant_metadata record and are redeployed with every "
+            f"application package: {diff['tenant_orphan_schemas']}. Clear them "
+            f"with POST /admin/reconcile-orphans"
+            f"?dry_run=false&remove_tenant_orphans=true"
+        )
+
+    return {
+        "dry_run": dry_run,
+        "deleted": deleted,
+        "tenant_orphans_deleted": tenant_orphans_deleted,
+        **diff,
+    }
 
 
 # ============================================================================
