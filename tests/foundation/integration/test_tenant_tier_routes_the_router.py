@@ -336,14 +336,24 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
     ]
 
     # A cache hit replays the stored body verbatim, including the stub's
-    # per-process call counter; every other leg is one fresh upstream call.
+    # per-process call counter; every other leg is one fresh call on the
+    # upstream its tier's model is bound to, and each upstream counts its own.
     assert reflections[cached_leg] == reflections[0]
-    first_call = reflections[0]["call_index"]
-    routed_calls = iter(range(first_call, first_call + len(tiers) - 1))
-    assert [reflection["call_index"] for reflection in reflections] == [
-        first_call if index == cached_leg else next(routed_calls)
-        for index in range(len(tiers))
-    ]
+    endpoint_by_model = {
+        model["name"]: model["backend_refs"][0]["endpoint"]
+        for model in yaml.safe_load(SR_CONFIG.read_text())["providers"]["models"]
+    }
+    next_call: dict[str, int] = {}
+    expected_calls = []
+    for index, (tier, reflection) in enumerate(zip(tiers, reflections)):
+        if index == cached_leg:
+            expected_calls.append(reflections[0]["call_index"])
+            continue
+        upstream = endpoint_by_model[expected_by_tier[tier]["model"]]
+        call = next_call.get(upstream, reflection["call_index"])
+        expected_calls.append(call)
+        next_call[upstream] = call + 1
+    assert [reflection["call_index"] for reflection in reflections] == expected_calls
 
     # No other tier is answered out of the first tier's entry.
     assert [
