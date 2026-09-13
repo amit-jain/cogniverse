@@ -694,6 +694,14 @@ def _run_leg(
     )
 
 
+def _shown(value):
+    """``value`` with every set as a sorted list, so a verdict reads the same
+    whatever the interpreter's hash seed."""
+    if isinstance(value, (set, frozenset)):
+        return sorted((_shown(item) for item in value), key=repr)
+    return value
+
+
 def _leg_verdict(
     leg: Leg,
     *,
@@ -710,7 +718,7 @@ def _leg_verdict(
 
     def check(name: str, actual, expected) -> None:
         if actual != expected:
-            problems.append(f"{name}: {actual!r} != {expected!r}")
+            problems.append(f"{name}: {_shown(actual)!r} != {_shown(expected)!r}")
 
     check("calls cut by the client's timeout", leg.timed_out, 0)
     check(
@@ -900,7 +908,7 @@ def test_the_verdict_rejects_a_pro_call_dialled_to_the_student_cluster():
 def test_the_verdict_rejects_a_pro_call_answered_by_the_student_model():
     leg = replace(_synthetic_pro_leg(), served_models={"student-model"})
     assert _synthetic_verdict(leg) == [
-        "served models: {'student-model'} != {'student-model', 'teacher-model'}"
+        "served models: ['student-model'] != ['student-model', 'teacher-model']"
     ]
 
 
