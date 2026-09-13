@@ -662,20 +662,13 @@ class EntityExtractionAgent(
         *,
         query: str,
         entities: List[Entity],
-        entity_records: Optional[List[Dict[str, Any]]] = None,
+        entity_records: List[Dict[str, Any]],
     ) -> List[Relationship]:
         """Run the SpaCy relationship pass over validated entities."""
         if len(entities) < 2 or self._spacy_analyzer is None:
             return []
 
         self.emit_progress("relationships", "Extracting relationships with SpaCy...")
-        if entity_records is None:
-            entity_records, ungrounded = self._build_entity_records_from_entities(
-                entities, query
-            )
-            if ungrounded:
-                raise EntitySpanNotInQueryError(ungrounded[0][0], query)
-
         raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
         return self._reconcile_relationships(
             query=query,

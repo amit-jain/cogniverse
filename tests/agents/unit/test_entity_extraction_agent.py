@@ -2339,3 +2339,17 @@ async def test_gliner_fast_path_offloaded_from_event_loop():
     await t
 
     assert ticks >= 10, f"only {ticks} ticks — GLiNER ran on the event loop"
+
+
+def test_relationship_pass_requires_grounded_entity_records():
+    """Both production callers pass the records they grounded; the pass has no
+    path that rebuilds them from bare entities."""
+    import inspect
+
+    from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent
+
+    param = inspect.signature(
+        EntityExtractionAgent._extract_spacy_relationships
+    ).parameters["entity_records"]
+    assert param.default is inspect.Parameter.empty
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
