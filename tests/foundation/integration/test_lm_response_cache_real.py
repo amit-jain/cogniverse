@@ -458,6 +458,20 @@ def test_invalid_config_is_not_retained(tmp_path, monkeypatch):
     assert [(item.ttl_seconds, item.max_entries) for item in caches] == [(7.0, 3)] * 16
 
 
+def test_missing_config_raises_and_is_not_retained(tmp_path, monkeypatch):
+    from cogniverse_foundation.config import lm_response_cache as module
+
+    monkeypatch.setenv("COGNIVERSE_CONFIG", str(tmp_path / "absent.json"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(module, "_PROCESS_CACHE", None)
+    with pytest.raises(FileNotFoundError) as error:
+        module.lm_response_cache()
+    assert str(error.value) == (
+        "LM response cache configuration: no config.json in the standard locations"
+    )
+    assert module._PROCESS_CACHE is None
+
+
 def test_routed_error_keeps_its_type_and_is_not_cached(upstream, cache):
     from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
 
