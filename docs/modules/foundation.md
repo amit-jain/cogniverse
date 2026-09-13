@@ -552,6 +552,8 @@ A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniver
 
 `RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
 
+A call made under a caller's deadline never outlives it. The caller binds an `LMCallDeadline` (`cogniverse_foundation.config.lm_deadline`, `bound_lm_call_deadline`); `BodyBoundedLM` sends nothing once the deadline has passed or the caller abandoned it and raises `LMCallDeadlineExceeded`, a `TimeoutError` naming the endpoint, the model and the deadline. An OpenAI-compatible request goes through `deadline_bound_openai_client(api_base, api_key)`, whose connects, writes and reads each wait at most the time left at that moment, and a caller joining an identical in-flight call waits no longer than its own deadline. `RoutedLM` starts no retry or student attempt past the deadline, and a failure under a deadline adds `endpoint=` and `deadline_s=` to its message.
+
 A pro free-form call whose teacher raises `UpstreamUnavailable` with status
 502, 503, 504, a timeout (408), or a transport failure (500 or no status) gets
 one attempt on `classification_model`, which serves the student. The LM

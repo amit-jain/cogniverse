@@ -32,6 +32,7 @@ import openai
 from opentelemetry import trace
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
+from cogniverse_foundation.config.lm_deadline import current_lm_call_deadline
 from cogniverse_foundation.config.request_body import (
     http_status_of,
     messages_from,
@@ -64,12 +65,19 @@ class RoutedLMCallFailed(RuntimeError):
         tenant_id: str,
         tier: str,
         routed_model: str,
+        endpoint: Optional[str] = None,
+        deadline_s: Optional[float] = None,
     ) -> None:
-        super().__init__(
+        detail = (
             f"{summary}: tenant={tenant_id} tier={tier} "
             f"routed_model={routed_model} status={status} "
             f"router_code={router_code}"
         )
+        if deadline_s is not None:
+            detail += f" endpoint={endpoint} deadline_s={deadline_s:.2f}"
+        super().__init__(detail)
+        self.endpoint = endpoint
+        self.deadline_s = deadline_s
         self.summary = summary
         self.status = status
         self.router_code = router_code
@@ -123,8 +131,13 @@ def classify_routed_failure(
     tenant_id: str,
     tier: str,
     routed_model: str,
+    endpoint: Optional[str] = None,
+    deadline_s: Optional[float] = None,
 ) -> Optional[RoutedLMCallFailed]:
     """The typed failure for ``exc``, or ``None`` when it is not a call failure.
+
+    A call made under a caller's deadline (``deadline_s``) also names the
+    endpoint and that deadline.
 
     Anything that is not a provider/transport error -- a bug in cogniverse's
     own assembly, a cancellation -- returns ``None`` so it propagates as
@@ -154,6 +167,8 @@ def classify_routed_failure(
         tenant_id=tenant_id,
         tier=tier,
         routed_model=routed_model,
+        endpoint=endpoint,
+        deadline_s=deadline_s,
     )
 
 
@@ -247,15 +262,24 @@ class RoutedLM(BodyBoundedLM):
         return self
 
     def _classified(self, exc: BaseException) -> Optional[RoutedLMCallFailed]:
+        deadline = current_lm_call_deadline()
         failure = classify_routed_failure(
             exc,
             tenant_id=self.tenant_id,
             tier=self.tier,
             routed_model=self.model,
+            endpoint=self.kwargs.get("api_base"),
+            deadline_s=None if deadline is None else deadline.budget_s,
         )
         if failure is not None:
             logger.error("routed LM call failed: %s", failure)
         return failure
+
+    def _stop_past_deadline(self, failure: RoutedLMCallFailed) -> None:
+        """No further attempt once the caller's deadline is spent."""
+        deadline = current_lm_call_deadline()
+        if deadline is not None and deadline.expired:
+            raise self._deadline_exceeded(deadline) from failure
 
     def _can_use_student(self, failure: RoutedLMCallFailed) -> bool:
         return (
@@ -280,6 +304,7 @@ class RoutedLM(BodyBoundedLM):
                 failure = self._classified(exc)
                 if failure is None:
                     raise
+                self._stop_past_deadline(failure)
                 if self._can_use_student(failure):
                     metadata = _record_degradation(failure)
                     response = self._student.forward(
@@ -307,6 +332,7 @@ class RoutedLM(BodyBoundedLM):
                 failure = self._classified(exc)
                 if failure is None:
                     raise
+                self._stop_past_deadline(failure)
                 if self._can_use_student(failure):
                     metadata = _record_degradation(failure)
                     response = await self._student.aforward(

@@ -422,6 +422,18 @@ GROUNDING_SEARCH_TIMEOUT_KEY = "answer_grounding_search_timeout_seconds"
 GROUNDING_SEARCH_RESERVE_S = 2.0
 
 
+def dispatched_query_rewrite_budget_s(search_budget_s: float) -> float:
+    """The rewrite bound a dispatched search gets out of its search budget:
+    the measured rewrite budget, never more than what the budget leaves after
+    the retrieval reserve."""
+    from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
+
+    return min(
+        QUERY_REWRITE_BUDGET_S,
+        max(search_budget_s - GROUNDING_SEARCH_RESERVE_S, 0.0),
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class AnswerGrounding:
     """Hits an answer agent is grounded in, and how they were obtained."""
@@ -2436,15 +2448,8 @@ class AgentDispatcher:
         # grounding remainder still caps it, so a caller with less time than
         # that gets the smaller of the two.
         if query_rewrite_timeout_s is None:
-            from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
-
-            query_rewrite_timeout_s = min(
-                QUERY_REWRITE_BUDGET_S,
-                max(
-                    await self._grounding_search_budget_s(tenant_id)
-                    - GROUNDING_SEARCH_RESERVE_S,
-                    0.0,
-                ),
+            query_rewrite_timeout_s = dispatched_query_rewrite_budget_s(
+                await self._grounding_search_budget_s(tenant_id)
             )
 
         # Rewrite query using conversation history to resolve anaphoric references.
@@ -2781,8 +2786,6 @@ class AgentDispatcher:
                 modalities=modalities,
                 undeployed_profiles=plan.undeployed_profiles,
             )
-        from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
-
         try:
             budget_s = await self._grounding_search_budget_s(tenant_id)
         except ValueError:
@@ -2809,10 +2812,7 @@ class AgentDispatcher:
                     top_k=top_k,
                     enrichment={**enrichment, "profiles": profiles},
                     context=context,
-                    query_rewrite_timeout_s=min(
-                        QUERY_REWRITE_BUDGET_S,
-                        max(budget_s - GROUNDING_SEARCH_RESERVE_S, 0.0),
-                    ),
+                    query_rewrite_timeout_s=dispatched_query_rewrite_budget_s(budget_s),
                 ),
                 timeout=budget_s,
             )
