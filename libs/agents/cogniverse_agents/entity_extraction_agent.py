@@ -498,17 +498,14 @@ class EntityExtractionAgent(
             logger.warning("GLiNER unavailable, using DSPy fallback: %s", e)
 
         # SpaCy powers relationship extraction only; the fast path runs
-        # entity-only when it's absent (see _extract_fast_path). Keep its
-        # init independent so a missing SpaCy model never disables GLiNER.
-        try:
-            from cogniverse_agents.routing.relationship_extraction_tools import (
-                SpaCyDependencyAnalyzer,
-            )
+        # entity-only when the pipeline is absent (see _extract_fast_path).
+        # Keep its init independent so a missing SpaCy model never disables
+        # GLiNER.
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            SpaCyDependencyAnalyzer,
+        )
 
-            self._spacy_analyzer = SpaCyDependencyAnalyzer()
-        except Exception as e:
-            self._spacy_analyzer = None
-            logger.warning("SpaCy unavailable, relationships will be empty: %s", e)
+        self._spacy_analyzer = SpaCyDependencyAnalyzer()
 
     async def _process_impl(
         self, input: EntityExtractionInput
@@ -664,8 +661,18 @@ class EntityExtractionAgent(
         entities: List[Entity],
         entity_records: List[Dict[str, Any]],
     ) -> List[Relationship]:
-        """Run the SpaCy relationship pass over validated entities."""
-        if len(entities) < 2 or self._spacy_analyzer is None:
+        """Run the SpaCy relationship pass over validated entities.
+
+        Returns no relationships when there is nothing to relate, or when the
+        spaCy pipeline is absent -- asked for directly, so an unavailable
+        pipeline is a recorded skip rather than an empty parse result.
+        """
+        if len(entities) < 2:
+            return []
+        if not self._spacy_analyzer.is_available():
+            logger.warning(
+                "spaCy pipeline unavailable; serving entities without relationships"
+            )
             return []
 
         self.emit_progress("relationships", "Extracting relationships with SpaCy...")
@@ -747,7 +754,7 @@ class EntityExtractionAgent(
         raw_relationships: List[Dict[str, Any]],
     ) -> List[Relationship]:
         """Ground SpaCy relationships to GLiNER entity spans."""
-        if not raw_relationships or self._spacy_analyzer is None:
+        if not raw_relationships:
             return []
 
         try:
