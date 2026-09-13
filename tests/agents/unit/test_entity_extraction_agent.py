@@ -2392,3 +2392,87 @@ def test_relationship_pass_requires_grounded_entity_records():
     ).parameters["entity_records"]
     assert param.default is inspect.Parameter.empty
     assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+class TestARoutedFailureIsFiledByItsOwnType:
+    """What the span records when the DSPy path failed through the routed LM.
+
+    ``RoutedLM`` raises a typed failure carrying the upstream's status; litellm
+    stamps a synthetic 408 on a timeout and hands a 403 the 400 class. The
+    reason recorded follows the typed failure, never the synthetic status.
+    """
+
+    QUERY = "Barack Obama in Chicago"
+
+    def _agent(self):
+        agent = _make_extraction_agent()
+        agent.dspy_module = EntityExtractionModule()
+        agent._gliner_extractor = _CountingExtractor(
+            result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
+        )
+        agent._spacy_analyzer = _unavailable_spacy()
+        return agent
+
+    async def _reason(self, error):
+        agent = self._agent()
+        with dspy.context(lm=_StatusRaisingDummyLM(error)):
+            result = await agent._process_impl(
+                EntityExtractionInput(query=self.QUERY, tenant_id=TEST_TENANT_ID)
+            )
+        assert result.path_used == "fast"
+        ((span,),) = (agent.telemetry_manager.spans,)
+        return span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE]
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_engine_is_an_outage_not_a_rejection(self):
+        import litellm
+
+        reason = await self._reason(
+            litellm.Timeout(message="timed out", model="auto", llm_provider="openai")
+        )
+
+        assert reason == ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_a_routed_outage_is_an_outage_whatever_status_it_carries(self):
+        import litellm
+
+        from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
+
+        cause = litellm.Timeout(
+            message="timed out", model="auto", llm_provider="openai"
+        )
+        failure = UpstreamUnavailable(
+            "the model endpoint did not answer",
+            status=408,
+            router_code=None,
+            tenant_id=TEST_TENANT_ID,
+            tier="free",
+            routed_model="openai/auto",
+        )
+        failure.__cause__ = cause
+
+        assert await self._reason(failure) == ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_a_routed_refusal_keeps_the_upstreams_status(self):
+        import litellm
+
+        from cogniverse_foundation.config.routed_lm import UpstreamAuthRejected
+
+        # litellm hands a 403 its 400 class; the typed failure carries the 403.
+        cause = litellm.BadRequestError(
+            message="not allowed", model="auto", llm_provider="openai"
+        )
+        assert cause.status_code == 400
+        failure = UpstreamAuthRejected(
+            "the model endpoint rejected the credentials or the tenant",
+            status=403,
+            router_code="model_not_permitted",
+            tenant_id=TEST_TENANT_ID,
+            tier="free",
+            routed_model="openai/auto",
+        )
+        failure.__cause__ = cause
+
+        assert await self._reason(failure) == entity_extraction_request_rejected(403)

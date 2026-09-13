@@ -16,6 +16,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 import dspy
+import openai
 from dspy.utils.exceptions import AdapterParseError
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +25,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.common.entity_types import ENTITY_TYPES, EntityType
+from cogniverse_foundation.config.routed_lm import (
+    RoutedLMCallFailed,
+    UpstreamUnavailable,
+)
 from cogniverse_foundation.dspy import StructuredJSONAdapter
 from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
@@ -335,6 +340,10 @@ def _rejection_status(exc: BaseException) -> Optional[int]:
     request URL and the server body, so matching text there misreads an outage
     whose URL happens to carry the phrase.
     """
+    if isinstance(exc, openai.APIConnectionError):
+        # A timeout or refused connection: nothing answered, and the 408 / 500
+        # litellm stamps on is synthetic.
+        return None
     status = getattr(exc, "status_code", None)
     if isinstance(status, bool) or not isinstance(status, int):
         return None
@@ -376,6 +385,12 @@ def _fallback_reason(exc: BaseException) -> str:
             return ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED
         if isinstance(current, AdapterParseError):
             return ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+        if isinstance(current, UpstreamUnavailable):
+            return ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+        if isinstance(current, RoutedLMCallFailed):
+            # The routed LM carries the upstream's own status; litellm's class
+            # underneath may not (a 403 arrives as its 400 class).
+            return entity_extraction_request_rejected(current.status)
         status = _rejection_status(current)
         if status is not None:
             return entity_extraction_request_rejected(status)
