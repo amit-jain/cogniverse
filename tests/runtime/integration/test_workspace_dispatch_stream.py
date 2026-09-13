@@ -10,6 +10,7 @@ from types import ModuleType
 import dspy
 import pytest
 
+from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -212,6 +213,7 @@ async def test_generic_stream_builder_wires_search_and_context(
     )
     assert agent._config_manager is stream_dispatcher._config_manager
     assert await agent._search_fn("subquestion", "test:unit") == [{"id": "evidence-a"}]
+    assert QUERY_REWRITE_BUDGET_S < _SHIPPED_REWRITE_BUDGET_S
     assert seen == [
         (
             "subquestion",
@@ -220,7 +222,7 @@ async def test_generic_stream_builder_wires_search_and_context(
             {
                 "enrichment": {"profiles": list(plan.profiles)},
                 "context": None,
-                "query_rewrite_timeout_s": _SHIPPED_REWRITE_BUDGET_S,
+                "query_rewrite_timeout_s": QUERY_REWRITE_BUDGET_S,
             },
         )
     ]
