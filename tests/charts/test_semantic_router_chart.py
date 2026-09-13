@@ -285,6 +285,41 @@ class TestTheTeacherHasItsOwnEnvoyCluster:
         assert _backend_protocols(_sr_config(docs)) == {"https"}
 
 
+def _rendered_config_json(docs: list[dict]) -> dict:
+    for d in docs:
+        if d.get("kind") == "ConfigMap" and d.get("metadata", {}).get("name") == (
+            "cogniverse-config"
+        ):
+            return json.loads(d["data"]["config.json"])
+    raise AssertionError("cogniverse-config ConfigMap not rendered")
+
+
+class TestTheAgentLmTimeoutCoversATeacherColdStart:
+    """The routed LM's per-call timeout deploys from the chart's config.json,
+    not the repo's, so the value the pod runs is the one rendered here."""
+
+    def test_the_deployed_timeout_is_the_reference_configs_timeout(self):
+        primary = _rendered_config_json(_render())["llm_config"]["primary"]
+        reference = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+        assert (
+            primary["request_timeout"]
+            == (reference["llm_config"]["primary"]["request_timeout"])
+        )
+
+    def test_the_shipped_timeout_outlives_the_measured_cold_start(self):
+        """Measured one-token completions against the Modal teacher: cold
+        82.6 s (2026-09-13), 105-120 s on earlier days; warm 0.86 s. The
+        shipped timeout is 1.5x the upper measurement and stays under Envoy's
+        300 s route timeout, which must cut the proxy hop after the client."""
+        primary = _rendered_config_json(_render())["llm_config"]["primary"]
+        assert primary["request_timeout"] == 180.0
+        route_timeouts = {
+            route["route"]["timeout"] for route in _envoy_routes(_render())
+        }
+        assert route_timeouts == {"300s"}
+        assert primary["request_timeout"] < 300.0
+
+
 class TestAnUnservedTeacherFailsTheRender:
     """The router sends every pro decision to the teacher, so a chart with the
     router on and nothing serving the teacher is refused at render time rather

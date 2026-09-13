@@ -182,7 +182,8 @@
       "temperature": 0.1,
       "max_tokens": 1000,
       "adapter_path": null,
-      "api_base": "{{ include "cogniverse.primaryLLMEndpoint" . }}"
+      "api_base": "{{ include "cogniverse.primaryLLMEndpoint" . }}",
+      "request_timeout": 180.0
     },
     "teacher": {
       "model": "{{ include "cogniverse.teacherLLMModel" . }}",
