@@ -80,6 +80,7 @@ def _routed_lm(
         config=SemanticRouterConfig(enabled=True, semantic_router_url=base_url),
         tenant_id=tenant_id,
         tier=TIER,
+        call_site="summarizer_agent",
     )
     lm.cache = False
     return lm
@@ -214,6 +215,7 @@ class TestEachUpstreamRefusalGetsItsOwnType:
             ),
             tenant_id=TENANT,
             tier=TIER,
+            call_site="summarizer_agent",
         )
         lm.cache = False
         with pytest.raises(RouterDecodeFailed) as excinfo:
@@ -299,6 +301,7 @@ class TestTheRetryBudgetIsBounded:
             ),
             tenant_id=TENANT,
             tier=TIER,
+            call_site="summarizer_agent",
         )
         lm.cache = False
         with pytest.raises(RouterDecodeFailed):

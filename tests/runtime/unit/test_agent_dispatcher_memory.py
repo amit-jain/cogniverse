@@ -181,15 +181,19 @@ class TestDispatchPathsWireMemory:
     async def test_coding_task_initializes_agent_memory(
         self, mock_dispatcher, monkeypatch
     ):
-        monkeypatch.setattr(
-            "cogniverse_foundation.config.utils.get_config", lambda **k: MagicMock()
+        from cogniverse_foundation.config.unified_config import (
+            LLMEndpointConfig,
+            SemanticRouterConfig,
         )
-        # coding_lm is built via create_routed_lm, which constructs a RoutedLM
-        # from routed_lm's own binding — patch it there so no real dspy.LM is
-        # constructed from the stubbed config.
+
+        config = MagicMock()
+        config.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+            model="openai/coding", api_base="http://127.0.0.1:29071/v1"
+        )
+        config.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
+        config.config_manager.store.get_config.return_value = None
         monkeypatch.setattr(
-            "cogniverse_foundation.config.routed_lm.RoutedLM",
-            lambda *a, **k: MagicMock(),
+            "cogniverse_foundation.config.utils.get_config", lambda **k: config
         )
         monkeypatch.setattr(
             "cogniverse_agents.coding_agent.CodingAgent", lambda *a, **k: MagicMock()
