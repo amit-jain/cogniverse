@@ -41,6 +41,7 @@ from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
     leased_backend,
 )
+from cogniverse_foundation.config.lm_deadline import LMCallDeadline
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_foundation.telemetry.span_contract import (
     QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
@@ -1013,6 +1014,11 @@ class SearchAgent(
             return input.enhanced_query, input.enhanced_query, None
 
         self.emit_progress("query_optimization", "Optimizing query with DSPy...")
+        deadline = (
+            None
+            if input.query_rewrite_timeout_s is None
+            else LMCallDeadline.after(input.query_rewrite_timeout_s)
+        )
 
         async def rewrite():
             with _timed_stage("search.stage.context_injection_ms"):
@@ -1023,6 +1029,7 @@ class SearchAgent(
                 return await self.call_dspy(
                     self.search_module,
                     output_field="enhanced_query",
+                    deadline=deadline,
                     query=enriched_query,
                     modality=modality,
                     top_k=top_k,

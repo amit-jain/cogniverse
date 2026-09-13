@@ -33,6 +33,7 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import contextvars
 import copy
 import json
@@ -61,6 +62,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from cogniverse_core.agents.rails import RailChain
+    from cogniverse_foundation.config.lm_deadline import LMCallDeadline
 
 # Dedicated pool for LM round-trips. On the shared default executor (bounded
 # small for ordinary offloads), each LM call parks a worker for the full
@@ -106,6 +108,44 @@ def _lm_stream_loop() -> asyncio.AbstractEventLoop:
                 ).start()
                 _LM_STREAM_LOOP = loop
     return _LM_STREAM_LOOP
+
+
+@contextlib.contextmanager
+def _abandoned_on_early_exit(deadline: Optional["LMCallDeadline"]):
+    """Mark ``deadline`` abandoned when the caller stops waiting early, so an
+    LM attempt that has not started never starts."""
+    try:
+        yield
+    except BaseException:
+        if deadline is not None:
+            deadline.abandon()
+        raise
+
+
+async def _within_deadline(deadline: Optional["LMCallDeadline"], call):
+    """Await ``call``, for no longer than ``deadline`` leaves.
+
+    Past the deadline the call is abandoned and its deadline error names the
+    endpoint and model of the LM bound for this call.
+    """
+    if deadline is None:
+        return await call
+    from cogniverse_foundation.config.lm_deadline import LMCallDeadlineExceeded
+
+    try:
+        return await asyncio.wait_for(call, timeout=deadline.remaining_s())
+    except LMCallDeadlineExceeded:
+        raise
+    except TimeoutError:
+        import dspy
+
+        lm = dspy.settings.lm
+        exceeded = deadline.exceeded(
+            endpoint=(getattr(lm, "kwargs", None) or {}).get("api_base"),
+            model=str(getattr(lm, "model", None)),
+        )
+        deadline.abandon()
+        raise exceeded from None
 
 
 async def _call_in_lm_executor(fn, /, *args, **kwargs):
@@ -674,6 +714,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         output_field: str = "summary",
         *,
         stream_view: Optional[Callable[[str], str]] = None,
+        deadline: Optional["LMCallDeadline"] = None,
         **kwargs,
     ):
         """Call a DSPy module, streaming tokens via emit_progress when active.
@@ -700,15 +741,22 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
             output_field: Name of the output field to stream tokens for
             stream_view: Maps the field text streamed so far to the part that
                 is a prefix of the agent's final value for that field
+            deadline: When the caller stops waiting. The LM call gets the time
+                that is left, no attempt starts after it, and past it this
+                raises ``LMCallDeadlineExceeded`` naming the endpoint
             **kwargs: Arguments to pass to the module call
 
         Returns:
             DSPy Prediction from the module
         """
 
+        from cogniverse_foundation.config.lm_deadline import bound_lm_call_deadline
+
         with (
             self._adapter_lm_context(),
             _dispatched_prompt_overlay(self, module) as call_module,
+            bound_lm_call_deadline(deadline),
+            _abandoned_on_early_exit(deadline),
         ):
             if _PROGRESS_QUEUE.get() is not None and _STREAM_OWNER.get() is self:
                 import dspy
@@ -789,13 +837,17 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                     if not streaming.done():
                         streaming.cancel()
                 if prediction is None:
-                    prediction = await _call_in_lm_executor(call_module, **kwargs)
+                    prediction = await _within_deadline(
+                        deadline, _call_in_lm_executor(call_module, **kwargs)
+                    )
                 return prediction
             else:
                 # module(...) not module.forward(...): forward bypasses DSPy's
                 # __call__ instrumentation (callbacks, usage tracking, history)
                 # and warns on every dispatch.
-                return await _call_in_lm_executor(call_module, **kwargs)
+                return await _within_deadline(
+                    deadline, _call_in_lm_executor(call_module, **kwargs)
+                )
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """

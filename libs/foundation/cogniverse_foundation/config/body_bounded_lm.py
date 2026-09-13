@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import dspy
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.lm_deadline import (
+    LMCallDeadline,
+    LMCallDeadlineExceeded,
+    current_lm_call_deadline,
+    deadline_bound_openai_client,
+)
 from cogniverse_foundation.config.lm_response_cache import (
     TenantScopedLMCache,
     lm_response_cache,
@@ -105,9 +111,32 @@ class BodyBoundedLM(dspy.LM):
         }
         return request_cache_key(self.cache_tenant_id, request)
 
+    def _deadline_exceeded(self, deadline: LMCallDeadline) -> LMCallDeadlineExceeded:
+        return deadline.exceeded(endpoint=self.kwargs.get("api_base"), model=self.model)
+
+    def _refuse_past_deadline(self) -> Optional[LMCallDeadline]:
+        """The bound deadline, or raise once it is spent."""
+        deadline = current_lm_call_deadline()
+        if deadline is not None and deadline.expired:
+            raise self._deadline_exceeded(deadline)
+        return deadline
+
+    def _within_deadline(self, kwargs: dict[str, Any]) -> None:
+        """Refuse a request once its caller's deadline is spent. An
+        OpenAI-compatible request goes through the client that sends it with
+        the time left at that moment as its timeout."""
+        deadline = self._refuse_past_deadline()
+        api_base = self.kwargs.get("api_base")
+        if deadline is None or not api_base or not self.model.startswith("openai/"):
+            return
+        kwargs["client"] = deadline_bound_openai_client(
+            api_base, self.kwargs.get("api_key")
+        )
+
     def _upstream(self, messages: list[dict[str, Any]], **kwargs):
         detail = self._report(messages)
         kwargs["cache"] = False
+        self._within_deadline(kwargs)
         try:
             return super().forward(messages=messages, **kwargs)
         except Exception as exc:
@@ -117,6 +146,7 @@ class BodyBoundedLM(dspy.LM):
     async def _aupstream(self, messages: list[dict[str, Any]], **kwargs):
         detail = self._report(messages)
         kwargs["cache"] = False
+        self._refuse_past_deadline()
         try:
             return await super().aforward(messages=messages, **kwargs)
         except Exception as exc:
@@ -127,20 +157,34 @@ class BodyBoundedLM(dspy.LM):
         assembled = messages_from(prompt, messages)
         if self.cache_tenant_id is None:
             return self._upstream(assembled, **kwargs)
-        return self.response_cache.get_or_call(
-            self.cache_key(assembled, kwargs),
-            lambda: self._upstream(assembled, **kwargs),
-            tenant_id=self.cache_tenant_id,
-            model=self.model,
-        )
+        deadline = current_lm_call_deadline()
+        try:
+            return self.response_cache.get_or_call(
+                self.cache_key(assembled, kwargs),
+                lambda: self._upstream(assembled, **kwargs),
+                tenant_id=self.cache_tenant_id,
+                model=self.model,
+                wait_s=None if deadline is None else deadline.remaining_s(),
+            )
+        except TimeoutError as exc:
+            if deadline is None or isinstance(exc, LMCallDeadlineExceeded):
+                raise
+            raise self._deadline_exceeded(deadline) from exc
 
     async def aforward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)
         if self.cache_tenant_id is None:
             return await self._aupstream(assembled, **kwargs)
-        return await self.response_cache.aget_or_call(
-            self.cache_key(assembled, kwargs),
-            lambda: self._aupstream(assembled, **kwargs),
-            tenant_id=self.cache_tenant_id,
-            model=self.model,
-        )
+        deadline = current_lm_call_deadline()
+        try:
+            return await self.response_cache.aget_or_call(
+                self.cache_key(assembled, kwargs),
+                lambda: self._aupstream(assembled, **kwargs),
+                tenant_id=self.cache_tenant_id,
+                model=self.model,
+                wait_s=None if deadline is None else deadline.remaining_s(),
+            )
+        except TimeoutError as exc:
+            if deadline is None or isinstance(exc, LMCallDeadlineExceeded):
+                raise
+            raise self._deadline_exceeded(deadline) from exc

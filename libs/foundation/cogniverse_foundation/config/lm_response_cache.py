@@ -11,7 +11,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from dspy.clients.cache import Cache
 
@@ -184,11 +184,17 @@ class TenantScopedLMCache:
         *,
         tenant_id: str,
         model: str,
+        wait_s: Optional[float] = None,
     ) -> Any:
-        """Share one upstream call across synchronous and asynchronous callers."""
+        """Share one upstream call across synchronous and asynchronous callers.
+
+        A caller joining a call already in flight waits at most ``wait_s``
+        and then raises ``TimeoutError``; the call itself carries on for its
+        owner.
+        """
         pending, owner = self._claim(key)
         if not owner:
-            return self._served(pending.result())
+            return self._served(pending.result(timeout=wait_s))
         try:
             value = factory()
             self._finish(key, pending, value)
@@ -206,11 +212,16 @@ class TenantScopedLMCache:
         *,
         tenant_id: str,
         model: str,
+        wait_s: Optional[float] = None,
     ) -> Any:
         """Await the shared call without blocking a loop or cancelling its owner."""
         pending, owner = self._claim(key)
         if not owner:
-            return self._served(await asyncio.shield(asyncio.wrap_future(pending)))
+            return self._served(
+                await asyncio.wait_for(
+                    asyncio.shield(asyncio.wrap_future(pending)), timeout=wait_s
+                )
+            )
         try:
             value = await factory()
             self._finish(key, pending, value)

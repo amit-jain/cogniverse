@@ -195,6 +195,11 @@ class MySearchAgent(AgentBase[MySearchInput, MySearchOutput, MySearchDeps]):
 | `get_output_schema() -> Dict` | Get JSON schema for output type |
 | `get_stats() -> Dict` | Get processing statistics |
 
+`call_dspy(..., deadline=LMCallDeadline)` binds the caller's deadline for the LM
+call it makes: the call gets the time that is left, no attempt starts once the
+caller stops waiting (cancelled, or the deadline passed), and past the deadline
+it raises `LMCallDeadlineExceeded` naming the bound LM's endpoint.
+
 `call_dspy(..., output_field=..., stream_view=...)` emits token events with the
 new text in `message` and `data={"accumulated": ..., "output_field": ...}`.
 `accumulated` is always a prefix of the stripped value the module returns for
