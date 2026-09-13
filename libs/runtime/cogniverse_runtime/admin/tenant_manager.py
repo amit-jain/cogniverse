@@ -1040,13 +1040,23 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                 )
             )
             if not metadata_deleted:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"tenant_metadata delete for {canonical_tid} did not "
-                        "confirm — tenant record retained, retry the delete"
-                    ),
+                # delete_metadata_document reports any non-200 as False, including
+                # a failed response for a record that is nevertheless gone. Re-read
+                # before failing: an absent record means the delete is durable, so
+                # only a record still present is unconfirmed.
+                surviving = await asyncio.to_thread(
+                    backend.get_metadata_document,
+                    schema="tenant_metadata",
+                    doc_id=canonical_tid,
                 )
+                if surviving:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"tenant_metadata delete for {canonical_tid} did not "
+                            "confirm — tenant record retained, retry the delete"
+                        ),
+                    )
 
         from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
         from cogniverse_foundation.caching import evict_tenant_from_registered_caches

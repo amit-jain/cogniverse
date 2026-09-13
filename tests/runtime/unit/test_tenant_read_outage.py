@@ -396,6 +396,13 @@ async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
 
     backend = MagicMock()
     backend.delete_metadata_document.return_value = False
+    # The re-read that distinguishes an unconfirmed delete from one another
+    # request already completed: the record is still there, so this IS
+    # unconfirmed.
+    backend.get_metadata_document.return_value = {
+        "tenant_full_id": "acme:acme",
+        "org_id": "acme",
+    }
     schema_manager = MagicMock()
     schema_manager.delete_tenant_schemas.return_value = ["video_colpali__acme_acme"]
     backend.schema_manager = schema_manager
@@ -409,7 +416,54 @@ async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await tm.delete_tenant_internal("acme:acme")
     assert exc.value.status_code == 502
-    assert "tenant_metadata" in exc.value.detail
+    assert exc.value.detail == (
+        "tenant_metadata delete for acme:acme did not confirm — tenant "
+        "record retained, retry the delete"
+    )
+
+
+@pytest.mark.usefixtures("harness_key_config_store")
+@pytest.mark.asyncio
+async def test_delete_tenant_reports_deleted_when_the_record_is_already_gone(
+    monkeypatch,
+):
+    """A concurrent delete that already removed the record makes
+    delete_metadata_document report False. 502-ing there fails a request
+    whose effect is durable, so the record is re-read: absent means the
+    delete completed."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.delete_metadata_document.return_value = False
+    backend.get_metadata_document.return_value = None
+    schema_manager = MagicMock()
+    schema_manager.delete_tenant_schemas.return_value = []
+    backend.schema_manager = schema_manager
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+
+    async def _remaining(_org_id):
+        return []
+
+    async def _org(_org_id):
+        return None
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+
+    result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["status"] == "deleted"
+    assert result["tenant_full_id"] == "acme:acme"
+    assert result["deleted_schemas"] == []
+    assert result["schemas_deleted"] == 0
+    assert backend.get_metadata_document.call_args.kwargs == {
+        "schema": "tenant_metadata",
+        "doc_id": "acme:acme",
+    }
 
 
 @pytest.mark.usefixtures("harness_key_config_store")
