@@ -1494,8 +1494,14 @@ exists = schema_manager.tenant_schema_exists(
 
 # Delete tenant schemas (cleanup) — immediately redeploys to Vespa
 # REQUIRES: schema_registry in constructor, raises ValueError if not provided
-# Internally: unregisters each schema, then redeploys the application package
+# Internally: redeploys the application package, then unregisters each schema
 # with allow_schema_removal=True (Vespa validation override for content type removal)
+# Drops the tenant's registered schemas and its suffix-matched Vespa
+# orphans in one redeploy. Registered peers are excluded from suffix matching.
+# Serialized within one process on SchemaRegistry._deploy_lock with
+# the deployed snapshot taken inside it, so a concurrent deploy or delete
+# cannot activate a package built from a stale survivor set. The lock
+# covers target selection and registry removal for single and bulk deletes.
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 # Returns: List of deleted schema names (schemas removed from Vespa via redeployment)
 ```

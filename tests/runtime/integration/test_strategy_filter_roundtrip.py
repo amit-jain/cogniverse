@@ -248,7 +248,9 @@ class TestGatewayAgentStrategyInjection:
     """``MemoryAwareMixin.inject_context_into_prompt`` returns strategies from
     Mem0 when memory is initialized for gateway_agent."""
 
-    def test_gateway_agent_receives_strategies_via_mixin(self, memory_manager):
+    def test_gateway_agent_receives_strategies_via_mixin(
+        self, memory_manager, config_manager
+    ):
         """inject_context_into_prompt must include strategies seeded for
         gateway_agent. This guards the mixin's strategy-injection path."""
         tenant_id = f"gateway_strat_test_{int(time.time() * 1000)}"
@@ -267,6 +269,7 @@ class TestGatewayAgentStrategyInjection:
         # (which requires telemetry, LLM config, etc.). The mixin is the unit
         # under test here.
         proxy = _MemoryProxy()
+        proxy.bind_config_manager(config_manager)
         proxy.memory_manager = memory_manager
         proxy._memory_initialized = True
         proxy._memory_agent_name = "gateway_agent"
@@ -280,9 +283,12 @@ class TestGatewayAgentStrategyInjection:
             lambda text: routing_text in text,
         )
 
-        assert routing_text in enriched, (
-            f"gateway_agent strategy not injected into prompt — "
-            f"inject_context_into_prompt returned {enriched[:300]!r}"
+        assert enriched == (
+            f"{prompt}\n\n## Learned Strategies\n"
+            f"- I prefer the following approach for gateway_agent: {routing_text} "
+            "I use this when multi-modal routing. "
+            "(confidence: 0.90, from 10 traces, user-level)\n\n"
+            f"## Current Query:\n{prompt}"
         )
         assert enriched.startswith(f"{prompt}\n\n")
         assert enriched.endswith(f"## Current Query:\n{prompt}")
@@ -332,7 +338,9 @@ class TestCodingAgentStrategyInjection:
     """Fix #9 — CodingAgent.inject_context_into_prompt returns strategies
     from Mem0 when memory is initialized for coding_agent."""
 
-    def test_coding_agent_receives_strategies_via_mixin(self, memory_manager):
+    def test_coding_agent_receives_strategies_via_mixin(
+        self, memory_manager, config_manager
+    ):
         """inject_context_into_prompt must include strategies seeded for coding_agent.
 
         Before fix #9, CodingAgent lacked MemoryAwareMixin entirely."""
@@ -351,6 +359,7 @@ class TestCodingAgentStrategyInjection:
         )
 
         proxy = _MemoryProxy()
+        proxy.bind_config_manager(config_manager)
         proxy.memory_manager = memory_manager
         proxy._memory_initialized = True
         proxy._memory_agent_name = "coding_agent"
@@ -364,9 +373,12 @@ class TestCodingAgentStrategyInjection:
             lambda text: coding_text in text,
         )
 
-        assert coding_text in enriched, (
-            f"coding_agent strategy not injected into prompt — "
-            f"inject_context_into_prompt returned {enriched[:300]!r}"
+        assert enriched == (
+            f"{prompt}\n\n## Learned Strategies\n"
+            f"- I prefer the following approach for coding_agent: {coding_text} "
+            "I use this when code generation tasks. "
+            "(confidence: 0.90, from 10 traces, user-level)\n\n"
+            f"## Current Query:\n{prompt}"
         )
         assert enriched.startswith(f"{prompt}\n\n")
         assert enriched.endswith(f"## Current Query:\n{prompt}")
