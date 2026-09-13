@@ -307,12 +307,14 @@ class TestTheAgentLmTimeoutCoversATeacherColdStart:
         )
 
     def test_the_shipped_timeout_outlives_the_measured_cold_start(self):
-        """Measured one-token completions against the Modal teacher: cold
-        82.6 s (2026-09-13), 105-120 s on earlier days; warm 0.86 s. The
-        shipped timeout is 1.5x the upper measurement and stays under Envoy's
-        300 s route timeout, which must cut the proxy hop after the client."""
+        """Measured one-token completions on 2026-09-13 against the Modal
+        backends after their 900 s scale-down: student cold 135.0 s, warm
+        0.79 s and 0.85 s; teacher cold 82.6 s (105-120 s on earlier days),
+        warm 0.86 s and 0.89 s. The shipped timeout is 1.5x the longest cold
+        start (202.5 s, rounded up) and stays under Envoy's 300 s route
+        timeout, which must cut the proxy hop after the client."""
         primary = _rendered_config_json(_render())["llm_config"]["primary"]
-        assert primary["request_timeout"] == 180.0
+        assert primary["request_timeout"] == 210.0
         route_timeouts = {
             route["route"]["timeout"] for route in _envoy_routes(_render())
         }

@@ -183,7 +183,7 @@
       "max_tokens": 1000,
       "adapter_path": null,
       "api_base": "{{ include "cogniverse.primaryLLMEndpoint" . }}",
-      "request_timeout": 180.0
+      "request_timeout": 210.0
     },
     "teacher": {
       "model": "{{ include "cogniverse.teacherLLMModel" . }}",
