@@ -210,8 +210,8 @@ def test_routing_headers_change_misses(upstream, cache):
         model=MODEL, api_base=upstream.url, api_key="test", num_retries=0
     )
     router = SemanticRouterConfig(enabled=True, semantic_router_url=upstream.url)
-    first = create_routed_lm(endpoint, router, "acme:prod", "free")
-    second = create_routed_lm(endpoint, router, "acme:prod", "pro")
+    first = create_routed_lm(endpoint, router, "acme:prod", "free", "summarizer_agent")
+    second = create_routed_lm(endpoint, router, "acme:prod", "pro", "summarizer_agent")
     first.response_cache = second.response_cache = cache
     assert text(first.forward(messages=MESSAGES)) == "answer-1"
     assert text(second.forward(messages=MESSAGES)) == "answer-2"
@@ -479,7 +479,7 @@ def test_routed_error_keeps_its_type_and_is_not_cached(upstream, cache):
         model=MODEL, api_base=upstream.url, api_key="test", num_retries=0
     )
     router = SemanticRouterConfig(enabled=True, semantic_router_url=upstream.url)
-    model = create_routed_lm(endpoint, router, "acme:prod", "pro")
+    model = create_routed_lm(endpoint, router, "acme:prod", "pro", "search_agent")
     model.response_cache = cache
     upstream.failures = 1
     with pytest.raises(UpstreamUnavailable) as error:
@@ -489,7 +489,7 @@ def test_routed_error_keeps_its_type_and_is_not_cached(upstream, cache):
         error.value.tier,
         error.value.status,
         error.value.routed_model,
-    ) == ("acme:prod", "pro", 503, "openai/auto")
+    ) == ("acme:prod", "pro", 503, "openai/cogniverse-classification")
     assert cache.entry_count() == 0
     assert text(model.forward(messages=MESSAGES)) == "answer-2"
     assert text(model.forward(messages=MESSAGES)) == "answer-2"
