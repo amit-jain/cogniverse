@@ -88,6 +88,7 @@ class TestRenderedEnvoyIsTheChartDataPlane:
             "bytes_sent": "%BYTES_SENT%",
             "duration_ms": "%DURATION%",
             "upstream": "%UPSTREAM_HOST%",
+            "cluster": "%UPSTREAM_CLUSTER%",
             "request_id": "%REQ(X-REQUEST-ID)%",
         }
 
