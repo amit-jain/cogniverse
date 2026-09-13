@@ -164,6 +164,8 @@ class TestTheModelNameMatchesTheChart:
             "tier_header": "x-authz-user-groups",
             "user_id_header": "x-authz-user-id",
             "routed_model": "openai/auto",
+            "response_cache_ttl_seconds": 3600,
+            "response_cache_max_entries": 1024,
             "classification_model": "openai/cogniverse-classification",
             "vision_model": "openai/cogniverse-vision",
         }
