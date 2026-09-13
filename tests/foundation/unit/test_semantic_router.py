@@ -196,7 +196,23 @@ class TestSemanticRouterConfigSerialization:
             "tier_header": "x-authz-user-groups",
             "user_id_header": "x-authz-user-id",
             "routed_model": "openai/auto",
+            "response_cache_ttl_seconds": 3600,
+            "response_cache_max_entries": 1024,
         }
+
+    def test_response_cache_bounds_survive_a_round_trip(self):
+        """Non-default bounds, so a from_dict that dropped them reads back as
+        the defaults and fails here instead of silently widening the agent
+        cache."""
+        cfg = _enabled_config(
+            response_cache_ttl_seconds=600, response_cache_max_entries=64
+        )
+        rt = SemanticRouterConfig.from_dict(cfg.to_dict())
+        assert (rt.response_cache_ttl_seconds, rt.response_cache_max_entries) == (
+            600,
+            64,
+        )
+        assert rt == cfg
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
         assert SystemConfig().semantic_router.enabled is False

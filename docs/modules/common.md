@@ -1164,6 +1164,8 @@ backfilled with `scripts/backfill_source_url.py`.
 
 **Purpose:** Mixin for runtime DSPy module and optimizer configuration
 
+The LM it builds is bound to the agent's tenant (`self.tenant_id`, else the tenant its `system_config` was loaded for), so its responses are cached per tenant whether or not the semantic router is enabled. An agent with no tenant calls the provider without caching.
+
 **Import:**
 ```python
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin

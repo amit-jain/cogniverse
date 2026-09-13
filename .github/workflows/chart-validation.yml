@@ -10,22 +10,28 @@ on:
       - 'charts/**'
       - 'workflows/**'
       - 'tests/charts/**'
+      - 'tests/fixtures/shipped_config.py'
       - 'tests/foundation/integration/_sr_stack/**'
       - '.github/workflows/chart-validation.yml'
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
+      - 'libs/foundation/cogniverse_foundation/config/unified_config.py'
   pull_request:
     branches: [main]
     paths:
       - 'charts/**'
       - 'workflows/**'
       - 'tests/charts/**'
+      - 'tests/fixtures/shipped_config.py'
       - 'tests/foundation/integration/_sr_stack/**'
       - '.github/workflows/chart-validation.yml'
       # test_inference_chart.py and test_shipped_config_parity.py read the
       # shipped and example configs.
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
+      # test_semantic_router_chart.py pins the router's response-cache bounds
+      # against SemanticRouterConfig.
+      - 'libs/foundation/cogniverse_foundation/config/unified_config.py'
 
 jobs:
   chart-validation:

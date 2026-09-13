@@ -144,13 +144,14 @@ def create_routed_lm(
         tier=tier,
     )
     if not config.enabled:
-        return create_dspy_lm(routed)
+        return create_dspy_lm(routed, tenant_id=tenant_id)
 
     from cogniverse_foundation.config.routed_lm import RoutedLM
 
     return RoutedLM(
         routed.model,
         tenant_id=tenant_id,
+        cache_tenant_id=tenant_id,
         tier=tier,
         **dspy_lm_kwargs(routed),
     )
@@ -195,14 +196,14 @@ def routed_lm_context_for(
 
     When ``endpoint`` is omitted the endpoint is resolved from config for
     ``agent_name`` on the enabled path (``agent_name`` selects which endpoint,
-    not any routing signal), and the ambient ``dspy.settings.lm`` is left in
-    place on the direct path (for callers that rely on the global LM, e.g. the
-    orchestrator).
+    not any routing signal). On the direct path, an ambient ``BodyBoundedLM``
+    is bound to the request tenant, sharing its response cache.
     """
     from contextlib import nullcontext
 
     import dspy
 
+    from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
     from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
     from cogniverse_foundation.config.utils import get_config
 
@@ -211,7 +212,10 @@ def routed_lm_context_for(
         # dspy.settings.lm when the agent supplied no endpoint. This is the
         # feature being off, NOT an error fallback.
         if endpoint is not None:
-            return dspy.context(lm=create_dspy_lm(endpoint))
+            return dspy.context(lm=create_dspy_lm(endpoint, tenant_id=tenant_id))
+        ambient = dspy.settings.lm
+        if tenant_id and isinstance(ambient, BodyBoundedLM):
+            return dspy.context(lm=ambient.for_tenant(tenant_id))
         return nullcontext()
 
     # No config manager (standalone agent process without a config store)

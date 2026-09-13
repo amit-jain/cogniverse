@@ -281,6 +281,9 @@ class SemanticRouterConfig:
     # names and rejects raw provider model ids, so the endpoint's model is
     # replaced, not forwarded.
     routed_model: str = "openai/auto"
+    # Bounds of the tenant-scoped LM response cache in shipped config.json.
+    response_cache_ttl_seconds: int = 3600
+    response_cache_max_entries: int = 1024
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -289,6 +292,8 @@ class SemanticRouterConfig:
             "tier_header": self.tier_header,
             "user_id_header": self.user_id_header,
             "routed_model": self.routed_model,
+            "response_cache_ttl_seconds": self.response_cache_ttl_seconds,
+            "response_cache_max_entries": self.response_cache_max_entries,
         }
 
     @classmethod
@@ -299,6 +304,12 @@ class SemanticRouterConfig:
             tier_header=data.get("tier_header", "x-authz-user-groups"),
             user_id_header=data.get("user_id_header", "x-authz-user-id"),
             routed_model=data.get("routed_model", "openai/auto"),
+            response_cache_ttl_seconds=int(
+                data.get("response_cache_ttl_seconds", cls.response_cache_ttl_seconds)
+            ),
+            response_cache_max_entries=int(
+                data.get("response_cache_max_entries", cls.response_cache_max_entries)
+            ),
         )
 
 

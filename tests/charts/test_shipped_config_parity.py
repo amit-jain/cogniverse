@@ -4,14 +4,12 @@
 ``configs/config.json`` feeds local runs. They carry overlapping agent and
 modality declarations, and a divergence between them is invisible until a pod
 fails ``parse_synthetic_runtime_config`` at startup and crash-loops before
-serving. Templated Helm values render to absolute URLs, so the parse here
-substitutes one for each ``{{ ... }}`` expression.
+serving. Chart values are rendered by Helm before parsing.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +21,12 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_runtime.agent_dispatcher import GROUNDING_SEARCH_TIMEOUT_KEY
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+from tests.fixtures.shipped_config import load_shipped_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHIPPED = REPO_ROOT / "configs" / "config.json"
 CHART = REPO_ROOT / "charts" / "cogniverse" / "files" / "config.json"
 CONFIGS = [SHIPPED, CHART]
-
-
-def _rendered(path: Path) -> dict[str, Any]:
-    raw = path.read_text(encoding="utf-8")
-    return json.loads(re.sub(r"\{\{[^}]*\}\}", "http://rendered.invalid", raw))
 
 
 def _mappings(config: dict[str, Any]) -> list[tuple[str, str]]:
@@ -55,7 +49,9 @@ def _training_selection(config: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
 def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
-    parsed = parse_synthetic_runtime_config(_rendered(path), tenant_id=SYSTEM_TENANT_ID)
+    parsed = parse_synthetic_runtime_config(
+        load_shipped_config(path), tenant_id=SYSTEM_TENANT_ID
+    )
 
     assert parsed.backend_config.tenant_id == SYSTEM_TENANT_ID
     assert parsed.backend_config.profiles
@@ -64,7 +60,7 @@ def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
 def test_every_mapped_agent_declares_the_modality_it_is_mapped_for(path: Path):
-    config = _rendered(path)
+    config = load_shipped_config(path)
     agents = config["agents"]
 
     undeclared = [
@@ -78,8 +74,8 @@ def test_every_mapped_agent_declares_the_modality_it_is_mapped_for(path: Path):
 
 @pytest.mark.unit
 def test_shared_agents_declare_identical_modalities_across_shipped_configs():
-    shipped_agents = _rendered(SHIPPED)["agents"]
-    chart_agents = _rendered(CHART)["agents"]
+    shipped_agents = load_shipped_config(SHIPPED)["agents"]
+    chart_agents = load_shipped_config(CHART)["agents"]
 
     drift = {
         name: (
@@ -98,8 +94,8 @@ def test_shared_agents_declare_identical_modalities_across_shipped_configs():
 def test_shared_agents_declare_identical_token_streaming_across_shipped_configs():
     """The chart config is what a pod runs, so a streaming declaration made in
     the repo copy alone leaves the deployed agent answering in whole chunks."""
-    shipped_agents = _rendered(SHIPPED)["agents"]
-    chart_agents = _rendered(CHART)["agents"]
+    shipped_agents = load_shipped_config(SHIPPED)["agents"]
+    chart_agents = load_shipped_config(CHART)["agents"]
     declared = {
         name: (
             shipped_agents[name].get("streams_answer_tokens", False),
@@ -123,8 +119,8 @@ def test_shipped_configs_declare_identical_harness_surface():
     A model name that resolves to an agent locally and to nothing in the pod
     is a 404 only in production.
     """
-    shipped = _rendered(SHIPPED)["harness"]
-    chart = _rendered(CHART)["harness"]
+    shipped = load_shipped_config(SHIPPED)["harness"]
+    chart = load_shipped_config(CHART)["harness"]
 
     assert shipped == chart
     assert shipped == {
@@ -142,7 +138,7 @@ def test_shipped_configs_declare_identical_harness_surface():
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
 def test_every_harness_model_names_a_declared_agent(path: Path):
-    config = _rendered(path)
+    config = load_shipped_config(path)
     declared = set(config["agents"])
 
     mapped = set(config["harness"]["models"].values())
@@ -152,19 +148,23 @@ def test_every_harness_model_names_a_declared_agent(path: Path):
 
 @pytest.mark.unit
 def test_shipped_configs_declare_identical_agent_mappings():
-    assert _mappings(_rendered(SHIPPED)) == _mappings(_rendered(CHART))
+    assert _mappings(load_shipped_config(SHIPPED)) == _mappings(
+        load_shipped_config(CHART)
+    )
 
 
 @pytest.mark.unit
 def test_shipped_configs_declare_identical_optimizer_floors():
-    assert _optimizer_floors(_rendered(SHIPPED)) == _optimizer_floors(_rendered(CHART))
+    assert _optimizer_floors(load_shipped_config(SHIPPED)) == _optimizer_floors(
+        load_shipped_config(CHART)
+    )
 
 
 @pytest.mark.unit
 def test_shipped_configs_declare_identical_training_selection():
     # Drift guard: the charted config must match the shipped runtime config.
-    assert _training_selection(_rendered(SHIPPED)) == _training_selection(
-        _rendered(CHART)
+    assert _training_selection(load_shipped_config(SHIPPED)) == _training_selection(
+        load_shipped_config(CHART)
     )
 
 
@@ -173,15 +173,15 @@ def test_shipped_configs_declare_identical_optimizer_configs():
     """Drift guard: the chart config is what the cluster actually runs, so a
     scoring rule added only to the repo copy changes nothing in a deployment
     and silently makes local and served selection disagree."""
-    assert _optimizer_configs(_rendered(SHIPPED)) == _optimizer_configs(
-        _rendered(CHART)
+    assert _optimizer_configs(load_shipped_config(SHIPPED)) == _optimizer_configs(
+        load_shipped_config(CHART)
     )
 
 
 @pytest.mark.unit
 def test_shipped_training_selection_matches_canonical_block():
     # Canonical pin: the shipped config carries the exact expected values.
-    assert _training_selection(_rendered(SHIPPED)) == {
+    assert _training_selection(load_shipped_config(SHIPPED)) == {
         "simba_query_enhancement": {
             "trainset_cap": 300,
             "mmr_lambda": 0.7,
@@ -221,8 +221,8 @@ def test_shipped_configs_declare_identical_teacher_request_bounds():
         }
 
     assert (
-        bounds(_rendered(SHIPPED))
-        == bounds(_rendered(CHART))
+        bounds(load_shipped_config(SHIPPED))
+        == bounds(load_shipped_config(CHART))
         == {"temperature": 0.7, "max_tokens": 2048, "context_window": 4096}
     )
 
@@ -232,15 +232,17 @@ def test_shipped_configs_declare_identical_answer_grounding_budget():
     """The dispatcher raises when this key is absent rather than searching
     unbounded, so a budget carried by one copy alone fails every grounded
     answer in the deployment that renders the other."""
-    budgets = [_rendered(path).get(GROUNDING_SEARCH_TIMEOUT_KEY) for path in CONFIGS]
+    budgets = [
+        load_shipped_config(path).get(GROUNDING_SEARCH_TIMEOUT_KEY) for path in CONFIGS
+    ]
 
     assert budgets == [12.0, 12.0]
 
 
 @pytest.mark.unit
 def test_chart_agents_are_a_subset_of_the_reference_config():
-    shipped_agents = set(_rendered(SHIPPED)["agents"])
-    chart_agents = set(_rendered(CHART)["agents"])
+    shipped_agents = set(load_shipped_config(SHIPPED)["agents"])
+    chart_agents = set(load_shipped_config(CHART)["agents"])
 
     assert chart_agents - shipped_agents == set()
 

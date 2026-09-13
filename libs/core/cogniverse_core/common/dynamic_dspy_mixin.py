@@ -143,7 +143,12 @@ class DynamicDSPyMixin:
 
         endpoint_config = self._route_through_semantic_router(endpoint_config)
 
-        self._dspy_lm = create_dspy_lm(endpoint_config)
+        # The tenant binds the LM's response cache. Routing, when it is on,
+        # also puts the tenant on the wire, but the cache must separate
+        # tenants either way.
+        self._dspy_lm = create_dspy_lm(
+            endpoint_config, tenant_id=self._cache_tenant_id() or None
+        )
         logger.info(
             f"Created DSPy LM: {endpoint_config.model} @ {endpoint_config.api_base}"
         )
@@ -179,17 +184,27 @@ class DynamicDSPyMixin:
         if not router.enabled:
             return endpoint
 
-        tenant_id = (
-            getattr(self, "tenant_id", None)
-            or getattr(system_config, "tenant_id", "")
-            or ""
-        )
+        tenant_id = self._cache_tenant_id()
         return apply_semantic_routing(
             endpoint=endpoint,
             config=router,
             tenant_id=tenant_id,
             tier=resolve_tenant_tier(system_config, tenant_id),
         )
+
+    def _cache_tenant_id(self) -> str:
+        """The tenant this agent's LM answers for, or the empty string.
+
+        The agent's own ``tenant_id`` wins; a tenant-agnostic agent falls back
+        to the one its system config was loaded for.
+        """
+        system_config = getattr(self, "system_config", None)
+        raw = (
+            getattr(self, "tenant_id", None)
+            or getattr(system_config, "tenant_id", "")
+            or ""
+        )
+        return raw if isinstance(raw, str) else ""
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):
         """

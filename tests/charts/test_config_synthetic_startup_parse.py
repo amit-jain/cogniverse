@@ -4,14 +4,11 @@
 validated at startup by ``parse_synthetic_runtime_config`` for the system
 tenant; a config that fails the parse crash-loops every deployed runtime pod
 before it serves a single request. ``configs/config.json`` feeds the same parse
-in local runs. Templated Helm values render to absolute URLs, so the parse here
-substitutes one for each ``{{ ... }}`` expression.
+in local runs. The chart configuration is rendered by Helm before parsing.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +16,7 @@ import pytest
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 from cogniverse_synthetic.utils import partition_profiles_by_sampleability
+from tests.fixtures.shipped_config import load_shipped_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS = [
@@ -36,15 +34,12 @@ EXPECTED_AGENT_MAPPINGS = {
 }
 
 
-def _rendered(path: Path) -> dict:
-    raw = path.read_text(encoding="utf-8")
-    return json.loads(re.sub(r"\{\{[^}]*\}\}", "http://rendered.invalid", raw))
-
-
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.name + ":" + p.parent.name)
 def test_config_passes_system_tenant_startup_parse(path: Path):
-    parsed = parse_synthetic_runtime_config(_rendered(path), tenant_id=SYSTEM_TENANT_ID)
+    parsed = parse_synthetic_runtime_config(
+        load_shipped_config(path), tenant_id=SYSTEM_TENANT_ID
+    )
 
     modality_config = parsed.generator_config.get_optimizer_config("modality")
     mappings = {

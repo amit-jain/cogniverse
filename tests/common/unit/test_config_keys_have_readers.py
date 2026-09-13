@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
 from typing import Sequence
 
@@ -12,6 +10,7 @@ import pytest
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 from cogniverse_synthetic.utils import partition_profiles_by_sampleability
+from tests.fixtures.shipped_config import load_shipped_config
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ROOTS = [REPO_ROOT / "libs", REPO_ROOT / "scripts", REPO_ROOT / "deploy"]
@@ -158,9 +157,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 320,
-    CONFIG_PATHS[1]: 305,
-    CONFIG_PATHS[2]: 274,
+    CONFIG_PATHS[0]: 323,
+    CONFIG_PATHS[1]: 308,
+    CONFIG_PATHS[2]: 277,
 }
 
 EXPECTED_AGENT_MAPPINGS = {
@@ -171,13 +170,6 @@ EXPECTED_AGENT_MAPPINGS = {
     "CODE": "coding_agent",
     "WIKI": "document_agent",
 }
-
-
-def _load_json(path: Path) -> dict:
-    raw = path.read_text(encoding="utf-8")
-    if "{{" in raw:
-        raw = re.sub(r"\{\{[^}]*\}\}", "http://rendered.invalid", raw)
-    return json.loads(raw)
 
 
 # Mappings whose entry NAMES are data rather than config keys: code iterates
@@ -205,7 +197,7 @@ def _all_keys(node, seen: set[str], path: tuple[str, ...] = ()) -> set[str]:
 
 
 def unread_config_keys(config_path: Path, source_roots: Sequence[Path]) -> set[str]:
-    keys = _all_keys(_load_json(config_path), set())
+    keys = _all_keys(load_shipped_config(config_path), set())
     blob = "\n".join(
         path.read_text(errors="replace")
         for root in source_roots
@@ -220,7 +212,7 @@ def unread_config_keys(config_path: Path, source_roots: Sequence[Path]) -> set[s
 @pytest.mark.ci_fast
 @pytest.mark.parametrize("path", CONFIG_PATHS, ids=lambda p: p.name)
 def test_no_new_shipped_config_key_lacks_a_reader(path: Path):
-    keys = _all_keys(_load_json(path), set())
+    keys = _all_keys(load_shipped_config(path), set())
     assert len(keys) == EXPECTED_KEY_COUNTS[path]
 
     unread = unread_config_keys(path, SOURCE_ROOTS)
@@ -233,7 +225,7 @@ def test_no_new_shipped_config_key_lacks_a_reader(path: Path):
 @pytest.mark.parametrize("path", STARTUP_PARSE_PATHS, ids=lambda p: p.name)
 def test_shipped_configs_pass_system_tenant_startup_parse(path: Path):
     parsed = parse_synthetic_runtime_config(
-        _load_json(path), tenant_id=SYSTEM_TENANT_ID
+        load_shipped_config(path), tenant_id=SYSTEM_TENANT_ID
     )
 
     modality_config = parsed.generator_config.get_optimizer_config("modality")
