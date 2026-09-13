@@ -49,7 +49,16 @@ def test_reconcile_orphans_clean_cluster_returns_0(
     monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"orphan_schemas": []})
+        return httpx.Response(
+            200,
+            json={
+                "orphan_schemas": [],
+                "tenant_orphan_schemas": [],
+                "tenant_orphan_tenants": [],
+                "tenant_orphans_deleted": [],
+                "orphan_details": [],
+            },
+        )
 
     _mount_httpx(monkeypatch, handler)
     rc = admin_cli.cmd_reconcile_orphans("http://runtime.test", confirm=False)
@@ -70,6 +79,10 @@ def test_reconcile_orphans_lists_orphans_dry_run(
                 "orphan_tenants": ["acme:acme"],
                 "unrecovered_schemas": [],
                 "deleted": [],
+                "tenant_orphan_schemas": [],
+                "tenant_orphan_tenants": [],
+                "tenant_orphans_deleted": [],
+                "orphan_details": [],
             },
         )
 
@@ -97,6 +110,10 @@ def test_reconcile_orphans_confirm_sends_dry_run_false(
                 "orphan_tenants": ["t"],
                 "unrecovered_schemas": [],
                 "deleted": ["x_t"],
+                "tenant_orphan_schemas": [],
+                "tenant_orphan_tenants": [],
+                "tenant_orphans_deleted": [],
+                "orphan_details": [],
             },
         )
 
@@ -421,3 +438,17 @@ def test_graph_cli_wrapper_success_exits_0(
 
     result = CliRunner().invoke(cli, ["graph", "stats", "--tenant", "acme:acme"])
     assert result.exit_code == 0
+
+
+def test_reconcile_orphans_rejects_an_incomplete_inventory(
+    monkeypatch, capture_console
+):
+    _mount_httpx(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"orphan_schemas": []}),
+    )
+    result = admin_cli.cmd_reconcile_orphans("http://runtime.test", confirm=False)
+    assert result == 3
+    assert capture_console.getvalue() == (
+        "reconcile-orphans response is missing 'tenant_orphan_schemas'\n"
+    )

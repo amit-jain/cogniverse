@@ -1,13 +1,17 @@
 """Unit tests for the ``/admin/reconcile-orphans`` endpoint.
 
 The endpoint diffs Vespa-deployed schemas against the SchemaRegistry's
-active set and either reports orphans (dry_run) or drops them all in
-one Vespa redeploy (confirm). Tests mock the backend so they don't
-need a live Vespa.
+active set (registry-orphans) and against the tenant_metadata registry
+(tenant-orphans), and either reports them (dry_run) or drops them in a
+Vespa redeploy (confirm). These tests pin the route's own contract:
+status codes, refusal messages, and which primitive is called with what.
+The removal and its readback run against real Vespa in
+tests/runtime/integration/test_reconcile_tenant_orphans.py.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -44,6 +48,10 @@ def admin_client():
     backend.schema_manager = schema_manager
     schema_manager._schema_registry = schema_registry
     schema_registry.reserved_schemas.return_value = {}
+    # The tenant registry the reconciler diffs registered schemas against.
+    # ``legit`` is the live tenant every test below registers a schema for,
+    # so its schema is never a tenant-orphan.
+    backend.query_metadata_documents.return_value = [{"tenant_full_id": "legit:legit"}]
     schema_manager._PROTECTED_SCHEMAS = frozenset(
         {
             "tenant_metadata",
@@ -78,6 +86,7 @@ class TestReconcileOrphansDryRun:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
@@ -129,6 +138,7 @@ class TestReconcileOrphansDryRun:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
@@ -164,6 +174,7 @@ class TestReconcileOrphansDryRun:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
@@ -202,6 +213,7 @@ class TestReconcileOrphansDryRun:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
@@ -228,6 +240,7 @@ class TestReconcileOrphansBaseSchemaSource:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
@@ -248,6 +261,7 @@ class TestReconcileOrphansBaseSchemaSource:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
@@ -273,6 +287,7 @@ class TestReconcileOrphansBaseSchemaSource:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
@@ -302,6 +317,7 @@ class TestReconcileOrphansConfirm:
         # deployed schemas is the failed-load case the safety guard blocks.)
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
         schema_manager.delete_orphan_schemas.return_value = [
             "knowledge_graph_alpha",
@@ -389,6 +405,7 @@ class TestReconcileOrphansInFlightDeploys:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
         schema_registry.reserved_schemas.return_value = {
             "knowledge_graph_inflight": {"full_schema_name": "knowledge_graph_inflight"}
@@ -427,6 +444,7 @@ class TestReconcileOrphansInFlightDeploys:
         ]
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
         schema_registry._get_all_schemas.return_value = [legit]
         schema_registry.reserved_schemas.side_effect = RegistryStorageError(
             "Cannot read deployment intents: journal unavailable"
@@ -443,3 +461,342 @@ class TestReconcileOrphansInFlightDeploys:
             )
         }
         schema_manager.delete_orphan_schemas.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestReconcileTenantOrphans:
+    """A schema whose registry row names a tenant with no tenant_metadata
+    record is invisible to the registry diff: it is registered, so
+    ``orphan_schemas`` never lists it, and every application package
+    carries it forever."""
+
+    def test_registered_schema_of_deleted_tenant_is_a_tenant_orphan(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "agent_memories_legit_legit",
+            "agent_memories_ghost_t1",
+            "provenance_ghost_t1",
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        ghost_memories = MagicMock()
+        ghost_memories.full_schema_name = "agent_memories_ghost_t1"
+        ghost_memories.tenant_id = "ghost:t1"
+        ghost_provenance = MagicMock()
+        ghost_provenance.full_schema_name = "provenance_ghost_t1"
+        ghost_provenance.tenant_id = "ghost:t1"
+        schema_registry._get_all_schemas.return_value = [
+            live,
+            ghost_memories,
+            ghost_provenance,
+        ]
+
+        data = client.post("/admin/reconcile-orphans?dry_run=true").json()
+
+        assert data["tenant_orphan_schemas"] == [
+            "agent_memories_ghost_t1",
+            "provenance_ghost_t1",
+        ]
+        assert data["tenant_orphan_tenants"] == ["ghost:t1"]
+        assert data["tenant_orphans_deleted"] == []
+        # The defect this class exists for: the registry diff cannot see them.
+        assert data["orphan_schemas"] == []
+        assert data["orphan_tenants"] == []
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+    def test_owner_comes_from_the_registry_row_not_the_schema_name(self, admin_client):
+        """``agent_memories_a_b_c`` is ambiguous by name (a:b_c or a_b:c).
+        The registry row names the owner, so the split is never guessed."""
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_a_b_c",
+        ]
+        row = MagicMock()
+        row.full_schema_name = "agent_memories_a_b_c"
+        row.tenant_id = "a_b:c"
+        schema_registry._get_all_schemas.return_value = [row]
+        backend.query_metadata_documents.return_value = [{"tenant_full_id": "a:b_c"}]
+
+        data = client.post("/admin/reconcile-orphans?dry_run=true").json()
+
+        assert data["tenant_orphan_tenants"] == ["a_b:c"]
+
+    def test_registered_schema_not_deployed_is_not_a_tenant_orphan(self, admin_client):
+        """Only a schema Vespa actually carries costs a slot in the package."""
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_legit_legit",
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        stale_row = MagicMock()
+        stale_row.full_schema_name = "agent_memories_ghost_t1"
+        stale_row.tenant_id = "ghost:t1"
+        schema_registry._get_all_schemas.return_value = [live, stale_row]
+
+        data = client.post("/admin/reconcile-orphans?dry_run=true").json()
+
+        assert data["tenant_orphan_schemas"] == []
+        assert data["tenant_orphan_tenants"] == []
+
+    def test_confirm_drops_tenant_orphans_and_reads_back(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.side_effect = [
+            [
+                "tenant_metadata",
+                "agent_memories_legit_legit",
+                "agent_memories_ghost_t1",
+            ],
+            ["tenant_metadata", "agent_memories_legit_legit"],
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        ghost = MagicMock()
+        ghost.full_schema_name = "agent_memories_ghost_t1"
+        ghost.tenant_id = "ghost:t1"
+        schema_registry._get_all_schemas.return_value = [live, ghost]
+        schema_manager.delete_tenant_schemas_bulk.return_value = [
+            "agent_memories_ghost_t1"
+        ]
+
+        data = client.post(
+            "/admin/reconcile-orphans?dry_run=false&remove_tenant_orphans=true"
+        ).json()
+
+        assert data["tenant_orphans_deleted"] == ["agent_memories_ghost_t1"]
+        schema_manager.delete_tenant_schemas_bulk.assert_called_once_with(["ghost:t1"])
+
+    def test_readback_showing_a_survivor_refuses_to_report_success(self, admin_client):
+        """The redeploy returned the name as dropped but Vespa still carries
+        it: reporting success would leave the operator believing the cluster
+        is clean."""
+        client, backend, schema_manager, schema_registry = admin_client
+
+        deployed = [
+            "tenant_metadata",
+            "agent_memories_legit_legit",
+            "agent_memories_ghost_t1",
+        ]
+        schema_manager.list_deployed_document_types.side_effect = [
+            deployed,
+            deployed,
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        ghost = MagicMock()
+        ghost.full_schema_name = "agent_memories_ghost_t1"
+        ghost.tenant_id = "ghost:t1"
+        schema_registry._get_all_schemas.return_value = [live, ghost]
+        schema_manager.delete_tenant_schemas_bulk.return_value = [
+            "agent_memories_ghost_t1"
+        ]
+
+        resp = client.post(
+            "/admin/reconcile-orphans?dry_run=false&remove_tenant_orphans=true"
+        )
+        assert resp.status_code == 502
+        assert resp.json() == {
+            "detail": (
+                "Tenant-orphan removal did not take for "
+                "['agent_memories_ghost_t1']; they are still deployed after "
+                "the redeploy"
+            )
+        }
+
+    def test_empty_selection_is_refused(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_legit_legit",
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        schema_registry._get_all_schemas.return_value = [live]
+
+        resp = client.post(
+            "/admin/reconcile-orphans?dry_run=false&remove_tenant_orphans=true"
+        )
+        assert resp.status_code == 409
+        assert resp.json() == {
+            "detail": (
+                "No tenant-orphan schemas to remove: every schema registered "
+                "in Vespa belongs to a tenant that still has a tenant_metadata "
+                "record. Refusing an empty selection."
+            )
+        }
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+    def test_dry_run_never_drops_tenant_orphans(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_ghost_t1",
+        ]
+        ghost = MagicMock()
+        ghost.full_schema_name = "agent_memories_ghost_t1"
+        ghost.tenant_id = "ghost:t1"
+        schema_registry._get_all_schemas.return_value = [ghost]
+
+        data = client.post(
+            "/admin/reconcile-orphans?dry_run=true&remove_tenant_orphans=true"
+        ).json()
+
+        assert data["tenant_orphan_schemas"] == ["agent_memories_ghost_t1"]
+        assert data["tenant_orphans_deleted"] == []
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTenantRegistryReadContract:
+    """An unreadable or truncated tenant list makes live tenants look like
+    tenant-orphans, and the removal path would drop them with their
+    documents. Both must refuse, never degrade to a partial set."""
+
+    def test_tenant_registry_outage_refuses_to_reconcile(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_legit_legit",
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        schema_registry._get_all_schemas.return_value = [live]
+        backend.query_metadata_documents.side_effect = RuntimeError("vespa unreachable")
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": (
+                "Cannot read the tenant registry; refusing to reconcile "
+                "orphans because every schema would read as a tenant-orphan: "
+                "vespa unreachable"
+            )
+        }
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+    def test_saturated_tenant_page_refuses_to_reconcile(self, admin_client):
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_legit_legit",
+        ]
+        live = MagicMock()
+        live.full_schema_name = "agent_memories_legit_legit"
+        live.tenant_id = "legit:legit"
+        schema_registry._get_all_schemas.return_value = [live]
+        backend.query_metadata_documents.return_value = [
+            {"tenant_full_id": f"org{i}:t"}
+            for i in range(tenant_manager._TENANT_SWEEP_HITS)
+        ]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": (
+                "Tenant registry returned 400 rows, at or above the 400-row "
+                "page limit; refusing to reconcile orphans because a "
+                "truncated tenant list marks live tenants as orphans"
+            )
+        }
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+    def test_no_tenants_at_all_reports_every_registered_schema(self, admin_client):
+        """A tenant registry that answers successfully but empty is a real
+        state: schema auto-deploy paths create schemas without creating a
+        tenant, so a cluster can hold only orphans, and that is the cluster
+        reconciliation exists to clean. Refusing here would make it
+        uncleanable. The reads that can FABRICATE orphans raise instead, and
+        the removal still needs the explicit flag."""
+        client, backend, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "agent_memories_ghost_a",
+            "agent_memories_ghost_b",
+        ]
+        ghost_a = MagicMock()
+        ghost_a.full_schema_name = "agent_memories_ghost_a"
+        ghost_a.tenant_id = "ghost:a"
+        ghost_b = MagicMock()
+        ghost_b.full_schema_name = "agent_memories_ghost_b"
+        ghost_b.tenant_id = "ghost:b"
+        schema_registry._get_all_schemas.return_value = [ghost_a, ghost_b]
+        backend.query_metadata_documents.return_value = []
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tenant_orphan_schemas"] == [
+            "agent_memories_ghost_a",
+            "agent_memories_ghost_b",
+        ]
+        assert data["tenant_orphan_tenants"] == ["ghost:a", "ghost:b"]
+        assert data["tenant_orphans_deleted"] == []
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_direct_confirmation_does_not_enable_tenant_orphan_removal(admin_client):
+    _, _, manager, registry = admin_client
+    manager.list_deployed_document_types.return_value = [
+        "tenant_metadata",
+        "agent_memories_ghost_t1",
+    ]
+    row = MagicMock()
+    row.full_schema_name = "agent_memories_ghost_t1"
+    row.tenant_id = "ghost:t1"
+    registry._get_all_schemas.return_value = [row]
+
+    result = asyncio.run(tenant_manager.reconcile_orphans(dry_run=False))
+
+    assert result["tenant_orphan_schemas"] == ["agent_memories_ghost_t1"]
+    assert result["tenant_orphans_deleted"] == []
+    assert manager.delete_tenant_schemas_bulk.call_args_list == []
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_malformed_tenant_metadata_refuses_orphan_removal(admin_client):
+    client, backend, manager, registry = admin_client
+    manager.list_deployed_document_types.return_value = [
+        "tenant_metadata",
+        "agent_memories_legit_legit",
+    ]
+    row = MagicMock()
+    row.full_schema_name = "agent_memories_legit_legit"
+    row.tenant_id = "legit:legit"
+    registry._get_all_schemas.return_value = [row]
+    backend.query_metadata_documents.return_value = [{}]
+
+    response = client.post(
+        "/admin/reconcile-orphans?dry_run=false&remove_tenant_orphans=true"
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Tenant registry contains a row without tenant_full_id; refusing to reconcile orphans"
+    }
+    assert manager.delete_tenant_schemas_bulk.call_args_list == []

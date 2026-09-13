@@ -992,22 +992,35 @@ def admin() -> None:
     ),
 )
 @click.option(
+    "--tenant-orphans",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also drop the schemas of tenants that no longer have a "
+        "tenant_metadata record. Needs --confirm; the runtime refuses an "
+        "empty selection."
+    ),
+)
+@click.option(
     "--runtime-url",
     default="http://localhost:28000",
     show_default=True,
     help="Runtime endpoint to call /admin/reconcile-orphans on.",
 )
-def admin_reconcile_orphans(confirm: bool, runtime_url: str) -> None:
-    """Find and drop Vespa-only schema orphans.
+def admin_reconcile_orphans(
+    confirm: bool, tenant_orphans: bool, runtime_url: str
+) -> None:
+    """Find and drop orphan schemas.
 
-    Diffs the deployed Vespa schemas against the SchemaRegistry's active
-    set. Anything in Vespa but not in the registry is an orphan from an
-    interrupted deploy path. Default mode (dry-run) lists them; pass
-    --confirm to drop them all in one atomic redeploy.
+    Reports registry-orphans (in Vespa, not in the SchemaRegistry) and
+    tenant-orphans (registered, but their tenant has no tenant_metadata
+    record, so they ride along in every deploy). Default mode lists both;
+    --confirm drops the registry-orphans and --confirm --tenant-orphans
+    drops the tenant-orphans too.
     """
     from cogniverse_cli.admin import run
 
-    run(runtime_url, confirm=confirm)
+    run(runtime_url, confirm=confirm, tenant_orphans=tenant_orphans)
 
 
 @admin.command(name="invite")
