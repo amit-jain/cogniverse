@@ -229,6 +229,7 @@ class TestSemanticRouterConfigSerialization:
             "response_cache_ttl_seconds": 3600,
             "response_cache_max_entries": 1024,
             "classification_model": "openai/cogniverse-classification",
+            "vision_model": "openai/cogniverse-vision",
         }
 
     def test_response_cache_bounds_survive_a_round_trip(self):
@@ -757,3 +758,68 @@ class TestRoutedLmUnderFaultAndConcurrency:
             for span in exporter.get_finished_spans()
         }
         assert stamped == {f"agent.call.{i}": f"served-{i}" for i in range(8)}
+
+
+class TestTheVisionEntry:
+    """A call carrying image parts cannot be served by a text-only model, so
+    the routed LM sends it on the vision entry (whose recipe serves the
+    multimodal student for every tier) and text-only calls on the entry the
+    call site takes. The choice is per request, read off the messages."""
+
+    def test_vision_model_defaults_and_round_trips(self):
+        default = SemanticRouterConfig()
+        assert default.vision_model == "openai/cogniverse-vision"
+        assert default.to_dict()["vision_model"] == "openai/cogniverse-vision"
+        rt = SemanticRouterConfig.from_dict(
+            SemanticRouterConfig(vision_model="openai/another-vision").to_dict()
+        )
+        assert rt.vision_model == "openai/another-vision"
+        assert SemanticRouterConfig.from_dict({}).vision_model == (
+            "openai/cogniverse-vision"
+        )
+
+    def test_image_bearing_calls_take_the_vision_entry_and_text_calls_do_not(self):
+        from cogniverse_foundation.config.semantic_router import create_routed_lm
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        with _EchoingChatEndpoint() as endpoint:
+            lm = create_routed_lm(
+                LLMEndpointConfig(
+                    model="openai/auto",
+                    api_base="http://unused:1/v1",
+                    api_key="stub-key",
+                    temperature=0.0,
+                    max_tokens=8,
+                    num_retries=0,
+                ),
+                SemanticRouterConfig(
+                    enabled=True,
+                    semantic_router_url=endpoint.api_base,
+                    routed_model="openai/text-entry",
+                    vision_model="openai/vision-entry",
+                ),
+                "tenant-a:prod",
+                "pro",
+                call_site="summarizer_agent",
+            )
+            lm.cache = False
+            image_part = {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+            }
+            served = [
+                lm.history[-1]["response"].model
+                for messages in (
+                    [{"role": "user", "content": "text only"}],
+                    [
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "look"}, image_part],
+                        }
+                    ],
+                    [{"role": "user", "content": "text again"}],
+                )
+                if lm(messages=messages) is not None
+            ]
+        assert served == ["text-entry", "vision-entry", "text-entry"]
+        assert lm.model == "openai/text-entry"

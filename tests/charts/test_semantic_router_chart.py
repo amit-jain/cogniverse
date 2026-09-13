@@ -512,6 +512,40 @@ def test_decisions_declare_their_model_reasoning_and_admitting_tier_exactly():
     assert sorted(cfg["global"]["stores"]) == ["response_cache"]
 
 
+def test_the_vision_entrypoint_serves_the_multimodal_student_for_every_tier():
+    """A call carrying image parts enters on cogniverse-vision; its recipe
+    tests the tier only and serves basic-chat - the multimodal student - for
+    every tier, because the teacher is a text-only model."""
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    (vision,) = [e for e in cfg["entrypoints"] if e["recipe"] == "vision"]
+    assert vision == {"model_names": ["cogniverse-vision"], "recipe": "vision"}
+    (recipe,) = [r for r in cfg["recipes"] if r["name"] == "vision"]
+    decisions = recipe["routing"]["decisions"]
+    assert [decision["name"] for decision in decisions] == [
+        "vision-pro",
+        "vision-free",
+        "vision-base",
+    ]
+    assert [decision["priority"] for decision in decisions] == [200, 100, 50]
+    assert [
+        [(cond["type"], cond["name"]) for cond in decision["rules"]["conditions"]]
+        for decision in decisions
+    ] == [
+        [("authz", "pro_tier")],
+        [("authz", "free_tier")],
+        [("authz", "base_tier")],
+    ]
+    assert [
+        [(ref["model"], ref["use_reasoning"]) for ref in decision["modelRefs"]]
+        for decision in decisions
+    ] == [[("basic-chat", False)]] * 3
+    assert [decision["plugins"] for decision in decisions] == [
+        [_EXACT_CACHE_PLUGIN]
+    ] * 3
+    student = _chart_values()["inference"]["vllm_llm_student"]["model"]
+    assert _provider_model_ids(cfg)["basic-chat"] == student
+
+
 def test_the_classification_entrypoint_selects_the_tier_only_recipe():
     """A bounded-output call names this virtual model; the recipe it selects
     must test the tenant tier and nothing else. One ``domain`` or ``keyword``
@@ -519,9 +553,13 @@ def test_the_classification_entrypoint_selects_the_tier_only_recipe():
     the cost the entrypoint exists to remove."""
     cfg = _sr_config(_render("llm.engine=vllm"))
     assert cfg["entrypoints"] == [
-        {"model_names": ["cogniverse-classification"], "recipe": "classification"}
+        {"model_names": ["cogniverse-classification"], "recipe": "classification"},
+        {"model_names": ["cogniverse-vision"], "recipe": "vision"},
     ]
-    assert [recipe["name"] for recipe in cfg["recipes"]] == ["classification"]
+    assert [recipe["name"] for recipe in cfg["recipes"]] == [
+        "classification",
+        "vision",
+    ]
     decisions = cfg["recipes"][0]["routing"]["decisions"]
     assert [decision["name"] for decision in decisions] == [
         "classification-pro",

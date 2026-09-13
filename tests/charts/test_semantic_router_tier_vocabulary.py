@@ -150,7 +150,7 @@ class TestTheClassificationRecipeRunsNoClassifier:
         served = {name for e in config["entrypoints"] for name in e["model_names"]}
         catalog = {model["name"] for model in config["providers"]["models"]}
         catalog |= {card["name"] for card in config["routing"]["modelCards"]}
-        assert served == {"cogniverse-classification"}
+        assert served == {"cogniverse-classification", "cogniverse-vision"}
         assert served & (catalog | {"auto", "vllm-sr/auto", "MoM"}) == set()
 
     def test_every_entrypoint_names_a_declared_recipe(self):
