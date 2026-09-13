@@ -154,8 +154,9 @@ routing:
 # routing intent, entity extraction) enter on this virtual model name. It
 # selects the ``classification`` recipe, whose decisions test the tenant tier
 # only: no domain or keyword signal, so the domain classifier never runs and
-# the routing decision costs no measurable time, while the tier still picks
-# the model and the response cache still applies.
+# the routing decision costs no measurable time. Every tier's bounded call is
+# served by basic-chat - it never crosses to the teacher - while the tier
+# gate and the response cache still apply.
 entrypoints:
   - model_names: [cogniverse-classification]
     recipe: classification
@@ -175,7 +176,7 @@ recipes:
               - type: authz
                 name: pro_tier
           modelRefs:
-            - model: pro-reasoning
+            - model: basic-chat
               use_reasoning: false
           plugins: *exact_cache
         - name: classification-free

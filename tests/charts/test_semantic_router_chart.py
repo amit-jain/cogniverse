@@ -313,7 +313,7 @@ def test_the_classification_entrypoint_selects_the_tier_only_recipe():
         [(ref["model"], ref["use_reasoning"]) for ref in decision["modelRefs"]]
         for decision in decisions
     ] == [
-        [("pro-reasoning", False)],
+        [("basic-chat", False)],
         [("basic-chat", False)],
         [("basic-chat", False)],
     ]
