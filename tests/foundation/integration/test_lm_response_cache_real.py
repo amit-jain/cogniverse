@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import http.server
 import json
+import logging
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -345,6 +346,31 @@ def test_upstream_failure_is_not_cached(upstream, cache, async_call):
     assert cache.entry_count() == 0
     assert ask() == "answer-2"
     assert ask() == "answer-2"
+    assert upstream.count == 2
+
+
+def test_a_cancelled_call_is_not_reported_as_a_failure(upstream, cache, caplog):
+    model = lm(upstream, cache)
+    upstream.release.clear()
+    caplog.set_level(logging.DEBUG)
+
+    async def cancel_in_flight():
+        task = asyncio.ensure_future(model.aforward(messages=MESSAGES))
+        assert await asyncio.to_thread(upstream.entered.wait, 10) is True
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_in_flight())
+    upstream.release.set()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_foundation.config.lm_response_cache"
+        and record.levelno >= logging.ERROR
+    ] == []
+    assert cache.entry_count() == 0
+    assert text(model.forward(messages=MESSAGES)) == "answer-2"
     assert upstream.count == 2
 
 
