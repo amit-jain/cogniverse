@@ -543,12 +543,13 @@ class TestTheClassificationEntrypointRoutesOnTierAlone:
         assert reflected["served_model"] == "basic-chat"
         assert reflected["reasoning"] is False
 
-    def test_pro_tier_gets_the_pro_model_with_reasoning_off(self, sr_base_url):
+    def test_pro_tier_stays_on_the_basic_model_with_reasoning_off(self, sr_base_url):
         """The same prompt on the auto alias routes pro-reasoning WITH
-        reasoning; through the entrypoint the keyword and domain signals are
-        not evaluated, so a bounded call never pays for a reasoning trace."""
+        reasoning; through the entrypoint a bounded call stays on the basic
+        model for every tier, so it never crosses to the teacher and never
+        pays for a reasoning trace."""
         reflected = _call_bounded(sr_base_url, "pro-tenant", _TECHNICAL)
-        assert reflected["served_model"] == "pro-reasoning"
+        assert reflected["served_model"] == "basic-chat"
         assert reflected["reasoning"] is False
 
     def test_the_authz_headers_still_reach_the_backend(self, sr_base_url):
