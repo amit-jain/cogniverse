@@ -953,6 +953,7 @@ def test_envoy_access_log_names_the_reason_for_every_local_reply():
         "bytes_sent": "%BYTES_SENT%",
         "duration_ms": "%DURATION%",
         "upstream": "%UPSTREAM_HOST%",
+        "cluster": "%UPSTREAM_CLUSTER%",
         "request_id": "%REQ(X-REQUEST-ID)%",
     }, fields
 
