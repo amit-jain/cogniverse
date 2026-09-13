@@ -26,7 +26,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render(*set_args: str) -> list[dict]:
+# The router serves pro-reasoning from the teacher, so a render with the
+# router on needs a served teacher; the in-cluster one is the plain case.
+TEACHER_SERVED = "inference.vllm_llm_teacher.enabled=true"
+
+
+def _helm_template(*set_args: str) -> subprocess.CompletedProcess:
     cmd = [
         "helm",
         "template",
@@ -39,12 +44,31 @@ def _render(*set_args: str) -> list[dict]:
     ]
     for arg in set_args:
         cmd.extend(["--set", arg])
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def _render(*set_args: str) -> list[dict]:
+    result = _helm_template(TEACHER_SERVED, *set_args)
     if result.returncode != 0:
         raise AssertionError(
             f"helm template failed (exit {result.returncode}):\n{result.stderr}"
         )
     return [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+
+
+def _chart_values(*values_files: str) -> dict:
+    merged: dict = {}
+    for name in ("values.yaml", *values_files):
+        _deep_merge(merged, yaml.safe_load((CHART_PATH / name).read_text()))
+    return merged
+
+
+def _deep_merge(into: dict, overlay: dict) -> None:
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(into.get(key), dict):
+            _deep_merge(into[key], value)
+        else:
+            into[key] = value
 
 
 def _render_with_values(*values_files: str) -> list[dict]:
@@ -92,12 +116,20 @@ def _container_env_entries(
     raise AssertionError(f"{deployment_name}/{container_name} not rendered")
 
 
-def _backend_endpoints(cfg: dict) -> set[str]:
-    endpoints: set[str] = set()
+def _backend_endpoints(cfg: dict) -> dict[str, str]:
+    """Catalog model name -> the one backend endpoint it is bound to."""
+    endpoints: dict[str, str] = {}
     for model in cfg["providers"]["models"]:
-        for ref in model["backend_refs"]:
-            endpoints.add(ref["endpoint"])
+        (ref,) = model["backend_refs"]
+        endpoints[model["name"]] = ref["endpoint"]
     return endpoints
+
+
+def _provider_model_ids(cfg: dict) -> dict[str, str]:
+    return {m["name"]: m["provider_model_id"] for m in cfg["providers"]["models"]}
+
+
+TEACHER_IN_CLUSTER = "cogniverse-vllm-llm-teacher:8000"
 
 
 def _envoy_upstream(docs: list[dict]) -> str:
@@ -129,31 +161,190 @@ def _envoy_service(docs: list[dict]) -> dict:
 
 def test_vllm_engine_routes_to_student_service():
     cfg = _sr_config(_render("llm.engine=vllm"))
-    assert _backend_endpoints(cfg) == {"cogniverse-vllm-llm-student:8000"}
+    assert _backend_endpoints(cfg) == {
+        "basic-chat": "cogniverse-vllm-llm-student:8000",
+        "pro-reasoning": TEACHER_IN_CLUSTER,
+    }
 
 
 def test_ollama_engine_routes_to_llm_service():
     cfg = _sr_config(_render("llm.engine=ollama"))
-    assert _backend_endpoints(cfg) == {"cogniverse-llm:11434"}
+    assert _backend_endpoints(cfg) == {
+        "basic-chat": "cogniverse-llm:11434",
+        "pro-reasoning": TEACHER_IN_CLUSTER,
+    }
 
 
 def test_external_engine_parses_configured_url():
     cfg = _sr_config(
         _render("llm.engine=external", "llm.external.url=http://my-llm:9000/v1")
     )
-    assert _backend_endpoints(cfg) == {"my-llm:9000"}
+    assert _backend_endpoints(cfg) == {
+        "basic-chat": "my-llm:9000",
+        "pro-reasoning": TEACHER_IN_CLUSTER,
+    }
 
 
 def test_envoy_upstream_matches_sr_backend_for_vllm():
     docs = _render("llm.engine=vllm")
     assert _envoy_upstream(docs) == "cogniverse-vllm-llm-student:8000"
-    assert _backend_endpoints(_sr_config(docs)) == {"cogniverse-vllm-llm-student:8000"}
+    assert _backend_endpoints(_sr_config(docs))["basic-chat"] == (
+        "cogniverse-vllm-llm-student:8000"
+    )
 
 
-def test_provider_model_id_is_bare_served_model_for_vllm():
+def test_each_catalog_model_serves_its_own_shipped_model_id():
+    """basic-chat is the student the chart serves and pro-reasoning the
+    teacher, both read from the values the pods themselves are rendered
+    from, so a model bump in values moves the router with it."""
     cfg = _sr_config(_render("llm.engine=vllm"))
-    model_ids = {m["provider_model_id"] for m in cfg["providers"]["models"]}
-    assert model_ids == {"google/gemma-4-e4b-it"}
+    inference = _chart_values()["inference"]
+    assert _provider_model_ids(cfg) == {
+        "basic-chat": inference["vllm_llm_student"]["model"],
+        "pro-reasoning": inference["vllm_llm_teacher"]["model"],
+    }
+    assert (
+        inference["vllm_llm_student"]["model"]
+        != (inference["vllm_llm_teacher"]["model"])
+    )
+
+
+class TestTheTeacherHasItsOwnEnvoyCluster:
+    """Envoy has one static cluster per backend and routes on the model the
+    router selected; before this every catalog model reached the student's
+    cluster whatever the router config said."""
+
+    def test_the_teacher_route_precedes_the_catch_all(self):
+        docs = _render("llm.engine=vllm")
+        routes = _envoy_routes(docs)
+        assert [route["route"]["cluster"] for route in routes] == [
+            "llm_teacher",
+            "llm_upstream",
+        ]
+        (header,) = routes[0]["match"]["headers"]
+        assert header == {
+            "name": "x-selected-model",
+            "string_match": {"exact": "pro-reasoning"},
+        }
+        assert "headers" not in routes[1]["match"]
+        assert [route["match"]["prefix"] for route in routes] == ["/", "/"]
+        assert [route["route"]["timeout"] for route in routes] == ["300s", "300s"]
+
+    def test_the_matched_value_is_the_model_every_pro_decision_serves(self):
+        docs = _render("llm.engine=vllm")
+        (header,) = _envoy_routes(docs)[0]["match"]["headers"]
+        cfg = _sr_config(docs)
+        pro_models = {
+            ref["model"]
+            for decision in cfg["routing"]["decisions"]
+            if decision["name"].startswith("pro-")
+            for ref in decision["modelRefs"]
+        }
+        assert pro_models == {header["string_match"]["exact"]}
+        assert header["string_match"]["exact"] in {
+            m["name"] for m in cfg["providers"]["models"]
+        }
+
+    def test_in_cluster_teacher_is_plain_http_with_no_host_rewrite(self):
+        docs = _render("llm.engine=vllm")
+        cluster = _envoy_cluster(docs, "llm_teacher")
+        assert _cluster_address(cluster) == TEACHER_IN_CLUSTER
+        assert "transport_socket" not in cluster
+        assert "auto_host_rewrite" not in _envoy_routes(docs)[0]["route"]
+        assert _backend_endpoints(_sr_config(docs))["pro-reasoning"] == (
+            TEACHER_IN_CLUSTER
+        )
+
+    def test_modal_teacher_gets_tls_sni_and_a_host_rewrite(self):
+        docs = _render_with_values("values.k3s.yaml", "values.modal-llm.yaml")
+        values = _chart_values("values.k3s.yaml", "values.modal-llm.yaml")
+        teacher_host = values["inference"]["vllm_llm_teacher"]["externalUrl"].split(
+            "://", 1
+        )[1]
+        student_host = (
+            values["runtime"]["primaryLLM"]["apiBase"]
+            .split("://", 1)[1]
+            .removesuffix("/v1")
+        )
+        assert teacher_host != student_host
+        cluster = _envoy_cluster(docs, "llm_teacher")
+        assert _cluster_address(cluster) == f"{teacher_host}:443"
+        assert cluster["transport_socket"]["typed_config"]["sni"] == teacher_host
+        assert _cluster_address(_envoy_cluster(docs, "llm_upstream")) == (
+            f"{student_host}:443"
+        )
+        routes = _envoy_routes(docs)
+        assert [route["route"]["auto_host_rewrite"] for route in routes] == [
+            True,
+            True,
+        ]
+        assert _backend_endpoints(_sr_config(docs)) == {
+            "basic-chat": f"{student_host}:443",
+            "pro-reasoning": f"{teacher_host}:443",
+        }
+        assert _backend_protocols(_sr_config(docs)) == {"https"}
+
+
+class TestAnUnservedTeacherFailsTheRender:
+    """The router sends every pro decision to the teacher, so a chart with the
+    router on and nothing serving the teacher is refused at render time rather
+    than answering 'no healthy upstream' on the first pro request."""
+
+    UNSERVED = (
+        "inference.vllm_llm_teacher.enabled=false",
+        "inference.vllm_llm_teacher.externalUrl=",
+    )
+
+    def test_router_on_and_teacher_unserved_is_refused_naming_both_values(self):
+        result = _helm_template(*self.UNSERVED)
+        assert result.returncode != 0
+        assert "inference.vllm_llm_teacher.enabled" in result.stderr
+        assert "inference.vllm_llm_teacher.externalUrl" in result.stderr
+        assert "semanticRouter.enabled" in result.stderr
+
+    def test_an_external_teacher_renders(self):
+        result = _helm_template(
+            "inference.vllm_llm_teacher.enabled=false",
+            "inference.vllm_llm_teacher.externalUrl=https://teacher.example.modal.run",
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_router_off_renders_without_a_teacher(self):
+        result = _helm_template(*self.UNSERVED, "semanticRouter.enabled=false")
+        assert result.returncode == 0, result.stderr
+
+
+def _envoy_config(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "ConfigMap"
+            and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+        ):
+            return yaml.safe_load(d["data"]["envoy.yaml"])
+    raise AssertionError("semantic-router envoy ConfigMap not rendered")
+
+
+def _envoy_routes(docs: list[dict]) -> list[dict]:
+    listener = _envoy_config(docs)["static_resources"]["listeners"][0]
+    hcm = listener["filter_chains"][0]["filters"][0]["typed_config"]
+    (vhost,) = hcm["route_config"]["virtual_hosts"]
+    return vhost["routes"]
+
+
+def _envoy_cluster(docs: list[dict], name: str) -> dict:
+    (cluster,) = [
+        c
+        for c in _envoy_config(docs)["static_resources"]["clusters"]
+        if c["name"] == name
+    ]
+    return cluster
+
+
+def _cluster_address(cluster: dict) -> str:
+    (endpoint,) = cluster["load_assignment"]["endpoints"]
+    (lb,) = endpoint["lb_endpoints"]
+    sock = lb["endpoint"]["address"]["socket_address"]
+    return f"{sock['address']}:{sock['port_value']}"
 
 
 def _router_image(docs: list[dict]) -> str:
@@ -518,15 +709,17 @@ class TestUpstreamScheme:
     def test_https_upstream_without_a_port_uses_443_and_https(self):
         cfg = _sr_config(_render(f"runtime.primaryLLM.apiBase={self.HTTPS}"))
 
-        assert _backend_endpoints(cfg) == {
+        assert _backend_endpoints(cfg)["basic-chat"] == (
             "amit-jain--cogniverse-vllm-llm-student-inference.modal.run:443"
-        }
-        assert _backend_protocols(cfg) == {"https"}
+        )
+        assert _backend_protocols(cfg) == {"http", "https"}
 
     def test_http_upstream_keeps_its_explicit_port_and_http(self):
         cfg = _sr_config(_render(f"runtime.primaryLLM.apiBase={self.HTTP}"))
 
-        assert _backend_endpoints(cfg) == {"cogniverse-vllm-llm-student:8000"}
+        assert (
+            _backend_endpoints(cfg)["basic-chat"] == "cogniverse-vllm-llm-student:8000"
+        )
         assert _backend_protocols(cfg) == {"http"}
 
 

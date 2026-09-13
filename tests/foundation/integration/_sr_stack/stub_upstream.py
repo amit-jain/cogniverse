@@ -56,8 +56,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BACKEND_TAG = os.environ.get("BACKEND_TAG", "stub")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Header names the stack uses to carry routing metadata to the backend.
-_ROUTING_HEADER_PREFIXES = ("x-vsr-", "x-authz-", "x-tenant-", "x-task")
+# Every extension header that reaches the backend: the router's own
+# ``x-vsr-*`` and destination headers, the tier/tenant headers cogniverse
+# sends, and whatever Envoy adds on the way.
+_ROUTING_HEADER_PREFIXES = ("x-",)
 
 _CALLS_LOCK = threading.Lock()
 _CALLS = 0

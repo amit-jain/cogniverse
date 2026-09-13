@@ -34,6 +34,7 @@ import yaml
 from tests.utils.semantic_router_stack import (
     CHART_VALUES,
     ROUTER_ALIAS,
+    TEACHER_ALIAS,
     UPSTREAM_ALIAS,
     envoy_listener_port,
     render_envoy_config,
@@ -133,6 +134,7 @@ def semantic_router_stack(tmp_path_factory):
     uid = f"{os.getpid()}-{int(time.time() * 1000)}"
     net = f"cog-sr-net-{uid}"
     stub = f"cog-sr-stub-{uid}"
+    teacher = f"cog-sr-teacher-{uid}"
     router = f"cog-sr-router-{uid}"
     envoy = f"cog-sr-envoy-{uid}"
     host_port = _free_port()
@@ -169,27 +171,35 @@ def semantic_router_stack(tmp_path_factory):
             pytest.fail(f"cannot create docker network: {r.stderr.strip()}")
         created.append(("network", net))
 
-        # Reflecting OpenAI-compatible stub backend.
-        r = _docker(
-            "run",
-            "-d",
-            "--name",
-            stub,
-            "--label",
-            owner_label,
-            "--network",
-            net,
-            "--network-alias",
-            UPSTREAM_ALIAS,
-            "-v",
-            f"{_STACK_DIR / 'stub_upstream.py'}:/app/stub.py:ro",
-            _STUB_IMAGE,
-            "python",
-            "/app/stub.py",
-        )
-        if r.returncode != 0:
-            pytest.fail(f"stub upstream failed to start: {r.stderr}")
-        created.append(("container", stub))
+        # Reflecting OpenAI-compatible stub backends: the student the router
+        # serves basic-chat from and the teacher it serves pro-reasoning from,
+        # each tagging its reflections so the answering backend is readable.
+        for name, alias, tag in (
+            (stub, UPSTREAM_ALIAS, "student"),
+            (teacher, TEACHER_ALIAS, "teacher"),
+        ):
+            r = _docker(
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--label",
+                owner_label,
+                "--network",
+                net,
+                "--network-alias",
+                alias,
+                "-e",
+                f"BACKEND_TAG={tag}",
+                "-v",
+                f"{_STACK_DIR / 'stub_upstream.py'}:/app/stub.py:ro",
+                _STUB_IMAGE,
+                "python",
+                "/app/stub.py",
+            )
+            if r.returncode != 0:
+                pytest.fail(f"stub backend {tag} failed to start: {r.stderr}")
+            created.append(("container", name))
 
         # Semantic router (ext_proc gRPC on :50051). The image entrypoint reads
         # its config from the CMD arg, defaulting to /app/config.yaml; mount

@@ -24,6 +24,7 @@ EXPECTED_INFERENCE_SERVICE_URLS = {
     "denseon": "http://cogniverse-denseon:8000",
     "gliner": "http://cogniverse-gliner:8080",
     "vllm_asr": "http://cogniverse-vllm-asr:8000",
+    "vllm_llm_teacher": "http://cogniverse-vllm-llm-teacher:8000",
 }
 
 pytestmark = pytest.mark.skipif(

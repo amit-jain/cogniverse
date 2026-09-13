@@ -1792,7 +1792,7 @@ spec:
       {{- else if eq $engine "vllm_chat" }}
       # vLLM serving an OpenAI-compatible chat-completion endpoint.
       # Used by vllm_llm_student (runtime hot path, Gemma 4 E4B) and
-      # vllm_llm_teacher (DSPy compile-time only, Qwen3.6-27B-AWQ-INT4).
+      # vllm_llm_teacher (DSPy compile-time teacher and the router's pro-reasoning backend).
       # Distinguished from the embedding-style ``vllm`` engine by the
       # absence of ``--convert embed`` — chat models serve /v1/chat/completions
       # natively without conversion. ``command: ["vllm"]`` overrides

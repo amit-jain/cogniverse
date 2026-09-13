@@ -146,11 +146,12 @@ directly rather than delegating to primaryLLMEndpoint, which falls back here.
 {{- end -}}
 
 {{/*
-vLLM teacher LLM endpoint — DSPy compile-time only. Resolves to the
-teacher entry in ``cogniverse.inferenceServiceUrls`` when that service is
-rendered with ``externalUrl``; otherwise resolves to the in-cluster
-vllm-llm-teacher service. Scale-to-zero by default (replicaCount: 0);
-spun up on-demand by optimization_cli runs.
+vLLM teacher LLM endpoint: the DSPy compile-time teacher and the backend
+the semantic router serves pro-reasoning from. Resolves to the teacher
+entry in ``cogniverse.inferenceServiceUrls`` when that service is rendered
+with ``externalUrl``; otherwise to the in-cluster vllm-llm-teacher service,
+which ships at scale-to-zero (replicaCount: 0) until a device overlay or an
+optimization_cli run scales it.
 */}}
 {{- define "cogniverse.llmTeacherEndpoint" -}}
 {{- $urls := include "cogniverse.inferenceServiceUrls" . | fromJson -}}
@@ -252,6 +253,12 @@ vLLM's served-model-name defaults to whatever path is passed to
 {{- printf "%s/%s" (include "cogniverse.llmProviderPrefix" .) .Values.inference.vllm_llm_teacher.model -}}
 {{- end -}}
 
+{{/* Same as ``cogniverse.teacherLLMModel`` WITHOUT the provider prefix: the
+served model name an OAI-compatible endpoint expects. */}}
+{{- define "cogniverse.teacherLLMModelBare" -}}
+{{- .Values.inference.vllm_llm_teacher.model -}}
+{{- end -}}
+
 {{/*
 Runtime primary LLM model — the model id the runtime hands to
 ``dspy.LM`` verbatim. ``create_dspy_lm`` does no string manipulation
@@ -347,31 +354,58 @@ this from SEMANTIC_ROUTER_URL and rewrites each agent's api_base to it.
 {{- printf "http://%s-semantic-router-envoy:%d/v1" (include "cogniverse.fullname" .) (int .Values.semanticRouter.envoy.service.port) -}}
 {{- end -}}
 
-{{/* SR upstream host/port — the runtime's own LLM endpoint, scheme + /v1 stripped. */}}
-{{- define "cogniverse.srUpstreamHostPort" -}}
-{{- include "cogniverse.primaryLLMEndpoint" . | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" -}}
+{{/* host:port of an OpenAI-compatible endpoint URL, scheme and /v1 stripped.
+The srEndpoint* helpers take the endpoint URL as their context. */}}
+{{- define "cogniverse.srEndpointHostPort" -}}
+{{- . | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" -}}
 {{- end -}}
 
-{{- define "cogniverse.srUpstreamHost" -}}
-{{- index (include "cogniverse.srUpstreamHostPort" . | splitList ":") 0 -}}
+{{- define "cogniverse.srEndpointHost" -}}
+{{- index (include "cogniverse.srEndpointHostPort" . | splitList ":") 0 -}}
 {{- end -}}
 
-{{/* https when the runtime's own LLM endpoint is TLS, otherwise http. The
-router dials the upstream itself, so this decides both the default port and the
-protocol it speaks. */}}
-{{- define "cogniverse.srUpstreamProtocol" -}}
-{{- if hasPrefix "https://" (include "cogniverse.primaryLLMEndpoint" .) }}https{{ else }}http{{ end -}}
+{{/* https when the endpoint is TLS, otherwise http. Envoy dials the backend
+itself, so this decides both the default port and the transport it speaks. */}}
+{{- define "cogniverse.srEndpointProtocol" -}}
+{{- if hasPrefix "https://" . }}https{{ else }}http{{ end -}}
 {{- end -}}
 
-{{- define "cogniverse.srUpstreamPort" -}}
-{{- $hp := include "cogniverse.srUpstreamHostPort" . | splitList ":" -}}
+{{- define "cogniverse.srEndpointPort" -}}
+{{- $hp := include "cogniverse.srEndpointHostPort" . | splitList ":" -}}
 {{- if gt (len $hp) 1 -}}
 {{- index $hp 1 -}}
-{{- else if eq (include "cogniverse.srUpstreamProtocol" .) "https" -}}
+{{- else if eq (include "cogniverse.srEndpointProtocol" .) "https" -}}
 443
 {{- else -}}
 80
 {{- end -}}
+{{- end -}}
+
+{{/* The student backend Envoy serves basic-chat from: the runtime's own LLM
+endpoint. */}}
+{{- define "cogniverse.srUpstreamHost" -}}
+{{- include "cogniverse.srEndpointHost" (include "cogniverse.primaryLLMEndpoint" .) -}}
+{{- end -}}
+
+{{- define "cogniverse.srUpstreamPort" -}}
+{{- include "cogniverse.srEndpointPort" (include "cogniverse.primaryLLMEndpoint" .) -}}
+{{- end -}}
+
+{{- define "cogniverse.srUpstreamProtocol" -}}
+{{- include "cogniverse.srEndpointProtocol" (include "cogniverse.primaryLLMEndpoint" .) -}}
+{{- end -}}
+
+{{/* The teacher backend Envoy serves pro-reasoning from. */}}
+{{- define "cogniverse.srTeacherHost" -}}
+{{- include "cogniverse.srEndpointHost" (include "cogniverse.llmTeacherEndpoint" .) -}}
+{{- end -}}
+
+{{- define "cogniverse.srTeacherPort" -}}
+{{- include "cogniverse.srEndpointPort" (include "cogniverse.llmTeacherEndpoint" .) -}}
+{{- end -}}
+
+{{- define "cogniverse.srTeacherProtocol" -}}
+{{- include "cogniverse.srEndpointProtocol" (include "cogniverse.llmTeacherEndpoint" .) -}}
 {{- end -}}
 
 {{/*

@@ -115,12 +115,16 @@ host-running Ollama).
 
 `cogniverse up` deploys the vLLM Semantic Router (Envoy front-end + the router)
 in front of the LLM backend, and the runtime routes every agent's LLM call
-through it. The router forwards to the same in-cluster LLM the runtime would
-otherwise call directly — the chart's `srUpstream*` helpers derive the upstream
-host/port from `primaryLLMEndpoint`, so it tracks the `llm.engine` in use
+through it. Envoy has one cluster per backend and routes on the catalog model
+the router selected (`x-selected-model`): `basic-chat` goes to the same LLM the
+runtime would otherwise call directly — the chart's `srUpstream*` helpers derive
+its host/port from `primaryLLMEndpoint`, so it tracks the `llm.engine` in use
 (ollama → the `-llm` service, vllm → the `-vllm-llm-student` service, external →
-the configured URL). Claim extraction during ingestion keeps the direct primary
-LLM endpoint. The division of labor:
+the configured URL) — and `pro-reasoning` goes to the teacher, whose `srTeacher*`
+helpers derive from `llmTeacherEndpoint` (`inference.vllm_llm_teacher`, or its
+`externalUrl`). A render with the router on and no served teacher fails. Claim
+extraction during ingestion keeps the direct primary LLM endpoint. The division
+of labor:
 
 - **cogniverse** sends only *who* the tenant is — the tenant identity
   (`x-authz-user-id` = `tenant_id`) and its tier (`x-authz-user-groups`,

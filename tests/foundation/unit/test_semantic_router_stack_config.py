@@ -114,13 +114,19 @@ class TestRenderedEnvoyIsTheChartDataPlane:
         clusters = {
             entry["name"]: entry for entry in document["static_resources"]["clusters"]
         }
-        assert sorted(clusters) == ["llm_upstream", "semantic_router"]
+        assert sorted(clusters) == ["llm_teacher", "llm_upstream", "semantic_router"]
         endpoint = clusters["llm_upstream"]["load_assignment"]["endpoints"][0]
         assert endpoint["lb_endpoints"][0]["endpoint"]["address"]["socket_address"] == {
             "address": stack.UPSTREAM_ALIAS,
             "port_value": stack.UPSTREAM_PORT,
         }
         assert "transport_socket" not in clusters["llm_upstream"]
+        teacher = clusters[stack.TEACHER_CLUSTER]["load_assignment"]["endpoints"][0]
+        assert teacher["lb_endpoints"][0]["endpoint"]["address"]["socket_address"] == {
+            "address": stack.TEACHER_ALIAS,
+            "port_value": stack.UPSTREAM_PORT,
+        }
+        assert "transport_socket" not in clusters[stack.TEACHER_CLUSTER]
         router_endpoint = clusters["semantic_router"]["load_assignment"]["endpoints"][0]
         assert router_endpoint["lb_endpoints"][0]["endpoint"]["address"][
             "socket_address"
@@ -128,10 +134,20 @@ class TestRenderedEnvoyIsTheChartDataPlane:
             "address": stack.ROUTER_ALIAS,
             "port_value": _chart_values()["router"]["grpcPort"],
         }
-        route = _connection_manager(document)["route_config"]["virtual_hosts"][0][
+        routes = _connection_manager(document)["route_config"]["virtual_hosts"][0][
             "routes"
-        ][0]
-        assert route["route"] == {"cluster": "llm_upstream", "timeout": "300s"}
+        ]
+        assert [route["route"] for route in routes] == [
+            {"cluster": stack.TEACHER_CLUSTER, "timeout": "300s"},
+            {"cluster": "llm_upstream", "timeout": "300s"},
+        ]
+        assert routes[0]["match"] == {
+            "prefix": "/",
+            "headers": [
+                {"name": "x-selected-model", "string_match": {"exact": "pro-reasoning"}}
+            ],
+        }
+        assert routes[1]["match"] == {"prefix": "/"}
 
 
 class TestRenderRefusesWhatItCannotSubstitute:

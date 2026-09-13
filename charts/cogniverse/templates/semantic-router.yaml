@@ -1,4 +1,7 @@
 {{- if .Values.semanticRouter.enabled }}
+{{- if and (not .Values.inference.vllm_llm_teacher.enabled) (not .Values.inference.vllm_llm_teacher.externalUrl) }}
+{{- fail "semanticRouter.enabled=true serves pro-reasoning from the teacher, but nothing serves it: set inference.vllm_llm_teacher.enabled=true or inference.vllm_llm_teacher.externalUrl" }}
+{{- end }}
 {{- $fullName := include "cogniverse.fullname" . -}}
 ---
 apiVersion: v1
