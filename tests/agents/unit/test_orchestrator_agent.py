@@ -29,6 +29,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
     SystemConfig,
 )
+from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 from tests.utils.tenant_helpers import config_manager_with_tiers
 
 
@@ -115,7 +116,12 @@ def mock_agent_registry():
 
 @pytest.fixture
 def orchestrator_agent(mock_agent_registry):
-    """Create OrchestratorAgent for testing"""
+    """OrchestratorAgent whose reformulation LM is a recorded refusal.
+
+    The retrieval loop's reformulation step runs the real analysis module;
+    the recorded LM declines, so each iteration re-runs the seeded query
+    through the named ``schema_refused`` fallback.
+    """
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
         mock_config_manager = _make_mock_config_manager()
@@ -130,7 +136,8 @@ def orchestrator_agent(mock_agent_registry):
         telemetry_manager = Mock()
         telemetry_manager.span.return_value = span_context
         agent.telemetry_manager = telemetry_manager
-        return agent
+    with recorded_completion_lm(RECORDED_REFUSAL) as lm, dspy.context(lm=lm):
+        yield agent
 
 
 @pytest.mark.unit
@@ -1399,9 +1406,13 @@ class TestOrchestratorIntelligence:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
+        with (
+            patch(
+                "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
+                return_value=mock_cm,
+            ),
+            recorded_completion_lm(RECORDED_REFUSAL) as lm,
+            dspy.context(lm=lm),
         ):
             await agent._process_impl(
                 OrchestratorInput(query="Show me ML videos", tenant_id="test:unit")

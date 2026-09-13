@@ -62,6 +62,12 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+# One recorded completion no signature's adapter can parse: a refusal, which
+# is what a served model returns when it declines. A module given it takes its
+# named ``schema_refused`` fallback.
+RECORDED_REFUSAL = "I'm sorry, I cannot help with that request."
+
+
 @contextmanager
 def recorded_completion_lm(content: str):
     """Yield a ``dspy.LM`` whose endpoint answers every call with ``content``."""
