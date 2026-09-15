@@ -177,6 +177,24 @@ class TestDispatchPathsWireMemory:
             await coro
         return seen
 
+    @staticmethod
+    def _resolve_grounding(dispatcher):
+        """Answer the grounding the answer paths resolve before the agent runs.
+
+        The dispatcher's config manager is a Mock, which the grounding plan
+        cannot read, and a failed plan fails the turn — so the dispatch would
+        never reach _init_agent_memory, which is what these tests pin.
+        """
+        from cogniverse_runtime.agent_dispatcher import (
+            GROUNDING_SEARCHED,
+            AnswerGrounding,
+        )
+
+        async def _grounding(*args, **kwargs):
+            return AnswerGrounding(hits=[], state=GROUNDING_SEARCHED)
+
+        dispatcher._resolve_answer_search_results = _grounding
+
     @pytest.mark.asyncio
     async def test_coding_task_initializes_agent_memory(
         self, mock_dispatcher, monkeypatch
@@ -211,6 +229,7 @@ class TestDispatchPathsWireMemory:
             "cogniverse_agents.summarizer_agent.SummarizerAgent",
             lambda *a, **k: MagicMock(),
         )
+        self._resolve_grounding(mock_dispatcher)
         seen = await self._capture_init_call(
             mock_dispatcher,
             mock_dispatcher._execute_summarization_task("q", "acme:prod", {}),
@@ -225,6 +244,7 @@ class TestDispatchPathsWireMemory:
             "cogniverse_agents.detailed_report_agent.DetailedReportAgent",
             lambda *a, **k: MagicMock(),
         )
+        self._resolve_grounding(mock_dispatcher)
         seen = await self._capture_init_call(
             mock_dispatcher,
             mock_dispatcher._execute_detailed_report_task("q", "acme:prod"),
