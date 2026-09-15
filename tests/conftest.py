@@ -1305,7 +1305,7 @@ def shared_vespa():
             backend_endpoint="http://localhost",
             backend_port=config_port,
         )
-        schema_mgr._deploy_package(app_package)
+        schema_mgr._deploy_package(lambda: app_package)
 
         if not _vespa_wait_for_data_port_ready(http_port, timeout=120):
             pytest.fail(

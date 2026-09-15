@@ -46,11 +46,27 @@ def test_cross_tenant_target_rejected_by_canonical_suffix():
         mgr.delete_schema("acme", "video")
 
 
+class _NoContentionLease:
+    """The deployment lease with a single deployer: no peer contends here."""
+
+    def acquire(self):
+        return self
+
+    def renew(self):
+        return None
+
+    def release(self):
+        return None
+
+
 class _RecordingRegistry:
     def __init__(self, reserved: dict | None = None):
         self.unregistered: list = []
         self.reserved_queries: list = []
         self._reserved = reserved or {}
+
+    def deployment_lease(self, **kwargs) -> _NoContentionLease:
+        return _NoContentionLease()
 
     def reserved_schemas(self, live_names: set) -> dict:
         self.reserved_queries.append(set(live_names))
@@ -73,8 +89,8 @@ def _guard_manager(
     ]
     mgr.list_deployed_document_types = lambda **_: list(deployed_names)
     mgr.deployed_packages = []
-    mgr._deploy_package = lambda pkg, allow_schema_removal=False: (
-        mgr.deployed_packages.append(pkg)
+    mgr._deploy_package = lambda build, allow_schema_removal=False: (
+        mgr.deployed_packages.append(build())
     )
     return mgr
 
@@ -230,6 +246,9 @@ class _BulkRegistry:
         self.unregistered: list = []
         self.reserved_queries: list = []
 
+    def deployment_lease(self, **kwargs) -> _NoContentionLease:
+        return _NoContentionLease()
+
     def reserved_schemas(self, live_names: set) -> dict:
         self.reserved_queries.append(set(live_names))
         return dict(self._reserved)
@@ -307,8 +326,8 @@ class TestBulkDeleteSuffixAndRefuseGuards:
         mgr.list_deployed_document_types = lambda **_: list(deployed)
         mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
         deployed_packages: list = []
-        mgr._deploy_package = lambda pkg, allow_schema_removal=False: (
-            deployed_packages.append(pkg)
+        mgr._deploy_package = lambda build, allow_schema_removal=False: (
+            deployed_packages.append(build())
         )
 
         with pytest.raises(BackendDeploymentError, match="no registry record"):
@@ -358,8 +377,8 @@ class TestBulkDeleteKeepsInFlightDeploys:
         mgr.list_deployed_document_types = lambda **_: list(deployed)
         mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
         packages: list = []
-        mgr._deploy_package = lambda pkg, allow_schema_removal=False: packages.append(
-            pkg
+        mgr._deploy_package = lambda build, allow_schema_removal=False: packages.append(
+            build()
         )
         return mgr, packages
 

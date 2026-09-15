@@ -74,6 +74,7 @@ cogniverse_core/
 │   ├── agent_registry.py        # Agent class registration
 │   ├── backend_registry.py      # Backend provider registration
 │   ├── schema_registry.py       # Schema template registration
+│   ├── schema_deploy_lease.py   # Cross-process lease on the application package
 │   ├── adapter_store_registry.py # AdapterStoreRegistry (entry-point auto-discovery)
 │   ├── workflow_store_registry.py # WorkflowStoreRegistry (entry-point auto-discovery)
 │   ├── exceptions.py            # Registry exceptions
@@ -680,6 +681,19 @@ A stale creator reuses the completed payload for the same registry version;
 an unresolved generation cannot be replaced merely because deletion advanced
 the registry version. A fresh generation requires a strictly advanced registry
 version and a completed prior intent; older snapshots are rejected.
+
+`SchemaDeployLease` in `cogniverse_core/registries/schema_deploy_lease.py`
+(built by `SchemaRegistry.deployment_lease()`) serialises application-package
+replacement across processes and pods. The record lives under the system
+tenant's `SCHEMA` scope, `schema_deploy_lease` service, `application` key, and
+holds the current holder id and its wall-clock expiry; it moves only through
+`compare_and_set_config`. `acquire()` waits out a live holder and takes over an
+expired one, `renew()` extends the lease and raises `DeploymentLeaseLost` once
+another holder owns it, and `release()` hands it back. A backend deploy
+(`deploy_schemas`), the runtime's startup metadata deploy, schema deletion and
+the orphan reconciler's redeploy all hold it while they enumerate the live
+schemas, build their package and post it, so no package is built from a
+snapshot another process has already moved past.
 
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
 conditionally; `grace_s` is a required keyword-only argument.

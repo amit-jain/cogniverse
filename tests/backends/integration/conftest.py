@@ -189,7 +189,7 @@ def second_vespa():
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=config_port
         )._deploy_package(
-            _shared_vespa_application_package(
+            lambda: _shared_vespa_application_package(
                 [
                     create_organization_metadata_schema(),
                     create_tenant_metadata_schema(),
