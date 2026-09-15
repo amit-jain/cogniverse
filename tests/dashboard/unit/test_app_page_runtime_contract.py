@@ -1,0 +1,523 @@
+"""The dashboard page body against a real runtime socket.
+
+``app.py`` is the Streamlit entry script, so its ingestion, search, chat and
+annotation behaviour only exists when the script runs. These tests drive the
+real script with ``AppTest`` and answer its HTTP calls from a real uvicorn
+server that speaks the runtime's routes, so what is asserted is the exact
+wire request the page makes and the exact widgets it renders back.
+
+Three contracts are pinned here:
+
+* Ingestion submits the uploaded bytes to ``POST /ingestion/upload`` and
+  reports the job's terminal state — never a success banner over a failure.
+* Interactive Search renders exactly one result list for the one search it
+  ran, labelled with the profile the runtime reported.
+* Switching the active tenant drops the previous tenant's search results,
+  chat and annotations before any tab renders.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
+
+import pytest
+import streamlit as st
+import uvicorn
+from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
+from streamlit.testing.v1 import AppTest
+
+APP_PATH = "libs/dashboard/cogniverse_dashboard/app.py"
+
+VIDEO_BYTES = b"\x00\x00\x00\x18ftypmp42cogniverse-test-video-bytes"
+VIDEO_NAME = "clip.mp4"
+DEFAULT_PROFILE = "video_colpali_smol500_mv_frame"
+
+
+@dataclass
+class RuntimeRecorder:
+    """What the page sent, and what the runtime is scripted to answer."""
+
+    registered_tenants: set = field(default_factory=lambda: {"acme:a", "acme:b"})
+    uploads: List[Dict[str, Any]] = field(default_factory=list)
+    status_polls: List[str] = field(default_factory=list)
+    searches: List[Dict[str, Any]] = field(default_factory=list)
+    # ingest_id -> ordered status payloads, last one repeats
+    status_script: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    upload_response: Dict[str, Any] = field(
+        default_factory=lambda: {"status": 202, "body": None}
+    )
+    status_response_status: int = 200
+    search_results: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    search_profile: str = "video_colqwen_omni_mv_chunk_30s"
+    search_span_id: str = "0123456789abcdef"
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+def _build_app(recorder: RuntimeRecorder) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/health")
+    async def health() -> Dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/agents/{agent_name}")
+    async def agent(agent_name: str) -> Dict[str, str]:
+        return {"name": agent_name}
+
+    @app.get("/admin/tenants/{tenant_id}")
+    async def tenant(tenant_id: str):
+        if tenant_id in recorder.registered_tenants:
+            return {"tenant_id": tenant_id}
+        return JSONResponse(status_code=404, content={"detail": "unknown tenant"})
+
+    @app.post("/ingestion/upload")
+    async def upload(
+        file: UploadFile,
+        profile: str = Form(...),
+        backend: str = Form(...),
+        tenant_id: str = Form(...),
+    ):
+        content = await file.read()
+        with recorder.lock:
+            index = len(recorder.uploads)
+            recorder.uploads.append(
+                {
+                    "filename": file.filename,
+                    "content": content,
+                    "content_type": file.content_type,
+                    "profile": profile,
+                    "backend": backend,
+                    "tenant_id": tenant_id,
+                }
+            )
+        scripted = recorder.upload_response
+        if scripted["status"] not in (200, 202):
+            return JSONResponse(
+                status_code=scripted["status"], content=scripted["body"]
+            )
+        ingest_id = f"ingest-{index}"
+        return JSONResponse(
+            status_code=scripted["status"],
+            content={"ingest_id": ingest_id, "state": "queued"},
+        )
+
+    @app.get("/ingestion/{ingest_id}/status")
+    async def status(ingest_id: str):
+        with recorder.lock:
+            recorder.status_polls.append(ingest_id)
+        if recorder.status_response_status != 200:
+            return JSONResponse(
+                status_code=recorder.status_response_status,
+                content={"detail": "ingestion status store unavailable"},
+            )
+        script = recorder.status_script.get(ingest_id)
+        if not script:
+            return JSONResponse(status_code=404, content={"detail": "no such ingest"})
+        payload = script[0] if len(script) == 1 else script.pop(0)
+        return payload
+
+    @app.post("/a2a/")
+    async def a2a(request: Request):
+        body = await request.json()
+        metadata = body["params"]["metadata"]
+        with recorder.lock:
+            recorder.searches.append(metadata)
+        tenant_id = metadata["tenant_id"]
+        results = recorder.search_results.get(tenant_id, [])
+        final = {
+            "type": "final",
+            "data": {
+                "query": body["params"]["message"]["parts"][0]["text"],
+                "search_mode": "single_profile",
+                "profile": recorder.search_profile,
+                "results": results,
+                "total_results": len(results),
+                "span_id": recorder.search_span_id,
+            },
+        }
+
+        def stream():
+            frame = {
+                "result": {
+                    "status": {"message": {"parts": [{"text": json.dumps(final)}]}}
+                }
+            }
+            yield f"data: {json.dumps(frame)}\n\n".encode()
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    return app
+
+
+@pytest.fixture
+def runtime():
+    recorder = RuntimeRecorder()
+    config = uvicorn.Config(
+        _build_app(recorder), host="127.0.0.1", port=0, log_level="error"
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert server.started is True, "runtime stand-in did not start"
+    port = server.servers[0].sockets[0].getsockname()[1]
+    recorder.url = f"http://127.0.0.1:{port}"
+    try:
+        yield recorder
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+@pytest.fixture
+def page(runtime, monkeypatch):
+    """``app.py`` wired to the runtime stand-in, with caches isolated."""
+    import cogniverse_foundation.config.utils as config_utils
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    def _factory() -> ConfigManager:
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_system_config(SystemConfig(agent_registry_url=runtime.url))
+        return manager
+
+    monkeypatch.setattr(config_utils, "create_default_config_manager", _factory)
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    yield lambda: AppTest.from_file(APP_PATH, default_timeout=300)
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+
+def _open_tenant(page, tenant_id: str) -> AppTest:
+    app = page()
+    app.run()
+    app.text_input(key="active_tenant_input").set_value(tenant_id).run()
+    assert [e.message for e in app.exception] == []
+    return app
+
+
+def _switch_tenant(app: AppTest, tenant_id: str) -> AppTest:
+    app.text_input(key="active_tenant_input").set_value(tenant_id).run()
+    assert [e.message for e in app.exception] == []
+    return app
+
+
+def _ingestion_messages(elements) -> List[str]:
+    """Only the Ingestion Testing tab's own banners.
+
+    The page also renders sidebar agent-status banners and per-tab
+    telemetry errors, so an unfiltered list would not pin this tab.
+    """
+    return [
+        element.value
+        for element in elements
+        if element.value.startswith(("video_", "Ingestion failed for ", "All "))
+    ]
+
+
+def _button(app: AppTest, label: str):
+    matches = [b for b in app.button if b.label == label]
+    assert len(matches) == 1, f"{label} -> {[b.label for b in app.button]}"
+    return matches[0]
+
+
+def _complete(documents_fed: int, video_id: str, chunks: int) -> Dict[str, Any]:
+    return {
+        "state": "complete",
+        "latest": {
+            "state": "complete",
+            "result": {
+                "video_id": video_id,
+                "documents_fed": documents_fed,
+                "chunks": chunks,
+            },
+        },
+    }
+
+
+def _upload_video(app: AppTest) -> AppTest:
+    uploader = next(
+        u for u in app.file_uploader if u.label == "Upload test video for ingestion"
+    )
+    uploader.set_value((VIDEO_NAME, VIDEO_BYTES, "video/mp4")).run()
+    return app
+
+
+def _result(document_id: str, video_id: str, score: float) -> Dict[str, Any]:
+    return {
+        "document_id": document_id,
+        "score": score,
+        "metadata": {"video_id": video_id, "description": f"{video_id} description"},
+        "temporal_info": {"start_time": 0.0, "end_time": 3.0},
+    }
+
+
+# --------------------------------------------------------------------------
+# B8 — ingestion submits bytes and reports the terminal job outcome
+# --------------------------------------------------------------------------
+
+
+def test_process_video_uploads_the_bytes_and_reports_the_fed_documents(page, runtime):
+    runtime.status_script["ingest-0"] = [_complete(7, "clip_9f2", 3)]
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert [e.message for e in app.exception] == []
+    assert runtime.uploads == [
+        {
+            "filename": VIDEO_NAME,
+            "content": VIDEO_BYTES,
+            "content_type": "video/mp4",
+            "profile": DEFAULT_PROFILE,
+            "backend": "vespa",
+            "tenant_id": "acme:a",
+        }
+    ]
+    assert runtime.status_polls == ["ingest-0"]
+    successes = [s.value for s in app.success]
+    assert f"{DEFAULT_PROFILE}: fed 7 documents as clip_9f2" in successes
+    assert "All 1 profiles ingested" in successes
+    assert app.session_state["processing_results"] == [
+        {
+            "status": "success",
+            "profile": DEFAULT_PROFILE,
+            "ingest_id": "ingest-0",
+            "video_id": "clip_9f2",
+            "documents_fed": 7,
+            "chunks_created": 3,
+            "processing_time": 0,
+        }
+    ]
+
+
+def test_failed_ingestion_is_reported_as_failure_not_a_success_banner(page, runtime):
+    runtime.status_script["ingest-0"] = [
+        {
+            "state": "failed",
+            "latest": {"state": "failed", "error": "keyframe extraction crashed"},
+        }
+    ]
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert [e.message for e in app.exception] == []
+    assert _ingestion_messages(app.success) == []
+    assert _ingestion_messages(app.error) == [
+        f"{DEFAULT_PROFILE}: Ingestion ingest-0 failed: keyframe extraction crashed",
+        f"Ingestion failed for {DEFAULT_PROFILE} (1 of 1 profiles)",
+    ]
+    assert app.session_state["processing_results"][0]["status"] == "error"
+
+
+def test_rejected_upload_names_the_http_failure_and_never_polls(page, runtime):
+    runtime.upload_response = {
+        "status": 503,
+        "body": {"message": "object store unavailable"},
+    }
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert runtime.status_polls == []
+    assert _ingestion_messages(app.success) == []
+    reported = _ingestion_messages(app.error)
+    assert len(reported) == 2
+    assert reported[0].startswith(f"{DEFAULT_PROFILE}: Upload rejected: HTTP 503:")
+    assert "object store unavailable" in reported[0]
+    assert reported[1] == f"Ingestion failed for {DEFAULT_PROFILE} (1 of 1 profiles)"
+
+
+def test_status_outage_mid_job_is_an_error_not_a_completed_ingestion(page, runtime):
+    runtime.status_script["ingest-0"] = [_complete(4, "clip_x", 2)]
+    runtime.status_response_status = 503
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert _ingestion_messages(app.success) == []
+    reported = _ingestion_messages(app.error)
+    assert reported[0].startswith(
+        f"{DEFAULT_PROFILE}: Ingestion status for ingest-0: HTTP 503:"
+    )
+    assert app.session_state["processing_results"][0]["status"] == "error"
+
+
+def test_each_profile_gets_its_own_job_and_outcomes_do_not_cross(page, runtime):
+    second = "video_xclip_sv_chunk_6s"
+    runtime.status_script["ingest-0"] = [_complete(5, "clip_a", 2)]
+    runtime.status_script["ingest-1"] = [
+        {"state": "failed", "latest": {"state": "failed", "error": "profile missing"}}
+    ]
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    next(m for m in app.multiselect if m.label == "Select profiles to test").set_value(
+        [DEFAULT_PROFILE, second]
+    ).run()
+    _button(app, "🔄 Process Video").click().run()
+
+    assert [u["profile"] for u in runtime.uploads] == [DEFAULT_PROFILE, second]
+    assert [u["content"] for u in runtime.uploads] == [VIDEO_BYTES, VIDEO_BYTES]
+    assert runtime.status_polls == ["ingest-0", "ingest-1"]
+    assert [
+        (r["profile"], r["status"], r.get("documents_fed"))
+        for r in app.session_state["processing_results"]
+    ] == [(DEFAULT_PROFILE, "success", 5), (second, "error", None)]
+    assert _ingestion_messages(app.error) == [
+        f"{second}: Ingestion ingest-1 failed: profile missing",
+        f"Ingestion failed for {second} (1 of 2 profiles)",
+    ]
+    assert _ingestion_messages(app.success) == [
+        f"{DEFAULT_PROFILE}: fed 5 documents as clip_a"
+    ]
+
+
+# --------------------------------------------------------------------------
+# M26 — one search, one result list, the profile the runtime actually used
+# --------------------------------------------------------------------------
+
+
+def _run_search(app: AppTest, query: str) -> AppTest:
+    next(t for t in app.text_input if t.label == "Enter your search query").set_value(
+        query
+    ).run()
+    _button(app, "🔍 Search").click().run()
+    assert [e.message for e in app.exception] == []
+    return app
+
+
+def test_search_renders_one_result_list_for_the_single_executed_operation(
+    page, runtime
+):
+    runtime.search_results["acme:a"] = [
+        _result("doc-1", "video_a", 0.91),
+        _result("doc-2", "video_b", 0.42),
+    ]
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+
+    assert [m.label for m in app.multiselect] != []
+    assert "Ranking Strategies" not in [m.label for m in app.multiselect]
+    assert "Processing Profile" not in [s.label for s in app.selectbox]
+    assert runtime.searches[-1]["top_k"] == 5
+    assert "profile" not in runtime.searches[-1]
+    assert [m.value for m in app.markdown if m.value.startswith("### 📊 Results")] == [
+        "### 📊 Results (single_profile)"
+    ]
+    assert [s.value for s in app.success if s.value.startswith("Found")] == [
+        "Found 2 results for 'robots'"
+    ]
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics["Results"] == "2"
+    assert metrics["Profile"] == "video_colqwen_omni_mv_chunk_30s"
+    assert len([b for b in app.button if b.label == "💾 Save Annotation"]) == 2
+    stored = app.session_state["current_search_results"]
+    assert stored["tenant_id"] == "acme:a"
+    assert stored["profile"] == "video_colqwen_omni_mv_chunk_30s"
+    assert [r["document_id"] for r in stored["results"]] == ["doc-1", "doc-2"]
+    assert app.session_state["conversation_history"] == [
+        {
+            "query": "robots",
+            "profile": "video_colqwen_omni_mv_chunk_30s",
+            "timestamp": stored["timestamp"],
+            "result_count": 2,
+        }
+    ]
+
+
+# --------------------------------------------------------------------------
+# M25 — a tenant switch shows and writes nothing from the previous tenant
+# --------------------------------------------------------------------------
+
+
+def test_tenant_switch_drops_the_previous_tenants_search_chat_and_annotations(
+    page, runtime
+):
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    runtime.search_results["acme:b"] = []
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+    app.session_state["chat_messages"] = [{"role": "user", "content": "hello A"}]
+    app.session_state["search_annotations"] = [
+        {"tenant_id": "acme:a", "query": "robots", "result_id": 0}
+    ]
+    app.session_state["orch_spans"] = ["A-span"]
+    first_session_id = app.session_state["session_id"]
+
+    _switch_tenant(app, "acme:b")
+
+    assert app.session_state["current_tenant"] == "acme:b"
+    assert "current_search_results" not in app.session_state
+    assert app.session_state["chat_messages"] == []
+    assert app.session_state["conversation_history"] == []
+    assert app.session_state["search_annotations"] == []
+    assert "orch_spans" not in app.session_state
+    assert app.session_state["session_id"] != first_session_id
+    assert [b.label for b in app.button if b.label == "💾 Save Annotation"] == []
+    assert [m.value for m in app.markdown if m.value.startswith("### 📊 Results")] == []
+    assert "video_a" not in "".join(
+        str(m.value) for m in app.markdown if isinstance(m.value, str)
+    )
+
+
+def test_search_after_a_switch_is_scoped_to_the_new_tenant(page, runtime):
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    runtime.search_results["acme:b"] = [_result("doc-9", "video_b", 0.77)]
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+    _switch_tenant(app, "acme:b")
+    _run_search(app, "robots")
+
+    assert [s["tenant_id"] for s in runtime.searches] == ["acme:a", "acme:b"]
+    stored = app.session_state["current_search_results"]
+    assert stored["tenant_id"] == "acme:b"
+    assert [r["document_id"] for r in stored["results"]] == ["doc-9"]
+    assert {m.label: m.value for m in app.metric}["Results"] == "1"
+
+
+def test_two_sessions_on_different_tenants_never_see_each_others_results(page, runtime):
+    """Two browser sessions share this process's render caches.
+
+    A cache keyed without the tenant would hand the second session the
+    first session's answer, and a re-render of either would then show the
+    other tenant's results.
+    """
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    runtime.search_results["acme:b"] = [
+        _result("doc-9", "video_b", 0.77),
+        _result("doc-8", "video_c", 0.55),
+    ]
+    first = _open_tenant(page, "acme:a")
+    _run_search(first, "robots")
+    second = _open_tenant(page, "acme:b")
+    _run_search(second, "robots")
+
+    # Re-render each session after the other has run: a process-wide cache
+    # hit would surface here.
+    _button(first, "🔄 Refresh Now").click().run()
+    _button(second, "🔄 Refresh Now").click().run()
+
+    assert [row["tenant_id"] for row in runtime.searches] == ["acme:a", "acme:b"]
+    assert first.session_state["current_search_results"]["tenant_id"] == "acme:a"
+    assert second.session_state["current_search_results"]["tenant_id"] == "acme:b"
+    assert [
+        row["document_id"]
+        for row in first.session_state["current_search_results"]["results"]
+    ] == ["doc-1"]
+    assert [
+        row["document_id"]
+        for row in second.session_state["current_search_results"]["results"]
+    ] == ["doc-9", "doc-8"]
+    assert {m.label: m.value for m in first.metric}["Results"] == "1"
+    assert {m.label: m.value for m in second.metric}["Results"] == "2"
+    assert first.session_state["session_id"] != second.session_state["session_id"]

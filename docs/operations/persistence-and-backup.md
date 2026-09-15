@@ -59,7 +59,7 @@ Each stateful component has its own `<name>.persistence` block in
 | Component | values key | Default size | Notes |
 |---|---|---|---|
 | Vespa | `vespa.persistence` | 100 Gi | Document store + config server — holds every schema (video/image/document/audio embeddings, `agent_memories`, knowledge graph, provenance, tenant/org metadata, adapter registry) **and** per-tenant config overrides written through `ConfigStore` (schema `config_metadata`; scopes `backend`, `gateway_agent`, `telemetry` all land here — `ConfigManager` methods default to `service="backend"`). One tar backs up all of it. `hostStorage.enabled=true` overrides to hostPath bind-mount. |
-| Phoenix | `phoenix.persistence` | 50 Gi | sqlite traces. Distroless container — backed up in `mode: volume-mount` (tar of the mounted volume; `.db` files are staged through SQLite's online-backup API first so the tar isn't a torn read), not `kubectl exec` + tar. |
+| Phoenix | `phoenix.persistence` | 50 Gi | Working directory only; traces, datasets and annotations live in `phoenix-postgres`. Backed up in `mode: postgres`: a `pg_dump` custom-format archive of that database plus a tar of the read-only mounted working directory, in one `<service>-<timestamp>.tar`. |
 | MinIO | `minio.persistence` | 100 Gi | Default backup destination on dev. See [MinIO durability](#minio-durability-load-bearing-for-dev) below. |
 | HF model cache (per pod) | `hfCache.persistence` | 50 Gi each | Off by default (`enabled: false`). When enabled, one PVC per inference svc + runtime + ingestor, pre-warmed via init container. |
 | Redis | `redis.persistence` | 10 Gi | Job queue + status-stream state (AOF on). Lose it = re-ingest in-flight jobs. |

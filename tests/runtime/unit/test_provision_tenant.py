@@ -85,28 +85,51 @@ def test_init_memory_raises_when_init_fails(monkeypatch):
         pt.init_memory("acme")
 
 
-def test_init_telemetry_emits_probe_span(monkeypatch):
-    pt = _load()
-    spans = []
-
-    class _Span:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
+def _telemetry_manager(spans, *, fail=None):
+    """A manager whose ``required_span`` records the exact probe it exported."""
+    from contextlib import asynccontextmanager
 
     class _TM:
-        def span(self, name, *, tenant_id, component):
-            spans.append((name, tenant_id, component))
-            return _Span()
+        @asynccontextmanager
+        async def required_span(self, name, *, tenant_id):
+            if fail is not None:
+                raise fail
+            spans.append((name, tenant_id))
+            yield object()
 
+    return _TM()
+
+
+def test_init_telemetry_exports_the_probe_under_the_canonical_tenant(monkeypatch):
+    """The step must export, not merely open, the probe: a project Phoenix
+    never received is a project that does not exist."""
+    pt = _load()
+    spans = []
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-        lambda *args, **kwargs: _TM(),
+        lambda *args, **kwargs: _telemetry_manager(spans),
     )
     pt.init_telemetry("acme")
-    assert spans == [("provision.probe", "acme", "search_service")]
+    assert spans == [("provision.probe", "acme:acme")]
+
+
+def test_init_telemetry_reports_a_collector_outage_as_a_failure(monkeypatch):
+    pt = _load()
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda *args, **kwargs: _telemetry_manager(
+            [],
+            fail=RuntimeError(
+                "Required telemetry export failed: endpoint=1.2.3.4:4317"
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeError) as raised:
+        pt.init_telemetry("acme")
+    assert str(raised.value) == (
+        "Provisioning telemetry failed for tenant acme:acme: "
+        "Required telemetry export failed: endpoint=1.2.3.4:4317"
+    )
 
 
 def test_cli_help_loads():

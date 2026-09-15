@@ -566,3 +566,31 @@ copy of the auth branch.
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Public URL prefix the ingress publishes the runtime under.
+
+The runtime is reached two ways: in-cluster on its Service, where the path
+carries no prefix, and through the ingress, where every path starts with
+this prefix. FastAPI strips a ``root_path`` that a request actually carries
+and leaves every other path alone, so one value serves both. It is read
+from the ingress rules rather than configured twice, and publishing the
+runtime under two different prefixes has no single answer, so it fails.
+*/}}
+{{- define "cogniverse.apiPrefix" -}}
+{{- $prefixes := list -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.hosts -}}
+{{- range .paths -}}
+{{- if eq .service "runtime" -}}
+{{- $prefixes = append $prefixes (trimSuffix "/" .path) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $distinct := uniq $prefixes -}}
+{{- if gt (len $distinct) 1 -}}
+{{- fail (printf "runtime ingress paths must share one prefix, got %v" $distinct) -}}
+{{- end -}}
+{{- first $distinct | default "" -}}
+{{- end -}}

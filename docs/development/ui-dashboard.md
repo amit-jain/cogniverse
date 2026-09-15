@@ -378,8 +378,8 @@ def render_memory_management_tab():
 
 **Key Functions**:
 ```python
+from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
-from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 
@@ -389,10 +389,12 @@ def render_routing_evaluation_tab():
 
     tenant_id = st.session_state["current_tenant"]
     lookback_hours = st.number_input("Lookback Period (hours)", 1, 168, 24)
-    project_name = f"cogniverse-{tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
 
     telemetry_manager = get_telemetry_manager()
     provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    # The span producers open their spans with no project override, so the
+    # reader derives the same bare tenant project from the same config.
+    project_name = tenant_project_name(telemetry_manager, tenant_id)
     evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
     # cached — Streamlit re-executes the tab on every widget interaction
@@ -1417,7 +1419,7 @@ sub-tabs that live inside Configuration and Optimization):
 # Foundation layer
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.config import (
-    SPAN_NAME_PROFILE_SELECTION, SERVICE_NAME_ORCHESTRATION, TelemetryConfig,
+    SPAN_NAME_PROFILE_SELECTION, TelemetryConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_foundation.config.unified_config import SystemConfig, RoutingConfigUnified

@@ -49,7 +49,8 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 The runtime entry surfaces are `cogniverse_runtime/main.py`,
 `cogniverse_runtime/agent_dispatcher.py`,
 `cogniverse_runtime/inference_services.py`,
-`cogniverse_runtime/startup_wait.py`, and
+`cogniverse_runtime/startup_wait.py`,
+`cogniverse_runtime/provision_tenant.py`, and
 `cogniverse_runtime/synthetic_config.py`.
 
 ```text
@@ -57,6 +58,7 @@ cogniverse_runtime/
 ├── main.py                          # FastAPI app + lifespan setup
 ├── backend_startup.py               # Backend probes and metadata bootstrap
 ├── runtime_cli.py                   # Backend wait before uvicorn
+├── provision_tenant.py              # Tenant schemas, memory, telemetry, tier
 ├── config_loader.py                 # Dynamic backend/agent loading
 ├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
 ├── harness_turn.py                  # Answer text, request seed, tool-call shape for a turn

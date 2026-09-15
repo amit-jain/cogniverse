@@ -83,6 +83,7 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
+from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -125,7 +126,7 @@ def render_orchestration_annotation_tab():
                     # window and filtering client-side downloads the full
                     # frame per refresh.
                     return await provider.traces.get_spans(
-                        project=f"cogniverse-{tenant_id}",
+                        project=tenant_project_name(telemetry_manager, tenant_id),
                         start_time=start_time,
                         end_time=end_time,
                         filters={"name": "cogniverse.orchestration"},

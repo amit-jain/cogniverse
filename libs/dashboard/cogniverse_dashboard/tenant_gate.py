@@ -74,3 +74,75 @@ def decide_tenant_gate(
             "cannot scope its data safely."
         ),
     )
+
+
+# Session-state entries that hold one tenant's data: search results and the
+# span ids they carry, chat and conversation turns, annotation queues,
+# telemetry frames and generated datasets.
+TENANT_SCOPED_SESSION_KEYS: tuple[str, ...] = (
+    "current_search_results",
+    "conversation_history",
+    "chat_messages",
+    "search_annotations",
+    "search_spans",
+    "orch_spans",
+    "processing_results",
+    "golden_dataset",
+    "golden_dataset_size",
+    "annotation_requests",
+    "annotation_count",
+    "auto_annotations",
+    "approval_agent",
+    "approval_agent_tenant_id",
+    "approval_storage",
+    "approved_items",
+    "pending_items",
+    "rejected_items",
+    "last_generated_batch",
+    "synthetic_data_result",
+    "embedding_atlas_file",
+    "last_optimize_run",
+    "_root_cause_analysis",
+)
+
+# The subset the app body appends to without a presence check, so the reset
+# leaves an empty list rather than a missing key.
+_LIST_VALUED_SESSION_KEYS = frozenset(
+    {
+        "conversation_history",
+        "chat_messages",
+        "search_annotations",
+        "processing_results",
+    }
+)
+
+
+def reset_tenant_scoped_state(session_state) -> None:
+    """Drop every tenant-scoped entry and start a new telemetry session.
+
+    Called whenever the sidebar's active tenant changes. Without it the
+    previous tenant's search results, chat turns and span ids stay in
+    session state: the new tenant's page renders them, and Save Annotation
+    writes the previous tenant's span id into the new tenant's project.
+    """
+    import uuid
+
+    for key in TENANT_SCOPED_SESSION_KEYS:
+        if key in _LIST_VALUED_SESSION_KEYS:
+            session_state[key] = []
+        else:
+            session_state.pop(key, None)
+    session_state["session_id"] = str(uuid.uuid4())
+
+
+def require_result_tenant(result: dict, tenant_id: str) -> dict:
+    """Return ``result`` when it was produced for ``tenant_id``.
+
+    Search results carry the tenant they were fetched for. Rendering one
+    under a different tenant, or attaching its span id to a different
+    tenant's Phoenix project, is a cross-tenant write, so it raises instead.
+    """
+    owner = result.get("tenant_id")
+    if owner != tenant_id:
+        raise ValueError(f"Search result belongs to {owner}, not {tenant_id}")
+    return result
