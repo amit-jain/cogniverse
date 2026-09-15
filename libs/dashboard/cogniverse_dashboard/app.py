@@ -2630,14 +2630,9 @@ with main_tabs[10]:
                             horizontal=True,
                         )
 
-                        # The Save button lives inside the
-                        # `if search_button:` branch, so clicking
-                        # it triggers a rerun where the branch
-                        # doesn't re-enter and the handler doesn't
-                        # run. This is a known Streamlit
-                        # limitation; the test only asserts the
-                        # button is rendered, not that clicking
-                        # persists state.
+                        # Rendered from the stored search, so the
+                        # rerun a click triggers re-enters here and
+                        # runs the handler below.
                         if st.button(
                             "💾 Save Annotation",
                             key=f"save_{i}",
