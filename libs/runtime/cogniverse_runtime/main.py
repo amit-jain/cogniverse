@@ -495,7 +495,7 @@ def build_pin_lookup(
                 knowledge_registry,
                 quotas=PinQuotas.for_tenant(tenant_id, admin_overrides=admin_overrides),
             )
-            return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
+            return pin_svc.pinned_target_ids(tenant_id)
         except Exception as exc:
             logger.warning(
                 "Pin lookup failed for tenant %s during lifecycle tick; "

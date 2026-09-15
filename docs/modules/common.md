@@ -666,8 +666,9 @@ def clear_agent_memory(
     Clear all memory for an agent.
 
     Use case: Reset agent memory for testing or tenant offboarding.
-    Returns True when every listed memory is gone; backend failures
-    propagate.
+    Deletes the whole namespace, archived rows included — never a
+    bounded page. Returns True when every listed memory is gone;
+    backend failures propagate.
     """
 ```
 
