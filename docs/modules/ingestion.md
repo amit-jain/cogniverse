@@ -116,6 +116,14 @@ Required transcription failures stop the pipeline before embedding or feed and
 leave the Redis job failed and eligible for resubmission. A video without an
 audio stream produces an empty transcript successfully.
 
+Text, source code and audio transcripts are embedded in model-sized windows:
+the served ColBERT model reports the character spans it encodes whole, and each
+span becomes its own document carrying `chunk_index`, `chunk_count`,
+`chunk_start` and `chunk_end` alongside its slice of the text. All windows of
+one source share that source's identity field, and the `document_text_semantic`,
+`code_lateon_mv` and `audio_clap_semantic` profiles resolve results at source
+granularity, so a search returns one hit per source with its matched windows.
+
 Each run writes its keyframes, chunks, rendered pages, transcripts and their
 metadata under its own scratch directory beneath the profile output directory,
 and the pipeline removes that directory when the run ends, whether it

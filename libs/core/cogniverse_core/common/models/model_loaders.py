@@ -834,6 +834,70 @@ class RemoteColBERTLoader(ModelLoader):
 
                 return all_embeddings
 
+            def text_windows(self, texts: list) -> list:
+                """Character spans tiling each text into encodable windows.
+
+                The model's tokenizer and document window live in the
+                service, so the split comes from there: the caller indexes
+                one document per span instead of sending text the encoder
+                would silently drop past its window.
+                """
+                payload = {"input": texts, "model": self.model_name}
+                try:
+                    resp = self.session.post(
+                        f"{self.endpoint_url}/windows",
+                        json=payload,
+                        timeout=DOCUMENT_ENCODE_TIMEOUT_S,
+                    )
+                    resp.raise_for_status()
+                except requests.HTTPError as exc:
+                    raise RuntimeError(
+                        "remote ColBERT windowing failed for model "
+                        f"{self.model_name!r} at {self.endpoint_url}"
+                    ) from exc
+                except requests.RequestException as exc:
+                    raise InferenceServiceUnavailableError(
+                        "colbert_windows",
+                        "remote ColBERT pooling sidecar unreachable for "
+                        f"model {self.model_name!r} at {self.endpoint_url}",
+                    ) from exc
+                try:
+                    response_payload = resp.json()
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "remote ColBERT windowing returned invalid JSON for model "
+                        f"{self.model_name!r} at {self.endpoint_url}"
+                    ) from exc
+                items = (
+                    response_payload.get("data")
+                    if isinstance(response_payload, dict)
+                    else None
+                )
+                if not isinstance(items, list) or len(items) != len(texts):
+                    item_count = len(items) if isinstance(items, list) else "non-list"
+                    raise RuntimeError(
+                        "remote ColBERT windowing returned "
+                        f"{item_count} results for {len(texts)} inputs from "
+                        f"model {self.model_name!r} at {self.endpoint_url}"
+                    )
+                spans = []
+                for item, text in zip(items, texts):
+                    item_spans = item.get("spans") if isinstance(item, dict) else None
+                    if not isinstance(item_spans, list) or not item_spans:
+                        raise RuntimeError(
+                            "remote ColBERT windowing returned no spans for model "
+                            f"{self.model_name!r} at {self.endpoint_url}"
+                        )
+                    parsed = [(int(span[0]), int(span[1])) for span in item_spans]
+                    if parsed[0][0] != 0 or parsed[-1][1] != len(text):
+                        raise RuntimeError(
+                            "remote ColBERT windowing returned spans covering "
+                            f"{parsed[0][0]}..{parsed[-1][1]} of {len(text)} characters "
+                            f"from model {self.model_name!r} at {self.endpoint_url}"
+                        )
+                    spans.append(parsed)
+                return spans
+
         wrapper = ColBERTRemoteWrapper(
             self.remote_url,
             self._resolved_headers,

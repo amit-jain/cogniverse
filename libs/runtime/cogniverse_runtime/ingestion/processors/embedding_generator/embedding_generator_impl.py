@@ -510,6 +510,26 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             metadata={"num_segments": len(segments)},
         )
 
+    def _text_windows(self, text: str) -> list[tuple[int, int]]:
+        """Character spans of ``text`` the encoder represents in full.
+
+        A ColBERT model embeds at most its document window — 300 tokens for
+        LateOn, 2048 for LateOn-Code — and drops the rest without saying so,
+        so a single encode of a whole file indexes only its opening. The
+        tokenizer and the window belong to the served model, which returns
+        the spans that tile the text; each span is indexed as its own
+        document and the documents are aggregated per source at query time.
+        """
+        windows = getattr(self.colbert_model, "text_windows", None)
+        if windows is None:
+            raise RuntimeError(
+                f"ColBERT model {self.model_name!r} cannot report its document "
+                "window, so long text would be silently truncated. Set "
+                "inference_services.embedding on the profile so the model is "
+                "served by the PyLate service."
+            )
+        return windows([text])[0]
+
     def _process_document_segments(
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
@@ -531,6 +551,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         feed_batch: list[Document] = []
         errors = []
 
+        total_documents = 0
+
         for idx, doc_info in enumerate(segments):
             try:
                 text = doc_info.get("extracted_text", "")
@@ -539,46 +561,58 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         f"Document {doc_info.get('filename', idx)!r} has no extracted text."
                     )
 
-                token_embeddings = self.colbert_model.encode(
-                    [text[:8192]], is_query=False
-                )[0]
-                embeddings_np = np.array(token_embeddings, dtype=np.float32)
+                spans = self._text_windows(text)
+                total_documents += len(spans)
+                windows = [text[start:end] for start, end in spans]
+                encoded = self.colbert_model.encode(windows, is_query=False)
 
                 self.logger.info(
                     f"  📄 Document {doc_info.get('filename', idx)}: "
-                    f"embeddings shape={embeddings_np.shape}"
+                    f"{len(windows)} window(s) over {len(text)} characters"
                 )
 
-                doc = Document(
-                    id=f"{content_id}_{doc_info.get('document_id', idx)}",
-                    content_type=ContentType.DOCUMENT,
-                    content_id=content_id,
-                    status=ProcessingStatus.COMPLETED,
-                )
-                doc.add_embedding(
-                    "embedding", embeddings_np, {"type": "float", "raw": True}
-                )
-                doc.add_metadata("document_id", doc_info.get("document_id", ""))
-                doc.add_metadata(
-                    "document_title",
-                    self._resolve_title(
-                        video_data.get("original_filename"),
-                        doc_info.get("filename")
-                        or Path(doc_info.get("path", "")).name
-                        or doc_info.get("document_id", idx),
-                    ),
-                )
-                doc.add_metadata("document_type", doc_info.get("document_type", ""))
-                doc.add_metadata("document_path", doc_info.get("path", ""))
-                doc.add_metadata("full_text", text)
-                doc.add_metadata("page_count", doc_info.get("page_count", 1))
-                if video_data.get("source_url"):
-                    doc.add_metadata("source_url", video_data["source_url"])
+                for window_index, ((start, end), token_embeddings) in enumerate(
+                    zip(spans, encoded)
+                ):
+                    embeddings_np = np.array(token_embeddings, dtype=np.float32)
+                    doc = Document(
+                        id=(
+                            f"{content_id}_{doc_info.get('document_id', idx)}"
+                            f"_w{window_index:04d}"
+                        ),
+                        content_type=ContentType.DOCUMENT,
+                        content_id=content_id,
+                        status=ProcessingStatus.COMPLETED,
+                    )
+                    doc.add_embedding(
+                        "embedding", embeddings_np, {"type": "float", "raw": True}
+                    )
+                    doc.add_metadata("document_id", doc_info.get("document_id", ""))
+                    doc.add_metadata(
+                        "document_title",
+                        self._resolve_title(
+                            video_data.get("original_filename"),
+                            doc_info.get("filename")
+                            or Path(doc_info.get("path", "")).name
+                            or doc_info.get("document_id", idx),
+                        ),
+                    )
+                    doc.add_metadata("document_type", doc_info.get("document_type", ""))
+                    doc.add_metadata("document_path", doc_info.get("path", ""))
+                    doc.add_metadata("full_text", windows[window_index])
+                    doc.add_metadata("page_count", doc_info.get("page_count", 1))
+                    doc.add_metadata("chunk_index", window_index)
+                    doc.add_metadata("chunk_count", len(spans))
+                    doc.add_metadata("chunk_start", start)
+                    doc.add_metadata("chunk_end", end)
+                    if video_data.get("source_url"):
+                        doc.add_metadata("source_url", video_data["source_url"])
 
-                documents_processed += 1
-                feed_batch.append(doc)
+                    documents_processed += 1
+                    feed_batch.append(doc)
 
             except Exception as e:
+                total_documents += 1
                 self.logger.error(f"Error processing document {idx}: {e}")
                 errors.append(f"Document {idx}: {str(e)}")
 
@@ -586,12 +620,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         return EmbeddingResult(
             video_id=content_id,
-            total_documents=len(segments),
+            total_documents=total_documents,
             documents_processed=documents_processed,
             documents_fed=documents_fed,
             processing_time=0,
             errors=errors,
-            metadata={"num_documents": len(segments)},
+            metadata={"num_documents": len(segments), "num_windows": total_documents},
         )
 
     def _process_document_visual_segments(
@@ -709,6 +743,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         feed_batch: list[Document] = []
         errors = []
 
+        total_documents = 0
+
         for idx, seg in enumerate(segments):
             try:
                 text = seg.get("extracted_text", "")
@@ -717,39 +753,51 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         f"Code chunk {seg.get('document_id', idx)!r} has no source text."
                     )
 
-                token_embeddings = self.colbert_model.encode(
-                    [text[:8192]], is_query=False
-                )[0]
-                embeddings_np = np.array(token_embeddings, dtype=np.float32)
+                spans = self._text_windows(text)
+                total_documents += len(spans)
+                windows = [text[start:end] for start, end in spans]
+                encoded = self.colbert_model.encode(windows, is_query=False)
 
                 self.logger.info(
                     f"  💻 Code chunk {seg.get('chunk_name', idx)}: "
-                    f"embeddings shape={embeddings_np.shape}"
+                    f"{len(windows)} window(s) over {len(text)} characters"
                 )
 
-                doc = Document(
-                    id=f"{content_id}_{seg.get('document_id', idx)}",
-                    content_type=ContentType.TEXT,
-                    content_id=content_id,
-                    status=ProcessingStatus.COMPLETED,
-                )
-                doc.add_embedding(
-                    "embedding", embeddings_np, {"type": "float", "raw": True}
-                )
-                doc.add_metadata("code_id", seg.get("document_id", ""))
-                doc.add_metadata("file_path", seg.get("path", ""))
-                doc.add_metadata("chunk_name", seg.get("chunk_name", ""))
-                doc.add_metadata("chunk_type", seg.get("chunk_type", ""))
-                doc.add_metadata("language", seg.get("language", ""))
-                doc.add_metadata("signature", seg.get("signature", ""))
-                doc.add_metadata("line_start", int(seg.get("line_start", 0)))
-                doc.add_metadata("line_end", int(seg.get("line_end", 0)))
-                doc.add_metadata("source_code", text)
+                for window_index, ((start, end), token_embeddings) in enumerate(
+                    zip(spans, encoded)
+                ):
+                    embeddings_np = np.array(token_embeddings, dtype=np.float32)
+                    doc = Document(
+                        id=(
+                            f"{content_id}_{seg.get('document_id', idx)}"
+                            f"_w{window_index:04d}"
+                        ),
+                        content_type=ContentType.TEXT,
+                        content_id=content_id,
+                        status=ProcessingStatus.COMPLETED,
+                    )
+                    doc.add_embedding(
+                        "embedding", embeddings_np, {"type": "float", "raw": True}
+                    )
+                    doc.add_metadata("code_id", seg.get("document_id", ""))
+                    doc.add_metadata("file_path", seg.get("path", ""))
+                    doc.add_metadata("chunk_name", seg.get("chunk_name", ""))
+                    doc.add_metadata("chunk_type", seg.get("chunk_type", ""))
+                    doc.add_metadata("language", seg.get("language", ""))
+                    doc.add_metadata("signature", seg.get("signature", ""))
+                    doc.add_metadata("line_start", int(seg.get("line_start", 0)))
+                    doc.add_metadata("line_end", int(seg.get("line_end", 0)))
+                    doc.add_metadata("source_code", windows[window_index])
+                    doc.add_metadata("chunk_index", window_index)
+                    doc.add_metadata("chunk_count", len(spans))
+                    doc.add_metadata("chunk_start", start)
+                    doc.add_metadata("chunk_end", end)
 
-                documents_processed += 1
-                feed_batch.append(doc)
+                    documents_processed += 1
+                    feed_batch.append(doc)
 
             except Exception as e:
+                total_documents += 1
                 self.logger.error(f"Error processing code chunk {idx}: {e}")
                 errors.append(f"Code chunk {idx}: {str(e)}")
 
@@ -757,12 +805,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         return EmbeddingResult(
             video_id=content_id,
-            total_documents=len(segments),
+            total_documents=total_documents,
             documents_processed=documents_processed,
             documents_fed=documents_fed,
             processing_time=0,
             errors=errors,
-            metadata={"num_documents": len(segments)},
+            metadata={"num_documents": len(segments), "num_windows": total_documents},
         )
 
     def _process_audio_segments(
@@ -798,6 +846,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_processed = 0
         documents_fed = 0
+        total_documents = 0
         # Segments accumulate here and feed as one batch — feeding one
         # document per call rebuilt the feed client machinery every doc.
         feed_batch: list[Document] = []
@@ -828,63 +877,79 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         f"Audio file {audio_path.name!r} has no transcript text. "
                         "Transcription must run before audio embedding."
                     )
-                semantic_tokens = self.colbert_model.encode(
-                    [transcript_text[:8192]], is_query=False
-                )[0]
-                semantic_np = np.array(semantic_tokens, dtype=np.float32)
+                spans = self._text_windows(transcript_text)
+                total_documents += len(spans)
+                windows = [transcript_text[start:end] for start, end in spans]
+                encoded = self.colbert_model.encode(windows, is_query=False)
 
                 acoustic_shape = None if acoustic_emb is None else acoustic_emb.shape
                 self.logger.info(
                     f"  🔊 Audio {audio_info.get('filename', idx)}: "
-                    f"acoustic={acoustic_shape}, semantic={semantic_np.shape}"
+                    f"acoustic={acoustic_shape}, "
+                    f"{len(windows)} transcript window(s)"
                 )
 
-                # Create Document with dual embeddings
-                doc = Document(
-                    id=f"{content_id}_{audio_info.get('audio_id', idx)}",
-                    content_type=ContentType.AUDIO,
-                    content_id=content_id,
-                    status=ProcessingStatus.COMPLETED,
-                )
+                for window_index, ((start, end), semantic_tokens) in enumerate(
+                    zip(spans, encoded)
+                ):
+                    semantic_np = np.array(semantic_tokens, dtype=np.float32)
 
-                # Semantic ColBERT embedding goes through standard embedding path
-                doc.add_embedding(
-                    "embedding", semantic_np, {"type": "float", "raw": True}
-                )
+                    # Create Document with dual embeddings
+                    doc = Document(
+                        id=(
+                            f"{content_id}_{audio_info.get('audio_id', idx)}"
+                            f"_w{window_index:04d}"
+                        ),
+                        content_type=ContentType.AUDIO,
+                        content_id=content_id,
+                        status=ProcessingStatus.COMPLETED,
+                    )
 
-                # Acoustic CLAP embedding stored as pre-formatted Vespa field in metadata.
-                # The ingestion client's generic metadata→field mapping picks this up
-                # because 'acoustic_embedding' matches the schema field name.
-                if acoustic_emb is not None:
-                    doc.add_metadata("acoustic_embedding", acoustic_emb.tolist())
+                    # Semantic ColBERT embedding goes through standard embedding path
+                    doc.add_embedding(
+                        "embedding", semantic_np, {"type": "float", "raw": True}
+                    )
 
-                doc.add_metadata(
-                    "audio_id", audio_info.get("audio_id", audio_path.stem)
-                )
-                doc.add_metadata(
-                    "audio_title",
-                    self._resolve_title(
-                        video_data.get("original_filename"),
-                        audio_info.get("filename")
-                        or audio_path.name
-                        or audio_info.get("audio_id", idx),
-                    ),
-                )
-                doc.add_metadata("audio_path", str(audio_path))
-                doc.add_metadata("audio_transcript", transcript_text)
-                language = transcript_data.get("language")
-                if language:
-                    doc.add_metadata("audio_language", str(language))
-                duration = transcript_data.get("duration")
-                if duration is not None:
-                    doc.add_metadata("audio_duration", float(duration))
-                if video_data.get("source_url"):
-                    doc.add_metadata("source_url", video_data["source_url"])
+                    # Acoustic CLAP embedding stored as pre-formatted Vespa field in
+                    # metadata. The ingestion client's generic metadata→field mapping
+                    # picks this up because 'acoustic_embedding' matches the schema
+                    # field name. It describes the whole clip, so every transcript
+                    # window of that clip carries it.
+                    if acoustic_emb is not None:
+                        doc.add_metadata("acoustic_embedding", acoustic_emb.tolist())
 
-                documents_processed += 1
-                feed_batch.append(doc)
+                    doc.add_metadata(
+                        "audio_id", audio_info.get("audio_id", audio_path.stem)
+                    )
+                    doc.add_metadata(
+                        "audio_title",
+                        self._resolve_title(
+                            video_data.get("original_filename"),
+                            audio_info.get("filename")
+                            or audio_path.name
+                            or audio_info.get("audio_id", idx),
+                        ),
+                    )
+                    doc.add_metadata("audio_path", str(audio_path))
+                    doc.add_metadata("audio_transcript", windows[window_index])
+                    doc.add_metadata("chunk_index", window_index)
+                    doc.add_metadata("chunk_count", len(spans))
+                    doc.add_metadata("chunk_start", start)
+                    doc.add_metadata("chunk_end", end)
+                    language = transcript_data.get("language")
+                    if language:
+                        doc.add_metadata("audio_language", str(language))
+                    duration = transcript_data.get("duration")
+                    if duration is not None:
+                        doc.add_metadata("audio_duration", float(duration))
+                    if video_data.get("source_url"):
+                        doc.add_metadata("source_url", video_data["source_url"])
+
+                    documents_processed += 1
+                    feed_batch.append(doc)
 
             except Exception as e:
+                total_documents += 1
                 self.logger.error(f"Error processing audio {idx}: {e}")
                 errors.append(f"Audio {idx}: {str(e)}")
 
@@ -892,12 +957,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         return EmbeddingResult(
             video_id=content_id,
-            total_documents=len(segments),
+            total_documents=total_documents,
             documents_processed=documents_processed,
             documents_fed=documents_fed,
             processing_time=0,
             errors=errors,
-            metadata={"num_audio_files": len(segments)},
+            metadata={"num_audio_files": len(segments), "num_windows": total_documents},
         )
 
     def _generate_segment_embeddings(
