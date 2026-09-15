@@ -37,7 +37,13 @@ def test_no_search_results_renders_no_button_and_no_exception(tmp_path: Path) ->
 def test_results_present_renders_button_without_exception(tmp_path: Path) -> None:
     at = _app_test(
         tmp_path,
-        {"current_search_results": {"query": "robots", "results": {}}},
+        {
+            "current_search_results": {
+                "tenant_id": "acme:a",
+                "query": "robots",
+                "results": [{"video_id": "v1", "description": "a robot arm"}],
+            }
+        },
     )
     at.run()
 
