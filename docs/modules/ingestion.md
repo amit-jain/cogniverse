@@ -112,6 +112,10 @@ The Ingestion Module transforms raw content files into searchable, multi-modal r
 9. **Code Processing** - tree-sitter AST-aware chunking of source files (`CodeSegmentationStrategy`) with ColBERT multi-vector embeddings (`CodeTextEmbeddingStrategy`)
 10. **Backend Ingestion** - Feed documents to Vespa search
 
+Required transcription failures stop the pipeline before embedding or feed and
+leave the Redis job failed and eligible for resubmission. A video without an
+audio stream produces an empty transcript successfully.
+
 ### Key Features
 
 - **Strategy Pattern**: Pluggable processors configured via YAML profiles
