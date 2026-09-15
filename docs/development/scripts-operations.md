@@ -55,7 +55,7 @@ scripts/
 │
 ├── Deployment & Setup
 │   ├── deploy_json_schema.py         # Deploy single JSON schema
-│   ├── provision_tenant.py           # Cold-bootstrap tenant resources (memory/telemetry)
+│   ├── provision_tenant.py           # Entry point for cogniverse_runtime.provision_tenant
 │   ├── setup_ollama.py               # Ollama model setup
 │   └── setup_gliner.py               # GLiNER setup
 │   (bulk schema deploy flows through the runtime admin API:
@@ -504,37 +504,42 @@ for the full operator workflow and JSON shapes.
 
 ### 4. provision_tenant.py
 
-**Purpose:** Cold-bootstrap a tenant's backend resources (Mem0 memory schema, Phoenix telemetry project, semantic-router tier) without a live runtime. Used by the tenant-provisioning WorkflowTemplate as a pre-step before schema deployment.
+**Purpose:** Cold-bootstrap a tenant's backend resources (Vespa schemas, Mem0 memory schema, Phoenix telemetry project, semantic-router tier) without a live runtime. The tenant-provisioning WorkflowTemplate runs it inside the runtime image.
 
-**Location:** `scripts/provision_tenant.py`
+**Location:** `libs/runtime/cogniverse_runtime/provision_tenant.py`, with `scripts/provision_tenant.py` as the checkout-side entry point.
 
 **Command Line Arguments:**
 ```bash
 --tenant-id TENANT   # Tenant identifier (required)
---step STEP          # Provisioning step: memory|telemetry|tier (required)
+--step STEP          # Provisioning step: schemas|verify|memory|telemetry|tier (required)
 --tier TIER          # Router tier to store (required by --step tier)
+--profiles LIST      # Comma-separated backend profiles (required by --step schemas|verify)
 ```
+
+**Environment:** `BACKEND_URL` / `BACKEND_PORT` name the Vespa data endpoint; `VESPA_CONFIG_PORT` names the config server the schema deploy posts to.
 
 **Steps:**
 
+- `schemas` — Deploys each profile's schema through `SchemaRegistry.deploy_schema`, the seam `POST /admin/profiles/{name}/deploy` uses, under the tenant-scoped schema name
+- `verify` — Confirms each profile's tenant schema is registered and queryable
 - `memory` — Creates the tenant's Mem0 memory schema via `lazy_init_memory`
-- `telemetry` — Emits a probe span via `TelemetryManager.span(...)` to create the Phoenix project
+- `telemetry` — Exports a required probe span via `TelemetryManager.required_span(...)` to create the Phoenix project; an unreachable collector fails the step
 - `tier` — Stores the tenant's semantic-router tier via `set_tenant_tier`; a tier outside `ROUTER_TIERS` is refused before any store is built
 
 **Usage:**
 ```bash
 # Initialize memory schema for tenant
-uv run python scripts/provision_tenant.py \
+uv run python -m cogniverse_runtime.provision_tenant \
   --tenant-id acme:production \
   --step memory
 
 # Initialize Phoenix telemetry project for tenant
-uv run python scripts/provision_tenant.py \
+uv run python -m cogniverse_runtime.provision_tenant \
   --tenant-id acme:production \
   --step telemetry
 
 # Store the router tier for tenant
-uv run python scripts/provision_tenant.py \
+uv run python -m cogniverse_runtime.provision_tenant \
   --tenant-id acme:production \
   --step tier --tier pro
 ```

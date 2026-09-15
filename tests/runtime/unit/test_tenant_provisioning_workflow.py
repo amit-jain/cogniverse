@@ -1,16 +1,13 @@
 """The tenant-provisioning Argo template deploys and verifies a Vespa schema
-per profile. Two bugs lived here:
+per profile, from inside the runtime image.
 
-* The deploy step referenced ``configs/schemas/<profile>.json`` while the files
-  are named ``<schema_name>_schema.json`` — ``deploy_json_schema.py`` failed on
-  the missing path while the loop still reported success, so a provisioned
-  tenant got no schemas.
-* The schema file/id are named after the profile's ``schema_name``, which is
-  not always the profile name (``audio_clap_semantic`` -> ``audio_content``),
-  so even the ``_schema.json`` suffix wasn't enough — the step must resolve
-  schema_name from config.
+The image ships the installed packages, ``configs/`` and nothing else: no
+``uv``, no ``scripts/`` and no ``kubectl``. Every step therefore runs
+``python -m cogniverse_runtime.provision_tenant``, whose schema step goes
+through ``SchemaRegistry`` — the seam ``POST /admin/profiles/{name}/deploy``
+uses — rather than posting a one-schema application package of its own.
 
-These pin the template's schema-path expression, the resolver, and the
+These pin the step commands, their Vespa environment, and the
 profile→schema_name→file chain against the real files on disk.
 """
 
@@ -38,16 +35,108 @@ def _default_profiles() -> dict:
     return json.loads(CONFIG.read_text()).get("backend", {}).get("profiles", {})
 
 
+ENTRYPOINT = ["python", "-m", "cogniverse_runtime.provision_tenant"]
+VESPA_ENV = {
+    "BACKEND_URL": "http://cogniverse-vespa",
+    "BACKEND_PORT": "8080",
+    "VESPA_CONFIG_PORT": "19071",
+}
+
+
+def _templates() -> dict:
+    (document,) = [
+        d
+        for d in yaml.safe_load_all(WORKFLOW.read_text())
+        if d["kind"] == "WorkflowTemplate"
+    ]
+    return {t["name"]: t for t in document["spec"]["templates"]}
+
+
 @pytest.mark.unit
-def test_template_resolves_schema_name_not_profile_name():
+def test_every_runtime_step_runs_the_installed_entrypoint():
+    templates = _templates()
+    for name in (
+        "deploy-schemas",
+        "create-phoenix-project",
+        "initialize-memory",
+        "set-tier",
+        "verify-tenant",
+    ):
+        assert templates[name]["container"]["command"] == ENTRYPOINT, name
+    # The runtime image has no uv, no scripts/ and no kubectl, so a step
+    # naming any of them fails before it reaches Vespa.
     text = WORKFLOW.read_text(encoding="utf-8")
-    # Deploy + verify must resolve schema_name via the resolver, then use the
-    # ``<schema_name>_schema.json`` file. The bare ``<profile>.json`` and the
-    # unresolved ``<profile>_schema.json`` forms must be gone.
-    assert "resolve_profile_schema.py" in text
-    assert "configs/schemas/${schema_name}_schema.json" in text
-    assert 'configs/schemas/${profile}.json"' not in text
-    assert 'configs/schemas/${profile}_schema.json"' not in text
+    for absent in ("uv run", "scripts/", "kubectl "):
+        assert absent not in text, absent
+
+
+@pytest.mark.unit
+def test_schema_steps_name_the_profiles_and_the_vespa_endpoint():
+    templates = _templates()
+    for name, step in (("deploy-schemas", "schemas"), ("verify-tenant", "verify")):
+        container = templates[name]["container"]
+        assert container["args"] == [
+            "--step",
+            step,
+            "--tenant-id",
+            "{{workflow.parameters.tenant-id}}",
+            "--profiles",
+            "{{workflow.parameters.profiles}}",
+        ], name
+        # The step reads the data endpoint the rest of the stack reads and
+        # the config-server port the deploy posts to; the old VESPA_URL was
+        # read by nothing.
+        assert {
+            entry["name"]: entry["value"] for entry in container["env"]
+        } == VESPA_ENV, name
+
+
+@pytest.mark.unit
+def test_namespace_and_claim_are_verified_through_argo_resource_reads():
+    templates = _templates()
+    assert templates["verify-namespace"]["resource"]["action"] == "get"
+    assert "kind: Namespace" in templates["verify-namespace"]["resource"]["manifest"]
+    assert templates["verify-storage"]["resource"]["action"] == "get"
+    assert (
+        "kind: PersistentVolumeClaim"
+        in templates["verify-storage"]["resource"]["manifest"]
+    )
+
+
+@pytest.mark.unit
+def test_schema_deployment_resolves_the_profiles_schema_name():
+    """The module deploys ``profile.schema_name``, not the profile name.
+
+    ``audio_clap_semantic`` deploys ``audio_content``; a step that passed the
+    profile name through would register a schema no reader queries.
+    """
+    from cogniverse_runtime import provision_tenant
+
+    calls = []
+
+    class _Registry:
+        def deploy_schema(self, *, tenant_id, base_schema_name):
+            calls.append((tenant_id, base_schema_name))
+            return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+
+    class _Backend:
+        schema_registry = _Registry()
+
+    profile_names = ["audio_clap_semantic", "video_colpali_smol500_mv_frame"]
+    expected = [resolve_profile_schema(name, CONFIG) for name in profile_names]
+    original = provision_tenant._resolve
+    provision_tenant._resolve = lambda tenant_id, profiles: (
+        None,
+        _Backend(),
+        [resolve_profile_schema(name, CONFIG) for name in profiles],
+    )
+    try:
+        deployed = provision_tenant.deploy_schemas("acme", profile_names)
+    finally:
+        provision_tenant._resolve = original
+
+    assert calls == [("acme:acme", schema) for schema in expected]
+    assert deployed == [f"{schema}_acme_acme" for schema in expected]
 
 
 @pytest.mark.unit
@@ -101,13 +190,13 @@ def _provisioning_shape(document: dict) -> dict:
     ]
     steps = [step["template"] for group in pipeline["steps"] for step in group]
     (tier_step,) = [t for t in template["templates"] if t["name"] == "set-tier"]
-    (script,) = tier_step["container"]["args"]
     parameters = {
         entry["name"]: entry["value"] for entry in template["arguments"]["parameters"]
     }
     return {
         "steps": steps,
-        "tier_invocation": " ".join(script.replace("\\\n", " ").split()),
+        "tier_invocation": tier_step["container"]["command"]
+        + tier_step["container"]["args"],
         "tier_default": parameters["tier"],
     }
 
@@ -129,12 +218,17 @@ def test_provisioning_sets_the_router_tier_before_verifying():
         "create-storage",
         "initialize-memory",
         "set-tier",
+        "verify-namespace",
+        "verify-storage",
         "verify-tenant",
         "notify-completion",
     ]
-    assert (
-        "scripts/provision_tenant.py --step tier "
-        '--tier "{{workflow.parameters.tier}}" '
-        '--tenant-id "{{workflow.parameters.tenant-id}}"'
-    ) in shape["tier_invocation"]
+    assert shape["tier_invocation"] == ENTRYPOINT + [
+        "--step",
+        "tier",
+        "--tier",
+        "{{workflow.parameters.tier}}",
+        "--tenant-id",
+        "{{workflow.parameters.tenant-id}}",
+    ]
     assert shape["tier_default"] == "default"
