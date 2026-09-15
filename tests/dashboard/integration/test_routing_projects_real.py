@@ -175,10 +175,31 @@ def test_tabs_read_only_selected_tenants_producer_spans(
             ] == []
 
 
+# What each tab renders for a window it read nothing from. profile_metrics
+# names the project it queried, which is where a wrong derivation shows up;
+# routing_evaluation names the producer instead.
+_EMPTY_WINDOW_NOTICE = {
+    "routing_evaluation": (
+        "No routing decisions found in the last 24 hours. Make sure the routing "
+        "agent has been processing requests and telemetry is capturing traces."
+    ),
+    "profile_metrics": "No spans found in `{project}` for the last 24h.",
+}
+
+
 @pytest.mark.parametrize("tab", ["routing_evaluation", "profile_metrics"])
-def test_tab_query_failure_after_project_lookup_is_not_no_traffic(
+def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
     phoenix_container, telemetry_manager_with_phoenix, monkeypatch, tab_reads, tab
 ):
+    """A store that answers 503 must not move the tab to another project.
+
+    ``PhoenixTraceStore.get_spans`` turns the 503 into an empty frame
+    (``libs/telemetry-phoenix/cogniverse_telemetry_phoenix/provider.py``), so
+    the tab reaches its empty-window branch. What this pins is that the one
+    query it issued named the derived project, that no metric is rendered
+    from the failed read, and that the notice is this tab's empty-window one
+    and nothing else.
+    """
     manager = telemetry_manager_with_phoenix
     tenant = f"metrics{uuid4().hex[:8]}:tenant"
     captured = _emit(manager, [tenant], monkeypatch)
@@ -236,10 +257,20 @@ def test_tab_query_failure_after_project_lookup_is_not_no_traffic(
             + quote(manager.config.get_project_name(tenant), safe="")
         ]
         assert [m.value for m in app.metric] == []
-        assert [m.value for m in app.info if m.value.startswith("No spans found")] == []
-        notices = [e.value for e in app.error] + [e.value for e in app.warning]
-        assert len(notices) == 1
-        assert "503" in notices[0] or "unavailable" in notices[0].lower()
+        notices = (
+            [element.value for element in app.error]
+            + [element.value for element in app.warning]
+            + [element.value for element in app.info]
+        )
+        assert [
+            notice
+            for notice in notices
+            if not notice.startswith(_ANNOTATION_STORE_ERROR)
+        ] == [
+            _EMPTY_WINDOW_NOTICE[tab].format(
+                project=manager.config.get_project_name(tenant)
+            )
+        ]
     finally:
         server.shutdown()
         server.server_close()
