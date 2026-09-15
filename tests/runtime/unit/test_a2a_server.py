@@ -356,6 +356,7 @@ class TestA2AMessageSend:
         body = response.json()
         assert "result" in body
         assert body["result"]["status"]["state"] == "failed"
+        assert body["result"]["status"]["message"]["role"] == "agent"
         text = body["result"]["status"]["message"]["parts"][0]["text"]
         assert json.loads(text) == {
             "type": "error",
@@ -365,6 +366,8 @@ class TestA2AMessageSend:
                 "Agent 'bad_agent' failed with ValueError. See runtime logs for detail."
             ),
         }
+        assert "not found in registry" not in text
+        assert mock_dispatcher.dispatch.await_count == 1
 
     @pytest.mark.ci_fast
     def test_context_id_passed_to_dispatcher(self, client, mock_dispatcher):
