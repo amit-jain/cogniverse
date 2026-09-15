@@ -46,6 +46,10 @@ spec:
         template: initialize-memory
     - - name: set-tier
         template: set-tier
+    - - name: verify-namespace
+        template: verify-namespace
+    - - name: verify-storage
+        template: verify-storage
     - - name: verify-tenant
         template: verify-tenant
     - - name: notify-completion
@@ -89,37 +93,26 @@ spec:
             tenant: "{{workflow.parameters.tenant-id}}"
             managed-by: cogniverse
 
-  # Deploy Vespa schemas for tenant
+  # Deploy Vespa schemas for tenant. Each profile's schema goes through
+  # SchemaRegistry, the same seam POST /admin/profiles/{name}/deploy uses,
+  # so it lands under its tenant-scoped name beside every other tenant's
+  # schema instead of replacing the application package.
   - name: deploy-schemas
     container:
       image: "{{workflow.parameters.runtime-image}}"
-      command: ["/bin/bash", "-c"]
+      command: ["python", "-m", "cogniverse_runtime.provision_tenant"]
       args:
-        - |
-          set -e
-          echo "Deploying Vespa schemas for tenant {{workflow.parameters.tenant-id}}..."
-
-          # Deploy each profile's schema. The schema FILE is named after the
-          # profile's schema_name (e.g. profile audio_clap_semantic ->
-          # schema audio_content), which is not always the profile name — so
-          # resolve schema_name from config before deploying, matching the
-          # admin /profiles/{name}/deploy path.
-          cd /app
-          IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
-          for profile in "${PROFILES[@]}"; do
-            schema_name=$(uv run python scripts/resolve_profile_schema.py "$profile")
-            echo "Deploying schema for profile $profile -> $schema_name"
-
-            uv run python scripts/deploy_json_schema.py \
-              "configs/schemas/${schema_name}_schema.json"
-
-            echo "Schema $schema_name deployed successfully"
-          done
-
-          echo "All schemas deployed"
+        - --step
+        - schemas
+        - --tenant-id
+        - "{{workflow.parameters.tenant-id}}"
+        - --profiles
+        - "{{workflow.parameters.profiles}}"
       env:
-      - name: VESPA_URL
-        value: "http://cogniverse-vespa:8080"
+      - name: BACKEND_URL
+        value: "http://cogniverse-vespa"
+      - name: BACKEND_PORT
+        value: "8080"
       - name: VESPA_CONFIG_PORT
         value: "19071"
       resources:
@@ -134,23 +127,16 @@ spec:
   - name: create-phoenix-project
     container:
       image: "{{workflow.parameters.runtime-image}}"
-      command: ["/bin/bash", "-c"]
+      command: ["python", "-m", "cogniverse_runtime.provision_tenant"]
       args:
-        - |
-          set -e
-          echo "Creating Phoenix project for tenant..."
-
-          PROJECT_NAME="{{workflow.parameters.tenant-id}}_project"
-          echo "Project name: $PROJECT_NAME"
-
-          cd /app
-          uv run python scripts/provision_tenant.py \
-            --step telemetry \
-            --tenant-id "{{workflow.parameters.tenant-id}}"
-
-          echo "Phoenix project created"
+        - --step
+        - telemetry
+        - --tenant-id
+        - "{{workflow.parameters.tenant-id}}"
       env:
-      - name: PHOENIX_ENDPOINT
+      - name: TELEMETRY_OTLP_ENDPOINT
+        value: "cogniverse-phoenix:4317"
+      - name: TELEMETRY_HTTP_ENDPOINT
         value: "http://cogniverse-phoenix:6006"
       resources:
         requests:
@@ -202,23 +188,19 @@ spec:
   - name: initialize-memory
     container:
       image: "{{workflow.parameters.runtime-image}}"
-      command: ["/bin/bash", "-c"]
+      command: ["python", "-m", "cogniverse_runtime.provision_tenant"]
       args:
-        - |
-          set -e
-          echo "Initializing memory system for tenant..."
-
-          cd /app
-          uv run python scripts/provision_tenant.py \
-            --step memory \
-            --tenant-id "{{workflow.parameters.tenant-id}}"
-
-          echo "Memory system ready"
+        - --step
+        - memory
+        - --tenant-id
+        - "{{workflow.parameters.tenant-id}}"
       env:
       - name: BACKEND_URL
         value: "http://cogniverse-vespa"
       - name: BACKEND_PORT
         value: "8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
       resources:
         requests:
           memory: "2Gi"
@@ -232,24 +214,21 @@ spec:
   - name: set-tier
     container:
       image: "{{workflow.parameters.runtime-image}}"
-      command: ["/bin/bash", "-c"]
+      command: ["python", "-m", "cogniverse_runtime.provision_tenant"]
       args:
-        - |
-          set -e
-          echo "Setting router tier for tenant..."
-
-          cd /app
-          uv run python scripts/provision_tenant.py \
-            --step tier \
-            --tier "{{workflow.parameters.tier}}" \
-            --tenant-id "{{workflow.parameters.tenant-id}}"
-
-          echo "Router tier set"
+        - --step
+        - tier
+        - --tier
+        - "{{workflow.parameters.tier}}"
+        - --tenant-id
+        - "{{workflow.parameters.tenant-id}}"
       env:
       - name: BACKEND_URL
         value: "http://cogniverse-vespa"
       - name: BACKEND_PORT
         value: "8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
       resources:
         requests:
           memory: "1Gi"
@@ -258,51 +237,47 @@ spec:
           memory: "2Gi"
           cpu: "1"
 
-  # Verify tenant provisioning
+  # Verify tenant provisioning. The namespace and the claim are read back
+  # through Argo resource templates (the runtime image ships no kubectl),
+  # and each profile's tenant schema is checked through the same registry
+  # that deployed it.
+  - name: verify-namespace
+    resource:
+      action: get
+      manifest: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: cogniverse-{{workflow.parameters.tenant-id}}
+
+  - name: verify-storage
+    resource:
+      action: get
+      manifest: |
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: tenant-data
+          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+
   - name: verify-tenant
     container:
       image: "{{workflow.parameters.runtime-image}}"
-      command: ["/bin/bash", "-c"]
+      command: ["python", "-m", "cogniverse_runtime.provision_tenant"]
       args:
-        - |
-          set -e
-          echo "Verifying tenant provisioning..."
-
-          # Check namespace
-          if ! kubectl get namespace cogniverse-{{workflow.parameters.tenant-id}} >/dev/null 2>&1; then
-            echo "ERROR: Namespace not created"
-            exit 1
-          fi
-
-          # Check schemas. Resolve the profile's schema_name (may differ from
-          # the profile name) before building the tenant-scoped schema id.
-          cd /app
-          IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
-          for profile in "${PROFILES[@]}"; do
-            schema_base=$(uv run python scripts/resolve_profile_schema.py "$profile")
-            SCHEMA_NAME="${schema_base}_{{workflow.parameters.tenant-id}}"
-
-            # Query schema
-            RESPONSE=$(curl -s "http://cogniverse-vespa:8080/search/?yql=select+*+from+${SCHEMA_NAME}+where+true+limit+0")
-
-            if echo "$RESPONSE" | grep -q "error"; then
-              echo "ERROR: Schema $SCHEMA_NAME not accessible"
-              exit 1
-            fi
-
-            echo "Schema $SCHEMA_NAME verified"
-          done
-
-          # Check PVC
-          if ! kubectl get pvc tenant-data -n cogniverse-{{workflow.parameters.tenant-id}} >/dev/null 2>&1; then
-            echo "ERROR: PVC not created"
-            exit 1
-          fi
-
-          echo "Tenant provisioning verified successfully"
+        - --step
+        - verify
+        - --tenant-id
+        - "{{workflow.parameters.tenant-id}}"
+        - --profiles
+        - "{{workflow.parameters.profiles}}"
       env:
-      - name: VESPA_URL
-        value: "http://cogniverse-vespa:8080"
+      - name: BACKEND_URL
+        value: "http://cogniverse-vespa"
+      - name: BACKEND_PORT
+        value: "8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
       resources:
         requests:
           memory: "512Mi"

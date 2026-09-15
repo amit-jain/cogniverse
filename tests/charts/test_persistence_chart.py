@@ -326,8 +326,7 @@ def test_backup_disabled_by_default_renders_no_workflows():
 
 def test_backup_enabled_defaults_to_vespa_and_phoenix():
     """Default backup set covers vespa (kubectl-exec into the source pod)
-    AND phoenix (volume-mount of the hostStorage path — phoenix's
-    distroless image lacks tar so kubectl-exec doesn't work)."""
+    AND phoenix (pg_dump of the database its rows actually live in)."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
@@ -341,72 +340,101 @@ def test_backup_enabled_defaults_to_vespa_and_phoenix():
     assert names == ["cogniverse-backup-phoenix", "cogniverse-backup-vespa"]
 
 
-def test_phoenix_backup_uses_volume_mount_not_kubectl_exec():
-    """Regression: phoenix MUST use volume-mount mode (its distroless
-    container lacks tar). The dump container should mount the source
-    volume directly + run tar locally, NOT kubectl exec into phoenix."""
+def test_phoenix_backup_dumps_the_database_and_mounts_assets_read_only():
+    """Phoenix's traces, datasets and annotations live in phoenix-postgres,
+    so the snapshot is a pg_dump of that database plus the working
+    directory it mounts read-only — no exec into the distroless pod."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
+        "hostStorage.enabled=true",
     )
     cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
-    assert cw is not None
-    # Source volume on the workflow spec.
-    vols = cw["spec"]["workflowSpec"].get("volumes", [])
-    source = next((v for v in vols if v["name"] == "source"), None)
-    assert source is not None, (
-        f"phoenix workflow must define a ``source`` volume, got volumes={vols}"
-    )
-    assert "hostPath" in source, (
-        f"hostStorage default uses hostPath for phoenix source, got {source}"
-    )
-    assert source["hostPath"]["path"] == "/host-data/phoenix"
+    vols = cw["spec"]["workflowSpec"]["volumes"]
+    assert vols == [
+        {
+            "name": "source",
+            "hostPath": {"path": "/host-data/phoenix", "type": "Directory"},
+        }
+    ]
 
     dump = next(
         t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
     )
-    # Must NOT use kubectl-exec for distroless phoenix.
-    assert "kubectl" not in dump["container"].get("image", ""), (
-        f"phoenix dump container must not be kubectl image (no exec needed); "
-        f"got {dump['container']['image']}"
+    assert dump["container"]["image"] == "postgres:16.10-alpine"
+    env = {e["name"]: e for e in dump["container"]["env"]}
+    assert {
+        k: env[k]["value"] for k in ("PGHOST", "PGPORT", "PGUSER", "PGDATABASE")
+    } == {
+        "PGHOST": "cogniverse-phoenix-postgres",
+        "PGPORT": "5432",
+        "PGUSER": "phoenix",
+        "PGDATABASE": "phoenix",
+    }
+    assert env["PGPASSWORD"]["valueFrom"]["secretKeyRef"] == {
+        "name": "cogniverse-phoenix-postgres-auth",
+        "key": "password",
+    }
+    assert dump["container"]["volumeMounts"] == [
+        {"name": "stage", "mountPath": "/stage"},
+        {"name": "source", "mountPath": "/source", "readOnly": True},
+    ]
+    assert dump["container"]["command"] == ["sh", "-c"]
+
+    # The snapshot is a database dump plus the assets, and it only takes the
+    # name the upload step globs once both halves are written.
+    (script,) = dump["container"]["args"]
+    assert "pg_dump --format=custom --no-owner --no-privileges" in script
+    assert 'pg_restore --list "$WORK/database.dump" > "$WORK/database.list"' in script
+    assert 'tar -cf "$WORK/working-assets.tar" -C /source .' in script
+    assert 'mv "$WORK/archive.tar" "/stage/phoenix-$STAMP.tar"' in script
+
+    upload = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "upload"
     )
-    # Mounts the source volume at /source. It is deliberately writable, not
-    # read-only: opening a WAL-mode SQLite database (as the phoenix dump does)
-    # needs write access to create/update the -wal and -shm sidecar files.
-    mounts = {m["name"]: m for m in dump["container"]["volumeMounts"]}
-    assert mounts["source"].get("readOnly", False) is not True
-    assert mounts["source"]["mountPath"] == "/source"
+    assert (
+        'mc cp /stage/phoenix-*.tar "dest/$MINIO_BUCKET/phoenix/"'
+        in (upload["container"]["args"][0])
+    )
+
+    # The vespa sibling is untouched: it still tars out of the live pod.
+    vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
+    vespa_dump = next(
+        t for t in vespa["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )
+    assert vespa_dump["container"]["image"] == "alpine/k8s:1.31.2"
+    assert cw["spec"]["concurrencyPolicy"] == "Forbid"
 
 
-def test_phoenix_backup_supports_pvc_mode_for_cloud():
-    """Cloud operators set ``pvcName`` instead of ``hostPath``. The
-    workflow then mounts the PVC directly (operator must arrange RWX or
-    accept downtime / use VolumeSnapshot)."""
+def test_phoenix_backup_uses_the_phoenix_claim_when_hoststorage_is_off():
+    """Cloud operators run phoenix on its own claim; the asset half of the
+    snapshot follows that claim instead of a host directory."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
-        "hostStorage.backup.services[0].name=phoenix",
-        "hostStorage.backup.services[0].mode=volume-mount",
-        "hostStorage.backup.services[0].pvcName=data-cogniverse-phoenix-0",
+        "hostStorage.enabled=false",
     )
     cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
-    assert cw is not None
-    vols = cw["spec"]["workflowSpec"]["volumes"]
-    source = next(v for v in vols if v["name"] == "source")
-    assert "persistentVolumeClaim" in source
-    assert source["persistentVolumeClaim"]["claimName"] == "data-cogniverse-phoenix-0"
-    assert source["persistentVolumeClaim"]["readOnly"] is True
+    assert cw["spec"]["workflowSpec"]["volumes"] == [
+        {
+            "name": "source",
+            "persistentVolumeClaim": {
+                "claimName": "data-cogniverse-phoenix-0",
+                "readOnly": True,
+            },
+        }
+    ]
 
 
 def test_role_only_renders_when_a_service_uses_kubectl_exec():
-    """If every service uses volume-mount, no pods/exec privilege is
+    """If no service uses kubectl-exec, no pods/exec privilege is
     needed → don't render the Role/RoleBinding (least privilege)."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
-        # Override services to phoenix-only (volume-mount).
+        # Override services to phoenix-only (pg_dump, no exec).
         "hostStorage.backup.services[0].name=phoenix",
-        "hostStorage.backup.services[0].mode=volume-mount",
+        "hostStorage.backup.services[0].mode=postgres",
         "hostStorage.backup.services[0].hostPath=/host-data/phoenix",
     )
     role = _named(docs, "Role", "cogniverse-backup-exec")

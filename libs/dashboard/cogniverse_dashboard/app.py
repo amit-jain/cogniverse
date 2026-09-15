@@ -23,6 +23,7 @@ from cogniverse_dashboard import configure_dashboard_logging
 configure_dashboard_logging()
 
 from cogniverse_dashboard.chat import format_gateway_answer
+from cogniverse_dashboard.ingestion import submit_video_ingestion
 from cogniverse_dashboard.search_summary import render_search_summary
 
 # Import config and memory management tabs
@@ -34,6 +35,8 @@ from cogniverse_dashboard.tabs.tenant_management import render_tenant_management
 from cogniverse_dashboard.tenant_gate import (
     TenantProbe,
     decide_tenant_gate,
+    require_result_tenant,
+    reset_tenant_scoped_state,
 )
 
 # Add project root to path
@@ -47,6 +50,7 @@ sys.path.insert(0, str(project_root))
 import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 from cogniverse_dashboard.utils.traces import (
@@ -419,6 +423,10 @@ with st.sidebar:
     active_tenant = canonicalize_tenant_input(active_tenant)
     if active_tenant != st.session_state.get("active_tenant"):
         st.session_state["active_tenant"] = active_tenant
+        # Everything already in session state belongs to the tenant we just
+        # left. Drop it before any tab renders, so the new tenant's page
+        # shows only its own data and annotations attach to its own project.
+        reset_tenant_scoped_state(st.session_state)
     # Sync to "current_tenant" key used by config_management_tab and other scripts
     st.session_state["current_tenant"] = active_tenant
     if active_tenant:
@@ -585,40 +593,14 @@ def show_agent_status():
 def call_agent(task_data: dict) -> dict:
     """Route all agent calls through the runtime at RUNTIME_URL.
 
-    Every action goes through the runtime's agent process endpoint or
-    ingestion API — no direct calls to individual agent servers.
+    Every action goes through the runtime's agent process endpoint — no
+    direct calls to individual agent servers.
     """
     try:
         action = task_data.get("action", "")
         client = get_runtime_client()
 
-        if action == "process_video":
-            # task_data is built inside a tab, which is only rendered after
-            # the gate has committed a valid tenant to session state.
-            _tenant = st.session_state["current_tenant"]
-            response = client.post(
-                f"{RUNTIME_URL}/ingestion/start",
-                json={
-                    "video_dir": task_data.get("video_path", ""),
-                    "profile": task_data.get(
-                        "profile", "video_colpali_smol500_mv_frame"
-                    ),
-                    "tenant_id": _tenant,
-                },
-            )
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "status": "success",
-                    "job_id": result.get("job_id"),
-                    "message": result.get("message", "Ingestion started"),
-                }
-            return {
-                "status": "error",
-                "message": f"Ingestion error: HTTP {response.status_code}: {response.text}",
-            }
-
-        elif action == "search_videos":
+        if action == "search_videos":
             _tenant = st.session_state["current_tenant"]
             response = client.post(
                 f"{RUNTIME_URL}/agents/search_agent/process",
@@ -2350,164 +2332,62 @@ with main_tabs[9]:
             default=["video_colpali_smol500_mv_frame"],
         )
 
-    # Pipeline Configuration
     if uploaded_video:
-        st.subheader("⚙️ Pipeline Configuration")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            max_frames = st.slider("Max Frames per Video", 1, 50, 10)
-            chunk_duration = st.slider("Chunk Duration (s)", 5, 60, 30)
-
-        with col2:
-            enable_transcription = st.checkbox("Enable Audio Transcription", True)
-            enable_descriptions = st.checkbox("Enable Frame Descriptions", True)
-
-        with col3:
-            keyframe_method = st.selectbox(
-                "Keyframe Extraction", ["fps", "scene_detection", "uniform"]
-            )
-            embedding_precision = st.selectbox(
-                "Embedding Precision", ["float32", "binary"]
-            )
-
-        # Process Video Button
-        # Check if video processing agent is available
-        video_processing_agent_available = (
+        # Check the runtime is reachable before offering to send bytes to it.
+        ingestion_runtime_available = (
             "error" not in agent_status
             and agent_status.get("Search Agent", {}).get("status") == "online"
         )
         process_button_disabled = (
-            not selected_profiles or not video_processing_agent_available
+            not selected_profiles or not ingestion_runtime_available
         )
 
-        if not video_processing_agent_available:
-            st.warning(
-                "🔧 Search Agent is offline. Please start the agent to enable video processing."
-            )
+        if not ingestion_runtime_available:
+            st.warning("🔧 The runtime is offline. Start it to enable video ingestion.")
 
         if st.button(
             "🔄 Process Video", type="primary", disabled=process_button_disabled
         ):
-            with st.spinner("🚀 Processing video with selected profiles..."):
-                try:
-                    # Save uploaded video to temporary file
-                    import tempfile
+            with st.spinner("🚀 Ingesting video with selected profiles..."):
+                video_bytes = uploaded_video.getvalue()
+                tenant_id = st.session_state["current_tenant"]
+                client = get_runtime_client()
+                processing_results = []
 
-                    video_bytes = uploaded_video.read()
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".mp4", delete=False
-                    ) as temp_file:
-                        temp_file.write(video_bytes)
-                        temp_video_path = temp_file.name
-
-                    processing_results = []
-
-                    # Process each profile
-                    for i, profile in enumerate(selected_profiles):
-                        progress_bar = st.progress(0, text=f"Processing {profile}...")
-
-                        # Prepare processing task for video agent
-                        processing_task = {
-                            "action": "process_video",
-                            "video_path": temp_video_path,
-                            "profile": profile,
-                            "config": {
-                                "max_frames": max_frames,
-                                "chunk_duration": chunk_duration,
-                                "enable_transcription": enable_transcription,
-                                "enable_descriptions": enable_descriptions,
-                                "keyframe_method": keyframe_method,
-                                "embedding_precision": embedding_precision,
-                            },
-                        }
-
-                        # Call video processing agent
-                        try:
-                            # Show indeterminate progress while calling agent
-                            progress_bar.progress(
-                                0,
-                                text=f"Calling video processing agent for {profile}...",
-                            )
-
-                            # Make real async call to video processing agent
-                            result = call_agent(processing_task)
-
-                            if result.get("status") == "success":
-                                processing_results.append(
-                                    {
-                                        "profile": profile,
-                                        "status": "success",
-                                        "embeddings_created": result.get(
-                                            "embeddings_created", 0
-                                        ),
-                                        "processing_time": result.get(
-                                            "processing_time", 0
-                                        ),
-                                        "quality_score": result.get(
-                                            "quality_score", 0.0
-                                        ),
-                                        "processing_id": result.get(
-                                            "processing_id", ""
-                                        ),
-                                    }
-                                )
-                                st.success(f"✅ {profile} processing complete!")
-                            else:
-                                # Agent call failed - show error but continue with other profiles
-                                st.error(
-                                    f"❌ {profile} processing failed: {result.get('message', 'Unknown error')}"
-                                )
-                                if "Connection refused" in result.get("message", ""):
-                                    st.info(
-                                        f"💡 Video processing agent not available at {result.get('agent_url', 'unknown URL')}"
-                                    )
-
-                                # Add failed result to show what happened
-                                processing_results.append(
-                                    {
-                                        "profile": profile,
-                                        "status": "failed",
-                                        "error": result.get("message", "Unknown error"),
-                                        "embeddings_created": 0,
-                                        "processing_time": 0,
-                                        "quality_score": 0.0,
-                                    }
-                                )
-
-                        except Exception as e:
-                            st.error(
-                                f"❌ Error calling video processing agent for {profile}: {str(e)}"
-                            )
-                            processing_results.append(
-                                {
-                                    "profile": profile,
-                                    "status": "error",
-                                    "error": str(e),
-                                    "embeddings_created": 0,
-                                    "processing_time": 0,
-                                    "quality_score": 0.0,
-                                }
-                            )
-
-                        progress_bar.empty()
-
-                    # Store results in session state
-                    st.session_state.processing_results = processing_results
-
-                    # Clean up temp file
-                    import os
-
-                    if os.path.exists(temp_video_path):
-                        os.remove(temp_video_path)
-
-                    st.success("🎉 All profiles processed successfully!")
-
-                except Exception as e:
-                    st.error(f"❌ Error processing video: {str(e)}")
-                    st.info(
-                        "💡 This would normally call the video processing agent via A2A"
+                for profile in selected_profiles:
+                    progress_bar = st.progress(0, text=f"Ingesting {profile}...")
+                    result = submit_video_ingestion(
+                        client,
+                        RUNTIME_URL,
+                        filename=uploaded_video.name,
+                        content=video_bytes,
+                        content_type=uploaded_video.type or "application/octet-stream",
+                        profile=profile,
+                        tenant_id=tenant_id,
                     )
+                    progress_bar.empty()
+                    processing_results.append(result)
+                    if result["status"] == "success":
+                        st.success(
+                            f"✅ {profile}: fed {result['documents_fed']} documents "
+                            f"as {result['video_id']}"
+                        )
+                    else:
+                        st.error(f"❌ {profile}: {result['message']}")
+
+                st.session_state.processing_results = processing_results
+
+                failed = [
+                    r["profile"] for r in processing_results if r["status"] != "success"
+                ]
+                if failed:
+                    st.error(
+                        "❌ Ingestion failed for "
+                        + ", ".join(failed)
+                        + f" ({len(failed)} of {len(processing_results)} profiles)"
+                    )
+                else:
+                    st.success(f"🎉 All {len(processing_results)} profiles ingested")
 
     else:
         st.info("👆 Upload a video file to start testing ingestion pipelines")
@@ -2518,53 +2398,25 @@ with main_tabs[9]:
         hasattr(st.session_state, "processing_results")
         and st.session_state.processing_results
     ):
-        st.markdown("**Embedding Quality Comparison:**")
-
-        # Display results from actual processing
-        for result in st.session_state.processing_results:
-            profile = result["profile"]
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric(
-                    f"{profile[:20]}...", "Quality Score", result["quality_score"]
-                )
-            with col2:
-                # Determine dimensions based on profile
-                if "colpali" in profile:
-                    dims = "128"
-                else:
-                    dims = "768"
-                st.metric("Dimensions", dims)
-            with col3:
-                st.metric("Processing Time", f"{result['processing_time']}s")
-            with col4:
-                st.metric("Embeddings Created", str(result["embeddings_created"]))
-
-        # Comparison chart
-        if len(st.session_state.processing_results) > 1:
-            st.markdown("**Quality Comparison Chart:**")
-            profiles = [
-                r["profile"][:20] + "..." for r in st.session_state.processing_results
-            ]
-            quality_scores = [
-                r["quality_score"] for r in st.session_state.processing_results
-            ]
-            processing_times = [
-                r["processing_time"] for r in st.session_state.processing_results
-            ]
-
-            col1, col2 = st.columns(2)
-            with col1:
-                chart_data = pd.DataFrame(
-                    {"Profile": profiles, "Quality Score": quality_scores}
-                )
-                st.bar_chart(chart_data.set_index("Profile"))
-
-            with col2:
-                chart_data = pd.DataFrame(
-                    {"Profile": profiles, "Processing Time (s)": processing_times}
-                )
-                st.bar_chart(chart_data.set_index("Profile"))
+        st.markdown("**Terminal ingestion outcome per profile:**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Profile": result["profile"],
+                        "Outcome": result["status"],
+                        "Ingest ID": result.get("ingest_id", "—"),
+                        "Video ID": result.get("video_id", "—"),
+                        "Documents fed": result.get("documents_fed", 0),
+                        "Chunks": result.get("chunks_created", 0),
+                        "Detail": result.get("message", ""),
+                    }
+                    for result in st.session_state.processing_results
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     elif uploaded_video and selected_profiles:
         st.info("👆 Click 'Process Video' to see analysis results")
@@ -2574,9 +2426,7 @@ with main_tabs[9]:
 # Interactive Search Tab
 with main_tabs[10]:
     st.header("🔍 Interactive Search Interface")
-    st.markdown(
-        "Live search testing and evaluation with multiple ranking strategies and real-time results."
-    )
+    st.markdown("Live search testing and evaluation with real-time results.")
 
     # Session Info and Controls
     session_col1, session_col2, session_col3 = st.columns([2, 1, 1])
@@ -2631,28 +2481,11 @@ with main_tabs[10]:
     # Search Configuration
     st.subheader("⚙️ Search Configuration")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        selected_profile = st.selectbox(
-            "Processing Profile",
-            [
-                "video_colpali_smol500_mv_frame",
-                "video_colqwen_omni_mv_chunk_30s",
-                "video_xclip_sv_chunk_6s",
-            ],
-            help="Select the video processing profile for search",
-        )
+        top_k = st.slider("Number of Results", 1, 20, 5)
 
     with col2:
-        ranking_strategies = st.multiselect(
-            "Ranking Strategies",
-            ["binary_binary", "float_float", "binary_float", "float_binary"],
-            default=["binary_binary", "float_float"],
-            help="Compare different ranking strategies",
-        )
-
-    with col3:
-        top_k = st.slider("Number of Results", 1, 20, 5)
         # Default 0.0 — Vespa rank scores are unbounded reals, not 0-1
         # confidences, and a 0.5 floor silently hides every ColPali result.
         confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.0)
@@ -2666,35 +2499,35 @@ with main_tabs[10]:
     if search_button and search_query and search_agent_available:
         st.subheader("🎯 Search Results")
 
+        _search_tenant = st.session_state["current_tenant"]
         try:
             # Stream search through A2A — shows progress events as search runs
             final_data = display_streaming_result(
                 agent_name="search_agent",
                 query=search_query,
-                tenant_id=st.session_state["current_tenant"],
-                metadata={
-                    "top_k": top_k,
-                    "modality": "video",
-                },
+                tenant_id=_search_tenant,
+                metadata={"top_k": top_k},
             )
 
             if final_data and "results" in final_data:
-                # Adapt SearchOutput (flat list) to strategy-keyed dict
-                # the dashboard expects
-                flat_results = final_data["results"]
-                search_results = {}
-                for strategy in ranking_strategies:
-                    search_results[strategy] = flat_results
-                if not search_results:
+                results_list = final_data["results"]
+                if not results_list:
                     st.error("❌ Agent returned success but no search results")
                 else:
                     # Store search results in session state — stamp in UTC so
                     # the latency widget at render time can subtract safely.
                     _captured_at = datetime.now(timezone.utc)
                     st.session_state.current_search_results = {
+                        # The tenant this list was fetched for. Rendering it
+                        # or annotating it under another tenant is refused.
+                        "tenant_id": _search_tenant,
                         "query": search_query,
-                        "profile": selected_profile,
-                        "results": search_results,
+                        # What the runtime actually searched, as reported by
+                        # the agent. The dashboard does not pick the profile.
+                        "search_mode": final_data.get("search_mode", ""),
+                        "profile": final_data.get("profile"),
+                        "profiles": final_data.get("profiles") or [],
+                        "results": results_list,
                         "timestamp": _captured_at,
                         # The search span's id — the Save Annotation button
                         # (which reruns outside this branch) reads it from here
@@ -2703,24 +2536,17 @@ with main_tabs[10]:
                     }
 
                     # Add to conversation history for multi-turn tracking
-                    total_results = sum(
-                        len(search_results.get(s, [])) for s in ranking_strategies
-                    )
                     st.session_state.conversation_history.append(
                         {
                             "query": search_query,
-                            "profile": selected_profile,
+                            "profile": final_data.get("profile"),
                             "timestamp": _captured_at,
-                            "result_count": total_results,
-                            "results_summary": {
-                                s: len(search_results.get(s, []))
-                                for s in ranking_strategies
-                            },
+                            "result_count": len(results_list),
                         }
                     )
 
                     st.success(
-                        f"✅ Found results for '{search_query}' across {len(ranking_strategies)} strategies"
+                        f"✅ Found {len(results_list)} results for '{search_query}'"
                     )
             else:
                 st.error("❌ Search returned no results")
@@ -2734,16 +2560,19 @@ with main_tabs[10]:
         hasattr(st.session_state, "current_search_results")
         and st.session_state.current_search_results
     ):
-        results = st.session_state.current_search_results["results"]
+        _stored_search = require_result_tenant(
+            st.session_state.current_search_results,
+            st.session_state["current_tenant"],
+        )
+        results = _stored_search["results"]
 
         # Summary metrics — Results count, Latency, Profile. The e2e
         # tests look for exactly three stMetric widgets here.
-        _total_count = sum(len(results.get(s, [])) for s in ranking_strategies)
         _m1, _m2, _m3 = st.columns(3)
         with _m1:
-            st.metric("Results", _total_count)
+            st.metric("Results", len(results))
         with _m2:
-            _ts = st.session_state.current_search_results.get("timestamp")
+            _ts = _stored_search.get("timestamp")
             if _ts is not None and isinstance(_ts, datetime) and _ts.tzinfo is None:
                 _ts = _ts.replace(tzinfo=timezone.utc)
             _lat_ms = (
@@ -2751,135 +2580,120 @@ with main_tabs[10]:
             )
             st.metric("Latency", f"{_lat_ms:.0f}ms")
         with _m3:
+            _served_profiles = _stored_search.get("profiles") or []
             st.metric(
                 "Profile",
-                st.session_state.current_search_results.get("profile", "auto"),
+                _stored_search.get("profile")
+                or (", ".join(_served_profiles) if _served_profiles else "—"),
             )
 
-        for strategy in ranking_strategies:
-            if strategy in results:
-                st.markdown(f"### 📊 Results: {strategy}")
+        st.markdown(f"### 📊 Results ({_stored_search.get('search_mode') or 'search'})")
 
-                for i, result in enumerate(results[strategy]):
-                    # SearchResult.to_dict() returns "score" (not "confidence"),
-                    # "document_id" (not "frame_id"), and places video/time
-                    # under "metadata" and "temporal_info".
-                    metadata = result.get("metadata", {})
-                    temporal = result.get("temporal_info", {})
-                    score = result.get("score", 0.0)
-                    video_id = metadata.get(
-                        "video_id", result.get("source_id", "unknown")
-                    )
-                    if score >= confidence_threshold:
-                        with st.expander(
-                            f"Result {i + 1}: {video_id} (Score: {score:.3f})"
+        for i, result in enumerate(results):
+            # SearchResult.to_dict() returns "score" (not "confidence"),
+            # "document_id" (not "frame_id"), and places video/time
+            # under "metadata" and "temporal_info".
+            metadata = result.get("metadata", {})
+            temporal = result.get("temporal_info", {})
+            score = result.get("score", 0.0)
+            video_id = metadata.get("video_id", result.get("source_id", "unknown"))
+            if score >= confidence_threshold:
+                with st.expander(f"Result {i + 1}: {video_id} (Score: {score:.3f})"):
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.write(f"**Video ID:** {video_id}")
+                        st.write(f"**Document ID:** {result.get('document_id', '—')}")
+                        if temporal:
+                            st.write(
+                                f"**Time:** {temporal.get('start_time', 0):.2f}s"
+                                f" — {temporal.get('end_time', 0):.2f}s"
+                            )
+                        description = metadata.get(
+                            "description", metadata.get("segment_id", "")
+                        )
+                        if description:
+                            st.write(f"**Description:** {description}")
+                        st.write(f"**Score:** {score:.3f}")
+
+                    with col2:
+                        # Relevance annotation: radio input + explicit
+                        # Save button. The e2e tests look for the
+                        # Save button by its label.
+                        relevance = st.radio(
+                            f"Relevance (Result {i + 1})",
+                            [
+                                "Highly Relevant",
+                                "Somewhat Relevant",
+                                "Not Relevant",
+                            ],
+                            key=f"relevance_{i}",
+                            horizontal=True,
+                        )
+
+                        # Rendered from the stored search, so the
+                        # rerun a click triggers re-enters here and
+                        # runs the handler below.
+                        if st.button(
+                            "💾 Save Annotation",
+                            key=f"save_{i}",
                         ):
-                            col1, col2 = st.columns([2, 1])
-                            with col1:
-                                st.write(f"**Video ID:** {video_id}")
-                                st.write(
-                                    f"**Document ID:** {result.get('document_id', '—')}"
-                                )
-                                if temporal:
-                                    st.write(
-                                        f"**Time:** {temporal.get('start_time', 0):.2f}s"
-                                        f" — {temporal.get('end_time', 0):.2f}s"
-                                    )
-                                description = metadata.get(
-                                    "description", metadata.get("segment_id", "")
-                                )
-                                if description:
-                                    st.write(f"**Description:** {description}")
-                                st.write(f"**Score:** {score:.3f}")
+                            from cogniverse_dashboard.utils.annotations import (
+                                persist_result_relevance,
+                            )
+                            from cogniverse_foundation.telemetry.manager import (
+                                get_telemetry_manager,
+                            )
 
-                            with col2:
-                                # Relevance annotation: radio input + explicit
-                                # Save button. The e2e tests look for the
-                                # Save button by its label.
-                                relevance = st.radio(
-                                    f"Relevance (Result {i + 1})",
-                                    [
-                                        "Highly Relevant",
-                                        "Somewhat Relevant",
-                                        "Not Relevant",
-                                    ],
-                                    key=f"relevance_{strategy}_{i}",
-                                    horizontal=True,
+                            _tenant = st.session_state["current_tenant"]
+                            # The span id comes from the stored search
+                            # whose tenant was checked above, so the
+                            # annotation can only land in that tenant's
+                            # project.
+                            _span_id = _stored_search.get("span_id")
+                            # Persist to Phoenix before reporting success.
+                            try:
+                                _manager = get_telemetry_manager()
+                                _provider = _manager.get_provider(tenant_id=_tenant)
+                                run_async_in_streamlit(
+                                    persist_result_relevance(
+                                        _provider,
+                                        tenant_project_name(_manager, _tenant),
+                                        _span_id,
+                                        video_id,
+                                        relevance,
+                                    )
                                 )
-
-                                # The Save button lives inside the
-                                # `if search_button:` branch, so clicking
-                                # it triggers a rerun where the branch
-                                # doesn't re-enter and the handler doesn't
-                                # run. This is a known Streamlit
-                                # limitation; the test only asserts the
-                                # button is rendered, not that clicking
-                                # persists state.
-                                if st.button(
-                                    "💾 Save Annotation",
-                                    key=f"save_{strategy}_{i}",
-                                ):
-                                    from cogniverse_dashboard.utils.annotations import (
-                                        persist_result_relevance,
+                            except Exception as exc:
+                                st.error(f"❌ Failed to save annotation: {exc}")
+                            else:
+                                st.success(f"✅ Rated: {relevance}")
+                                # Mirror into session state for the
+                                # Export Annotations feature.
+                                if "search_annotations" not in st.session_state:
+                                    st.session_state.search_annotations = []
+                                annotation = {
+                                    "tenant_id": _tenant,
+                                    "query": search_query,
+                                    "result_id": i,
+                                    "video_id": video_id,
+                                    "relevance": relevance,
+                                    "timestamp": datetime.now().isoformat(),
+                                }
+                                existing = next(
+                                    (
+                                        a
+                                        for a in st.session_state.search_annotations
+                                        if a["query"] == search_query
+                                        and a["result_id"] == i
+                                    ),
+                                    None,
+                                )
+                                if existing:
+                                    existing.update(annotation)
+                                else:
+                                    st.session_state.search_annotations.append(
+                                        annotation
                                     )
-                                    from cogniverse_foundation.telemetry.manager import (
-                                        get_telemetry_manager,
-                                    )
-
-                                    _tenant = st.session_state["current_tenant"]
-                                    _span_id = (
-                                        st.session_state.current_search_results.get(
-                                            "span_id"
-                                        )
-                                    )
-                                    # Persist to Phoenix before reporting success.
-                                    try:
-                                        _provider = (
-                                            get_telemetry_manager().get_provider(
-                                                tenant_id=_tenant
-                                            )
-                                        )
-                                        run_async_in_streamlit(
-                                            persist_result_relevance(
-                                                _provider,
-                                                f"cogniverse-{_tenant}",
-                                                _span_id,
-                                                video_id,
-                                                relevance,
-                                            )
-                                        )
-                                    except Exception as exc:
-                                        st.error(f"❌ Failed to save annotation: {exc}")
-                                    else:
-                                        st.success(f"✅ Rated: {relevance}")
-                                        # Mirror into session state for the
-                                        # Export Annotations feature.
-                                        if "search_annotations" not in st.session_state:
-                                            st.session_state.search_annotations = []
-                                        annotation = {
-                                            "query": search_query,
-                                            "strategy": strategy,
-                                            "result_id": i,
-                                            "video_id": video_id,
-                                            "relevance": relevance,
-                                            "timestamp": datetime.now().isoformat(),
-                                        }
-                                        existing = next(
-                                            (
-                                                a
-                                                for a in st.session_state.search_annotations
-                                                if a["query"] == search_query
-                                                and a["strategy"] == strategy
-                                                and a["result_id"] == i
-                                            ),
-                                            None,
-                                        )
-                                        if existing:
-                                            existing.update(annotation)
-                                        else:
-                                            st.session_state.search_annotations.append(
-                                                annotation
-                                            )
 
     # Show annotation count
     if (
@@ -2891,14 +2705,15 @@ with main_tabs[10]:
         )
 
     # Export annotations
-    if st.button("📥 Export Annotations") and hasattr(
-        st.session_state, "search_annotations"
+    if st.button("📥 Export Annotations") and st.session_state.get(
+        "search_annotations"
     ):
+        _exported_search = st.session_state.get("current_search_results") or {}
         annotations = {
             "search_session": {
-                "query": search_query,
-                "profile": selected_profile,
-                "strategies": ranking_strategies,
+                "tenant_id": st.session_state["current_tenant"],
+                "query": _exported_search.get("query", search_query),
+                "profile": _exported_search.get("profile"),
                 "timestamp": datetime.now().isoformat(),
             },
             "annotations": st.session_state.search_annotations,
