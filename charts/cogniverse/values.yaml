@@ -180,11 +180,11 @@ hostStorage:
         dataPath: /opt/vespa/var
         podLabel: app.kubernetes.io/component=vespa
       - name: phoenix
-        mode: volume-mount
-        # hostStorage mode (default for dev) — phoenix data lives at
-        # ``hostStorage.path/phoenix``. For PVC-backed cloud setups,
-        # replace with ``pvcName: data-cogniverse-phoenix-0`` (and
-        # arrange RWX/snapshot/downtime per the comment above).
+        mode: postgres
+        # Phoenix keeps its traces, datasets and annotations in the
+        # phoenix-postgres database; ``hostPath`` only carries the
+        # working directory, and is replaced by phoenix's own claim when
+        # ``hostStorage.enabled`` is false.
         hostPath: /host-data/phoenix
     # Backup destination — single config block that switches between
     # local-dev (in-cluster MinIO, default) and cloud (R2 / B2 / AWS S3).

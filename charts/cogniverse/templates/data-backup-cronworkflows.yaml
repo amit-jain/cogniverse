@@ -5,7 +5,7 @@ the service's data into a workflow-scoped staging volume, then mc cp it
 to s3://<bucket>/<svc-name>/<timestamp>.tar and prune all but the most
 recent ``retainLast`` snapshots.
 
-Two dump modes are supported per service:
+Three dump modes are supported per service:
 
   mode: kubectl-exec   (default) — kubectl-exec into the live pod and
     tar the configured ``dataPath`` from inside. Works only for source
@@ -22,10 +22,17 @@ Two dump modes are supported per service:
     CSI VolumeSnapshot first, or scale the source pod to 0 during the
     backup window.
 
-Both modes share the same upload step (mc cp + retention pruning).
-Snapshots are not crash-consistent; the source process keeps writing
-during the dump. For stronger guarantees layer CSI VolumeSnapshots at
-the storage-class level.
+  mode: postgres — required for phoenix whenever
+    ``phoenix.postgres.enabled``: the traces, datasets and annotations
+    live in the phoenix-postgres database, not in the working directory,
+    so the dump is a ``pg_dump`` custom-format archive of that database
+    alongside a tar of the mounted working directory.
+
+All modes share the same upload step (mc cp + retention pruning). The
+file-copy modes are not crash-consistent; the source process keeps
+writing during the dump. For stronger guarantees layer CSI
+VolumeSnapshots at the storage-class level. ``pg_dump`` runs in one
+repeatable-read snapshot, so the database half is consistent.
 */}}
 {{- /* ``default dict`` so ``--reuse-values`` from older releases doesn't
 crash. Inner subkeys also defaulted explicitly because ``--reuse-values``
@@ -41,9 +48,18 @@ values — chart defaults from values.yaml don't reapply. */}}
 of its hostStorage path. Operator overrides as needed. */}}
 {{- $defaultServices := list
     (dict "name" "vespa" "mode" "kubectl-exec" "dataPath" "/opt/vespa/var" "podLabel" "app.kubernetes.io/component=vespa")
-    (dict "name" "phoenix" "mode" "volume-mount" "hostPath" (printf "%s/phoenix" $hostStoragePath)) }}
+    (dict "name" "phoenix" "mode" "postgres" "hostPath" (printf "%s/phoenix" $hostStoragePath)) }}
 {{- $services := ($bk.services | default $defaultServices) }}
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- /* A file copy of Phoenix's working directory restores nothing once
+Phoenix keeps its traces, datasets and annotations in Postgres. */}}
+{{- if $.Values.phoenix.postgres.enabled }}
+{{- range $svcCfg := $services }}
+{{- if and (eq $svcCfg.name "phoenix") (ne (default "kubectl-exec" $svcCfg.mode) "postgres") }}
+{{- fail "Phoenix uses Postgres: hostStorage.backup.services entry phoenix must use mode=postgres" }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- /* Backup destination — single config knob to switch between dev (in-cluster
 MinIO) and cloud (R2 / B2 / AWS S3 / etc). Operator overrides:
   hostStorage.backup.s3.endpoint        — S3-compatible URL; empty = in-cluster MinIO
@@ -135,6 +151,21 @@ spec:
         readOnly: true
       {{- else }}
       {{- fail (printf "service %s has mode=volume-mount but neither hostPath nor pvcName set" $svc) }}
+      {{- end }}
+    {{- else if eq $mode "postgres" }}
+    {{- /* The working directory follows the same volume the source pod
+    uses: a host directory on hostStorage clusters, that pod's own claim
+    otherwise. The database half travels over the Service. */}}
+    volumes:
+    - name: source
+      {{- if $.Values.hostStorage.enabled }}
+      hostPath:
+        path: {{ $svcCfg.hostPath | default (printf "%s/%s" $hostStoragePath $svc) }}
+        type: Directory
+      {{- else }}
+      persistentVolumeClaim:
+        claimName: {{ $svcCfg.pvcName | default (printf "data-%s-%s-0" $fullName $svc) }}
+        readOnly: true
       {{- end }}
     {{- end }}
     volumeClaimTemplates:
@@ -231,8 +262,61 @@ spec:
           mountPath: /source
           # Not readOnly: SQLite readers of a WAL-mode database need write
           # access to the -shm file even though the backup only reads.
+      {{- else if eq $mode "postgres" }}
+      container:
+        # The database's own client image: pg_dump and pg_restore must
+        # match the server that wrote the data.
+        image: "{{ $.Values.phoenix.postgres.image.repository }}:{{ $.Values.phoenix.postgres.image.tag }}"
+        imagePullPolicy: {{ $.Values.phoenix.postgres.image.pullPolicy }}
+        command: [sh, -c]
+        args:
+        - |
+          set -eu
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          WORK=/stage/work
+          rm -rf "$WORK" && mkdir -p "$WORK"
+          echo "Dumping $PGDATABASE on $PGHOST and /source -> /stage/{{ $svc }}-$STAMP.tar"
+          pg_dump --format=custom --no-owner --no-privileges \
+            --file="$WORK/database.dump"
+          # Reading the archive's table of contents back proves it is a
+          # complete archive, not a truncated file that only restores
+          # part of the database on the day it is needed.
+          pg_restore --list "$WORK/database.dump" > "$WORK/database.list"
+          printf 'PGHOST=%s\nPGPORT=%s\nPGDATABASE=%s\nPGUSER=%s\n' \
+            "$PGHOST" "$PGPORT" "$PGDATABASE" "$PGUSER" > "$WORK/restore.env"
+          tar -cf "$WORK/working-assets.tar" -C /source .
+          tar -cf "$WORK/archive.tar" -C "$WORK" \
+            database.dump database.list restore.env working-assets.tar
+          # The upload step globs this name, so it appears only once every
+          # part of the snapshot is on disk: an interrupted dump publishes
+          # nothing.
+          mv "$WORK/archive.tar" "/stage/{{ $svc }}-$STAMP.tar"
+          rm -rf "$WORK"
+          ls -la /stage
+        env:
+        - name: PGHOST
+          value: "{{ $fullName }}-phoenix-postgres"
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          value: {{ $.Values.phoenix.postgres.auth.username | quote }}
+        - name: PGDATABASE
+          value: {{ $.Values.phoenix.postgres.auth.database | quote }}
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-phoenix-postgres-auth
+              key: password
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" $ | nindent 10 }}
+        volumeMounts:
+        - name: stage
+          mountPath: /stage
+        - name: source
+          mountPath: /source
+          readOnly: true
       {{- else }}
-      {{- fail (printf "service %s has unknown mode=%s; expected kubectl-exec or volume-mount" $svc $mode) }}
+      {{- fail (printf "service %s has unknown mode=%s; expected kubectl-exec, volume-mount or postgres" $svc $mode) }}
       {{- end }}
     - name: upload
       container:
