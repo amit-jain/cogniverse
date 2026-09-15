@@ -288,12 +288,23 @@ class VespaConfigStore(ImmutableConfigStore):
 
         entries: List[tuple[str, ConfigEntry]] = []
         continuation: Optional[str] = None
+        pages = 0
         while True:
             if continuation:
                 params["continuation"] = continuation
             payload = _config_store_read_json(path, params=params, timeout=30)
             if payload is None:
-                return entries
+                if continuation is None:
+                    # No config_metadata document type yet: a genuinely empty
+                    # store, not a traversal that stopped halfway.
+                    return entries
+                raise ConfigStoreUnavailableError(
+                    f"Vespa config visit answered HTTP "
+                    f"{_CONFIG_STORE_READ_MISSING_HTTP_STATUS} continuing past page "
+                    f"{pages} ({len(entries)} documents read); refusing to return a "
+                    f"partial traversal"
+                )
+            pages += 1
             documents = payload["documents"]
             if not isinstance(documents, list):
                 raise ValueError("Vespa config visit documents must be a list")
@@ -915,15 +926,21 @@ class VespaConfigStore(ImmutableConfigStore):
         Returns:
             Dictionary with all configurations
         """
-        if include_history:
-            # Get all versions
-            yql = f"select * from {self.schema_name} where tenant_id contains {yql_quote(tenant_id)} limit 400"
-        else:
-            # Get only latest versions
-            configs = self.list_configs(tenant_id)
+        try:
+            if include_history:
+                # Every retained version, over the same complete Document v1
+                # traversal list_configs uses. A bounded query would report a
+                # truncated backup as a successful one.
+                configs = [
+                    entry
+                    for _, entry in self._visit_config_entries(tenant_id=tenant_id)
+                ]
+            else:
+                configs = self.list_configs(tenant_id)
+
             return {
                 "tenant_id": tenant_id,
-                "include_history": False,
+                "include_history": include_history,
                 "configs": [
                     {
                         "tenant_id": c.tenant_id,
@@ -940,38 +957,11 @@ class VespaConfigStore(ImmutableConfigStore):
                 "exported_at": datetime.now(timezone.utc).isoformat(),
             }
 
-        try:
-            response = self.vespa_app.query(yql=yql)
-            _raise_if_degraded(response, f"export({tenant_id})")
-
-            configs = []
-            for hit in response.hits:
-                fields = hit["fields"]
-                configs.append(
-                    {
-                        "tenant_id": fields["tenant_id"],
-                        "scope": fields["scope"],
-                        "service": fields["service"],
-                        "config_key": fields["config_key"],
-                        "config_value": json.loads(fields["config_value"]),
-                        "version": fields["version"],
-                        "created_at": fields["created_at"],
-                        "updated_at": fields["updated_at"],
-                    }
-                )
-
-            return {
-                "tenant_id": tenant_id,
-                "include_history": True,
-                "configs": configs,
-                "exported_at": datetime.now(timezone.utc).isoformat(),
-            }
-
         except Exception as e:
-            # A degraded or failed read must raise, not return an empty export
-            # a caller would persist as authoritative — matching get_config /
-            # list_configs / get_config_history. Only a genuinely empty tenant
-            # returns an empty configs list (via the no-error path above).
+            # A degraded or failed read must raise, not return an empty or
+            # partial export a caller would persist as authoritative —
+            # matching get_config / list_configs / get_config_history. Only a
+            # genuinely empty tenant returns an empty configs list.
             logger.error(f"Failed to export configs from Vespa: {e}")
             raise
 
