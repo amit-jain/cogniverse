@@ -90,6 +90,7 @@ class CircuitBreaker:
         self._failures: Deque[float] = deque()
         self._opened_at: float = 0.0
         self._half_open_calls: int = 0
+        self._generation = 0
 
     @property
     def state(self) -> CircuitState:
@@ -112,10 +113,13 @@ class CircuitBreaker:
                 "Circuit '%s' HALF_OPEN — probing recovery", self.config.name
             )
 
-    def _before_call(self) -> None:
-        """Admission check. Raises CircuitOpenError if the call must not proceed."""
+    def _before_call(self) -> tuple[int, bool] | None:
+        """Admit the call and return what it holds: the state generation it
+        entered in, and whether it took the HALF_OPEN recovery slot. ``None``
+        for a disabled breaker. Raises CircuitOpenError if the call must not
+        proceed."""
         if self.config.failure_threshold <= 0:
-            return
+            return None
         with self._lock:
             self._maybe_half_open()
             if self._state is CircuitState.OPEN:
@@ -124,21 +128,34 @@ class CircuitBreaker:
                 if self._half_open_calls >= self.config.half_open_max_calls:
                     raise CircuitOpenError(self.config.name)
                 self._half_open_calls += 1
+            return self._generation, self._state is CircuitState.HALF_OPEN
 
-    def _on_success(self) -> None:
-        if self.config.failure_threshold <= 0:
+    def _release_slot(self, admission: tuple[int, bool] | None) -> None:
+        if admission is None or not admission[1]:
             return
         with self._lock:
+            if admission[0] == self._generation:
+                self._half_open_calls -= 1
+
+    def _on_success(self, admission: tuple[int, bool] | None) -> None:
+        if admission is None:
+            return
+        with self._lock:
+            if admission[0] != self._generation:
+                return
             if self._state is CircuitState.HALF_OPEN:
                 logger.warning("Circuit '%s' CLOSED — recovered", self.config.name)
+                self._generation += 1
             self._state = CircuitState.CLOSED
             self._failures.clear()
             self._half_open_calls = 0
 
-    def _on_failure(self) -> None:
-        if self.config.failure_threshold <= 0:
+    def _on_failure(self, admission: tuple[int, bool] | None) -> None:
+        if admission is None:
             return
         with self._lock:
+            if admission[0] != self._generation:
+                return
             now = self._now()
             if self._state is CircuitState.HALF_OPEN:
                 # Trial failed — back to OPEN.
@@ -154,6 +171,7 @@ class CircuitBreaker:
     def _trip(self, now: float) -> None:
         """Move to OPEN. Caller holds lock."""
         was = self._state
+        self._generation += 1
         self._state = CircuitState.OPEN
         self._opened_at = now
         self._failures.clear()
@@ -170,27 +188,33 @@ class CircuitBreaker:
 
     def call(self, fn: Callable[..., T], *args, **kwargs) -> T:
         """Run ``fn`` through the breaker (sync)."""
-        self._before_call()
+        admission = self._before_call()
         try:
             result = fn(*args, **kwargs)
         except BaseException as exc:
             if self._counts(exc):
-                self._on_failure()
+                self._on_failure(admission)
             raise
-        self._on_success()
-        return result
+        else:
+            self._on_success(admission)
+            return result
+        finally:
+            self._release_slot(admission)
 
     async def acall(self, fn: Callable[..., Awaitable[T]], *args, **kwargs) -> T:
         """Run an awaitable ``fn`` through the breaker (async)."""
-        self._before_call()
+        admission = self._before_call()
         try:
             result = await fn(*args, **kwargs)
         except BaseException as exc:
             if self._counts(exc):
-                self._on_failure()
+                self._on_failure(admission)
             raise
-        self._on_success()
-        return result
+        else:
+            self._on_success(admission)
+            return result
+        finally:
+            self._release_slot(admission)
 
 
 def circuit_breaker(config: BreakerConfig):
