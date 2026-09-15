@@ -749,9 +749,11 @@ class TestGroundingSearchIsBounded:
         _reset_query_encoder_cache()
 
         assert list(failure.value.profiles) == FANOUT_PROFILES
+        assert failure.value.tenant_id == TENANT_FANOUT
         assert failure.value.reason == (
             f"search exceeded its {SHIPPED_GROUNDING_BUDGET_S:.1f}s budget"
         )
+        assert type(failure.value.__cause__) is asyncio.TimeoutError
         assert SHIPPED_GROUNDING_BUDGET_S <= elapsed < SHIPPED_GROUNDING_BUDGET_S + 5, (
             f"budget {SHIPPED_GROUNDING_BUDGET_S}s, returned in {elapsed:.2f}s"
         )
