@@ -76,6 +76,41 @@
         ]
       },
       {
+        "name": "chunk_index",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "chunk_count",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "chunk_start",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "chunk_end",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
         "name": "acoustic_embedding",
         "type": "tensor<float>(v[512])",
         "indexing": [

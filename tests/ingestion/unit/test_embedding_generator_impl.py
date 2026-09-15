@@ -1709,6 +1709,9 @@ class TestEmbeddingGeneratorImpl:
 
         mock_colbert = Mock()
         mock_colbert.encode.return_value = [np.random.rand(10, 128)]
+        mock_colbert.text_windows.side_effect = lambda texts: [
+            [(0, len(text))] for text in texts
+        ]
         generator.colbert_model = mock_colbert
         mock_backend_client.ingest_documents.return_value = {"success_count": 1}
 
@@ -1837,6 +1840,9 @@ class _StubColbert:
 
     def encode(self, texts, is_query=False):
         return [np.random.rand(6, 128).astype(np.float32) for _ in texts]
+
+    def text_windows(self, texts):
+        return [[(0, len(text))] for text in texts]
 
 
 class _CapturingBackend:

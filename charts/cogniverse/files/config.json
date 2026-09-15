@@ -865,6 +865,7 @@
         "type": "audio",
         "description": "Audio ingestion with CLAP acoustic embeddings (512-dim) and LateOn semantic embeddings (128-dim multi-vector) from transcripts.",
         "schema_name": "audio_content",
+        "result_granularity": "source",
         "embedding_model": "laion/clap-htsat-unfused",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -908,6 +909,7 @@
         "type": "document",
         "description": "Document text extraction with LateOn multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
         "schema_name": "document_text",
+        "result_granularity": "source",
         "embedding_model": "lightonai/LateOn",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1170,6 +1172,7 @@
         "type": "code",
         "description": "Source code semantic search with LateOn-Code-edge multi-vector embeddings (48-dim). Tree-sitter AST chunking by function/class/method.",
         "schema_name": "code_lateon_mv",
+        "result_granularity": "source",
         "embedding_model": "lightonai/LateOn-Code-edge",
         "pipeline_config": {
           "extract_keyframes": false,
