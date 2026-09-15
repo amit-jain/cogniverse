@@ -3723,9 +3723,10 @@ libs/agents/cogniverse_agents/
 │   ├── ab_harness.py             # RLMABRunner: with-RLM vs without-RLM comparison
 │   ├── deno_check.py             # Boot probe: fail-fast if Deno missing
 │   ├── instrumented_rlm.py       # InstrumentedRLM with EventQueue + fallback marker
-│   ├── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
+│   ├── rlm_inference.py          # RLMInference wrapper, RLMResult
 │   └── tolerant_interpreter.py   # TolerantPythonInterpreter/TolerantRLM: skip
-│                                 # stale id-null messages on the Deno channel
+│                                 # stale id-null messages on the Deno channel;
+│                                 # RLMTimeoutError and the iteration deadline
 ├── mixins/
 │   ├── __init__.py
 │   └── rlm_aware_mixin.py        # RLMAwareMixin for agents
@@ -4476,8 +4477,14 @@ class SearchOutput(AgentOutput):
 
 ### Timeout and Error Handling
 
+`timeout_seconds` is enforced inside the REPL loop: `TolerantRLM` checks the
+deadline at each iteration boundary and raises `RLMTimeoutError` there, so the
+computation stops rather than continuing unobserved. The overrun is therefore
+bounded by the model call in flight when the deadline passes. `process` is
+synchronous; async callers run it through `asyncio.to_thread`.
+
 ```text
-from cogniverse_agents.inference.rlm_inference import RLMTimeoutError
+from cogniverse_agents.inference import RLMTimeoutError
 
 try:
     result = rlm.process(query=query, context=large_context)

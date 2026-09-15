@@ -9,6 +9,7 @@ Advertised client tools select workspace turns that suspend for tool results.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -397,7 +398,8 @@ class CodingAgent(
             )
             logger.info(f"RLM enabled for coding task: {input.task[:50]}...")
             try:
-                rlm_result = self.process_with_rlm(
+                rlm_result = await asyncio.to_thread(
+                    self.process_with_rlm,
                     query=input.task,
                     context=code_context,
                     rlm_options=input.rlm,

@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
@@ -115,13 +117,50 @@ class TolerantPythonInterpreter(PythonInterpreter):
             return response
 
 
+class RLMTimeoutError(TimeoutError):
+    """Raised when RLM processing exceeds the configured timeout."""
+
+
 class TolerantRLM(dspy.RLM):
     """dspy.RLM whose default REPL is :class:`TolerantPythonInterpreter`.
 
     Mirrors the parent's per-forward interpreter lifecycle (fresh instance,
     shutdown on exit) so thread ownership stays bound to the executing
     thread; an explicitly injected interpreter is honored unchanged.
+
+    ``deadline`` bounds a call: the REPL loop stops at the first iteration
+    boundary at or after the deadline and raises :class:`RLMTimeoutError`.
+    dspy.RLM exposes no cancellation hook, so the boundary is the only
+    place the work can be stopped rather than merely abandoned. The
+    deadline is thread-local, so one caller's expiry never truncates
+    another's concurrent call on the same instance.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline_state = threading.local()
+
+    @contextmanager
+    def deadline(self, timeout_seconds: float | None) -> Iterator[None]:
+        """Bound every iteration of calls made from this thread."""
+        previous = getattr(self._deadline_state, "expires_at", None)
+        self._deadline_state.expires_at = (
+            None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        )
+        self._deadline_state.timeout_seconds = timeout_seconds
+        try:
+            yield
+        finally:
+            self._deadline_state.expires_at = previous
+
+    def _execute_iteration(self, *args, **kwargs):
+        expires_at = getattr(self._deadline_state, "expires_at", None)
+        if expires_at is not None and time.monotonic() >= expires_at:
+            raise RLMTimeoutError(
+                "RLM processing exceeded timeout of "
+                f"{self._deadline_state.timeout_seconds}s"
+            )
+        return super()._execute_iteration(*args, **kwargs)
 
     @contextmanager
     def _interpreter_context(

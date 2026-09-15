@@ -18,7 +18,6 @@ References:
     - DSPy: https://github.com/stanfordnlp/dspy
 """
 
-import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass, field
@@ -32,17 +31,14 @@ if TYPE_CHECKING:
 
 from cogniverse_agents.inference.deno_check import assert_deno_available
 from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
-from cogniverse_agents.inference.tolerant_interpreter import TolerantRLM
+from cogniverse_agents.inference.tolerant_interpreter import (
+    RLMTimeoutError,
+    TolerantRLM,
+)
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
-
-
-class RLMTimeoutError(TimeoutError):
-    """Raised when RLM processing exceeds the configured timeout."""
-
-    pass
 
 
 _TRAJECTORY_FIELD_TRUNCATE = 500
@@ -369,25 +365,12 @@ class RLMInference:
             # RLM (and therefore a fresh interpreter), not a result.
             for attempt in (1, 2):
                 try:
-                    # Execute RLM with timeout protection
-                    if self.timeout_seconds:
-                        with concurrent.futures.ThreadPoolExecutor(
-                            max_workers=1
-                        ) as executor:
-                            future = executor.submit(
-                                self._execute_rlm, rlm, full_query, context
-                            )
-                            try:
-                                result, tokens_used = future.result(
-                                    timeout=self.timeout_seconds
-                                )
-                            except concurrent.futures.TimeoutError:
-                                raise RLMTimeoutError(
-                                    f"RLM processing exceeded timeout of "
-                                    f"{self.timeout_seconds}s"
-                                )
-                    else:
-                        # No timeout - execute directly
+                    # The deadline is enforced inside the REPL loop, at the
+                    # iteration boundary. Running the call in a worker and
+                    # abandoning it on expiry left the computation running:
+                    # the timeout stopped nothing and the pool's shutdown
+                    # waited for it anyway.
+                    with rlm.deadline(self.timeout_seconds):
                         result, tokens_used = self._execute_rlm(
                             rlm, full_query, context
                         )

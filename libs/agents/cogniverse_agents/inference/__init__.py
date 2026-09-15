@@ -23,8 +23,8 @@ from cogniverse_agents.inference.instrumented_rlm import (
 from cogniverse_agents.inference.rlm_inference import (
     RLMInference,
     RLMResult,
-    RLMTimeoutError,
 )
+from cogniverse_agents.inference.tolerant_interpreter import RLMTimeoutError
 
 __all__ = [
     "RLMInference",
