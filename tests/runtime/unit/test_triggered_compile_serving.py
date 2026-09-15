@@ -63,11 +63,20 @@ class _GateRecordingManager:
         return SimpleNamespace(promoted=self.promote, extra_metrics=extras)
 
 
-def _compiled(instructions="Optimized: rank by intent."):
-    predictor = SimpleNamespace(
-        signature=SimpleNamespace(instructions=instructions), demos=[]
-    )
-    return SimpleNamespace(named_predictors=lambda: [("predict", predictor)])
+def _compiled(instructions="Optimized: rank by intent.", agent_name="search"):
+    """A served module whose predictor carries the given instructions."""
+    from cogniverse_runtime.optimization_cli import _served_module
+
+    module = _served_module(agent_name)
+    for _, predictor in module.named_predictors():
+        predictor.signature = predictor.signature.with_instructions(instructions)
+    return module
+
+
+def _expected_state(module):
+    import json
+
+    return json.dumps(json.loads(json.dumps(module.dump_state())), sort_keys=True)
 
 
 def test_serve_target_maps_compile_names_to_dispatch_agents():
@@ -93,22 +102,16 @@ class TestEvalPrimitives:
         assert _split_train_holdout([1]) == ([1], [])
         assert _split_train_holdout([]) == ([], [])
 
-    def test_search_validity_exact(self):
-        from cogniverse_runtime.optimization_cli import _search_validity
+    def test_probe_score_is_token_f1_against_the_served_output_field(self):
+        from cogniverse_runtime.optimization_cli import _probe_score
 
-        good = SimpleNamespace(
-            primary_intent="temporal_search",
-            complexity_level="Simple",
-            needs_video_search="true",
+        pred = SimpleNamespace(enhanced_query="red kite footage")
+        assert _probe_score(pred, "red kite footage", "search") == 1.0
+        assert _probe_score(pred, "kite footage clips", "search") == pytest.approx(
+            2 / 3
         )
-        assert _search_validity(good) == 1.0
-        partial = SimpleNamespace(
-            primary_intent="find videos about cats",
-            complexity_level="moderate",
-            needs_video_search="yes",
-        )
-        assert _search_validity(partial) == pytest.approx(1 / 3)
-        assert _search_validity(SimpleNamespace()) == 0.0
+        assert _probe_score(SimpleNamespace(enhanced_query=""), "", "search") == 0.0
+        assert _probe_score(pred, "", "search") == 1.0
 
     def test_holdout_scores_exact_for_summary(self):
         import dspy
@@ -116,12 +119,13 @@ class TestEvalPrimitives:
         def _example(label):
             return dspy.Example(
                 content="c",
+                query="q",
                 summary_type="comprehensive",
-                target_audience="general",
+                keyframes=[],
                 summary=label,
                 key_points="[]",
-                confidence=0.9,
-            ).with_inputs("content", "summary_type", "target_audience")
+                confidence_score="0.9",
+            ).with_inputs("content", "query", "summary_type", "keyframes")
 
         class _StubModule:
             def __init__(self, outputs):
@@ -137,8 +141,9 @@ class TestEvalPrimitives:
             (
                 {
                     "content": "{}",
+                    "query": "q",
                     "summary_type": "comprehensive",
-                    "target_audience": "general",
+                    "keyframes": [],
                 },
                 "bad output text",
             )
@@ -152,14 +157,15 @@ class TestEvalPrimitives:
 
         assert b == pytest.approx((1.0 + 0.0 + 0.0) / 3)
         assert c == pytest.approx((1.0 + 1.0 + 2 / 3) / 3)
-        # Both modules saw the same three input sets, holdout first, with the
-        # signature's optional input blank-filled.
+        # Both modules saw the same three input sets, holdout first, each one
+        # exactly the served signature's input fields.
         assert baseline.calls == candidate.calls
-        assert len(baseline.calls) == 3
-        assert all(call["visual_insights"] == "" for call in baseline.calls)
+        assert [sorted(call) for call in baseline.calls] == [
+            ["content", "keyframes", "query", "summary_type"]
+        ] * 3
         assert baseline.calls[2]["content"] == "{}"
 
-    def test_holdout_scores_search_uses_validity(self):
+    def test_holdout_scores_search_uses_the_served_enhanced_query(self):
         class _StubModule:
             def __init__(self, preds):
                 self.preds = list(preds)
@@ -169,36 +175,36 @@ class TestEvalPrimitives:
                 self.calls.append(kwargs)
                 return self.preds.pop(0)
 
-        valid = SimpleNamespace(
-            primary_intent="search",
-            complexity_level="simple",
-            needs_video_search="true",
+        negatives = [
+            (
+                {"query": "previously failing query", "modality": "video", "top_k": 10},
+                "stale rewritten query",
+            )
+        ]
+        baseline = _StubModule(
+            [SimpleNamespace(enhanced_query="stale rewritten query")]
         )
-        invalid = SimpleNamespace(
-            primary_intent="",
-            complexity_level="",
-            needs_video_search="",
-        )
-        negatives = [({"query": "previously failing query"}, "")]
-        baseline = _StubModule([invalid])
-        candidate = _StubModule([valid])
+        candidate = _StubModule([SimpleNamespace(enhanced_query="red kite footage")])
 
         b, c = _holdout_scores(baseline, candidate, [], negatives, "search")
 
         assert b == 0.0
         assert c == 1.0
-        assert baseline.calls == [{"query": "previously failing query", "context": ""}]
+        assert baseline.calls == [
+            {"query": "previously failing query", "modality": "video", "top_k": 10}
+        ]
 
 
 class TestGatedServing:
     @pytest.mark.asyncio
     async def test_winning_scores_serve_through_the_gate(self):
         am = _GateRecordingManager(promote=True)
+        compiled = _compiled()
 
         result = await _serve_compiled_prompts(
             am,
             "search",
-            _compiled(),
+            compiled,
             baseline_score=0.40,
             candidate_score=0.60,
             min_improvement=0.05,
@@ -208,7 +214,7 @@ class TestGatedServing:
         call = am.gate_calls[0]
         assert call["agent_type"] == "search_agent"
         assert call["candidate_prompts"] == {
-            "search_optimizer": "Optimized: rank by intent."
+            "__dspy_module__": _expected_state(compiled)
         }
         assert call["baseline_score"] == 0.40
         assert call["candidate_score"] == 0.60
@@ -265,21 +271,25 @@ class TestGatedServing:
     async def test_summary_maps_to_summarizer_predictor(self):
         am = _GateRecordingManager(promote=True)
 
+        compiled = _compiled("Be concise.", agent_name="summary")
         await _serve_compiled_prompts(
             am,
             "summary",
-            _compiled("Be concise."),
+            compiled,
             baseline_score=0.3,
             candidate_score=0.9,
         )
 
         assert am.gate_calls[0]["agent_type"] == "summarizer_agent"
-        assert am.gate_calls[0]["candidate_prompts"] == {"summarizer": "Be concise."}
+        assert am.gate_calls[0]["candidate_prompts"] == {
+            "__dspy_module__": _expected_state(compiled)
+        }
+        assert '"Be concise."' in _expected_state(compiled)
 
     @pytest.mark.asyncio
-    async def test_no_instructions_serves_nothing(self):
+    async def test_no_module_state_serves_nothing(self):
         am = _GateRecordingManager()
-        compiled = SimpleNamespace(named_predictors=lambda: [])
+        compiled = SimpleNamespace(dump_state=lambda: {})
 
         result = await _serve_compiled_prompts(
             am, "report", compiled, baseline_score=0.1, candidate_score=0.9
@@ -346,3 +356,117 @@ class TestMinImprovementKnob:
         cm = ConfigManager(store=store)
 
         assert _min_improvement_from_config("acme:acme", config_manager=cm) == 0.05
+
+
+@pytest.mark.parametrize("agent_name", ["search", "summary", "report"])
+def test_triggered_compile_uses_the_served_signature(agent_name):
+    from cogniverse_agents.detailed_report_agent import ReportGenerationSignature
+    from cogniverse_agents.search_agent import SearchOptimizationSignature
+    from cogniverse_agents.summarizer_agent import SummaryGenerationSignature
+    from cogniverse_runtime.optimization_cli import (
+        _SERVE_TARGET,
+        _served_module,
+        _signature_for_agent,
+    )
+
+    expected = {
+        "search": SearchOptimizationSignature,
+        "summary": SummaryGenerationSignature,
+        "report": ReportGenerationSignature,
+    }[agent_name]
+    assert _signature_for_agent(agent_name) is expected
+    module = _served_module(agent_name)
+    _, predictor_attr = _SERVE_TARGET[agent_name]
+    predictor = getattr(module, predictor_attr)
+    inner = getattr(predictor, "predict", predictor)
+    assert set(expected.input_fields) <= set(inner.signature.input_fields)
+    assert set(expected.output_fields) <= set(inner.signature.output_fields)
+
+
+@pytest.mark.asyncio
+async def test_triggered_publishes_the_complete_compiled_module_state():
+    import json
+
+    import dspy
+    from dspy.teleprompt import BootstrapFewShot
+
+    from cogniverse_agents.summarizer_agent import SummarizationModule
+
+    example = dspy.Example(
+        content="Saturn has rings.",
+        query="Describe Saturn",
+        summary_type="brief",
+        keyframes=[],
+        summary="Saturn has rings.",
+        key_points="rings",
+        confidence_score="1.0",
+    ).with_inputs("content", "query", "summary_type", "keyframes")
+    compiled = BootstrapFewShot(max_bootstrapped_demos=0, max_labeled_demos=1).compile(
+        SummarizationModule(), trainset=[example]
+    )
+    expected = json.loads(json.dumps(compiled.dump_state()))
+    assert expected["summarizer.predict"]["demos"] == [dict(example)]
+    manager = _GateRecordingManager()
+    result = await _serve_compiled_prompts(
+        manager,
+        "summary",
+        compiled,
+        baseline_score=0.0,
+        candidate_score=1.0,
+    )
+    assert result["promoted"] is True
+    assert manager.gate_calls[0]["candidate_prompts"] == {
+        "__dspy_module__": json.dumps(expected, sort_keys=True)
+    }
+
+
+@pytest.mark.asyncio
+async def test_compiled_module_overlay_isolated_across_concurrent_requests():
+    import asyncio
+    import json
+
+    from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+    from cogniverse_agents.summarizer_agent import SummarizationModule
+    from cogniverse_core.agents.base import _dispatched_prompt_overlay
+
+    module = SummarizationModule()
+    stock = json.loads(json.dumps(module.dump_state()))
+    ready = asyncio.Event()
+    arrivals = 0
+
+    async def request(label):
+        nonlocal arrivals
+        state = json.loads(json.dumps(stock))
+        state["summarizer.predict"]["signature"]["instructions"] = f"Answer {label}."
+        state["summarizer.predict"]["demos"] = [{"content": label, "summary": label}]
+        agent = MemoryAwareMixin()
+        agent.set_dispatched_artefact(
+            {"prompts": {"__dspy_module__": json.dumps(state)}}
+        )
+        arrivals += 1
+        if arrivals == 2:
+            ready.set()
+        await ready.wait()
+        with _dispatched_prompt_overlay(agent, module) as consumed:
+            assert consumed.dump_state() == state
+        return state["summarizer.predict"]["demos"]
+
+    assert await asyncio.gather(request("Saturn"), request("Jupiter")) == [
+        [{"content": "Saturn", "summary": "Saturn"}],
+        [{"content": "Jupiter", "summary": "Jupiter"}],
+    ]
+    assert module.dump_state() == stock
+
+
+def test_corrupt_compiled_module_overlay_raises():
+    import json
+
+    from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+    from cogniverse_agents.summarizer_agent import SummarizationModule
+    from cogniverse_core.agents.base import _dispatched_prompt_overlay
+
+    agent = MemoryAwareMixin()
+    agent.set_dispatched_artefact({"prompts": {"__dspy_module__": "{"}})
+    with pytest.raises(json.JSONDecodeError):
+        with _dispatched_prompt_overlay(agent, SummarizationModule()):
+            pytest.fail("Corrupt compiled state was accepted")

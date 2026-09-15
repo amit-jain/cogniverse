@@ -41,14 +41,27 @@ class EvaluationOutput:
 
     @classmethod
     def from_json(cls, json_str: str) -> "EvaluationOutput":
-        """Deserialize from JSON string."""
+        """Deserialize a complete, successful solver result or raise."""
         try:
             data = json.loads(json_str)
-            return cls(**data)
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.error(f"Failed to parse evaluation output: {e}")
-            # Return empty output on error
-            return cls(query="", search_configs={})
+            output = cls(**data)
+            if not isinstance(output.query, str) or not output.query.strip():
+                raise ValueError("query must be a nonempty string")
+            if not isinstance(output.search_configs, dict) or not output.search_configs:
+                raise ValueError("search_configs must contain a scored retrieval")
+            for key, config in output.search_configs.items():
+                if not isinstance(config, dict) or config.get("success") is not True:
+                    raise ValueError(f"retrieval {key!r} failed: {config}")
+                results = config.get("results")
+                if not isinstance(results, list) or any(
+                    not isinstance(result, dict) for result in results
+                ):
+                    raise ValueError(
+                        f"retrieval {key!r} results must be a list of objects"
+                    )
+            return output
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid evaluation output: {e}") from e
 
 
 def pack_solver_output(

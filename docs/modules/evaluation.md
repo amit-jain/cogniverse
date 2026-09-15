@@ -2045,6 +2045,13 @@ cogniverse-eval list-traces --tenant-id acme:acme --hours 2 --limit 50
 cogniverse-eval test
 ```
 
+`inspect_ai.eval` returns `EvalLogs` (a `list[EvalLog]`). `evaluate` and `test`
+check every log's terminal `status`: anything other than `success` prints
+`Inspect evaluation <eval_id>: status=<status>` through the failure path, exits
+1, and writes no `--output` file. On success `--output` receives one row per
+scored sample: `eval_id`, `sample_id`, `epoch`, `input`, `target`, `trace_ids`
+and each scorer's `value`/`explanation`.
+
 `evaluate --mode experiment` requires both `--profiles`/`-p` and
 `--strategies`/`-s`; `evaluate --mode batch`/`--mode live` require
 `--tenant-id` (or `project_name`/`tenant_id` in the `--config` file) to
@@ -2873,7 +2880,8 @@ retrieval_solver = create_retrieval_solver(
     config={"top_k": 10}
 )
 
-# Batch solver - loads existing Phoenix traces with ground truth extraction.
+# Batch solver - loads existing Phoenix traces with ground truth extraction and
+# scores each dataset sample against the traces that answered ITS query.
 # ground_truth_strategy must be one of "schema_aware" (default), "dataset",
 # "backend", or "hybrid" — any other value silently falls back to schema_aware
 # (see core/ground_truth.py::get_ground_truth_strategy).
@@ -2881,7 +2889,13 @@ retrieval_solver = create_retrieval_solver(
 # (canonicalized, same derivation the span writers use); the solver raises if
 # neither is configured. Trace dicts are built from the columns the Phoenix
 # span frame actually carries: context.trace_id for identity, and
-# start_time/end_time for the derived duration_ms.
+# start_time/end_time for the derived duration_ms. A span whose output.value
+# does not parse raises rather than reading as a trace that retrieved nothing.
+#
+# Both the batch and live solvers set state.output to the packed solver-output
+# contract the scorers read: one search config per matching trace, keyed by
+# trace id, plus state.metadata["trace_ids"]. No trace for the sample's query,
+# and no spans at all, are both evaluation errors.
 batch_solver = create_batch_solver(
     trace_ids=None,  # None for recent traces
     config={
@@ -2907,9 +2921,11 @@ result data through Inspect AI's string-only solver→scorer interface via a
 `pack_solver_output(query, search_results, phoenix_trace_id=None, metadata=None) -> str`
 / `unpack_solver_output(output_str: str) -> EvaluationOutput` pair.
 `EvaluationOutput` is a `@dataclass(query, search_configs, phoenix_trace_id=None, metadata=None)`
-with `to_json()`/`from_json()`; `from_json` degrades to an empty
-`EvaluationOutput(query="", search_configs={})` on a parse failure rather than
-raising, so scorers always receive a valid (possibly empty) object.
+with `to_json()`/`from_json()`. `from_json` raises `ValueError` on anything that
+is not a complete, successful result — unparseable JSON, an empty query, no
+search configs, a config that did not succeed, or results that are not objects
+— so a broken payload surfaces as an evaluation error instead of a fabricated
+0.0 score. The default scorers propagate that error rather than catching it.
 
 ## Plugin System
 

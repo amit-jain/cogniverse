@@ -35,6 +35,52 @@ def cli(verbose):
         logging.getLogger().setLevel(logging.DEBUG)
 
 
+def _require_successful(results) -> list:
+    """Every Inspect log must have reached terminal success.
+
+    ``inspect_ai.eval`` returns ``EvalLogs`` (a ``list[EvalLog]``); a failed
+    run is an ordinary returned log with a non-success ``status``, not a raised
+    exception, so the status is the only signal an operator gets.
+    """
+    logs = list(results)
+    failures = []
+    for log in logs:
+        if log.status == "success":
+            continue
+        detail = f"Inspect evaluation {log.eval.eval_id}: status={log.status}"
+        if log.error is not None:
+            detail += f" ({log.error.message})"
+        failures.append(detail)
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    return logs
+
+
+def _sample_rows(logs) -> list:
+    """One exported row per scored sample, carrying its own identity."""
+    rows = []
+    for log in logs:
+        for sample in log.samples or []:
+            rows.append(
+                {
+                    "eval_id": log.eval.eval_id,
+                    "sample_id": sample.id,
+                    "epoch": sample.epoch,
+                    "input": sample.input,
+                    "target": sample.target,
+                    "trace_ids": list((sample.metadata or {}).get("trace_ids", [])),
+                    "scores": {
+                        name: {
+                            "value": score.value,
+                            "explanation": score.explanation,
+                        }
+                        for name, score in (sample.scores or {}).items()
+                    },
+                }
+            )
+    return rows
+
+
 @cli.command()
 @click.option(
     "--mode",
@@ -131,25 +177,23 @@ def evaluate(
 
         # Run evaluation
         click.echo("Running evaluation...")
-        results = inspect_eval(task)
+        rows = _sample_rows(_require_successful(inspect_eval(task)))
 
         # Process results
         click.echo("\n" + "=" * 60)
         click.echo("EVALUATION RESULTS")
         click.echo("=" * 60)
 
-        if results and hasattr(results, "samples"):
-            for i, sample in enumerate(results.samples):
-                click.echo(f"\nSample {i + 1}:")
-                click.echo(f"  Query: {sample.input.get('query', 'N/A')[:50]}...")
-
-                if hasattr(sample, "scores"):
-                    for scorer_name, score in sample.scores.items():
-                        if score.value is not None:
-                            status = "✓" if score.value > 0.5 else "✗"
-                            click.echo(f"  {status} {scorer_name}: {score.value:.3f}")
-                        else:
-                            click.echo(f"  - {scorer_name}: N/A")
+        for i, row in enumerate(rows):
+            click.echo(f"\nSample {i + 1}:")
+            click.echo(f"  Query: {str(row['input'])[:50]}")
+            for scorer_name, score in row["scores"].items():
+                value = score["value"]
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    status = "✓" if value > 0.5 else "✗"
+                    click.echo(f"  {status} {scorer_name}: {value:.3f}")
+                else:
+                    click.echo(f"  - {scorer_name}: N/A")
 
         # Save results if output specified
         if output:
@@ -157,19 +201,8 @@ def evaluate(
                 "mode": mode,
                 "dataset": dataset,
                 "timestamp": datetime.now().isoformat(),
-                "results": [],
+                "results": rows,
             }
-
-            if results and hasattr(results, "samples"):
-                for sample in results.samples:
-                    sample_data = {"input": sample.input, "scores": {}}
-                    if hasattr(sample, "scores"):
-                        for scorer_name, score in sample.scores.items():
-                            sample_data["scores"][scorer_name] = {
-                                "value": score.value,
-                                "explanation": score.explanation,
-                            }
-                    output_data["results"].append(sample_data)
 
             with open(output, "w") as f:
                 json.dump(output_data, f, indent=2)
@@ -313,12 +346,8 @@ def test(tenant_id):
             config={"use_custom": True},
         )
 
-        results = inspect_eval(task)
-
-        if results:
-            click.echo("✓ Experiment mode test passed")
-        else:
-            click.echo("✗ Experiment mode test failed")
+        logs = _require_successful(inspect_eval(task))
+        click.echo(f"✓ Experiment mode test passed ({len(logs)} log(s))")
 
         click.echo("\n✓ All tests complete")
 

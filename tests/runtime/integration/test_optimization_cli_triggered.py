@@ -242,6 +242,32 @@ class TestTriggeredOptimization:
         assert isinstance(served["version"], int) and served["version"] >= 1
         assert result["search"]["holdout_examples"] >= 1
 
+        # The published artefact is the WHOLE compiled module, and serving
+        # reconstructs exactly the object that was scored: read it back
+        # through the request path and load it into a stock served module.
+        import json
+
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import COMPILED_MODULE_PROMPT_KEY
+        from cogniverse_runtime.optimization_cli import (
+            _build_phoenix_provider_for_cli,
+        )
+
+        reader = ArtifactManager(
+            _build_phoenix_provider_for_cli("test:unit"), "test:unit"
+        )
+        overlay = await reader.load_for_request(
+            "search_agent", request_seed="triggered-roundtrip"
+        )
+        assert overlay["served_from"] == "active"
+        assert overlay["version"] == served["version"]
+        assert list(overlay["prompts"]) == [COMPILED_MODULE_PROMPT_KEY]
+        published = json.loads(overlay["prompts"][COMPILED_MODULE_PROMPT_KEY])
+        module = SearchOptimizationModule()
+        module.load_state(published)
+        assert json.loads(json.dumps(module.dump_state())) == published
+
         # Strategy distillation should have run.
         assert "strategies_distilled" in result
         assert result["strategies_distilled"] >= 0

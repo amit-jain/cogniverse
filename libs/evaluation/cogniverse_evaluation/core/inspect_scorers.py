@@ -128,7 +128,7 @@ def relevance_scorer():
 
         except Exception as e:
             logger.error(f"Error in relevance scorer: {e}")
-            return Score(value=0.0, explanation=f"Scorer error: {e}")
+            raise
 
     return score
 
@@ -201,7 +201,7 @@ def diversity_scorer():
 
         except Exception as e:
             logger.error(f"Error in diversity scorer: {e}")
-            return Score(value=0.0, explanation=f"Scorer error: {e}")
+            raise
 
     return score
 
@@ -252,7 +252,7 @@ def result_count_scorer():
 
         except Exception as e:
             logger.error(f"Error in result count scorer: {e}")
-            return Score(value=0.0, explanation=f"Scorer error: {e}")
+            raise
 
     return score
 
@@ -333,7 +333,7 @@ def precision_scorer():
             )
         except Exception as e:
             logger.error(f"Error in precision scorer: {e}")
-            return Score(value=0.0, explanation=f"Scorer error: {e}")
+            raise
 
     return score
 
@@ -381,7 +381,7 @@ def recall_scorer():
             )
         except Exception as e:
             logger.error(f"Error in recall scorer: {e}")
-            return Score(value=0.0, explanation=f"Scorer error: {e}")
+            raise
 
     return score
 
