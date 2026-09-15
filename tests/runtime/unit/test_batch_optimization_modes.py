@@ -4243,7 +4243,10 @@ class TestProfileSelectionOptimization:
                     {
                         "profile": profile,
                         "attempts": 3,
-                        "cause": {"type": "ConnectionError", "message": "backend unavailable"},
+                        "cause": {
+                            "type": "ConnectionError",
+                            "message": "backend unavailable",
+                        },
                     }
                     for profile in candidate_profiles
                 ],
