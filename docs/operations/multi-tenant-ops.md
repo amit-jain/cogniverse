@@ -617,8 +617,7 @@ open http://localhost:6006
 
 # Projects visible (TelemetryConfig.tenant_project_template is
 # "cogniverse-{tenant_id}"; a "service" argument to get_project_name
-# appends "-{service}", as profile_metrics.py does for
-# "cogniverse-orchestration" spans):
+# appends "-{service}", which no span producer passes):
 # - cogniverse-acme_corp (tenant project)
 # - cogniverse-globex_inc (tenant project)
 # - cogniverse-default (default tenant project)
@@ -1190,7 +1189,7 @@ def search_acme_videos(query: str, caller_tenant_id: str, config_manager):
 
 Per-modality runtime metrics (request counts, P50/P95/P99 latency, success rate) are available per tenant in the **Profile Routing Metrics** dashboard tab (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
 
-The tab reads `cogniverse.profile_selection` spans from the tenant's Phoenix project and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Tenant isolation is provided natively by the telemetry layer — each tenant has its own Phoenix project (`cogniverse-{tenant_id}-cogniverse-orchestration`), so span queries are scoped automatically.
+The tab reads `cogniverse.profile_selection` spans from the tenant's Phoenix project and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Tenant isolation is provided natively by the telemetry layer — each tenant has its own Phoenix project (`cogniverse-{tenant_id}`, derived through `tenant_project_name`), so span queries are scoped automatically.
 
 To view metrics for a specific tenant:
 1. Open the dashboard: `uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501`
