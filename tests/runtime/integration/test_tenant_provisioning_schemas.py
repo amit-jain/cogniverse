@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -336,9 +337,14 @@ def test_concurrent_telemetry_steps_create_only_their_canonical_projects(
     client = Client(base_url=phoenix_container["http_endpoint"])
     for tenant in tenants:
         canonical = f"{tenant}:{tenant}"
-        frame = client.spans.get_spans_dataframe(
-            project_identifier=TelemetryConfig().get_project_name(canonical)
-        )
+        project = TelemetryConfig().get_project_name(canonical)
+        # Phoenix indexes an accepted export asynchronously; the step already
+        # blocked on the exporter, so this only covers the indexing lag.
+        deadline = time.monotonic() + 60
+        frame = client.spans.get_spans_dataframe(project_identifier=project)
+        while frame.empty and time.monotonic() < deadline:
+            time.sleep(0.5)
+            frame = client.spans.get_spans_dataframe(project_identifier=project)
         assert frame[["name", f"attributes.{TENANT_ID_ATTRIBUTE}"]].to_dict(
             "records"
         ) == [
