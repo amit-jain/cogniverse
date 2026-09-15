@@ -2,7 +2,7 @@
 
 The runtime admin upload path canonicalizes rows here, and the optimizer loads
 the active blob through the same seam. The loader distinguishes a missing
-tenant artifact from a store failure so callers can surface a precise status.
+tenant artifact from a store failure so callers can surface a precise reason.
 """
 
 from __future__ import annotations
@@ -15,14 +15,20 @@ PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY = "profile_selection_ground_truth"
 
 
 class ProfileSelectionGroundTruthError(RuntimeError):
-    """Base error for profile-selection ground-truth loading."""
+    """Base error for profile-selection ground-truth loading.
 
-    status = ""
+    ``to_result`` renders the one terminal failure contract the CLI exit
+    classifier reads: ``status`` is always ``"failed"`` and ``reason`` carries
+    which failure it was.
+    """
+
+    reason = ""
     retryable = False
 
     def to_result(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "status": self.status,
+            "status": "failed",
+            "reason": self.reason,
             "retryable": self.retryable,
             "error": str(self),
         }
@@ -36,14 +42,14 @@ class ProfileSelectionGroundTruthError(RuntimeError):
 
 
 class ProfileSelectionGroundTruthMissingError(ProfileSelectionGroundTruthError):
-    status = "profile_selection_ground_truth_missing"
+    reason = "profile_selection_ground_truth_missing"
     retryable = False
 
 
 class ProfileSelectionGroundTruthStoreUnavailableError(
     ProfileSelectionGroundTruthError
 ):
-    status = "profile_selection_ground_truth_store_unavailable"
+    reason = "profile_selection_ground_truth_store_unavailable"
     retryable = True
 
 

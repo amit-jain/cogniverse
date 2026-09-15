@@ -1387,7 +1387,8 @@ class TestEmptySpanHandling:
                 tenant_id="test:unit", lookback_hours=1
             )
         assert result == {
-            "status": "profile_selection_ground_truth_missing",
+            "status": "failed",
+            "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
         }
@@ -1710,7 +1711,8 @@ class TestSpansWithNoExamples:
                 tenant_id="test:unit", lookback_hours=1
             )
         assert result == {
-            "status": "profile_selection_ground_truth_missing",
+            "status": "failed",
+            "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
         }
@@ -4202,7 +4204,7 @@ class TestProfileSelectionOptimization:
         assert document_only.labels_by_profile == {}
         assert document_only.exclusions_by_reason == {"no_profile_serves_media_type": 1}
 
-    def test_profile_selection_backend_outage_raises_for_query(self):
+    def test_profile_selection_backend_outage_excludes_incomplete_query(self):
         from cogniverse_runtime.optimization_cli import derive_profile_labels
 
         queries = [
@@ -4221,19 +4223,33 @@ class TestProfileSelectionOptimization:
             del query, profile
             raise ConnectionError("backend unavailable")
 
-        with pytest.raises(RuntimeError) as err:
-            derive_profile_labels(
-                queries,
-                candidate_profiles,
-                retrieve,
-                title_fields=_VIDEO_TITLE_FIELDS,
-            )
-
-        assert (
-            str(err.value) == "Profile selection retrieval failed for query 'q-outage'"
+        labels = derive_profile_labels(
+            queries,
+            candidate_profiles,
+            retrieve,
+            title_fields=_VIDEO_TITLE_FIELDS,
         )
-        assert type(err.value.__cause__) is ConnectionError
-        assert str(err.value.__cause__) == "backend unavailable"
+
+        assert labels == {}
+        assert labels.records == ()
+        assert labels.exclusions == (
+            {
+                "query": "q-outage",
+                "reason": "incomplete_comparison",
+                "position": 0,
+                "expected_videos": ["v1"],
+                "candidate_profiles": candidate_profiles,
+                "failed_profiles": [
+                    {
+                        "profile": profile,
+                        "attempts": 3,
+                        "cause": {"type": "ConnectionError", "message": "backend unavailable"},
+                    }
+                    for profile in candidate_profiles
+                ],
+            },
+        )
+        assert labels.exclusions_by_reason == {"incomplete_comparison": 1}
 
     def test_profile_selection_record_contains_only_derivable_fields(self):
         from cogniverse_runtime.optimization_cli import derive_profile_labels
@@ -5907,7 +5923,8 @@ class TestProfileSelectionOptimization:
         )
 
         assert result == {
-            "status": "profile_selection_ground_truth_missing",
+            "status": "failed",
+            "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
         }
@@ -5947,7 +5964,8 @@ class TestProfileSelectionOptimization:
         )
 
         assert result == {
-            "status": "profile_selection_ground_truth_store_unavailable",
+            "status": "failed",
+            "reason": "profile_selection_ground_truth_store_unavailable",
             "retryable": True,
             "error": "profile_selection_ground_truth store unavailable",
             "cause": {
