@@ -439,8 +439,9 @@ def _describe_entity_shape(entities: Any) -> str:
 
 
 # Named states an answer agent's envelope reports under "grounding", so a
-# caller can tell "this tenant serves nothing to search" from "the search
-# dependency is down" from "these profiles were searched and matched nothing".
+# caller can tell "this tenant serves nothing to search" from "these profiles
+# were searched and matched nothing". A failed search dependency is not a
+# state: it raises AnswerGroundingUnavailable and the turn fails.
 GROUNDING_THREADED = "threaded_results"
 GROUNDING_SEARCHED = "searched_servable_profiles"
 GROUNDING_SEARCHED_DEGRADED = "searched_servable_profiles_degraded"
@@ -448,7 +449,27 @@ GROUNDING_NO_PROFILE_FOR_MODALITY = "no_servable_profile_for_modality"
 GROUNDING_TENANT_DEFAULT_PROFILE = "tenant_default_profile"
 GROUNDING_NO_SERVABLE_PROFILE = "no_servable_profile"
 GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE = "no_deployed_schema_for_profile"
-GROUNDING_SEARCH_UNAVAILABLE = "search_unavailable"
+
+
+class AnswerGroundingUnavailable(RuntimeError):
+    """The retrieval an answer agent needs could not be performed.
+
+    Summaries and reports are written from retrieved content; with none, the
+    agent would narrate the query back. The turn fails instead of returning a
+    fabricated answer as a success. Distinct from a tenant that serves nothing
+    to search, which is a definite empty result and answers normally.
+    """
+
+    def __init__(self, tenant_id: str, reason: str, profiles: Tuple[str, ...] = ()):
+        named = ", ".join(profiles) if profiles else "no resolved profile"
+        super().__init__(
+            f"Answer grounding for tenant {tenant_id} over {named} is "
+            f"unavailable: {reason}"
+        )
+        self.tenant_id = tenant_id
+        self.reason = reason
+        self.profiles = profiles
+
 
 # Wall-clock ceiling on an answer agent's grounding search, read from the
 # shipped config so a leg that never answers cannot hold the answer open.
@@ -2165,11 +2186,18 @@ class AgentDispatcher:
             routed_lm_context_for,
         )
 
+        # routed_lm_context_for resolves the tenant's router tier, which is a
+        # TTL-expiring Vespa config read — build the context off the loop, then
+        # enter it on the request task so the binding is this task's.
+        routed_lm = await asyncio.to_thread(
+            routed_lm_context_for, self._config_manager, tenant_id, agent_name
+        )
+
         # EPHEMERAL_SESSION writes need metadata.session_id to pass schema
         # validation; mixin auto-stamps it from this field. Cleared on exit
         # so the next request on the same agent instance doesn't inherit it.
         with self._scoped_session(agent, context.get("session_id")):
-            with routed_lm_context_for(self._config_manager, tenant_id, agent_name):
+            with routed_lm:
                 result = await agent.process(typed_input)
 
         # Convert pydantic model to dict
@@ -2545,7 +2573,12 @@ class AgentDispatcher:
         )
 
         session_id = context.get("session_id") if context else None
-        with routed_lm_context_for(self._config_manager, tenant_id, "search_agent"):
+        # The tier resolution behind this is a TTL-expiring Vespa config read;
+        # build the context off the loop and enter it on the request task.
+        routed_lm = await asyncio.to_thread(
+            routed_lm_context_for, self._config_manager, tenant_id, "search_agent"
+        )
+        with routed_lm:
             with self._session_context(search_agent, tenant_id, session_id):
                 output = await search_agent.process(input_data)
 
@@ -2798,12 +2831,13 @@ class AgentDispatcher:
             plan = await self._grounding_plan(query, tenant_id, enrichment, context)
         except Exception as exc:
             logger.warning(
-                "Grounding profile resolution failed for tenant %s; proceeding "
-                "with an ungrounded answer: %r",
+                "Grounding profile resolution failed for tenant %s: %r",
                 tenant_id,
                 exc,
             )
-            return AnswerGrounding(hits=[], state=GROUNDING_SEARCH_UNAVAILABLE)
+            raise AnswerGroundingUnavailable(
+                tenant_id, f"profile resolution failed: {exc!r}"
+            ) from exc
         modalities, profiles, state = plan.modalities, list(plan.profiles), plan.state
         if not profiles:
             return AnswerGrounding(
@@ -2819,17 +2853,13 @@ class AgentDispatcher:
         except Exception as exc:
             logger.warning(
                 "Answer-agent grounding for tenant %s could not read its search "
-                "budget; proceeding with an ungrounded answer: %r",
+                "budget: %r",
                 tenant_id,
                 exc,
             )
-            return AnswerGrounding(
-                hits=[],
-                state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=modalities,
-                profiles=tuple(profiles),
-                undeployed_profiles=plan.undeployed_profiles,
-            )
+            raise AnswerGroundingUnavailable(
+                tenant_id, f"search budget read failed: {exc!r}", tuple(profiles)
+            ) from exc
         try:
             search = await asyncio.wait_for(
                 self._execute_search_task(
@@ -2842,35 +2872,28 @@ class AgentDispatcher:
                 ),
                 timeout=budget_s,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning(
                 "Answer-agent grounding search for tenant %s exceeded its %.1fs "
-                "budget over profiles %s; proceeding with an ungrounded answer",
+                "budget over profiles %s",
                 tenant_id,
                 budget_s,
                 profiles,
             )
-            return AnswerGrounding(
-                hits=[],
-                state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=modalities,
-                profiles=tuple(profiles),
-                undeployed_profiles=plan.undeployed_profiles,
-            )
+            raise AnswerGroundingUnavailable(
+                tenant_id,
+                f"search exceeded its {budget_s:.1f}s budget",
+                tuple(profiles),
+            ) from exc
         except Exception as exc:
             logger.warning(
-                "Answer-agent grounding search failed for tenant %s; proceeding "
-                "with an ungrounded answer: %r",
+                "Answer-agent grounding search failed for tenant %s: %r",
                 tenant_id,
                 exc,
             )
-            return AnswerGrounding(
-                hits=[],
-                state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=modalities,
-                profiles=tuple(profiles),
-                undeployed_profiles=plan.undeployed_profiles,
-            )
+            raise AnswerGroundingUnavailable(
+                tenant_id, f"search failed: {exc!r}", tuple(profiles)
+            ) from exc
         degraded = tuple(
             (str(entry["profile"]), str(entry["reason"]))
             for entry in search.get("degraded_profiles") or []
@@ -3497,10 +3520,16 @@ class AgentDispatcher:
             routed_lm_context_for,
         )
 
+        # The tier resolution behind this is a TTL-expiring Vespa config read;
+        # build the context off the loop and enter it on the request task.
+        routed_lm = await asyncio.to_thread(
+            routed_lm_context_for,
+            self._config_manager,
+            tenant_id,
+            "detailed_report_agent",
+        )
         with self._scoped_session(agent, (context or {}).get("session_id")):
-            with routed_lm_context_for(
-                self._config_manager, tenant_id, "detailed_report_agent"
-            ):
+            with routed_lm:
                 result = await agent.process(typed_input)
 
         return {

@@ -479,3 +479,77 @@ async def test_cold_build_survives_cancelled_waiter(
         for waiter in waiters:
             waiter.cancel()
         await asyncio.gather(*waiters, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_generic_dispatch_resolves_the_tenant_tier_off_the_loop(
+    dispatcher, monkeypatch
+):
+    """The routed-LM bind must not block the serving loop.
+
+    ``routed_lm_context_for`` resolves the tenant's router tier through a
+    TTL-expiring ConfigStore read — a real Vespa round trip. Called inline on
+    this ``async def`` dispatch it freezes every request, stream and health
+    probe on the replica. It runs in a worker thread; the resulting
+    ``dspy.context`` is entered on the request task so the bind still applies
+    to this dispatch only.
+    """
+    import asyncio
+    import threading
+    import time
+    from unittest.mock import MagicMock
+
+    import dspy
+
+    from cogniverse_foundation.config.semantic_router import SemanticRouterConfig
+
+    block_s = 0.3
+    cfg = MagicMock()
+    cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=True)
+    cfg.get_llm_config.return_value.resolve.return_value = MagicMock(name="endpoint")
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: cfg,
+    )
+
+    sentinel = MagicMock(name="tenant_routed_lm")
+    calls: list = []
+
+    def _create(endpoint, router, tenant_id, tier, call_site):
+        calls.append((threading.get_ident(), call_site, tenant_id))
+        time.sleep(block_s)
+        return sentinel
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.semantic_router.create_routed_lm", _create
+    )
+
+    seen: dict = {}
+
+    async def _capturing_process(self, typed_input):
+        seen["lm"] = dspy.settings.lm
+        return FakeOutput(echo=typed_input.query, tenant_id=typed_input.tenant_id)
+
+    monkeypatch.setattr(FakeAgentA, "process", _capturing_process)
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker():
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    await dispatcher._execute_generic_agent("fakea", "q", {}, "acme:acme")
+    stop.set()
+    await task
+
+    assert [call[1:] for call in calls] == [("fakea", "acme:acme")]
+    assert calls[0][0] != threading.get_ident()
+    assert seen["lm"] is sentinel
+    assert ticks >= 10, (
+        f"only {ticks} ticks during a {block_s}s tier resolution — the generic "
+        "dispatch resolved the tenant tier on the event loop"
+    )

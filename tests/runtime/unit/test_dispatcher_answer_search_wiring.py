@@ -9,7 +9,10 @@ when present, else in a fresh search, and that a threaded set skips the redundan
 search.
 """
 
+import asyncio
 import json
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,13 +37,13 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_SERVABLE_PROFILE,
     GROUNDING_SEARCH_RESERVE_S,
     GROUNDING_SEARCH_TIMEOUT_KEY,
-    GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
     GROUNDING_SEARCHED_DEGRADED,
     GROUNDING_TENANT_DEFAULT_PROFILE,
     GROUNDING_THREADED,
     AgentDispatcher,
     AnswerGrounding,
+    AnswerGroundingUnavailable,
     _flatten_search_hit,
 )
 from tests.utils.memory_store import (
@@ -210,6 +213,16 @@ class _SearchAgentStub(RealSearchAgent):
         )
 
 
+class _AsyncReturn:
+    """Callable returning ``value`` from a coroutine, for seam replacement."""
+
+    def __init__(self, value):
+        self._value = value
+
+    async def __call__(self, *args, **kwargs):
+        return self._value
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 class TestResolveAnswerSearchResults:
@@ -274,26 +287,110 @@ class TestResolveAnswerSearchResults:
         assert out.hits == [_flatten_search_hit(h) for h in hits]
         assert out.state == GROUNDING_SEARCHED
 
-    async def test_search_failure_degrades_to_empty(self, dispatcher):
-        """A report/summary request is not inherently a video-search request —
-        an unreachable search backend must degrade to an ungrounded answer over
-        [], not hard-fail the whole request (e.g. a plain conversational summary
-        when the video-search embedding service is down)."""
+    async def test_search_failure_fails_the_turn(self, dispatcher):
+        """An unreachable search backend fails the answer.
+
+        The agent writes its answer from the retrieved content; with none it
+        narrates the query back. Returning that as a successful answer tells
+        the caller a failed turn succeeded, so the failure propagates instead.
+        """
+
+        async def _boom(*a, **k):
+            raise RuntimeError("embedding service unreachable")
+
+        dispatcher._execute_search_task = _boom
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher._resolve_answer_search_results(
+                "explain deep learning", "acme:acme", None, top_k=10
+            )
+        searchable = tuple(
+            _profile_names_of_type(
+                "video", "image", "audio", "document", "wiki", "code"
+            )
+        )
+        assert failure.value.tenant_id == "acme:acme"
+        assert failure.value.profiles == searchable
+        assert (
+            failure.value.reason
+            == "search failed: RuntimeError('embedding service unreachable')"
+        )
+        assert str(failure.value) == (
+            f"Answer grounding for tenant acme:acme over {', '.join(searchable)} "
+            "is unavailable: search failed: RuntimeError('embedding service "
+            "unreachable')"
+        )
+
+    async def test_search_that_exceeds_its_budget_fails_the_turn(self, dispatcher):
+        """A grounding search that runs past its budget is an unknown result.
+
+        The summarizer would otherwise write from the query alone while the
+        search is still running, and report that as a complete answer.
+        """
+        entered = asyncio.Event()
+
+        async def _hang(*a, **k):
+            entered.set()
+            await asyncio.sleep(3600)
+
+        dispatcher._execute_search_task = _hang
+        dispatcher._grounding_search_budget_s = _AsyncReturn(0.05)
+
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher._resolve_answer_search_results(
+                "explain deep learning", "acme:acme", None, top_k=10
+            )
+
+        assert entered.is_set() is True
+        assert failure.value.reason == "search exceeded its 0.1s budget"
+        assert type(failure.value.__cause__) is asyncio.TimeoutError
+
+    async def test_profile_resolution_failure_fails_the_turn(self, dispatcher):
+        """The profile plan is a config read; when it fails nothing was searched."""
+        searched = []
+
+        async def _search(*a, **k):
+            searched.append(1)
+            return {"results": []}
+
+        async def _plan_down(*a, **k):
+            raise ConnectionError("config store unreachable")
+
+        dispatcher._execute_search_task = _search
+        dispatcher._grounding_plan = _plan_down
+
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher._resolve_answer_search_results(
+                "explain deep learning", "acme:acme", None, top_k=10
+            )
+
+        assert searched == []
+        assert failure.value.profiles == ()
+        assert failure.value.reason == (
+            "profile resolution failed: ConnectionError('config store unreachable')"
+        )
+        assert str(failure.value) == (
+            "Answer grounding for tenant acme:acme over no resolved profile is "
+            "unavailable: profile resolution failed: ConnectionError('config "
+            "store unreachable')"
+        )
+
+    async def test_threaded_results_answer_while_the_search_backend_is_down(
+        self, dispatcher
+    ):
+        """Hits the caller already threaded through never touch the backend."""
 
         async def _boom(*a, **k):
             raise RuntimeError("embedding service unreachable")
 
         dispatcher._execute_search_task = _boom
         out = await dispatcher._resolve_answer_search_results(
-            "explain deep learning", "acme:acme", None, top_k=10
+            "explain deep learning",
+            "acme:acme",
+            {"search_results": [_s3_hit(9)]},
+            top_k=10,
         )
-        assert out.hits == []
-        assert out.state == GROUNDING_SEARCH_UNAVAILABLE
-        assert out.profiles == tuple(
-            _profile_names_of_type(
-                "video", "image", "audio", "document", "wiki", "code"
-            )
-        )
+        assert out.state == GROUNDING_THREADED
+        assert out.hits == [_flatten_search_hit(_s3_hit(9))]
 
 
 @pytest.mark.unit
@@ -1820,9 +1917,15 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "result_count": 0,
         }
 
-    async def test_search_outage_is_distinguishable_from_nothing_to_search(
+    async def test_search_outage_fails_the_summary_instead_of_answering(
         self, monkeypatch
     ):
+        """A search outage is not a tenant that has nothing to search.
+
+        "Nothing to search" is a definite empty result and answers normally;
+        an outage is an unknown, so the summary fails rather than summarizing
+        the query back at the caller.
+        """
         dispatcher = self._dispatcher(_document_profiles())
 
         async def _boom(*args, **kwargs):
@@ -1834,20 +1937,16 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
         )
 
-        result = await dispatcher._execute_summarization_task(
-            "summarize the documents about robotics", "acme:acme"
-        )
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher._execute_summarization_task(
+                "summarize the documents about robotics", "acme:acme"
+            )
 
-        assert result["grounding"] == {
-            "state": GROUNDING_SEARCH_UNAVAILABLE,
-            "modalities": ["document"],
-            "profiles": _profile_names_of_type("document"),
-            "degraded_profiles": [],
-            "degraded_query_rewrite": None,
-            "undeployed_profiles": [],
-            "result_count": 0,
-        }
-        assert _CaptureAgent.captured["request"].search_results == []
+        assert failure.value.profiles == tuple(_profile_names_of_type("document"))
+        assert (
+            failure.value.reason == "search failed: RuntimeError('vespa unreachable')"
+        )
+        assert _CaptureAgent.captured == {}
 
 
 class TestGroundingSearchBudgetFaultContract:
@@ -1867,7 +1966,7 @@ class TestGroundingSearchBudgetFaultContract:
             schema_loader=MagicMock(),
         )
 
-    async def test_config_outage_on_the_budget_read_degrades_the_grounding(
+    async def test_config_outage_on_the_budget_read_fails_the_grounding(
         self, monkeypatch
     ):
         dispatcher = self._dispatcher()
@@ -1884,17 +1983,18 @@ class TestGroundingSearchBudgetFaultContract:
 
         monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", _down)
 
-        out = await dispatcher._resolve_answer_search_results(
-            "summarize the documents about robotics", "acme:acme", None, top_k=10
-        )
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher._resolve_answer_search_results(
+                "summarize the documents about robotics", "acme:acme", None, top_k=10
+            )
 
         assert searched == []
-        assert out.state == GROUNDING_SEARCH_UNAVAILABLE
-        assert out.hits == []
-        assert out.modalities == ("document",)
-        assert out.profiles == tuple(_profile_names_of_type("document"))
-        assert out.degraded_profiles == ()
-        assert out.nothing_to_search is False
+        assert failure.value.tenant_id == "acme:acme"
+        assert failure.value.profiles == tuple(_profile_names_of_type("document"))
+        assert failure.value.reason == (
+            "search budget read failed: ConnectionError('config store unreachable')"
+        )
+        assert type(failure.value.__cause__) is ConnectionError
 
     async def test_an_undeclared_budget_raises_instead_of_searching_unbounded(
         self, monkeypatch
@@ -1989,7 +2089,6 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
         assert out.hits == [_flatten_search_hit(_s3_hit(2))]
         assert out.degraded_query_rewrite == QUERY_REWRITE_TIMED_OUT
         assert out.state == GROUNDING_SEARCHED_DEGRADED
-        assert out.state != GROUNDING_SEARCH_UNAVAILABLE
         assert out.degraded_profiles == ()
         assert out.envelope() == {
             "state": GROUNDING_SEARCHED_DEGRADED,
@@ -2076,4 +2175,195 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
             "degraded_query_rewrite": QUERY_REWRITE_FAILED,
             "undeployed_profiles": undeployed,
             "result_count": 1,
+        }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestTenantTierResolutionRunsOffTheEventLoop:
+    """Binding the tenant-routed LM must not block the serving loop.
+
+    ``routed_lm_context_for`` resolves the tenant's router tier through a
+    TTL-expiring ConfigStore read — a real Vespa round trip with retries.
+    Called inline on an ``async def`` dispatch path it freezes every request,
+    stream and health probe on the replica for the length of that read. The
+    resolution runs in a worker thread; the resulting ``dspy.context`` is
+    entered on the request task so the binding is still this task's.
+    """
+
+    BLOCK_S = 0.3
+
+    @staticmethod
+    def _router_config(monkeypatch):
+        from cogniverse_foundation.config.semantic_router import SemanticRouterConfig
+
+        cfg = MagicMock()
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=True)
+        cfg.get = _fake_config_get(_SHIPPED_ACTIVE_PROFILE)
+        cfg.get_llm_config.return_value.resolve.return_value = MagicMock(
+            name="endpoint"
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: cfg,
+        )
+        return cfg
+
+    @staticmethod
+    def _blocking_routed_lm(monkeypatch, block_s, sink):
+        """Replace the LM build with a blocking one that records its thread."""
+        sentinel = MagicMock(name="tenant_routed_lm")
+
+        def _create(endpoint, router, tenant_id, tier, call_site):
+            sink.append((threading.get_ident(), call_site, tenant_id))
+            time.sleep(block_s)
+            return sentinel
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.create_routed_lm", _create
+        )
+        return sentinel
+
+    @staticmethod
+    async def _ticks_during(awaitable_factory):
+        ticks = 0
+        stop = asyncio.Event()
+
+        async def ticker():
+            nonlocal ticks
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        result = await awaitable_factory()
+        stop.set()
+        await task
+        return ticks, result
+
+    async def test_search_dispatch_resolves_the_tier_off_the_loop(
+        self, dispatcher, monkeypatch
+    ):
+        import dspy
+
+        self._router_config(monkeypatch)
+        calls: list = []
+        sentinel = self._blocking_routed_lm(monkeypatch, self.BLOCK_S, calls)
+        bound: dict = {}
+
+        class _LMRecordingStub(_SearchAgentStub):
+            async def _process_impl(self, inp):
+                bound["lm"] = dspy.settings.lm
+                return await super()._process_impl(inp)
+
+        dispatcher._get_search_agent = lambda profile: _LMRecordingStub(profile)
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+
+        ticks, _ = await self._ticks_during(
+            lambda: dispatcher._execute_search_task("robots", "acme:acme", top_k=5)
+        )
+
+        assert [call[1] for call in calls] == ["search_agent"]
+        assert calls[0][2] == "acme:acme"
+        assert calls[0][0] != threading.get_ident()
+        assert bound["lm"] is sentinel
+        assert ticks >= 10, (
+            f"only {ticks} ticks during a {self.BLOCK_S}s tier resolution — "
+            "the search dispatch resolved the tenant tier on the event loop"
+        )
+
+    async def test_detailed_report_dispatch_resolves_the_tier_off_the_loop(
+        self, dispatcher, monkeypatch
+    ):
+        import dspy
+
+        self._router_config(monkeypatch)
+        calls: list = []
+        sentinel = self._blocking_routed_lm(monkeypatch, self.BLOCK_S, calls)
+        bound: dict = {}
+
+        class _LMRecordingAgent(_CaptureAgent):
+            async def process(self, typed_input):
+                bound["lm"] = dspy.settings.lm
+                return await _CaptureAgent.process(self, typed_input)
+
+        monkeypatch.setattr(
+            "cogniverse_agents.detailed_report_agent.DetailedReportAgent",
+            _LMRecordingAgent,
+        )
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            return {"results": [_s3_hit(1)]}
+
+        dispatcher._execute_search_task = _search
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+
+        ticks, result = await self._ticks_during(
+            lambda: dispatcher._execute_detailed_report_task(
+                "report on robotics", "acme:acme"
+            )
+        )
+
+        assert [call[1] for call in calls] == ["detailed_report_agent"]
+        assert calls[0][0] != threading.get_ident()
+        assert bound["lm"] is sentinel
+        assert result["agent"] == "detailed_report_agent"
+        assert ticks >= 10, (
+            f"only {ticks} ticks during a {self.BLOCK_S}s tier resolution — "
+            "the report dispatch resolved the tenant tier on the event loop"
+        )
+
+    async def test_concurrent_tenants_each_bind_their_own_tier_lm(
+        self, dispatcher, monkeypatch
+    ):
+        """Two dispatches in flight together must not see each other's LM.
+
+        The context is built in a worker thread and entered on the request
+        task, so the binding is per-task; a process-global bind would hand
+        whichever tenant entered last to both.
+        """
+        import dspy
+
+        self._router_config(monkeypatch)
+        per_tenant = {
+            "acme:acme": MagicMock(name="acme_lm"),
+            "peer:peer": MagicMock(name="peer_lm"),
+        }
+        arrived = threading.Barrier(2, timeout=10)
+
+        def _create(endpoint, router, tenant_id, tier, call_site):
+            arrived.wait()
+            return per_tenant[tenant_id]
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.create_routed_lm", _create
+        )
+        bound: dict = {}
+
+        class _LMRecordingStub(_SearchAgentStub):
+            async def _process_impl(self, inp):
+                bound[inp.tenant_id] = dspy.settings.lm
+                await asyncio.sleep(0.05)
+                bound[inp.tenant_id] = dspy.settings.lm
+                return await super()._process_impl(inp)
+
+        dispatcher._get_search_agent = lambda profile: _LMRecordingStub(profile)
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        register_deployed_schema(
+            dispatcher._config_manager, "peer:peer", _SHIPPED_ACTIVE_PROFILE
+        )
+
+        await asyncio.gather(
+            dispatcher._execute_search_task("robots", "acme:acme", top_k=5),
+            dispatcher._execute_search_task("robots", "peer:peer", top_k=5),
+        )
+
+        assert bound == {
+            "acme:acme": per_tenant["acme:acme"],
+            "peer:peer": per_tenant["peer:peer"],
         }
