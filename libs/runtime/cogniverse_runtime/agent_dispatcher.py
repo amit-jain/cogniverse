@@ -1969,18 +1969,15 @@ class AgentDispatcher:
         the extraction agent are projected to wiki titles first.
         """
         try:
+            from cogniverse_agents.wiki.wiki_manager import WikiManager
             from cogniverse_agents.wiki.wiki_schema import entity_titles
             from cogniverse_runtime.routers import wiki as wiki_router
 
             if wiki_router._wiki_manager_factory is None:
                 return
 
-            wm = wiki_router._wiki_manager_factory(tenant_id)
-            if wm is None:
-                return
-
             titles = entity_titles(entities)
-            if not wm._should_auto_file(titles, agent_name, turn_count):
+            if not WikiManager._should_auto_file(titles, agent_name, turn_count):
                 return
 
             response_text = response.get("answer")
@@ -1991,6 +1988,9 @@ class AgentDispatcher:
                     agent_name,
                     tenant_id,
                 )
+                return
+            wm = await asyncio.to_thread(wiki_router._wiki_manager_factory, tenant_id)
+            if wm is None:
                 return
             await asyncio.get_running_loop().run_in_executor(
                 None,

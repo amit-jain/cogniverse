@@ -607,7 +607,15 @@ async def delete_profile(
         HTTPException 409: Cannot delete schema (other profiles using it)
         HTTPException 500: Deletion failed
     """
-    try:
+
+    def _delete() -> bool:
+        """The profile delete's blocking work, run off the serving loop.
+
+        Every step is synchronous Vespa traffic: the config reads, and — when
+        the schema goes too — a full application redeploy that retries on 409
+        with sleeps and a 300s read timeout. Inline, one profile delete freezes
+        every request, stream and probe on this replica for its duration.
+        """
         profile = config_manager.get_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
@@ -658,6 +666,10 @@ async def delete_profile(
             raise HTTPException(
                 status_code=500, detail=f"Failed to delete profile '{profile_name}'"
             )
+        return schema_deleted
+
+    try:
+        schema_deleted = await asyncio.to_thread(_delete)
 
         return ProfileDeleteResponse(
             profile_name=profile_name,
