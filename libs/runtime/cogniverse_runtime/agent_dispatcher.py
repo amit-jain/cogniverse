@@ -314,12 +314,27 @@ def _new_orchestrator_agent_cache(
     )
 
 
-def _retrieve_future_exc(fut: "asyncio.Future[Any]") -> None:
-    """Consume a resolved build future's exception so a failed cold build with
-    no concurrent waiter doesn't log ``Future exception was never retrieved``.
-    Real waiters still receive it via ``await``."""
-    if not fut.cancelled():
-        fut.exception()
+async def _shared_agent_build(inflight, key, build):
+    """Own a cold build independently of the requests waiting for it."""
+    task = inflight.get(key)
+    if task is None:
+
+        async def run():
+            try:
+                return await build()
+            finally:
+                inflight.pop(key, None)
+
+        task = asyncio.create_task(run())
+        task.add_done_callback(_retrieve_build_exception)
+        inflight[key] = task
+    return await asyncio.shield(task)
+
+
+def _retrieve_build_exception(task: "asyncio.Task[Any]") -> None:
+    """Retrieve failures even when every request has disconnected."""
+    if not task.cancelled():
+        task.exception()
 
 
 def typed_input_from_context(input_cls, *, query, tenant_id, context, **overrides):
@@ -550,10 +565,10 @@ class AgentDispatcher:
         # In-flight cold-build guards: a cache miss serializes concurrent
         # first-touches for the same key through one build so N first requests
         # don't each run a full build (schema deploy, mem0 init) and discard
-        # N-1. Each maps key -> the Future of the build currently running;
+        # N-1. Each maps key -> the owned Task of the build currently running;
         # removed in the build's finally, so the dict only holds active builds.
-        self._gateway_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
-        self._generic_build_inflight: Dict[Tuple[str, str], "asyncio.Future[Any]"] = {}
+        self._gateway_build_inflight: Dict[str, "asyncio.Task[Any]"] = {}
+        self._generic_build_inflight: Dict[Tuple[str, str], "asyncio.Task[Any]"] = {}
         # _get_search_agent and _get_rail_chains run inside asyncio.to_thread OS
         # threads (not on the loop), so their per-key cold-builds — each a
         # heavyweight SearchAgent init or a Vespa get_config read — are guarded
@@ -572,7 +587,7 @@ class AgentDispatcher:
             )
         )
         self._orchestrator_artifact_ttl_s: float = ORCHESTRATOR_ARTIFACT_TTL_S
-        self._orchestrator_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
+        self._orchestrator_build_inflight: Dict[str, "asyncio.Task[Any]"] = {}
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
         # discarded is documented to allow that — keep the handles, discard
@@ -683,24 +698,15 @@ class AgentDispatcher:
         if inflight is None:
             inflight = {}
             self._gateway_build_inflight = inflight
-        pending = inflight.get(tenant_id)
-        if pending is not None:
-            return await pending
-        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
-        fut.add_done_callback(_retrieve_future_exc)
-        inflight[tenant_id] = fut
-        try:
+
+        async def build():
             agent = await self._build_gateway_agent(tenant_id)
             cache.set(
                 tenant_id, _GatewayAgentEntry(agent=agent, loaded_at=time.monotonic())
             )
-            fut.set_result(agent)
             return agent
-        except Exception as exc:
-            fut.set_exception(exc)
-            raise
-        finally:
-            inflight.pop(tenant_id, None)
+
+        return await _shared_agent_build(inflight, tenant_id, build)
 
     def _close_evicted_orchestrator_client(
         self, tenant_id: str, entry: "_OrchestratorAgentEntry"
@@ -818,25 +824,16 @@ class AgentDispatcher:
         if inflight is None:
             inflight = {}
             self._orchestrator_build_inflight = inflight
-        pending = inflight.get(tenant_id)
-        if pending is not None:
-            return await pending
-        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
-        fut.add_done_callback(_retrieve_future_exc)
-        inflight[tenant_id] = fut
-        try:
+
+        async def build():
             agent = await self._build_orchestrator_agent(tenant_id)
             cache.set(
                 tenant_id,
                 _OrchestratorAgentEntry(agent=agent, loaded_at=time.monotonic()),
             )
-            fut.set_result(agent)
             return agent
-        except Exception as exc:
-            fut.set_exception(exc)
-            raise
-        finally:
-            inflight.pop(tenant_id, None)
+
+        return await _shared_agent_build(inflight, tenant_id, build)
 
     def _bind_graph_manager(self, agent: Any, tenant_id: str) -> None:
         """Bind the tenant's Vespa knowledge-graph manager to a graph-aware
@@ -2042,28 +2039,17 @@ class AgentDispatcher:
         if inflight is None:
             inflight = {}
             self._generic_build_inflight = inflight
-        pending = inflight.get(key)
-        if pending is not None:
-            return await pending
-        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
-        fut.add_done_callback(_retrieve_future_exc)
-        inflight[key] = fut
-        try:
+
+        async def build():
             agent = await self._build_generic_agent(
                 agent_name, tenant_id, agent_cls, deps_cls
             )
-            # Re-fetch the per-tenant dict in case the tenant was LRU-evicted
-            # during the build's awaits.
             cache.get_or_set(tenant_id, dict)[agent_name] = _GenericAgentEntry(
                 agent=agent, loaded_at=time.monotonic()
             )
-            fut.set_result(agent)
             return agent
-        except Exception as exc:
-            fut.set_exception(exc)
-            raise
-        finally:
-            inflight.pop(key, None)
+
+        return await _shared_agent_build(inflight, key, build)
 
     async def _execute_generic_agent(
         self,
