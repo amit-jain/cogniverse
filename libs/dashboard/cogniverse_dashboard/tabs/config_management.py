@@ -766,7 +766,11 @@ def render_import_export_ui(manager, tenant_id: str):
 
             # Import button
             if st.button("📤 Import Configurations"):
+                # The destination is the tenant selected above; tenant ids
+                # inside the uploaded file are ignored, so an export taken
+                # from one tenant restores into whichever tenant is selected.
                 count = manager.store.import_configs(
+                    tenant_id=tenant_id,
                     configs=import_data,
                 )
                 st.success(f"✅ Imported {count} configurations successfully!")
