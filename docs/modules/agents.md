@@ -1627,14 +1627,30 @@ Cross-modal fusion of results from all agents. Detects modality per result,
 selects fusion strategy (SCORE_BASED, TEMPORAL, HIERARCHICAL, or SIMPLE),
 and dispatches to the appropriate fusion method.
 
+`status` is the orchestration's outcome and the one every consumer reads:
+`failed` when no step produced an answer, `partial` when a step failed or
+reported a partial answer of its own, `success` otherwise. Failed steps keep
+their entry in `results` but are never fused into `aggregated_content`. The
+dispatch envelope and `_dspy_to_a2a_output` carry this status through, and
+`harness_turn` treats `failed` as terminal (no answer text) while `partial`
+renders the answer the completed steps produced. Success memory is written
+only for `success`.
+
 ```text
 def _aggregate_results(
     self, query: str, agent_results: Dict[str, Any]
 ) -> Dict[str, Any]:
-    # Detect modalities per agent
-    agent_modalities = {
-        name: self._detect_agent_modality(name) for name in agent_results
+    # Fuse only the steps that answered; keep every step in ``results``
+    answered = {
+        name: result for name, result in agent_results.items()
+        if result.get("status") not in FAILED_STEP_STATUSES
     }
+    if not answered:
+        return {
+            "query": query, "status": FAILED_STATUS,
+            "message": "No orchestration step completed successfully",
+            "results": ..., "aggregated_content": "", "fusion_quality": ...,
+        }
     fusion_strategy = self._select_fusion_strategy(query, agent_modalities)
 
     # Dispatch to fusion method
@@ -1646,7 +1662,8 @@ def _aggregate_results(
         fused = self._fuse_simple(task_results)
 
     return {
-        "query": query, "status": "success",
+        "query": query,
+        "status": PARTIAL_STATUS if degraded else "success",
         "results": ...,
         "fusion_strategy": fusion_strategy.value,
         "fusion_quality": ...,

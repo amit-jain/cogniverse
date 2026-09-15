@@ -525,3 +525,37 @@ class TestOpenAIToolCalls:
         assert str(excinfo.value) == (
             "pending_tool_calls[1] is str, expected a mapping with 'id' and 'name'"
         )
+
+
+@pytest.mark.parametrize("status", ["error", "failed"])
+def test_orchestration_failed_status_cannot_render_answer(status):
+    payload = {
+        "agent": "orchestrator_agent",
+        "final_output": {
+            "status": status,
+            "message": "No orchestration step completed successfully",
+            "aggregated_content": "untrusted child error text",
+        },
+    }
+    with pytest.raises(NoAnswerError) as raised:
+        extract_answer_text(payload)
+    assert raised.value.status == status
+    assert str(raised.value) == (
+        f"'final_output' reported status={status}: "
+        "No orchestration step completed successfully"
+    )
+
+
+def test_orchestration_partial_status_preserves_valid_answer():
+    assert (
+        extract_answer_text(
+            {
+                "agent": "orchestrator_agent",
+                "status": "partial",
+                "orchestration_result": {
+                    "final_output": {"status": "partial", "aggregated_content": "42"}
+                },
+            }
+        )
+        == "42"
+    )

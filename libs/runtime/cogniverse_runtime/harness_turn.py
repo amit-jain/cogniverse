@@ -182,9 +182,14 @@ def _render_entries(value: Any) -> Optional[str]:
     return "\n".join(lines) if lines else None
 
 
+#: Statuses that carry no answer. ``partial`` is deliberately absent: a
+#: partial result has a real answer from the steps that did complete.
+TERMINAL_FAILURE_STATUSES = frozenset({"error", "failed"})
+
+
 def _raise_if_error(payload: Mapping[str, Any], where: str) -> None:
     status = payload.get("status")
-    if isinstance(status, str) and status.lower() == "error":
+    if isinstance(status, str) and status.lower() in TERMINAL_FAILURE_STATUSES:
         detail = payload.get("error") or payload.get("message") or "no detail"
         raise NoAnswerError(
             f"{where} reported status={status}: {detail}", status=status
