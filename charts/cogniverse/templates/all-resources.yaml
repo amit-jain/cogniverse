@@ -424,6 +424,11 @@ spec:
               name: {{ $fullName }}-minio
               key: rootPassword
         {{- end }}
+        {{- if hasKey .Values.runtime.env "COGNIVERSE_ROOT_PATH" }}
+        {{- fail "COGNIVERSE_ROOT_PATH is derived from ingress paths; set ingress.hosts[].paths[].path instead" }}
+        {{- end }}
+        - name: COGNIVERSE_ROOT_PATH
+          value: {{ include "cogniverse.apiPrefix" . | quote }}
         {{- range $key, $value := .Values.runtime.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

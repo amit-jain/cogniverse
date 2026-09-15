@@ -1392,11 +1392,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 # Create FastAPI app
+# Public URL prefix the ingress publishes this runtime under (the chart
+# derives it from the ingress rules). Starlette strips it from a request
+# that carries it and leaves an in-cluster request on the Service path
+# alone, so one value serves both entry points and the generated docs and
+# OpenAPI URLs point at the public prefix.
+ROOT_PATH = os.environ.get("COGNIVERSE_ROOT_PATH", "")
+
 app = FastAPI(
     title="Cogniverse Runtime",
     description="Multi-agent AI platform for content intelligence",
     version="1.0.0",
     lifespan=lifespan,
+    root_path=ROOT_PATH,
 )
 
 # Add CORS middleware
@@ -1459,8 +1467,8 @@ async def root():
         "service": "Cogniverse Runtime",
         "version": "1.0.0",
         "description": "Multi-agent AI platform for content intelligence",
-        "docs": "/docs",
-        "health": "/health",
+        "docs": f"{ROOT_PATH}/docs",
+        "health": f"{ROOT_PATH}/health",
     }
 
 
