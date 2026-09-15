@@ -159,7 +159,7 @@ def vespa_with_schemas():
     app_package = ApplicationPackage(
         name="cogniverse", schema=[doc_schema, audio_schema]
     )
-    schema_manager._deploy_package(app_package, allow_schema_removal=True)
+    schema_manager._deploy_package(lambda: app_package, allow_schema_removal=True)
 
     time.sleep(8)
 
