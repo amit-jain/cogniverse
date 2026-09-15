@@ -103,8 +103,9 @@ class WikiManager:
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
     def _should_auto_file(
-        self, entities: List[str], agent_name: str, turn_count: int
+        entities: List[str], agent_name: str, turn_count: int
     ) -> bool:
         """Return True when this interaction is substantial enough to auto-file."""
         if len(entities) >= 3:

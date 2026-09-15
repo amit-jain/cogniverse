@@ -24,8 +24,8 @@ async def test_auto_file_saves_session_when_threshold_met(monkeypatch):
     from cogniverse_runtime.routers import wiki as wiki_router
 
     wm = MagicMock()
-    wm._should_auto_file.return_value = True
-    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", lambda tid: wm)
+    factory = MagicMock(return_value=wm)
+    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", factory)
 
     d = _dispatcher()
     await d._maybe_auto_file_wiki(
@@ -34,12 +34,10 @@ async def test_auto_file_saves_session_when_threshold_met(monkeypatch):
         entities=["Machine Learning"],
         agent_name="search_agent",
         tenant_id="acme:acme",
-        turn_count=3,
+        turn_count=4,
     )
 
-    wm._should_auto_file.assert_called_once_with(
-        ["Machine Learning"], "search_agent", 3
-    )
+    factory.assert_called_once_with("acme:acme")
     wm.save_session.assert_called_once()
     kwargs = wm.save_session.call_args.kwargs
     assert kwargs["query"] == "what is ml?"
@@ -117,8 +115,8 @@ async def test_auto_file_projects_extraction_records_to_titles(monkeypatch):
     from cogniverse_runtime.routers import wiki as wiki_router
 
     wm = MagicMock()
-    wm._should_auto_file.return_value = True
-    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", lambda tid: wm)
+    factory = MagicMock(return_value=wm)
+    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", factory)
 
     records = [
         {"text": "Barack Obama", "type": "PERSON", "confidence": 0.9, "context": ""},
@@ -132,12 +130,10 @@ async def test_auto_file_projects_extraction_records_to_titles(monkeypatch):
         entities=records,
         agent_name="search_agent",
         tenant_id="acme:acme",
-        turn_count=3,
+        turn_count=4,
     )
 
-    wm._should_auto_file.assert_called_once_with(
-        ["Barack Obama", "Chicago"], "search_agent", 3
-    )
+    factory.assert_called_once_with("acme:acme")
     assert wm.save_session.call_args.kwargs["entities"] == ["Barack Obama", "Chicago"]
 
 
@@ -234,3 +230,31 @@ async def test_auto_file_rejects_an_entity_record_without_text(monkeypatch, capl
         "entity record with a 'text' str, got dict with keys ['name', 'type']"
         "; entities=1 items, item types={'dict'}, dict keys={'name', 'type'}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, entities, turn_count",
+    [({"answer": "a"}, [], 1), ({"message": "status only"}, ["A", "B", "C"], 5)],
+)
+async def test_auto_file_checks_eligibility_before_constructing_manager(
+    monkeypatch, response, entities, turn_count
+):
+    from cogniverse_runtime.routers import wiki as wiki_router
+
+    constructed = []
+
+    def factory(tenant_id):
+        constructed.append(tenant_id)
+        raise RuntimeError("ineligible calls must never deploy a wiki schema")
+
+    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", factory)
+    await _dispatcher()._maybe_auto_file_wiki(
+        query="q",
+        response=response,
+        entities=entities,
+        agent_name="search_agent",
+        tenant_id="acme:acme",
+        turn_count=turn_count,
+    )
+    assert constructed == []

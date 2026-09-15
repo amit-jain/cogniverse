@@ -417,10 +417,8 @@ def _configure_library_module_defaults(
 def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     """Build the per-tenant ``WikiManager`` factory the runtime installs.
 
-    Each tenant gets a dedicated ``wiki_pages_<tenant>`` schema. The first
-    access for a new tenant deploys the schema (non-fatal on error — the
-    first feed then surfaces the real error); subsequent accesses reuse the
-    cached manager.
+    Each tenant gets a dedicated ``wiki_pages_<tenant>`` schema, deployed on
+    that tenant's first access; subsequent accesses reuse the cached manager.
 
     The factory canonicalizes ``tenant_id`` so the schema name matches what
     ``POST /admin/tenants`` stored it under. Without this, a simple-form
@@ -430,38 +428,67 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     DELETE cannot reap. Extracted to module scope so this behaviour is
     unit-testable against a fake backend without booting the app (and so the
     test exercises the real factory rather than a drifting copy).
+
+    Callers run the factory in worker threads, so a tenant's first access is
+    single-flighted: the deploy is a full Vespa application redeploy, and
+    concurrent first touches would otherwise each run one. Waiters share the
+    owner's outcome, failure included, and a failed build caches nothing — a
+    manager bound to a schema that was never deployed answers every later read
+    with a backend error no retry can clear.
     """
+    import threading
+    from concurrent.futures import Future
+
     from cogniverse_agents.wiki.wiki_manager import WikiManager
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
     managers: dict = {}
+    inflight: dict = {}
+    lock = threading.Lock()
 
-    def _wiki_manager_factory(tenant_id: str) -> "WikiManager":
-        tenant_id = canonical_tenant_id(tenant_id)
-        if tenant_id in managers:
-            return managers[tenant_id]
-
-        try:
-            with leased_backend(resolve_wiki_backend) as wiki_backend:
-                wiki_backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_id, base_schema_name="wiki_pages"
-                )
-        except Exception as schema_err:
-            logger.warning(
-                f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
-            )
-
+    def _build(tenant_id: str) -> "WikiManager":
         with leased_backend(resolve_wiki_backend) as wiki_backend:
+            wiki_backend.schema_registry.deploy_schema(
+                tenant_id=tenant_id, base_schema_name="wiki_pages"
+            )
             schema_name = wiki_backend.get_tenant_schema_name(tenant_id, "wiki_pages")
-        mgr = WikiManager(
+        return WikiManager(
             backend_resolver=resolve_wiki_backend,
             tenant_id=tenant_id,
             schema_name=schema_name,
             llm_endpoint_config=config.get_llm_config().primary,
             config_manager=config_manager,
         )
-        managers[tenant_id] = mgr
-        return mgr
+
+    def _wiki_manager_factory(tenant_id: str) -> "WikiManager":
+        tenant_id = canonical_tenant_id(tenant_id)
+        with lock:
+            cached = managers.get(tenant_id)
+            if cached is not None:
+                return cached
+            pending = inflight.get(tenant_id)
+            if pending is None:
+                pending = inflight[tenant_id] = Future()
+                owner = True
+            else:
+                owner = False
+
+        if not owner:
+            return pending.result()
+
+        try:
+            mgr = _build(tenant_id)
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        else:
+            with lock:
+                managers[tenant_id] = mgr
+            pending.set_result(mgr)
+            return mgr
+        finally:
+            with lock:
+                inflight.pop(tenant_id, None)
 
     return _wiki_manager_factory
 
