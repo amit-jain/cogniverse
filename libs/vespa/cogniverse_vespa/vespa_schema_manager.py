@@ -1,6 +1,8 @@
 import logging
 import re
 import threading
+import time
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
 from vespa.configuration.services import (
@@ -19,14 +21,18 @@ from vespa.configuration.services import (
 from vespa.configuration.vt import VT
 from vespa.package import ApplicationPackage, ServicesConfiguration
 
-# Intra-process lock serialising prepare+activate so threads in the
-# same Python process don't race each other's deploys. Cross-process /
-# cross-pod races against Vespa's session pipeline still happen and
-# are caught by the retry-on-409 loop in ``_deploy_package`` — the
-# lock alone does NOT make the deploy cluster-safe, the retry does.
-# Keeping the lock avoids cheap self-inflicted 409s on multi-threaded
-# uvicorn workers without precluding the cluster-wide retry path.
+# Intra-process lock serialising prepare+activate so threads in the same
+# Python process don't race each other's deploys. It does NOT make a deploy
+# cluster-safe, and neither does the retry-on-409 loop: a deploy replaces the
+# WHOLE application, so a retry that reposts a package built before a peer's
+# activation removes that peer's schema and its documents. Cross-process and
+# cross-pod safety comes from ``VespaSchemaManager.deployment_lease`` plus the
+# per-attempt package rebuild in ``_deploy_package``.
 _DEPLOY_LOCK = threading.Lock()
+
+# Depth of the deployment lease this thread already holds, so a nested deploy
+# reuses it instead of deadlocking against itself.
+_DEPLOY_LEASE_STATE = threading.local()
 
 # (connect, read) for the app-package deploy POSTs. Without an explicit
 # timeout a stalled config server blocks the call forever — inside
@@ -507,8 +513,9 @@ class VespaSchemaManager:
                 schema_objects.append(document_text_schema)
 
             # Deploy all schemas together
-            app_package = ApplicationPackage(name=app_name, schema=schema_objects)
-            self._deploy_package(app_package)
+            self._deploy_package(
+                lambda: ApplicationPackage(name=app_name, schema=schema_objects)
+            )
 
             self._logger.info(f"Successfully uploaded content type schemas: {schemas}")
 
@@ -516,106 +523,154 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to upload content type schemas: {str(e)}")
             raise
 
+    @contextmanager
+    def deployment_lease(self):
+        """Hold the cross-process lease on the Vespa application package.
+
+        A prepare-and-activate replaces the whole application, so every
+        enumeration the package is built from must be read inside this lease
+        and the package must be posted inside it too. Reentrant: a nested
+        deploy reuses the lease this thread already holds. Yields ``None``
+        when no schema registry is wired — the single-owner bootstrap case,
+        which has no config store to contend through.
+        """
+        from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+        if getattr(_DEPLOY_LEASE_STATE, "depth", 0):
+            yield _DEPLOY_LEASE_STATE.lease
+            return
+        lease = (
+            None
+            if self._schema_registry is None
+            else self._schema_registry.deployment_lease()
+        )
+        with SchemaRegistry._deploy_lock:
+            if lease is not None:
+                lease.acquire()
+            _DEPLOY_LEASE_STATE.depth = 1
+            _DEPLOY_LEASE_STATE.lease = lease
+            try:
+                yield lease
+            finally:
+                _DEPLOY_LEASE_STATE.depth = 0
+                _DEPLOY_LEASE_STATE.lease = None
+                if lease is not None:
+                    lease.release()
+
+    def _post_package(self, deploy_url: str, app_zip: bytes):
+        """POST one application package to the config server."""
+        import requests
+
+        with _DEPLOY_LOCK:
+            return requests.post(
+                deploy_url,
+                headers={"Content-Type": "application/zip"},
+                data=app_zip,
+                verify=False,
+                timeout=DEPLOY_REQUEST_TIMEOUT_S,
+            )
+
     def _deploy_package(
         self,
-        app_package: ApplicationPackage,
+        build_package,
         allow_field_type_change: bool = False,
         allow_schema_removal: bool = False,
     ) -> None:
-        """
-        Deploy an application package to Vespa.
+        """Replace the Vespa application with a freshly built package.
 
         Args:
-            app_package: The ApplicationPackage to deploy
+            build_package: Zero-argument callable returning the
+                ApplicationPackage to post. It is called again before every
+                attempt, inside the deployment lease, so the survivor set the
+                package carries is the one Vespa holds at that moment.
             allow_field_type_change: If True, adds validation override for field type changes
             allow_schema_removal: If True, adds validation override for content type removal
         """
         import json
         from datetime import datetime, timedelta
 
-        import requests
         from vespa.package import Validation, ValidationID
-
-        # Add validation overrides if requested
-        if allow_field_type_change or allow_schema_removal:
-            until_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
-            if app_package.validations is None:
-                app_package.validations = []
-
-            if allow_field_type_change:
-                app_package.validations.append(
-                    Validation(
-                        validation_id=ValidationID.fieldTypeChange,
-                        until=until_date,
-                        comment="Allow field type changes for schema updates",
-                    )
-                )
-
-            if allow_schema_removal:
-                app_package.validations.append(
-                    Validation(
-                        validation_id=ValidationID.contentTypeRemoval,
-                        until=until_date,
-                        comment="Allow schema removal during tenant deletion",
-                    )
-                )
-
-        # Create the deployment URL - properly construct with base URL and port
-        import re
 
         # Remove any existing port from endpoint
         base_url = re.sub(r":\d+$", "", self.backend_endpoint)
         deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
-            app_package.services_config = build_services_config(app_package)
-            # Materialise the zip as bytes: to_zip() returns a BytesIO that
-            # requests reads to EOF, so a retry would post an empty body.
-            app_zip = app_package.to_zip().getvalue()
-            import time as _time
+            with self.deployment_lease() as lease:
+                # Retry on any 409 from prepareandactivate. Vespa's session
+                # pipeline returns 409 for several distinct conditions —
+                # ACTIVATION_CONFLICT (activate stage), session-busy (prepare
+                # stage), and others — so matching on the status code rather
+                # than a specific message catches every cross-process race.
+                backoff = 0.5
+                max_attempts = 5
+                response = None
+                for attempt in range(max_attempts):
+                    app_package = build_package()
 
-            # Retry on any 409 from prepareandactivate. Vespa's session
-            # pipeline returns 409 for several distinct conditions —
-            # ACTIVATION_CONFLICT (activate stage), session-busy (prepare
-            # stage), and others — so matching on the status code rather
-            # than a specific message catches every cross-process race.
-            backoff = 0.5
-            max_attempts = 5
-            response = None
-            for attempt in range(max_attempts):
-                with _DEPLOY_LOCK:
-                    response = requests.post(
-                        deploy_url,
-                        headers={"Content-Type": "application/zip"},
-                        data=app_zip,
-                        verify=False,
-                        timeout=DEPLOY_REQUEST_TIMEOUT_S,
+                    # Add validation overrides if requested
+                    if allow_field_type_change or allow_schema_removal:
+                        until_date = (datetime.now() + timedelta(days=14)).strftime(
+                            "%Y-%m-%d"
+                        )
+                        if app_package.validations is None:
+                            app_package.validations = []
+
+                        if allow_field_type_change:
+                            app_package.validations.append(
+                                Validation(
+                                    validation_id=ValidationID.fieldTypeChange,
+                                    until=until_date,
+                                    comment="Allow field type changes for schema updates",
+                                )
+                            )
+
+                        if allow_schema_removal:
+                            app_package.validations.append(
+                                Validation(
+                                    validation_id=ValidationID.contentTypeRemoval,
+                                    until=until_date,
+                                    comment="Allow schema removal during tenant deletion",
+                                )
+                            )
+
+                    app_package.services_config = build_services_config(app_package)
+                    # Materialise the zip as bytes: to_zip() returns a BytesIO that
+                    # requests reads to EOF, so a retry would post an empty body.
+                    app_zip = app_package.to_zip().getvalue()
+                    if lease is not None:
+                        # Extend before the POST and refuse to activate a
+                        # package whose builder no longer owns the lease.
+                        lease.renew()
+                    response = self._post_package(deploy_url, app_zip)
+                    if response.status_code == 200:
+                        break
+                    if response.status_code != 409 or attempt == max_attempts - 1:
+                        break
+                    body_text = response.content.decode("utf-8", errors="replace")
+                    self._logger.warning(
+                        f"Vespa deploy 409 on attempt {attempt + 1}/{max_attempts}; "
+                        f"rebuilding the package and retrying after {backoff:.1f}s. "
+                        f"Body: {body_text[:200]}"
                     )
-                if response.status_code == 200:
-                    break
-                if response.status_code != 409 or attempt == max_attempts - 1:
-                    break
-                body_text = response.content.decode("utf-8", errors="replace")
-                self._logger.warning(
-                    f"Vespa deploy 409 on attempt {attempt + 1}/{max_attempts}; "
-                    f"retrying after {backoff:.1f}s. Body: {body_text[:200]}"
-                )
-                _time.sleep(backoff)
-                backoff = min(backoff * 2, 4.0)
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 4.0)
 
-            if response is not None and response.status_code == 200:
-                self._logger.info("Successfully deployed application package")
-            else:
-                status = response.status_code if response is not None else "no-response"
-                error_msg = f"Deployment failed with status {status}"
-                if response is not None:
-                    try:
-                        error_detail = json.loads(response.content.decode("utf-8"))
-                        error_msg += f": {error_detail}"
-                    except Exception:
-                        error_msg += f": {response.content.decode('utf-8')}"
+                if response is not None and response.status_code == 200:
+                    self._logger.info("Successfully deployed application package")
+                else:
+                    status = (
+                        response.status_code if response is not None else "no-response"
+                    )
+                    error_msg = f"Deployment failed with status {status}"
+                    if response is not None:
+                        try:
+                            error_detail = json.loads(response.content.decode("utf-8"))
+                            error_msg += f": {error_detail}"
+                        except Exception:
+                            error_msg += f": {response.content.decode('utf-8')}"
 
-                raise RuntimeError(error_msg)
+                    raise RuntimeError(error_msg)
 
         except Exception as e:
             self._logger.error(f"Failed to deploy package: {str(e)}")
@@ -815,16 +870,16 @@ class VespaSchemaManager:
                 package is the authoritative full set (e.g. a test harness
                 reclaiming a shared cluster).
         """
-        try:
-            from vespa.package import ApplicationPackage
+        from vespa.package import ApplicationPackage
 
-            from cogniverse_vespa.metadata_schemas import (
-                create_adapter_registry_schema,
-                create_config_metadata_schema,
-                create_organization_metadata_schema,
-                create_tenant_metadata_schema,
-            )
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
 
+        def build_package():
             metadata_schemas = [
                 create_organization_metadata_schema(),
                 create_tenant_metadata_schema(),
@@ -842,25 +897,25 @@ class VespaSchemaManager:
                         deployed, known={schema.name for schema in existing_schemas}
                     )
                 )
-            all_schemas = metadata_schemas + existing_schemas
+            self._logger.info(
+                f"Deploying metadata schemas preserving "
+                f"{len(existing_schemas)} tenant schemas"
+            )
+            return ApplicationPackage(
+                name=app_name, schema=metadata_schemas + existing_schemas
+            )
 
-            # Deploy metadata + the registry's known tenant schemas together.
-            # allow_schema_removal defaults to False so a deploy that would drop
-            # a schema the merge missed (a peer tenant's not-yet-registered one)
-            # is refused, not executed. A deliberate cleanup passes True.
-            app_package = ApplicationPackage(name=app_name, schema=all_schemas)
-            self._deploy_package(app_package, allow_schema_removal=allow_schema_removal)
-
-            if existing_schemas:
-                self._logger.info(
-                    f"Successfully deployed metadata schemas "
-                    f"(preserved {len(existing_schemas)} tenant schemas)"
-                )
-            else:
-                self._logger.info(
-                    "Successfully deployed metadata schemas: "
-                    "organization_metadata, tenant_metadata, config_metadata, adapter_registry"
-                )
+        try:
+            # Deploy metadata + every schema live at build time. The build runs
+            # inside the deployment lease and again on every conflict, so the
+            # package never omits a peer that activated meanwhile.
+            self._deploy_package(
+                build_package, allow_schema_removal=allow_schema_removal
+            )
+            self._logger.info(
+                "Successfully deployed metadata schemas: "
+                "organization_metadata, tenant_metadata, config_metadata, adapter_registry"
+            )
 
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")
@@ -945,41 +1000,6 @@ class VespaSchemaManager:
                 f"is a defensive check against typo-driven cross-tenant deletes."
             )
 
-        survivors = [s for s in self._get_existing_tenant_schemas() if s.name != target]
-
-        # The redeploy replaces the WHOLE application package with
-        # metadata + survivors, so any deployed schema the registry does not
-        # know would be silently dropped alongside the target — destroying
-        # sibling data (e.g. an auto-deployed knowledge_graph schema).
-        # Refuse instead; a failed enumeration propagates because guessing
-        # the survivor set is how the data loss happens.
-        try:
-            deployed = self.list_deployed_document_types(raise_on_failure=True)
-        except Exception as e:
-            raise RuntimeError(
-                f"Cannot enumerate Vespa-deployed schemas before deleting "
-                f"'{target}': {e}"
-            ) from e
-        survivor_names = {s.name for s in survivors}
-        # A peer's activation the registry has not seen yet survives too,
-        # rebuilt from its deployment intent.
-        for name, registration in self._schema_registry.reserved_schemas(
-            set(deployed)
-        ).items():
-            if name == target or name in survivor_names:
-                continue
-            survivors.append(self._parse_definition(registration["schema_definition"]))
-            survivor_names.add(name)
-        would_drop = set(deployed) - self._PROTECTED_SCHEMAS - survivor_names - {target}
-        if would_drop:
-            raise ValueError(
-                f"Refusing to delete '{target}': redeploying without it would "
-                f"also drop {sorted(would_drop)} — deployed schemas the "
-                f"registry does not know and cannot reconstruct. Register "
-                f"them or remove them explicitly first (delete_tenant_schemas "
-                f"/ POST /admin/reconcile-orphans)."
-            )
-
         from vespa.package import ApplicationPackage
 
         from cogniverse_vespa.metadata_schemas import (
@@ -989,32 +1009,80 @@ class VespaSchemaManager:
             create_tenant_metadata_schema,
         )
 
-        metadata_schemas = [
-            create_organization_metadata_schema(),
-            create_tenant_metadata_schema(),
-            create_config_metadata_schema(),
-            create_adapter_registry_schema(),
-        ]
-        app_package = ApplicationPackage(
-            name="cogniverse", schema=metadata_schemas + survivors
-        )
+        def build_package():
+            survivors = [
+                schema
+                for schema in self._get_existing_tenant_schemas()
+                if schema.name != target
+            ]
 
-        self._logger.info(
-            f"Deploying app package without '{target}' ({len(survivors)} survivors)"
-        )
-        self._deploy_package(app_package, allow_schema_removal=True)
-
-        try:
-            self._schema_registry.unregister_schema(tenant_id, base_schema_name)
-        except Exception as e:
-            self._logger.error(
-                f"Schema '{target}' removed from Vespa but registry tombstone "
-                f"write failed: {e}"
+            # The redeploy replaces the WHOLE application package with
+            # metadata + survivors, so any deployed schema the registry does not
+            # know would be silently dropped alongside the target — destroying
+            # sibling data (e.g. an auto-deployed knowledge_graph schema).
+            # Refuse instead; a failed enumeration propagates because guessing
+            # the survivor set is how the data loss happens.
+            try:
+                deployed = self.list_deployed_document_types(raise_on_failure=True)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Cannot enumerate Vespa-deployed schemas before deleting "
+                    f"'{target}': {e}"
+                ) from e
+            survivor_names = {schema.name for schema in survivors}
+            # A peer's activation the registry has not seen yet survives too,
+            # rebuilt from its deployment intent.
+            for name, registration in self._schema_registry.reserved_schemas(
+                set(deployed)
+            ).items():
+                if name == target or name in survivor_names:
+                    continue
+                survivors.append(
+                    self._parse_definition(registration["schema_definition"])
+                )
+                survivor_names.add(name)
+            would_drop = (
+                set(deployed) - self._PROTECTED_SCHEMAS - survivor_names - {target}
             )
-            raise RuntimeError(
-                f"Schema '{target}' was removed from Vespa, but its registry "
-                f"tombstone failed: {e}"
-            ) from e
+            if would_drop:
+                raise ValueError(
+                    f"Refusing to delete '{target}': redeploying without it would "
+                    f"also drop {sorted(would_drop)} — deployed schemas the "
+                    f"registry does not know and cannot reconstruct. Register "
+                    f"them or remove them explicitly first (delete_tenant_schemas "
+                    f"/ POST /admin/reconcile-orphans)."
+                )
+
+            metadata_schemas = [
+                create_organization_metadata_schema(),
+                create_tenant_metadata_schema(),
+                create_config_metadata_schema(),
+                create_adapter_registry_schema(),
+            ]
+            self._logger.info(
+                f"Deploying app package without '{target}' ({len(survivors)} survivors)"
+            )
+            return ApplicationPackage(
+                name="cogniverse", schema=metadata_schemas + survivors
+            )
+
+        # The tombstone belongs inside the lease: between the redeploy and the
+        # registry write the schema is gone from Vespa but still a survivor in
+        # the registry, and a peer package built from that view would restore it.
+        with self.deployment_lease():
+            self._deploy_package(build_package, allow_schema_removal=True)
+
+            try:
+                self._schema_registry.unregister_schema(tenant_id, base_schema_name)
+            except Exception as e:
+                self._logger.error(
+                    f"Schema '{target}' removed from Vespa but registry tombstone "
+                    f"write failed: {e}"
+                )
+                raise RuntimeError(
+                    f"Schema '{target}' was removed from Vespa, but its registry "
+                    f"tombstone failed: {e}"
+                ) from e
 
         return target
 
@@ -1032,17 +1100,17 @@ class VespaSchemaManager:
         Used by both the single-tenant and bulk-tenant delete paths so the
         peer-orphan safeguard is shared.
 
-        Runs under the registry's deploy lock, which ``deploy_schemas`` also
-        takes, and enumerates the deployed set INSIDE it. Two redeploys that
-        each snapshot before serializing both activate a package built from
-        their own view, and the loser's package omits whatever the winner
-        added, dropping a live schema together with its documents.
+        Runs under the cross-process deployment lease, which also covers the
+        registry's deploy lock, and enumerates the deployed set INSIDE it —
+        again for every conflict retry. Two redeploys that each snapshot
+        before serializing both activate a package built from their own view,
+        and the loser's package omits whatever the winner added, dropping a
+        live schema together with its documents.
         """
         import json
 
         from vespa.package import ApplicationPackage
 
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_vespa.json_schema_parser import JsonSchemaParser
         from cogniverse_vespa.metadata_schemas import (
             create_adapter_registry_schema,
@@ -1051,9 +1119,9 @@ class VespaSchemaManager:
             create_tenant_metadata_schema,
         )
 
-        with SchemaRegistry._deploy_lock:
+        def enumerate_deployed():
             try:
-                deployed = self.list_deployed_document_types(raise_on_failure=True)
+                return self.list_deployed_document_types(raise_on_failure=True)
             except Exception as e:
                 raise RuntimeError(
                     f"Cannot enumerate Vespa-deployed schemas before delete: {e}. "
@@ -1061,9 +1129,8 @@ class VespaSchemaManager:
                     f"list — a partial view risks dropping peer-tenant schemas."
                 ) from e
 
-            deleted_schemas = sorted(deletion_targets & set(deployed))
-            if not deleted_schemas:
-                return deleted_schemas
+        def build_package():
+            deployed = enumerate_deployed()
 
             # A peer process's schema is live-but-unregistered for its whole
             # convergence wait (activation precedes registration), and its
@@ -1136,14 +1203,20 @@ class VespaSchemaManager:
                 create_config_metadata_schema(),
                 create_adapter_registry_schema(),
             ]
-            app_package = ApplicationPackage(
-                name="cogniverse", schema=metadata_schemas + survivors
-            )
             self._logger.info(
-                f"Redeploying to remove {len(deleted_schemas)} schemas; "
+                f"Redeploying to remove {len(deletion_targets)} schemas; "
                 f"{len(survivors)} survivors"
             )
-            self._deploy_package(app_package, allow_schema_removal=True)
+            return ApplicationPackage(
+                name="cogniverse", schema=metadata_schemas + survivors
+            )
+
+        with self.deployment_lease():
+            deleted_schemas = sorted(deletion_targets & set(enumerate_deployed()))
+            if not deleted_schemas:
+                return deleted_schemas
+
+            self._deploy_package(build_package, allow_schema_removal=True)
             return deleted_schemas
 
     def delete_tenant_schemas(self, tenant_id: str) -> list:
@@ -1155,9 +1228,7 @@ class VespaSchemaManager:
         unreconstructable peer-tenant orphan exists. Returns the list of
         full schema names dropped from Vespa.
         """
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
-
-        with SchemaRegistry._deploy_lock:
+        with self.deployment_lease():
             if not self._schema_registry:
                 raise ValueError(
                     "schema_registry required for tenant schema operations"
@@ -1232,9 +1303,7 @@ class VespaSchemaManager:
         it into the deletion — a schema that cannot be confirmed an orphan is
         never dropped. Returns the full list of schemas dropped.
         """
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
-
-        with SchemaRegistry._deploy_lock:
+        with self.deployment_lease():
             if not self._schema_registry:
                 raise ValueError(
                     "schema_registry required for tenant schema operations"
@@ -1324,36 +1393,42 @@ class VespaSchemaManager:
                 f"Refusing to delete protected schema(s): {sorted(protected)}"
             )
 
-        try:
-            deployed = set(self.list_deployed_document_types(raise_on_failure=True))
-        except Exception as exc:
-            raise RuntimeError(
-                f"Cannot enumerate Vespa-deployed schemas before orphan delete: {exc}"
-            ) from exc
+        # The guards below and the redeploy are one decision: without the lease
+        # a peer could register or activate one of these names in between, and
+        # the redeploy would drop a schema that is no longer an orphan.
+        with self.deployment_lease():
+            try:
+                deployed = set(self.list_deployed_document_types(raise_on_failure=True))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Cannot enumerate Vespa-deployed schemas before orphan "
+                    f"delete: {exc}"
+                ) from exc
 
-        missing = targets - deployed
-        if missing:
-            raise ValueError(
-                f"Refusing to delete schema(s) not deployed in Vespa: {sorted(missing)}"
-            )
+            missing = targets - deployed
+            if missing:
+                raise ValueError(
+                    f"Refusing to delete schema(s) not deployed in Vespa: "
+                    f"{sorted(missing)}"
+                )
 
-        registered = {
-            info.full_schema_name
-            for info in (self._schema_registry._get_all_schemas() or [])
-        }
-        active = targets & registered
-        if active:
-            raise ValueError(
-                f"Refusing to delete registered schema(s): {sorted(active)}"
-            )
-        in_flight = targets & set(self._schema_registry.reserved_schemas(deployed))
-        if in_flight:
-            raise ValueError(
-                "Refusing to delete schema(s) whose activation is in flight in "
-                f"another process: {sorted(in_flight)}"
-            )
+            registered = {
+                info.full_schema_name
+                for info in (self._schema_registry._get_all_schemas() or [])
+            }
+            active = targets & registered
+            if active:
+                raise ValueError(
+                    f"Refusing to delete registered schema(s): {sorted(active)}"
+                )
+            in_flight = targets & set(self._schema_registry.reserved_schemas(deployed))
+            if in_flight:
+                raise ValueError(
+                    "Refusing to delete schema(s) whose activation is in flight in "
+                    f"another process: {sorted(in_flight)}"
+                )
 
-        return self._redeploy_dropping(targets)
+            return self._redeploy_dropping(targets)
 
     def tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
         """

@@ -98,6 +98,7 @@ def _make_backend(port: int) -> VespaBackend:
     backend._url = "http://127.0.0.1"
     backend._port = 8080
     backend._config_port = port
+    backend.schema_manager = _make_schema_manager(port)
     return backend
 
 
@@ -106,6 +107,9 @@ def _make_schema_manager(port: int) -> VespaSchemaManager:
     manager.backend_endpoint = "http://127.0.0.1"
     manager.backend_port = port
     manager._logger = logging.getLogger("test.vsm")
+    # No registry, so no config store to lease through: these tests are the
+    # single deployer and drive a real config server on a real socket.
+    manager._schema_registry = None
     return manager
 
 
@@ -194,15 +198,24 @@ def test_conflict_on_every_attempt_exhausts_retries_and_raises():
     assert "ACTIVATION_CONFLICT" in str(exc_info.value)
 
 
-def test_schema_manager_retry_resends_the_complete_package():
-    """VespaSchemaManager._deploy_package retries any 409 while holding the
-    process-wide deploy lock; each attempt must carry the full package."""
-    app_package = ApplicationPackage(name="conflictprobe")
+def test_schema_manager_retry_rebuilds_and_resends_the_complete_package():
+    """VespaSchemaManager._deploy_package builds the package again for every
+    attempt — a 409 means someone else's package is now active, so reposting
+    the one built before it would drop whatever they added — and each attempt
+    must carry the full zip, never a body left over from a consumed stream."""
+    built = []
+
+    def build_package():
+        built.append(len(built) + 1)
+        return ApplicationPackage(name="conflictprobe")
 
     with _ConfigServer([409, 200]) as server:
         manager = _make_schema_manager(server.port)
-        manager._deploy_package(app_package)
+        manager._deploy_package(build_package)
 
+    assert built == [1, 2]
     assert len(server.bodies) == 2
-    assert server.bodies[0] == server.bodies[1]
-    assert _entries(server.bodies[1]) == EXPECTED_PACKAGE_ENTRIES
+    assert [_entries(body) for body in server.bodies] == [
+        EXPECTED_PACKAGE_ENTRIES,
+        EXPECTED_PACKAGE_ENTRIES,
+    ]

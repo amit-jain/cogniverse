@@ -867,13 +867,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Deploy metadata schemas once at startup (not in every VespaBackend.__init__).
-    # allow_schema_removal=True is safe ONLY here: this manager is
-    # registry-aware and schema enumeration raises on any schema it cannot
-    # include, so the deploy can garbage-collect deleted-tenant schemas
-    # without ever silently dropping a live one.
+    # The package carries every schema live at build time, so this deploy never
+    # needs to remove one; without the override a package that nonetheless
+    # missed a peer's schema is refused instead of destroying its documents.
+    # Dropping schemas left behind by deleted tenants belongs to
+    # POST /admin/reconcile-orphans, which enumerates both orphan classes and
+    # removes them in one redeploy.
     system_config = config_manager.get_system_config()
     system_backend.schema_manager.upload_metadata_schemas(
-        app_name=system_config.application_name, allow_schema_removal=True
+        app_name=system_config.application_name, allow_schema_removal=False
     )
     logger.info("Metadata schemas deployed via system backend")
 

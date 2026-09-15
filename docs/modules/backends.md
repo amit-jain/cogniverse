@@ -619,7 +619,7 @@ operations:
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document. A genuine 404 is an idempotent success; connection failures and every other rejected status raise with the document route. |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids, schema_name)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope. When a shared search backend handles a batch read, the unified backend resolves the matching Document v1 namespace and passes both schema and namespace explicitly. |
-| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
+| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. The activation holds the cross-process deployment lease, so it cannot land between another process's enumeration and its own package post. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
 | `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
@@ -1459,12 +1459,11 @@ schema_manager = backend.schema_manager  # Already has schema_registry, schema_l
 
 ```python
 # Deploy metadata schemas (organization/tenant) for multi-tenant management.
-# Schema-aware: preserves existing tenant schemas to avoid Vespa removal errors.
-# allow_schema_removal defaults to False — Vespa refuses a deploy that would
-# drop schemas instead of executing it. Only a registry-aware caller that
-# needs deleted-tenant schema cleanup (the runtime startup deploy) passes
-# True; schema enumeration raises on any registry entry it cannot rebuild,
-# so a True deploy never silently drops a live schema.
+# Schema-aware: the package carries every schema live when it is built, inside
+# the deployment lease, and is rebuilt from a fresh enumeration on every
+# conflict retry. allow_schema_removal defaults to False — Vespa refuses a
+# deploy that would drop schemas instead of executing it. Dropping the schemas
+# of deleted tenants belongs to POST /admin/reconcile-orphans.
 schema_manager.upload_metadata_schemas(app_name="cogniverse")
 
 # Deploy content-type schemas together in one application package
@@ -1498,10 +1497,11 @@ exists = schema_manager.tenant_schema_exists(
 # with allow_schema_removal=True (Vespa validation override for content type removal)
 # Drops the tenant's registered schemas and its suffix-matched Vespa
 # orphans in one redeploy. Registered peers are excluded from suffix matching.
-# Serialized within one process on SchemaRegistry._deploy_lock with
-# the deployed snapshot taken inside it, so a concurrent deploy or delete
-# cannot activate a package built from a stale survivor set. The lock
-# covers target selection and registry removal for single and bulk deletes.
+# Serialized across processes on the deployment lease
+# (SchemaRegistry.deployment_lease), with the deployed snapshot taken inside
+# it and retaken before every conflict retry, so no deploy or delete can
+# activate a package built from a stale survivor set. The lease covers target
+# selection and registry removal for single and bulk deletes.
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 # Returns: List of deleted schema names (schemas removed from Vespa via redeployment)
 ```

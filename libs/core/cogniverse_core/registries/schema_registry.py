@@ -21,6 +21,7 @@ from cogniverse_core.registries.exceptions import (
     SchemaLoadError,
     SchemaRegistryInitializationError,
 )
+from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
 from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
 
 logger = logging.getLogger(__name__)
@@ -703,6 +704,14 @@ class SchemaRegistry:
             lambda row, version: self.register_schema(**row, expected_version=version),
         )
         return [SchemaInfo(**row) for row in recovered]
+
+    def deployment_lease(self, **kwargs) -> SchemaDeployLease:
+        """An unacquired lease over the whole Vespa application package.
+
+        Serialises package replacement across processes and pods; see
+        ``SchemaDeployLease``.
+        """
+        return SchemaDeployLease(self._config_manager.store, **kwargs)
 
     def reserved_schemas(self, live_names: set[str]) -> Dict[str, Dict[str, Any]]:
         """Full schema names owned by an activation in flight, with their
