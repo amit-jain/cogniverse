@@ -31,10 +31,13 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_HISTORY_LOADED,
+    CONVERSATION_HISTORY_UNAVAILABLE,
     CONVERSATION_LOAD_TIMEOUT_S,
     CONVERSATION_PERSIST_FAILURE_CAPACITY,
     CONVERSATION_SAVE_TIMEOUT_S,
     AgentDispatcher,
+    ConversationHistory,
     ConversationPersistFailed,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -825,6 +828,11 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
             "message": "reply two",
             "entities": [],
             "answer": "reply two",
+            "conversation": {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 2,
+                "reason": None,
+            },
         }
         assert set(r2) == set(r1)
         print(
@@ -854,7 +862,11 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
             load_started = time.monotonic()
             degraded = await d._load_conversation_history(TENANT, ctx)
             load_elapsed = time.monotonic() - load_started
-            assert degraded == []
+            assert degraded == ConversationHistory(
+                turns=[],
+                state=CONVERSATION_HISTORY_UNAVAILABLE,
+                reason="TimeoutError()",
+            )
             assert (
                 CONVERSATION_LOAD_TIMEOUT_S
                 <= load_elapsed

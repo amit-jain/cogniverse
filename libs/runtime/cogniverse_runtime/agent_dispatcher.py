@@ -163,6 +163,32 @@ class ConversationPersistFailed(Exception):
         self.__cause__ = cause
 
 
+CONVERSATION_HISTORY_LOADED = "loaded"
+CONVERSATION_HISTORY_UNAVAILABLE = "unavailable"
+
+
+@dataclasses.dataclass(frozen=True)
+class ConversationHistory:
+    """A context's prior turns and the outcome of the read that produced them.
+
+    ``state`` separates "this context has no prior turns" from "the store did
+    not answer", so an answer written without the context it should have had
+    is never presented as one written with it.
+    """
+
+    turns: List[Dict[str, str]]
+    state: str = CONVERSATION_HISTORY_LOADED
+    reason: Optional[str] = None
+
+    def envelope(self) -> Dict[str, Any]:
+        """The ``conversation`` block a server-managed turn's envelope carries."""
+        return {
+            "state": self.state,
+            "turn_count": len(self.turns),
+            "reason": self.reason,
+        }
+
+
 # Capabilities whose execution path reaches Vespa (retrieval, code context).
 # Every dispatch path reaches the LM, so "llm" needs no capability test.
 _VESPA_REACHING_CAPABILITIES = frozenset(
@@ -1481,10 +1507,12 @@ class AgentDispatcher:
         # never double-managed.
         context_id = context.get("context_id")
         manage_history = bool(context_id) and "conversation_history" not in context
+        managed_history: Optional[ConversationHistory] = None
         if manage_history:
-            conversation_history = await self._load_conversation_history(
+            managed_history = await self._load_conversation_history(
                 tenant_id, str(context_id)
             )
+            conversation_history = managed_history.turns
             context["conversation_history"] = conversation_history
         else:
             conversation_history = context.get("conversation_history", [])
@@ -1562,7 +1590,9 @@ class AgentDispatcher:
         if isinstance(result, dict):
             self._stamp_answer(result)
 
-        if manage_history:
+        if managed_history is not None:
+            if isinstance(result, dict):
+                result["conversation"] = managed_history.envelope()
             self._schedule_conversation_save(tenant_id, str(context_id), query, result)
 
         entities = result.get("entities", [])
@@ -1612,7 +1642,7 @@ class AgentDispatcher:
 
     async def _load_conversation_history(
         self, tenant_id: str, context_id: str
-    ) -> List[Dict[str, str]]:
+    ) -> ConversationHistory:
         """Load a context's recent turns off the event loop, time-bounded.
 
         Waits for this context's pending saves first, so a turn reads its own
@@ -1621,10 +1651,13 @@ class AgentDispatcher:
 
         History is enrichment, not a hard dependency: a Mem0 outage, an
         unconfigured backend, or a read that exceeds
-        CONVERSATION_LOAD_TIMEOUT_S degrades to no history (logged), so the
-        agent still answers — it just loses prior-turn context, never the
-        reply. A hung backend cannot stall the reply past the budget (the
-        offloaded thread may run on, but the dispatch stops waiting).
+        CONVERSATION_LOAD_TIMEOUT_S degrades to no history, so the agent still
+        answers — it just loses prior-turn context, never the reply. A hung
+        backend cannot stall the reply past the budget (the offloaded thread
+        may run on, but the dispatch stops waiting). The degrade is reported:
+        the returned state is ``unavailable`` with the failing exception, which
+        the turn's envelope carries under ``conversation``, so a caller can
+        tell a context with no prior turns from one whose turns were not read.
         """
         await self._await_conversation_saves(tenant_id, context_id)
 
@@ -1635,15 +1668,20 @@ class AgentDispatcher:
             return await asyncio.to_thread(store.get_history, context_id)
 
         try:
-            return await asyncio.wait_for(_load(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 — enrichment degrade, logged
+            turns = await asyncio.wait_for(_load(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — reported through the envelope
             logger.warning(
                 "Conversation history unavailable for context %s: %s: %r",
                 context_id,
                 type(exc).__name__,
                 exc,
             )
-            return []
+            return ConversationHistory(
+                turns=[],
+                state=CONVERSATION_HISTORY_UNAVAILABLE,
+                reason=repr(exc),
+            )
+        return ConversationHistory(turns=turns)
 
     def _schedule_conversation_save(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
@@ -1770,19 +1808,21 @@ class AgentDispatcher:
         A save that fails or exceeds CONVERSATION_SAVE_TIMEOUT_S records a
         ConversationPersistFailed for the context and logs the exception type
         — the turn is lost, and the loss is readable through
-        :meth:`conversation_persist_status`, never a silent drop. The
-        assistant turn is skipped when the agent produced no human-readable
-        message.
+        :meth:`conversation_persist_status`, never a silent drop.
+
+        The assistant turn is the delivered answer — ``result["answer"]``, the
+        same text every dispatch consumer renders. An envelope with no answer
+        (an error, or a turn :meth:`_stamp_answer` could not extract) persists
+        the user turn alone, so history never carries text the assistant did
+        not say.
         """
         if after is not None:
             # The predecessor records its own failure; this save proceeds
             # either way so one bad write cannot stall a context forever.
             await asyncio.wait([after])
 
-        assistant_text = result.get("message")
-        if not isinstance(assistant_text, str) or not assistant_text:
-            candidate = result.get("result")
-            assistant_text = candidate if isinstance(candidate, str) else ""
+        answer = result.get("answer")
+        assistant_text = answer if isinstance(answer, str) else ""
 
         deadline = time.monotonic() + CONVERSATION_SAVE_TIMEOUT_S
 
