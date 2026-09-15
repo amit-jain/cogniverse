@@ -73,6 +73,68 @@ class PoolingResponse(BaseModel):
     model: str
 
 
+class WindowRequest(BaseModel):
+    input: list[str] = Field(..., description="Texts to split into windows.")
+    model: str | None = Field(
+        None,
+        description="Optional model identifier; must equal the pinned model.",
+    )
+
+
+class WindowResponseItem(BaseModel):
+    index: int
+    spans: list[tuple[int, int]]
+
+
+class WindowResponse(BaseModel):
+    object: str = "list"
+    data: list[WindowResponseItem]
+    model: str
+    document_length: int
+    window_tokens: int
+
+
+def _window_token_budget(model: Any) -> int:
+    """Content tokens that fit in one encode alongside the document prefix.
+
+    PyLate tokenizes ``document_prefix + text`` and caps the sequence at
+    ``document_length - 1``, special tokens included, then drops whatever
+    does not fit. The budget is what is left of that cap once the prefix
+    and its special tokens are accounted for.
+    """
+    tokenizer = model.tokenizer
+    prefix_tokens = len(tokenizer(model.document_prefix)["input_ids"])
+    budget = model.document_length - 1 - prefix_tokens
+    if budget < 1:
+        raise ValueError(
+            f"document_length {model.document_length} leaves no room for content "
+            f"after {prefix_tokens} prefix tokens"
+        )
+    return budget
+
+
+def _text_window_spans(model: Any, text: str, budget: int) -> list[tuple[int, int]]:
+    """Character spans that tile ``text`` into encodable windows.
+
+    Spans are contiguous and cover the whole string, so concatenating the
+    windows reproduces the source exactly: each window ends at the last
+    character of its final token and the next one resumes there.
+    """
+    offsets = model.tokenizer(
+        text, add_special_tokens=False, return_offsets_mapping=True
+    )["offset_mapping"]
+    if not offsets:
+        return [(0, len(text))]
+    spans = []
+    start = 0
+    for index in range(0, len(offsets), budget):
+        group = offsets[index : index + budget]
+        end = len(text) if index + budget >= len(offsets) else int(group[-1][1])
+        spans.append((start, end))
+        start = end
+    return spans
+
+
 def _load_colbert(model_name: str, model_revision: str, device: str) -> Any:
     from pylate.models import ColBERT
 
@@ -234,6 +296,65 @@ def build_app(
                 for index, tokens in enumerate(encoded)
             ],
             model=model_name,
+        )
+
+    @app.post("/windows", response_model=WindowResponse)
+    def windows(request: WindowRequest) -> WindowResponse:
+        """Split each text into the character spans this model encodes whole.
+
+        The tokenizer and the document window belong to the model, so the
+        caller cannot compute this itself without shipping the model files;
+        it sends the text and indexes one document per returned span.
+        """
+        if not request.input:
+            raise HTTPException(
+                status_code=400, detail="`input` must be a non-empty list"
+            )
+        if len(request.input) > max_input_items:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"pylate: `input` holds {len(request.input)} texts, "
+                    f"limit is {max_input_items}"
+                ),
+            )
+        total_chars = sum(len(text) for text in request.input)
+        if total_chars > max_input_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"pylate: `input` holds {total_chars} characters, "
+                    f"limit is {max_input_chars}"
+                ),
+            )
+        if request.model is not None and request.model != model_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"model must equal pinned model {model_name}",
+            )
+        model = _loaded_model()
+        try:
+            budget = _window_token_budget(model)
+            data = [
+                WindowResponseItem(
+                    index=index, spans=_text_window_spans(model, text, budget)
+                )
+                for index, text in enumerate(request.input)
+            ]
+        except Exception as exc:
+            logger.exception("windowing failed (model=%s)", model_name)
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"pylate: model {model_name} windowing failed "
+                    f"({type(exc).__name__}): {exc}"
+                ),
+            ) from exc
+        return WindowResponse(
+            data=data,
+            model=model_name,
+            document_length=int(model.document_length),
+            window_tokens=budget,
         )
 
     return app

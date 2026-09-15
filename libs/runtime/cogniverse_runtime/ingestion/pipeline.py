@@ -21,6 +21,7 @@ Based on the configurable pipeline design from CLAUDE.md.
 import asyncio
 import json
 import logging
+import shutil
 import sys
 import time
 import uuid
@@ -154,12 +155,14 @@ class _VideoProcessingContext:
     """Per-video view over the pipeline handed to strategies as their
     ``pipeline_context``.
 
-    Carries this video's identity (``video_path``/``video_uri``) while
-    delegating shared services (processor manager, embedding generation,
-    config, schema name) to the owning pipeline. Keeping identity here
-    instead of on the pipeline is what lets ``process_videos_concurrent``
-    run videos in parallel without one task clobbering another's
-    ``video_path`` between awaits.
+    Carries this video's identity (``video_path``/``video_uri``) and its
+    own ``profile_output_dir`` scratch directory, while delegating shared
+    services (processor manager, embedding generation, config, schema
+    name) to the owning pipeline. Keeping identity here instead of on the
+    pipeline is what lets ``process_videos_concurrent`` run videos in
+    parallel without one task clobbering another's ``video_path`` between
+    awaits, and what keeps two runs of the same source from writing over
+    each other's keyframes, chunks, pages and transcripts.
     """
 
     def __init__(
@@ -168,6 +171,10 @@ class _VideoProcessingContext:
         self.video_path = video_path
         self.video_uri = video_uri
         self._pipeline = pipeline
+        self.profile_output_dir = (
+            pipeline.profile_output_dir / f"job-{uuid.uuid4().hex}"
+        )
+        self.profile_output_dir.mkdir(parents=True, exist_ok=True)
 
     def __getattr__(self, name: str) -> Any:
         pipeline = self.__dict__.get("_pipeline")
@@ -1040,13 +1047,23 @@ class VideoIngestionPipeline:
                     "pipeline.schema_name": self.schema_name or "unknown",
                 },
             ) as pipeline_span:
-                # Let strategy set orchestrate everything
-                self.logger.info("Delegating to ProcessingStrategySet.process()")
-                processing_results = await self.strategy_set.process(
-                    video_path=video_path,
-                    processor_manager=self.processor_manager,
-                    pipeline_context=pipeline_context,
+                # Let strategy set orchestrate everything. The stages run
+                # decoders and encoders in worker threads that keep writing
+                # into this job's scratch directory after a cancellation is
+                # delivered, so shield them: a cancelled ingest lets the
+                # in-flight stage settle and only then releases its scratch.
+                stages = asyncio.ensure_future(
+                    self.strategy_set.process(
+                        video_path=video_path,
+                        processor_manager=self.processor_manager,
+                        pipeline_context=pipeline_context,
+                    )
                 )
+                try:
+                    processing_results = await asyncio.shield(stages)
+                except asyncio.CancelledError:
+                    await asyncio.wait({stages})
+                    raise
 
                 # Add processing results to our results structure
                 results["results"] = processing_results
@@ -1145,24 +1162,22 @@ class VideoIngestionPipeline:
 
             return results
         finally:
-            self._cleanup_local_keyframes(video_id)
+            self._release_job_scratch(pipeline_context.profile_output_dir)
 
-    def _cleanup_local_keyframes(self, video_id: str) -> None:
-        """Remove this pod's extracted keyframe JPEGs after the run.
+    def _release_job_scratch(self, scratch_dir: Path) -> None:
+        """Remove the media this run generated on the pod's own disk.
 
-        Keyframes are uploaded to the object store and cached as encoded
-        JPEG bytes during ``strategy_set.process``; answer-time serving
-        fetches from the object store and cache hits rehydrate from the
-        stored bytes, so nothing downstream reads the local files once
-        processing returns. Left in place they accumulate one directory
-        per ingest and eventually fill the pod disk.
+        Keyframes, transcoded chunks, rendered document pages, transcripts
+        and their metadata are written under a scratch directory owned by
+        this run. Frames and pages are uploaded to the object store and
+        cached as encoded bytes during ``strategy_set.process``, and the
+        embedding stage has already read every generated file by the time
+        the run returns, so nothing downstream opens these paths again.
+        Left in place they accumulate one directory per ingest and fill
+        the pod disk.
         """
-        import shutil
-
-        kf_dir = self.profile_output_dir / "keyframes" / video_id
-        if kf_dir.exists():
-            shutil.rmtree(kf_dir, ignore_errors=True)
-            self.logger.debug("Removed local keyframe dir %s", kf_dir)
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        self.logger.debug("Released job scratch %s", scratch_dir)
 
     def _prepare_base_results(
         self, video_path: Path, video_uri: str | None = None

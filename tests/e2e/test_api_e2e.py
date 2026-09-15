@@ -2661,6 +2661,33 @@ class TestPDFIngestionAndSearch:
             )
 
 
+def _served_document_windows(text: str) -> list[str]:
+    """The slices the deployed embedding service splits ``text`` into.
+
+    Ingestion asks the served model where its document window falls and
+    indexes one document per slice, so the expected document count comes
+    from that same call against the same sidecar, never from a literal.
+    """
+    from cogniverse_cli.images import detect_torch_backend
+
+    from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+    from tests.e2e.conftest import e2e_required_health_probes
+
+    endpoints = dict(e2e_required_health_probes(detect_torch_backend()))
+    profile = json.loads(CONFIG_PATH.read_text())["backend"]["profiles"][
+        DOCUMENT_PROFILE
+    ]
+    model, _ = RemoteColBERTLoader(
+        profile["embedding_model"],
+        {"remote_inference_url": endpoints["colbert_pylate"]},
+        _resolved_headers={},
+    ).load_model()
+    try:
+        return [text[start:end] for start, end in model.text_windows([text])[0]]
+    finally:
+        model._close()
+
+
 @pytest.mark.e2e
 class TestDocumentIngestionAndSearch:
     """Upload tracked dataset_summary.md and retrieve its exact content."""
@@ -2671,6 +2698,8 @@ class TestDocumentIngestionAndSearch:
         document_text = real_document_path.read_text(encoding="utf-8").strip()
         assert "# Evaluation Dataset" in document_text
         assert "Provides:\n- **500 test videos** from ActivityNet-200" in document_text
+        windows = _served_document_windows(document_text)
+        assert "".join(windows) == document_text
         expected_source_url = _expected_artifact_source_url(real_document_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
@@ -2693,8 +2722,8 @@ class TestDocumentIngestionAndSearch:
             assert upload_data["existing"] is False, upload_data
             assert upload_data["filename"] == real_document_path.name
             assert upload_data["source_url"] == expected_source_url
-            assert upload_data["chunks_created"] == 1, upload_data
-            assert upload_data["documents_fed"] == 1, upload_data
+            assert upload_data["chunks_created"] == len(windows), upload_data
+            assert upload_data["documents_fed"] == len(windows), upload_data
             assert upload_data["video_id"] == _content_sha256(real_document_path)
 
             time.sleep(3)
@@ -2717,9 +2746,14 @@ class TestDocumentIngestionAndSearch:
                 video_id=upload_data["video_id"],
                 expected_metadata={
                     "document_id": upload_data["video_id"],
-                    "full_text": document_text,
                 },
             )
+            # Source granularity returns the document's best-matching window,
+            # so the hit carries that window's slice, and it is the slice that
+            # holds the sentence the query names.
+            hit_text = search_resp.json()["results"][0]["metadata"]["full_text"]
+            assert hit_text in windows
+            assert "125 extracted queries" in hit_text
 
 
 # Scenario 20 (API portion): Event queue listing

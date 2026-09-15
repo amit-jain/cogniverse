@@ -79,6 +79,12 @@ revision, GPU candidates, secret requirements such as `requires_hf_token`)
 comes from `cogniverse_foundation.inference_specs`, including the
 `context_window` a vLLM service launches with and publishes.
 
+The PyLate server (`modal_inference/servers/pylate.py`) serves `POST /pooling`
+for per-token embeddings and `POST /windows`, which returns the character spans
+that tile each text into pieces the pinned model encodes whole. The tokenizer
+and the document window belong to the model, so ingestion asks the server where
+to split and indexes one document per span.
+
 ---
 
 ## Commands

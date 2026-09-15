@@ -82,7 +82,10 @@ class TestOriginalFilenameTitles:
 
         class _FakeColbert:
             def encode(self, texts, is_query=False):
-                return [np.zeros((4, 128), dtype=np.float32)]
+                return [np.zeros((4, 128), dtype=np.float32) for _ in texts]
+
+            def text_windows(self, texts):
+                return [[(0, len(text))] for text in texts]
 
         gen = object.__new__(EmbeddingGeneratorImpl)
         gen.logger = logging.getLogger("test_document_titles")
@@ -132,7 +135,10 @@ class TestOriginalFilenameTitles:
 
         class _FakeColbert:
             def encode(self, texts, is_query=False):
-                return [np.zeros((4, 128), dtype=np.float32)]
+                return [np.zeros((4, 128), dtype=np.float32) for _ in texts]
+
+            def text_windows(self, texts):
+                return [[(0, len(text))] for text in texts]
 
         monkeypatch.setattr(
             aeg, "AudioEmbeddingGenerator", _StubAudioEmbeddingGenerator
@@ -186,7 +192,10 @@ class TestOriginalFilenameTitles:
 
         class _FakeColbert:
             def encode(self, texts, is_query=False):
-                return [np.zeros((4, 128), dtype=np.float32)]
+                return [np.zeros((4, 128), dtype=np.float32) for _ in texts]
+
+            def text_windows(self, texts):
+                return [[(0, len(text))] for text in texts]
 
         monkeypatch.setattr(
             aeg, "AudioEmbeddingGenerator", _StubAudioEmbeddingGenerator
@@ -245,7 +254,10 @@ class TestAudioChunkResilience:
 
         class _FakeColbert:
             def encode(self, texts, is_query=False):
-                return [np.zeros((4, 128), dtype=np.float32)]
+                return [np.zeros((4, 128), dtype=np.float32) for _ in texts]
+
+            def text_windows(self, texts):
+                return [[(0, len(text))] for text in texts]
 
         gen = object.__new__(EmbeddingGeneratorImpl)
         gen.logger = logging.getLogger("test_audio_resilience")
