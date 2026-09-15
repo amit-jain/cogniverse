@@ -967,7 +967,13 @@ Every answer envelope carries a `grounding` block — `state`, `modalities`,
 | `no_servable_profile_for_modality` | the tenant serves nothing for this modality |
 | `no_deployed_schema_for_profile` | the tenant configures profiles for this request but has deployed no schema for them; they are named under `undeployed_profiles` |
 | `no_servable_profile` | the tenant has no servable profile and no configured default |
-| `search_unavailable` | a search dependency failed or the search exceeded its budget; the answer is ungrounded |
+
+A failed retrieval is not one of these states. When the profile plan, the
+budget read or the search itself fails, or the search exceeds its budget, the
+turn raises `AnswerGroundingUnavailable` naming the tenant, the resolved
+profiles and the reason, and the transport reports the failure (a 5xx on `/v1`
+and `/agents/{name}/process`, a `failed` A2A task). An answer written from the
+query alone is not returned as a successful answer.
 
 `undeployed_profiles` names the profiles this request would have searched had
 their schema been deployed for this tenant. They are reported rather than
@@ -994,13 +1000,15 @@ The three nothing-to-search states short-circuit: the envelope states that the
 tenant serves no content of that modality, has no servable profile, or has no
 deployed schema for the profiles it configures, and the answer model is not
 invoked, so an empty corpus never reads as a confident summary of nothing. A
-dependency outage stays distinct under `search_unavailable`.
+dependency outage is different in kind — the result is unknown rather than
+empty — and fails the turn.
 
 The grounding search is bounded by `answer_grounding_search_timeout_seconds`
-(seconds, `configs/config.json` and the chart's copy). Exceeding it yields
-`search_unavailable` with no hits, so a leg whose encoder never answers cannot
-hold an answer open. A config the budget cannot be read from degrades the same
-way; a config that does not declare it raises, rather than searching unbounded. The
+(seconds, `configs/config.json` and the chart's copy). Exceeding it raises
+`AnswerGroundingUnavailable`, so a leg whose encoder never answers cannot hold
+an answer open. A config the budget cannot be read from fails the same way; a
+config that does not declare it raises `ValueError`, rather than searching
+unbounded. The
 fan-out is paid in parallel: profiles sharing an embedding model share one
 encode, and every profile's query runs concurrently, so a stalled leg costs its
 own stall rather than the stall plus the healthy legs' work.
@@ -1013,7 +1021,7 @@ consume the search's time. A rewrite that fails or overruns its share searches
 the original query; `degraded_query_rewrite` then names it
 (`query_rewrite_failed` / `query_rewrite_timed_out`) and the state becomes
 `searched_servable_profiles_degraded`, so a degraded rewrite still returns hits
-and is never reported as `search_unavailable`.
+and is never treated as a failed retrieval.
 
 A dispatched search's envelope carries `status`, `agent`, `message`,
 `results_count`, `results`, `profile`, `profiles`, `degraded_profiles`,
@@ -1026,7 +1034,7 @@ nested there rather than being a top-level field of the routing response.
 
 Completed dispatch envelopes carry `answer`: the human-facing text of the turn, produced by `harness_turn.extract_answer_text` and read by the wiki auto-file hook and the harness transports. `harness_turn` derives that text from the agent's own output — nested under `result` / `orchestration_result`, or flat for the generic path — falling back to the envelope's message and hits. An error envelope raises `NoAnswerError` and is left without an `answer`, so a failure is never rendered as a reply. The module also holds `derive_request_seed` (the canary/variant bucket for a conversation, anchored on its first user message) and `to_openai_tool_calls`.
 
-**Server-managed conversation history.** When a dispatch carries a `context_id` and no `conversation_history` of its own (the messaging gateway), the dispatcher loads that context's recent turns from Mem0 before the agent runs and persists the user + assistant turns after. The load is on the reply path and bounded by `CONVERSATION_LOAD_TIMEOUT_S` (5s; a real read measures ~0.02s) — a hung Mem0 degrades to no history, logged with the exception type, and the agent still answers. The save is **not** on the reply path: `_schedule_conversation_save` queues it on a per-`(tenant_id, context_id)` chain through `_spawn_background`, so one context's turns land in the order their replies were produced while other contexts run concurrently. A load first waits for its own context's chain, bounded by one save budget, so a turn still reads its own writes. The save appends the user turn and then the assistant turn, and each append is retried on its own: `CONVERSATION_SAVE_ATTEMPTS` (4) attempts, `CONVERSATION_SAVE_RETRY_BACKOFF_S` (0.25s) doubling per retry, stopping early when the remaining budget cannot hold the next attempt plus `CONVERSATION_SAVE_STEP_RESERVE_S`. Only a failure the write never got a verdict for is retried (transport, timeout, a retryable status — `cogniverse_core.conversation.is_transient_turn_write_error`); a document the backend refused is not. An append that landed is never repeated, and the store build is not retried because a failed build leaves nothing half-written. When the assistant append is given up on, the user turn stays and a durable `assistant_missing` marker row records the failure type in the reply's place — never fabricated assistant text — so a half-turn is findable after a restart through `ConversationStore.get_missing_assistant_markers`, while the loaded history shows an unanswered user message. A save that fails or exceeds `CONVERSATION_SAVE_TIMEOUT_S` (20s; a fresh process's first save measures ~7.2s, later saves ~0.1s) records a `ConversationPersistFailed` for that context: `conversation_persist_status()` reports `{"pending": N, "failed": [(tenant_id, context_id), …]}` and `conversation_persist_failure(tenant_id, context_id)` returns the typed error, so a lost turn is readable rather than silent; the record holds the newest `CONVERSATION_PERSIST_FAILURE_CAPACITY` contexts, evicting oldest-first. `drain_conversation_saves()` lands what is in flight within `CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S`; the runtime's shutdown calls it through `routers.agents.drain_conversation_saves()`.
+**Server-managed conversation history.** When a dispatch carries a `context_id` and no `conversation_history` of its own (the messaging gateway), the dispatcher loads that context's recent turns from Mem0 before the agent runs and persists the user + assistant turns after. The load is on the reply path and bounded by `CONVERSATION_LOAD_TIMEOUT_S` (5s; a real read measures ~0.02s) — a hung Mem0 degrades to no history and the agent still answers, and the degrade is reported: the envelope carries a `conversation` block `{"state", "turn_count", "reason"}` whose state is `loaded` or `unavailable`, with `reason` the repr of the failure, so a context with no prior turns is distinguishable from one whose turns were not read. The save is **not** on the reply path: `_schedule_conversation_save` queues it on a per-`(tenant_id, context_id)` chain through `_spawn_background`, so one context's turns land in the order their replies were produced while other contexts run concurrently. A load first waits for its own context's chain, bounded by one save budget, so a turn still reads its own writes. The assistant turn is `result["answer"]`, the rendered answer the caller was handed; an envelope with no answer persists the user turn alone. The save appends the user turn and then the assistant turn, and each append is retried on its own: `CONVERSATION_SAVE_ATTEMPTS` (4) attempts, `CONVERSATION_SAVE_RETRY_BACKOFF_S` (0.25s) doubling per retry, stopping early when the remaining budget cannot hold the next attempt plus `CONVERSATION_SAVE_STEP_RESERVE_S`. Only a failure the write never got a verdict for is retried (transport, timeout, a retryable status — `cogniverse_core.conversation.is_transient_turn_write_error`); a document the backend refused is not. An append that landed is never repeated, and the store build is not retried because a failed build leaves nothing half-written. When the assistant append is given up on, the user turn stays and a durable `assistant_missing` marker row records the failure type in the reply's place — never fabricated assistant text — so a half-turn is findable after a restart through `ConversationStore.get_missing_assistant_markers`, while the loaded history shows an unanswered user message. A save that fails or exceeds `CONVERSATION_SAVE_TIMEOUT_S` (20s; a fresh process's first save measures ~7.2s, later saves ~0.1s) records a `ConversationPersistFailed` for that context: `conversation_persist_status()` reports `{"pending": N, "failed": [(tenant_id, context_id), …]}` and `conversation_persist_failure(tenant_id, context_id)` returns the typed error, so a lost turn is readable rather than silent; the record holds the newest `CONVERSATION_PERSIST_FAILURE_CAPACITY` contexts, evicting oldest-first. `drain_conversation_saves()` lands what is in flight within `CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S`; the runtime's shutdown calls it through `routers.agents.drain_conversation_saves()`.
 
 
 `dispatch_stream(agent_name, query, context)` checks egress in a worker and
