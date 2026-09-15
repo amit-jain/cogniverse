@@ -178,12 +178,13 @@ def test_tabs_read_only_selected_tenants_producer_spans(
 # What each tab renders for a window it read nothing from. profile_metrics
 # names the project it queried, which is where a wrong derivation shows up;
 # routing_evaluation names the producer instead.
-_EMPTY_WINDOW_NOTICE = {
-    "routing_evaluation": (
+_EMPTY_WINDOW_NOTICES = {
+    "routing_evaluation": [
         "No routing decisions found in the last 24 hours. Make sure the routing "
-        "agent has been processing requests and telemetry is capturing traces."
-    ),
-    "profile_metrics": "No spans found in `{project}` for the last 24h.",
+        "agent has been processing requests and telemetry is capturing traces.",
+        "Querying spans from project: `{project}`",
+    ],
+    "profile_metrics": ["No spans found in `{project}` for the last 24h."],
 }
 
 
@@ -267,9 +268,8 @@ def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
             for notice in notices
             if not notice.startswith(_ANNOTATION_STORE_ERROR)
         ] == [
-            _EMPTY_WINDOW_NOTICE[tab].format(
-                project=manager.config.get_project_name(tenant)
-            )
+            notice.format(project=manager.config.get_project_name(tenant))
+            for notice in _EMPTY_WINDOW_NOTICES[tab]
         ]
     finally:
         server.shutdown()

@@ -341,10 +341,14 @@ def test_concurrent_telemetry_steps_create_only_their_canonical_projects(
         # Phoenix indexes an accepted export asynchronously; the step already
         # blocked on the exporter, so this only covers the indexing lag.
         deadline = time.monotonic() + 60
+        column = f"attributes.{TENANT_ID_ATTRIBUTE}"
         frame = client.spans.get_spans_dataframe(project_identifier=project)
-        while frame.empty and time.monotonic() < deadline:
+        while (
+            frame.empty or column not in frame.columns
+        ) and time.monotonic() < deadline:
             time.sleep(0.5)
             frame = client.spans.get_spans_dataframe(project_identifier=project)
+        assert column in frame.columns, sorted(frame.columns)
         assert frame[["name", f"attributes.{TENANT_ID_ATTRIBUTE}"]].to_dict(
             "records"
         ) == [
