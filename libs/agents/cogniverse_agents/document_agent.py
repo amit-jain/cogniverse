@@ -333,7 +333,8 @@ class DocumentAgent(
 
             # Store successful search in memory
             if self.is_memory_enabled() and results:
-                self.remember_success(
+                await asyncio.to_thread(
+                    self.remember_success,
                     query=query,
                     result={
                         "result_count": len(results),
@@ -354,7 +355,8 @@ class DocumentAgent(
 
             # Store failure in memory
             if self.is_memory_enabled():
-                self.remember_failure(
+                await asyncio.to_thread(
+                    self.remember_failure,
                     query=query,
                     error=str(e),
                     metadata={"search_strategy": strategy, "limit": limit},
