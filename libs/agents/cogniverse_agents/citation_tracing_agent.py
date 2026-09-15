@@ -262,7 +262,11 @@ class CitationTracingAgent(
         # so the dispatcher's stamping always wins (input.tenant_id can be
         # missing when the orchestrator forwards an enrichment payload).
         tenant_id = getattr(self, "_memory_tenant_id", None) or input.tenant_id or ""
-        graph = walker.walk(input.memory_id, tenant_id=tenant_id)
+        # Each level of the walk is a blocking Vespa query plus one Mem0 read
+        # per node — off the loop, as AuditExplanationAgent does.
+        graph = await asyncio.to_thread(
+            walker.walk, input.memory_id, tenant_id=tenant_id
+        )
 
         nodes_out = [
             CitationNodeOut(
