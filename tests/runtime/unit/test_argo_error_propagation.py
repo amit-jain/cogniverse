@@ -266,3 +266,143 @@ class TestArgoClientAcceptsTheInClusterCertificate:
 
         assert response.status_code == 200
         assert response.json() == {"metadata": {"name": "ok"}}
+
+
+class TestFailedJobCommitLeavesNoLiveSchedule:
+    """A config write that fails after Argo accepted the schedule.
+
+    ``create_job`` submits the CronWorkflow first so a persisted row always has
+    a schedule behind it. The other order of failure was unhandled: Argo takes
+    the schedule, the ConfigStore write fails, and the CronWorkflow is left
+    firing on the cluster with nothing describing it — ``list_jobs`` reads
+    config rows, ``delete_job`` 404s without one, and the job_executor raises on
+    every tick. The create compensates by deleting what it submitted.
+    """
+
+    class _RecordingClient(_FakeAsyncClient):
+        """Records the Argo calls made, so the compensation is observable."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls: list[tuple[str, str]] = []
+
+        async def post(self, url, *args, **kwargs):
+            self.calls.append(("POST", url))
+            return await super().post(url, *args, **kwargs)
+
+        async def delete(self, url, *args, **kwargs):
+            self.calls.append(("DELETE", url))
+            return await super().delete(url, *args, **kwargs)
+
+    @staticmethod
+    def _config_manager(monkeypatch, *, write_error=None):
+        from unittest.mock import MagicMock
+
+        cm = MagicMock()
+        writes: list[dict] = []
+
+        def _set_config_value(**kwargs):
+            writes.append(kwargs)
+            if write_error is not None:
+                raise write_error
+
+        cm.set_config_value.side_effect = _set_config_value
+        monkeypatch.setattr(tenant_router, "_config_manager", cm)
+        return cm, writes
+
+    @staticmethod
+    def _body():
+        return tenant_router.JobCreateRequest(
+            name="daily-report", schedule="0 9 * * *", query="Read launch notes"
+        )
+
+    @pytest.mark.asyncio
+    async def test_config_write_failure_deletes_the_submitted_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_argo_endpoint(monkeypatch)
+        client = self._RecordingClient(post_status=201, delete_status=200)
+        _patch_httpx(monkeypatch, client)
+        _cm, writes = self._config_manager(
+            monkeypatch, write_error=ConnectionError("config store unreachable")
+        )
+
+        with pytest.raises(ConnectionError) as failure:
+            await tenant_router.create_job("acme:production", self._body())
+
+        assert str(failure.value) == "config store unreachable"
+        assert len(writes) == 1
+        job_id = writes[0]["config_key"].removeprefix("job_")
+        name = tenant_router._cron_workflow_name("acme:production", job_id)
+        assert client.calls == [
+            ("POST", "http://argo.test/api/v1/cron-workflows/argo"),
+            ("DELETE", f"http://argo.test/api/v1/cron-workflows/argo/{name}"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_compensating_delete_that_also_fails_surfaces_its_own_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Argo refusing the cleanup is reported, not swallowed.
+
+        The schedule is still live; a caller told "created failed, nothing
+        left behind" would never look for it.
+        """
+        _set_argo_endpoint(monkeypatch)
+        client = self._RecordingClient(post_status=201, delete_status=500)
+        _patch_httpx(monkeypatch, client)
+        self._config_manager(
+            monkeypatch, write_error=ConnectionError("config store unreachable")
+        )
+
+        with pytest.raises(HTTPException) as failure:
+            await tenant_router.create_job("acme:production", self._body())
+
+        assert failure.value.status_code == 503
+        assert failure.value.detail.startswith("Argo rejected CronWorkflow delete for ")
+        assert [call[0] for call in client.calls] == ["POST", "DELETE"]
+
+    @pytest.mark.asyncio
+    async def test_a_successful_create_deletes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_argo_endpoint(monkeypatch)
+        client = self._RecordingClient(post_status=201, delete_status=200)
+        _patch_httpx(monkeypatch, client)
+        _cm, writes = self._config_manager(monkeypatch)
+
+        response = await tenant_router.create_job("acme:production", self._body())
+
+        assert [call[0] for call in client.calls] == ["POST"]
+        assert len(writes) == 1
+        assert writes[0]["config_key"] == f"job_{response.job_id}"
+        assert response.status == "created"
+        assert response.schedule == "0 9 * * *"
+
+    @pytest.mark.asyncio
+    async def test_without_argo_a_failed_write_deletes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No Argo endpoint means nothing was submitted to compensate for."""
+        from cogniverse_runtime.config_loader import WorkflowSettings
+
+        monkeypatch.setattr(
+            tenant_router,
+            "get_workflow_settings",
+            lambda: WorkflowSettings(
+                api_url="",
+                namespace="argo",
+                job_template="cogniverse-job-runner",
+                optimization_template="cogniverse-optimization-runner",
+            ),
+        )
+        client = self._RecordingClient(post_status=201, delete_status=200)
+        _patch_httpx(monkeypatch, client)
+        self._config_manager(
+            monkeypatch, write_error=ConnectionError("config store unreachable")
+        )
+
+        with pytest.raises(ConnectionError):
+            await tenant_router.create_job("acme:production", self._body())
+
+        assert client.calls == []

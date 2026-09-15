@@ -1000,20 +1000,31 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
     # propagates a submit failure, so the ConfigStore job row is persisted only
     # once the cluster has accepted the schedule — no visible row with nothing
     # firing.
+    submitted_namespace = None
     if get_workflow_settings().api_url:
-        manifest = _build_cron_workflow(
-            tenant_id, job_id, body.schedule, get_workflow_settings().namespace
-        )
+        namespace = get_workflow_settings().namespace
+        manifest = _build_cron_workflow(tenant_id, job_id, body.schedule, namespace)
         await _submit_cron_workflow(manifest)
+        submitted_namespace = namespace
 
-    await asyncio.to_thread(
-        cm.set_config_value,
-        tenant_id=tenant_id,
-        scope=ConfigScope.SYSTEM,
-        service=_JOBS_SERVICE,
-        config_key=f"job_{job_id}",
-        config_value=config_value,
-    )
+    try:
+        await asyncio.to_thread(
+            cm.set_config_value,
+            tenant_id=tenant_id,
+            scope=ConfigScope.SYSTEM,
+            service=_JOBS_SERVICE,
+            config_key=f"job_{job_id}",
+            config_value=config_value,
+        )
+    except BaseException:
+        # The schedule is live on the cluster and nothing describes it: list_jobs
+        # reads config rows, delete_job 404s without one, and job_executor raises
+        # on every tick. Remove it so the failed create leaves nothing behind.
+        if submitted_namespace is not None:
+            await _delete_cron_workflow(
+                _cron_workflow_name(tenant_id, job_id), submitted_namespace
+            )
+        raise
     logger.info(
         "Created job %s for tenant %s (schedule=%s)", job_id, tenant_id, body.schedule
     )
