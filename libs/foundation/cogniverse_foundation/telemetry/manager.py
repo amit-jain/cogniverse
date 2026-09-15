@@ -12,10 +12,10 @@ import asyncio
 import logging
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from typing import Any, Dict, Optional
 
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.trace import Status, StatusCode, Tracer, use_span
 
 from cogniverse_foundation.telemetry.tenant_context import _current_tenant_id
@@ -31,6 +31,26 @@ ENVIRONMENT_ATTRIBUTE = "environment"
 SPAN_ENVELOPE_ATTRIBUTES = frozenset(
     {TENANT_ID_ATTRIBUTE, SERVICE_NAME_ATTRIBUTE, ENVIRONMENT_ATTRIBUTE}
 )
+
+
+class _ProviderSpanLease(SpanProcessor):
+    """Keep an evicted provider alive until its recording spans have ended."""
+
+    def __init__(self, manager, provider):
+        self._manager = manager
+        self._provider = provider
+
+    def on_start(self, span, parent_context=None):
+        with self._manager._lock:
+            self._manager._provider_leases[self._provider] += 1
+
+    def on_end(self, span):
+        with self._manager._retirement_condition:
+            self._manager._provider_leases[self._provider] -= 1
+            self._manager._retirement_condition.notify_all()
+
+    def force_flush(self, timeout_millis=30000):
+        return True
 
 
 class TelemetryManager:
@@ -88,6 +108,11 @@ class TelemetryManager:
             # config.tenant_cache_ttl_seconds are rebuilt on access.
             self._tracer_created_at: Dict[str, float] = {}
             self._lock = threading.RLock()
+            self._retirement_condition = threading.Condition(self._lock)
+            self._provider_leases: Dict[TracerProvider, int] = {}
+            self._retired_providers: Dict[TracerProvider, str] = {}
+            self._retirement_thread: Optional[threading.Thread] = None
+            self._shutdown = False
 
             # Per-project configs (single source of truth for project settings)
             self._project_configs: Dict[str, Dict[str, Any]] = {}
@@ -136,6 +161,8 @@ class TelemetryManager:
                 return cached
 
             self._cache_misses += 1
+            if not self._can_create_provider():
+                return None
 
             # Create tracer provider for tenant if needed
             try:
@@ -292,6 +319,7 @@ class TelemetryManager:
                 return
 
             checked_provider = None
+            span_scope = ExitStack()
             full_project_name = self.config.get_project_name(tenant_id, project_name)
             project_key = f"{tenant_id}:{project_name}"
             endpoint = self._project_configs.get(project_key, {}).get(
@@ -302,8 +330,17 @@ class TelemetryManager:
                     checked_provider, tracer = self._create_checked_tracer_for_project(
                         tenant_id, project_name
                     )
+                    if tracer is not None:
+                        span = span_scope.enter_context(
+                            tracer.start_as_current_span(name)
+                        )
                 else:
-                    tracer = self._get_tracer_for_project(tenant_id, project_name)
+                    with self._lock:
+                        tracer = self._get_tracer_for_project(tenant_id, project_name)
+                        if tracer is not None:
+                            span = span_scope.enter_context(
+                                tracer.start_as_current_span(name)
+                            )
 
                 if tracer is None:
                     if require_export:
@@ -324,7 +361,7 @@ class TelemetryManager:
                     yield NoOpSpan()
                     return
 
-                with tracer.start_as_current_span(name) as span:
+                with span_scope:
                     if require_export:
                         span_context = span.get_span_context()
                         if (
@@ -590,6 +627,8 @@ class TelemetryManager:
                 return cached
 
             self._cache_misses += 1
+            if not self._can_create_provider():
+                return None
 
             # Create tracer provider for project if needed
             try:
@@ -807,6 +846,14 @@ class TelemetryManager:
                 raise_on_export_failure=force_sync_export,
             )
 
+            if not force_sync_export:
+                self._provider_leases[tracer_provider] = 0
+                # Append through the SDK: backend convenience providers can
+                # replace their existing exporter when add_span_processor runs.
+                TracerProvider.add_span_processor(
+                    tracer_provider, _ProviderSpanLease(self, tracer_provider)
+                )
+
             mode = "BATCH" if use_batch_export else "SYNC"
             logger.info(
                 f"Created {mode} tracer provider: {project_name} (endpoint={endpoint})"
@@ -846,8 +893,8 @@ class TelemetryManager:
 
         Providers are evicted only once no remaining tracer maps to them, so a
         provider shared across one tenant's projects survives until its last
-        tracer is gone. ``shutdown()`` flushes the provider's pending spans
-        before it is dropped.
+        tracer is gone. Orphaned providers drain in a background worker after
+        their in-flight spans end.
         """
         if len(self._tenant_tracers) > self.config.max_cached_tenants:
             items_to_remove = len(self._tenant_tracers) - self.config.max_cached_tenants
@@ -860,35 +907,89 @@ class TelemetryManager:
 
         self._evict_orphaned_providers()
 
+    def _can_create_provider(self) -> bool:
+        """Bound queued drains and their SDK exporter threads during outages."""
+        if self._shutdown:
+            return False
+        if len(self._retired_providers) >= max(1, self.config.max_cached_tenants):
+            logger.warning(
+                "Telemetry provider retirement capacity reached; "
+                "new optional spans are not recorded until exporters drain"
+            )
+            return False
+        return True
+
     def _evict_orphaned_providers(self):
-        """Shut down and drop providers no cached tracer references."""
+        """Detach orphaned providers; draining never runs on the caller's thread."""
         still_referenced = set(self._tracer_provider_keys.values())
-        for provider_key in list(self._tenant_providers.keys()):
-            if provider_key in still_referenced:
-                continue
-            provider = self._tenant_providers.pop(provider_key)
-            try:
-                provider.shutdown()
-            except Exception:
-                logger.debug(
-                    "Provider shutdown failed for %s", provider_key, exc_info=True
+        with self._retirement_condition:
+            for provider_key in list(self._tenant_providers):
+                if provider_key in still_referenced:
+                    continue
+                provider = self._tenant_providers.pop(provider_key)
+                self._retired_providers[provider] = provider_key
+            self._start_retirement_worker()
+
+    def _start_retirement_worker(self):
+        if self._retired_providers and self._retirement_thread is None:
+            self._retirement_thread = threading.Thread(
+                target=self._drain_retired_providers,
+                name="cogniverse-telemetry-retirement",
+                daemon=True,
+            )
+            self._retirement_thread.start()
+        self._retirement_condition.notify_all()
+
+    def _drain_retired_providers(self):
+        while True:
+            with self._retirement_condition:
+                if not self._retired_providers:
+                    self._retirement_thread = None
+                    self._retirement_condition.notify_all()
+                    return
+                ready = next(
+                    (
+                        provider
+                        for provider in self._retired_providers
+                        if not self._provider_leases.get(provider, 0)
+                    ),
+                    None,
                 )
-            logger.debug(f"Evicted tracer provider from cache: {provider_key}")
+                if ready is None:
+                    self._retirement_condition.wait()
+                    continue
+                provider_key = self._retired_providers[ready]
+            try:
+                ready.shutdown()
+            except Exception:
+                logger.warning(
+                    "Telemetry provider retirement failed: provider=%s",
+                    provider_key,
+                    exc_info=True,
+                )
+            finally:
+                with self._retirement_condition:
+                    self._retired_providers.pop(ready)
+                    self._provider_leases.pop(ready, None)
+                    self._retirement_condition.notify_all()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get telemetry manager statistics."""
-        return {
-            "cache_hits": self._cache_hits,
-            "cache_misses": self._cache_misses,
-            "failed_initializations": self._failed_initializations,
-            "cached_tenants": len(self._tenant_providers),
-            "cached_tracers": len(self._tenant_tracers),
-            "config": {
-                "enabled": self.config.enabled,
-                "level": self.config.level.value,
-                "environment": self.config.environment,
-            },
-        }
+        with self._lock:
+            return {
+                "cache_hits": self._cache_hits,
+                "cache_misses": self._cache_misses,
+                "failed_initializations": self._failed_initializations,
+                "cached_tenants": len(self._tenant_providers),
+                "cached_tracers": len(self._tenant_tracers),
+                "retired_providers": len(self._retired_providers),
+                "retirement_workers": int(self._retirement_thread is not None),
+                "config": {
+                    "enabled": self.config.enabled,
+                    "level": self.config.level.value,
+                    "environment": self.config.environment,
+                },
+            }
 
     def force_flush(self, timeout_millis: int = 10000) -> bool:
         """
@@ -919,23 +1020,25 @@ class TelemetryManager:
         return all_success
 
     def shutdown(self):
-        """Shutdown all tracer providers gracefully."""
-        with self._lock:
-            for tenant_id, provider in self._tenant_providers.items():
-                try:
-                    if hasattr(provider, "force_flush"):
-                        provider.force_flush(timeout_millis=5000)
-                    if hasattr(provider, "shutdown"):
-                        provider.shutdown()
-                except Exception as e:
-                    logger.warning(
-                        f"Error shutting down provider for tenant {tenant_id}: {e}"
-                    )
-
+        """Stop new spans and wait at most 30 seconds for leased providers."""
+        with self._retirement_condition:
+            self._shutdown = True
+            self._retired_providers.update(
+                (provider, key) for key, provider in self._tenant_providers.items()
+            )
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
             self._tracer_provider_keys.clear()
             self._tracer_created_at.clear()
+            self._start_retirement_worker()
+            worker = self._retirement_thread
+        if worker is not None:
+            worker.join(timeout=30)
+            if worker.is_alive():
+                logger.warning(
+                    "Telemetry shutdown timed out; %s providers continue draining",
+                    len(self._retired_providers),
+                )
 
     @classmethod
     def reset(cls) -> None:

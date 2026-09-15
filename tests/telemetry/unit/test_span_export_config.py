@@ -358,6 +358,7 @@ def test_manager_forwards_batch_config_and_resource_attributes():
         batch_config=BatchExportConfig(max_queue_size=64),
     )
     manager._project_configs = {}
+    manager._provider_leases = {}
     fake_provider = MagicMock()
     manager.get_provider = MagicMock(return_value=fake_provider)
 
@@ -376,6 +377,8 @@ def test_manager_forwards_batch_config_and_resource_attributes():
         raise_on_export_failure=False,
     )
     assert result is fake_provider.configure_span_export.return_value
+    assert manager._provider_leases == {result: 0}
+    result._active_span_processor.add_span_processor.assert_called_once()
 
 
 def test_manager_forwards_sync_mode_from_registered_project():
@@ -390,16 +393,19 @@ def test_manager_forwards_sync_mode_from_registered_project():
             "use_sync_export": True,
         }
     }
+    manager._provider_leases = {}
     fake_provider = MagicMock()
     manager.get_provider = MagicMock(return_value=fake_provider)
 
-    manager._create_tenant_provider_for_project("acme", "search")
+    result = manager._create_tenant_provider_for_project("acme", "search")
 
     kwargs = fake_provider.configure_span_export.call_args.kwargs
     assert kwargs["endpoint"] == "localhost:24317"
     assert kwargs["use_batch_export"] is False
     assert kwargs["batch_config"] is manager.config.batch_config
     assert kwargs["raise_on_export_failure"] is False
+    assert manager._provider_leases == {result: 0}
+    result._active_span_processor.add_span_processor.assert_called_once()
 
 
 def test_manager_can_force_checked_export_for_required_spans():

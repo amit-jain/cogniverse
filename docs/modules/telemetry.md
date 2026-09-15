@@ -773,13 +773,21 @@ _failed_initializations: int
 
 **Cache Eviction (count + TTL):** `_evict_old_tracers()` runs after every
 cache miss. It first enforces the LRU count cap (`max_cached_tenants`),
-then calls `_evict_orphaned_providers()` to shut down and drop any
-`TracerProvider` no remaining cached tracer references — a provider
-shared across one tenant's projects survives until its last tracer is
-evicted. Independently, `_cached_tracer()` checks `tenant_cache_ttl_seconds`
-on every lookup: an entry older than the TTL is dropped (and its provider
-evicted once orphaned) so the caller rebuilds a fresh tracer. A TTL of 0
-or less disables expiry.
+then detaches providers no cached tracer references. One background worker
+drains detached providers outside the manager lock after all their recording
+spans end. Request spans acquire their tracer and start recording under the
+same manager lock. Cancellation releases the lease when the span scope exits.
+`_cached_tracer()` checks `tenant_cache_ttl_seconds` on each lookup and
+retires expired entries through the same worker. A TTL of 0 or less disables
+expiry.
+
+Retired providers are capped at `max(1, max_cached_tenants)`. At capacity,
+new optional tracer creation emits a warning and yields no recording tracer;
+cached tracers remain usable. This bounds exporter threads during collector
+outages. `get_stats()` exposes `retired_providers` and `retirement_workers`.
+`shutdown()` closes admission, retires all cached providers, and waits at most
+30 seconds for draining. Leased providers continue draining in the background
+if that deadline expires.
 
 **Initialization Pattern:**
 
