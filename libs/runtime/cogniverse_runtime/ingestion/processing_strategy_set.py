@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .exceptions import ContentProcessingError
 from .processor_base import BaseStrategy
 from .strategies import DOCUMENT_EXTENSIONS
 
@@ -654,6 +655,13 @@ class ProcessingStrategySet:
                     pipeline_context.profile_output_dir,
                     None,
                 )
+                if "error" in result:
+                    raise ContentProcessingError(
+                        f"Required transcription failed: {result['error']}",
+                        content_path=video_path,
+                        stage="transcription",
+                        profile=pipeline_context.schema_name,
+                    )
                 await pipeline_context.set_cached_transcript(video_path, result)
                 return {"transcript": result}
 

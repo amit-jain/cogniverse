@@ -207,7 +207,7 @@ class AudioProcessor(BaseProcessor):
         }
 
     @staticmethod
-    def _extract_audio_wav(video_path: Path) -> bytes:
+    def _extract_audio_wav(video_path: Path) -> bytes | None:
         """Extract the audio stream from ``video_path`` and return it as
         16 kHz mono PCM WAV bytes.
 
@@ -224,7 +224,7 @@ class AudioProcessor(BaseProcessor):
         in_stream = next((s for s in container.streams if s.type == "audio"), None)
         if in_stream is None:
             container.close()
-            raise RuntimeError(f"{video_path}: no audio stream present")
+            return None
 
         buf = io.BytesIO()
         out = av.open(buf, "w", format="wav")
@@ -263,6 +263,13 @@ class AudioProcessor(BaseProcessor):
         url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
         headers = self.auth_headers()
         audio_bytes = self._extract_audio_wav(video_path)
+        if audio_bytes is None:
+            return {
+                "video_id": video_id,
+                "video_path": str(video_path),
+                "full_text": "",
+                "segments": [],
+            }
         files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
         try:
             models_resp = requests.get(

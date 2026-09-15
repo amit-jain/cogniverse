@@ -565,10 +565,11 @@ class TestPipelineStep:
 
 @pytest.mark.unit
 class TestLocalKeyframeCleanup:
-    """The extracted keyframe JPEGs are uploaded to the object store and
-    cached as bytes during processing; the local copies must be removed
-    when the run ends so they don't accumulate one directory per ingest
-    and fill the pod disk."""
+    """Media a run generates on the pod — keyframe JPEGs, transcoded chunks,
+    rendered pages — is uploaded to the object store and cached as bytes
+    during processing; the run's local scratch directory must be removed
+    when it ends so it doesn't accumulate one directory per ingest and fill
+    the pod disk."""
 
     def _pipeline(self, output_dir: Path) -> VideoIngestionPipeline:
         pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
@@ -593,10 +594,14 @@ class TestLocalKeyframeCleanup:
     async def test_local_keyframes_removed_after_successful_run(self, tmp_path):
         pipeline = self._pipeline(tmp_path)
         video_path = Path("/videos/vid.mp4")
-        kf_dir = self._seed_keyframes(tmp_path, "vid")
+        seeded = []
 
         async def _process(**kwargs):
-            # Local JPEGs still present while the stages consume them.
+            # The stages write under, and read from, the run's own scratch.
+            kf_dir = self._seed_keyframes(
+                kwargs["pipeline_context"].profile_output_dir, "vid"
+            )
+            seeded.append(kf_dir)
             assert kf_dir.exists()
             return {"keyframes": {"keyframes": []}}
 
@@ -617,17 +622,24 @@ class TestLocalKeyframeCleanup:
             result = await pipeline.process_video_async_with_strategies(video_path)
 
         assert result["status"] == "completed"
-        assert not kf_dir.exists()
+        assert [kf_dir.exists() for kf_dir in seeded] == [False]
+        assert list(tmp_path.rglob("*")) == []
 
     @pytest.mark.asyncio
     async def test_local_keyframes_removed_even_when_processing_fails(self, tmp_path):
         pipeline = self._pipeline(tmp_path)
         video_path = Path("/videos/vid.mp4")
-        kf_dir = self._seed_keyframes(tmp_path, "vid")
+        seeded = []
 
-        pipeline.strategy_set.process = AsyncMock(
-            side_effect=RuntimeError("embedding backend down")
-        )
+        async def _process(**kwargs):
+            seeded.append(
+                self._seed_keyframes(
+                    kwargs["pipeline_context"].profile_output_dir, "vid"
+                )
+            )
+            raise RuntimeError("embedding backend down")
+
+        pipeline.strategy_set.process = AsyncMock(side_effect=_process)
 
         with (
             patch.object(pipeline, "_prepare_base_results") as prep,
@@ -641,4 +653,5 @@ class TestLocalKeyframeCleanup:
             result = await pipeline.process_video_async_with_strategies(video_path)
 
         assert result["status"] == "failed"
-        assert not kf_dir.exists()
+        assert [kf_dir.exists() for kf_dir in seeded] == [False]
+        assert list(tmp_path.rglob("*")) == []
