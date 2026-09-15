@@ -785,6 +785,12 @@ instead of being silently discarded.
 
 Restore active artefacts to a previously snapshotted version. Wraps `ArtifactManager.rollback_to_version` and snapshots the current active first so the rollback is itself reversible.
 
+A rollback carrying `--prompts-version` also moves the artefact state machine that
+`load_for_request` reads: the superseded active and any canary are retired with reason `rollback`,
+`active` becomes the rollback target and `canary` is cleared, all under the same compensation scope
+as the content writes. Every request seed therefore serves the rollback target on the next dispatch.
+A demos-only rollback leaves the state alone — the served identity is the prompts version.
+
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_rollback`
 
 ```bash

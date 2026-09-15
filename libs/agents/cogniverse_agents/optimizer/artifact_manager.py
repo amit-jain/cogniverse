@@ -1383,10 +1383,14 @@ class ArtifactManager:
     ) -> Dict[str, Any]:
         """Restore active artefacts from a previously-snapshotted version.
 
-        Reads the ``dspy-prompts-{tenant}-{agent}-v{N}`` (and demos) datasets
-        and re-promotes their content as the active ones. The currently-active
-        artefacts are themselves snapshotted first so the rollback is itself
-        reversible. Returns a summary dict.
+        Reads the ``dspy-prompts-{tenant}-{agent}-v{N}`` (and demos) datasets,
+        re-promotes their content as the active ones AND moves the artefact
+        state machine ``load_for_request`` reads to that version, retiring the
+        superseded active and any canary with reason ``rollback``. A
+        demos-only rollback leaves the state alone: the served identity is the
+        prompts version. The currently-active artefacts are themselves
+        snapshotted first so the rollback is itself reversible. Returns a
+        summary dict.
         """
         # Snapshot current state so the operator can undo the rollback.
         backup_versions = await self.snapshot_active(agent_type) or {}
@@ -1436,6 +1440,28 @@ class ArtifactManager:
         # pair so the slot never disagrees with itself.
         previous_prompts = await self.load_prompts(agent_type)
         previous_demos = await self.load_demonstrations(agent_type)
+        previous_state = None
+        rolled_back_state = None
+        if new_prompts is not _absent:
+            rolled_back_state = await self.get_artefact_state(agent_type)
+            previous_state = json.loads(json.dumps(rolled_back_state, default=str))
+            retired_at = datetime.now(timezone.utc).isoformat()
+            retired = rolled_back_state.setdefault("retired", [])
+            for slot in ("active", "canary"):
+                superseded = rolled_back_state.get(slot)
+                if superseded:
+                    retired.append(
+                        {
+                            "version": superseded["version"],
+                            "retired_at": retired_at,
+                            "reason": "rollback",
+                        }
+                    )
+            rolled_back_state["active"] = {
+                "version": prompts_version,
+                "promoted_at": retired_at,
+            }
+            rolled_back_state["canary"] = None
         try:
             if new_prompts is not _absent:
                 await self.save_prompts(agent_type, new_prompts)
@@ -1443,12 +1469,17 @@ class ArtifactManager:
             if new_demos is not _absent:
                 await self.save_demonstrations(agent_type, new_demos)
                 result["restored"]["demos_version"] = demos_version
+            if rolled_back_state is not None:
+                await self._save_artefact_state(agent_type, rolled_back_state)
+                result["state"] = rolled_back_state
         except Exception:
             try:
                 if previous_prompts is not None:
                     await self.save_prompts(agent_type, previous_prompts)
                 if previous_demos is not None:
                     await self.save_demonstrations(agent_type, previous_demos)
+                if previous_state is not None:
+                    await self._save_artefact_state(agent_type, previous_state)
                 logger.warning(
                     "Rollback failed for %s/%s; previous active artefacts restored",
                     self._tenant_id,
