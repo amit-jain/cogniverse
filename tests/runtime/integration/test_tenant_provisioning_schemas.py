@@ -266,23 +266,23 @@ def test_schema_boundary_failure_cannot_report_success_and_retry_recovers(
 ):
     endpoint, cm, app, peer = provisioning_store
     from cogniverse_runtime import provision_tenant
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    from cogniverse_vespa.backend import VespaBackend
 
     monkeypatch.setenv("BACKEND_URL", "http://localhost")
     monkeypatch.setenv("BACKEND_PORT", str(endpoint["http_port"]))
     monkeypatch.setenv("VESPA_CONFIG_PORT", str(endpoint["config_port"]))
-    original = VespaSchemaManager._deploy_package
+    original = VespaBackend._deploy_package
     attempts = []
 
-    def fail_at_activation(manager, package, *args, **kwargs):
-        attempts.append(manager.backend_port)
+    def fail_at_activation(backend, package, *args, **kwargs):
+        attempts.append(backend._config_port)
         # Real transport failure after registry preparation, before activation.
         requests.post(
             "http://127.0.0.1:1/application/v2/tenant/default/prepareandactivate",
             timeout=1,
         )
 
-    monkeypatch.setattr(VespaSchemaManager, "_deploy_package", fail_at_activation)
+    monkeypatch.setattr(VespaBackend, "_deploy_package", fail_at_activation)
     with pytest.raises(
         RuntimeError, match="provisionfailure:production.*knowledge_graph"
     ):
@@ -300,7 +300,7 @@ def test_schema_boundary_failure_cannot_report_success_and_retry_recovers(
         is None
     )
     _peer(app, peer)
-    monkeypatch.setattr(VespaSchemaManager, "_deploy_package", original)
+    monkeypatch.setattr(VespaBackend, "_deploy_package", original)
     assert provision_tenant.deploy_schemas(
         "provisionfailure:production", ["graph_profile"]
     ) == ["knowledge_graph_provisionfailure_production"]
