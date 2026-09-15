@@ -1088,7 +1088,7 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **POST /admin/organizations** - Create organization
 **GET /admin/organizations** - List all organizations
 **GET /admin/organizations/{org_id}** - Get organization
-**DELETE /admin/organizations/{org_id}** - Delete organization (and its tenants)
+**DELETE /admin/organizations/{org_id}** - Delete organization and its tenants. A failed child deletion returns 503 with `deleted_tenant_ids` and `failed_tenant_ids`, retaining the organization for retry. The parent record is removed only after all child deletions succeed; an unconfirmed parent deletion returns 502 while its record remains.
 **GET /admin/organizations/{org_id}/tenants** - List tenants for an organization
 **POST /admin/tenants** - Create tenant (writes `tenant_metadata`). The `base_schemas` list deploys in one application activation and one convergence wait. Metadata is written after schema registration. A failed convergence or registration preserves pending schema intents for recovery and is not retried as a transport failure. Accepts both simple form (`acme`) and colon form (`acme:production`); simple form is normalized to `acme:acme` before storage.
 **GET /admin/tenants/{tenant_full_id}** - Get tenant. Path param is canonicalized via `canonical_tenant_id` (see [common.md#canonical_tenant_id](common.md#canonical_tenant_id)), so simple form (`acme`) and colon form (`acme:acme`) resolve identically.
