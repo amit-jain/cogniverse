@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_foundation.dspy import LMOutputIncomplete
 
 logger = logging.getLogger(__name__)
 
@@ -1379,6 +1380,10 @@ class AgentDispatcher:
     ) -> Dict[str, Any]:
         """Dispatch a task to the named agent and return the result.
 
+        An LM that stops before producing every output field its signature
+        requires ends the turn as an error envelope naming the missing fields
+        and the request, rather than an answer assembled from placeholders.
+
         Raises:
             ValueError: If agent is not found or has no supported execution path.
         """
@@ -1395,6 +1400,7 @@ class AgentDispatcher:
 
         from cogniverse_agents.memory_aware_mixin import clear_request_tenant
         from cogniverse_foundation.config.routed_lm import tier_degradation_context
+        from cogniverse_foundation.dspy import LMOutputIncomplete
         from cogniverse_foundation.telemetry.tenant_context import tenant_span_context
 
         try:
@@ -1402,14 +1408,40 @@ class AgentDispatcher:
                 tenant_span_context(canonical_tenant_id(tenant_id)),
                 tier_degradation_context() as degradation,
             ):
-                result = await self._dispatch_for_tenant(
-                    agent, agent_name, query, context, tenant_id, top_k
-                )
+                try:
+                    result = await self._dispatch_for_tenant(
+                        agent, agent_name, query, context, tenant_id, top_k
+                    )
+                except LMOutputIncomplete as incomplete:
+                    return {
+                        **self._incomplete_generation_envelope(
+                            agent_name, context, incomplete
+                        ),
+                        **degradation,
+                    }
                 return {**result, **degradation}
         finally:
             # The request-scoped tenant bound during this dispatch must not
             # survive into a later caller on the same context.
             clear_request_tenant()
+
+    def _incomplete_generation_envelope(
+        self,
+        agent_name: str,
+        context: Dict[str, Any],
+        incomplete: "LMOutputIncomplete",
+    ) -> Dict[str, Any]:
+        """Error envelope for an LM response missing required output fields."""
+        request_seed = str(
+            context.get("request_id") or context.get("request_seed") or ""
+        )
+        missing = ", ".join(incomplete.missing_fields)
+        message = (
+            f"Agent '{agent_name}' generation for request '{request_seed}' "
+            f"produced no {missing}"
+        )
+        logger.warning("%s", message)
+        return {"status": "error", "agent": agent_name, "error": message}
 
     def supports_token_stream(self, agent_name: str) -> bool:
         """Return the registered answer-token streaming declaration."""
