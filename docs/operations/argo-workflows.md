@@ -286,28 +286,34 @@ Cold-bootstrap a new tenant's full backend footprint (K8s namespace, Vespa schem
 
 ### How it works
 
-The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisioning-pipeline` entrypoint) runs ten sequential steps:
+The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisioning-pipeline` entrypoint) runs twelve sequential steps:
 
 1. `validate-tenant` — regex-checks the tenant ID format (lowercase alphanumeric + underscores).
 2. `create-namespace` — creates a `cogniverse-<tenant-id>` `Namespace` (`resource: action: create`).
-3. `deploy-schemas` — for each comma-separated profile, runs `uv run python scripts/deploy_json_schema.py configs/schemas/<profile>.json` against Vespa directly.
-4. `create-phoenix-project` — runs `scripts/provision_tenant.py --step telemetry --tenant-id <id>`.
+3. `deploy-schemas` — `python -m cogniverse_runtime.provision_tenant --step schemas --profiles <list>`.
+4. `create-phoenix-project` — the same entry point with `--step telemetry`.
 5. `setup-resource-quotas` — creates a `ResourceQuota` in the tenant namespace from the `cpu-quota` / `memory-quota` / `storage-quota` parameters.
 6. `create-storage` — creates a `PersistentVolumeClaim` in the tenant namespace sized to `storage-quota`.
-7. `initialize-memory` — runs `scripts/provision_tenant.py --step memory --tenant-id <id>`.
-8. `set-tier` — runs `scripts/provision_tenant.py --step tier --tier <tier> --tenant-id <id>` with the `tier` parameter (default `default`).
-9. `verify-tenant` — checks the namespace, each schema, and the PVC exist.
-10. `notify-completion` — logs a completion summary (webhook call commented out).
+7. `initialize-memory` — the same entry point with `--step memory`.
+8. `set-tier` — the same entry point with `--step tier --tier <tier>` (parameter default `default`).
+9. `verify-namespace` — reads the `Namespace` back (`resource: action: get`).
+10. `verify-storage` — reads the `PersistentVolumeClaim` back (`resource: action: get`).
+11. `verify-tenant` — the same entry point with `--step verify --profiles <list>`.
+12. `notify-completion` — logs a completion summary (webhook call commented out).
 
-`scripts/provision_tenant.py` (used by steps 4, 7 and 8) supports three `--step` values:
+Every container step runs `python -m cogniverse_runtime.provision_tenant` from the runtime image, which ships the installed packages and `configs/` but no `uv`, no `scripts/` and no `kubectl`. `BACKEND_URL` / `BACKEND_PORT` name the Vespa data endpoint and `VESPA_CONFIG_PORT` the config server the schema deploy posts to.
 
-| Step | What it does |
+`python -m cogniverse_runtime.provision_tenant` supports five `--step` values:
+
+| `--step` | What it does |
 |---|---|
+| `schemas` | Deploys each `--profiles` entry's schema through `SchemaRegistry.deploy_schema`, the seam `POST /admin/profiles/{name}/deploy` uses, under the tenant-scoped schema name |
+| `verify` | Confirms each `--profiles` entry's tenant schema is registered and queryable |
 | `memory` | Creates the tenant's Mem0 memory schema via `Mem0MemoryManager` + `lazy_init_memory` |
-| `telemetry` | Emits a probe span so the tenant's Phoenix project is created |
+| `telemetry` | Exports a required probe span so the tenant's Phoenix project is created; an unreachable collector fails the step |
 | `tier` | Stores the tenant's semantic-router tier (`--tier`, one of `ROUTER_TIERS`) via `set_tenant_tier`, the seam `PUT /admin/tenants/{id}/tier` writes |
 
-If a runtime is already live for the target cluster, the lighter-weight alternative is to skip this Argo template and drive the same two `provision_tenant.py` steps plus schema deployment through the runtime admin API — see [Register the tenant and deploy schemas](#register-the-tenant-and-deploy-schemas) below.
+If a runtime is already live for the target cluster, the lighter-weight alternative is to skip this Argo template and drive the same steps through the runtime admin API — see [Register the tenant and deploy schemas](#register-the-tenant-and-deploy-schemas) below.
 
 ### Submit Workflow
 
@@ -324,14 +330,17 @@ argo submit workflows/tenant-provisioning.yaml \
 ### Run provisioning steps directly
 
 ```bash
+# Deploy profile schemas
+python -m cogniverse_runtime.provision_tenant --tenant-id newcorp_inc --step schemas --profiles video_colpali_smol500_mv_frame
+
 # Initialize memory schema
-uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step memory
+python -m cogniverse_runtime.provision_tenant --tenant-id newcorp_inc --step memory
 
 # Create telemetry project
-uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step telemetry
+python -m cogniverse_runtime.provision_tenant --tenant-id newcorp_inc --step telemetry
 
 # Store the router tier
-uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step tier --tier pro
+python -m cogniverse_runtime.provision_tenant --tenant-id newcorp_inc --step tier --tier pro
 ```
 
 ### Register the tenant and deploy schemas
