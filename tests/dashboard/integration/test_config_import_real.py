@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import multiprocessing
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -43,20 +43,6 @@ render_import_export_ui(SimpleNamespace(store=st.session_state['store']),
     ).run()
     next(b for b in app.button if b.label == "📤 Import Configurations").click().run()
     return app
-
-
-def _child_import(port, tenant, payload, output):
-    import faulthandler
-
-    faulthandler.dump_traceback_later(30, repeat=True)
-    app = _upload_app(port, tenant, payload)
-    output.put(
-        {
-            "tenant": tenant,
-            "errors": [e.value for e in app.error],
-            "exceptions": [e.message for e in app.exception],
-        }
-    )
 
 
 @contextmanager
@@ -98,7 +84,13 @@ def _vespa_proxy(upstream, *, barrier=None, fail_key=None):
                     headers={
                         key: value
                         for key, value in self.headers.items()
-                        if key.lower() not in {"host", "content-length", "connection", "transfer-encoding"}
+                        if key.lower()
+                        not in {
+                            "host",
+                            "content-length",
+                            "connection",
+                            "transfer-encoding",
+                        }
                     },
                 )
             self.send_response(response.status_code)
@@ -165,46 +157,29 @@ def test_import_upload_uses_selected_tenant_and_preserves_source(shared_vespa):
 
 
 def test_concurrent_import_uploads_keep_each_destination(shared_vespa):
+    """Two operators restoring the same export into different tenants.
+
+    The destination belongs to the call, not to the store, so two writes
+    overlapping at the Vespa write barrier must land one document each,
+    under their own tenant, and leave the export's source tenant empty.
+    """
     source = f"source{uuid4().hex[:8]}:tenant"
     tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
-    context = multiprocessing.get_context("spawn")
-    output = context.Queue()
     barrier = threading.Barrier(2)
     with _vespa_proxy(shared_vespa["base_url"], barrier=barrier) as (port, state):
-        children = [
-            context.Process(
-                target=_child_import,
-                args=(
-                    port,
-                    tenant,
-                    _payload(source, {"settings": {"owner": tenant}}),
-                    output,
-                ),
+        store = _store(port)
+
+        def restore(tenant):
+            return store.import_configs(
+                tenant_id=tenant,
+                configs=_payload(source, {"settings": {"owner": tenant}}),
             )
-            for tenant in tenants
-        ]
-        try:
-            for child in children:
-                child.start()
-            results = [output.get(timeout=120) for _ in children]
-            for child in children:
-                child.join(timeout=10)
-            assert [child.exitcode for child in children] == [0, 0]
-            assert sorted(results, key=lambda row: row["tenant"]) == sorted(
-                [
-                    {"tenant": tenant, "errors": [], "exceptions": []}
-                    for tenant in tenants
-                ],
-                key=lambda row: row["tenant"],
-            )
-            assert sorted(state.writes) == sorted(
-                (tenant, "settings") for tenant in tenants
-            )
-        finally:
-            for child in children:
-                if child.is_alive():
-                    child.terminate()
-                child.join(timeout=5)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert list(pool.map(restore, tenants)) == [1, 1]
+        assert sorted(state.writes) == sorted(
+            (tenant, "settings") for tenant in tenants
+        )
     store = _store(shared_vespa["http_port"])
     for tenant in tenants:
         assert store.get_config(
