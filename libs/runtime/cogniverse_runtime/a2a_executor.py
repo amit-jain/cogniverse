@@ -30,6 +30,7 @@ from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.harness_turn import _raise_if_error
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +261,7 @@ class CogniverseAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Dispatch non-streaming and emit a single result event."""
+        state = TaskState.input_required
         try:
             result = await self._dispatcher.dispatch(
                 agent_name=agent_name,
@@ -267,11 +269,21 @@ class CogniverseAgentExecutor(AgentExecutor):
                 context=task_context,
                 top_k=top_k,
             )
+            _raise_if_error(result, f"Agent '{agent_name}'")
             result_text = json.dumps(result, default=str)
         except Exception as e:
             logger.error(f"A2A dispatch failed for agent '{agent_name}': {e}")
+            state = TaskState.failed
             result_text = json.dumps(
-                {"status": "error", "error": str(e), "agent": agent_name}
+                {
+                    "type": "error",
+                    "agent": agent_name,
+                    "error_type": type(e).__name__,
+                    "message": (
+                        f"Agent '{agent_name}' failed with {type(e).__name__}. "
+                        "See runtime logs for detail."
+                    ),
+                }
             )
 
         response_message = new_agent_text_message(result_text)
@@ -280,7 +292,7 @@ class CogniverseAgentExecutor(AgentExecutor):
             context_id=context_id,
             final=True,
             status=TaskStatus(
-                state=TaskState.input_required,
+                state=state,
                 message=response_message,
             ),
         )
@@ -320,10 +332,18 @@ class CogniverseAgentExecutor(AgentExecutor):
                     # the queue tears down.
                     if event_type == "error":
                         event["agent"] = agent_name
+                    elif event_type == "final":
+                        _raise_if_error(event.get("data", {}), f"Agent '{agent_name}'")
                     event_text = json.dumps(event, default=str)
 
                     is_final = event_type in ("final", "error")
-                    state = TaskState.input_required if is_final else TaskState.working
+                    state = (
+                        TaskState.failed
+                        if event_type == "error"
+                        else TaskState.input_required
+                        if is_final
+                        else TaskState.working
+                    )
 
                     a2a_event = TaskStatusUpdateEvent(
                         task_id=task_id,
@@ -335,6 +355,8 @@ class CogniverseAgentExecutor(AgentExecutor):
                         ),
                     )
                     await event_queue.enqueue_event(a2a_event)
+                    if is_final:
+                        return
 
         except Exception as e:
             logger.error(
@@ -362,7 +384,7 @@ class CogniverseAgentExecutor(AgentExecutor):
                 context_id=context_id,
                 final=True,
                 status=TaskStatus(
-                    state=TaskState.input_required,
+                    state=TaskState.failed,
                     message=new_agent_text_message(error_text),
                 ),
             )

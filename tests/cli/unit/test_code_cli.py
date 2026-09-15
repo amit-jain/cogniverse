@@ -391,3 +391,231 @@ class TestHandleEventShapeGuards:
         out = _parse_coding_result({"result": [1, 2, 3]})
         assert isinstance(out, CodingResult)
         assert "1" in out.summary
+
+
+@pytest.fixture
+def failing_coding_runtime():
+    import asyncio
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.types import AgentCapabilities, AgentCard
+
+    from cogniverse_core.agents.base import (
+        AgentBase,
+        AgentDeps,
+        AgentInput,
+        AgentOutput,
+    )
+    from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    entered = threading.Event()
+    release = threading.Event()
+    release.set()
+
+    class CodingInput(AgentInput):
+        query: str = ""
+
+    class CodingOutput(AgentOutput):
+        summary: str
+
+    class FixtureCodingAgent(AgentBase[CodingInput, CodingOutput, AgentDeps]):
+        async def _process_impl(self, input):
+            self.emit_progress("partial", "", data={"text": "Before failure."})
+            if input.query == "fail":
+                entered.set()
+                await asyncio.to_thread(release.wait, 10)
+                raise RuntimeError("fixture tool failed")
+            return CodingOutput(summary=f"Completed {input.query}.")
+
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    registry = AgentRegistry(tenant_id="test:cli", config_manager=config_manager)
+    registry.register_agent(
+        AgentEndpoint(name="coding_agent", url="http://unused", capabilities=["coding"])
+    )
+    agent = FixtureCodingAgent(deps=AgentDeps())
+
+    class CodingDispatcher(AgentDispatcher):
+        async def _rewrite_query_with_history(self, query, history):
+            return query
+
+        async def create_streaming_agent(
+            self, agent_name, query, tenant_id, context=None
+        ):
+            if query == "setup":
+                raise TimeoutError("fixture build timed out")
+            return agent, CodingInput(query=query)
+
+        async def dispatch(self, agent_name, query, context, top_k=10):
+            if query == "setup":
+                raise TimeoutError("fixture build timed out")
+            return (await agent.process(CodingInput(query=query))).model_dump()
+
+    dispatcher = CodingDispatcher(registry, config_manager, None)
+    card = AgentCard(
+        name="Coding",
+        description="Coding fixture",
+        url="http://localhost/a2a/",
+        version="1",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=True),
+        skills=[],
+    )
+    app = A2AStarletteApplication(
+        agent_card=card,
+        http_handler=DefaultRequestHandler(
+            agent_executor=CogniverseAgentExecutor(dispatcher),
+            task_store=InMemoryTaskStore(),
+        ),
+    ).build(rpc_url="/a2a/")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]})
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started is True
+    try:
+        yield app, f"http://127.0.0.1:{port}", entered, release
+    finally:
+        release.set()
+        server.should_exit = True
+        thread.join(10)
+        listener.close()
+        assert thread.is_alive() is False
+
+
+@pytest.mark.parametrize(
+    "query,error_type", [("setup", "TimeoutError"), ("fail", "RuntimeError")]
+)
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_a2a_failure_has_exact_failed_terminal(
+    failing_coding_runtime, query, error_type, streaming
+):
+    import json
+
+    import httpx
+
+    app, _, _, _ = failing_coding_runtime
+    request = _build_a2a_request(query, "test:cli")
+    request["params"]["metadata"]["stream"] = streaming
+    if not streaming:
+        request["method"] = "message/send"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://runtime"
+    ) as client:
+        response = await client.post("/a2a/", json=request)
+    assert response.status_code == 200
+    events = (
+        [
+            json.loads(line[6:])["result"]
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        if streaming
+        else [response.json()["result"]]
+    )
+    terminals = [event for event in events if event.get("final", not streaming)]
+    assert len(terminals) == 1
+    terminal = terminals[0]
+    assert terminal["status"]["state"] == "failed"
+    payload = json.loads(terminal["status"]["message"]["parts"][0]["text"])
+    assert payload["type"] == "error"
+    assert payload["agent"] == "coding_agent"
+    assert payload["error_type"] == error_type
+
+
+@pytest.mark.parametrize(
+    "query,error_type", [("setup", "TimeoutError"), ("fail", "RuntimeError")]
+)
+def test_cli_process_shows_failure_once_and_recovers(
+    failing_coding_runtime, query, error_type
+):
+    import json
+    import subprocess
+
+    _, runtime_url, _, _ = failing_coding_runtime
+    script = """
+import json, sys
+from cogniverse_cli.code import CodingSession
+s = CodingSession("test:cli", "python", 1, ".", sys.argv[1])
+failed = s.send(sys.argv[2])
+print("FAILURE_STATE=" + json.dumps({"result": failed is None, "history": s.history, "last": s.last_result is None}))
+recovered = s.send("recover")
+print("RECOVERED=" + json.dumps({"summary": recovered.summary, "history": s.history}))
+"""
+    result = subprocess.run(
+        ["uv", "run", "python", "-c", script, runtime_url, query],
+        capture_output=True,
+        text=True,
+        timeout=40,
+    )
+    assert result.returncode == 0, result.stderr
+    state = json.loads(
+        next(
+            line.removeprefix("FAILURE_STATE=")
+            for line in result.stdout.splitlines()
+            if line.startswith("FAILURE_STATE=")
+        )
+    )
+    assert state == {
+        "result": True,
+        "history": [{"role": "user", "content": query}],
+        "last": True,
+    }
+    assert result.stdout.count(f"coding_agent ({error_type}):") == 1
+    recovered = json.loads(
+        next(
+            line.removeprefix("RECOVERED=")
+            for line in result.stdout.splitlines()
+            if line.startswith("RECOVERED=")
+        )
+    )
+    assert recovered == {
+        "summary": "Completed recover.",
+        "history": [
+            {"role": "user", "content": query},
+            {"role": "user", "content": "recover"},
+            {"role": "assistant", "content": "Completed recover."},
+        ],
+    }
+
+
+def test_cli_failed_turn_keeps_concurrent_session_result(failing_coding_runtime):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, runtime_url, entered, release = failing_coding_runtime
+    failed = CodingSession("test:cli", "python", 1, ".", runtime_url)
+    healthy = CodingSession("test:peer", "python", 1, ".", runtime_url)
+    release.clear()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(failed.send, "fail")
+        try:
+            assert entered.wait(10) is True
+            good = pool.submit(healthy.send, "peer").result(timeout=10)
+            assert good.summary == "Completed peer."
+            assert healthy.history == [
+                {"role": "user", "content": "peer"},
+                {"role": "assistant", "content": "Completed peer."},
+            ]
+        finally:
+            release.set()
+        assert pending.result(timeout=10) is None
+    assert failed.history == [{"role": "user", "content": "fail"}]
+    assert failed.last_result is None
+    assert healthy.last_result.summary == "Completed peer."
