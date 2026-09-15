@@ -128,9 +128,15 @@ def init_telemetry(tenant_id: str) -> None:
     """
     from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
 
     tenant = canonical_tenant_id(tenant_id)
-    manager = get_telemetry_manager()
+    # The collector the step was pointed at, the same override the runtime
+    # entrypoint applies. Without it the probe goes to the default local
+    # collector and the tenant's project is created nowhere.
+    manager = get_telemetry_manager(
+        otlp_endpoint=resolve_library_env_defaults()["telemetry_otlp_endpoint"]
+    )
 
     async def _emit() -> None:
         async with manager.required_span("provision.probe", tenant_id=tenant):
@@ -167,6 +173,18 @@ _STEPS = sorted({*_PROFILE_STEPS, *_TENANT_STEPS, "tier"})
 
 
 def main() -> int:
+    # Same wiring every other runtime entrypoint applies: the step's
+    # TELEMETRY_OTLP_ENDPOINT, MinIO credentials and embed URLs reach the
+    # libraries only through this call. Without it the telemetry probe goes
+    # to the default localhost collector and the tenant's project is never
+    # created on the one the workflow named.
+    from cogniverse_runtime.entrypoint_env import (
+        configure_runtime_library_defaults,
+        resolve_library_env_defaults,
+    )
+
+    configure_runtime_library_defaults(resolve_library_env_defaults())
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tenant-id", required=True, help="Tenant identifier")
     parser.add_argument(
