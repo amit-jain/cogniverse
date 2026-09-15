@@ -209,10 +209,11 @@ class TestGatewayOrchestrationHandoff:
         self, dispatcher
     ):
         """A gateway 'simple' route persists the downstream agent's user-facing
-        answer as the assistant turn — the value the response path renders —
-        not the routing breadcrumb. The breadcrumb, stored as the prior reply,
-        was fed to the anaphora rewriter on the next turn and shown by the
-        messaging display in place of the real answer.
+        answer as the assistant turn — the rendered answer the response path
+        hands the caller, hits included — not the routing breadcrumb and not
+        the envelope's status line. Either of those, stored as the prior
+        reply, was fed to the anaphora rewriter on the next turn and shown by
+        the messaging display in place of the real answer.
         """
         gateway_output = _make_gateway_output(
             complexity="simple", routed_to="search_agent", modality="video"
@@ -283,8 +284,13 @@ class TestGatewayOrchestrationHandoff:
         assert await dispatcher.drain_conversation_saves() is True
         assert stored == [
             ("user", "find videos of cats"),
-            ("assistant", "Found 3 results for 'find videos of cats'"),
+            (
+                "assistant",
+                "Found 3 results for 'find videos of cats'\n- v1\n- v2\n- v3",
+            ),
         ]
+        # What was stored is exactly what the caller was handed.
+        assert stored[1][1] == result["answer"]
 
         # The response the caller/display consumes carries the answer as
         # `message` and surfaces the hits at top level, gateway triage kept.
