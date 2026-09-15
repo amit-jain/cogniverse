@@ -2793,10 +2793,18 @@ class TestSimbaQueryEnhancement:
 
     @staticmethod
     def _persisted_state(provider) -> dict:
-        blob_df = provider.datasets.datasets[
-            "dspy-model-test:unit-simba_query_enhancement"
+        """The content of the greatest published serving revision."""
+        rows = [
+            row
+            for parity in (0, 1)
+            if f"dspy-model-test:unit-simba_query_enhancement--r{parity}"
+            in provider.datasets.datasets
+            for row in provider.datasets.datasets[
+                f"dspy-model-test:unit-simba_query_enhancement--r{parity}"
+            ].to_dict("records")
         ]
-        return json.loads(blob_df.iloc[-1]["content"])
+        served = max(rows, key=lambda row: int(row["blob_revision"]))
+        return json.loads(served["content"])
 
     @staticmethod
     def _lineage(provider) -> list[dict]:

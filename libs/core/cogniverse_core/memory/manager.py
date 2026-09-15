@@ -1184,7 +1184,12 @@ class Mem0MemoryManager:
         if not self.memory:
             return False
 
-        memories = self.get_all_memories(tenant_id, agent_name)
+        # The whole partition, archived rows included: a bounded page would
+        # leave the older rows feeding retrieval while the caller reported the
+        # namespace cleared.
+        memories = self.get_all_memories(
+            tenant_id, agent_name, include_archived=True, limit=None
+        )
 
         for memory in memories:
             # Memory can be a dict or a string ID
@@ -1243,7 +1248,9 @@ class Mem0MemoryManager:
         now_epoch = int(time.time())
         deleted_by_kind: Dict[str, int] = {}
 
-        result = self.memory.get_all(user_id=self._storage_tenant_id)
+        # Walk the whole partition: a bounded page leaves expired rows behind
+        # every run, and the rows it does reach depend on write order.
+        result = self.memory.get_all(user_id=self._storage_tenant_id, limit=None)
         memories = result.get("results", []) if isinstance(result, dict) else result
 
         for memory in memories:

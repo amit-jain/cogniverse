@@ -1185,6 +1185,14 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **PUT /admin/tenants/{tenant_id}/signature_variants/{agent_type}** — Pick a variant id for an agent. Body: `{"variant_id": str}`. Selections persist durably as a per-tenant `config/signature_variants` blob, write-behind through the same `BlobWriteQueue` as pin quotas (see optimization.md `Signature Variants`).
 
+Pin-quota and signature-selection partial PUTs merge the requested fields onto a
+fresh read of the durable blob, skipping the TTL serving cache, so a value
+another replica persisted survives. Content this process has accepted but not
+yet persisted still wins over the durable read. Per-tenant locks serialize
+updates within one process; Phoenix has no compare-and-set, so updates that
+truly overlap across replicas stay last-write-wins. A store outage on either
+route answers 503.
+
 **POST /admin/tenants/{tenant_id}/canary/{agent_type}/promote** — Promote a versioned artefact to canary at a traffic percentage.
 Body: `{"version": int, "traffic_pct": int = 10}` (range `[1, 100]`; 400 otherwise).
 Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by `ArtifactManager.promote_to_canary`.
