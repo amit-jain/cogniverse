@@ -849,3 +849,230 @@ class TestStreamedAnswerMatchesTheExtractor:
                 "detailed_findings": list(FINDINGS),
             }
         )
+
+
+class ArtifactCacheDispatcher(AgentDispatcher):
+    """A no-model agent whose cold dependency is the real artifact store."""
+
+    def __init__(self, cache_kind, managers):
+        super().__init__(None, None, None)
+        self.cache_kind = cache_kind
+        self.managers = managers
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.arrived = asyncio.Event()
+        self.departed = asyncio.Event()
+        self.builds = {}
+        self.requests = 0
+
+    async def _build(self, tenant_id):
+        self.builds[tenant_id] = self.builds.get(tenant_id, 0) + 1
+        if tenant_id == TENANT_A:
+            self.started.set()
+            await self.release.wait()
+        return json.loads(
+            await self.managers[tenant_id].load_blob("config", "cold_agent")
+        )
+
+    async def _build_gateway_agent(self, tenant_id):
+        return await self._build(tenant_id)
+
+    async def _build_orchestrator_agent(self, tenant_id):
+        return await self._build(tenant_id)
+
+    async def _build_generic_agent(self, agent_name, tenant_id, agent_cls, deps_cls):
+        return await self._build(tenant_id)
+
+    async def cached(self, tenant_id):
+        if self.cache_kind == "gateway":
+            return await self._get_or_build_gateway_agent(tenant_id)
+        if self.cache_kind == "orchestrator":
+            return await self._get_or_build_orchestrator(tenant_id)
+        return await self._get_or_build_generic_agent(
+            "fixture_agent", tenant_id, None, None
+        )
+
+    def supports_token_stream(self, agent_name):
+        return False
+
+    async def dispatch(self, agent_name, query, context, **kwargs):
+        self.requests += 1
+        if self.requests == 2:
+            self.arrived.set()
+        try:
+            artifact = await self.cached(context["tenant_id"])
+            return {"answer": artifact["answer"]}
+        except asyncio.CancelledError:
+            self.departed.set()
+            raise
+
+
+@pytest.fixture
+async def cold_artifact_managers(phoenix_container):
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+    managers = {}
+    for tenant in (TENANT_A, TENANT_B):
+        provider = PhoenixProvider()
+        provider.initialize(
+            {
+                "tenant_id": tenant,
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            }
+        )
+        manager = ArtifactManager(telemetry_provider=provider, tenant_id=tenant)
+        await manager.save_blob(
+            "config",
+            "cold_agent",
+            json.dumps({"answer": f"Stored answer for {tenant}."}),
+        )
+        managers[tenant] = manager
+    yield managers
+    for manager in managers.values():
+        await manager._provider.datasets.delete_dataset(
+            manager._blob_dataset_name("config", "cold_agent")
+        )
+
+
+async def _wait_cache_predicate(predicate):
+    async with asyncio.timeout(5):
+        while not predicate():
+            await asyncio.sleep(0.005)
+
+
+@pytest.mark.parametrize("cache_kind", ["gateway", "orchestrator", "generic"])
+@pytest.mark.parametrize("disconnect", ["owner", "follower"])
+@pytest.mark.asyncio
+async def test_cold_cache_socket_disconnect_preserves_other_waiter(
+    cold_artifact_managers, cache_kind, disconnect
+):
+    dispatcher = ArtifactCacheDispatcher(cache_kind, cold_artifact_managers)
+    openai_compat.set_dispatcher_provider(lambda: dispatcher)
+    openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
+    openai_compat.set_model_map({"cogniverse": "gateway_agent"})
+    app = FastAPI()
+    app.include_router(openai_compat.router, prefix="/v1")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    serving = asyncio.create_task(server.serve(sockets=[listener]))
+    responses = []
+    try:
+        await _wait_cache_predicate(lambda: server.started)
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}", timeout=5
+        ) as client:
+            body = {
+                "model": "cogniverse",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Read my artifact"}],
+            }
+            for _ in range(2):
+                response = await client.send(
+                    client.build_request(
+                        "POST", "/v1/chat/completions", json=body, headers=_auth(KEY_A)
+                    ),
+                    stream=True,
+                )
+                responses.append(response)
+                lines = response.aiter_lines()
+                role = json.loads((await anext(lines))[6:])
+                assert role["choices"][0]["delta"] == {"role": "assistant"}
+                response.cache_lines = lines
+                await dispatcher.started.wait()
+            await dispatcher.arrived.wait()
+            gone, survivor = responses if disconnect == "owner" else reversed(responses)
+            await gone.aclose()
+            await asyncio.wait_for(dispatcher.departed.wait(), 5)
+            control = await client.post(
+                "/v1/chat/completions",
+                json={**body, "stream": False},
+                headers=_auth(KEY_B),
+            )
+            assert (
+                control.json()["choices"][0]["message"]["content"]
+                == f"Stored answer for {TENANT_B}."
+            )
+            dispatcher.release.set()
+            async with asyncio.timeout(5):
+                frames = [
+                    line[6:]
+                    async for line in survivor.cache_lines
+                    if line.startswith("data: ")
+                ]
+            assert frames[-1] == "[DONE]"
+            chunks = [json.loads(frame) for frame in frames[:-1]]
+            assert [chunk.get("error") for chunk in chunks] == [None, None]
+            assert [chunk["choices"][0]["delta"] for chunk in chunks] == [
+                {"content": f"Stored answer for {TENANT_A}."},
+                {},
+            ]
+            assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+            assert dispatcher.builds == {TENANT_A: 1, TENANT_B: 1}
+            assert await dispatcher.cached(TENANT_A) == {
+                "answer": f"Stored answer for {TENANT_A}."
+            }
+            assert dispatcher._gateway_build_inflight == {}
+            assert dispatcher._orchestrator_build_inflight == {}
+            assert dispatcher._generic_build_inflight == {}
+            await _wait_cache_predicate(lambda: openai_compat.in_flight_count() == 0)
+            assert openai_compat.in_flight_count() == 0
+    finally:
+        dispatcher.release.set()
+        for response in responses:
+            await response.aclose()
+        server.should_exit = True
+        await asyncio.wait_for(serving, 10)
+        listener.close()
+        openai_compat.set_dispatcher_provider(None)
+        openai_compat.set_api_keys(None)
+        openai_compat.set_model_map(None)
+
+
+@pytest.mark.parametrize("cache_kind", ["gateway", "orchestrator", "generic"])
+@pytest.mark.asyncio
+async def test_cold_cache_failed_dependency_settles_waiters_and_retries(
+    cold_artifact_managers, cache_kind, monkeypatch
+):
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_foundation.telemetry.providers.base import (
+        DatasetStoreUnavailableError,
+    )
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": TENANT_A,
+            "http_endpoint": "http://127.0.0.1:29071",
+            "grpc_endpoint": "http://127.0.0.1:29071",
+        }
+    )
+    managers = dict(cold_artifact_managers)
+    managers[TENANT_A] = ArtifactManager(
+        telemetry_provider=provider, tenant_id=TENANT_A
+    )
+    dispatcher = ArtifactCacheDispatcher(cache_kind, managers)
+    first = asyncio.create_task(dispatcher.cached(TENANT_A))
+    await dispatcher.started.wait()
+    second = asyncio.create_task(dispatcher.cached(TENANT_A))
+    await asyncio.sleep(0)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    dispatcher.release.set()
+    with pytest.raises(DatasetStoreUnavailableError) as failure:
+        await asyncio.wait_for(first, 10)
+    assert failure.value.endpoint == "http://127.0.0.1:29071"
+    assert failure.value.dataset == "dspy-config-acme:acme-cold_agent"
+    dispatcher.managers = cold_artifact_managers
+    assert await dispatcher.cached(TENANT_A) == {
+        "answer": f"Stored answer for {TENANT_A}."
+    }
+    assert dispatcher.builds == {TENANT_A: 2}
+    assert dispatcher._gateway_build_inflight == {}
+    assert dispatcher._orchestrator_build_inflight == {}
+    assert dispatcher._generic_build_inflight == {}

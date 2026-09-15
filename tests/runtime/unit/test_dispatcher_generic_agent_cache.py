@@ -421,3 +421,61 @@ async def test_generic_dispatch_binds_tenant_routed_lm(dispatcher, monkeypatch):
         f"generic dispatch ran on {seen['lm']!r}, not the tenant-routed LM"
     )
     assert captured["tenant_id"] == "acme:acme"
+
+
+@pytest.mark.parametrize("cache_kind", ["gateway", "orchestrator", "generic"])
+@pytest.mark.parametrize("cancel_waiter", [0, 1])
+@pytest.mark.asyncio
+async def test_cold_build_survives_cancelled_waiter(
+    dispatcher, cache_kind, cancel_waiter
+):
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    builds = []
+    agent = object()
+
+    async def build(*args):
+        builds.append(args)
+        started.set()
+        await release.wait()
+        return agent
+
+    if cache_kind == "gateway":
+        dispatcher._build_gateway_agent = build
+
+        def get():
+            return dispatcher._get_or_build_gateway_agent("acme:acme")
+    elif cache_kind == "orchestrator":
+        dispatcher._build_orchestrator_agent = build
+
+        def get():
+            return dispatcher._get_or_build_orchestrator("acme:acme")
+    else:
+        dispatcher._build_generic_agent = build
+
+        def get():
+            return dispatcher._get_or_build_generic_agent(
+                "fakea", "acme:acme", FakeAgentA, FakeDeps
+            )
+
+    waiters = [asyncio.create_task(get())]
+    await started.wait()
+    waiters.append(asyncio.create_task(get()))
+    await asyncio.sleep(0)
+    waiters[cancel_waiter].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiters[cancel_waiter]
+    release.set()
+    try:
+        assert await asyncio.wait_for(waiters[1 - cancel_waiter], 1) is agent
+        assert await get() is agent
+        assert len(builds) == 1
+        assert dispatcher._gateway_build_inflight == {}
+        assert dispatcher._orchestrator_build_inflight == {}
+        assert dispatcher._generic_build_inflight == {}
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
