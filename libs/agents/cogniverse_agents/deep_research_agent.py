@@ -285,7 +285,8 @@ class DeepResearchAgent(
             self.emit_progress("rlm_synthesis", "Synthesizing evidence with RLM...")
             logger.info(f"RLM enabled for research query: {input.query[:50]}...")
             try:
-                rlm_result = self.process_with_rlm(
+                rlm_result = await asyncio.to_thread(
+                    self.process_with_rlm,
                     query=input.query,
                     context=evidence_context,
                     rlm_options=input.rlm,
