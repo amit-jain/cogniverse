@@ -122,7 +122,7 @@ surface without repeating their implementation guides.
 | --- | --- | --- |
 | `utils.async_bridge` | `run_coro_blocking` | Run a coroutine from synchronous code, including callers already on an event-loop thread. |
 | `utils.async_polling` | `wait_for_retry_backoff` | Async exponential or linear retry delay. |
-| `utils.circuit_breaker` | `CircuitState`, `CircuitOpenError`, `BreakerConfig`, `CircuitBreaker`, `circuit_breaker` | Per-dependency circuit-breaker state and decorator. |
+| `utils.circuit_breaker` | `CircuitState`, `CircuitOpenError`, `BreakerConfig`, `CircuitBreaker`, `circuit_breaker` | Per-dependency circuit-breaker state and decorator. Sync and async calls release their own recovery reservation on every exit, including cancellation and uncounted exceptions. Completions from an older state generation cannot change the current state. |
 | `utils.output_manager` | `OutputManager`, `get_output_manager` | Output-directory management and singleton lookup. |
 | `utils.retry` | `RetryConfig`, `retry_with_backoff`, `RetryableOperation`, `create_retry_decorator` | Retry configuration, decorator, context manager, and configured decorator factory. |
 

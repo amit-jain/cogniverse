@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import threading
+
 import pytest
 
 from cogniverse_core.common.utils.circuit_breaker import (
@@ -181,3 +185,96 @@ async def test_acall_trips_and_rejects():
     assert br.state is CircuitState.OPEN
     with pytest.raises(CircuitOpenError):
         await br.acall(afail)
+
+
+@pytest.mark.parametrize("error_type", [ValueError, KeyboardInterrupt])
+def test_uncounted_half_open_exit_releases_its_slot(error_type):
+    clock = _Clock()
+    br = CircuitBreaker(
+        _cfg(clock, failure_threshold=1, counted_exceptions=(ConnectionError,))
+    )
+    with pytest.raises(ConnectionError):
+        br.call(_fail)
+    clock.advance(30)
+
+    def abort():
+        raise error_type("probe interrupted")
+
+    with pytest.raises(error_type, match="probe interrupted"):
+        br.call(abort)
+    assert br._half_open_calls == 0
+    assert br.state is CircuitState.HALF_OPEN
+    assert br.call(lambda: "recovered") == "recovered"
+    assert br.state is CircuitState.CLOSED
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_releases_only_its_own_concurrent_slot():
+    clock = _Clock()
+    br = CircuitBreaker(_cfg(clock, failure_threshold=1, half_open_max_calls=2))
+    with pytest.raises(ConnectionError):
+        br.call(_fail)
+    clock.advance(30)
+    entered = [asyncio.Event(), asyncio.Event()]
+    release = asyncio.Event()
+
+    async def probe(index):
+        entered[index].set()
+        await release.wait()
+        return index
+
+    tasks = [asyncio.create_task(br.acall(probe, i)) for i in range(2)]
+    try:
+        await asyncio.wait_for(asyncio.gather(*(e.wait() for e in entered)), 2)
+        tasks[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await tasks[0]
+        assert br._half_open_calls == 1
+        assert br.state is CircuitState.HALF_OPEN
+        with pytest.raises(ConnectionError, match="down"):
+            br.call(_fail)
+        assert br.state is CircuitState.OPEN
+        release.set()
+        assert await tasks[1] == 1
+        assert br.state is CircuitState.OPEN
+        assert br._half_open_calls == 0
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("late_failure", [False, True])
+def test_stale_sync_completion_cannot_change_new_recovery(late_failure):
+    clock = _Clock()
+    br = CircuitBreaker(_cfg(clock, failure_threshold=1))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def old_call():
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release old call")
+        if late_failure:
+            raise ConnectionError("old outage")
+        return "old success"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(br.call, old_call)
+        try:
+            assert entered.wait(2) is True
+            with pytest.raises(ConnectionError):
+                br.call(_fail)
+            clock.advance(30)
+            assert br.state is CircuitState.HALF_OPEN
+            release.set()
+            if late_failure:
+                with pytest.raises(ConnectionError, match="old outage"):
+                    future.result(timeout=2)
+            else:
+                assert future.result(timeout=2) == "old success"
+            assert br.state is CircuitState.HALF_OPEN
+            assert br._half_open_calls == 0
+            assert br.call(lambda: "new recovery") == "new recovery"
+            assert br.state is CircuitState.CLOSED
+        finally:
+            release.set()
