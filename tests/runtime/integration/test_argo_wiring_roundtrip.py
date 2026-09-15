@@ -284,6 +284,25 @@ def argo_server(tmp_path_factory):
                 timeout=70,
             )
             assert ready.returncode == 0, ready.stderr
+        # argo-server reads the controller's ConfigMap on startup and exits
+        # fatally without it; the defaults are what this fixture needs.
+        applied = _kubectl(
+            kubeconfig,
+            "apply",
+            "-f",
+            "-",
+            input_text=json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {
+                        "name": "workflow-controller-configmap",
+                        "namespace": "cogniverse",
+                    },
+                }
+            ),
+        )
+        assert applied.returncode == 0, applied.stderr
         template = {
             "apiVersion": "argoproj.io/v1alpha1",
             "kind": "WorkflowTemplate",
