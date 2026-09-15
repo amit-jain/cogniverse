@@ -320,6 +320,12 @@ class ConfigManagerAware:
         return self._config_manager
 
 
+# Reserved dispatched-prompt key: the serialized state of the whole compiled
+# DSPy module (instructions plus learned demonstrations), written by the
+# triggered optimization path and loaded into the per-call module copy.
+COMPILED_MODULE_PROMPT_KEY = "__dspy_module__"
+
+
 def _signature_predictor(attr: Any) -> Any:
     """Return the signature-bearing predictor for a module attribute.
 
@@ -356,8 +362,12 @@ class _DispatchedPromptOverlayContext:
     on the module (e.g. ``"search_optimizer"`` matches
     ``module.search_optimizer``); the value replaces that predictor's
     ``signature.instructions``. Keys that don't match any predictor are
-    silently skipped. The whole thing degrades to the base module when
-    the agent exposes no ``get_dispatched_prompts`` hook, the getter
+    silently skipped. The reserved key ``COMPILED_MODULE_PROMPT_KEY`` instead
+    carries a whole compiled module state (``dspy.Module.dump_state`` as JSON)
+    and is loaded into the copy, so instructions AND learned demonstrations
+    serve exactly as they were scored; a corrupt state raises rather than
+    serving a half-applied module. The whole thing degrades to the base module
+    when the agent exposes no ``get_dispatched_prompts`` hook, the getter
     raises, no prompts are in scope, or the clone fails — always
     preferring the active prompt over a crash.
     """
@@ -393,6 +403,10 @@ class _DispatchedPromptOverlayContext:
 
         applied = []
         for name, value in prompts.items():
+            if name == COMPILED_MODULE_PROMPT_KEY:
+                local.load_state(json.loads(value))
+                applied.append(name)
+                continue
             predictor = _signature_predictor(getattr(local, name, None))
             if predictor is None:
                 continue

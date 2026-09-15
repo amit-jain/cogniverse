@@ -47,7 +47,10 @@ from cogniverse_agents.optimizer.example_selection import (
     embed_texts,
     select_training_records,
 )
-from cogniverse_core.agents.base import require_config_manager
+from cogniverse_core.agents.base import (
+    COMPILED_MODULE_PROMPT_KEY,
+    require_config_manager,
+)
 from cogniverse_core.durable import (
     PipelineCheckpoint,
     PipelineCheckpointStatus,
@@ -705,6 +708,9 @@ def _profile_selection_recovery_score(
     return sum(reciprocal_ranks) / len(expected)
 
 
+PROFILE_SELECTION_RETRIEVAL_ATTEMPTS = 3
+
+
 def derive_profile_labels(
     queries: Iterable[dict[str, Any]],
     candidate_profiles: Iterable[str],
@@ -807,12 +813,26 @@ def derive_profile_labels(
         ]
         scored_profiles: list[dict[str, Any]] = []
         untitled_results: list[dict[str, Any]] = []
-        last_error: Exception | None = None
+        failed_profiles: list[dict[str, Any]] = []
         for profile in row_profiles:
-            try:
-                rows = retrieve(query, profile)
-            except Exception as exc:
-                last_error = exc
+            rows = None
+            for attempt in range(1, PROFILE_SELECTION_RETRIEVAL_ATTEMPTS + 1):
+                try:
+                    rows = retrieve(query, profile)
+                    break
+                except Exception as exc:
+                    if attempt == PROFILE_SELECTION_RETRIEVAL_ATTEMPTS:
+                        failed_profiles.append(
+                            {
+                                "profile": profile,
+                                "attempts": attempt,
+                                "cause": {
+                                    "type": type(exc).__name__,
+                                    "message": str(exc),
+                                },
+                            }
+                        )
+            if rows is None:
                 continue
 
             retrieved, untitled = _profile_selection_result_titles(
@@ -836,10 +856,18 @@ def derive_profile_labels(
                 }
             )
 
-        if not scored_profiles:
-            raise RuntimeError(
-                f"Profile selection retrieval failed for query {query!r}"
-            ) from last_error
+        if failed_profiles:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "incomplete_comparison",
+                    "position": position,
+                    "expected_videos": expected_videos,
+                    "candidate_profiles": list(row_profiles),
+                    "failed_profiles": failed_profiles,
+                }
+            )
+            continue
 
         if untitled_results:
             exclusions.append(
@@ -1678,37 +1706,9 @@ async def _optimize_agent(
         if not isinstance(output, dict):
             output = {}
 
-        if agent_name == "search":
-            example = dspy.Example(
-                query=query,
-                modality="video",
-                top_k=10,
-                enhanced_query=str(output.get("enhanced_query") or query),
-            ).with_inputs("query", "modality", "top_k")
-        elif agent_name == "summary":
-            example = dspy.Example(
-                content=_json.dumps(output, default=str),
-                summary_type="comprehensive",
-                target_audience="general",
-                summary=output.get("summary", ""),
-                key_points=str(output.get("key_points", [])),
-                confidence=row.get("score", 0.8),
-            ).with_inputs("content", "summary_type", "target_audience")
-        elif agent_name == "report":
-            example = dspy.Example(
-                search_results=_json.dumps(output, default=str),
-                query_context=query,
-                analysis_depth="detailed",
-                executive_summary=output.get("executive_summary", ""),
-                detailed_findings=output.get("detailed_findings", ""),
-                recommendations=output.get("recommendations", ""),
-                technical_details=output.get("technical_details", ""),
-                confidence=row.get("score", 0.8),
-            ).with_inputs("search_results", "query_context", "analysis_depth")
-        else:
-            continue
-
-        trainset.append(example)
+        trainset.append(
+            _served_example(agent_name, query, output, row.get("score", 0.8))
+        )
 
     if not trainset:
         return await _reflect_or_skip(
@@ -1730,8 +1730,6 @@ async def _optimize_agent(
         llm_endpoint, teacher_endpoint_config=teacher_endpoint
     )
 
-    signature = _signature_for_agent(optimizer, agent_name)
-
     train, holdout = _split_train_holdout(trainset)
     negatives = _negative_probes(agent_name, low_scoring_df)
 
@@ -1749,7 +1747,7 @@ async def _optimize_agent(
         teacher_settings=optimizer.optimization_settings["teacher_settings"],
     )
 
-    module = dspy.ChainOfThought(signature)
+    module = _served_module(agent_name)
 
     try:
         # initialize_language_model only sets optimizer.lm, so the compile gets
@@ -1761,7 +1759,6 @@ async def _optimize_agent(
         return await _score_and_serve(
             artifact_manager,
             agent_name,
-            signature,
             compiled,
             holdout,
             negatives,
@@ -1776,19 +1773,103 @@ async def _optimize_agent(
         return {"status": "failed", "error": str(e)}
 
 
-def _signature_for_agent(optimizer, agent_name: str):
-    """The DSPy signature the compile trains for a servable agent."""
+def _active_compiled_state(prompts) -> Optional[dict]:
+    """The active compiled module state, or None when the agent is stock."""
+    raw = (prompts or {}).get(COMPILED_MODULE_PROMPT_KEY)
+    return json.loads(raw) if raw else None
+
+
+def _served_module(agent_name: str):
+    """A fresh instance of the DSPy module the runtime serves for this agent.
+
+    The compile, the held-out scoring and the published artifact all use this
+    one module, so what is scored is exactly what serving loads.
+    """
     if agent_name == "search":
-        return optimizer.create_query_analysis_signature()
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+
+        return SearchOptimizationModule()
     if agent_name == "summary":
-        return optimizer.create_summary_generation_signature()
-    return optimizer.create_detailed_report_signature()
+        from cogniverse_agents.summarizer_agent import SummarizationModule
+
+        return SummarizationModule()
+    if agent_name == "report":
+        from cogniverse_agents.detailed_report_agent import ReportGenerationModule
+
+        return ReportGenerationModule()
+    raise KeyError(f"no served module for agent {agent_name!r}")
+
+
+def _signature_for_agent(agent_name: str):
+    """The signature the served predictor carries."""
+    if agent_name == "search":
+        from cogniverse_agents.search_agent import SearchOptimizationSignature
+
+        return SearchOptimizationSignature
+    if agent_name == "summary":
+        from cogniverse_agents.summarizer_agent import SummaryGenerationSignature
+
+        return SummaryGenerationSignature
+    if agent_name == "report":
+        from cogniverse_agents.detailed_report_agent import ReportGenerationSignature
+
+        return ReportGenerationSignature
+    raise KeyError(f"no served signature for agent {agent_name!r}")
+
+
+def _served_inputs(agent_name: str, query: str, output: dict) -> dict:
+    """The served signature's input fields for one recorded row."""
+    if agent_name == "search":
+        return {"query": query, "modality": "video", "top_k": 10}
+    if agent_name == "summary":
+        return {
+            "content": json.dumps(output, default=str),
+            "query": query,
+            "summary_type": "comprehensive",
+            "keyframes": [],
+        }
+    if agent_name == "report":
+        return {
+            "content": json.dumps(output, default=str),
+            "query": query,
+            "report_type": "comprehensive",
+            "keyframes": [],
+        }
+    raise KeyError(f"no served inputs for agent {agent_name!r}")
+
+
+def _served_labels(agent_name: str, query: str, output: dict, score) -> dict:
+    """The served signature's output fields for one recorded row."""
+    if agent_name == "search":
+        return {"enhanced_query": str(output.get("enhanced_query") or query)}
+    if agent_name == "summary":
+        return {
+            "summary": str(output.get("summary", "")),
+            "key_points": str(output.get("key_points", [])),
+            "confidence_score": str(score),
+        }
+    if agent_name == "report":
+        return {
+            "executive_summary": str(output.get("executive_summary", "")),
+            "key_findings": str(output.get("key_findings", [])),
+            "recommendations": str(output.get("recommendations", [])),
+            "confidence_score": str(score),
+        }
+    raise KeyError(f"no served labels for agent {agent_name!r}")
+
+
+def _served_example(agent_name: str, query: str, output: dict, score):
+    """One labeled training example in the served signature's own fields."""
+    import dspy
+
+    inputs = _served_inputs(agent_name, query, output)
+    labels = _served_labels(agent_name, query, output, score)
+    return dspy.Example(**inputs, **labels).with_inputs(*inputs)
 
 
 async def _score_and_serve(
     artifact_manager,
     agent_name: str,
-    signature,
     compiled,
     holdout: list,
     negatives: list,
@@ -1809,21 +1890,19 @@ async def _score_and_serve(
     """
     import dspy
 
-    served_agent, predictor_attr = _SERVE_TARGET[agent_name]
+    served_agent, _ = _SERVE_TARGET[agent_name]
 
-    # Baseline = the currently-active instructions (or the stock signature when
-    # the agent was never optimized), scored against the candidate on the
-    # held-out positives + known-bad probes.
+    # Baseline = the currently-active compiled module (or the stock served
+    # module when the agent was never optimized), scored against the candidate
+    # on the held-out positives + known-bad probes.
     baseline_score = candidate_score = None
     if holdout or negatives:
-        baseline_module = dspy.ChainOfThought(signature)
-        active_prompts = await artifact_manager.load_prompts(served_agent)
-        if active_prompts and active_prompts.get(predictor_attr):
-            for _, predictor in baseline_module.named_predictors():
-                predictor.signature = predictor.signature.with_instructions(
-                    active_prompts[predictor_attr]
-                )
-                break
+        baseline_module = _served_module(agent_name)
+        active_state = _active_compiled_state(
+            await artifact_manager.load_prompts(served_agent)
+        )
+        if active_state is not None:
+            baseline_module.load_state(active_state)
         with dspy.context(lm=optimizer_lm):
             baseline_score, candidate_score = _holdout_scores(
                 baseline_module, compiled, holdout, negatives, agent_name
@@ -2220,8 +2299,6 @@ async def _reflect_or_skip(
     optimizer.initialize_language_model(
         llm_endpoint, teacher_endpoint_config=teacher_endpoint
     )
-    signature = _signature_for_agent(optimizer, agent_name)
-
     # Eval negatives are HELD OUT — GEPA compiles on reflect_train_rows only and
     # never sees reflect_eval_rows, so the promotion gate scores against unseen
     # failures.
@@ -2231,7 +2308,6 @@ async def _reflect_or_skip(
         compiled = _reflective_compile(
             agent_name,
             reflect_train_rows,
-            signature,
             optimizer.lm,
             max_metric_calls,
         )
@@ -2239,7 +2315,6 @@ async def _reflect_or_skip(
         return await _score_and_serve(
             artifact_manager,
             agent_name,
-            signature,
             compiled,
             [],
             eval_negatives,
@@ -2268,34 +2343,27 @@ def _build_gepa(metric, reflection_lm, max_metric_calls: int):
 
 
 def _reflective_metric(agent_name: str):
-    """A 5-arg GEPA feedback metric rewarding a candidate for NOT reproducing
-    the recorded failing output.
+    """The canonical DSPy feedback metric rewarding a candidate for NOT
+    reproducing the recorded failing output.
 
-    ``search`` has no free-text label, so it is scored on enum validity; the
-    text agents score ``1 - token_f1`` against the recorded failing output.
+    DSPy calls a metric with two arguments from ``Evaluate``, three from
+    bootstrapped tracing and five from GEPA's feedback path, so the trace and
+    predictor context are optional.
     """
     from dspy.teleprompt.gepa.gepa import ScoreWithFeedback
 
-    field = _EVAL_FIELD.get(agent_name)
+    field = _EVAL_FIELD[agent_name]
 
-    def metric(gold, pred, trace, pred_name, pred_trace):
-        if agent_name == "search":
-            score = _search_validity(pred)
-            feedback = (
-                f"The recorded analysis for query {getattr(gold, 'query', '')!r} "
-                "was malformed. A valid analysis sets primary_intent, "
-                "complexity_level, and needs_video_search to well-formed enum "
-                "values."
-            )
-        else:
-            bad = str(getattr(gold, "_bad_output", "") or "")
-            produced = str(getattr(pred, field, "") or "")
-            score = 1.0 - _token_f1(produced, bad)
-            feedback = (
+    def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+        bad = str(getattr(gold, "_bad_output", "") or "")
+        produced = str(getattr(pred, field, "") or "")
+        return ScoreWithFeedback(
+            score=float(1.0 - _token_f1(produced, bad)),
+            feedback=(
                 f"The recorded failing {field} was {bad!r}. Produce a distinct, "
                 f"accurate {field} that does not reproduce it."
-            )
-        return ScoreWithFeedback(score=float(score), feedback=feedback)
+            ),
+        )
 
     return metric
 
@@ -2303,7 +2371,6 @@ def _reflective_metric(agent_name: str):
 def _reflective_compile(
     agent_name: str,
     reflect_train_rows: list,
-    signature,
     reflection_lm,
     max_metric_calls: int,
 ):
@@ -2317,9 +2384,7 @@ def _reflective_compile(
     """
     import dspy
 
-    input_keys = _EVAL_INPUTS[agent_name]
-    optional_keys = _EVAL_OPTIONAL_INPUTS[agent_name]
-    field = _EVAL_FIELD.get(agent_name)
+    field = _EVAL_FIELD[agent_name]
 
     trainset = []
     for row in reflect_train_rows:
@@ -2333,36 +2398,16 @@ def _reflective_compile(
         if not isinstance(output, dict):
             output = {}
 
-        if agent_name == "search":
-            inputs = {"query": query}
-            bad_output = ""
-        elif agent_name == "summary":
-            inputs = {
-                "content": json.dumps(output, default=str),
-                "summary_type": "comprehensive",
-                "target_audience": "general",
-            }
-            bad_output = str(output.get(field, ""))
-        else:
-            inputs = {
-                "search_results": json.dumps(output, default=str),
-                "query_context": query,
-                "analysis_depth": "detailed",
-            }
-            bad_output = str(output.get(field, ""))
-        for key in optional_keys:
-            inputs.setdefault(key, "")
-
-        example = dspy.Example(**inputs, _bad_output=bad_output).with_inputs(
-            *input_keys
-        )
+        inputs = _served_inputs(agent_name, query, output)
+        example = dspy.Example(
+            **inputs, _bad_output=str(output.get(field, ""))
+        ).with_inputs(*inputs)
         trainset.append(example)
 
     metric = _reflective_metric(agent_name)
     gepa = _build_gepa(metric, reflection_lm, max_metric_calls)
-    module = dspy.ChainOfThought(signature)
     with dspy.context(lm=reflection_lm):
-        return gepa.compile(module, trainset=trainset)
+        return gepa.compile(_served_module(agent_name), trainset=trainset)
 
 
 # Where a triggered-mode compile is served from: the DISPATCH agent name the
@@ -2374,61 +2419,24 @@ _SERVE_TARGET = {
     "report": ("detailed_report_agent", "report_generator"),
 }
 
-# Held-out eval wiring per agent, matching the REAL DSPy signatures
-# (create_query_analysis_signature etc.): required input kwargs taken from
-# each example, optional inputs blank-filled, and the primary output field
-# scored against the example's label. The search signature emits
-# intent/complexity/boolean enums with no free-text labeled output, so search
-# is scored label-free on output VALIDITY (are the enums well-formed values).
+# Held-out eval wiring per agent, matching the signatures the runtime SERVES:
+# the input kwargs taken from each example and the primary output field scored
+# against the example's label.
 _EVAL_FIELD = {
+    "search": "enhanced_query",
     "summary": "summary",
     "report": "executive_summary",
 }
 _EVAL_INPUTS = {
-    "search": ("query",),
-    "summary": ("content", "summary_type", "target_audience"),
-    "report": ("search_results", "query_context", "analysis_depth"),
+    "search": ("query", "modality", "top_k"),
+    "summary": ("content", "query", "summary_type", "keyframes"),
+    "report": ("content", "query", "report_type", "keyframes"),
 }
-_EVAL_OPTIONAL_INPUTS = {
-    "search": ("context",),
-    "summary": ("visual_insights",),
-    "report": ("visual_analysis",),
-}
-_SEARCH_INTENTS = {
-    "search",
-    "comparison",
-    "analysis",
-    "summarization",
-    "reporting",
-    "temporal_search",
-    "content_discovery",
-    "information_extraction",
-    "complex_analysis",
-    "meta_query",
-}
-_SEARCH_COMPLEXITIES = {"simple", "moderate", "complex"}
-_BOOL_WORDS = {"true", "false"}
-
-
-def _search_validity(pred) -> float:
-    """Label-free score for the query-analysis signature: fraction of the
-    enum-typed outputs that hold a well-formed value."""
-    intent = str(getattr(pred, "primary_intent", "") or "").strip().lower()
-    complexity = str(getattr(pred, "complexity_level", "") or "").strip().lower()
-    needs_video = str(getattr(pred, "needs_video_search", "") or "").strip().lower()
-    checks = [
-        intent in _SEARCH_INTENTS,
-        complexity in _SEARCH_COMPLEXITIES,
-        needs_video in _BOOL_WORDS,
-    ]
-    return sum(checks) / len(checks)
 
 
 def _probe_score(pred, label: str, agent_name: str) -> float:
-    """Score one prediction: search by validity, summary/report by token-F1
-    to the label (or plain non-emptiness when the label is empty)."""
-    if agent_name == "search":
-        return _search_validity(pred)
+    """Token-F1 of the served output field against the label (or plain
+    non-emptiness when the label is empty)."""
     text = str(getattr(pred, _EVAL_FIELD[agent_name], "") or "")
     if str(label or "").strip():
         return _token_f1(text, label)
@@ -2633,26 +2641,12 @@ def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
                 output = {}
         if not isinstance(output, dict):
             output = {}
+        bad = str(output.get(field, ""))
         if agent_name == "search":
             if not str(query).strip():
                 continue
-            probes.append(({"query": query}, ""))
-        elif agent_name == "summary":
-            bad = str(output.get(field, ""))
-            if not bad:
-                continue
-            probes.append(
-                (
-                    {
-                        "content": _json.dumps(output, default=str),
-                        "summary_type": "comprehensive",
-                        "target_audience": "general",
-                    },
-                    bad,
-                )
-            )
+            probes.append((_served_inputs(agent_name, query, output), bad))
         else:
-            bad = str(output.get(field, ""))
             if not bad:
                 continue
             probes.append(
@@ -2675,35 +2669,23 @@ def _holdout_scores(
 ) -> tuple[float, float]:
     """Score both modules on the same probe set.
 
-    Held-out positives contribute ``_probe_score`` against the labeled
-    output (validity for search); summary/report negatives contribute
-    ``1 - F1`` against the recorded failing output, search negatives the
-    validity of the fresh analysis. Returns
+    Held-out positives contribute ``_probe_score`` against the labeled output;
+    negatives contribute ``1 - F1`` against the recorded failing output, so a
+    candidate is rewarded for not reproducing it. Returns
     ``(baseline_score, candidate_score)`` as means over the probe set.
     """
     input_keys = _EVAL_INPUTS[agent_name]
-    optional_keys = _EVAL_OPTIONAL_INPUTS[agent_name]
-    label_field = _EVAL_FIELD.get(agent_name)
-
-    def _kwargs(base: dict) -> dict:
-        kwargs = dict(base)
-        for k in optional_keys:
-            kwargs.setdefault(k, "")
-        return kwargs
+    label_field = _EVAL_FIELD[agent_name]
 
     def _run(module) -> list:
         scores = []
         for ex in holdout:
-            pred = module(**_kwargs({k: getattr(ex, k) for k in input_keys}))
-            label = getattr(ex, label_field) if label_field else ""
-            scores.append(_probe_score(pred, label, agent_name))
+            pred = module(**{k: getattr(ex, k) for k in input_keys})
+            scores.append(_probe_score(pred, getattr(ex, label_field), agent_name))
         for inputs, bad_output in negatives:
-            pred = module(**_kwargs(inputs))
-            if agent_name == "search":
-                scores.append(_search_validity(pred))
-            else:
-                field = _EVAL_FIELD[agent_name]
-                scores.append(1.0 - _token_f1(getattr(pred, field, ""), bad_output))
+            pred = module(**inputs)
+            produced = str(getattr(pred, label_field, "") or "")
+            scores.append(1.0 - _token_f1(produced, bad_output))
         return scores
 
     baseline_scores = _run(baseline_module)
@@ -2726,7 +2708,7 @@ async def _serve_compiled_prompts(
     min_improvement: float = 0.0,
     train_examples: Optional[int] = None,
 ):
-    """Publish a compiled module's instructions IF it beats the active baseline.
+    """Publish a compiled module's whole state IF it beats the active baseline.
 
     Serving goes through ``ArtifactManager.promote_if_better``: only a
     candidate that scores at least ``baseline + min_improvement`` on the
@@ -2738,27 +2720,25 @@ async def _serve_compiled_prompts(
     Without eval scores nothing is promoted — an ungated promote can regress
     live traffic, which is exactly what the gate exists to prevent.
 
-    Returns ``None`` when the compile produced no instructions, otherwise a
+    What is published is the compiled module's own ``dump_state()`` — the
+    instructions AND the learned demonstrations that produced the winning
+    score — so serving loads the exact object that was scored.
+
+    Returns ``None`` when the compile produced no module state, otherwise a
     dict with ``served_agent``/``version``/``active``/``promoted`` plus the
     scores (or a ``reason`` when no eval material was available).
     """
     target = _SERVE_TARGET.get(agent_name)
     if target is None:
         return None
-    served_agent, predictor_attr = target
+    served_agent, _ = target
 
-    instructions = None
-    named = getattr(compiled, "named_predictors", None)
-    for _, predictor in named() if callable(named) else []:
-        candidate = getattr(getattr(predictor, "signature", None), "instructions", None)
-        if candidate:
-            instructions = str(candidate)
-            break
-    if not instructions:
-        logger.warning(
-            "Compiled %s module has no instructions — nothing to serve", agent_name
-        )
+    dump_state = getattr(compiled, "dump_state", None)
+    state = dump_state() if callable(dump_state) else None
+    if not state:
+        logger.warning("Compiled %s module has no state — nothing to serve", agent_name)
         return None
+    serialized = json.dumps(state, sort_keys=True)
 
     if baseline_score is None or candidate_score is None:
         logger.warning(
@@ -2775,7 +2755,7 @@ async def _serve_compiled_prompts(
 
     record = await artifact_manager.promote_if_better(
         agent_type=served_agent,
-        candidate_prompts={predictor_attr: instructions},
+        candidate_prompts={COMPILED_MODULE_PROMPT_KEY: serialized},
         candidate_demos=None,
         baseline_score=baseline_score,
         candidate_score=candidate_score,

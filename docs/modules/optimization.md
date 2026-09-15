@@ -291,9 +291,10 @@ async def run_profile_optimization(
 
     1. Load the tenant's versioned ground-truth blob
        ("config", "profile_selection_ground_truth") before any scoring. If the
-       blob is absent, return the named missing-label status. If the artifact
-       store is unreachable or the payload is malformed, return the named
-       store-unavailable status with a chained cause.
+       blob is absent, return status "failed" with the missing-label reason
+       and retryable=False. If the artifact store is unreachable or the payload
+       is malformed, return status "failed" with the store-unavailable reason,
+       retryable=True, and a chained cause. Both failures exit the CLI nonzero.
     2. Derive (query, available_profiles) -> selected_profile labels from those
        rows with derive_profile_labels: the tenant's SearchService runs every
        query against each profile from
@@ -306,7 +307,10 @@ async def run_profile_optimization(
        serve the row's expected media type, so video rows only score video
        profiles. The label is the single profile whose results match all of the
        row's expected_videos. Queries with no serving profile emit the named
-       `no_profile_serves_media_type` exclusion; no recovered video, untitled
+       `no_profile_serves_media_type` exclusion. A failed retrieval is attempted
+       at most three times; an exhausted comparison excludes the entire query
+       with `incomplete_comparison` and per-profile failure context. No
+       recovered video, untitled
        results, or profile ties are also excluded and reported under
        label_exclusions. cogniverse.profile_selection spans are counted as
        spans_found and not read.
@@ -339,9 +343,9 @@ async def run_profile_optimization(
          "labels_by_profile": dict[str, int],
          "exclusions_by_reason": dict[str, int]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
-      - {"status": "profile_selection_ground_truth_missing", "retryable": False,
+      - {"status": "failed", "reason": "profile_selection_ground_truth_missing", "retryable": False,
          "error": str}
-      - {"status": "profile_selection_ground_truth_store_unavailable", "retryable": True,
+      - {"status": "failed", "reason": "profile_selection_ground_truth_store_unavailable", "retryable": True,
          "error": str, "cause": {"type": str, "message": str}}
       - {"status": "no_eval_material", "spans_found": int,
          "served_scoreable_examples": int, "training_examples": int,
@@ -555,20 +559,24 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    `"insufficient_failures_to_reflect"` when reflection is on but that post-split trainset is smaller
    than `min_reflective_failures` (the threshold checks the split trainset, not the raw failing-row
    count).
-2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot` on the
-   trainset, scoped inside `dspy.context(lm=optimizer.lm)` (`initialize_language_model` only sets
-   `optimizer.lm`; the compile reads the LM from the task-local binding).
+2. Compiles the module the runtime actually serves (`_served_module`: `SearchOptimizationModule`,
+   `SummarizationModule`, `ReportGenerationModule`) with `BootstrapFewShot` on the trainset, scoped
+   inside `dspy.context(lm=optimizer.lm)` (`initialize_language_model` only sets `optimizer.lm`; the
+   compile reads the LM from the task-local binding). Training examples carry the served signature's
+   own input and output fields (`_served_example` / `_served_inputs`).
 3. Scores the compiled candidate against the currently-active baseline (`_holdout_scores` via
-   `_probe_score`): for `summary`/`report`, held-out positives contribute token-F1 to the labeled
-   output and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT
-   reproducing the recorded failing output; for `search` (whose signature emits enum fields with no
-   free-text label), both held-out positives and negatives are scored label-free via `_search_validity`
-   — the fraction of `primary_intent`/`complexity_level`/`needs_video_search` that hold a well-formed
-   value.
-4. Publishes the compiled instructions via `_serve_compiled_prompts` **only if the candidate wins by
+   `_probe_score`): held-out positives contribute token-F1 of the served output field
+   (`_EVAL_FIELD`: `enhanced_query` / `summary` / `executive_summary`) against the labeled output,
+   and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT reproducing
+   the recorded failing output. The baseline is the same served module with the active compiled state
+   loaded into it.
+4. Publishes the compiled module's whole `dump_state()` via `_serve_compiled_prompts` **only if the candidate wins by
    at least the tenant's `optimization_improvement_threshold`** — the call routes through
-   `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active); the
-   per-request prompt overlay serves a winner on the next dispatch, a loser is recorded in the
+   `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active). The
+   published prompts dict has the single reserved key `__dspy_module__`
+   (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding the compiled state as JSON, so
+   the instructions AND the learned demonstrations that produced the winning score serve together:
+   the per-request overlay `load_state`s it into its per-call copy of the served module. A loser is recorded in the
    experiments ledger with `promoted=False`, `--mode rollback` restores a prior version, and the
    result reports the outcome under `"served"` (`served_agent`, `version`, `active`, `promoted`, plus
    `baseline_score`/`candidate_score` when eval material was available or a `reason` when it wasn't).
@@ -583,10 +591,11 @@ when that trainset has at least `min_reflective_failures` rows does `_optimize_a
 post-split trainset size, not the raw failing-row count, so it takes more raw failures than
 `min_reflective_failures` to clear it. Each GEPA training example carries the recorded failing output
 as a `_bad_output` attribute, and
-a 5-argument GEPA feedback metric `(gold, pred, trace, pred_name, pred_trace) -> ScoreWithFeedback`
-(`_reflective_metric`) rewards a candidate for **not** reproducing that failing output
-(`_search_validity` for `search`; `1 - token_f1(pred, _bad_output)` for `summary`/`report`) while its
-`feedback` string names the failing output and what a good one must avoid. GEPA's reflection LM (the
+a GEPA feedback metric `(gold, pred, trace=None, pred_name=None, pred_trace=None) ->
+ScoreWithFeedback` (`_reflective_metric`) rewards a candidate for **not** reproducing that failing
+output (`1 - token_f1(pred, _bad_output)`) while its `feedback` string names the failing output and
+what a good one must avoid. Only `gold` and `pred` are required, which is the arity DSPy's own
+`Evaluate` and bootstrap tracing call a metric with. GEPA's reflection LM (the
 resolved optimization LM) reads the failing rollouts plus that feedback and proposes improved
 instructions, capped at `reflective_max_metric_calls` metric calls (`_build_gepa` is the injectable GEPA
 seam). The GEPA candidate STILL flows through the same `_score_and_serve` →

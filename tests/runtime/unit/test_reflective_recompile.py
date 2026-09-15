@@ -99,37 +99,27 @@ class TestReflectiveMetric:
         )
         assert diverged.score == 1.0
 
-    def test_search_metric_scores_enum_validity(self):
+    def test_search_metric_scores_the_served_rewritten_query(self):
         from dspy.teleprompt.gepa.gepa import ScoreWithFeedback
 
         metric = _reflective_metric("search")
-        gold = SimpleNamespace(_bad_output="", query="find cats")
+        gold = SimpleNamespace(_bad_output="cats video please", query="find cats")
 
-        valid = metric(
-            gold,
-            SimpleNamespace(
-                primary_intent="search",
-                complexity_level="simple",
-                needs_video_search="true",
-            ),
-            None,
-            None,
-            None,
+        repeated = metric(
+            gold, SimpleNamespace(enhanced_query="cats video please"), None, None, None
         )
-        assert isinstance(valid, ScoreWithFeedback)
-        assert valid.score == 1.0
-        assert "find cats" in valid.feedback
+        assert isinstance(repeated, ScoreWithFeedback)
+        assert repeated.score == 0.0
+        assert repeated.feedback == (
+            "The recorded failing enhanced_query was 'cats video please'. "
+            "Produce a distinct, accurate enhanced_query that does not "
+            "reproduce it."
+        )
 
-        invalid = metric(
-            gold,
-            SimpleNamespace(
-                primary_intent="", complexity_level="", needs_video_search=""
-            ),
-            None,
-            None,
-            None,
+        diverged = metric(
+            gold, SimpleNamespace(enhanced_query="feline footage"), None, None, None
         )
-        assert invalid.score == 0.0
+        assert diverged.score == 1.0
 
 
 def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
@@ -148,13 +138,12 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
 
         def compile(self, module, trainset=None):
             self.trainset = trainset
-            predictor = SimpleNamespace(
-                signature=SimpleNamespace(
-                    instructions="Reflective: avoid the failing output."
-                ),
-                demos=[],
-            )
-            return SimpleNamespace(named_predictors=lambda: [("predict", predictor)])
+            self.module = module
+            for _, predictor in module.named_predictors():
+                predictor.signature = predictor.signature.with_instructions(
+                    "Reflective: avoid the failing output."
+                )
+            return module
 
     fake_gepa = _FakeGepa()
 
@@ -174,22 +163,9 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
         def initialize_language_model(self, endpoint, teacher_endpoint_config=None):
             self.lm = MagicMock(name="student_lm")
 
-        def create_query_analysis_signature(self):
-            return SimpleNamespace(kind="search_sig")
-
-        def create_summary_generation_signature(self):
-            return SimpleNamespace(kind="summary_sig")
-
-        def create_detailed_report_signature(self):
-            return SimpleNamespace(kind="report_sig")
-
     monkeypatch.setattr(
         "cogniverse_agents.optimizer.dspy_agent_optimizer.DSPyAgentPromptOptimizer",
         _FakeOptimizer,
-    )
-    monkeypatch.setattr(
-        "dspy.ChainOfThought",
-        lambda sig: SimpleNamespace(named_predictors=lambda: []),
     )
 
     class _FakeArtifactManager:
@@ -288,8 +264,9 @@ class TestReflectiveBranch:
         ]
         assert fake_gepa.trainset[0].inputs().toDict() == {
             "content": json.dumps({"summary": "bad 0"}),
+            "query": "q0",
             "summary_type": "comprehensive",
-            "target_audience": "general",
+            "keyframes": [],
         }
         assert captured["reflection_lm"] is not None
         assert captured["max_metric_calls"] == 42
@@ -308,9 +285,13 @@ class TestReflectiveBranch:
         # Serving still routes through the promote_if_better gate, versioned.
         assert len(gate_calls) == 1
         assert gate_calls[0]["agent_type"] == "summarizer_agent"
-        assert gate_calls[0]["candidate_prompts"] == {
-            "summarizer": "Reflective: avoid the failing output."
-        }
+        published = json.loads(gate_calls[0]["candidate_prompts"]["__dspy_module__"])
+        assert list(gate_calls[0]["candidate_prompts"]) == ["__dspy_module__"]
+        assert published == json.loads(json.dumps(fake_gepa.module.dump_state()))
+        assert (
+            published["summarizer.predict"]["signature"]["instructions"]
+            == "Reflective: avoid the failing output."
+        )
         assert gate_calls[0]["serve_versioned"] is True
         assert gate_calls[0]["baseline_score"] == 0.30
         assert gate_calls[0]["candidate_score"] == 0.80
@@ -351,9 +332,13 @@ class TestReflectiveBranch:
         assert result["status"] == "success"
         assert result["reflective"] is True
         assert len(fake_gepa.trainset) == 9
-        assert fake_gepa.trainset[0].inputs().toDict() == {"query": "query 0"}
-        # search rows carry no free-text failing output — the metric scores
-        # enum-validity, so _bad_output is the empty string.
+        assert fake_gepa.trainset[0].inputs().toDict() == {
+            "query": "query 0",
+            "modality": "video",
+            "top_k": 10,
+        }
+        # These rows recorded no rewritten query at all, so the metric's
+        # known-bad output is the empty string.
         assert all(ex._bad_output == "" for ex in fake_gepa.trainset)
         assert gate_calls[0]["agent_type"] == "search_agent"
         assert result["served"]["promoted"] is True
@@ -408,3 +393,52 @@ class TestReflectiveBranch:
             "reason": "insufficient_failures_to_reflect",
             "negative_examples": 6,
         }
+
+
+@pytest.mark.parametrize("context", [(), (None,), (None, "summarizer", None)])
+def test_reflective_metric_accepts_dspy_evaluation_and_feedback_calls(context):
+    import dspy
+
+    metric = _reflective_metric("summary")
+    result = metric(
+        dspy.Example(_bad_output="alpha beta"),
+        dspy.Prediction(summary="alpha gamma"),
+        *context,
+    )
+    assert result.score == 0.5
+    assert result.feedback == (
+        "The recorded failing summary was 'alpha beta'. Produce a distinct, "
+        "accurate summary that does not reproduce it."
+    )
+
+
+def test_reflective_metric_runs_through_concurrent_dspy_evaluate():
+    import threading
+
+    import dspy
+
+    barrier = threading.Barrier(2)
+
+    def program(query):
+        barrier.wait(timeout=5)
+        return dspy.Prediction(summary=query)
+
+    examples = [
+        dspy.Example(query="alpha beta", _bad_output="alpha beta").with_inputs("query"),
+        dspy.Example(query="gamma delta", _bad_output="alpha beta").with_inputs(
+            "query"
+        ),
+    ]
+    result = dspy.Evaluate(
+        devset=examples,
+        metric=_reflective_metric("summary"),
+        num_threads=2,
+        max_errors=1,
+        display_progress=False,
+    )(program)
+    assert result.score == 50.0
+    assert [score.score for _, _, score in result.results] == [0.0, 1.0]
+    assert [example.query for example, _, _ in result.results] == [
+        "alpha beta",
+        "gamma delta",
+    ]
