@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from cogniverse_evaluation.core.solver_output import unpack_solver_output
 from cogniverse_evaluation.core.solvers import (
     create_batch_solver,
     create_live_solver,
@@ -339,6 +340,76 @@ class TestBatchSolver:
                 "count": 2,
             }
         }
+        assert packed["metadata"]["mode"] == "batch"
+        assert packed["metadata"]["project"] == "cogniverse-acme:acme"
+        assert (
+            packed["metadata"]["ground_truth_stats"]
+            == (result.metadata["ground_truth_stats"])
+        )
+        assert result.output.model == "trace_eval"
+        assert len(result.output.choices) == 1
+        assert result.output.choices[0].stop_reason == "stop"
+        assert result.output.choices[0].message.source == "generate"
+        assert (
+            unpack_solver_output(
+                result.output.choices[0].message.content
+            ).search_configs
+            == packed["search_configs"]
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_ground_truth_requires_expected_items(self, monkeypatch):
+        """`expected_items` is the field the strategies return; a result
+        without it is a strategy bug, not an empty ground truth."""
+        from unittest.mock import AsyncMock
+
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        monkeypatch.setattr(
+            "cogniverse_evaluation.core.ground_truth.get_ground_truth_strategy",
+            lambda *_a, **_kw: Mock(
+                extract_ground_truth=AsyncMock(
+                    return_value={
+                        "expected_videos": ["gt-trace-a"],
+                        "confidence": 0.9,
+                        "source": "fixture",
+                    }
+                )
+            ),
+            raising=False,
+        )
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(KeyError, match="expected_items"):
+            await solver(_sample_state("what is a quark"), Mock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_malformed_span_payload_raises(self, monkeypatch):
+        """A span whose output.value does not parse is an error, not a
+        trace that retrieved nothing."""
+        df = _populated_traces_df()
+        df.loc[0, "attributes.output.value"] = "{broken"
+        _seed_solver_provider(monkeypatch, df)
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(ValueError, match="unparseable output.value"):
+            await solver(_sample_state("what is a quark"), Mock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_sample_without_a_query_raises(self, monkeypatch):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(ValueError, match="no query to score"):
+            await solver(_sample_state(" "), Mock())
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -360,6 +431,14 @@ class TestBatchSolver:
         packed = json.loads(result.output.choices[0].message.content)
         assert list(packed["search_configs"]) == ["trace-b"]
         assert packed["search_configs"]["trace-b"]["count"] == 1
+        assert packed["query"] == "explain entanglement"
+        assert packed["phoenix_trace_id"] == "trace-b"
+        assert packed["search_configs"]["trace-b"]["results"] == [
+            {"source_id": "v3", "score": 0.7, "content": "entangled"}
+        ]
+        assert packed["search_configs"]["trace-b"]["profile"] == "xclip_global"
+        assert packed["search_configs"]["trace-b"]["strategy"] == "float_float"
+        assert "loaded_traces" not in result.metadata
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -450,6 +529,14 @@ class TestLiveSolver:
             {"source_id": "v1", "score": 0.9, "content": "quark"},
             {"source_id": "v2", "score": 0.5, "content": "lepton"},
         ]
+        assert packed["search_configs"]["trace-a"]["count"] == 2
+        assert packed["search_configs"]["trace-a"]["success"] is True
+        assert packed["search_configs"]["trace-a"]["profile"] == "frame_based_colpali"
+        assert packed["search_configs"]["trace-a"]["strategy"] == "binary_binary"
+        assert list(packed["search_configs"]) == ["trace-a"]
+        assert result.output.model == "trace_eval"
+        assert result.output.choices[0].stop_reason == "stop"
+        assert "live_traces" not in result.metadata
 
     @pytest.mark.unit
     @pytest.mark.asyncio
