@@ -2914,9 +2914,9 @@ async def run_cleanup(
     """Daily-cleanup workflow body: memory + logs + temp + config vacuum.
 
     Per-tenant Mem0 cleanup is schema-driven (per-kind TTLs in the
-    KnowledgeRegistry) and touches only tenants whose memory schema is
-    already deployed: a tenant without one is reported as skipped and
-    nothing is ever deployed on its behalf. Every per-tenant entry is
+    KnowledgeRegistry), skips every pinned target, and touches only tenants
+    whose memory schema is already deployed: a tenant without one is reported
+    as skipped and nothing is ever deployed on its behalf. Every per-tenant entry is
     ``{"status": "completed", "deleted_by_kind": {...}}``,
     ``{"status": "skipped", "reason": ...}`` or
     ``{"status": "failed", "error": ...}``; ``memory_cleanup_summary``
@@ -2940,6 +2940,7 @@ async def run_cleanup(
     temp_dir = _validate_cleanup_root("temp_dir", temp_dir)
 
     from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.pinning import PinService
     from cogniverse_core.memory.schema import build_default_registry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
@@ -2976,7 +2977,11 @@ async def run_cleanup(
                 return {"status": "skipped", "reason": "no memory schema deployed"}
             mm = Mem0MemoryManager(tenant_id=tid)
             lazy_init_memory(mm, tid, config_manager, auto_create_schema=False)
-            deleted_by_kind = mm.cleanup_with_schema(registry)
+            # Pins exempt their targets from retention. Reading them raises on
+            # an outage, so this tenant is reported failed and nothing is
+            # deleted — an unreadable pin must never read as "not pinned".
+            pinned_ids = PinService(mm, registry).pinned_target_ids(tid)
+            deleted_by_kind = mm.cleanup_with_schema(registry, pinned_ids)
             return {"status": "completed", "deleted_by_kind": dict(deleted_by_kind)}
         except Exception as e:
             return {"status": "failed", "error": f"{type(e).__name__}: {e}"}

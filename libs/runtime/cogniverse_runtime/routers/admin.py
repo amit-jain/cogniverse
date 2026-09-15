@@ -1406,9 +1406,11 @@ async def load_signature_variants(
     before it resolves a variant so every replica serves the selection an
     admin PUT accepted, not just the one that handled the PUT. A store
     outage propagates rather than masquerading as "no selection".
-    ``for_update`` is the PUT recovery path: it merges from the last
-    ACCEPTED state instead of raising, so a new PUT can supersede a failed
-    write.
+
+    ``for_update`` is the PUT merge base: it skips the TTL cache and reads
+    the durable blob, so a selection another replica persisted is not erased
+    by this replica's stale snapshot, and it merges from the last ACCEPTED
+    state instead of raising, so a new PUT can supersede a failed write.
     """
     key = canonical_tenant_id(tenant_id)
     if for_update:
@@ -1429,7 +1431,8 @@ async def load_signature_variants(
     cached = _signature_variant_overrides.get(key)
     ts = _signature_variant_cache_ts.get(key)
     if (
-        cached is not None
+        not for_update
+        and cached is not None
         and ts is not None
         and (time.monotonic() - ts) < _PIN_QUOTA_CACHE_TTL_S
     ):
@@ -1472,9 +1475,12 @@ async def _load_pin_quotas(
     write-through cache, then the durable blob. A store outage propagates
     (the blob read raises) rather than masquerading as "unset" — an admin
     must not silently see defaults when the real values are merely
-    unreachable. ``for_update`` is the PUT recovery path: it merges from
-    the last ACCEPTED state instead of raising, so a new PUT can supersede
-    a failed write.
+    unreachable.
+
+    ``for_update`` is the PUT merge base: it skips the TTL cache and reads
+    the durable blob, so a quota another replica persisted is not erased by
+    this replica's stale snapshot, and it merges from the last ACCEPTED
+    state instead of raising, so a new PUT can supersede a failed write.
     """
     key = canonical_tenant_id(tenant_id)
     if for_update:
@@ -1495,7 +1501,8 @@ async def _load_pin_quotas(
     cached = _pin_quota_overrides.get(key)
     ts = _pin_quota_cache_ts.get(key)
     if (
-        cached is not None
+        not for_update
+        and cached is not None
         and ts is not None
         and (time.monotonic() - ts) < (_PIN_QUOTA_CACHE_TTL_S)
     ):
@@ -2200,9 +2207,17 @@ class SignatureVariantResponse(BaseModel):
 )
 async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
     """list per-agent variant selections for a tenant."""
+    try:
+        selections = await load_signature_variants(tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # The blob read raises on a store outage (never masquerades as "no
+        # selection"); map it to 503 rather than an opaque 500.
+        raise HTTPException(503, f"signature-variant store unavailable: {exc}") from exc
     return SignatureVariantResponse(
         tenant_id=tenant_id,
-        selections=await load_signature_variants(tenant_id),
+        selections=selections,
         pending_write=_blob_write_queue.pending_content(
             canonical_tenant_id(tenant_id),
             _SIGNATURE_VARIANT_BLOB_KIND,
@@ -2231,7 +2246,14 @@ async def set_signature_variant(
     # diverge under concurrent same-tenant PUTs, and persist to the durable blob
     # so the selection survives a restart and reaches every replica.
     async with _signature_variant_write_lock(key):
-        selections = await load_signature_variants(tenant_id, for_update=True)
+        try:
+            selections = await load_signature_variants(tenant_id, for_update=True)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                503, f"signature-variant store unavailable: {exc}"
+            ) from exc
         selections[agent_type] = body.variant_id
         _signature_variant_overrides[key] = selections
         _signature_variant_cache_ts[key] = time.monotonic()

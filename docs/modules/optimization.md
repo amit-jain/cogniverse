@@ -740,6 +740,27 @@ State shape:
 
 ---
 
+### Serving blobs
+
+`ArtifactManager.save_blob(kind, key, content)` publishes a serving revision as
+a single immutable row. Revisions alternate between two datasets,
+`dspy-{kind}-{tenant}-{key}--r0` and `--r1`, each row carrying its
+`blob_revision`. A publication writes the slot holding the revision before the
+committed one, so the committed revision stays readable for the whole
+publication and a failed or killed publication leaves it in place. The slot's
+previous occupant is pruned there and only there — one publication after its
+successor became readable. `load_blob` reads both slots and returns the greater
+revision, or `None` when neither exists. Store failures propagate.
+
+Phoenix has no compare-and-set, so two overlapping publications are
+last-write-wins on the same slot; neither can remove the revision the other
+serves.
+
+Serving revisions and optimizer candidates are separate namespaces.
+`save_blob_versioned` records candidates and their evaluation ledger under
+`-v{n}`; only `activate_version` copies a candidate into the serving blob, so a
+rejected candidate never reaches serving.
+
 ### 13. **Regression-Reject Promotion Gate (`promote_if_better`)**
 
 `ArtifactManager.promote_if_better` is the guarded alternative to unconditionally overwriting active
@@ -880,7 +901,7 @@ and `TEMP_DIR=/tmp/cogniverse-cleanup`; its scratch `emptyDir` is also `TMPDIR`.
 
 | Section | Source | Knob |
 |---|---|---|
-| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema | per-kind TTLs in `KnowledgeRegistry` |
+| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry(), PinService(mm, registry).pinned_target_ids(tenant))` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema. The pin read raises on a store outage, so the tenant is reported `failed` and nothing is deleted | per-kind TTLs in `KnowledgeRegistry` |
 | `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` required existing directory; `--log-retention-days` overrides `LOG_RETENTION_DAYS` (7) |
 | `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` required existing directory; `TEMP_RETENTION_DAYS` (1) |
 | `config_vacuum` | `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` | `CONFIG_KEEP_VERSIONS` env (default 10) |
