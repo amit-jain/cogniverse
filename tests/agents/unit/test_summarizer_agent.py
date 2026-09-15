@@ -1231,10 +1231,19 @@ class TestA2AExecutorStreaming:
             schema_loader=Mock(),
         )
 
-        async def _no_search(*a, **k):
-            return {"results": []}
+        # The Mock config manager cannot answer the grounding plan's profile
+        # reads, and a failed plan now fails the turn; this test is about the
+        # agent and typed input the construction returns, so give it a resolved
+        # grounding directly.
+        from cogniverse_runtime.agent_dispatcher import (
+            GROUNDING_SEARCHED,
+            AnswerGrounding,
+        )
 
-        dispatcher._execute_search_task = _no_search
+        async def _grounding(*a, **k):
+            return AnswerGrounding(hits=[], state=GROUNDING_SEARCHED)
+
+        dispatcher._resolve_answer_search_results = _grounding
 
         with (
             patch("cogniverse_agents.summarizer_agent.VLMInterface"),
@@ -1246,6 +1255,7 @@ class TestA2AExecutorStreaming:
 
         assert isinstance(agent, SummarizerAgent)
         assert typed_input.query == "test query"
+        assert typed_input.search_results == []
 
     @pytest.mark.asyncio
     async def test_create_streaming_agent_unsupported(self):
