@@ -3276,13 +3276,16 @@ class AgentDispatcher:
             with self._scoped_session(agent, session_id):
                 result = await agent.process(input_data)
 
+        orchestration_result = (
+            result.model_dump() if hasattr(result, "model_dump") else vars(result)
+        )
+        final_output = orchestration_result.get("final_output") or {}
         return {
-            "status": "success",
+            "status": final_output.get("status", "success"),
             "agent": "orchestrator_agent",
-            "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
-            "orchestration_result": (
-                result.model_dump() if hasattr(result, "model_dump") else vars(result)
-            ),
+            "message": final_output.get("message")
+            or f"Orchestrated '{query[:50]}' via A2A pipeline",
+            "orchestration_result": orchestration_result,
             "gateway_context": gateway_context,
         }
 

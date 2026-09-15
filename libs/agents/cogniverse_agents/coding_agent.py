@@ -15,6 +15,7 @@ import logging
 import shutil
 import tempfile
 import uuid
+from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -308,52 +309,81 @@ class CodingAgent(
         files_modified: List[str] = []
         previous_error = ""
         iteration = 0
+        success = False
         workspace_dir = tempfile.mkdtemp(prefix=f"coding_{uuid.uuid4().hex[:8]}_")
         try:
-            for iteration in range(1, input.max_iterations + 1):
-                self.emit_progress(
-                    "generate",
-                    f"Iteration {iteration}: generating code...",
-                )
-
-                code, test_command = await self._generate_code(
-                    input.task, plan, code_context, input.language, previous_error
-                )
-
-                file_path = f"{workspace_dir}/solution.{self._ext(input.language)}"
-                code_changes = [
-                    {"file_path": file_path, "content": code, "change_type": "create"}
-                ]
-                all_code_changes = code_changes
-                files_modified = [file_path]
-
-                self.emit_progress("execute", f"Iteration {iteration}: executing...")
-                exec_result = await self._execute_in_sandbox(
-                    file_path, code, test_command, input.language
-                )
-                all_exec_results.append(exec_result)
-
-                self.emit_progress("evaluate", f"Iteration {iteration}: evaluating...")
-                is_successful, feedback = await self._evaluate_output(
-                    input.task,
-                    code,
-                    exec_result.get("stdout", ""),
-                    exec_result.get("stderr", ""),
-                    exec_result.get("exit_code", -1),
-                )
-
-                if is_successful:
+            # One exclusive sandbox for the whole task, leased when the first
+            # iteration has code to run: a cold sandbox costs minutes, and a
+            # task whose generation fails never needs one.
+            async with AsyncExitStack() as sandbox:
+                session = None
+                for iteration in range(1, input.max_iterations + 1):
                     self.emit_progress(
-                        "done", f"Task completed in {iteration} iterations"
+                        "generate",
+                        f"Iteration {iteration}: generating code...",
                     )
-                    break
 
-                previous_error = (
-                    f"Exit code: {exec_result.get('exit_code')}\n"
-                    f"stderr: {exec_result.get('stderr', '')}\n"
-                    f"Feedback: {feedback}"
-                )
+                    code, test_command = await self._generate_code(
+                        input.task, plan, code_context, input.language, previous_error
+                    )
 
+                    file_path = f"{workspace_dir}/solution.{self._ext(input.language)}"
+                    code_changes = [
+                        {
+                            "file_path": file_path,
+                            "content": code,
+                            "change_type": "create",
+                        }
+                    ]
+                    all_code_changes = code_changes
+                    files_modified = [file_path]
+
+                    self.emit_progress(
+                        "execute", f"Iteration {iteration}: executing..."
+                    )
+                    if session is None:
+                        if self._sandbox_manager is None:
+                            raise RuntimeError(
+                                "CodingAgent requires a SandboxManager with an "
+                                "available OpenShell gateway. Executing "
+                                "LLM-generated code without sandbox isolation is "
+                                "not permitted. Provide a sandbox_manager to "
+                                "CodingAgent or CodingDeps, or start the "
+                                "OpenShell gateway."
+                            )
+                        session = await sandbox.enter_async_context(
+                            self._sandbox_manager.task_session(
+                                "coding_agent", input.tenant_id
+                            )
+                        )
+                    exec_result = await self._execute_in_sandbox(
+                        file_path, code, test_command, input.language, session
+                    )
+                    all_exec_results.append(exec_result)
+
+                    self.emit_progress(
+                        "evaluate", f"Iteration {iteration}: evaluating..."
+                    )
+                    is_successful, feedback = await self._evaluate_output(
+                        input.task,
+                        code,
+                        exec_result.get("stdout", ""),
+                        exec_result.get("stderr", ""),
+                        exec_result.get("exit_code", -1),
+                    )
+
+                    if is_successful and exec_result["exit_code"] == 0:
+                        success = True
+                        self.emit_progress(
+                            "done", f"Task completed in {iteration} iterations"
+                        )
+                        break
+
+                    previous_error = (
+                        f"Exit code: {exec_result.get('exit_code')}\n"
+                        f"stderr: {exec_result.get('stderr', '')}\n"
+                        f"Feedback: {feedback}"
+                    )
         finally:
             shutil.rmtree(workspace_dir)
 
@@ -367,6 +397,14 @@ class CodingAgent(
             else f"Planned but no code executed after {iteration} iterations."
         )
 
+        error = None
+        if not success:
+            error = (
+                f"Coding task failed after {iteration} iteration(s): "
+                f"{previous_error or 'No code executed'}"
+            )
+            summary = error
+
         rlm_synthesis = None
         rlm_telemetry = None
 
@@ -376,7 +414,8 @@ class CodingAgent(
             )
             logger.info(f"RLM enabled for coding task: {input.task[:50]}...")
             try:
-                rlm_result = self.process_with_rlm(
+                rlm_result = await asyncio.to_thread(
+                    self.process_with_rlm,
                     query=input.task,
                     context=code_context,
                     rlm_options=input.rlm,
@@ -397,6 +436,8 @@ class CodingAgent(
 
         return CodingOutput(
             plan=plan,
+            success=success,
+            error=error,
             code_changes=all_code_changes,
             execution_results=all_exec_results,
             summary=summary,
@@ -571,25 +612,9 @@ class CodingAgent(
         code: str,
         test_command: str,
         language: str,
+        session: Any,
     ) -> Dict[str, Any]:
-        """Execute code in an OpenShell sandbox. Refuses to run without one.
-
-        The connectivity probe and both sandbox execs are synchronous gRPC/socket
-        calls (write exec 30s, run exec up to 300s); offload them so a coding
-        task cannot freeze the shared API loop and trip k8s liveness mid-run.
-        """
-        sandbox_available = (
-            self._sandbox_manager is not None
-            and await asyncio.to_thread(lambda: self._sandbox_manager.available)
-        )
-        if not sandbox_available:
-            raise RuntimeError(
-                "CodingAgent requires a SandboxManager with an available OpenShell "
-                "gateway. Executing LLM-generated code without sandbox isolation "
-                "is not permitted. Provide a sandbox_manager to CodingAgent or "
-                "CodingDeps, or start the OpenShell gateway."
-            )
-
+        """Write and execute within the task's exclusive sandbox session."""
         # Always run the file we actually wrote (``file_path`` = solution.<ext>).
         # The LLM's ``test_command`` frequently names a file from its plan
         # (e.g. ``python hello_world.py``) that doesn't match the fixed
@@ -601,16 +626,15 @@ class CodingAgent(
             f"mkdir -p $(dirname {file_path}) && "
             f"cat > {file_path} << 'SANDBOX_CODE_EOF'\n{code}\nSANDBOX_CODE_EOF"
         )
-        await asyncio.to_thread(
-            self._sandbox_manager.exec_in_sandbox,
-            agent_type="coding_agent",
+        write_result = await session.exec(
             command=["sh", "-c", write_cmd],
             timeout_seconds=30,
         )
 
-        result = await asyncio.to_thread(
-            self._sandbox_manager.exec_in_sandbox,
-            agent_type="coding_agent",
+        if write_result["exit_code"] != 0:
+            return {**write_result, "command": write_cmd, "success": False}
+
+        result = await session.exec(
             command=["sh", "-c", run_cmd],
             timeout_seconds=300,
         )

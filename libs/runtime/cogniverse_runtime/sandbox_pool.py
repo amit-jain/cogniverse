@@ -24,6 +24,7 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -165,6 +166,17 @@ class SandboxSessionPool:
         finally:
             if not released:
                 self._release(entry)
+
+    @contextmanager
+    def task_session(self):
+        """Own a fresh session until task completion, then destroy it."""
+        session = self._create_with_spans()
+        try:
+            yield session
+        finally:
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span("sandbox.delete"):
+                session.delete()
 
     def evict_idle(self, *, now: Optional[float] = None) -> int:
         """Destroy entries idle longer than ``max_idle_seconds``.
@@ -328,14 +340,18 @@ class SandboxSessionPool:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("sandbox.create_session"):
             session = self._client.create_session()
-        with tracer.start_as_current_span(
-            "sandbox.wait_ready",
-            attributes={"openshell.wait_timeout_s": self._wait_ready_timeout},
-        ):
-            self._client.wait_ready(
-                session.sandbox.name,
-                timeout_seconds=self._wait_ready_timeout,
-            )
+        try:
+            with tracer.start_as_current_span(
+                "sandbox.wait_ready",
+                attributes={"openshell.wait_timeout_s": self._wait_ready_timeout},
+            ):
+                self._client.wait_ready(
+                    session.sandbox.name,
+                    timeout_seconds=self._wait_ready_timeout,
+                )
+        except BaseException:
+            self._destroy_with_span(session)
+            raise
         return session
 
     def _destroy_with_span(self, session: Any) -> None:
