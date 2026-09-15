@@ -42,11 +42,11 @@ from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
 # a slow answer is a normal condition rather than an outage. Only used to word
 # the timeout branch; the fetch itself is bounded by the client's own budget.
 _ROUTING_SPAN_FETCH_TIMEOUT_S = 30.0
-from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 logger = logging.getLogger(__name__)
 
 
+from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 
 
@@ -99,6 +99,19 @@ def render_routing_evaluation_tab():
 
     # Configuration section — tenant comes from the gate-validated session state
     tenant_id = st.session_state["current_tenant"]
+
+    # Initialize evaluator with telemetry provider
+    try:
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+        project_name = tenant_project_name(telemetry_manager, tenant_id)
+        evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
+    except Exception as e:
+        st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
+        return
+
     with st.expander("⚙️ Configuration", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
@@ -108,20 +121,7 @@ def render_routing_evaluation_tab():
                 "Lookback Period (hours)", min_value=1, max_value=168, value=24
             )
 
-        # Project name - using unified orchestration project
-        project_name = f"cogniverse-{tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
         st.info(f"📊 Querying spans from project: `{project_name}`")
-
-    # Initialize evaluator with telemetry provider
-    try:
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        telemetry_manager = get_telemetry_manager()
-        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-        evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
-    except Exception as e:
-        st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
-        return
 
     # Time range for query — Phoenix stores spans in UTC, mirror that here so
     # the window is correct on non-UTC hosts (the dashboard runs anywhere).

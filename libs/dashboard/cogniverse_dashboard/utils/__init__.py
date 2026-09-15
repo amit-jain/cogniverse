@@ -15,3 +15,17 @@ def canonicalize_tenant_input(raw: str) -> str:
         return canonical_tenant_id(raw)
     except ValueError:
         return raw
+
+
+def tenant_project_name(telemetry_manager, tenant_id: str) -> str:
+    """Phoenix project holding the runtime's spans for ``tenant_id``.
+
+    GatewayAgent, ProfileSelectionAgent and OrchestratorAgent open their
+    spans with ``TelemetryManager.span(..., tenant_id=...)`` and no project
+    override, so the spans land in the manager's bare tenant project.
+    Readers derive the name from the same config object and the same
+    canonical tenant form, or they query a project nothing writes to.
+    """
+    return telemetry_manager.config.get_project_name(
+        canonicalize_tenant_input(tenant_id)
+    )

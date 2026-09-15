@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+
 
 @pytest.fixture(autouse=True)
 def _isolate_streamlit_cache():
@@ -206,6 +208,10 @@ def test_routing_evaluation_tab_fetches_spans_once(tmp_path, monkeypatch):
         traces = _Traces()
 
     class _Manager:
+        # The tabs derive the tenant's Phoenix project from the manager's
+        # own config, the way the span producers do.
+        config = TelemetryConfig()
+
         def get_provider(self, tenant_id=None):
             return _Provider()
 
@@ -250,6 +256,10 @@ def test_routing_evaluation_names_the_cause_when_the_span_fetch_times_out(
         traces = _Traces()
 
     class _Manager:
+        # The tabs derive the tenant's Phoenix project from the manager's
+        # own config, the way the span producers do.
+        config = TelemetryConfig()
+
         def get_provider(self, tenant_id=None):
             return _Provider()
 
@@ -323,6 +333,10 @@ def test_annotation_section_wires_max_annotations_per_batch_from_config(
         traces = _Traces()
 
     class _Manager:
+        # The tabs derive the tenant's Phoenix project from the manager's
+        # own config, the way the span producers do.
+        config = TelemetryConfig()
+
         def get_provider(self, tenant_id=None):
             return _Provider()
 

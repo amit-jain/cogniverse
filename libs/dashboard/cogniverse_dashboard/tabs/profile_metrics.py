@@ -17,10 +17,8 @@ import plotly.express as px
 import streamlit as st
 
 from cogniverse_dashboard.telemetry_gate import run_render_span_query
-from cogniverse_foundation.telemetry.config import (
-    SPAN_NAME_PROFILE_SELECTION,
-    TelemetryConfig,
-)
+from cogniverse_dashboard.utils import tenant_project_name
+from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logger = logging.getLogger(__name__)
@@ -91,9 +89,7 @@ def render_profile_metrics_tab() -> None:
     try:
         manager = get_telemetry_manager()
         provider = manager.get_provider(tenant_id=tenant_id)
-        project_name = TelemetryConfig().get_project_name(
-            tenant_id, service="cogniverse-orchestration"
-        )
+        project_name = tenant_project_name(manager, tenant_id)
     except Exception as exc:
         st.error(f"Failed to initialise telemetry provider: {exc}")
         return
