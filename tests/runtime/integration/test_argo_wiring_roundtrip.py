@@ -7,18 +7,37 @@ the HTTP boundary (``_submit_cron_workflow`` / ``_delete_cron_workflow``) is
 mocked.
 """
 
+import asyncio
 import copy
 import json
+import os
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import jsonschema
 import pytest
+import requests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.k8s_api_server import (
+    CRONWORKFLOW_CRD,
+    _kubectl,
+    start_k8s_api_server,
+    stop_k8s_api_server,
+)
 
 _ARGO_SCHEMA_PATH = (
     Path(__file__).parent / "schemas" / "argo_cronworkflow_min.schema.json"
@@ -226,3 +245,302 @@ class TestManifestMatchesArgoSchema:
         broken["metadata"]["name"] = "Tenant_Job:Bad"
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(instance=broken, schema=_argo_schema())
+
+
+@pytest.fixture(scope="module")
+def argo_server(tmp_path_factory):
+    """Run the real Argo API against a fixture-owned Kubernetes datastore."""
+    cluster = start_k8s_api_server(tmp_path_factory.mktemp("job-argo"))
+    kubeconfig = Path(cluster["kubeconfig"])
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    name = f"cogniverse-test-argo-{os.getpid()}-{port}"
+    try:
+        for plural, kind, namespaced in (
+            ("workflows", "Workflow", True),
+            ("workflowtemplates", "WorkflowTemplate", True),
+            ("clusterworkflowtemplates", "ClusterWorkflowTemplate", False),
+        ):
+            crd = copy.deepcopy(CRONWORKFLOW_CRD)
+            crd["metadata"]["name"] = f"{plural}.argoproj.io"
+            crd["spec"]["scope"] = "Namespaced" if namespaced else "Cluster"
+            crd["spec"]["names"] = {
+                "kind": kind,
+                "listKind": f"{kind}List",
+                "plural": plural,
+                "singular": plural[:-1],
+            }
+            applied = _kubectl(
+                kubeconfig, "apply", "-f", "-", input_text=json.dumps(crd)
+            )
+            assert applied.returncode == 0, applied.stderr
+            ready = _kubectl(
+                kubeconfig,
+                "wait",
+                "--for=condition=Established",
+                f"crd/{plural}.argoproj.io",
+                "--timeout=60s",
+                timeout=70,
+            )
+            assert ready.returncode == 0, ready.stderr
+        template = {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "WorkflowTemplate",
+            "metadata": {"name": "cogniverse-job-runner", "namespace": "cogniverse"},
+            "spec": {
+                "entrypoint": "job",
+                "templates": [
+                    {
+                        "name": "job",
+                        "container": {"image": "alpine:3.20", "command": ["true"]},
+                    }
+                ],
+            },
+        }
+        applied = _kubectl(
+            kubeconfig, "apply", "-f", "-", input_text=json.dumps(template)
+        )
+        assert applied.returncode == 0, applied.stderr
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--label",
+                f"cogniverse-test-owner-pid={os.getpid()}",
+                "--network",
+                "host",
+                "--user",
+                "0:0",
+                "-v",
+                f"{kubeconfig}:/kubeconfig:ro",
+                "quay.io/argoproj/argocli:v3.7.3",
+                "server",
+                "--kubeconfig",
+                "/kubeconfig",
+                "--namespace",
+                "cogniverse",
+                "--namespaced",
+                "--auth-mode",
+                "server",
+                "--secure=false",
+                "--port",
+                str(port),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=180,
+        )
+        url = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                response = requests.get(f"{url}/api/v1/info", timeout=2)
+                if response.status_code == 200:
+                    break
+            except requests.ConnectionError:
+                pass
+            time.sleep(0.2)
+        else:
+            logs = subprocess.run(
+                ["docker", "logs", name], capture_output=True, text=True
+            )
+            pytest.fail(
+                f"Argo server did not become ready: {logs.stdout}\n{logs.stderr}"
+            )
+        yield url
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        stop_k8s_api_server(cluster["container"])
+
+
+@pytest.fixture
+def job_commit_boundary(vespa_instance, argo_server, monkeypatch):
+    """Forward real Vespa traffic, refusing one tenant's config feed on demand."""
+    state = {
+        "failed_tenant": None,
+        "hold": False,
+        "entered": threading.Event(),
+        "release": threading.Event(),
+        "refused_jobs": [],
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def forward(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            fields = json.loads(body).get("fields", {}) if body else {}
+            if (
+                self.command == "POST"
+                and fields.get("service") == "tenant_jobs"
+                and fields.get("tenant_id") == state["failed_tenant"]
+            ):
+                state["refused_jobs"].append(fields["config_key"].removeprefix("job_"))
+                state["entered"].set()
+                if state["hold"]:
+                    assert state["release"].wait(60) is True
+                response_body = b'{"message":"injected config feed refusal"}'
+                self.send_response(503)
+            else:
+                response = requests.request(
+                    self.command,
+                    vespa_instance["base_url"] + self.path,
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                response_body = response.content
+                self.send_response(response.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        do_GET = forward
+        do_POST = forward
+        do_DELETE = forward
+
+        def log_message(self, *args):
+            pass
+
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    thread.start()
+    cm = ConfigManager(
+        store=VespaConfigStore(
+            backend_url="http://127.0.0.1", backend_port=proxy.server_port
+        )
+    )
+    monkeypatch.setattr(tenant, "_config_manager", cm)
+    _configure_workflow(api_url=argo_server)
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    try:
+        yield app, cm, state
+    finally:
+        state["release"].set()
+        proxy.shutdown()
+        proxy.server_close()
+        thread.join(timeout=5)
+
+
+async def _actual_cron_names(argo_url: str, tenant_id: str) -> list[str]:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{argo_url}/api/v1/cron-workflows/cogniverse",
+            params={
+                "listOptions.labelSelector": f"tenant={tenant._sanitize_label_value(tenant_id)}"
+            },
+        )
+    assert response.status_code == 200, response.text
+    return sorted(row["metadata"]["name"] for row in response.json().get("items") or [])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_failed_job_commit_removes_real_schedule_before_retry(
+    job_commit_boundary, argo_server
+):
+    app, cm, state = job_commit_boundary
+    tenant_id = f"jobfail{uuid.uuid4().hex[:8]}:production"
+    body = {
+        "name": "daily-report",
+        "schedule": "0 9 * * *",
+        "query": "Read launch notes",
+    }
+    state["failed_tenant"] = tenant_id
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://job-test",
+    ) as client:
+        failed = await client.post(f"/admin/tenant/{tenant_id}/jobs", json=body)
+        assert failed.status_code == 500
+        assert len(set(state["refused_jobs"])) == 1
+        assert await _actual_cron_names(argo_server, tenant_id) == []
+        assert (await client.get(f"/admin/tenant/{tenant_id}/jobs")).json() == {
+            "jobs": []
+        }
+        state["failed_tenant"] = None
+        created = await client.post(f"/admin/tenant/{tenant_id}/jobs", json=body)
+        assert created.status_code == 200, created.text
+        result = created.json()
+        assert await _actual_cron_names(argo_server, tenant_id) == [
+            tenant._cron_workflow_name(tenant_id, result["job_id"])
+        ]
+        assert cm.get_config_value(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SYSTEM,
+            service="tenant_jobs",
+            config_key=f"job_{result['job_id']}",
+        ) == {
+            "job_id": result["job_id"],
+            **body,
+            "post_actions": [],
+            "created_at": result["created_at"],
+        }
+        assert (await client.get(f"/admin/tenant/{tenant_id}/jobs")).json() == {
+            "jobs": [{**result, "status": "active"}]
+        }
+        deleted = await client.delete(
+            f"/admin/tenant/{tenant_id}/jobs/{result['job_id']}"
+        )
+        assert deleted.json() == {"status": "deleted", "job_id": result["job_id"]}
+        assert await _actual_cron_names(argo_server, tenant_id) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_failed_job_compensation_does_not_remove_concurrent_tenant_schedule(
+    job_commit_boundary, argo_server
+):
+    app, cm, state = job_commit_boundary
+    failed_tenant = f"jobfail{uuid.uuid4().hex[:8]}:production"
+    peer_tenant = f"jobpeer{uuid.uuid4().hex[:8]}:production"
+    state["failed_tenant"] = failed_tenant
+    state["hold"] = True
+    body = {
+        "name": "daily-report",
+        "schedule": "0 9 * * *",
+        "query": "Read launch notes",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://job-test",
+    ) as client:
+        failing = asyncio.create_task(
+            client.post(f"/admin/tenant/{failed_tenant}/jobs", json=body)
+        )
+        try:
+            assert await asyncio.to_thread(state["entered"].wait, 60) is True
+            peer = await client.post(f"/admin/tenant/{peer_tenant}/jobs", json=body)
+            assert peer.status_code == 200, peer.text
+            result = peer.json()
+            assert await _actual_cron_names(argo_server, failed_tenant) == [
+                tenant._cron_workflow_name(failed_tenant, state["refused_jobs"][0])
+            ]
+        finally:
+            state["release"].set()
+        assert (await failing).status_code == 500
+        assert await _actual_cron_names(argo_server, failed_tenant) == []
+        assert await _actual_cron_names(argo_server, peer_tenant) == [
+            tenant._cron_workflow_name(peer_tenant, result["job_id"])
+        ]
+        assert (await client.get(f"/admin/tenant/{failed_tenant}/jobs")).json() == {
+            "jobs": []
+        }
+        assert (await client.get(f"/admin/tenant/{peer_tenant}/jobs")).json() == {
+            "jobs": [{**result, "status": "active"}]
+        }
+        assert cm.get_config_value(
+            tenant_id=peer_tenant,
+            scope=ConfigScope.SYSTEM,
+            service="tenant_jobs",
+            config_key=f"job_{result['job_id']}",
+        ) == {
+            "job_id": result["job_id"],
+            **body,
+            "post_actions": [],
+            "created_at": result["created_at"],
+        }
