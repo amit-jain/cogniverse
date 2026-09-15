@@ -795,3 +795,141 @@ def test_wait_ready_budget_is_not_below_the_sdk_default() -> None:
         f"pool wait_ready budget {pool_default}s undercuts the openshell SDK "
         f"default {sdk_default}s; a cold sandbox start measured 168s"
     )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("readiness unavailable"), TimeoutError("readiness expired")],
+)
+def test_readiness_failure_deletes_created_session(failure):
+    client = _CountingClient()
+
+    def fail_ready(name, timeout_seconds):
+        raise failure
+
+    client.wait_ready = fail_ready
+    pool = SandboxSessionPool(client)
+    callbacks = []
+    with pytest.raises(type(failure), match=str(failure)) as raised:
+        pool.with_session("coding_agent", lambda session: callbacks.append(session.id))
+    pool.close_all()
+    assert raised.value is failure
+    assert callbacks == []
+    assert [session.delete_count for session in client.created] == [1]
+    assert pool.stats() == {
+        "pool_size": 0,
+        "max_pool_size": 8,
+        "in_use": 0,
+        "agents": [],
+    }
+
+
+def test_failed_readiness_does_not_orphan_during_concurrent_recovery():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    client = _CountingClient()
+    barrier = Barrier(2)
+
+    def wait_ready(name, timeout_seconds):
+        barrier.wait(timeout=5)
+        if name == "sandbox-1":
+            raise RuntimeError("first readiness failed")
+
+    client.wait_ready = wait_ready
+    pool = SandboxSessionPool(client)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            pool.with_session, "search_agent", lambda session: session.id
+        )
+        second = executor.submit(
+            pool.with_session, "document_agent", lambda session: session.id
+        )
+        with pytest.raises(RuntimeError, match="first readiness failed"):
+            first.result(timeout=5)
+        assert second.result(timeout=5) == "sandbox-2"
+    pool.close_all()
+    assert [session.delete_count for session in client.created] == [1, 1]
+    assert pool.stats() == {
+        "pool_size": 0,
+        "max_pool_size": 8,
+        "in_use": 0,
+        "agents": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_task_leases_are_exclusive_and_destroyed_across_tenants():
+    import asyncio
+
+    from cogniverse_runtime.sandbox_manager import SandboxManager
+
+    client = _CountingClient()
+    manager = SandboxManager(policy="disabled")
+    manager._client = client
+    manager._available = True
+    both_acquired = asyncio.Barrier(2)
+
+    async def run(tenant_id):
+        async with manager.task_session("coding_agent", tenant_id) as session:
+            await both_acquired.wait()
+            assert [s.delete_count for s in client.created] == [0, 0]
+            return session.session_name
+
+    sessions = await asyncio.gather(run("prodfixagents:a"), run("prodfixagents:b"))
+    assert set(sessions) == {"sandbox-1", "sandbox-2"}
+    assert [s.delete_count for s in client.created] == [1, 1]
+    async with manager.task_session("coding_agent", "prodfixagents:a") as session:
+        assert session.session_name == "sandbox-3"
+    assert [s.delete_count for s in client.created] == [1, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_task_cancellation_waits_for_execution_before_destroying():
+    import asyncio
+    import threading
+
+    from openshell.sandbox import ExecResult
+
+    from cogniverse_runtime.sandbox_manager import SandboxManager
+
+    client = _CountingClient()
+    manager = SandboxManager(policy="disabled")
+    manager._client = client
+    manager._available = True
+    started = threading.Event()
+    finish = threading.Event()
+    events = []
+
+    def execute(command, timeout_seconds):
+        started.set()
+        assert finish.wait(5) is True
+        events.append("exec finished")
+        return ExecResult(stdout="done\n", stderr="", exit_code=0)
+
+    async def run():
+        async with manager.task_session(
+            "coding_agent", "prodfixagents:cancel"
+        ) as session:
+            client.created[0].exec = execute
+            original_delete = client.created[0].delete
+
+            def delete():
+                events.append("deleted")
+                original_delete()
+
+            client.created[0].delete = delete
+            await session.exec(["true"], timeout_seconds=5)
+
+    task = asyncio.create_task(run())
+    try:
+        assert await asyncio.to_thread(started.wait, 5) is True
+        task.cancel()
+        await asyncio.sleep(0)
+        assert events == []
+    finally:
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert events == ["exec finished", "deleted"]
+    assert client.created[0].delete_count == 1

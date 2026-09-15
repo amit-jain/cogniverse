@@ -17,10 +17,12 @@ surfaced as span attributes from stderr / exit_code patterns.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -51,6 +53,60 @@ class SandboxPolicy(str, enum.Enum):
 
 class SandboxGatewayUnavailableError(RuntimeError):
     """Raised at boot when policy=required but the gateway is unreachable."""
+
+
+async def _settle_sandbox_call(task):
+    """Wait for an owned SDK call even when its waiter is cancelled again."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    return task.result()
+
+
+async def _run_sandbox_call(function, *args, **kwargs):
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await _settle_sandbox_call(task)
+        raise
+
+
+class SandboxTaskSession:
+    """Exclusive task execution; cancellation joins the active SDK call."""
+
+    def __init__(self, session, agent_type: str, tenant_id: str):
+        self._session = session
+        self._agent_type = agent_type
+        self._tenant_id = tenant_id
+        self._closed = False
+
+    @property
+    def session_name(self) -> str:
+        return self._session.sandbox.name
+
+    async def exec(self, command: list[str], timeout_seconds: int) -> Dict[str, Any]:
+        if self._closed:
+            raise RuntimeError("Sandbox task session is closed")
+        return await _run_sandbox_call(self._exec, command, timeout_seconds)
+
+    def _exec(self, command, timeout_seconds):
+        tracer = trace.get_tracer(__name__)
+        attrs = {
+            "openshell.agent_type": self._agent_type,
+            "openshell.tenant_id": self._tenant_id,
+            "openshell.session_name": self.session_name,
+            "openshell.command_first": command[0] if command else "",
+            "openshell.timeout_seconds": timeout_seconds,
+        }
+        with tracer.start_as_current_span(
+            "sandbox.exec_in_sandbox", attributes=attrs
+        ) as parent_span:
+            return _exec_under_span(
+                self._session, command, timeout_seconds, attrs, parent_span, tracer
+            )
 
 
 # OOM / policy-denied detection from stderr + exit_code. These
@@ -448,6 +504,30 @@ class SandboxManager:
         except Exception as e:
             logger.warning(f"Failed to create sandbox for {agent_type}: {e}")
             return None
+
+    @asynccontextmanager
+    async def task_session(self, agent_type: str, tenant_id: str):
+        """Lease one fresh sandbox for a tenant's complete task."""
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
+        require_tenant_id(tenant_id, source="SandboxManager.task_session")
+        if not await asyncio.to_thread(lambda: self.available):
+            raise SandboxGatewayUnavailableError("Sandbox gateway is unavailable")
+        pool = self._get_or_create_pool()
+        lease = pool.task_session()
+        acquisition = asyncio.create_task(asyncio.to_thread(lease.__enter__))
+        try:
+            session = await asyncio.shield(acquisition)
+        except asyncio.CancelledError:
+            await _settle_sandbox_call(acquisition)
+            await _run_sandbox_call(lease.__exit__, None, None, None)
+            raise
+        owned = SandboxTaskSession(session, agent_type, tenant_id)
+        try:
+            yield owned
+        finally:
+            owned._closed = True
+            await _run_sandbox_call(lease.__exit__, None, None, None)
 
     def exec_in_sandbox(
         self,

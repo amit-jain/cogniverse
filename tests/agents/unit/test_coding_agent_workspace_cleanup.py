@@ -30,8 +30,16 @@ def _memory_config_manager():
 
 @pytest.mark.asyncio
 async def test_workspace_removed_after_run():
+    from contextlib import asynccontextmanager
+
+    class Manager:
+        @asynccontextmanager
+        async def task_session(self, agent_type, tenant_id):
+            yield object()
+
     agent = CodingAgent(
         CodingDeps(tenant_id="acme:acme"),
+        sandbox_manager=Manager(),
         config_manager=_memory_config_manager(),
     )
 
@@ -66,3 +74,55 @@ async def test_workspace_removed_after_run():
     assert out is not None
     assert created, "a workspace must have been created"
     assert not Path(created[0]).exists(), "workspace temp dir must be cleaned up"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("exit_code", "accepted"), [(7, False), (7, True), (0, False)])
+async def test_sandbox_exhaustion_preserves_failed_execution(
+    monkeypatch, exit_code, accepted
+):
+    from contextlib import asynccontextmanager
+
+    class Manager:
+        @asynccontextmanager
+        async def task_session(self, agent_type, tenant_id):
+            yield object()
+
+    agent = CodingAgent(
+        CodingDeps(tenant_id="prodfixagents:outcome"),
+        config_manager=_memory_config_manager(),
+        sandbox_manager=Manager(),
+    )
+    monkeypatch.setattr(agent, "_plan", AsyncMock(return_value="run the program"))
+    monkeypatch.setattr(
+        agent, "_generate_code", AsyncMock(return_value=("raise SystemExit(7)", ""))
+    )
+    monkeypatch.setattr(
+        agent, "_evaluate_output", AsyncMock(return_value=(accepted, "rejected"))
+    )
+    monkeypatch.setattr(
+        agent,
+        "_execute_in_sandbox",
+        AsyncMock(
+            return_value={
+                "exit_code": exit_code,
+                "stdout": "",
+                "stderr": "controlled failure\n",
+            }
+        ),
+    )
+    output = await agent._process_impl(
+        CodingInput(task="run", tenant_id="prodfixagents:outcome", max_iterations=2)
+    )
+    assert output.success is False
+    assert (
+        output.error
+        == f"Coding task failed after 2 iteration(s): Exit code: {exit_code}\nstderr: controlled failure\n\nFeedback: rejected"
+    )
+    assert output.summary == output.error
+    assert output.iterations_used == 2
+    assert (
+        output.execution_results
+        == [{"exit_code": exit_code, "stdout": "", "stderr": "controlled failure\n"}]
+        * 2
+    )
