@@ -9,16 +9,44 @@ forms (`sub_question`) when the schema names the field plural
 
 This adapter applies a small set of canonical aliases before the strict
 field-key equality check in the parent parser. Unknown fields still get
-stripped; only known aliases are renamed. Everything else (tool calls, type
+stripped; only known aliases are renamed. A response that names no alias for
+a required output is incomplete generation, and raises `LMOutputIncomplete`
+naming the fields the LM never produced. Everything else (tool calls, type
 casting, adapter fallback behaviour) is inherited from `JSONAdapter`.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from dspy.adapters.json_adapter import JSONAdapter
 from dspy.signatures.signature import Signature
+from dspy.utils.exceptions import AdapterParseError
+
+
+class LMOutputIncomplete(AdapterParseError):
+    """The LM stopped before producing every output field its signature requires."""
+
+    def __init__(
+        self,
+        *,
+        adapter_name: str,
+        signature: type[Signature],
+        lm_response: str,
+        missing_fields: Iterable[str],
+        parsed_result: dict[str, Any],
+    ) -> None:
+        self.missing_fields: tuple[str, ...] = tuple(sorted(missing_fields))
+        super().__init__(
+            adapter_name=adapter_name,
+            signature=signature,
+            lm_response=lm_response,
+            message=(
+                "The LM produced no "
+                f"{', '.join(self.missing_fields)} for this signature."
+            ),
+            parsed_result=parsed_result,
+        )
 
 
 class LenientJSONAdapter(JSONAdapter):
@@ -80,46 +108,19 @@ class LenientJSONAdapter(JSONAdapter):
                             break
                 remapped[target] = value
 
-            # After alias renaming, if the LM still missed one or more
-            # output fields we can recover in two ways:
-            #   1. Single unknown key + single missing expected field →
-            #      assume the LM used a non-canonical name for that field.
-            #   2. Any remaining missing expected field → fill with a safe
-            #      default so downstream schema validation holds (the
-            #      dispatcher's consumers already handle empty strings /
-            #      empty lists; they'd otherwise hit AdapterParseError and
-            #      500 the request).
-            missing = expected - remapped.keys()
-            unknown = [k for k in remapped if k not in expected]
-            if len(missing) == 1 and len(unknown) == 1:
-                remapped[next(iter(missing))] = remapped.pop(unknown[0])
-                missing = set()
-            for field_name in missing:
-                field_info = signature.output_fields.get(field_name)
-                annotation = getattr(field_info, "annotation", str)
-                remapped[field_name] = _default_for(annotation)
+            produced = {k: v for k, v in remapped.items() if k in expected}
+            missing = expected - produced.keys()
+            if missing:
+                raise LMOutputIncomplete(
+                    adapter_name=type(self).__name__,
+                    signature=signature,
+                    lm_response=completion,
+                    missing_fields=missing,
+                    parsed_result=produced,
+                )
 
             import json
 
-            completion = json.dumps(remapped)
+            completion = json.dumps(produced)
 
         return super().parse(signature, completion)
-
-
-def _default_for(annotation: Any) -> Any:
-    """Return a safe empty value matching the output field's annotation.
-
-    Handles both parameterized (``list[str]``) and bare (``list``)
-    annotations — bare collections have no ``__origin__``, and a str
-    default fails the parent parser's validation.
-    """
-    origin = getattr(annotation, "__origin__", None)
-    if origin in (list, tuple, set) or annotation in (list, tuple, set):
-        return []
-    if origin is dict or annotation is dict:
-        return {}
-    if annotation is bool:
-        return False
-    if annotation in (int, float):
-        return 0
-    return ""

@@ -1026,9 +1026,10 @@ across agents, evaluation, and finetuning.
 a `dspy.adapters.json_adapter.JSONAdapter` subclass that renames common LM
 field-name variants (e.g. `reason`/`rationale`/`thought` → `reasoning`,
 `answer`/`response`/`output` → `summary`, `sub_question` → `sub_questions`)
-before the parent's strict field-key equality check, and fills any field the
-LM still omits with a type-appropriate empty default (`[]`, `{}`, `0`,
-`False`, or `""`) instead of raising `AdapterParseError`.
+before the parent's strict field-key equality check. A response that still
+names no value for a required output raises **`LMOutputIncomplete`** (an
+`AdapterParseError` subclass) whose `missing_fields` names every output the
+LM never produced, and whose `parsed_result` carries the ones it did.
 
 ```python
 from cogniverse_foundation.dspy.lenient_json_adapter import LenientJSONAdapter
