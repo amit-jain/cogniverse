@@ -10,6 +10,7 @@ from rich.syntax import Syntax
 from cogniverse_cli.constants import RUNTIME_URL
 from cogniverse_cli.streaming import (
     CodingResult,
+    CodingStreamError,
     render_coding_result,
     stream_coding_response,
 )
@@ -44,15 +45,18 @@ class CodingSession:
             "codebase_path": self.codebase_path,
         }
 
-        result = stream_coding_response(
-            query=query,
-            agent_name="coding_agent",
-            tenant_id=self.tenant_id,
-            context=context,
-            conversation_history=self.history,
-            runtime_url=self.runtime_url,
-        )
-
+        try:
+            result = stream_coding_response(
+                query=query,
+                agent_name="coding_agent",
+                tenant_id=self.tenant_id,
+                context=context,
+                conversation_history=self.history,
+                runtime_url=self.runtime_url,
+            )
+        except CodingStreamError as exc:
+            console.print(str(exc), style="red", markup=False)
+            result = None
         self.history.append({"role": "user", "content": query})
         if result:
             self.last_result = result

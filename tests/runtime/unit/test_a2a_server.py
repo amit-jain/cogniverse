@@ -320,8 +320,15 @@ class TestA2AMessageSend:
         assert call_kwargs.kwargs["agent_name"] == "orchestrator_agent"
 
     @pytest.mark.ci_fast
-    def test_message_send_error_returns_error_text(self, client, mock_dispatcher):
-        """When dispatch raises, executor returns error as text message."""
+    def test_message_send_error_returns_a_failed_task_naming_the_failure(
+        self, client, mock_dispatcher
+    ):
+        """A dispatch that raises ends the task in ``failed``.
+
+        The payload names the agent and the exception type in the one error
+        shape the streaming half already emits. The exception text stays
+        server-side, as it can carry credentialed backend URLs.
+        """
         mock_dispatcher.dispatch = AsyncMock(
             side_effect=ValueError("Agent 'bad_agent' not found in registry")
         )
@@ -348,13 +355,16 @@ class TestA2AMessageSend:
 
         body = response.json()
         assert "result" in body
-        # The dispatch error must be surfaced verbatim in the response message,
-        # not swallowed into a generic/empty success.
+        assert body["result"]["status"]["state"] == "failed"
         text = body["result"]["status"]["message"]["parts"][0]["text"]
-        error_payload = json.loads(text)
-        assert error_payload["status"] == "error"
-        assert error_payload["agent"] == "bad_agent"
-        assert "not found in registry" in error_payload["error"]
+        assert json.loads(text) == {
+            "type": "error",
+            "agent": "bad_agent",
+            "error_type": "ValueError",
+            "message": (
+                "Agent 'bad_agent' failed with ValueError. See runtime logs for detail."
+            ),
+        }
 
     @pytest.mark.ci_fast
     def test_context_id_passed_to_dispatcher(self, client, mock_dispatcher):

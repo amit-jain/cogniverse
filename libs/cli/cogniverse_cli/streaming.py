@@ -15,6 +15,13 @@ from cogniverse_foundation.telemetry.context import trace_headers
 console = Console()
 
 
+class CodingStreamError(RuntimeError):
+    """A terminal failure returned by the runtime coding stream."""
+
+    def __init__(self, agent: str, error_type: str, message: str):
+        super().__init__(f"{agent} ({error_type}): {message}")
+
+
 @dataclass
 class CodingResult:
     """Parsed result from a coding agent response."""
@@ -198,6 +205,11 @@ def _handle_event(event: dict, current_phase: str):
     Event structure:
       {"id": ..., "result": {"status": {"state": "...", "message": {"parts": [{"kind": "text", "text": "{...json...}"}]}}}}
     """
+    if "error" in event:
+        error = event["error"]
+        raise CodingStreamError(
+            "runtime", "JSONRPCError", str(error.get("message", error))
+        )
     result_obj = event.get("result", event)
     if not isinstance(result_obj, dict):
         return current_phase
@@ -221,6 +233,8 @@ def _handle_event(event: dict, current_phase: str):
             text = part.get("text", "")
             break
 
+    if not text and state == "failed":
+        raise CodingStreamError("runtime", "AgentError", "Agent task failed.")
     if not text:
         return current_phase
 
@@ -232,6 +246,13 @@ def _handle_event(event: dict, current_phase: str):
         payload = {"text": text}
 
     event_type = payload.get("type", "")
+
+    if state == "failed" or event_type == "error":
+        raise CodingStreamError(
+            payload.get("agent", "runtime"),
+            payload.get("error_type", "AgentError"),
+            payload.get("message") or payload.get("error") or "Agent task failed.",
+        )
 
     if event_type == "status":
         phase = payload.get("phase", "")
