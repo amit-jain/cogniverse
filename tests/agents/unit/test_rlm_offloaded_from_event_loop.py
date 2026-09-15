@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,120 @@ from cogniverse_agents.multi_document_synthesis_agent import (
 from cogniverse_agents.temporal_reasoning_agent import TemporalReasoningAgent
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@pytest.mark.parametrize("agent_kind", ["research", "coding"])
+@pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.asyncio
+async def test_optional_rlm_keeps_concurrent_requests_running(agent_kind, fail):
+    from cogniverse_agents.coding_agent import CodingAgent, CodingInput
+    from cogniverse_agents.deep_research_agent import (
+        DeepResearchAgent,
+        DeepResearchInput,
+    )
+    from cogniverse_agents.inference.rlm_inference import RLMResult
+    from cogniverse_core.agents.rlm_options import RLMOptions
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def synthesis(**kwargs):
+        calls.append(kwargs["query"])
+        entered.set()
+        assert release.wait(3), "RLM held the serving event loop"
+        if fail:
+            raise ConnectionError("tenant-a RLM connection reset")
+        return RLMResult("tenant-a synthesis", 1, 1, 17, 2.0)
+
+    async def identity(query, _):
+        return query
+
+    async def context(*args):
+        return "tenant-a context"
+
+    async def questions(*args):
+        return ["tenant-a question"]
+
+    async def evidence(*args):
+        return [{"question": "tenant-a question", "results": []}]
+
+    async def evaluate(*args):
+        return True, [], 0.9
+
+    async def generate(*args):
+        return "print(17)", "python solution.py"
+
+    async def execute(*args):
+        return {"stdout": "17\n", "stderr": "", "exit_code": 0}
+
+    async def accepted(*args):
+        return True, "accepted"
+
+    if agent_kind == "research":
+        agent = object.__new__(DeepResearchAgent)
+        agent._decompose = questions
+        agent._search_parallel = evidence
+        agent._evaluate_evidence = evaluate
+        agent._synthesize = context
+        request = DeepResearchInput(
+            query="tenant-a task", tenant_id="tenant:a", rlm=RLMOptions(enabled=True)
+        )
+        operation = agent._research
+    else:
+
+        class SandboxOwner:
+            @asynccontextmanager
+            async def task_session(self, agent_type, tenant_id):
+                yield object()
+
+        agent = object.__new__(CodingAgent)
+        agent._sandbox_manager = SandboxOwner()
+        agent._search_code_context = context
+        agent._plan = context
+        agent._generate_code = generate
+        agent._execute_in_sandbox = execute
+        agent._evaluate_output = accepted
+        request = CodingInput(
+            task="tenant-a task", tenant_id="tenant:a", rlm=RLMOptions(enabled=True)
+        )
+        operation = agent._process_impl
+    agent.set_tenant_for_context = lambda tenant: None
+    agent.inject_context_into_prompt_async = identity
+    agent.emit_progress = lambda *args: None
+    agent.process_with_rlm = synthesis
+
+    async def concurrent_request():
+        assert await asyncio.to_thread(entered.wait, 3)
+        release.set()
+        return {"tenant": "tenant:b", "status": "healthy"}
+
+    output, independent = await asyncio.gather(operation(request), concurrent_request())
+    assert independent == {"tenant": "tenant:b", "status": "healthy"}
+    assert calls == ["tenant-a task"]
+    if fail:
+        assert output.rlm_synthesis is None
+        assert output.rlm_telemetry == {
+            "rlm_enabled": False,
+            "rlm_attempted": True,
+            "rlm_error": "tenant-a RLM connection reset",
+        }
+    else:
+        assert output.rlm_synthesis == "tenant-a synthesis"
+        assert output.rlm_telemetry == {
+            "rlm_enabled": True,
+            "rlm_depth_reached": 1,
+            "rlm_total_calls": 1,
+            "rlm_tokens_used": 17,
+            "rlm_latency_ms": 2.0,
+            "rlm_was_fallback": False,
+            "rlm_trajectory_length": 0,
+            "context_size_chars": len(
+                "## tenant-a question\n[]"
+                if agent_kind == "research"
+                else "tenant-a context"
+            ),
+        }
 
 
 def _memory_config_manager():

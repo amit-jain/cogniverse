@@ -2034,3 +2034,159 @@ class TestEvidenceCoercionCrashSafety:
         # No ValueError in the sort; the numeric-score hit sorts first, the
         # string-score hit coerces to 0.0 for ordering and lands after it.
         assert [e["source_doc_id"] for e in ranked] == ["num_score", "str_score"]
+
+
+class TestOrchestrationTerminalOutcome:
+    @pytest.mark.parametrize("child_status", ["error", "failed", "blocked"])
+    def test_failed_children_are_retained_but_never_fused(
+        self, orchestrator_agent, child_status
+    ):
+        children = {
+            "search_agent": {
+                "status": child_status,
+                "message": "retrieval unavailable",
+            },
+            "summarizer_agent": {"status": "error", "error": "LM connection closed"},
+        }
+        output = orchestrator_agent._aggregate_results("find evidence", children)
+        assert output["status"] == "failed"
+        assert output["results"] == children
+        assert output["aggregated_content"] == ""
+        assert output["message"] == "No orchestration step completed successfully"
+        assert output["fusion_quality"]["confidence"] == 0.0
+
+    def test_mixed_children_preserve_only_valid_answer(self, orchestrator_agent):
+        valid = {"status": "success", "answer": "The exact measured value is 42."}
+        children = {
+            "summarizer_agent": valid,
+            "search_agent": {"status": "error", "message": "retrieval unavailable"},
+        }
+        output = orchestrator_agent._aggregate_results("find evidence", children)
+        assert output["status"] == "partial"
+        assert output["results"] == children
+        assert output["aggregated_content"] == str(valid)
+        assert (
+            output["message"]
+            == "Some orchestration steps did not complete successfully"
+        )
+        assert orchestrator_agent._execution_outcome(
+            agent_sequence=list(children), agent_results=children
+        ) == (False, 1)
+
+    def test_partial_child_is_not_counted_as_success(self, orchestrator_agent):
+        children = {"summarizer_agent": {"status": "partial", "answer": "42"}}
+        output = orchestrator_agent._aggregate_results("find evidence", children)
+        assert output["status"] == "partial"
+        assert output["aggregated_content"] == str(children["summarizer_agent"])
+        assert orchestrator_agent._execution_outcome(
+            agent_sequence=list(children), agent_results=children
+        ) == (False, 0)
+
+    def test_empty_execution_is_failed(self, orchestrator_agent):
+        output = orchestrator_agent._aggregate_results("find evidence", {})
+        assert output["status"] == "failed"
+        assert output["results"] == {}
+        assert output["aggregated_content"] == ""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("rate_limited", [False, True])
+    async def test_unsubmitted_deep_synthesis_has_failed_status(
+        self, orchestrator_agent, rate_limited
+    ):
+        from cogniverse_agents.deep_synthesis_workflow import DeepSynthesisResult
+        from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
+
+        class RefusedWorkflow:
+            async def run(self, **kwargs):
+                return DeepSynthesisResult(
+                    answer="Unsubmitted evidence",
+                    iterations_used=1,
+                    subagent_calls_made=1,
+                    llm_calls_used=1,
+                    was_capped=True,
+                    was_submitted=False,
+                    was_rate_limited=rate_limited,
+                    trajectory=[],
+                )
+
+        orchestrator_agent._build_deep_synthesis_workflow = lambda tenant: (
+            RefusedWorkflow()
+        )
+        output = await orchestrator_agent.process(
+            OrchestratorInput(
+                query="find evidence",
+                tenant_id="prodfixagents:deep",
+                synthesis_depth="deep",
+            )
+        )
+        assert output.final_output["status"] == "failed"
+        assert (
+            output.final_output["message"]
+            == "Deep synthesis ended without a submitted answer"
+        )
+        assert output.final_output["answer"] == ""
+        assert output.agent_results == {
+            "deep_synthesis": {
+                "status": "error",
+                "message": "Deep synthesis ended without a submitted answer",
+            }
+        }
+        with pytest.raises(NoAnswerError) as raised:
+            extract_answer_text(output.model_dump())
+        assert raised.value.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_unexecuted_required_step_prevents_success_memory(
+        self, orchestrator_agent
+    ):
+        orchestrator_agent._ensure_memory_for_tenant = lambda tenant: None
+        orchestrator_agent.get_relevant_context = lambda query: ""
+        orchestrator_agent.workflow_intelligence = None
+        orchestrator_agent.remember_success = Mock()
+        orchestrator_agent._create_plan = AsyncMock(
+            return_value=OrchestrationPlan(
+                query="find evidence",
+                steps=[
+                    AgentStep(agent_name="search_agent", reasoning="retrieve"),
+                    AgentStep(agent_name="summarizer_agent", reasoning="answer"),
+                ],
+            )
+        )
+
+        async def stopped_loop(**kwargs):
+            kwargs["agent_results_sink"]["search_agent"] = {
+                "status": "success",
+                "answer": "42",
+            }
+            return AccumulatedEvidence(
+                exit_reason="wall_clock", partial_due_to_timeout=True
+            )
+
+        orchestrator_agent._iterative_retrieval_loop = stopped_loop
+        output = await orchestrator_agent.process(
+            OrchestratorInput(
+                query="find evidence",
+                tenant_id="prodfixagents:stopped",
+            )
+        )
+        assert output.final_output["status"] == "partial"
+        assert output.agent_results["summarizer_agent"] == {
+            "status": "failed",
+            "message": "Required orchestration step did not execute",
+        }
+        assert orchestrator_agent.remember_success.call_count == 0
+
+    @pytest.mark.parametrize("status", ["failed", "partial"])
+    def test_standalone_a2a_preserves_canonical_status(
+        self, orchestrator_agent, status
+    ):
+        result = OrchestrationResult(
+            query="find evidence",
+            plan=OrchestrationPlan(query="find evidence", steps=[]),
+            agent_results={},
+            final_output={"status": status, "aggregated_content": "42"},
+            execution_summary="No complete execution",
+        )
+        output = orchestrator_agent._dspy_to_a2a_output(result)
+        assert output["status"] == status
+        assert output["final_output"] == result.final_output

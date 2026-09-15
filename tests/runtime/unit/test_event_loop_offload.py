@@ -236,27 +236,31 @@ async def test_coding_sandbox_exec_offloaded():
     connectivity probe) off the loop. Run inline, the write+run execs (up to
     30s + 300s) plus the .available TCP probe froze the whole API loop and
     tripped k8s liveness mid-task."""
+    from unittest.mock import Mock
+
+    from openshell.sandbox import ExecResult
+
     from cogniverse_agents.coding_agent import CodingAgent
+    from cogniverse_runtime.sandbox_manager import SandboxTaskSession
 
-    class _BlockingSandbox:
-        @property
-        def available(self):
-            time.sleep(0.1)  # blocking connectivity probe (socket.create_connection)
-            return True
+    class _BlockingSession:
+        sandbox = Mock(name="sandbox")
 
-        def exec_in_sandbox(self, agent_type, command, timeout_seconds):
-            time.sleep(0.15)  # blocking gRPC session exec
-            return {"exit_code": 0, "stdout": "ok", "stderr": ""}
+        def exec(self, command, timeout_seconds):
+            time.sleep(0.2)
+            return ExecResult(exit_code=0, stdout="ok", stderr="")
 
     agent = object.__new__(CodingAgent)
-    agent._sandbox_manager = _BlockingSandbox()
-
+    session = SandboxTaskSession(
+        _BlockingSession(), "coding_agent", "prodfixagents:loop"
+    )
     ticks = await _ticks_during(
         lambda: agent._execute_in_sandbox(
             file_path="/workspace/solution.py",
             code="print('hi')",
             test_command="python solution.py",
             language="python",
+            session=session,
         )
     )
 

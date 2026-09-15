@@ -375,6 +375,14 @@ class OrchestratorDeps(AgentDeps):
     pass
 
 
+# Terminal outcome of an orchestration and of each step inside it. A step
+# reporting one of FAILED_STEP_STATUSES produced no answer; PARTIAL_STATUS
+# means an answer exists but the plan did not complete.
+FAILED_STATUS = "failed"
+PARTIAL_STATUS = "partial"
+FAILED_STEP_STATUSES = frozenset({"error", FAILED_STATUS, "blocked"})
+
+
 class FusionStrategy(Enum):
     """Strategies for combining results from multiple agents across modalities"""
 
@@ -1032,6 +1040,7 @@ class OrchestratorAgent(
                     raise
 
                 submitted = bool(result.was_submitted and result.answer.strip())
+                failure_summary = "Deep synthesis ended without a submitted answer"
                 telemetry_state.agent_observations.append(
                     {
                         "agent_name": "deep_synthesis",
@@ -1048,7 +1057,6 @@ class OrchestratorAgent(
                         success_override=True,
                     )
                 else:
-                    failure_summary = "Deep synthesis ended without a submitted answer"
                     telemetry_state.agent_results = {
                         "deep_synthesis": {
                             "status": "error",
@@ -1065,9 +1073,13 @@ class OrchestratorAgent(
                     workflow_id=workflow_id,
                     plan_steps=[],
                     plan_reasoning="Deep synthesis workflow selected",
-                    agent_results={},
+                    agent_results=(
+                        {} if submitted else dict(telemetry_state.agent_results)
+                    ),
                     final_output={
-                        "answer": result.answer,
+                        "status": "success" if submitted else FAILED_STATUS,
+                        **({} if submitted else {"message": failure_summary}),
+                        "answer": result.answer if submitted else "",
                         "iterations_used": result.iterations_used,
                         "subagent_calls_made": result.subagent_calls_made,
                         "llm_calls_used": result.llm_calls_used,
@@ -1264,6 +1276,19 @@ class OrchestratorAgent(
                     "message": f"Agent '{agent_name}' is not available in the registry",
                 }
 
+            # A planned step the loop never reached (budget, wall clock, an
+            # early exit) is a step that did not answer. Without an entry it
+            # is invisible to aggregation, and a plan that ran none of its
+            # steps aggregated to a success.
+            for step in plan.steps:
+                agent_results.setdefault(
+                    step.agent_name,
+                    {
+                        "status": FAILED_STATUS,
+                        "message": "Required orchestration step did not execute",
+                    },
+                )
+
             self.emit_progress("aggregating", "Merging results from all agents")
             final_output = self._aggregate_results(query, agent_results)
             # Cap the ranked evidence list at top-5 — anything beyond is
@@ -1304,8 +1329,12 @@ class OrchestratorAgent(
             }
             final_output["iterative_loop"] = iterative_loop
             execution_summary = self._generate_summary(plan, agent_results)
-            # remember_success runs Mem0's LLM fact-extraction add — offload it.
-            await asyncio.to_thread(self.remember_success, query, execution_summary)
+            # Only a plan every step of which answered is a success worth
+            # recalling; remembering a failed run taught the planner that the
+            # route that produced error strings worked.
+            if final_output["status"] == "success":
+                # remember_success runs Mem0's LLM fact-extraction add — offload it.
+                await asyncio.to_thread(self.remember_success, query, execution_summary)
 
             execution_time = time.monotonic() - start_time
 
@@ -2790,27 +2819,44 @@ class OrchestratorAgent(
     def _aggregate_results(
         self, query: str, agent_results: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Cross-modal fusion of results from all agents.
+        """Cross-modal fusion of the steps that produced an answer.
 
         Detects modality per result, selects fusion strategy, and dispatches
         to the appropriate fusion method. Falls back to simple aggregation
         for single-modality results.
-        """
-        if not agent_results:
-            return {"query": query, "status": "success", "results": {}}
 
+        A step that failed carries no answer, so its error entry is kept in
+        ``results`` for the caller but never fused into ``aggregated_content``
+        — fusing it rendered child error strings as the orchestration's
+        answer. The returned ``status`` is the orchestration's outcome:
+        ``failed`` when no step produced an answer, ``partial`` when any step
+        failed or reported a partial answer of its own, ``success`` otherwise.
+        """
         # Detect modalities and build task_results structure
+        results: Dict[str, Any] = {}
         task_results = {}
         agent_modalities = {}
+        failed = []
+        degraded = []
 
         for agent_name, result in agent_results.items():
-            modality = self._detect_agent_modality(agent_name)
-            agent_modalities[agent_name] = modality
-
             if isinstance(result, BaseModel):
                 result_data = result.model_dump()
             else:
                 result_data = result
+            results[agent_name] = result_data
+
+            status = (
+                result_data.get("status") if isinstance(result_data, dict) else None
+            )
+            if status in FAILED_STEP_STATUSES:
+                failed.append(agent_name)
+                continue
+            if status == PARTIAL_STATUS:
+                degraded.append(agent_name)
+
+            modality = self._detect_agent_modality(agent_name)
+            agent_modalities[agent_name] = modality
 
             confidence = parse_confidence(
                 result_data.get("confidence")
@@ -2824,6 +2870,21 @@ class OrchestratorAgent(
                 "modality": modality,
                 "result": result_data,
                 "confidence": confidence,
+            }
+
+        if not task_results:
+            return {
+                "query": query,
+                "status": FAILED_STATUS,
+                "message": "No orchestration step completed successfully",
+                "results": results,
+                "fusion_quality": {
+                    "strategy": FusionStrategy.SIMPLE.value,
+                    "modality_count": 0,
+                    "modalities": [],
+                    "confidence": 0.0,
+                },
+                "aggregated_content": "",
             }
 
         # Select fusion strategy
@@ -2846,14 +2907,19 @@ class OrchestratorAgent(
             "confidence": fused["confidence"],
         }
 
-        return {
+        aggregated = {
             "query": query,
-            "status": "success",
-            "results": {name: tr["result"] for name, tr in task_results.items()},
+            "status": PARTIAL_STATUS if (failed or degraded) else "success",
+            "results": results,
             "fusion_strategy": fusion_strategy.value,
             "fusion_quality": fusion_quality,
             "aggregated_content": fused["content"],
         }
+        if failed or degraded:
+            aggregated["message"] = (
+                "Some orchestration steps did not complete successfully"
+            )
+        return aggregated
 
     def _detect_agent_modality(self, agent_name: str) -> str:
         """Detect modality from agent name."""
@@ -3166,7 +3232,10 @@ class OrchestratorAgent(
         successful_agents = {
             agent_name
             for agent_name, result in agent_results.items()
-            if not (isinstance(result, dict) and result.get("status") == "error")
+            if not (
+                isinstance(result, dict)
+                and result.get("status") in FAILED_STEP_STATUSES | {PARTIAL_STATUS}
+            )
         }
         tasks_completed = len(successful_agents)
         success = (
@@ -3261,7 +3330,7 @@ class OrchestratorAgent(
     def _dspy_to_a2a_output(self, result: OrchestrationResult) -> Dict[str, Any]:
         """Convert OrchestrationResult to A2A output format."""
         return {
-            "status": "success",
+            "status": result.final_output.get("status", "success"),
             "agent": self.agent_name,
             "query": result.query,
             "plan": {
