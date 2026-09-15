@@ -8,6 +8,49 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 from click.testing import CliRunner
+from inspect_ai.log import EvalConfig, EvalDataset, EvalLog, EvalSample, EvalSpec
+from inspect_ai.scorer import Score
+
+
+def _eval_sample(sample_id, query, target, scores, trace_ids=()):
+    return EvalSample(
+        id=sample_id,
+        epoch=1,
+        input=query,
+        target=list(target),
+        metadata={"trace_ids": list(trace_ids)},
+        scores={
+            name: Score(value=value, explanation=f"{name} explanation")
+            for name, value in scores.items()
+        },
+    )
+
+
+def _inspect_log(*, status="success", samples=None):
+    return EvalLog(
+        status=status,
+        eval=EvalSpec(
+            created="2026-09-15T00:00:00Z",
+            task="offline_scoring",
+            eval_id="eval-1",
+            run_id="run-1",
+            dataset=EvalDataset(samples=1),
+            model="mockllm/model",
+            config=EvalConfig(),
+        ),
+        samples=samples
+        if samples is not None
+        else [
+            EvalSample(
+                id=1,
+                epoch=1,
+                input="alpha",
+                target=["video-a"],
+                scores={"relevance_scorer": Score(value=1.0)},
+            )
+        ],
+    )
+
 
 # Import CLI functions directly to avoid import issues
 try:
@@ -35,6 +78,38 @@ class TestCLI:
         """Create CLI test runner."""
         return CliRunner()
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("status", ["error", "cancelled", "started"])
+    @pytest.mark.parametrize("command", ["evaluate", "test"])
+    def test_inspect_terminal_status_controls_cli_exit(
+        self,
+        runner,
+        mock_task,
+        mock_inspect_eval,
+        mock_dataset_manager,
+        status,
+        command,
+    ):
+        mock_inspect_eval.return_value = [_inspect_log(status=status)]
+        arguments = (
+            [
+                "evaluate",
+                "--mode",
+                "batch",
+                "--dataset",
+                "test_dataset",
+                "--tenant-id",
+                "a:a",
+            ]
+            if command == "evaluate"
+            else ["test"]
+        )
+        result = runner.invoke(cli, arguments)
+        assert result.exit_code == 1
+        assert f"Inspect evaluation eval-1: status={status}" in result.output
+        assert "✓ Evaluation complete" not in result.output
+        assert "✓ All tests complete" not in result.output
+
     @pytest.fixture
     def mock_task(self):
         """Mock evaluation task."""
@@ -47,12 +122,9 @@ class TestCLI:
 
     @pytest.fixture
     def mock_inspect_eval(self):
-        """Mock inspect_eval function."""
+        """Stand in for inspect_ai.eval with its real EvalLogs contract."""
         with patch("cogniverse_evaluation.cli.inspect_eval") as mock:
-            # Create mock results
-            results = Mock()
-            results.samples = []
-            mock.return_value = results
+            mock.return_value = [_inspect_log(samples=[])]
             yield mock
 
     @pytest.fixture
@@ -269,24 +341,14 @@ class TestCLI:
     @pytest.mark.unit
     def test_evaluate_with_results(self, runner, mock_task, mock_inspect_eval):
         """Test evaluate command with actual results."""
-        # Create mock results with samples
-        sample1 = Mock()
-        sample1.input = {"query": "test query 1"}
-        score1 = Mock()
-        score1.value = 0.8
-        score1.explanation = "Good match"
-        sample1.scores = {"mrr": score1}
-
-        sample2 = Mock()
-        sample2.input = {"query": "test query 2"}
-        score2 = Mock()
-        score2.value = 0.3
-        score2.explanation = "Poor match"
-        sample2.scores = {"recall": score2}
-
-        results = Mock()
-        results.samples = [sample1, sample2]
-        mock_inspect_eval.return_value = results
+        mock_inspect_eval.return_value = [
+            _inspect_log(
+                samples=[
+                    _eval_sample(1, "test query 1", ["video-a"], {"mrr": 0.8}),
+                    _eval_sample(2, "test query 2", ["video-b"], {"recall": 0.3}),
+                ]
+            )
+        ]
 
         result = runner.invoke(
             evaluate,
@@ -295,24 +357,21 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert "EVALUATION RESULTS" in result.output
-        assert "Sample 1:" in result.output
-        assert "✓ mrr: 0.800" in result.output
-        assert "✗ recall: 0.300" in result.output
+        assert "Sample 1:\n  Query: test query 1\n  ✓ mrr: 0.800" in result.output
+        assert "Sample 2:\n  Query: test query 2\n  ✗ recall: 0.300" in result.output
 
     @pytest.mark.unit
     def test_evaluate_save_output(self, runner, mock_task, mock_inspect_eval):
         """Test evaluate command with output file."""
-        # Create mock results
-        sample = Mock()
-        sample.input = {"query": "test"}
-        score = Mock()
-        score.value = 0.9
-        score.explanation = "Test"
-        sample.scores = {"test_score": score}
-
-        results = Mock()
-        results.samples = [sample]
-        mock_inspect_eval.return_value = results
+        mock_inspect_eval.return_value = [
+            _inspect_log(
+                samples=[
+                    _eval_sample(
+                        1, "test", ["video-a"], {"test_score": 0.9}, ["trace-1"]
+                    )
+                ]
+            )
+        ]
 
         with runner.isolated_filesystem():
             result = runner.invoke(
@@ -337,8 +396,22 @@ class TestCLI:
                 output_data = json.load(f)
                 assert output_data["mode"] == "live"
                 assert output_data["dataset"] == "test_dataset"
-                assert len(output_data["results"]) == 1
-                assert output_data["results"][0]["scores"]["test_score"]["value"] == 0.9
+                assert output_data["results"] == [
+                    {
+                        "eval_id": "eval-1",
+                        "sample_id": 1,
+                        "epoch": 1,
+                        "input": "test",
+                        "target": ["video-a"],
+                        "trace_ids": ["trace-1"],
+                        "scores": {
+                            "test_score": {
+                                "value": 0.9,
+                                "explanation": "test_score explanation",
+                            }
+                        },
+                    }
+                ]
 
     @pytest.mark.unit
     def test_evaluate_exception_handling(self, runner, mock_task):
