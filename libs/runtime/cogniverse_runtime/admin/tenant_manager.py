@@ -475,6 +475,9 @@ async def delete_organization(org_id: str) -> Dict:
 
     Raises:
         HTTPException 404: Organization not found
+        HTTPException 503: A child tenant delete failed; the organization and
+            every tenant that is still present are retained for a retry
+        HTTPException 502: The organization record's delete did not confirm
         HTTPException 500: Deletion failed
     """
     try:
@@ -491,20 +494,50 @@ async def delete_organization(org_id: str) -> Dict:
             # Delete all tenants for this org
             tenants = await list_tenants_for_org_internal(org_id)
             deleted_tenants = []
+            failed_tenants = []
 
             for tenant in tenants:
                 try:
                     await delete_tenant_internal(tenant.tenant_full_id)
                     deleted_tenants.append(tenant.tenant_full_id)
                 except Exception as e:
+                    failed_tenants.append(tenant.tenant_full_id)
                     logger.error(
                         f"Failed to delete tenant {tenant.tenant_full_id}: {e}"
                     )
 
-            # Delete organization
-            backend.delete_metadata_document(
+            if failed_tenants:
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "message": (
+                            f"Organization {org_id} deletion incomplete; retry the delete"
+                        ),
+                        "org_id": org_id,
+                        "deleted_tenant_ids": deleted_tenants,
+                        "failed_tenant_ids": failed_tenants,
+                    },
+                )
+
+            # delete_metadata_document reports any non-200 as False, including
+            # a failed response for a record that is nevertheless gone. Re-read
+            # before failing: an absent record means the delete is durable, so
+            # only a record still present is unconfirmed. Reporting "deleted"
+            # for a surviving record leaves an organization no retry reaches.
+            if not bool(
+                backend.delete_metadata_document(
+                    schema="organization_metadata", doc_id=org_id
+                )
+            ) and backend.get_metadata_document(
                 schema="organization_metadata", doc_id=org_id
-            )
+            ):
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"organization_metadata delete for {org_id} did not "
+                        "confirm; retry the delete"
+                    ),
+                )
 
             logger.info(
                 f"Deleted organization {org_id} with {len(deleted_tenants)} tenants"

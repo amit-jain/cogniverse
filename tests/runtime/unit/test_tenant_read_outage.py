@@ -339,9 +339,7 @@ async def test_raw_form_input_resolves_to_one_canonical_pass(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_org_delete_continues_past_one_failing_tenant(monkeypatch):
-    """delete_organization tolerates a single tenant's failed delete: the
-    remaining tenants and the org record still go, and the response names
-    exactly the tenants that were deleted."""
+    """A child failure retains the parent and reports each child's outcome."""
     from types import SimpleNamespace
 
     from cogniverse_runtime.admin import tenant_manager as tm
@@ -370,19 +368,90 @@ async def test_org_delete_continues_past_one_failing_tenant(monkeypatch):
     monkeypatch.setattr(tm, "list_tenants_for_org_internal", _tenants)
     monkeypatch.setattr(tm, "delete_tenant_internal", _delete_tenant)
 
-    result = await tm.delete_organization("acme")
+    with pytest.raises(HTTPException) as failure:
+        await tm.delete_organization("acme")
 
-    assert result["status"] == "deleted"
-    assert result["tenants_deleted"] == 1
+    assert failure.value.status_code == 503
+    result = failure.value.detail
+    assert (
+        result["message"] == "Organization acme deletion incomplete; retry the delete"
+    )
+    assert result["org_id"] == "acme"
     assert result["deleted_tenant_ids"] == ["acme:two"]
+    assert result["failed_tenant_ids"] == ["acme:one"]
     assert deleted == ["acme:two"]
     org_deletes = [
         c
         for c in backend.delete_metadata_document.call_args_list
         if c.kwargs.get("schema") == "organization_metadata"
     ]
-    assert len(org_deletes) == 1
-    assert org_deletes[0].kwargs["doc_id"] == "acme"
+    assert org_deletes == []
+
+
+@pytest.mark.asyncio
+async def test_org_delete_retains_the_parent_until_its_delete_confirms(monkeypatch):
+    """An unconfirmed organization_metadata delete is not "deleted".
+
+    ``delete_metadata_document`` reports any non-200 as False. Returning
+    ``status=deleted`` for a record that is still there leaves an organization
+    no retry reaches, because the next delete would 404 on its own tenants.
+    """
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.delete_metadata_document.return_value = False
+    backend.get_metadata_document.return_value = {"org_id": "acme"}
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _org(_org_id):
+        return MagicMock()
+
+    async def _tenants(_org_id):
+        return []
+
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _tenants)
+
+    with pytest.raises(HTTPException) as failure:
+        await tm.delete_organization("acme")
+
+    assert failure.value.status_code == 502
+    assert failure.value.detail == (
+        "organization_metadata delete for acme did not confirm; retry the delete"
+    )
+    assert backend.get_metadata_document.call_args.kwargs == {
+        "schema": "organization_metadata",
+        "doc_id": "acme",
+    }
+
+
+@pytest.mark.asyncio
+async def test_org_delete_accepts_an_unreported_delete_that_removed_the_record(
+    monkeypatch,
+):
+    """A False return for a record that is actually gone is a durable delete."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.delete_metadata_document.return_value = False
+    backend.get_metadata_document.return_value = None
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _org(_org_id):
+        return MagicMock()
+
+    async def _tenants(_org_id):
+        return []
+
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _tenants)
+
+    assert await tm.delete_organization("acme") == {
+        "status": "deleted",
+        "org_id": "acme",
+        "tenants_deleted": 0,
+        "deleted_tenant_ids": [],
+    }
 
 
 @pytest.mark.usefixtures("harness_key_config_store")

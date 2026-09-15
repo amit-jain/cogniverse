@@ -16,12 +16,17 @@ There is no ``deleting`` state to reconcile.
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import socket
 import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
+import requests
 from fastapi import HTTPException
 from requests.exceptions import ConnectionError
 from vespa.application import Vespa
@@ -491,3 +496,217 @@ async def test_concurrent_deploy_cannot_restore_a_schema_awaiting_unregistration
         await asyncio.gather(
             deletion, *([deployment] if deployment else []), return_exceptions=True
         )
+
+
+def _seed_organization(org_id: str) -> None:
+    assert (
+        tm.get_backend().create_metadata_document(
+            schema="organization_metadata",
+            doc_id=org_id,
+            fields={
+                "org_id": org_id,
+                "org_name": "Deletion contract",
+                "created_at": 1757000000000,
+                "created_by": "tenant-delete-test",
+                "status": "active",
+            },
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_organization_child_failure_retains_parent_and_retry_deletes_remaining(
+    wired_tenant_manager, vespa_instance, monkeypatch
+):
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    failed_id = _unique_tenant()
+    org_id = failed_id.split(":")[0]
+    sibling_id = f"{org_id}:sibling"
+    await _create_tenant_with_memory(failed_id, vespa_instance["base_url"])
+    assert (
+        tm.get_backend().create_metadata_document(
+            schema="tenant_metadata",
+            doc_id=sibling_id,
+            fields={
+                "tenant_full_id": sibling_id,
+                "org_id": org_id,
+                "tenant_name": "sibling",
+                "created_at": 1757000000000,
+                "created_by": "tenant-delete-test",
+                "status": "active",
+                "schemas_deployed": [],
+            },
+        )
+        is True
+    )
+    real_deploy = VespaSchemaManager._deploy_package
+    with socket.socket() as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+
+        def refuse_schema_drop(manager, package, **kwargs):
+            isolated_manager = copy.copy(manager)
+            isolated_manager.backend_port = unavailable.getsockname()[1]
+            return real_deploy(isolated_manager, package, **kwargs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=tm.app), base_url="http://tenant-test"
+        ) as client:
+            with monkeypatch.context() as patch:
+                patch.setattr(VespaSchemaManager, "_deploy_package", refuse_schema_drop)
+                response = await client.delete(f"/admin/organizations/{org_id}")
+            assert response.status_code == 503
+            assert response.json() == {
+                "detail": {
+                    "message": f"Organization {org_id} deletion incomplete; retry the delete",
+                    "org_id": org_id,
+                    "deleted_tenant_ids": [sibling_id],
+                    "failed_tenant_ids": [failed_id],
+                }
+            }
+            assert (await tm.get_organization_internal(org_id)).org_id == org_id
+            assert (await tm.get_tenant_internal(failed_id)).tenant_full_id == failed_id
+            assert await tm.get_tenant_internal(sibling_id) is None
+            _assert_memories_readable(
+                vespa_instance["base_url"], _schema_names(failed_id)[0]
+            )
+            retried = await client.delete(f"/admin/organizations/{org_id}")
+            assert retried.status_code == 200
+            assert retried.json() == {
+                "status": "deleted",
+                "org_id": org_id,
+                "tenants_deleted": 1,
+                "deleted_tenant_ids": [failed_id],
+            }
+    assert await tm.get_tenant_internal(failed_id) is None
+    assert await tm.get_organization_internal(org_id) is None
+
+
+@pytest.mark.asyncio
+async def test_overlapping_organization_deletes_retain_parent_on_child_failure(
+    wired_tenant_manager, vespa_instance, monkeypatch
+):
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    tenant_id = _unique_tenant()
+    org_id = tenant_id.split(":")[0]
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+    real_delete = VespaSchemaManager.delete_tenant_schemas
+    real_deploy = VespaSchemaManager._deploy_package
+    barrier = threading.Barrier(2, timeout=60)
+    calls = []
+    with socket.socket() as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+
+        def interleave(manager, requested_tenant):
+            calls.append(requested_tenant)
+            barrier.wait()
+            return real_delete(manager, requested_tenant)
+
+        def refuse_schema_drop(manager, package, **kwargs):
+            isolated_manager = copy.copy(manager)
+            isolated_manager.backend_port = unavailable.getsockname()[1]
+            return real_deploy(isolated_manager, package, **kwargs)
+
+        monkeypatch.setattr(VespaSchemaManager, "delete_tenant_schemas", interleave)
+        monkeypatch.setattr(VespaSchemaManager, "_deploy_package", refuse_schema_drop)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=tm.app), base_url="http://tenant-test"
+        ) as client:
+            responses = await asyncio.gather(
+                client.delete(f"/admin/organizations/{org_id}"),
+                client.delete(f"/admin/organizations/{org_id}"),
+            )
+    assert calls == [tenant_id, tenant_id]
+    assert [response.status_code for response in responses] == [503, 503]
+    assert [response.json() for response in responses] == [
+        {
+            "detail": {
+                "message": f"Organization {org_id} deletion incomplete; retry the delete",
+                "org_id": org_id,
+                "deleted_tenant_ids": [],
+                "failed_tenant_ids": [tenant_id],
+            }
+        }
+    ] * 2
+    assert (await tm.get_organization_internal(org_id)).org_id == org_id
+    assert (await tm.get_tenant_internal(tenant_id)).tenant_full_id == tenant_id
+    _assert_memories_readable(vespa_instance["base_url"], _schema_names(tenant_id)[0])
+
+
+@pytest.mark.asyncio
+async def test_organization_delete_refusal_retains_parent_until_confirmed(
+    wired_tenant_manager, vespa_instance, monkeypatch
+):
+    org_id = f"orgdel{uuid.uuid4().hex[:8]}"
+    _seed_organization(org_id)
+    refused = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_DELETE(self):
+            refused.append(self.path)
+            body = json.dumps({"message": "injected delete refusal"}).encode()
+            self.send_response(404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            response = requests.get(vespa_instance["base_url"] + self.path, timeout=15)
+            self.send_response(response.status_code)
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        def do_POST(self):
+            response = requests.post(
+                vespa_instance["base_url"] + self.path,
+                data=self.rfile.read(int(self.headers.get("Content-Length", "0"))),
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            )
+            self.send_response(response.status_code)
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    backend = tm.get_backend()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=tm.app), base_url="http://tenant-test"
+        ) as client:
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    backend,
+                    "_metadata_app",
+                    Vespa(url=f"http://127.0.0.1:{server.server_port}"),
+                )
+                response = await client.delete(f"/admin/organizations/{org_id}")
+            assert response.status_code == 502
+            assert response.json() == {
+                "detail": f"organization_metadata delete for {org_id} did not confirm; retry the delete"
+            }
+            assert refused == [
+                f"/document/v1/organization_metadata/organization_metadata/docid/{org_id}"
+            ]
+            assert (await tm.get_organization_internal(org_id)).org_id == org_id
+            retried = await client.delete(f"/admin/organizations/{org_id}")
+            assert retried.status_code == 200
+            assert retried.json() == {
+                "status": "deleted",
+                "org_id": org_id,
+                "tenants_deleted": 0,
+                "deleted_tenant_ids": [],
+            }
+            assert await tm.get_organization_internal(org_id) is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
