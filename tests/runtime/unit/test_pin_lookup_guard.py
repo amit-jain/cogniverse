@@ -32,7 +32,9 @@ def test_outage_raises_instead_of_returning_no_pins():
     pin_lookup = build_pin_lookup(registry, quota_loader)
 
     failing_service = MagicMock()
-    failing_service.list_pins.side_effect = ConnectionError("pin store unreachable")
+    failing_service.pinned_target_ids.side_effect = ConnectionError(
+        "pin store unreachable"
+    )
 
     with (
         patch(
@@ -53,12 +55,8 @@ def test_success_returns_exact_pinned_id_set_with_tenant_quotas():
     )
     pin_lookup = build_pin_lookup(registry, quota_loader)
 
-    records = [
-        SimpleNamespace(target_memory_id="m1"),
-        SimpleNamespace(target_memory_id="m2"),
-    ]
     service = MagicMock()
-    service.list_pins.return_value = records
+    service.pinned_target_ids.return_value = {"m1", "m2"}
     tenant_quotas = MagicMock(name="tenant_quotas")
 
     with (
@@ -78,7 +76,7 @@ def test_success_returns_exact_pinned_id_set_with_tenant_quotas():
     )
     assert svc_cls.call_args.kwargs["quotas"] is tenant_quotas
     assert svc_cls.call_args.args == (mm, registry)
-    service.list_pins.assert_called_once_with("acme:acme")
+    service.pinned_target_ids.assert_called_once_with("acme:acme")
 
 
 def test_manager_without_tenant_yields_empty_set():

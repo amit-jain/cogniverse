@@ -880,7 +880,7 @@ and `TEMP_DIR=/tmp/cogniverse-cleanup`; its scratch `emptyDir` is also `TMPDIR`.
 
 | Section | Source | Knob |
 |---|---|---|
-| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema | per-kind TTLs in `KnowledgeRegistry` |
+| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry(), PinService(mm, registry).pinned_target_ids(tenant))` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema. The pin read raises on a store outage, so the tenant is reported `failed` and nothing is deleted | per-kind TTLs in `KnowledgeRegistry` |
 | `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` required existing directory; `--log-retention-days` overrides `LOG_RETENTION_DAYS` (7) |
 | `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` required existing directory; `TEMP_RETENTION_DAYS` (1) |
 | `config_vacuum` | `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` | `CONFIG_KEEP_VERSIONS` env (default 10) |

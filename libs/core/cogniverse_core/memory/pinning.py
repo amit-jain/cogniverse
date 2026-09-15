@@ -296,6 +296,14 @@ class PinService:
         cleanup to skip pinned targets, and by admins for audit."""
         return self._all_pin_records(tenant_id)
 
+    def pinned_target_ids(self, tenant_id: str) -> set:
+        """Every pinned target id for a tenant.
+
+        The one enumeration maintenance consults before deleting anything; a
+        read failure propagates so an outage can never read as "no pins".
+        """
+        return {rec.target_memory_id for rec in self._all_pin_records(tenant_id)}
+
     def quota_used(self, role: Pinnable, tenant_id: str) -> int:
         return sum(
             1 for rec in self._all_pin_records(tenant_id) if rec.pinned_by is role
@@ -307,7 +315,11 @@ class PinService:
     # --- internals --------------------------------------------------------
 
     def _all_pin_records(self, tenant_id: str) -> List[PinRecord]:
-        rows = self._mm.get_all_memories(tenant_id=tenant_id, agent_name=PIN_AGENT_NAME)
+        # Every pin record, not the newest page: maintenance treats an
+        # unlisted pin as absent and deletes its target.
+        rows = self._mm.get_all_memories(
+            tenant_id=tenant_id, agent_name=PIN_AGENT_NAME, limit=None
+        )
         return [r for r in (self._row_to_record(row) for row in rows) if r]
 
     def _find_pin_records(
