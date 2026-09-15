@@ -15,6 +15,7 @@ import logging
 import shutil
 import tempfile
 import uuid
+from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -311,11 +312,11 @@ class CodingAgent(
         success = False
         workspace_dir = tempfile.mkdtemp(prefix=f"coding_{uuid.uuid4().hex[:8]}_")
         try:
-            if self._sandbox_manager is None:
-                raise RuntimeError("CodingAgent requires an available SandboxManager")
-            async with self._sandbox_manager.task_session(
-                "coding_agent", input.tenant_id
-            ) as session:
+            # One exclusive sandbox for the whole task, leased when the first
+            # iteration has code to run: a cold sandbox costs minutes, and a
+            # task whose generation fails never needs one.
+            async with AsyncExitStack() as sandbox:
+                session = None
                 for iteration in range(1, input.max_iterations + 1):
                     self.emit_progress(
                         "generate",
@@ -340,6 +341,21 @@ class CodingAgent(
                     self.emit_progress(
                         "execute", f"Iteration {iteration}: executing..."
                     )
+                    if session is None:
+                        if self._sandbox_manager is None:
+                            raise RuntimeError(
+                                "CodingAgent requires a SandboxManager with an "
+                                "available OpenShell gateway. Executing "
+                                "LLM-generated code without sandbox isolation is "
+                                "not permitted. Provide a sandbox_manager to "
+                                "CodingAgent or CodingDeps, or start the "
+                                "OpenShell gateway."
+                            )
+                        session = await sandbox.enter_async_context(
+                            self._sandbox_manager.task_session(
+                                "coding_agent", input.tenant_id
+                            )
+                        )
                     exec_result = await self._execute_in_sandbox(
                         file_path, code, test_command, input.language, session
                     )
