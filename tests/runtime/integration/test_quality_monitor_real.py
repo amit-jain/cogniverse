@@ -293,10 +293,17 @@ async def monitor_with_real_search(
         {"version": 1, "name": f"dspy-config-{qm_tenant}-golden_set_ground_truth-v1"}
     ]
     frame = await provider.datasets.get_dataset(
-        f"dspy-config-{qm_tenant}-golden_set_ground_truth"
+        f"dspy-config-{qm_tenant}-golden_set_ground_truth--r1"
     )
     assert frame.to_dict("records") == [
-        {"input": {"content": json.dumps(GOLDEN_QUERIES)}, "output": {}, "metadata": {}}
+        {
+            "input": {
+                "content": json.dumps(GOLDEN_QUERIES),
+                "blob_revision": "1",
+            },
+            "output": {},
+            "metadata": {},
+        }
     ]
     app = FastAPI()
     app.include_router(search.router, prefix="/search")
@@ -679,9 +686,10 @@ class TestQualityMonitorTenantOwnership:
                 assert store_error.endpoint == unavailable_url
                 assert (
                     store_error.dataset
-                    == monitor._get_artifact_manager()._blob_dataset_name(
+                    == monitor._get_artifact_manager()._blob_slot_name(
                         GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
                         GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+                        0,
                     )
                 )
                 assert type(store_error.__cause__) is httpx.ConnectError

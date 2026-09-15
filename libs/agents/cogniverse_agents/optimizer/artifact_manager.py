@@ -13,6 +13,7 @@ appends per run so callers can fetch the latest, the full history, or
 filter by score/timestamp/baseline.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -500,11 +501,76 @@ class ArtifactManager:
     def _blob_dataset_name(self, kind: str, key: str) -> str:
         return f"dspy-{kind}-{self._tenant_id}-{key}"
 
+    def _blob_slot_name(self, kind: str, key: str, revision: int) -> str:
+        """Dataset holding serving revision ``revision`` of blob ``kind/key``.
+
+        Revisions alternate between two slots, so the store holds the current
+        revision and its predecessor and nothing else.
+        """
+        return f"{self._blob_dataset_name(kind, key)}--r{revision % 2}"
+
+    async def _read_blob_slot(
+        self, kind: str, key: str, revision_parity: int
+    ) -> Optional[Dict[str, Any]]:
+        """The ``{revision, content}`` record in one slot, or None if absent."""
+        name = self._blob_slot_name(kind, key, revision_parity)
+        try:
+            df = await self._provider.datasets.get_dataset(name=name)
+        except (KeyError, DatasetNotFoundError):
+            return None
+        if df is None or df.empty:
+            return None
+        if "content" in df.columns:
+            rows = [row.to_dict() for _, row in df.iterrows()]
+        elif "input" in df.columns:
+            rows = [
+                row if isinstance(row, dict) else {"content": row}
+                for row in df["input"].tolist()
+            ]
+        else:
+            logger.warning(
+                "Blob dataset %s has unexpected columns: %s", name, list(df.columns)
+            )
+            return None
+        best: Optional[Dict[str, Any]] = None
+        for row in rows:
+            content = row.get("content")
+            if not isinstance(content, str):
+                continue
+            try:
+                revision = int(row.get("blob_revision"))
+            except (TypeError, ValueError):
+                continue
+            if best is None or revision > best["revision"]:
+                best = {"revision": revision, "content": content}
+        return best
+
+    async def _read_blob_slots(
+        self, kind: str, key: str
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Both serving slots of blob ``kind/key``, read concurrently."""
+        even, odd = await asyncio.gather(
+            self._read_blob_slot(kind, key, 0),
+            self._read_blob_slot(kind, key, 1),
+        )
+        return even, odd
+
     async def save_blob(self, kind: str, key: str, content: str) -> str:
-        """Persist an arbitrary string blob as a single-row dataset.
+        """Publish an arbitrary string blob as the next serving revision.
 
         Intended for serialized models (DSPy JSON, XGBoost JSON),
         checkpoints, embedding caches, and other opaque string payloads.
+
+        Revisions alternate between two single-row datasets. The successor is
+        created in the slot holding the revision before the committed one, so
+        the committed revision stays readable for the whole publication and a
+        failed or interrupted publication leaves it in place. That slot's
+        previous occupant is pruned only here, one publication after its
+        successor became readable.
+
+        Phoenix has no compare-and-set, so two publications that overlap are
+        last-write-wins on the same slot; neither can remove the revision the
+        other is serving.
 
         Args:
             kind: Category (e.g. ``model``, ``checkpoint``, ``embeddings``).
@@ -514,103 +580,69 @@ class ArtifactManager:
         Returns:
             Dataset identifier assigned by the store.
         """
-        df = pd.DataFrame([{"content": content}])
-        dataset_name = self._blob_dataset_name(kind, key)
+        even, odd = await self._read_blob_slots(kind, key)
+        committed = max(
+            (slot for slot in (even, odd) if slot is not None),
+            key=lambda slot: slot["revision"],
+            default=None,
+        )
+        revision = 1 if committed is None else committed["revision"] + 1
+        dataset_name = self._blob_slot_name(kind, key, revision)
         metadata = {
             "artifact_type": f"blob_{kind}",
             "key": key,
             "tenant_id": self._tenant_id,
+            "blob_revision": revision,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "input_keys": ["content"],
+            "input_keys": ["content", "blob_revision"],
             "output_keys": [],
         }
-        # Blobs are last-write-wins. Delete any existing dataset so the store
-        # holds exactly one row — create_dataset on an existing name appends a
-        # new version, growing the dataset (and load's full-history download)
-        # unboundedly across saves. The pre-read makes the delete recoverable:
-        # a create failure after the committed delete would otherwise destroy
-        # the previous blob and read back as "never optimized".
-        previous = await self.load_blob(kind, key)
+        # Free the target slot before publishing: create_dataset on an existing
+        # name appends, which would leave two revisions in one slot and grow
+        # load's download without bound. The slot being freed is the revision
+        # before the committed one, which no reader resolves.
         await self._provider.datasets.delete_dataset(dataset_name)
-        try:
-            dataset_id = await self._provider.datasets.create_dataset(
-                name=dataset_name,
-                data=df,
-                metadata=metadata,
+        dataset_id = await self._provider.datasets.create_dataset(
+            name=dataset_name,
+            data=pd.DataFrame([{"content": content, "blob_revision": str(revision)}]),
+            metadata=metadata,
+        )
+        published = await self._read_blob_slot(kind, key, revision)
+        if published is None or published["revision"] != revision:
+            raise RuntimeError(
+                f"Blob {kind}/{key} revision {revision} for tenant "
+                f"{self._tenant_id} is not readable after publication"
             )
-        except Exception:
-            if previous is not None:
-                try:
-                    await self._provider.datasets.create_dataset(
-                        name=dataset_name,
-                        data=pd.DataFrame([{"content": previous}]),
-                        metadata=metadata,
-                    )
-                    logger.warning(
-                        "Blob %s/%s overwrite failed for %s; previous content restored",
-                        kind,
-                        key,
-                        self._tenant_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Blob %s/%s overwrite failed for %s and the restore "
-                        "also failed; previous content lost",
-                        kind,
-                        key,
-                        self._tenant_id,
-                    )
-            raise
         logger.info(
-            "Saved blob %s/%s for %s → dataset %s",
+            "Published blob %s/%s r%d for %s → dataset %s",
             kind,
             key,
+            revision,
             self._tenant_id,
             dataset_id,
         )
         return dataset_id
 
     async def load_blob(self, kind: str, key: str) -> Optional[str]:
-        """Load a string blob from dataset.
+        """Load a string blob from its greatest readable serving revision.
 
         Returns:
-            The stored string or ``None`` if no dataset exists.
+            The stored string or ``None`` if no revision exists.
         """
-        dataset_name = self._blob_dataset_name(kind, key)
-        try:
-            df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except (KeyError, DatasetNotFoundError):
+        even, odd = await self._read_blob_slots(kind, key)
+        slots = [slot for slot in (even, odd) if slot is not None]
+        if not slots:
             logger.debug(
-                "No blob dataset found for %s/%s/%s",
-                self._tenant_id,
-                kind,
-                key,
+                "No blob revision found for %s/%s/%s", self._tenant_id, kind, key
             )
             return None
-
-        if df is None or df.empty:
-            return None
-
-        # Extract content from the dataset (last row = latest version)
-        if "content" in df.columns:
-            content = df["content"].iloc[-1]
-        elif "input" in df.columns:
-            inp = df["input"].iloc[-1]
-            content = inp.get("content", inp) if isinstance(inp, dict) else inp
-        else:
-            logger.warning(
-                "Blob dataset %s has unexpected columns: %s",
-                dataset_name,
-                list(df.columns),
-            )
-            return None
-
+        content = max(slots, key=lambda slot: slot["revision"])["content"]
         logger.info(
             "Loaded blob %s/%s for %s (%d chars)",
             kind,
             key,
             self._tenant_id,
-            len(content) if content else 0,
+            len(content),
         )
         return content
 

@@ -740,6 +740,27 @@ State shape:
 
 ---
 
+### Serving blobs
+
+`ArtifactManager.save_blob(kind, key, content)` publishes a serving revision as
+a single immutable row. Revisions alternate between two datasets,
+`dspy-{kind}-{tenant}-{key}--r0` and `--r1`, each row carrying its
+`blob_revision`. A publication writes the slot holding the revision before the
+committed one, so the committed revision stays readable for the whole
+publication and a failed or killed publication leaves it in place. The slot's
+previous occupant is pruned there and only there — one publication after its
+successor became readable. `load_blob` reads both slots and returns the greater
+revision, or `None` when neither exists. Store failures propagate.
+
+Phoenix has no compare-and-set, so two overlapping publications are
+last-write-wins on the same slot; neither can remove the revision the other
+serves.
+
+Serving revisions and optimizer candidates are separate namespaces.
+`save_blob_versioned` records candidates and their evaluation ledger under
+`-v{n}`; only `activate_version` copies a candidate into the serving blob, so a
+rejected candidate never reaches serving.
+
 ### 13. **Regression-Reject Promotion Gate (`promote_if_better`)**
 
 `ArtifactManager.promote_if_better` is the guarded alternative to unconditionally overwriting active
