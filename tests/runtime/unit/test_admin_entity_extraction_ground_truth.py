@@ -58,9 +58,11 @@ class _InMemoryDatasetStore:
         self.release_first_state_write = asyncio.Event()
 
     def set_active_dataset_name(self, name: str) -> None:
+        """Base name of the served blob; its revision slots share this prefix."""
         self._active_dataset_name = name
 
     def set_state_dataset_name(self, name: str) -> None:
+        """Base name of the activation pointer blob, matched the same way."""
         self._state_dataset_name = name
 
     async def replace_dataset(self, name, data, metadata=None):
@@ -69,7 +71,8 @@ class _InMemoryDatasetStore:
     async def create_dataset(self, name, data, metadata=None):
         if (
             self._block_first_active_write
-            and name == self._active_dataset_name
+            and self._active_dataset_name is not None
+            and name.startswith(self._active_dataset_name)
             and not self._first_active_write_seen
         ):
             self._first_active_write_seen = True
@@ -78,7 +81,8 @@ class _InMemoryDatasetStore:
 
         if (
             self._block_first_state_write
-            and name == self._state_dataset_name
+            and self._state_dataset_name is not None
+            and name.startswith(self._state_dataset_name)
             and not self._first_state_write_seen
         ):
             self._first_state_write_seen = True
@@ -132,6 +136,18 @@ def _fixed_artifact_datetime(monkeypatch):
     import cogniverse_agents.optimizer.artifact_manager as artifact_manager_module
 
     monkeypatch.setattr(artifact_manager_module, "datetime", _FrozenDatetime)
+
+
+def _served_contents(store: _InMemoryDatasetStore, base_name: str) -> list[str]:
+    """Contents of the greatest published revision across a blob's two slots."""
+    rows = [
+        row
+        for parity in (0, 1)
+        if f"{base_name}--r{parity}" in store.datasets
+        for row in store.datasets[f"{base_name}--r{parity}"].to_dict("records")
+    ]
+    top = max(int(row["blob_revision"]) for row in rows)
+    return [row["content"] for row in rows if int(row["blob_revision"]) == top]
 
 
 async def _put(app, path, body):
@@ -189,7 +205,7 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
     versioned_name = am._versioned_dataset_name(
         "config", "entity_extraction_ground_truth", 1
     )
-    active_name = am._blob_dataset_name("config", "entity_extraction_ground_truth")
+    active_name = am._blob_slot_name("config", "entity_extraction_ground_truth", 1)
     assert store.datasets[versioned_name].to_dict("records") == [
         {
             "content": json.dumps(
@@ -219,7 +235,8 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
         {
             "content": json.dumps(
                 expected_rows, separators=(",", ":"), ensure_ascii=False
-            )
+            ),
+            "blob_revision": "1",
         }
     ]
 
@@ -343,7 +360,8 @@ async def test_loader_missing_returns_named_status(monkeypatch):
         "error": "entity_extraction_ground_truth is not configured for tenant acme:acme",
     }
     assert store.get_calls == [
-        am._blob_dataset_name("config", "entity_extraction_ground_truth")
+        am._blob_slot_name("config", "entity_extraction_ground_truth", 0),
+        am._blob_slot_name("config", "entity_extraction_ground_truth", 1),
     ]
 
 
@@ -372,7 +390,8 @@ async def test_loader_store_error_raises_fault_contract(monkeypatch):
         },
     }
     assert store.get_calls == [
-        am._blob_dataset_name("config", "entity_extraction_ground_truth")
+        am._blob_slot_name("config", "entity_extraction_ground_truth", 0),
+        am._blob_slot_name("config", "entity_extraction_ground_truth", 1),
     ]
 
 
@@ -503,25 +522,19 @@ async def test_concurrent_puts_last_writer_wins(monkeypatch):
             ),
         }
     ]
-    assert store.datasets[active_name].to_dict("records") == [
-        {
-            "content": json.dumps(
-                second_expected, separators=(",", ":"), ensure_ascii=False
-            )
-        }
+    assert _served_contents(store, active_name) == [
+        json.dumps(second_expected, separators=(",", ":"), ensure_ascii=False)
     ]
-    assert store.datasets[state_name].to_dict("records") == [
-        {
-            "content": json.dumps(
-                {
-                    "active": {
-                        "version": 2,
-                        "activated_at": FIXED_NOW.isoformat(),
-                    }
-                },
-                ensure_ascii=False,
-            )
-        }
+    assert _served_contents(store, state_name) == [
+        json.dumps(
+            {
+                "active": {
+                    "version": 2,
+                    "activated_at": FIXED_NOW.isoformat(),
+                }
+            },
+            ensure_ascii=False,
+        )
     ]
 
     loaded = await load_entity_extraction_ground_truth_rows(am)

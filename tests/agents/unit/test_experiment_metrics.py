@@ -217,7 +217,7 @@ async def test_all_artifact_creation_metadata_uses_utc_timestamps():
     expected_datasets = {
         "dspy-prompts-acme:acme-search",
         "dspy-demos-acme:acme-search",
-        "dspy-model-acme:acme-ranker",
+        "dspy-model-acme:acme-ranker--r1",
         "dspy-prompts-acme:acme-search-v1",
         "dspy-demos-acme:acme-search-v1",
     }
