@@ -63,6 +63,84 @@ def _filter_by_trace_ids(df, trace_ids: list[str], project: str):
     return df[df[id_col].isin(trace_ids)]
 
 
+def _sample_query(state) -> str:
+    """The query this Inspect sample evaluates."""
+    raw = state.input
+    query = raw.get("query", "") if isinstance(raw, dict) else raw
+    query = str(query or "").strip()
+    if not query:
+        raise ValueError("evaluation sample carries no query to score")
+    return query
+
+
+def _trace_search_configs(traces: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """One scoreable retrieval per trace, keyed by its trace id."""
+    configs: dict[str, dict[str, Any]] = {}
+    for trace in traces:
+        trace_id = trace.get("trace_id")
+        results = trace.get("results")
+        if not trace_id:
+            raise ValueError(f"span row carries no trace id: {trace!r}")
+        if not isinstance(results, list) or any(
+            not isinstance(result, dict) for result in results
+        ):
+            raise ValueError(
+                f"trace {trace_id} carries no retrieval result objects: {results!r}"
+            )
+        configs[str(trace_id)] = {
+            "results": results,
+            "profile": trace.get("profile", "unknown"),
+            "strategy": trace.get("strategy", "unknown"),
+            "success": True,
+            "count": len(results),
+        }
+    return configs
+
+
+def _trace_output(
+    query: str, traces: list[dict[str, Any]], metadata: dict[str, Any]
+) -> ModelOutput:
+    """Pack the sample's traces into the output contract the scorers read."""
+    from inspect_ai.model import ChatCompletionChoice, ChatMessageAssistant
+
+    from .solver_output import pack_solver_output
+
+    packed = pack_solver_output(
+        query=query,
+        search_results=_trace_search_configs(traces),
+        phoenix_trace_id=str(traces[0]["trace_id"]),
+        metadata=metadata,
+    )
+    return ModelOutput(
+        model="trace_eval",
+        choices=[
+            ChatCompletionChoice(
+                message=ChatMessageAssistant(content=packed, source="generate"),
+                stop_reason="stop",
+            )
+        ],
+    )
+
+
+def _traces_for_query(
+    traces: list[dict[str, Any]], query: str, project: str
+) -> list[dict[str, Any]]:
+    """The traces that answered this sample's query.
+
+    Raises rather than scoring a sample against another sample's retrieval or
+    against nothing at all.
+    """
+    matched = [
+        trace for trace in traces if str(trace.get("query", "")).strip() == query
+    ]
+    if not matched:
+        raise ValueError(
+            f"no trace for query {query!r} in project {project!r} "
+            f"({len(traces)} traces read)"
+        )
+    return matched
+
+
 @solver
 def create_retrieval_solver(
     profiles: list[str], strategies: list[str], config: dict[str, Any] | None = None
@@ -234,6 +312,8 @@ def create_batch_solver(
         """Load and evaluate existing traces with ground truth extraction."""
         from cogniverse_evaluation.providers import get_evaluation_provider
 
+        query = _sample_query(state)
+
         provider = get_evaluation_provider()
 
         # Get ground truth strategy
@@ -281,11 +361,10 @@ def create_batch_solver(
             )
 
         if df.empty:
-            logger.warning("No traces found")
-            state.output = ModelOutput(
-                completion="No traces found", stop_reason="no_data"
+            raise ValueError(
+                f"batch evaluation read no spans from project {project!r}; "
+                "there is nothing to score"
             )
-            return state
 
         # Extract trace data and ground truth
         from cogniverse_evaluation.data.traces import trace_dict_from_span_row
@@ -299,10 +378,7 @@ def create_batch_solver(
                 trace_data, backend
             )
 
-            # Use expected_items as the generic field, falling back to expected_videos for compatibility
-            trace_data["ground_truth"] = ground_truth_result.get(
-                "expected_items", ground_truth_result.get("expected_videos", [])
-            )
+            trace_data["ground_truth"] = ground_truth_result["expected_items"]
             trace_data["ground_truth_confidence"] = ground_truth_result["confidence"]
             trace_data["ground_truth_source"] = ground_truth_result["source"]
 
@@ -322,21 +398,28 @@ def create_batch_solver(
             )
             logger.info(f"Applied {reranking_strategy} reranking strategy")
 
-        # Store traces in state for evaluation
-        state.output = ModelOutput(
-            completion=f"Loaded {len(traces)} traces with ground truth",
-            stop_reason="completed",
-        )
-        state.metadata["loaded_traces"] = traces
+        matched = _traces_for_query(traces, query, project)
+        state.metadata["trace_ids"] = [str(trace["trace_id"]) for trace in matched]
         state.metadata["ground_truth_stats"] = {
-            "total_traces": len(traces),
-            "traces_with_ground_truth": sum(1 for t in traces if t.get("ground_truth")),
-            "average_confidence": np.mean(
-                [t.get("ground_truth_confidence", 0) for t in traces]
+            "total_traces": len(matched),
+            "traces_with_ground_truth": sum(
+                1 for t in matched if t.get("ground_truth")
+            ),
+            "average_confidence": float(
+                np.mean([t.get("ground_truth_confidence", 0) for t in matched])
             ),
         }
         if reranking_strategy:
             state.metadata["reranking_strategy"] = reranking_strategy
+        state.output = _trace_output(
+            query,
+            matched,
+            {
+                "mode": "batch",
+                "project": project,
+                "ground_truth_stats": state.metadata["ground_truth_stats"],
+            },
+        )
 
         return state
 
@@ -363,6 +446,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
         provider = get_evaluation_provider()
 
+        query = _sample_query(state)
         poll_interval = config.get("poll_interval", 10)
         max_iterations = config.get("max_iterations", 10)
         project = _resolve_project(config)
@@ -394,11 +478,13 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
         logger.info(f"Live monitoring complete. Collected {len(all_traces)} traces")
 
-        state.output = ModelOutput(
-            completion=f"Monitored {len(all_traces)} live traces",
-            stop_reason="completed",
+        matched = _traces_for_query(all_traces, query, project)
+        state.metadata["trace_ids"] = [str(trace["trace_id"]) for trace in matched]
+        state.output = _trace_output(
+            query,
+            matched,
+            {"mode": "live", "project": project, "iterations": max_iterations},
         )
-        state.metadata["live_traces"] = all_traces
 
         return state
 
