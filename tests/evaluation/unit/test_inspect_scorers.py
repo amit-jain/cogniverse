@@ -9,11 +9,45 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_evaluation.core.inspect_scorers import (
+    diversity_scorer,
     get_configured_scorers,
     precision_scorer,
     recall_scorer,
+    relevance_scorer,
+    result_count_scorer,
 )
 from cogniverse_evaluation.core.solver_output import pack_solver_output
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "factory",
+    [
+        relevance_scorer,
+        diversity_scorer,
+        result_count_scorer,
+        precision_scorer,
+        recall_scorer,
+    ],
+)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{broken",
+        "{}",
+        '{"query":"alpha","search_configs":{}}',
+        '{"query":"alpha","search_configs":{"trace-a":{"success":true,"results":["video-a"]}}}',
+        '{"query":"alpha","search_configs":{"trace-a":{"success":false,"results":[],"error":"Phoenix read failed"}}}',
+    ],
+)
+async def test_invalid_payload_raises_instead_of_scoring_zero(factory, payload):
+    from inspect_ai.model import ModelOutput
+    from inspect_ai.scorer import Target
+
+    state = SimpleNamespace(output=ModelOutput.from_content("search_eval", payload))
+    with pytest.raises(ValueError, match="Invalid evaluation output"):
+        await factory()(state, Target(["video-a"]))
 
 
 def _state_with(results: list) -> SimpleNamespace:

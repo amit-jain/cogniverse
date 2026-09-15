@@ -54,7 +54,8 @@ def trace_dict_from_span_row(row: Any) -> Dict[str, Any]:
     in ``context.trace_id``, timing in ``start_time``/``end_time``, and
     attributes flattened to ``attributes.*`` with ``output.value`` as a JSON
     string. There are no ``trace_id``/``timestamp``/``duration_ms`` columns
-    in the real frame.
+    in the real frame. An ``output.value`` that does not parse raises, so a
+    corrupt span never reads as a trace that retrieved nothing.
     """
     trace_id = row.get("context.trace_id")
     if _is_missing(trace_id):
@@ -70,8 +71,10 @@ def trace_dict_from_span_row(row: Any) -> Dict[str, Any]:
     elif isinstance(results, str):
         try:
             results = json.loads(results)
-        except (json.JSONDecodeError, ValueError):
-            results = []
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                f"span {trace_id} carries an unparseable output.value: {results!r}"
+            ) from exc
 
     metadata = row.get("attributes.metadata")
     if isinstance(metadata, str):

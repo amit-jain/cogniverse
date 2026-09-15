@@ -2,10 +2,12 @@
 Unit tests for evaluation solvers.
 """
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
 
+from cogniverse_evaluation.core.solver_output import unpack_solver_output
 from cogniverse_evaluation.core.solvers import (
     create_batch_solver,
     create_live_solver,
@@ -218,7 +220,12 @@ def _populated_traces_df():
                 "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
                 "end_time": pd.Timestamp("2026-01-01T00:00:01.100Z"),
                 "attributes.input.value": "what is a quark",
-                "attributes.output.value": json.dumps(["v1", "v2"]),
+                "attributes.output.value": json.dumps(
+                    [
+                        {"source_id": "v1", "score": 0.9, "content": "quark"},
+                        {"source_id": "v2", "score": 0.5, "content": "lepton"},
+                    ]
+                ),
                 "attributes.metadata.profile": "frame_based_colpali",
                 "attributes.metadata.strategy": "binary_binary",
             },
@@ -229,12 +236,23 @@ def _populated_traces_df():
                 "start_time": pd.Timestamp("2026-01-01T00:00:30Z"),
                 "end_time": pd.Timestamp("2026-01-01T00:00:30.900Z"),
                 "attributes.input.value": "explain entanglement",
-                "attributes.output.value": json.dumps(["v3"]),
+                "attributes.output.value": json.dumps(
+                    [{"source_id": "v3", "score": 0.7, "content": "entangled"}]
+                ),
                 "attributes.metadata.profile": "xclip_global",
                 "attributes.metadata.strategy": "float_float",
             },
         ]
     )
+
+
+def _sample_state(query: str):
+    """An Inspect TaskState carrying exactly the sample under evaluation."""
+    state = Mock()
+    state.input = query
+    state.outputs = {}
+    state.metadata = {}
+    return state
 
 
 def _seed_solver_provider(monkeypatch, df):
@@ -295,29 +313,103 @@ class TestBatchSolver:
             trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("what is a quark")
         result = await solver(state, Mock())
 
         # The span project is derived from the tenant, matching the writers.
         assert provider.get_spans_calls[0]["project"] == "cogniverse-acme:acme"
 
-        assert [t["trace_id"] for t in result.metadata["loaded_traces"]] == ["trace-a"]
-        loaded = result.metadata["loaded_traces"][0]
-        assert loaded["query"] == "what is a quark"
-        assert loaded["results"] == ["v1", "v2"]
-        assert loaded["profile"] == "frame_based_colpali"
-        assert loaded["strategy"] == "binary_binary"
-        assert str(loaded["timestamp"]) == "2026-01-01 00:00:00+00:00"
-        assert loaded["duration_ms"] == 1100.0
-        assert loaded["ground_truth"] == ["gt-trace-a"]
-        assert loaded["ground_truth_confidence"] == 0.9
-        assert loaded["ground_truth_source"] == "fixture"
-        stats = result.metadata["ground_truth_stats"]
-        assert stats["total_traces"] == 1
-        assert stats["traces_with_ground_truth"] == 1
-        assert stats["average_confidence"] == 0.9
+        assert result.metadata["trace_ids"] == ["trace-a"]
+        assert result.metadata["ground_truth_stats"] == {
+            "total_traces": 1,
+            "traces_with_ground_truth": 1,
+            "average_confidence": 0.9,
+        }
+        packed = json.loads(result.output.choices[0].message.content)
+        assert packed["query"] == "what is a quark"
+        assert packed["phoenix_trace_id"] == "trace-a"
+        assert packed["search_configs"] == {
+            "trace-a": {
+                "results": [
+                    {"source_id": "v1", "score": 0.9, "content": "quark"},
+                    {"source_id": "v2", "score": 0.5, "content": "lepton"},
+                ],
+                "profile": "frame_based_colpali",
+                "strategy": "binary_binary",
+                "success": True,
+                "count": 2,
+            }
+        }
+        assert packed["metadata"]["mode"] == "batch"
+        assert packed["metadata"]["project"] == "cogniverse-acme:acme"
+        assert (
+            packed["metadata"]["ground_truth_stats"]
+            == (result.metadata["ground_truth_stats"])
+        )
+        assert result.output.model == "trace_eval"
+        assert len(result.output.choices) == 1
+        assert result.output.choices[0].stop_reason == "stop"
+        assert result.output.choices[0].message.source == "generate"
+        assert (
+            unpack_solver_output(
+                result.output.choices[0].message.content
+            ).search_configs
+            == packed["search_configs"]
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_ground_truth_requires_expected_items(self, monkeypatch):
+        """`expected_items` is the field the strategies return; a result
+        without it is a strategy bug, not an empty ground truth."""
+        from unittest.mock import AsyncMock
+
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        monkeypatch.setattr(
+            "cogniverse_evaluation.core.ground_truth.get_ground_truth_strategy",
+            lambda *_a, **_kw: Mock(
+                extract_ground_truth=AsyncMock(
+                    return_value={
+                        "expected_videos": ["gt-trace-a"],
+                        "confidence": 0.9,
+                        "source": "fixture",
+                    }
+                )
+            ),
+            raising=False,
+        )
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(KeyError, match="expected_items"):
+            await solver(_sample_state("what is a quark"), Mock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_malformed_span_payload_raises(self, monkeypatch):
+        """A span whose output.value does not parse is an error, not a
+        trace that retrieved nothing."""
+        df = _populated_traces_df()
+        df.loc[0, "attributes.output.value"] = "{broken"
+        _seed_solver_provider(monkeypatch, df)
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(ValueError, match="unparseable output.value"):
+            await solver(_sample_state("what is a quark"), Mock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_batch_sample_without_a_query_raises(self, monkeypatch):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        with pytest.raises(ValueError, match="no query to score"):
+            await solver(_sample_state(" "), Mock())
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -327,21 +419,26 @@ class TestBatchSolver:
             trace_ids=None, config={"hours_back": 1, "tenant_id": "acme:acme"}
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("explain entanglement")
         result = await solver(state, Mock())
 
-        ids = sorted(t["trace_id"] for t in result.metadata["loaded_traces"])
-        assert ids == ["trace-a", "trace-b"]
-        durations = {
-            t["trace_id"]: t["duration_ms"] for t in result.metadata["loaded_traces"]
+        assert result.metadata["trace_ids"] == ["trace-b"]
+        assert result.metadata["ground_truth_stats"] == {
+            "total_traces": 1,
+            "traces_with_ground_truth": 1,
+            "average_confidence": 0.9,
         }
-        assert durations == {"trace-a": 1100.0, "trace-b": 900.0}
-        stats = result.metadata["ground_truth_stats"]
-        assert stats["total_traces"] == 2
-        assert stats["traces_with_ground_truth"] == 2
-        assert stats["average_confidence"] == 0.9
+        packed = json.loads(result.output.choices[0].message.content)
+        assert list(packed["search_configs"]) == ["trace-b"]
+        assert packed["search_configs"]["trace-b"]["count"] == 1
+        assert packed["query"] == "explain entanglement"
+        assert packed["phoenix_trace_id"] == "trace-b"
+        assert packed["search_configs"]["trace-b"]["results"] == [
+            {"source_id": "v3", "score": 0.7, "content": "entangled"}
+        ]
+        assert packed["search_configs"]["trace-b"]["profile"] == "xclip_global"
+        assert packed["search_configs"]["trace-b"]["strategy"] == "float_float"
+        assert "loaded_traces" not in result.metadata
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -355,13 +452,9 @@ class TestBatchSolver:
             trace_ids=None, config={"hours_back": 1, "tenant_id": "acme:acme"}
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
-        result = await solver(state, Mock())
-
-        assert result.output.completion == "No traces found"
-        assert "loaded_traces" not in result.metadata
+        state = _sample_state("what is a quark")
+        with pytest.raises(ValueError, match="read no spans from project"):
+            await solver(state, Mock())
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -369,9 +462,7 @@ class TestBatchSolver:
         _seed_solver_provider(monkeypatch, _populated_traces_df())
         solver = create_batch_solver(trace_ids=["trace-a"], config={})
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("what is a quark")
         with pytest.raises(ValueError, match="project_name.*tenant_id"):
             await solver(state, Mock())
 
@@ -384,9 +475,7 @@ class TestBatchSolver:
             config={"project_name": "cogniverse-custom", "tenant_id": "acme:acme"},
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("what is a quark")
         await solver(state, Mock())
 
         assert provider.get_spans_calls[0]["project"] == "cogniverse-custom"
@@ -402,9 +491,7 @@ class TestBatchSolver:
             trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("what is a quark")
         with pytest.raises(ValueError, match="no trace-id column"):
             await solver(state, Mock())
 
@@ -425,20 +512,31 @@ class TestLiveSolver:
             }
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
+        state = _sample_state("what is a quark")
         result = await solver(state, Mock())
 
         assert provider.get_spans_calls[0]["project"] == "cogniverse-acme:acme"
-        traces = result.metadata["live_traces"]
-        assert [t["trace_id"] for t in traces] == ["trace-a", "trace-b"]
-        assert traces[0]["query"] == "what is a quark"
-        assert traces[0]["results"] == ["v1", "v2"]
-        assert traces[0]["duration_ms"] == 1100.0
-        for t in traces:
-            assert set(t.keys()) >= {"trace_id", "query", "results", "timestamp"}
-        assert "2" in result.output.completion
+        assert result.metadata["trace_ids"] == ["trace-a"]
+        packed = json.loads(result.output.choices[0].message.content)
+        assert packed["query"] == "what is a quark"
+        assert packed["phoenix_trace_id"] == "trace-a"
+        assert packed["metadata"] == {
+            "mode": "live",
+            "project": "cogniverse-acme:acme",
+            "iterations": 1,
+        }
+        assert packed["search_configs"]["trace-a"]["results"] == [
+            {"source_id": "v1", "score": 0.9, "content": "quark"},
+            {"source_id": "v2", "score": 0.5, "content": "lepton"},
+        ]
+        assert packed["search_configs"]["trace-a"]["count"] == 2
+        assert packed["search_configs"]["trace-a"]["success"] is True
+        assert packed["search_configs"]["trace-a"]["profile"] == "frame_based_colpali"
+        assert packed["search_configs"]["trace-a"]["strategy"] == "binary_binary"
+        assert list(packed["search_configs"]) == ["trace-a"]
+        assert result.output.model == "trace_eval"
+        assert result.output.choices[0].stop_reason == "stop"
+        assert "live_traces" not in result.metadata
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -457,8 +555,6 @@ class TestLiveSolver:
             }
         )
 
-        state = Mock()
-        state.outputs = {}
-        state.metadata = {}
-        result = await solver(state, Mock())
-        assert result.metadata["live_traces"] == []
+        state = _sample_state("what is a quark")
+        with pytest.raises(ValueError, match="no trace for query"):
+            await solver(state, Mock())

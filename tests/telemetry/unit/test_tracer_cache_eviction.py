@@ -7,28 +7,40 @@ the config but eviction was count-based only, so a tracer built once was
 served forever regardless of age.
 """
 
-import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from cogniverse_foundation.telemetry import manager as manager_mod
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 
+@pytest.fixture(autouse=True)
+def _reset_manager():
+    TelemetryManager.reset()
+    yield
+    TelemetryManager.reset()
+
+
 def _manager(max_cached_tenants: int) -> TelemetryManager:
-    # Bypass the singleton/__init__; _evict_old_tracers only touches the caches
-    # and config.max_cached_tenants.
-    m = object.__new__(TelemetryManager)
-    m.config = SimpleNamespace(
-        max_cached_tenants=max_cached_tenants,
-        tenant_cache_ttl_seconds=0,
+    return TelemetryManager(
+        TelemetryConfig(
+            max_cached_tenants=max_cached_tenants,
+            tenant_cache_ttl_seconds=0,
+        )
     )
-    m._tenant_tracers = {}
-    m._tenant_providers = {}
-    m._tracer_provider_keys = {}
-    m._tracer_created_at = {}
-    return m
+
+
+def _wait_for_retirement(manager):
+    with manager._retirement_condition:
+        assert (
+            manager._retirement_condition.wait_for(
+                lambda: manager._retired_providers == {}, timeout=5
+            )
+            is True
+        )
 
 
 def test_orphaned_provider_is_shutdown_and_dropped():
@@ -43,6 +55,7 @@ def test_orphaned_provider_is_shutdown_and_dropped():
     assert "t1:proj" not in m._tenant_tracers
     assert "t1:proj" not in m._tenant_providers
     assert "t1:proj" not in m._tracer_provider_keys
+    _wait_for_retirement(m)
     p_old.shutdown.assert_called_once()
     # The still-referenced provider is untouched.
     assert "t2:proj" in m._tenant_providers
@@ -74,6 +87,7 @@ def test_shared_tenant_provider_survives_until_last_tracer():
     m._evict_old_tracers()
     assert m._tenant_tracers == {}
     assert "acme:prod" not in m._tenant_providers
+    _wait_for_retirement(m)
     provider.shutdown.assert_called_once()
 
 
@@ -106,23 +120,13 @@ def test_cache_hit_marks_tracer_as_most_recently_used():
 
 
 def _live_manager(ttl_seconds: int, max_cached_tenants: int = 10) -> TelemetryManager:
-    """Manager with real config + lock, exercising the full
-    ``_get_tracer_for_project`` cache path against stubbed providers."""
-    m = object.__new__(TelemetryManager)
-    m.config = TelemetryConfig(
-        tenant_cache_ttl_seconds=ttl_seconds,
-        max_cached_tenants=max_cached_tenants,
+    """Initialize the real lifecycle before substituting the provider factory."""
+    return TelemetryManager(
+        TelemetryConfig(
+            tenant_cache_ttl_seconds=ttl_seconds,
+            max_cached_tenants=max_cached_tenants,
+        )
     )
-    m._tenant_providers = {}
-    m._tenant_tracers = {}
-    m._tracer_provider_keys = {}
-    m._tracer_created_at = {}
-    m._lock = threading.RLock()
-    m._project_configs = {}
-    m._cache_hits = 0
-    m._cache_misses = 0
-    m._failed_initializations = 0
-    return m
 
 
 def _stub_provider_factory(m: TelemetryManager) -> list:
@@ -162,7 +166,8 @@ def test_entry_older_than_ttl_is_rebuilt(monkeypatch):
     assert len(providers) == 2
     assert second is providers[1].get_tracer.return_value
     assert second is not first
-    # Stale provider was flushed via shutdown() and replaced.
+    # The retired provider drains independently of its replacement.
+    _wait_for_retirement(m)
     providers[0].shutdown.assert_called_once()
     providers[1].shutdown.assert_not_called()
     assert m._tenant_providers == {"acme:cogniverse-acme-search": providers[1]}
@@ -214,4 +219,5 @@ def test_count_cap_still_evicts_with_ttl_active(monkeypatch):
     assert set(m._tenant_tracers) == {"acme:cogniverse-acme-routing"}
     assert set(m._tracer_created_at) == {"acme:cogniverse-acme-routing"}
     assert set(m._tenant_providers) == {"acme:cogniverse-acme-routing"}
+    _wait_for_retirement(m)
     providers[0].shutdown.assert_called_once()

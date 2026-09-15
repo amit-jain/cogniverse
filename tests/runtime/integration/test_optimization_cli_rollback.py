@@ -29,7 +29,7 @@ import pytest
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
 
 @pytest.fixture
@@ -51,15 +51,6 @@ def manager(phoenix_container, tenant_id: str) -> ArtifactManager:
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
 
 
-@pytest.fixture(autouse=True)
-def _backend_url_from_shared_vespa(shared_vespa, monkeypatch):
-    """CLI subprocesses must hit the session Vespa container, never the
-    k3d cluster — integration provisions its own infrastructure."""
-    # BACKEND_URL is host-only; BACKEND_PORT carries the port separately.
-    monkeypatch.setenv("BACKEND_URL", "http://localhost")
-    monkeypatch.setenv("BACKEND_PORT", str(shared_vespa["http_port"]))
-
-
 def _run_cli(
     args: list,
     phoenix_container: dict,
@@ -72,8 +63,6 @@ def _run_cli(
     fixture in tests/conftest.py).
     """
     env = dict(os.environ)
-    env["BACKEND_URL"] = os.environ["BACKEND_URL"]  # set by the
-    # autouse shared-vespa fixture; never the k3d cluster.
     # Point the subprocess at the docker-managed Phoenix from
     # tests/conftest.py (per-pid HTTP / OTLP gRPC ports).
     env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
@@ -213,3 +202,169 @@ class TestRollbackRoundTrip:
         assert second.returncode == 0
         # Active is back to v2.
         assert (await manager.load_prompts("reversible_agent")) == {"system": "V2"}
+
+
+@pytest.mark.asyncio
+async def test_cli_rollback_replaces_active_and_retires_canary_for_every_seed(
+    manager, tenant_id, phoenix_container
+):
+    import asyncio
+
+    agent = "rollback_served_agent"
+    for version in range(1, 4):
+        await manager.save_prompts_versioned(agent, {"summarizer": f"PROMPT_{version}"})
+    await manager.promote_to_canary(agent, 2)
+    await manager.promote_canary_to_active(agent)
+    await manager.promote_to_canary(agent, 3, traffic_pct=50)
+    seeds = [f"request-{index}" for index in range(32)]
+    before = await asyncio.gather(
+        *(manager.load_for_request(agent, request_seed=seed) for seed in seeds)
+    )
+    assert {row["version"] for row in before} == {2, 3}
+
+    result = await asyncio.to_thread(
+        _run_cli,
+        [
+            "--mode",
+            "rollback",
+            "--tenant-id",
+            tenant_id,
+            "--agent",
+            agent,
+            "--prompts-version",
+            "1",
+        ],
+        phoenix_container,
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["restored"] == {"prompts_version": 1}
+    fresh = ArtifactManager(manager._provider, tenant_id)
+    state = await fresh.get_artefact_state(agent)
+    assert state["active"]["version"] == 1
+    assert state["canary"] is None
+    assert [(row["version"], row["reason"]) for row in state["retired"]] == [
+        (2, "rollback"),
+        (3, "rollback"),
+    ]
+    after = await asyncio.gather(
+        *(fresh.load_for_request(agent, request_seed=seed) for seed in seeds)
+    )
+    assert (
+        after
+        == [
+            {
+                "prompts": {"summarizer": "PROMPT_1"},
+                "served_from": "active",
+                "version": 1,
+                "variant_id": "default",
+            }
+        ]
+        * 32
+    )
+    for key, (_, value) in list(manager._request_cache.items()):
+        manager._request_cache[key] = (0.0, value)
+    assert await manager.load_for_request(agent, request_seed=seeds[0]) == after[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_publication", [False, True])
+async def test_rollback_publication_preserves_complete_concurrent_reads(
+    manager, tenant_id, phoenix_container, fail_publication
+):
+    import asyncio
+    import threading
+
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    agent = "rollback_publication_agent"
+    for version in (1, 2):
+        await manager.save_prompts_versioned(agent, {"summarizer": f"PROMPT_{version}"})
+    await manager.promote_to_canary(agent, 2)
+    await manager.promote_canary_to_active(agent)
+    entered, release = threading.Event(), threading.Event()
+
+    def intercept(method, path, body):
+        if method == "POST" and f"artefact_state_{agent}".encode() in body:
+            entered.set()
+            if not release.wait(15):
+                return 503, b'{"detail":"state publication gate timed out"}'
+            if fail_publication:
+                return 503, b'{"detail":"state publication unavailable"}'
+        return None
+
+    with InterceptFaultProxy(phoenix_container["http_endpoint"], intercept) as proxy:
+        cli = asyncio.create_task(
+            asyncio.to_thread(
+                _run_cli,
+                [
+                    "--mode",
+                    "rollback",
+                    "--tenant-id",
+                    tenant_id,
+                    "--agent",
+                    agent,
+                    "--prompts-version",
+                    "1",
+                ],
+                phoenix_container,
+                {"PHOENIX_HTTP_ENDPOINT": proxy.url},
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 10) is True
+            fresh = ArtifactManager(manager._provider, tenant_id)
+            reads = await asyncio.gather(
+                *(
+                    fresh.load_for_request(agent, request_seed=f"blocked-{index}")
+                    for index in range(8)
+                )
+            )
+            # Every concurrent read returns ONE complete artefact: the rollback
+            # writes the target's content before it publishes the identity, and
+            # while the identity blob is being replaced a reader falls back to
+            # the un-versioned dataset, which already holds the target. No read
+            # ever mixes one version's prompts with another's identity.
+            assert (
+                reads
+                == [
+                    {
+                        "prompts": {"summarizer": "PROMPT_1"},
+                        "served_from": "default",
+                        "version": None,
+                        "variant_id": "default",
+                    }
+                ]
+                * 8
+            )
+            assert [
+                (read["prompts"]["summarizer"], read["version"]) for read in reads
+            ] == [("PROMPT_1", None)] * 8
+        finally:
+            release.set()
+            result = await cli
+        assert result.returncode == (1 if fail_publication else 0), result.stderr
+        assert ("Rollback complete:" in result.stderr) is (not fail_publication)
+        reader = ArtifactManager(manager._provider, tenant_id)
+        # A publication the store keeps refusing cannot restore the identity
+        # blob either, so serving falls back to the un-versioned dataset — but
+        # the content there is the pre-rollback version, never a half-applied
+        # mixture, and the CLI exits nonzero instead of claiming completion.
+        assert await reader.load_for_request(agent, request_seed="after") == (
+            {
+                "prompts": {"summarizer": "PROMPT_2"},
+                "served_from": "default",
+                "version": None,
+                "variant_id": "default",
+            }
+            if fail_publication
+            else {
+                "prompts": {"summarizer": "PROMPT_1"},
+                "served_from": "active",
+                "version": 1,
+                "variant_id": "default",
+            }
+        )
+        assert await reader.load_prompts(agent) == {
+            "summarizer": f"PROMPT_{2 if fail_publication else 1}"
+        }

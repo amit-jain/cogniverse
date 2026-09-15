@@ -22,6 +22,7 @@ class FakeStore:
         self.created: dict[str, pd.DataFrame] = {}
         self.create_calls: list[str] = []
         self.append_calls: list[tuple[str, pd.DataFrame]] = []
+        self.delete_calls: list[str] = []
 
     async def replace_dataset(self, name, data, metadata=None):
         return await self.create_dataset(name=name, data=data, metadata=metadata)
@@ -51,6 +52,10 @@ class FakeStore:
             raise KeyError(name)
         self.append_calls.append((name, data))
         self.created[name] = pd.concat([self.created[name], data], ignore_index=True)
+
+    async def delete_dataset(self, name: str) -> None:
+        self.created.pop(name, None)
+        self.delete_calls.append(name)
 
 
 class FakeProvider:
@@ -182,6 +187,20 @@ class TestRollback:
         # Rollback also created a backup snapshot of the just-overwritten v2
         # (so the rollback itself is reversible).
         assert "prompts_version" in out["backup_versions"]
+
+        # And it moved the state machine requests resolve through, so a reader
+        # serves v1 rather than the version the operator removed.
+        state = await mgr.get_artefact_state("agent_a")
+        assert state["active"]["version"] == 1
+        assert state["canary"] is None
+        assert state["retired"] == []
+        assert out["state"] == state
+        assert await mgr.load_for_request("agent_a", request_seed="after") == {
+            "prompts": {"system": "v1"},
+            "served_from": "active",
+            "version": 1,
+            "variant_id": "default",
+        }
 
     async def test_rollback_unknown_version_raises(self, manager_provider):
         mgr, _ = manager_provider
