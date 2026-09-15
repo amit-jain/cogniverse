@@ -1,0 +1,5784 @@
+[
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_00::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_00",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_01::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_01",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_01",
+      "config_value": "{\"key\": 1, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_02::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_02",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_02",
+      "config_value": "{\"key\": 2, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_03::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_03",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_03",
+      "config_value": "{\"key\": 3, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_04::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_04",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_04",
+      "config_value": "{\"key\": 4, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_05::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_05",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_05",
+      "config_value": "{\"key\": 5, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_06::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_06",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_06",
+      "config_value": "{\"key\": 6, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_07::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_07",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_07",
+      "config_value": "{\"key\": 7, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_08::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_08",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_08",
+      "config_value": "{\"key\": 8, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_09::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_09",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_09",
+      "config_value": "{\"key\": 9, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_10::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_10",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_10",
+      "config_value": "{\"key\": 10, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_11::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_11",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_11",
+      "config_value": "{\"key\": 11, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_12::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_12",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_12",
+      "config_value": "{\"key\": 12, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_13::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_13",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_13",
+      "config_value": "{\"key\": 13, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_14::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_14",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_14",
+      "config_value": "{\"key\": 14, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_15::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_15",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_15",
+      "config_value": "{\"key\": 15, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_16::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_16",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_16",
+      "config_value": "{\"key\": 16, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_17::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_17",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_17",
+      "config_value": "{\"key\": 17, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_18::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_18",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_18",
+      "config_value": "{\"key\": 18, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_19::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_19",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_19",
+      "config_value": "{\"key\": 19, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_20::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_20",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_20",
+      "config_value": "{\"key\": 20, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_21::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_21",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_21",
+      "config_value": "{\"key\": 21, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_22::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_22",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_22",
+      "config_value": "{\"key\": 22, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_23::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_23",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_23",
+      "config_value": "{\"key\": 23, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_24::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_24",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_24",
+      "config_value": "{\"key\": 24, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_25::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_25",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_25",
+      "config_value": "{\"key\": 25, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_26::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_26",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_26",
+      "config_value": "{\"key\": 26, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_27::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_27",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_27",
+      "config_value": "{\"key\": 27, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_28::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_28",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_28",
+      "config_value": "{\"key\": 28, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_29::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_29",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_29",
+      "config_value": "{\"key\": 29, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_30::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_30",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_30",
+      "config_value": "{\"key\": 30, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_31::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_31",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_31",
+      "config_value": "{\"key\": 31, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_32::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_32",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_32",
+      "config_value": "{\"key\": 32, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_33::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_33",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_33",
+      "config_value": "{\"key\": 33, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_34::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_34",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_34",
+      "config_value": "{\"key\": 34, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_35::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_35",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_35",
+      "config_value": "{\"key\": 35, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_36::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_36",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_36",
+      "config_value": "{\"key\": 36, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_37::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_37",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_37",
+      "config_value": "{\"key\": 37, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_38::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_38",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_38",
+      "config_value": "{\"key\": 38, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_39::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_39",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_39",
+      "config_value": "{\"key\": 39, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::1",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::2",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::3",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::4",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 4}",
+      "version": 4,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::5",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 5}",
+      "version": 5,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::6",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 6}",
+      "version": 6,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::7",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 7}",
+      "version": 7,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::8",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 8}",
+      "version": 8,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::9",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 9}",
+      "version": 9,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_history:system:runtime:key_40::10",
+    "fields": {
+      "config_id": "export_history:system:runtime:key_40",
+      "tenant_id": "export_history",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_40",
+      "config_value": "{\"key\": 40, \"revision\": 10}",
+      "version": 10,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_foreign:system:runtime:key_00::1",
+    "fields": {
+      "config_id": "export_foreign:system:runtime:key_00",
+      "tenant_id": "export_foreign",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 1}",
+      "version": 1,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_foreign:system:runtime:key_00::2",
+    "fields": {
+      "config_id": "export_foreign:system:runtime:key_00",
+      "tenant_id": "export_foreign",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 2}",
+      "version": 2,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  },
+  {
+    "id": "config_metadata::export_foreign:system:runtime:key_00::3",
+    "fields": {
+      "config_id": "export_foreign:system:runtime:key_00",
+      "tenant_id": "export_foreign",
+      "scope": "system",
+      "service": "runtime",
+      "config_key": "key_00",
+      "config_value": "{\"key\": 0, \"revision\": 3}",
+      "version": 3,
+      "created_at": "2026-09-15T00:00:00+00:00",
+      "updated_at": "2026-09-15T00:00:00+00:00"
+    }
+  }
+]

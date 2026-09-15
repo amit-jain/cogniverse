@@ -8,16 +8,20 @@ concurrent writers can never persist the same version number. These tests
 pin both contracts against a real Vespa instance.
 """
 
+import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 import requests
 
 import cogniverse_vespa.config.config_store as config_store_module
-from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 logger = logging.getLogger(__name__)
@@ -794,3 +798,248 @@ class TestCountVersionRows:
         single_id = f"{tenant}:system:runtime:single"
         assert counts[multi_id] == 3
         assert counts[single_id] == 1
+
+
+@pytest.fixture(scope="module")
+def export_history_corpus(vespa_config_store):
+    """Retained configurations and a foreign tenant with overlapping keys."""
+    from vespa.application import Vespa
+
+    store = vespa_config_store
+    rows = json.loads(
+        (Path(__file__).parents[1] / "fixtures/config_history.json").read_text()
+    )
+    assert len(rows) == 413
+    # The recording carries exactly the fields the production writer stores, so
+    # a renamed or dropped ConfigEntry field makes this corpus go red instead of
+    # quietly exporting a shape nothing writes any more.
+    written_fields = frozenset(
+        ConfigEntry(
+            tenant_id="t",
+            scope=ConfigScope.SYSTEM,
+            service="s",
+            config_key="k",
+            config_value={},
+            version=1,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        ).to_dict()
+    ) | {"config_id"}
+    assert {frozenset(row["fields"]) for row in rows} == {written_fields}
+    responses = []
+    Vespa(url=store.vespa_app.url).feed_iterable(
+        rows,
+        schema=store.schema_name,
+        namespace=store.schema_name,
+        callback=lambda response, doc_id: responses.append(
+            (doc_id, response.status_code)
+        ),
+    )
+    assert sorted(responses) == sorted((row["id"], 200) for row in rows)
+    deadline = time.monotonic() + 30
+    while True:
+        response = store.vespa_app.query(
+            yql="select * from config_metadata where tenant_id contains 'export_history' limit 0"
+        )
+        coverage = response.json["root"].get("coverage", {})
+        if response.json["root"]["fields"]["totalCount"] == 410 and coverage.get(
+            "full"
+        ):
+            break
+        if time.monotonic() >= deadline:
+            pytest.fail(f"Config corpus did not converge: {response.json}")
+        time.sleep(0.1)
+    return store
+
+
+def _export_coordinates(exported):
+    return sorted(
+        (
+            row["tenant_id"],
+            row["scope"],
+            row["service"],
+            row["config_key"],
+            row["version"],
+            row["config_value"]["key"],
+            row["config_value"]["revision"],
+        )
+        for row in exported["configs"]
+    )
+
+
+def _expected_history(tenant="export_history", keys=41, versions=range(1, 11)):
+    return [
+        (tenant, "system", "runtime", f"key_{key:02}", version, key, version)
+        for key in range(keys)
+        for version in versions
+    ]
+
+
+class _VisitProxy:
+    """Forward to owned Vespa, bound pages and interrupt a later response."""
+
+    def __init__(self, upstream, *, failure_status=None, barrier=None):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.parse import parse_qs, urlencode, urlsplit
+
+        self.pages = []
+        self.failures = 0
+        proxy = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                response = requests.post(
+                    upstream + self.path,
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                self.send_response(response.status_code)
+                self.end_headers()
+                self.wfile.write(response.content)
+
+            def do_GET(self):
+                parsed = urlsplit(self.path)
+                params = parse_qs(parsed.query)
+                visiting = parsed.path.startswith("/document/v1/")
+                if visiting:
+                    params["wantedDocumentCount"] = ["20"]
+                if barrier and "continuation" not in params:
+                    barrier.wait(timeout=20)
+                if visiting and "continuation" in params and failure_status:
+                    proxy.failures += 1
+                    self.send_response(failure_status)
+                    self.end_headers()
+                    self.wfile.write(b"visit interrupted")
+                    return
+                response = requests.get(
+                    upstream + parsed.path,
+                    params=urlencode(params, doseq=True),
+                    timeout=30,
+                )
+                if visiting:
+                    proxy.pages.append(response.json())
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(response.content)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        self.store = VespaConfigStore(
+            backend_url="http://127.0.0.1",
+            backend_port=self.server.server_port,
+        )
+        return self
+
+    def __exit__(self, *args):
+        self.store.close()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+@pytest.mark.integration
+class TestCompleteHistoryExport:
+    def test_export_every_retained_version_and_exact_latest(
+        self, export_history_corpus
+    ):
+        store = export_history_corpus
+        exported = store.export_configs("export_history", include_history=True)
+        assert (exported["tenant_id"], exported["include_history"]) == (
+            "export_history",
+            True,
+        )
+        assert (
+            _export_coordinates(json.loads(json.dumps(exported))) == _expected_history()
+        )
+        latest = store.export_configs("export_history")
+        assert _export_coordinates(latest) == _expected_history(versions=[10])
+        assert (latest["tenant_id"], latest["include_history"]) == (
+            "export_history",
+            False,
+        )
+
+    def test_concurrent_exports_keep_exact_tenant_histories(
+        self, export_history_corpus
+    ):
+        store = export_history_corpus
+        barrier = threading.Barrier(2)
+        with _VisitProxy(store.vespa_app.url, barrier=barrier) as proxy:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                exports = list(
+                    executor.map(
+                        lambda tenant: proxy.store.export_configs(
+                            tenant, include_history=True
+                        ),
+                        ["export_history", "export_foreign"],
+                    )
+                )
+        assert _export_coordinates(exports[0]) == _expected_history()
+        assert _export_coordinates(exports[1]) == _expected_history(
+            tenant="export_foreign",
+            keys=1,
+            versions=range(1, 4),
+        )
+
+    @pytest.mark.parametrize("status", [503, 404])
+    def test_later_visit_failure_cannot_return_partial_export(
+        self,
+        export_history_corpus,
+        status,
+    ):
+        store = export_history_corpus
+        with _VisitProxy(store.vespa_app.url, failure_status=status) as proxy:
+            with pytest.raises((RuntimeError, requests.HTTPError)) as caught:
+                proxy.store.export_configs("export_history", include_history=True)
+            assert str(status) in str(caught.value)
+            assert len(proxy.pages) == 1
+            assert proxy.failures == (5 if status == 503 else 1)
+            assert proxy.pages[0]["continuation"] != ""
+        assert (
+            _export_coordinates(
+                store.export_configs("export_history", include_history=True)
+            )
+            == _expected_history()
+        )
+
+    def test_dashboard_download_contains_every_retained_version(
+        self, export_history_corpus
+    ):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_string("""
+import streamlit as st
+from types import SimpleNamespace
+from streamlit.runtime import get_instance
+from cogniverse_dashboard.tabs.config_management import render_import_export_ui
+from cogniverse_vespa.config.config_store import VespaConfigStore
+store = VespaConfigStore(
+    backend_url=st.session_state.endpoint,
+    backend_port=st.session_state.port,
+)
+render_import_export_ui(SimpleNamespace(store=store), "export_history")
+st.session_state.media = get_instance().media_file_mgr._storage
+""")
+        url = export_history_corpus.vespa_app.url
+        app.session_state.endpoint, _, port = url.rpartition(":")
+        app.session_state.port = int(port)
+        app.run(timeout=30)
+        app.checkbox[0].check()
+        app.button[0].click().run(timeout=30)
+        assert [error.message for error in app.exception] == []
+        assert [notice.value for notice in app.error] == []
+        assert [notice.value for notice in app.success] == [
+            "Exported 410 configurations"
+        ]
+        [download] = app.get("download_button")
+        media = app.session_state.media.get_file(download.proto.url.rsplit("/", 1)[-1])
+        assert media.mimetype == "application/json"
+        assert _export_coordinates(json.loads(media.content)) == _expected_history()

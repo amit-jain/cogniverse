@@ -54,8 +54,10 @@ def test_delete_schema_refuses_and_does_not_deploy_on_outage(monkeypatch):
     )
     monkeypatch.setattr(manager, "_get_existing_tenant_schemas", lambda: [])
 
-    deploy_spy = MagicMock()
-    monkeypatch.setattr(manager, "_deploy_package", deploy_spy)
+    # The package is built inside the real deploy, under the deployment lease;
+    # spy on the POST so an outage has to refuse before anything is activated.
+    post_spy = MagicMock()
+    monkeypatch.setattr(manager, "_post_package", post_spy)
 
     # The config-server probe fails mid-delete.
     def _boom(*a, **k):
@@ -67,7 +69,7 @@ def test_delete_schema_refuses_and_does_not_deploy_on_outage(monkeypatch):
         manager.delete_schema("acme", "knowledge_graph")
 
     # The redeploy that would have dropped peer-tenant schemas never ran.
-    deploy_spy.assert_not_called()
+    post_spy.assert_not_called()
 
 
 def test_upload_metadata_schemas_defaults_to_removal_disabled():

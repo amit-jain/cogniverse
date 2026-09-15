@@ -1092,6 +1092,24 @@ class VespaBackend(Backend):
         allow_field_type_change: bool = False,
         allow_schema_removal: bool = False,
     ) -> int:
+        """Activate ``app_package`` while holding the deployment lease.
+
+        A prepare-and-activate replaces the whole application, so this
+        activation must not land between another process reading the live
+        schema set and posting the package it built from it — that package
+        would carry none of these schemas.
+        """
+        with self.schema_manager.deployment_lease():
+            return self._activate_application_package(
+                app_package, allow_field_type_change, allow_schema_removal
+            )
+
+    def _activate_application_package(
+        self,
+        app_package,
+        allow_field_type_change: bool = False,
+        allow_schema_removal: bool = False,
+    ) -> int:
         """
         Deploy an application package to Vespa.
 
