@@ -58,7 +58,11 @@ async def test_wiki_search_route_offloads_blocking_search(monkeypatch):
 
     wm = MagicMock()
     wm.search = _blocking(0.3)
-    monkeypatch.setattr(wiki, "get_wiki_manager_for_tenant", lambda t: wm)
+
+    async def _resolve(tenant_id):
+        return wm
+
+    monkeypatch.setattr(wiki, "get_wiki_manager_for_tenant", _resolve)
     req = wiki.WikiSearchRequest(query="q", tenant_id="acme:acme", top_k=5)
 
     ticks = await _ticks_during(lambda: wiki.search_wiki(req))

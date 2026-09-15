@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.exceptions import BackendDeploymentError
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
@@ -217,8 +218,16 @@ async def test_cold_wiki_factory_shares_one_manager_across_concurrent_threads(
             return_exceptions=True,
         )
     if failure:
-        assert [type(result) for result in results] == [RuntimeError] * 4
+        assert [type(result) for result in results] == [BackendDeploymentError] * 4
+        # One failed build, shared: every waiter received the owner's exception
+        # object, and nothing was cached, so the next call rebuilds.
         assert len({id(result) for result in results}) == 1
+        schema = f"wiki_pages_{env.tenant.replace(':', '_')}"
+        assert str(results[0]) == (
+            f"Backend deployment failed for schema '{schema}': Backend failed to "
+            f"deploy schema '{schema}'. The durable definition is retained for "
+            "late activation."
+        )
         managers = [await asyncio.to_thread(env.factory, env.tenant)]
     else:
         managers = results

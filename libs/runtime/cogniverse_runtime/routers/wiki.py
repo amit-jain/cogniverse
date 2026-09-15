@@ -36,18 +36,23 @@ def set_wiki_manager_factory(factory: Callable[[str], Any]) -> None:
     logger.info("WikiManager factory injected into wiki router")
 
 
-def get_wiki_manager_for_tenant(tenant_id: str):
+async def get_wiki_manager_for_tenant(tenant_id: str):
     """Return the WikiManager for ``tenant_id`` or raise HTTPException 503.
 
     Used by every endpoint to resolve the per-request manager. Centralised
     so a missing factory always produces the same error response.
+
+    The factory deploys the tenant's ``wiki_pages`` schema on its first
+    access — a full Vespa application redeploy plus a convergence wait — so
+    it runs off the event loop; the factory single-flights that build per
+    tenant, so concurrent first requests share one deploy.
     """
     if _wiki_manager_factory is None:
         raise HTTPException(
             status_code=503,
             detail="WikiManager factory not configured. Check runtime startup logs.",
         )
-    return _wiki_manager_factory(tenant_id)
+    return await asyncio.to_thread(_wiki_manager_factory, tenant_id)
 
 
 class WikiSaveRequest(BaseModel):
@@ -67,7 +72,7 @@ class WikiSearchRequest(BaseModel):
 @router.post("/save")
 async def save_wiki(request: WikiSaveRequest) -> Dict[str, Any]:
     """Persist an agent interaction as a wiki page for the request's tenant."""
-    wm = get_wiki_manager_for_tenant(request.tenant_id)
+    wm = await get_wiki_manager_for_tenant(request.tenant_id)
     response_text = str(request.response.get("answer", request.response))
     # The manager's Vespa I/O is synchronous — run it off the event loop so a
     # slow write can't stall every other request (mirrors the graph router).
@@ -89,7 +94,7 @@ async def save_wiki(request: WikiSaveRequest) -> Dict[str, Any]:
 @router.post("/search")
 async def search_wiki(request: WikiSearchRequest) -> Dict[str, Any]:
     """Full-text search over wiki pages for the request's tenant."""
-    wm = get_wiki_manager_for_tenant(request.tenant_id)
+    wm = await get_wiki_manager_for_tenant(request.tenant_id)
     results = await asyncio.to_thread(
         wm.search, query=request.query, top_k=request.top_k
     )
@@ -101,7 +106,7 @@ async def get_wiki_topic(
     slug: str, tenant_id: str = Query(..., description="Tenant identity")
 ) -> Dict[str, Any]:
     """Retrieve a topic page by slug for the given tenant."""
-    wm = get_wiki_manager_for_tenant(tenant_id)
+    wm = await get_wiki_manager_for_tenant(tenant_id)
     topic = await asyncio.to_thread(wm.get_topic, slug)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' not found")
@@ -113,7 +118,7 @@ async def get_wiki_index(
     tenant_id: str = Query(..., description="Tenant identity"),
 ) -> Dict[str, Any]:
     """Return the rendered wiki index for the given tenant."""
-    wm = get_wiki_manager_for_tenant(tenant_id)
+    wm = await get_wiki_manager_for_tenant(tenant_id)
     index_content = await asyncio.to_thread(wm.get_index)
     return {"content": index_content or ""}
 
@@ -123,7 +128,7 @@ async def lint_wiki(
     tenant_id: str = Query(..., description="Tenant identity"),
 ) -> Dict[str, Any]:
     """Run lint checks for the given tenant and return a quality report."""
-    wm = get_wiki_manager_for_tenant(tenant_id)
+    wm = await get_wiki_manager_for_tenant(tenant_id)
     return await asyncio.to_thread(wm.lint)
 
 
@@ -132,7 +137,7 @@ async def delete_wiki_topic(
     slug: str, tenant_id: str = Query(..., description="Tenant identity")
 ) -> Dict[str, Any]:
     """Delete a topic page by slug for the given tenant."""
-    wm = get_wiki_manager_for_tenant(tenant_id)
+    wm = await get_wiki_manager_for_tenant(tenant_id)
     safe = wm._tenant_id.replace(":", "_")
     doc_id = f"wiki_topic_{safe}_{slug}"
     try:
