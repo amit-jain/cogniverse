@@ -43,10 +43,10 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
     GROUNDING_SEARCH_RESERVE_S,
     GROUNDING_SEARCH_TIMEOUT_KEY,
-    GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
     GROUNDING_SEARCHED_DEGRADED,
     AgentDispatcher,
+    AnswerGroundingUnavailable,
     GroundingPlan,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -322,19 +322,20 @@ class TestPausedBackendKeepsTheOutageDistinguishable:
             ["docker", "pause", grounding_vespa["container_name"]], check=True
         )
         try:
-            grounding = await cold._resolve_answer_search_results(
-                DOCUMENT_QUERY, TENANT_DOCUMENTS, None, top_k=10
-            )
+            with pytest.raises(AnswerGroundingUnavailable) as failure:
+                await cold._resolve_answer_search_results(
+                    DOCUMENT_QUERY, TENANT_DOCUMENTS, None, top_k=10
+                )
         finally:
             subprocess.run(
                 ["docker", "unpause", grounding_vespa["container_name"]], check=True
             )
 
-        assert grounding.hits == []
-        assert grounding.state == GROUNDING_SEARCH_UNAVAILABLE
-        assert grounding.nothing_to_search is False, (
-            "an outage must never read as a tenant with nothing to search"
-        )
+        # An outage is an unknown result, never a tenant with nothing to search:
+        # the latter answers, this fails the turn.
+        assert failure.value.tenant_id == TENANT_DOCUMENTS
+        assert failure.value.reason.startswith("profile resolution failed: ")
+        assert failure.value.profiles == ()
 
         recovered = await _dispatcher(config_manager)._grounding_plan(
             DOCUMENT_QUERY, TENANT_DOCUMENTS, {}, None
@@ -740,15 +741,17 @@ class TestGroundingSearchIsBounded:
                 retrieval_vespa, pylate_server, stub
             )
             started = time.perf_counter()
-            grounding = await dispatcher._resolve_answer_search_results(
-                HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
-            )
+            with pytest.raises(AnswerGroundingUnavailable) as failure:
+                await dispatcher._resolve_answer_search_results(
+                    HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+                )
             elapsed = time.perf_counter() - started
         _reset_query_encoder_cache()
 
-        assert grounding.state == GROUNDING_SEARCH_UNAVAILABLE
-        assert grounding.hits == []
-        assert list(grounding.profiles) == FANOUT_PROFILES
+        assert list(failure.value.profiles) == FANOUT_PROFILES
+        assert failure.value.reason == (
+            f"search exceeded its {SHIPPED_GROUNDING_BUDGET_S:.1f}s budget"
+        )
         assert SHIPPED_GROUNDING_BUDGET_S <= elapsed < SHIPPED_GROUNDING_BUDGET_S + 5, (
             f"budget {SHIPPED_GROUNDING_BUDGET_S}s, returned in {elapsed:.2f}s"
         )
@@ -762,21 +765,24 @@ class TestGroundingSearchIsBounded:
                 retrieval_vespa, pylate_server, stub
             )
             started = time.perf_counter()
-            groundings = await asyncio.gather(
+            outcomes = await asyncio.gather(
                 *(
                     dispatcher._resolve_answer_search_results(
                         HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
                     )
                     for _ in range(concurrency)
-                )
+                ),
+                return_exceptions=True,
             )
             elapsed = time.perf_counter() - started
         _reset_query_encoder_cache()
 
-        assert [g.state for g in groundings] == [
-            GROUNDING_SEARCH_UNAVAILABLE
+        assert [type(outcome) for outcome in outcomes] == [
+            AnswerGroundingUnavailable
         ] * concurrency
-        assert [g.hits for g in groundings] == [[]] * concurrency
+        assert [outcome.reason for outcome in outcomes] == [
+            f"search exceeded its {SHIPPED_GROUNDING_BUDGET_S:.1f}s budget"
+        ] * concurrency
         assert SHIPPED_GROUNDING_BUDGET_S <= elapsed < SHIPPED_GROUNDING_BUDGET_S + 5, (
             f"{concurrency} concurrent dispatches took {elapsed:.2f}s against a "
             f"{SHIPPED_GROUNDING_BUDGET_S}s budget"
