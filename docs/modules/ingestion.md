@@ -116,6 +116,12 @@ Required transcription failures stop the pipeline before embedding or feed and
 leave the Redis job failed and eligible for resubmission. A video without an
 audio stream produces an empty transcript successfully.
 
+Each run writes its keyframes, chunks, rendered pages, transcripts and their
+metadata under its own scratch directory beneath the profile output directory,
+and the pipeline removes that directory when the run ends, whether it
+completed, failed or was cancelled. A cancelled run lets the in-flight decoding
+stage settle before releasing the directory.
+
 ### Key Features
 
 - **Strategy Pattern**: Pluggable processors configured via YAML profiles
