@@ -341,7 +341,11 @@ def test_concurrent_telemetry_steps_create_only_their_canonical_projects(
         # Phoenix indexes an accepted export asynchronously; the step already
         # blocked on the exporter, so this only covers the indexing lag.
         deadline = time.monotonic() + 60
-        column = f"attributes.{TENANT_ID_ATTRIBUTE}"
+        # Phoenix nests a dotted attribute key, so "tenant.id" arrives as
+        # {"id": ...} under the "tenant" column. Both halves come from the
+        # production constant so a rename fails here.
+        namespace, leaf = TENANT_ID_ATTRIBUTE.split(".", 1)
+        column = f"attributes.{namespace}"
         frame = client.spans.get_spans_dataframe(project_identifier=project)
         while (
             frame.empty or column not in frame.columns
@@ -349,10 +353,8 @@ def test_concurrent_telemetry_steps_create_only_their_canonical_projects(
             time.sleep(0.5)
             frame = client.spans.get_spans_dataframe(project_identifier=project)
         assert column in frame.columns, sorted(frame.columns)
-        assert frame[["name", f"attributes.{TENANT_ID_ATTRIBUTE}"]].to_dict(
-            "records"
-        ) == [
-            {"name": "provision.probe", f"attributes.{TENANT_ID_ATTRIBUTE}": canonical}
+        assert frame[["name", column]].to_dict("records") == [
+            {"name": "provision.probe", column: {leaf: canonical}}
         ]
 
 
