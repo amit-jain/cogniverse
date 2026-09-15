@@ -379,6 +379,31 @@ def test_phoenix_backup_dumps_the_database_and_mounts_assets_read_only():
         {"name": "stage", "mountPath": "/stage"},
         {"name": "source", "mountPath": "/source", "readOnly": True},
     ]
+    assert dump["container"]["command"] == ["sh", "-c"]
+
+    # The snapshot is a database dump plus the assets, and it only takes the
+    # name the upload step globs once both halves are written.
+    (script,) = dump["container"]["args"]
+    assert "pg_dump --format=custom --no-owner --no-privileges" in script
+    assert 'pg_restore --list "$WORK/database.dump" > "$WORK/database.list"' in script
+    assert 'tar -cf "$WORK/working-assets.tar" -C /source .' in script
+    assert 'mv "$WORK/archive.tar" "/stage/phoenix-$STAMP.tar"' in script
+
+    upload = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "upload"
+    )
+    assert (
+        'mc cp /stage/phoenix-*.tar "dest/$MINIO_BUCKET/phoenix/"'
+        in (upload["container"]["args"][0])
+    )
+
+    # The vespa sibling is untouched: it still tars out of the live pod.
+    vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
+    vespa_dump = next(
+        t for t in vespa["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )
+    assert vespa_dump["container"]["image"] == "alpine/k8s:1.31.2"
+    assert cw["spec"]["concurrencyPolicy"] == "Forbid"
 
 
 def test_phoenix_backup_uses_the_phoenix_claim_when_hoststorage_is_off():
