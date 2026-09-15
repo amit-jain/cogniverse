@@ -391,8 +391,9 @@ def job_commit_boundary(vespa_instance, argo_server, monkeypatch):
         def forward(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             fields = json.loads(body).get("fields", {}) if body else {}
+            # pyvespa feeds a conditional create as a PUT, not a POST.
             if (
-                self.command == "POST"
+                self.command in ("POST", "PUT")
                 and fields.get("service") == "tenant_jobs"
                 and fields.get("tenant_id") == state["failed_tenant"]
             ):
@@ -419,6 +420,7 @@ def job_commit_boundary(vespa_instance, argo_server, monkeypatch):
 
         do_GET = forward
         do_POST = forward
+        do_PUT = forward
         do_DELETE = forward
 
         def log_message(self, *args):
