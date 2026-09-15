@@ -30,13 +30,11 @@ def render_search_summary() -> None:
     from cogniverse_dashboard.app import display_streaming_result
 
     results_data = st.session_state.current_search_results
-    result_descriptions = []
-    for _strategy, items in results_data.get("results", {}).items():
-        for item in items[:5]:
-            result_descriptions.append(
-                f"{item.get('video_id', 'unknown')}: "
-                f"{item.get('description', 'no description')}"
-            )
+    result_descriptions = [
+        f"{item.get('video_id', 'unknown')}: "
+        f"{item.get('description', 'no description')}"
+        for item in results_data.get("results", [])[:5]
+    ]
 
     summary_query = (
         f"Summarize the search results for '{results_data['query']}': "
