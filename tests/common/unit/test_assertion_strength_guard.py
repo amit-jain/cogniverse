@@ -151,27 +151,31 @@ def added_test_files(base: str, repo: Path = REPO_ROOT) -> list[str]:
     return [line for line in listing.splitlines() if line.endswith(".py")]
 
 
+def _assertion_count(sha: str, path: str, repo: Path = REPO_ROOT) -> int:
+    """Count the assertions ``path`` holds at ``sha``."""
+    text = _run_git(["show", f"{sha}:{path}"], repo)
+    return sum(1 for line in text.splitlines() if _ASSERT.match("+" + line))
+
+
 def intra_branch_weakening(
     base: str, repo: Path = REPO_ROOT
 ) -> dict[str, dict[str, object]]:
-    """Return per-commit assertion losses in files the branch itself added.
+    """Return files the branch added that end weaker than the branch made them.
 
-    Keyed ``"<sha> <path>"``. The range diff against ``base`` reports such a
-    file as wholly added, so each commit that touched it is compared against
-    the state that commit inherited instead.
+    Keyed ``"<sha> <path>"`` by the commit that held the peak. The range diff
+    against ``base`` reports such a file as wholly added, so every commit that
+    touched it is counted and the final state must hold at least the peak.
     """
     offenders: dict[str, dict[str, object]] = {}
     for path in added_test_files(base, repo):
         shas = _run_git(
             ["log", "--no-merges", "--format=%H", f"{base}..HEAD", "--", path], repo
         ).split()
-        for sha in shas:
-            parents = _run_git(["rev-list", "--parents", "-n", "1", sha], repo).split()
-            before = parents[1] if len(parents) > 1 else EMPTY_TREE
-            diff = _run_git(["diff", "--unified=0", before, sha, "--", path], repo)
-            for changed, entry in analyze_diff(diff).items():
-                if int(entry["removed"]) > int(entry["added"]):  # type: ignore[arg-type]
-                    offenders[f"{sha} {changed}"] = entry
+        counts = [(sha, _assertion_count(sha, path, repo)) for sha in reversed(shas)]
+        final = _assertion_count("HEAD", path, repo)
+        peak_sha, peak = max(counts, key=lambda item: item[1])
+        if final < peak:
+            offenders[f"{peak_sha} {path}"] = {"peak": peak, "final": final}
     return offenders
 
 
@@ -208,10 +212,11 @@ def test_no_intra_branch_weakening_of_tests_the_branch_added():
     base = os.environ.get("ASSERTION_GUARD_BASE", "HEAD~1")
     offenders = intra_branch_weakening(base)
     assert offenders == {}, (
-        "these commits removed assertions from a test file added earlier in "
-        f"the same branch (base={base}): "
+        "these test files the branch added end with fewer assertions than the "
+        f"branch once gave them (base={base}): "
         + "; ".join(
-            f"{k}: -{f['removed']} +{f['added']}" for k, f in sorted(offenders.items())
+            f"{k}: peak {f['peak']}, final {f['final']}"
+            for k, f in sorted(offenders.items())
         )
     )
 
@@ -222,10 +227,13 @@ def _commit(repo: Path, message: str, path: str) -> str:
     return _run_git(["rev-parse", "HEAD"], repo).strip()
 
 
-def _branch_repo(tmp_path: Path, second_version: str) -> tuple[Path, str]:
+def _branch_repo(
+    tmp_path: Path, second_version: str, *versions: str
+) -> tuple[Path, str]:
     """Build a repo whose branch adds a test file and then rewrites it.
 
-    Returns the repository and the sha of the rewriting commit. This is the
+    Returns the repository and the sha of the commit that added the file.
+    Further ``versions`` are committed after ``second_version``. This is the
     shape the range diff cannot see: at ``main`` the file does not exist, so
     the whole branch reads as one wholly added file.
     """
@@ -245,15 +253,25 @@ def _branch_repo(tmp_path: Path, second_version: str) -> tuple[Path, str]:
         "    assert len(notices) == 1\n"
         "    assert '503' in notices[0]\n"
     )
-    _commit(repo, "Add the test", "tests/foo/test_x.py")
+    added = _commit(repo, "Add the test", "tests/foo/test_x.py")
 
-    target.write_text(second_version)
-    return repo, _commit(repo, "Rewrite the test", "tests/foo/test_x.py")
+    for index, version in enumerate((second_version, *versions)):
+        target.write_text(version)
+        _commit(repo, f"Rewrite the test {index}", "tests/foo/test_x.py")
+    return repo, added
 
 
 _WEAKENED = (
     "def test_notices():\n"
     "    notices = [element.value for element in app.error]\n"
+    "    assert notices == [_EMPTY_WINDOW_NOTICE]\n"
+)
+
+_RESTORED_SHORT = (
+    "def test_notices():\n"
+    "    notices = [element.value for element in app.error]\n"
+    "    assert [m.value for m in app.info] == []\n"
+    "    assert len(notices) == 1\n"
     "    assert notices == [_EMPTY_WINDOW_NOTICE]\n"
 )
 
@@ -270,8 +288,22 @@ _PRESERVED = (
 def test_detector_catches_a_later_commit_stripping_a_branch_added_test(tmp_path):
     repo, sha = _branch_repo(tmp_path, _WEAKENED)
     assert intra_branch_weakening("main", repo) == {
-        f"{sha} tests/foo/test_x.py": {"removed": 3, "added": 1, "weak": []}
+        f"{sha} tests/foo/test_x.py": {"peak": 3, "final": 1}
     }
+
+
+def test_detector_passes_a_stripped_test_the_branch_restores(tmp_path):
+    repo, _ = _branch_repo(tmp_path, _WEAKENED, _PRESERVED)
+    assert intra_branch_weakening("main", repo) == {}
+
+
+def test_detector_catches_a_restore_that_stops_short_of_the_peak(tmp_path):
+    repo, sha = _branch_repo(tmp_path, _PRESERVED, _WEAKENED, _RESTORED_SHORT)
+    offenders = intra_branch_weakening("main", repo)
+    assert list(offenders.values()) == [{"peak": 4, "final": 3}]
+    (key,) = offenders
+    assert key.endswith(" tests/foo/test_x.py")
+    assert key.split(" ")[0] != sha
 
 
 def test_detector_passes_a_rewrite_that_keeps_every_assertion(tmp_path):
