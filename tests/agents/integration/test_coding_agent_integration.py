@@ -510,6 +510,11 @@ class TestCodingAgentWithRealLM:
         )
         assert verify["stderr"] == ""
         assert verify["stdout"].strip() == "5", (
+            f"sandbox run of the generated code printed {verify['stdout']!r}\n"
+            f"code:\n{generated_code}"
+        )
+        assert verify["stderr"] == ""
+        assert verify["stdout"].strip() == "5", (
             f"Expected stdout '5' from add(2,3), got: {verify['stdout']!r}\n"
             f"code:\n{generated_code}"
         )

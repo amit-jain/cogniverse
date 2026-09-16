@@ -157,13 +157,25 @@ class TestSpanEmission:
         assert attrs["openshell.command_first"] == "echo"
         assert attrs["openshell.wall_ms"] >= 0
 
+        # The readiness span carries the budget the lease waited on.
+        wait_attrs = dict(
+            next(s for s in spans if s.name == "sandbox.wait_ready").attributes
+        )
+        assert wait_attrs == {"openshell.wait_timeout_s": 300}
+
         # Parent span has the same exit_code + classification mirrored.
         parent_span = next(s for s in spans if s.name == "sandbox.task_exec")
         parent_attrs = dict(parent_span.attributes)
         assert parent_attrs["openshell.agent_type"] == "search_agent"
         assert parent_attrs["openshell.tenant_id"] == "prodfixagents:telemetry"
         assert parent_attrs["openshell.session_name"] == "sandbox-1"
+        assert parent_attrs["openshell.command_first"] == "echo"
+        assert parent_attrs["openshell.timeout_seconds"] == 10
         assert parent_attrs["openshell.exit_code"] == 0
+
+        # One sandbox per task, created once and destroyed on release.
+        assert (client.create_count, client.wait_count) == (1, 1)
+        assert session.delete_calls == 1
 
     @pytest.mark.asyncio
     async def test_oom_exec_marks_oom_attribute(self, captured_spans):

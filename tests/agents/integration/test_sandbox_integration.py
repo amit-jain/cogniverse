@@ -357,11 +357,25 @@ class TestSandboxManagerIntegration:
         async with manager.task_session(
             "search_agent", "prodfixagents:sandbox"
         ) as session:
+            first_sandbox = session.session_name
             result = await session.exec(
                 ["echo", "sandbox-run-test"], timeout_seconds=30
             )
         assert result == {
             "stdout": "sandbox-run-test\n",
+            "stderr": "",
+            "exit_code": 0,
+        }
+
+        # Every task owns its own sandbox: the released one is gone, and the
+        # next task gets a different container rather than a reused session.
+        async with manager.task_session(
+            "search_agent", "prodfixagents:sandbox"
+        ) as second:
+            assert second.session_name != first_sandbox
+            again = await second.exec(["echo", "second-task"], timeout_seconds=30)
+        assert again == {
+            "stdout": "second-task\n",
             "stderr": "",
             "exit_code": 0,
         }

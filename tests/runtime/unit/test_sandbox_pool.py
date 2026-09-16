@@ -24,13 +24,14 @@ class _FakeSession:
 
 
 class _CountingClient:
-    """Records create_session + wait_ready calls so tests can assert reuse."""
+    """Records create_session + wait_ready calls so tests can assert on them."""
 
     def __init__(self):
         self.create_calls = 0
         self.wait_calls = 0
         self._next = 0
         self.created: list[_FakeSession] = []
+        self.wait_args: list[tuple] = []
 
     def create_session(self) -> _FakeSession:
         self._next += 1
@@ -41,6 +42,7 @@ class _CountingClient:
 
     def wait_ready(self, name: str, timeout_seconds: int = 0):
         self.wait_calls += 1
+        self.wait_args.append((name, timeout_seconds))
 
 
 class TestPoolConfig:
@@ -52,6 +54,435 @@ class TestPoolConfig:
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_SIZE", "3")
         cfg = SandboxPoolConfig.from_environment()
         assert cfg.max_pool_size == 3
+
+
+class TestTaskLeaseContract:
+    """What one lease does to the client, the stats and the session."""
+
+    def test_lease_creates_waits_and_destroys_exactly_once(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=2))
+
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+        with pool.task_session() as session:
+            assert session is client.created[0]
+            assert pool.stats() == {"max_pool_size": 2, "task_sessions": 1}
+            assert client.create_calls == 1
+            assert client.wait_args == [("sandbox-1", 300)]
+            assert session.delete_count == 0
+
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+        assert client.created[0].delete_count == 1
+
+    def test_readiness_budget_is_the_configured_one(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(
+            client, config=SandboxPoolConfig(max_pool_size=1), wait_ready_timeout_s=42
+        )
+
+        with pool.task_session():
+            assert client.wait_args == [("sandbox-1", 42)]
+        assert [s.delete_count for s in client.created] == [1]
+
+    def test_creation_failure_never_waits_and_frees_the_slot(self):
+        client = _CountingClient()
+
+        def boom():
+            raise RuntimeError("gateway refused the create")
+
+        client.create_session = boom
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=1))
+
+        with pytest.raises(RuntimeError, match="gateway refused the create"):
+            with pool.task_session():
+                pytest.fail("session yielded")
+
+        assert client.wait_args == []
+        assert client.created == []
+        assert pool.stats() == {"max_pool_size": 1, "task_sessions": 0}
+
+    def test_every_lease_dials_through_the_gateway_breaker(self):
+        calls: list = []
+
+        class _RecordingBreaker:
+            def call(self, fn, *args, **kwargs):
+                calls.append(fn.__name__)
+                return fn(*args, **kwargs)
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(
+            client,
+            config=SandboxPoolConfig(max_pool_size=2),
+            gateway_breaker=_RecordingBreaker(),
+        )
+
+        with pool.task_session():
+            pass
+        with pool.task_session():
+            pass
+
+        assert calls == ["_do_create_session", "_do_create_session"]
+        assert [s.delete_count for s in client.created] == [1, 1]
+
+
+class TestTaskLeaseSpans:
+    """Lifecycle spans a lease emits, in order, with their attributes."""
+
+    def test_lease_and_release_emit_the_lifecycle_spans(self, monkeypatch):
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(
+            trace, "get_tracer", lambda *_a, **_kw: provider.get_tracer("test")
+        )
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=1))
+        with pool.task_session():
+            pass
+
+        spans = exporter.get_finished_spans()
+        assert [s.name for s in spans] == [
+            "sandbox.create_session",
+            "sandbox.wait_ready",
+            "sandbox.delete",
+        ]
+        wait_span = spans[1]
+        assert dict(wait_span.attributes) == {"openshell.wait_timeout_s": 300}
+
+    def test_a_readiness_failure_still_emits_the_delete_span(self, monkeypatch):
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(
+            trace, "get_tracer", lambda *_a, **_kw: provider.get_tracer("test")
+        )
+
+        client = _CountingClient()
+
+        def fail_ready(name, timeout_seconds):
+            raise TimeoutError("readiness expired")
+
+        client.wait_ready = fail_ready
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=1))
+        with pytest.raises(TimeoutError, match="readiness expired"):
+            with pool.task_session():
+                pytest.fail("session yielded")
+
+        assert [s.name for s in exporter.get_finished_spans()] == [
+            "sandbox.create_session",
+            "sandbox.wait_ready",
+            "sandbox.delete",
+        ]
+        assert [s.delete_count for s in client.created] == [1]
+
+
+class TestCapacityBoundary:
+    """The cap admits exactly ``max_pool_size`` concurrent leases."""
+
+    def test_exactly_the_cap_is_admitted_and_the_next_is_refused(self):
+        from contextlib import ExitStack
+
+        from cogniverse_runtime.sandbox_pool import SandboxCapacityError
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=3))
+
+        with ExitStack() as stack:
+            held = [stack.enter_context(pool.task_session()).id for _ in range(3)]
+            assert held == ["sandbox-1", "sandbox-2", "sandbox-3"]
+            assert pool.stats() == {"max_pool_size": 3, "task_sessions": 3}
+            with pytest.raises(
+                SandboxCapacityError,
+                match="Sandbox task capacity reached: 3 sessions in use",
+            ):
+                with pool.task_session():
+                    pytest.fail("a fourth lease was admitted")
+            # The refusal must not have dialled the gateway.
+            assert client.create_calls == 3
+
+        assert pool.stats() == {"max_pool_size": 3, "task_sessions": 0}
+        assert [s.delete_count for s in client.created] == [1, 1, 1]
+
+    def test_the_env_cap_reaches_the_manager_built_pool(self, monkeypatch):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_SIZE", "2")
+        client = _CountingClient()
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = True
+
+        pool = mgr._get_or_create_pool()
+        assert pool.config.max_pool_size == 2
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+
+
+class TestCloseAllReclaim:
+    """``close_all`` reclaims what it owns and leaves the rest to its owner."""
+
+    def test_a_lease_still_being_created_is_destroyed_by_its_owner(self):
+        """close_all takes only leases that already hold a session. One whose
+        create is still in flight is destroyed on release instead — otherwise
+        its container outlives the client that close_all is about to shut."""
+        import threading
+
+        client = _CountingClient()
+        creating = threading.Event()
+        release = threading.Event()
+        original_create = client.create_session
+
+        def slow_create():
+            creating.set()
+            assert release.wait(30) is True
+            return original_create()
+
+        client.create_session = slow_create
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=2))
+        leased: list = []
+
+        def lease() -> None:
+            with pool.task_session() as session:
+                leased.append(session.id)
+
+        leaser = threading.Thread(target=lease)
+        leaser.start()
+        try:
+            assert creating.wait(5) is True
+            pool.close_all()
+            assert client.created == []
+        finally:
+            release.set()
+        leaser.join(10)
+
+        assert leased == ["sandbox-1"]
+        assert [s.delete_count for s in client.created] == [1]
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+
+    def test_close_all_twice_destroys_each_session_once(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=2))
+
+        with pool.task_session():
+            pool.close_all()
+            pool.close_all()
+            assert [s.delete_count for s in client.created] == [1]
+
+        assert [s.delete_count for s in client.created] == [1]
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+
+
+class TestManagerTaskSessionGuards:
+    """What SandboxManager.task_session refuses before it dials the gateway."""
+
+    @pytest.mark.asyncio
+    async def test_a_blank_tenant_id_is_refused(self):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = True
+
+        with pytest.raises(ValueError):
+            async with mgr.task_session("coding_agent", ""):
+                pytest.fail("session yielded for a blank tenant")
+
+        assert client.create_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_exec_after_the_task_ends_is_refused(self):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = True
+
+        async with mgr.task_session("coding_agent", "prodfixagents:closed") as owned:
+            assert owned.session_name == "sandbox-1"
+        with pytest.raises(RuntimeError, match="Sandbox task session is closed"):
+            await owned.exec(["echo", "hi"], timeout_seconds=5)
+        assert [s.delete_count for s in client.created] == [1]
+
+
+class TestTaskLifecycleFaults:
+    """What a task's own failure, a cancel, or a dead gateway leaves behind."""
+
+    def test_a_raising_task_destroys_its_sandbox_and_keeps_its_error(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=2))
+
+        with pytest.raises(ValueError, match="task blew up") as raised:
+            with pool.task_session() as session:
+                assert session.id == "sandbox-1"
+                raise ValueError("task blew up")
+
+        assert raised.value.args == ("task blew up",)
+        assert [s.delete_count for s in client.created] == [1]
+        assert pool.stats() == {"max_pool_size": 2, "task_sessions": 0}
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_creation_still_destroys_the_sandbox(self):
+        """A cancel that lands while the gateway is still creating the sandbox
+        must wait for the create and then destroy it — dropping the waiter
+        leaves a container the gateway keeps forever."""
+        import asyncio
+        import threading
+
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        creating = threading.Event()
+        release = threading.Event()
+        original_create = client.create_session
+
+        def slow_create():
+            creating.set()
+            assert release.wait(30) is True
+            return original_create()
+
+        client.create_session = slow_create
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = True
+
+        async def run():
+            async with mgr.task_session("coding_agent", "prodfixagents:cancel"):
+                pytest.fail("session yielded after cancellation")
+
+        task = asyncio.create_task(run())
+        assert await asyncio.to_thread(creating.wait, 5) is True
+        task.cancel()
+        await asyncio.sleep(0)
+        assert client.created == []
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert [s.delete_count for s in client.created] == [1]
+        assert mgr._pool.stats() == {"max_pool_size": 8, "task_sessions": 0}
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_gateway_refuses_before_dialling(self):
+        from cogniverse_runtime.sandbox_manager import (
+            SandboxGatewayUnavailableError,
+            SandboxManager,
+        )
+
+        client = _CountingClient()
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = False
+
+        with pytest.raises(
+            SandboxGatewayUnavailableError, match="Sandbox gateway is unavailable"
+        ):
+            async with mgr.task_session("coding_agent", "prodfixagents:down"):
+                pytest.fail("session yielded without a gateway")
+
+        assert client.create_calls == 0
+        assert mgr._pool is None
+
+    @pytest.mark.asyncio
+    async def test_exec_returns_the_sdk_result_fields(self):
+        from openshell.sandbox import ExecResult
+
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = client
+        mgr._available = True
+
+        async with mgr.task_session("coding_agent", "prodfixagents:exec") as owned:
+            client.created[0].exec = lambda command, timeout_seconds: ExecResult(
+                stdout="hello\n", stderr="warn\n", exit_code=3
+            )
+            result = await owned.exec(["echo", "hello"], timeout_seconds=7)
+
+        assert result == {"stdout": "hello\n", "stderr": "warn\n", "exit_code": 3}
+        assert [s.delete_count for s in client.created] == [1]
+
+    def test_manager_close_without_a_pool_still_closes_the_client(self):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        closed: list = []
+
+        class _Client:
+            def close(self):
+                closed.append("client")
+
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = _Client()
+        mgr._available = True
+        assert mgr._pool is None
+
+        mgr.close()
+
+        assert closed == ["client"]
+        assert mgr._client is None
+        assert mgr._available is False
+
+    @pytest.mark.asyncio
+    async def test_reconnect_destroys_a_live_task_sandbox(self, monkeypatch, tmp_path):
+        """A reconnect swaps the client; the sandboxes the old client created
+        keep failing auth, so the stale pool's live task session is destroyed
+        and the next task leases on the fresh client."""
+        import sys
+        from types import SimpleNamespace
+
+        from cogniverse_runtime import sandbox_manager as sm_mod
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        clients: list = []
+
+        def _make_client(endpoint=None, tls=None):
+            client = _CountingClient()
+            client.close = lambda: None
+            clients.append(client)
+            return client
+
+        class _FakeTls:
+            def __init__(self, ca_path=None, cert_path=None, key_path=None):
+                pass
+
+        monkeypatch.setitem(
+            sys.modules,
+            "openshell",
+            SimpleNamespace(SandboxClient=_make_client, TlsConfig=_FakeTls),
+        )
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "gw.invalid:19999")
+        monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(sm_mod, "_probe_gateway_endpoint", lambda ep: None)
+
+        mgr = SandboxManager(policy="optional")
+        assert len(clients) == 1
+        stale_client = clients[0]
+
+        async with mgr.task_session("coding_agent", "prodfixagents:rotate") as owned:
+            assert owned.session_name == "sandbox-1"
+            assert mgr.reconnect() is True
+            assert stale_client.created[0].delete_count == 1
+
+        assert len(clients) == 2
+        async with mgr.task_session("coding_agent", "prodfixagents:rotate") as owned:
+            assert owned.session_name == "sandbox-1"
+        assert [s.delete_count for s in clients[1].created] == [1]
 
 
 class TestCloseAllLocking:
