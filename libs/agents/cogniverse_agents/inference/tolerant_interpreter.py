@@ -12,6 +12,7 @@ failed step and resolves via fallback extraction.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -129,11 +130,14 @@ class TolerantRLM(dspy.RLM):
     thread; an explicitly injected interpreter is honored unchanged.
 
     ``deadline`` bounds a call: the REPL loop stops at the first iteration
-    boundary at or after the deadline and raises :class:`RLMTimeoutError`.
-    dspy.RLM exposes no cancellation hook, so the boundary is the only
-    place the work can be stopped rather than merely abandoned. The
-    deadline is thread-local, so one caller's expiry never truncates
-    another's concurrent call on the same instance.
+    boundary at or after the deadline, and the in-REPL ``llm_query`` /
+    ``llm_query_batched`` tools refuse to issue a model call past it, so a
+    generated program cannot spend the rest of ``max_llm_calls`` after
+    expiry. Both raise :class:`RLMTimeoutError`. dspy.RLM exposes no
+    cancellation hook, so these are the only places the work can be stopped
+    rather than merely abandoned. The deadline is thread-local, so one
+    caller's expiry never truncates another's concurrent call on the same
+    instance.
     """
 
     def __init__(self, *args, **kwargs):
@@ -153,14 +157,37 @@ class TolerantRLM(dspy.RLM):
         finally:
             self._deadline_state.expires_at = previous
 
-    def _execute_iteration(self, *args, **kwargs):
+    def _raise_if_expired(self) -> None:
         expires_at = getattr(self._deadline_state, "expires_at", None)
         if expires_at is not None and time.monotonic() >= expires_at:
             raise RLMTimeoutError(
                 "RLM processing exceeded timeout of "
                 f"{self._deadline_state.timeout_seconds}s"
             )
+
+    def _execute_iteration(self, *args, **kwargs):
+        self._raise_if_expired()
         return super()._execute_iteration(*args, **kwargs)
+
+    async def _aexecute_iteration(self, *args, **kwargs):
+        self._raise_if_expired()
+        return await super()._aexecute_iteration(*args, **kwargs)
+
+    def _make_llm_tools(self, *args, **kwargs) -> dict[str, Callable]:
+        return {
+            name: self._bounded_tool(tool)
+            for name, tool in super()._make_llm_tools(*args, **kwargs).items()
+        }
+
+    def _bounded_tool(self, tool: Callable) -> Callable:
+        """Wrap an in-REPL model tool so it cannot run past the deadline."""
+
+        @functools.wraps(tool)
+        def bounded(*args, **kwargs):
+            self._raise_if_expired()
+            return tool(*args, **kwargs)
+
+        return bounded
 
     @contextmanager
     def _interpreter_context(
