@@ -852,6 +852,19 @@ def _workflow_tenant_tag(data: Dict[str, Any]) -> Optional[str]:
     return label or None
 
 
+def _workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> bool:
+    """Whether the Workflow was submitted for ``tenant_id``.
+
+    The ``cogniverse.ai/tenant`` label is the colon-sanitized (lossy) form, so
+    two tenant ids can share one label value; ownership is decided on the raw
+    ``tenant-id`` argument whenever the Workflow carries it.
+    """
+    workflow_tenant = _workflow_tenant_tag(data)
+    return workflow_tenant is not None and canonical_tenant_id(
+        workflow_tenant
+    ) == canonical_tenant_id(tenant_id)
+
+
 def _assert_workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> None:
     """Raise 404 unless the Workflow was submitted for ``tenant_id``.
 
@@ -860,10 +873,7 @@ def _assert_workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> 
     with no tenant tag at all — answers 404 (not 403) so a caller cannot
     probe another tenant's run names.
     """
-    workflow_tenant = _workflow_tenant_tag(data)
-    if workflow_tenant is None or canonical_tenant_id(
-        workflow_tenant
-    ) != canonical_tenant_id(tenant_id):
+    if not _workflow_belongs_to_tenant(data, tenant_id):
         raise HTTPException(status_code=404, detail="Workflow not found")
 
 
@@ -900,6 +910,175 @@ async def _argo_get_workflow_data(workflow_name: str, tenant_id: str) -> Dict[st
     data = response.json()
     _assert_workflow_belongs_to_tenant(data, tenant_id)
     return data
+
+
+class OptimizeRunSummary(BaseModel):
+    workflow_name: str
+    # ``None`` for a scheduled pipeline run: the CronWorkflow passes a mode per
+    # step, so the Workflow itself carries no single mode.
+    mode: Optional[str]
+    trigger: str
+    phase: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+
+
+class OptimizeRunList(BaseModel):
+    runs: List[OptimizeRunSummary]
+
+
+class ArgoListUnavailableError(RuntimeError):
+    """Argo could not be listed. Reported as 503 — never as an empty list."""
+
+
+# Label Argo's CronWorkflow controller stamps on each Workflow it spawns.
+_CRON_WORKFLOW_LABEL = "workflows.argoproj.io/cron-workflow"
+# Response page size for the run listing.
+_OPTIMIZE_RUNS_DEFAULT_LIMIT = 20
+_OPTIMIZE_RUNS_MAX_LIMIT = 100
+# Ceiling on what a single Argo list may return into runtime memory. Completed
+# Workflows are reaped by ttlStrategy and by each CronWorkflow's history
+# limits, so a namespace holding more than this is already misconfigured.
+_ARGO_LIST_CEILING = 500
+
+
+async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
+    """List namespace Workflows matching ``label_selector``.
+
+    Raises ``ArgoListUnavailableError`` when Argo is unreachable or answers
+    anything but 200, so the caller reports the outage instead of an empty
+    list that reads as "no runs".
+    """
+    settings = get_workflow_settings()
+    try:
+        client = await _shared_argo_client()
+        response = await client.get(
+            f"{settings.api_url}/api/v1/workflows/{settings.namespace}",
+            params={
+                "listOptions.labelSelector": label_selector,
+                "listOptions.limit": _ARGO_LIST_CEILING,
+            },
+            headers=_argo_auth_headers(),
+        )
+    except httpx.HTTPError as exc:
+        raise ArgoListUnavailableError(f"Argo API unreachable: {exc}") from exc
+    if response.status_code != 200:
+        raise ArgoListUnavailableError(
+            f"Argo list failed ({response.status_code}): {response.text[:200]}"
+        )
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise ArgoListUnavailableError(
+            f"Argo list returned a non-JSON body: {response.text[:200]}"
+        ) from exc
+    return [item for item in (body.get("items") or []) if isinstance(item, dict)]
+
+
+def _references_template(node: Any, template_name: str) -> bool:
+    """Whether any ``templateRef``/``workflowTemplateRef`` in ``node`` names
+    ``template_name``. A manual run references it at the spec root; a
+    CronWorkflow-spawned run references it from a step or DAG task."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("templateRef", "workflowTemplateRef"):
+                if isinstance(value, dict) and value.get("name") == template_name:
+                    return True
+            if _references_template(value, template_name):
+                return True
+        return False
+    if isinstance(node, list):
+        return any(_references_template(item, template_name) for item in node)
+    return False
+
+
+def _is_optimization_run(data: Dict[str, Any]) -> bool:
+    """Whether a Workflow runs the optimization WorkflowTemplate.
+
+    Scheduled tenant *jobs* carry a ``tenant-id`` argument too, so the tenant
+    tag alone cannot tell them apart from optimization runs.
+    """
+    template = get_workflow_settings().optimization_template
+    if not template:
+        return False
+    return _references_template(data.get("spec") or {}, template)
+
+
+def _workflow_parameter(data: Dict[str, Any], name: str) -> Optional[str]:
+    """Value of a workflow-level spec argument, or ``None``."""
+    arguments = (data.get("spec") or {}).get("arguments") or {}
+    for param in arguments.get("parameters") or []:
+        if isinstance(param, dict) and param.get("name") == name:
+            return param.get("value")
+    return None
+
+
+def _optimize_run_summary(data: Dict[str, Any]) -> OptimizeRunSummary:
+    metadata = data.get("metadata") or {}
+    labels = metadata.get("labels") or {}
+    status_block = data.get("status") or {}
+    return OptimizeRunSummary(
+        workflow_name=metadata.get("name") or "",
+        mode=labels.get("cogniverse.ai/mode") or _workflow_parameter(data, "mode"),
+        trigger=labels.get("cogniverse.ai/trigger")
+        or ("scheduled" if labels.get(_CRON_WORKFLOW_LABEL) else "unknown"),
+        phase=status_block.get("phase"),
+        started_at=status_block.get("startedAt"),
+        finished_at=status_block.get("finishedAt"),
+    )
+
+
+def _run_sort_key(data: Dict[str, Any]) -> str:
+    """Start time, falling back to creation time for a run Argo has not
+    started yet. Argo emits RFC-3339 UTC, which sorts lexicographically."""
+    status_block = data.get("status") or {}
+    metadata = data.get("metadata") or {}
+    return status_block.get("startedAt") or metadata.get("creationTimestamp") or ""
+
+
+@router.get("/{tenant_id}/optimize/runs", response_model=OptimizeRunList)
+async def list_optimization_runs(
+    tenant_id: str,
+    limit: int = Query(_OPTIMIZE_RUNS_DEFAULT_LIMIT, ge=1, le=_OPTIMIZE_RUNS_MAX_LIMIT),
+):
+    """List a tenant's optimization Workflows, newest first.
+
+    Two selectors, because Argo does not copy a CronWorkflow's labels onto the
+    Workflows it spawns: manual runs carry ``cogniverse.ai/tenant`` from the
+    submit path, scheduled runs are found by the cron-workflow label the
+    controller stamps. Both are then narrowed to this tenant's optimization
+    runs by the raw ``tenant-id`` argument and the optimization
+    WorkflowTemplate reference.
+    """
+    if get_workflow_settings().api_url is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Argo is not configured on this deployment.",
+        )
+    try:
+        listed = await _argo_list_workflows(
+            f"cogniverse.ai/tenant={_sanitize_label_value(tenant_id)}"
+        )
+        listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
+    except ArgoListUnavailableError as exc:
+        logger.error("Argo list failed for tenant %s: %s", tenant_id, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for item in listed:
+        name = (item.get("metadata") or {}).get("name")
+        if not name or name in by_name:
+            continue
+        if not _workflow_belongs_to_tenant(item, tenant_id):
+            continue
+        if not _is_optimization_run(item):
+            continue
+        by_name[name] = item
+
+    ordered = sorted(by_name.values(), key=_run_sort_key, reverse=True)
+    return OptimizeRunList(
+        runs=[_optimize_run_summary(item) for item in ordered[:limit]]
+    )
 
 
 @router.get(

@@ -328,7 +328,10 @@ render_profile_metrics_tab()
 
 **Features (sub-tabs):**
 
-- Overview — quick stats across optimization workflows
+- Overview — quick stats across optimization workflows. The run count, the last-run
+  tile and the Recent Optimization History table read
+  `GET /admin/tenant/{tenant_id}/optimize/runs` for the active tenant; when the
+  runtime cannot list runs the tab shows the reason instead of zero runs
 
 - Search Annotations — annotate search results (thumbs up/down, star rating, relevance score) for optimizer training
 

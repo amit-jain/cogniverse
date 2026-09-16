@@ -46,7 +46,7 @@ def _build_manager_with_fake_client(client) -> SandboxManager:
     """Construct a SandboxManager whose _client is the supplied stub.
 
     Uses policy=DISABLED to short-circuit the boot connect, then sets the
-    client + _available manually so exec_in_sandbox proceeds.
+    client + _available manually so task_session proceeds.
     """
     mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
     mgr._client = client
@@ -54,16 +54,19 @@ def _build_manager_with_fake_client(client) -> SandboxManager:
     return mgr
 
 
+async def _exec_in_task(mgr, agent_type, command, timeout_seconds=60):
+    """Run one command through the manager's task-session API."""
+    async with mgr.task_session(agent_type, "prodfixagents:telemetry") as session:
+        return await session.exec(command, timeout_seconds=timeout_seconds)
+
+
 @pytest.fixture(autouse=True)
-def _disable_pool_for_d4_telemetry_tests(monkeypatch):
-    """These tests assert per-call create/wait/delete spans — that's the
-    un-pooled lifecycle. The session pool reuses sessions across
-    calls so create/wait fire only on first checkout and delete fires on
-    eviction. Disable the pool here so each test sees the original
-    per-call shape; pool-specific tests live in test_sandbox_pool.py.
-    """
-    monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_ENABLED", "false")
+def _reset_breakers():
+    from cogniverse_core.common.utils.circuit_breaker import CircuitBreaker
+
+    CircuitBreaker.reset_registry()
     yield
+    CircuitBreaker.reset_registry()
 
 
 class _FakeSession:
@@ -123,27 +126,29 @@ class TestClassifyExecFailure:
 
 
 class TestSpanEmission:
-    def test_successful_exec_emits_full_lifecycle_spans(self, captured_spans):
+    @pytest.mark.asyncio
+    async def test_successful_exec_emits_full_lifecycle_spans(self, captured_spans):
         session = _FakeSession(exit_code=0, stderr="", stdout="hello")
         client = _FakeClient(session)
         mgr = _build_manager_with_fake_client(client)
 
-        result = mgr.exec_in_sandbox(
-            "search_agent", ["echo", "hello"], timeout_seconds=10
+        result = await _exec_in_task(
+            mgr, "search_agent", ["echo", "hello"], timeout_seconds=10
         )
         assert result == {"stdout": "hello", "stderr": "", "exit_code": 0}
 
         spans = captured_spans.get_finished_spans()
-        names = [s.name for s in spans]
-        # Lifecycle phases all present.
-        assert "sandbox.create_session" in names
-        assert "sandbox.wait_ready" in names
-        assert "sandbox.exec" in names
-        assert "sandbox.delete" in names
-        assert "sandbox.exec_in_sandbox" in names
+        # One create, one readiness wait, one exec under its parent, one delete.
+        assert sorted(s.name for s in spans) == [
+            "sandbox.create_session",
+            "sandbox.delete",
+            "sandbox.exec",
+            "sandbox.task_exec",
+            "sandbox.wait_ready",
+        ]
 
-        # exec span carries exit_code + non-positive wall_ms (skips on
-        # CI where monotonic granularity is coarse, so use >= 0).
+        # exec span carries exit_code + non-negative wall_ms (monotonic
+        # granularity is coarse on CI, so the floor is 0).
         exec_span = next(s for s in spans if s.name == "sandbox.exec")
         attrs = dict(exec_span.attributes)
         assert attrs["openshell.exit_code"] == 0
@@ -152,18 +157,33 @@ class TestSpanEmission:
         assert attrs["openshell.command_first"] == "echo"
         assert attrs["openshell.wall_ms"] >= 0
 
+        # The readiness span carries the budget the lease waited on.
+        wait_attrs = dict(
+            next(s for s in spans if s.name == "sandbox.wait_ready").attributes
+        )
+        assert wait_attrs == {"openshell.wait_timeout_s": 300}
+
         # Parent span has the same exit_code + classification mirrored.
-        parent_span = next(s for s in spans if s.name == "sandbox.exec_in_sandbox")
+        parent_span = next(s for s in spans if s.name == "sandbox.task_exec")
         parent_attrs = dict(parent_span.attributes)
         assert parent_attrs["openshell.agent_type"] == "search_agent"
+        assert parent_attrs["openshell.tenant_id"] == "prodfixagents:telemetry"
+        assert parent_attrs["openshell.session_name"] == "sandbox-1"
+        assert parent_attrs["openshell.command_first"] == "echo"
+        assert parent_attrs["openshell.timeout_seconds"] == 10
         assert parent_attrs["openshell.exit_code"] == 0
 
-    def test_oom_exec_marks_oom_attribute(self, captured_spans):
+        # One sandbox per task, created once and destroyed on release.
+        assert (client.create_count, client.wait_count) == (1, 1)
+        assert session.delete_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_oom_exec_marks_oom_attribute(self, captured_spans):
         session = _FakeSession(exit_code=137, stderr="Killed", stdout="")
         client = _FakeClient(session)
         mgr = _build_manager_with_fake_client(client)
 
-        mgr.exec_in_sandbox("coding_agent", ["python", "memhog.py"])
+        await _exec_in_task(mgr, "coding_agent", ["python", "memhog.py"])
 
         spans = captured_spans.get_finished_spans()
         exec_span = next(s for s in spans if s.name == "sandbox.exec")
@@ -171,21 +191,23 @@ class TestSpanEmission:
         assert attrs["openshell.oom"] is True
         assert attrs["openshell.policy_denied"] is False
 
-    def test_policy_denied_marks_policy_denied_attribute(self, captured_spans):
+    @pytest.mark.asyncio
+    async def test_policy_denied_marks_policy_denied_attribute(self, captured_spans):
         session = _FakeSession(
             exit_code=1, stderr="open('/etc/shadow'): permission denied", stdout=""
         )
         client = _FakeClient(session)
         mgr = _build_manager_with_fake_client(client)
 
-        mgr.exec_in_sandbox("coding_agent", ["cat", "/etc/shadow"])
+        await _exec_in_task(mgr, "coding_agent", ["cat", "/etc/shadow"])
 
         spans = captured_spans.get_finished_spans()
         exec_span = next(s for s in spans if s.name == "sandbox.exec")
         attrs = dict(exec_span.attributes)
         assert attrs["openshell.policy_denied"] is True
 
-    def test_session_deleted_even_on_exec_exception(self, captured_spans):
+    @pytest.mark.asyncio
+    async def test_session_deleted_even_on_exec_exception(self, captured_spans):
         session = _FakeSession()
 
         def raising_exec(*a, **kw):
@@ -195,27 +217,34 @@ class TestSpanEmission:
         client = _FakeClient(session)
         mgr = _build_manager_with_fake_client(client)
 
-        result = mgr.exec_in_sandbox("search_agent", ["x"])
-        # exec_in_sandbox swallows the exception → returns dict with exit -1.
-        assert result["exit_code"] == -1
+        with pytest.raises(RuntimeError, match="simulated exec failure"):
+            await _exec_in_task(mgr, "search_agent", ["x"])
         # Delete still called.
         assert session.delete_calls == 1
         # Span recorded the exception type.
         spans = captured_spans.get_finished_spans()
-        parent = next(s for s in spans if s.name == "sandbox.exec_in_sandbox")
-        assert dict(parent.attributes).get("openshell.error") == "RuntimeError"
+        parent = next(s for s in spans if s.name == "sandbox.task_exec")
+        assert dict(parent.attributes)["openshell.error"] == "RuntimeError"
 
-    def test_no_spans_when_sandbox_unavailable(self, captured_spans):
+    @pytest.mark.asyncio
+    async def test_no_spans_when_sandbox_unavailable(self, captured_spans):
+        from cogniverse_runtime.sandbox_manager import (
+            SandboxGatewayUnavailableError,
+        )
+
         mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
         assert mgr._available is False
-        assert mgr.exec_in_sandbox("x", ["echo"]) is None
-        assert len(captured_spans.get_finished_spans()) == 0
+        with pytest.raises(
+            SandboxGatewayUnavailableError, match="Sandbox gateway is unavailable"
+        ):
+            await _exec_in_task(mgr, "x", ["echo"])
+        assert [s.name for s in captured_spans.get_finished_spans()] == []
 
 
 class TestExecUnderSpan:
-    """The helper shared by the pooled and non-pooled exec paths stamps the
-    exit code + classification on both spans (wall time on the exec span only)
-    and returns the stdout/stderr/exit_code dict."""
+    """The exec helper stamps the exit code + classification on both spans
+    (wall time on the exec span only) and returns the
+    stdout/stderr/exit_code dict."""
 
     def test_stamps_both_spans_and_returns_result(self, captured_spans):
         from cogniverse_runtime.sandbox_manager import _exec_under_span

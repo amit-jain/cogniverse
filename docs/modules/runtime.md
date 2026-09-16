@@ -75,7 +75,7 @@ cogniverse_runtime/
 ├── quality_monitor_cli.py           # Quality-monitor CLI entry
 ├── sandbox_http.py                  # Sandbox HTTP transport layer
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
-├── sandbox_pool.py                  # Pool of warm sandbox instances
+├── sandbox_pool.py                  # Capacity-bounded per-task sandbox leases
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
 ├── startup_wait.py                  # Dependency-readiness command + in-process startup wait
@@ -1205,6 +1205,16 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 **POST /admin/tenants/{tenant_id}/canary/{agent_type}/retire?reason=...** — Drop the current canary back to retired (active untouched). Default `reason="admin_retire"`. Response: same shape as promote.
 
+### Tenant Optimization Runs
+
+**GET /admin/tenant/{tenant_id}/optimize/runs** — List the tenant's optimization Workflows from Argo, newest first. Query param `limit` (1–100, default 20) caps the response. Response: `{runs: [{workflow_name, mode, trigger, phase, started_at, finished_at}, ...]}`.
+
+Two label selectors feed it, because Argo does not copy a CronWorkflow's labels onto the Workflows it spawns: on-demand runs from `POST /admin/tenant/{tenant_id}/optimize` carry `cogniverse.ai/tenant`, and scheduled runs are found by the `workflows.argoproj.io/cron-workflow` label the controller stamps. Both lists are then narrowed to Workflows whose raw `tenant-id` argument is this tenant and whose spec references the optimization `WorkflowTemplate` — scheduled tenant *jobs* carry a `tenant-id` argument too, so the tenant tag alone cannot tell them apart.
+
+`trigger` is `manual` for a dashboard submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
+
+The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
+
 ### Knowledge Endpoints
 
 Direct HTTP routes to the knowledge-system agents (`libs/runtime/cogniverse_runtime/routers/knowledge.py`). Dispatch builds each agent's declared input from the request context (`typed_input_from_context`); these routes additionally accept each agent's native input shape directly so admin tools, audit/compliance UIs, and operator scripts can call them without going through routing. All routes mount under `/admin/tenants/{tenant_id}/knowledge/`. The `tenant_id` path param — and the `tenant_ids` lists on the cross-tenant and federated routes — are canonicalized via `canonical_tenant_id` at route entry, so simple form (`acme`) and colon form (`acme:acme`) resolve to the same mem0 partition and graph namespace.
@@ -2005,7 +2015,7 @@ Resolution order: `COGNIVERSE_SANDBOX_POLICY` env var → `config["sandbox"]["po
 
 ### Sandbox telemetry
 
-Every `exec_in_sandbox` call emits a `sandbox.exec_in_sandbox` OpenTelemetry span with child spans for each lifecycle phase (`sandbox.create_session`, `sandbox.wait_ready`, `sandbox.exec`, `sandbox.delete`). Key span attributes: `openshell.agent_type`, `openshell.exit_code`, `openshell.wall_ms`, `openshell.oom`, `openshell.policy_denied`.
+Taking a task lease emits `sandbox.create_session` and `sandbox.wait_ready` OpenTelemetry spans; releasing it emits `sandbox.delete`. Each `SandboxTaskSession.exec` emits a `sandbox.task_exec` span with a child `sandbox.exec` span. Key span attributes: `openshell.agent_type`, `openshell.tenant_id`, `openshell.session_name`, `openshell.exit_code`, `openshell.wall_ms`, `openshell.oom`, `openshell.policy_denied`.
 
 ### Gateway health probe
 

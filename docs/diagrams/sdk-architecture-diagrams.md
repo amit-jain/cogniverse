@@ -699,7 +699,7 @@ flowchart TB
     subgraph SandboxSubg["<span style='color:#000'>Sandbox</span>"]
         SandboxManager["<span style='color:#000'>SandboxManager<br/>sandbox_manager.py<br/>SandboxPolicy enum</span>"]
         GatewayHealthProbe["<span style='color:#000'>GatewayHealthProbe<br/>openshell_health.py</span>"]
-        SandboxPool["<span style='color:#000'>SandboxPool<br/>sandbox_pool.py</span>"]
+        SandboxPool["<span style='color:#000'>SandboxSessionPool<br/>sandbox_pool.py</span>"]
     end
 
     subgraph OptCLISubg["<span style='color:#000'>Optimizer CLI</span>"]
@@ -1232,7 +1232,7 @@ flowchart TB
     end
 
     subgraph ExecPath["<span style='color:#000'>Execution</span>"]
-        ExecSandbox["<span style='color:#000'>exec_in_sandbox(code)<br/>→ OOM / policy-denied detection</span>"]
+        ExecSandbox["<span style='color:#000'>task_session(...).exec(code)<br/>→ OOM / policy-denied detection</span>"]
         OTelSpan["<span style='color:#000'>OpenTelemetry span per<br/>create_session / exec / delete</span>"]
     end
 

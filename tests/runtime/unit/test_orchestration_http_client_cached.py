@@ -22,6 +22,10 @@ from cogniverse_agents.orchestrator_agent import (
 )
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
+# What a completed orchestration dumps: the dispatcher reads its terminal
+# status out of final_output, and every producer records one there.
+_ORCHESTRATION_OK = {"result": "ok", "final_output": {"status": "success"}}
+
 
 class _StubOrchestrator(RealOrchestratorAgent):
     def __init__(self, **kwargs):
@@ -35,7 +39,7 @@ class _StubOrchestrator(RealOrchestratorAgent):
         pass
 
     async def _process_impl(self, input_data):
-        return SimpleNamespace(model_dump=lambda: {"result": "ok"})
+        return SimpleNamespace(model_dump=lambda: _ORCHESTRATION_OK)
 
 
 def _dispatcher_with_spy_client():
@@ -72,7 +76,7 @@ async def test_policy_client_built_once_and_reused_across_requests():
     dispatcher, spy_client, sandbox = _dispatcher_with_spy_client()
 
     async def ok(self, input_data):
-        return SimpleNamespace(model_dump=lambda: {"result": "ok"})
+        return SimpleNamespace(model_dump=lambda: _ORCHESTRATION_OK)
 
     with contextlib.ExitStack() as stack:
         for p in _patches(ok):

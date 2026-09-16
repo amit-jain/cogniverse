@@ -24,12 +24,10 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import yaml
 from opentelemetry import trace
-
-from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +75,18 @@ async def _run_sandbox_call(function, *args, **kwargs):
 class SandboxTaskSession:
     """Exclusive task execution; cancellation joins the active SDK call."""
 
-    def __init__(self, session, agent_type: str, tenant_id: str):
+    def __init__(
+        self,
+        session,
+        agent_type: str,
+        tenant_id: str,
+        on_exec_error: Optional[Callable[[BaseException], None]] = None,
+    ):
         self._session = session
         self._agent_type = agent_type
         self._tenant_id = tenant_id
         self._closed = False
+        self._on_exec_error = on_exec_error
 
     @property
     def session_name(self) -> str:
@@ -102,11 +107,17 @@ class SandboxTaskSession:
             "openshell.timeout_seconds": timeout_seconds,
         }
         with tracer.start_as_current_span(
-            "sandbox.exec_in_sandbox", attributes=attrs
+            "sandbox.task_exec", attributes=attrs
         ) as parent_span:
-            return _exec_under_span(
-                self._session, command, timeout_seconds, attrs, parent_span, tracer
-            )
+            try:
+                return _exec_under_span(
+                    self._session, command, timeout_seconds, attrs, parent_span, tracer
+                )
+            except Exception as exc:
+                parent_span.set_attribute("openshell.error", type(exc).__name__)
+                if self._on_exec_error is not None:
+                    self._on_exec_error(exc)
+                raise
 
 
 # OOM / policy-denied detection from stderr + exit_code. These
@@ -140,8 +151,7 @@ def _exec_under_span(
 
     Stamps the exit code + failure classification on both the exec span and
     the parent span (wall time only on the exec span), then returns the
-    stdout/stderr/exit_code dict. Shared by the pooled and non-pooled exec
-    paths so the span-emission contract lives in one place.
+    stdout/stderr/exit_code dict.
     """
     with tracer.start_as_current_span(
         "sandbox.exec", attributes=common_attrs
@@ -237,11 +247,11 @@ class SandboxManager:
         self._client = None
         self._available = False
 
-        # pooled sessions. Lazily created on first exec; uses
-        # SandboxPoolConfig.from_environment() so operators can disable or
-        # tune via env vars without code changes. The lock guards the
+        # Task-session pool. Lazily created on the first task; uses
+        # SandboxPoolConfig.from_environment() so operators tune the capacity
+        # cap via env vars without code changes. The lock guards the
         # build-once and drop-on-reconnect transitions — concurrent cold
-        # execs otherwise each build a pool and orphan the losers' live
+        # tasks otherwise each build a pool and orphan the losers' live
         # gateway sessions.
         self._pool: Optional[Any] = None
         self._pool_lock = threading.Lock()
@@ -251,8 +261,9 @@ class SandboxManager:
         self._connect_lock = threading.Lock()
 
         # Gateway circuit breaker: after a few failed dials it trips open and
-        # exec fails fast (CircuitOpenError) instead of every request eating the
-        # 120s wait_ready, so one dead gateway can't stall the worker pool.
+        # a task lease fails fast (CircuitOpenError) instead of every request
+        # eating the readiness budget, so one dead gateway can't stall the
+        # worker pool.
         from cogniverse_core.common.utils.circuit_breaker import (
             BreakerConfig,
             CircuitBreaker,
@@ -412,7 +423,7 @@ class SandboxManager:
         A reconnect (cert rotation, gateway recovery) swaps ``self._client``;
         sessions the pool creates on the old client keep failing auth while
         the health probe reads the new client and reports green. Dropping the
-        pool makes the next exec rebuild it on the fresh client.
+        pool makes the next task rebuild it on the fresh client.
         """
         with self._pool_lock:
             stale, self._pool = self._pool, None
@@ -522,103 +533,20 @@ class SandboxManager:
             await _settle_sandbox_call(acquisition)
             await _run_sandbox_call(lease.__exit__, None, None, None)
             raise
-        owned = SandboxTaskSession(session, agent_type, tenant_id)
+        except Exception as exc:
+            self._maybe_trigger_cert_rotator(exc)
+            raise
+        owned = SandboxTaskSession(
+            session,
+            agent_type,
+            tenant_id,
+            on_exec_error=self._maybe_trigger_cert_rotator,
+        )
         try:
             yield owned
         finally:
             owned._closed = True
             await _run_sandbox_call(lease.__exit__, None, None, None)
-
-    def exec_in_sandbox(
-        self,
-        agent_type: str,
-        command: list[str],
-        timeout_seconds: int = 60,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Execute a command inside a sandbox for the given agent type.
-
-        Uses the OpenShell Python SDK (SandboxClient.create_session + exec).
-        Each lifecycle phase (create_session, wait_ready, exec, delete)
-        emits an OpenTelemetry span so Phoenix correlates sandbox
-        behaviour with the parent agent span. OOM and policy-denied
-        outcomes surface as span attributes derived from stderr/exit_code.
-
-        Returns:
-            Dict with stdout, stderr, exit_code. None if sandbox unavailable.
-        """
-        if not self._available or not self._client:
-            return None
-
-        # go through the pool when enabled. Pool reuses one session
-        # per agent_type across calls, eliminating per-call container churn.
-        pool = self._get_or_create_pool()
-        if pool is not None and pool.config.enabled:
-            return self._exec_pooled(pool, agent_type, command, timeout_seconds)
-
-        tracer = trace.get_tracer(__name__)
-        common_attrs = {
-            "openshell.agent_type": agent_type,
-            "openshell.command_first": command[0] if command else "",
-            "openshell.timeout_seconds": int(timeout_seconds),
-        }
-
-        session = None
-        with tracer.start_as_current_span(
-            "sandbox.exec_in_sandbox", attributes=common_attrs
-        ) as parent_span:
-            try:
-                with tracer.start_as_current_span(
-                    "sandbox.create_session", attributes=common_attrs
-                ):
-                    session = self._gateway_breaker.call(self._client.create_session)
-                    parent_span.set_attribute(
-                        "openshell.session_name",
-                        getattr(getattr(session, "sandbox", None), "name", "")
-                        or getattr(session, "id", ""),
-                    )
-
-                with tracer.start_as_current_span(
-                    "sandbox.wait_ready",
-                    attributes={**common_attrs, "openshell.wait_timeout_s": 120},
-                ):
-                    self._gateway_breaker.call(
-                        self._client.wait_ready,
-                        session.sandbox.name,
-                        timeout_seconds=120,
-                    )
-
-                return _exec_under_span(
-                    session,
-                    command,
-                    timeout_seconds,
-                    common_attrs,
-                    parent_span,
-                    tracer,
-                )
-            except CircuitOpenError:
-                # Gateway is known-bad; fail fast (the breaker already logged
-                # the trip) instead of dialing and eating the 120s wait.
-                logger.warning(
-                    "Sandbox gateway circuit open; failing fast for %s", agent_type
-                )
-                parent_span.set_attribute("openshell.circuit_open", True)
-                return None
-            except Exception as e:
-                logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
-                parent_span.set_attribute("openshell.error", type(e).__name__)
-                parent_span.record_exception(e)
-                self._maybe_trigger_cert_rotator(e)
-                return {"stdout": "", "stderr": str(e), "exit_code": -1}
-            finally:
-                if session:
-                    with tracer.start_as_current_span(
-                        "sandbox.delete", attributes=common_attrs
-                    ):
-                        try:
-                            session.delete()
-                        except Exception as exc:
-                            logger.debug("sandbox.delete failed (non-fatal): %s", exc)
 
     def attach_cert_rotator(self, rotator: Any) -> None:
         """Wire a :class:`CertRotator` into the exec error path.
@@ -670,70 +598,14 @@ class SandboxManager:
             if self._pool is not None:
                 return self._pool
             cfg = SandboxPoolConfig.from_environment()
-            if not cfg.enabled:
-                # Cache a disabled placeholder so we don't rebuild every call.
-                self._pool = SandboxSessionPool(
-                    self._client, config=cfg, gateway_breaker=self._gateway_breaker
-                )
-                return self._pool
             pool = self._pool = SandboxSessionPool(
                 self._client, config=cfg, gateway_breaker=self._gateway_breaker
             )
         logger.info(
-            "Sandbox session pool initialised (max_size=%d, idle_s=%.0f)",
+            "Sandbox session pool initialised (max_size=%d)",
             cfg.max_pool_size,
-            cfg.max_idle_seconds,
         )
         return pool
-
-    def _exec_pooled(
-        self,
-        pool: Any,
-        agent_type: str,
-        command: list,
-        timeout_seconds: int,
-    ) -> Dict[str, Any]:
-        """Run an exec through the session pool with full span emission."""
-        tracer = trace.get_tracer(__name__)
-        common_attrs = {
-            "openshell.agent_type": agent_type,
-            "openshell.command_first": command[0] if command else "",
-            "openshell.timeout_seconds": int(timeout_seconds),
-            "openshell.pooled": True,
-        }
-        with tracer.start_as_current_span(
-            "sandbox.exec_in_sandbox", attributes=common_attrs
-        ) as parent_span:
-
-            def _run(session: Any) -> Dict[str, Any]:
-                parent_span.set_attribute(
-                    "openshell.session_name",
-                    getattr(getattr(session, "sandbox", None), "name", "")
-                    or getattr(session, "id", ""),
-                )
-                return _exec_under_span(
-                    session,
-                    command,
-                    timeout_seconds,
-                    common_attrs,
-                    parent_span,
-                    tracer,
-                )
-
-            try:
-                return pool.with_session(agent_type, _run)
-            except CircuitOpenError:
-                logger.warning(
-                    "Sandbox gateway circuit open; failing fast for %s", agent_type
-                )
-                parent_span.set_attribute("openshell.circuit_open", True)
-                return None
-            except Exception as e:
-                logger.warning(f"Pooled sandbox exec failed for {agent_type}: {e}")
-                parent_span.set_attribute("openshell.error", type(e).__name__)
-                parent_span.record_exception(e)
-                self._maybe_trigger_cert_rotator(e)
-                return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
     def list_sandboxes(self) -> list:
         """List active sandboxes."""
@@ -746,7 +618,7 @@ class SandboxManager:
             return []
 
     def close(self) -> None:
-        """Close the gateway connection and tear down any pooled sessions."""
+        """Close the gateway connection and tear down live task sessions."""
         with self._pool_lock:
             pool, self._pool = self._pool, None
         if pool is not None:
