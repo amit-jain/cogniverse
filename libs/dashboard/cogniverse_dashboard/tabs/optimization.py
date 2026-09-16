@@ -41,6 +41,7 @@ from cogniverse_dashboard.telemetry_gate import (
     classify_telemetry_probe,
     decide_telemetry_gate,
 )
+from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
@@ -236,7 +237,7 @@ def _render_search_annotation_tab():
                 telemetry_manager = get_telemetry_manager()
                 provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-                phoenix_project = f"cogniverse-{tenant_id}"
+                phoenix_project = tenant_project_name(telemetry_manager, tenant_id)
 
                 end_time = datetime.now(timezone.utc)
                 start_time = end_time - timedelta(hours=lookback_hours)
@@ -423,7 +424,9 @@ def _save_search_annotation(
                 label=label,
                 score=float(rating),
                 metadata=annotation_data,
-                project=f"cogniverse-{st.session_state['current_tenant']}",
+                project=tenant_project_name(
+                    telemetry_manager, st.session_state["current_tenant"]
+                ),
             )
 
         run_async_in_streamlit(save_annotation())
@@ -526,7 +529,7 @@ async def _build_golden_dataset_from_phoenix(
     telemetry_manager = get_telemetry_manager()
     provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    phoenix_project = f"cogniverse-{tenant_id}"
+    phoenix_project = tenant_project_name(telemetry_manager, tenant_id)
 
     # Query annotated spans
     end_time = datetime.now(timezone.utc)
@@ -1284,7 +1287,7 @@ def _render_profile_span_analysis(tenant_id: str) -> None:
         # without it get_spans() raises and the whole tab errors out.
         async def fetch_spans():
             return await provider.traces.get_spans(
-                project=f"cogniverse-{tenant_id}",
+                project=tenant_project_name(telemetry_manager, tenant_id),
                 start_time=start_time,
                 end_time=end_time,
             )
@@ -1470,6 +1473,9 @@ def _render_profile_selection_tab():
                         from cogniverse_agents.routing.profile_performance_optimizer import (
                             ProfilePerformanceOptimizer,
                         )
+                        from cogniverse_foundation.telemetry.manager import (
+                            get_telemetry_manager,
+                        )
 
                         st.info(
                             f"Extracting training data from {len(analysis.search_spans)} search spans..."
@@ -1482,7 +1488,9 @@ def _render_profile_selection_tab():
                         async def extract_data():
                             return await optimizer.extract_training_data_from_phoenix(
                                 tenant_id=tenant_id,
-                                project_name=f"cogniverse-{tenant_id}",
+                                project_name=tenant_project_name(
+                                    get_telemetry_manager(), tenant_id
+                                ),
                                 start_time=analysis.start_time,
                                 end_time=analysis.end_time,
                                 min_samples=10,
@@ -1635,13 +1643,14 @@ def _probe_telemetry(tenant_id: str) -> TelemetryProbe:
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     async def _read_one() -> None:
-        provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
         now = datetime.now(timezone.utc)
         await asyncio.wait_for(
             provider.traces.get_spans(
                 start_time=now - timedelta(minutes=1),
                 end_time=now,
-                project=f"cogniverse-{tenant_id}",
+                project=tenant_project_name(telemetry_manager, tenant_id),
                 limit=1,
             ),
             timeout=_TELEMETRY_PROBE_TIMEOUT_S,
@@ -1716,7 +1725,7 @@ def _render_metrics_dashboard_tab():
         def _fetch_spans_cached(_prov, tenant: str, start_iso: str, end_iso: str):
             async def _fetch_spans():
                 return await _prov.traces.get_spans(
-                    project=f"cogniverse-{tenant}",
+                    project=tenant_project_name(telemetry_manager, tenant),
                     start_time=datetime.fromisoformat(start_iso),
                     end_time=datetime.fromisoformat(end_iso),
                 )
@@ -1748,7 +1757,8 @@ def _render_metrics_dashboard_tab():
         # Scope to the tenant's canonical span project — the default project
         # is one no agent writes to, so routing metrics would read zero spans.
         routing_evaluator = RoutingEvaluator(
-            provider=provider, project_name=f"cogniverse-{tenant_id}"
+            provider=provider,
+            project_name=tenant_project_name(telemetry_manager, tenant_id),
         )
 
         # query_routing_spans is async — it must be awaited via
