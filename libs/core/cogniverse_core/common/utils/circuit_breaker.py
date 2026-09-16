@@ -5,7 +5,9 @@ sandbox gateway) is down, dialing it on every request and eating the full
 timeout serially stalls the worker pool. A breaker trips ``OPEN`` after enough
 failures in a rolling window and then fails fast — raising
 :class:`CircuitOpenError` immediately instead of dialing — until a reset window
-elapses, when a single ``HALF_OPEN`` trial probes recovery.
+elapses, when a single ``HALF_OPEN`` trial probes recovery. Only a trial that
+returns closes the breaker; a trial that raises or is cancelled sends it back
+to ``OPEN`` for another reset window.
 
 Composes with :mod:`.retry`: wrap the outermost boundary call in the breaker and
 let ``retry_with_backoff`` sit inside it, so transient blips are retried but a
@@ -150,22 +152,33 @@ class CircuitBreaker:
             self._failures.clear()
             self._half_open_calls = 0
 
-    def _on_failure(self, admission: tuple[int, bool] | None) -> None:
+    def _on_failure(self, admission: tuple[int, bool] | None, counted: bool) -> None:
+        """Record how an admitted call ended without succeeding.
+
+        The recovery trial concludes its own generation: it closes the breaker
+        only by returning, so any other exit — a counted failure, an uncounted
+        one, a cancellation — puts the breaker back to OPEN for another reset
+        window. A counted failure from any other call enters the rolling
+        window whatever generation admitted it: the dependency did fail, and a
+        recovery that raced ahead of the answer does not unmake that.
+        """
         if admission is None:
             return
         with self._lock:
-            if admission[0] != self._generation:
-                return
             now = self._now()
-            if self._state is CircuitState.HALF_OPEN:
-                # Trial failed — back to OPEN.
+            if admission[1] and admission[0] == self._generation:
                 self._trip(now)
+                return
+            if not counted:
                 return
             self._failures.append(now)
             cutoff = now - self.config.window_s
             while self._failures and self._failures[0] < cutoff:
                 self._failures.popleft()
-            if len(self._failures) >= self.config.failure_threshold:
+            if (
+                self._state is not CircuitState.OPEN
+                and len(self._failures) >= self.config.failure_threshold
+            ):
                 self._trip(now)
 
     def _trip(self, now: float) -> None:
@@ -192,8 +205,7 @@ class CircuitBreaker:
         try:
             result = fn(*args, **kwargs)
         except BaseException as exc:
-            if self._counts(exc):
-                self._on_failure(admission)
+            self._on_failure(admission, self._counts(exc))
             raise
         else:
             self._on_success(admission)
@@ -207,8 +219,7 @@ class CircuitBreaker:
         try:
             result = await fn(*args, **kwargs)
         except BaseException as exc:
-            if self._counts(exc):
-                self._on_failure(admission)
+            self._on_failure(admission, self._counts(exc))
             raise
         else:
             self._on_success(admission)
