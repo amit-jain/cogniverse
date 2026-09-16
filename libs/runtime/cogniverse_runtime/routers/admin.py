@@ -1365,10 +1365,46 @@ _PIN_QUOTA_BLOB_KIND = "config"
 _PIN_QUOTA_BLOB_KEY = "pin_quotas"
 
 
-async def _apply_blob_write(tenant_id: str, kind: str, key: str, content: str) -> None:
-    """Durably persist an accepted admin config-blob write."""
+def _merge_accepted_blob_write(base: str, accepted: str, durable: Optional[str]) -> str:
+    """Replay the fields a PUT changed onto the blob as it stands now.
+
+    ``base`` is what the PUT merged onto, ``accepted`` what it answered with;
+    the difference is the set of fields it changed. Everything else comes from
+    ``durable``, so a field another replica persisted between the accept and
+    this apply survives.
+    """
+    if durable is None:
+        return accepted
+    base_fields = json.loads(base)
+    accepted_fields = json.loads(accepted)
+    durable_fields = json.loads(durable)
+    if not all(
+        isinstance(fields, dict)
+        for fields in (base_fields, accepted_fields, durable_fields)
+    ):
+        raise ValueError("admin config blobs are JSON objects")
+    merged = dict(durable_fields)
+    for field, value in accepted_fields.items():
+        if field not in base_fields or base_fields[field] != value:
+            merged[field] = value
+    for field in base_fields:
+        if field not in accepted_fields:
+            merged.pop(field, None)
+    return json.dumps(merged)
+
+
+async def _apply_blob_write(
+    tenant_id: str, kind: str, key: str, content: str, base: str
+) -> None:
+    """Durably persist an accepted admin config-blob write.
+
+    The merge happens here, against a read taken now, rather than against the
+    snapshot the PUT read: between the two, a peer replica's own write-behind
+    persist may have landed, and that value is only visible in the store.
+    """
     am = _build_artifact_manager(tenant_id)
-    await am.save_blob(kind, key, content)
+    durable = await am.load_blob(kind, key)
+    await am.save_blob(kind, key, _merge_accepted_blob_write(base, content, durable))
 
 
 # Write-behind queue for the admin config blobs (pin quotas, signature
@@ -1579,6 +1615,7 @@ async def set_pin_quotas(
             raise
         except Exception as exc:
             raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
+        merge_base = dict(current)
         if body.user is not None:
             current["user"] = body.user
         if body.tenant_admin is not None:
@@ -1589,7 +1626,11 @@ async def set_pin_quotas(
         _pin_quota_overrides[key] = current
         _pin_quota_cache_ts[key] = time.monotonic()
         _blob_write_queue.enqueue(
-            key, _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current)
+            key,
+            _PIN_QUOTA_BLOB_KIND,
+            _PIN_QUOTA_BLOB_KEY,
+            json.dumps(current),
+            base=json.dumps(merge_base),
         )
         logger.info("Accepted pin-quota update for tenant=%s: %s", key, current)
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current, pending_write=True)
@@ -2254,6 +2295,7 @@ async def set_signature_variant(
             raise HTTPException(
                 503, f"signature-variant store unavailable: {exc}"
             ) from exc
+        merge_base = dict(selections)
         selections[agent_type] = body.variant_id
         _signature_variant_overrides[key] = selections
         _signature_variant_cache_ts[key] = time.monotonic()
@@ -2262,6 +2304,7 @@ async def set_signature_variant(
             _SIGNATURE_VARIANT_BLOB_KIND,
             _SIGNATURE_VARIANT_BLOB_KEY,
             json.dumps(selections),
+            base=json.dumps(merge_base),
         )
     logger.info(
         "Tenant=%s now using variant=%r for agent=%s",
