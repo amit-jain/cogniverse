@@ -124,11 +124,12 @@ one source share that source's identity field, and the `document_text_semantic`,
 `code_lateon_mv` and `audio_clap_semantic` profiles resolve results at source
 granularity, so a search returns one hit per source with its matched windows.
 
-Each run writes its keyframes, chunks, rendered pages, transcripts and their
-metadata under its own scratch directory beneath the profile output directory,
-and the pipeline removes that directory when the run ends, whether it
-completed, failed or was cancelled. A cancelled run lets the in-flight decoding
-stage settle before releasing the directory.
+Each run writes its keyframes — extracted or rehydrated from the cache —
+chunks, rendered pages, transcripts and their metadata under its own scratch
+directory beneath the profile output directory, and the pipeline removes that
+directory when the run ends, whether it completed, failed or was cancelled. A
+cancelled run lets the in-flight decoding stage settle before releasing the
+directory, and a directory that survives its release is logged as a warning.
 
 ### Key Features
 

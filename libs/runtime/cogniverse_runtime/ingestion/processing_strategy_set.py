@@ -302,7 +302,9 @@ class ProcessingStrategySet:
                 return {}
             processor = processor_manager.get_processor("keyframe")
             if processor:
-                cached = await pipeline_context.get_cached_keyframes(video_path)
+                cached = await pipeline_context.get_cached_keyframes(
+                    video_path, pipeline_context.profile_output_dir
+                )
                 if cached is not None:
                     pipeline_context.logger.info(
                         f"  ♻️ Keyframes cache hit: {len(cached.get('keyframes', []))} frames"

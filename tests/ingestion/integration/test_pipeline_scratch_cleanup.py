@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 import threading
 from pathlib import Path
 
@@ -139,3 +140,106 @@ async def test_cancelled_job_waits_for_decoder_and_preserves_concurrent_job(
     assert results[1]["status"] == "completed"
     assert list(pipeline.profile_output_dir.rglob("*")) == []
     assert source.exists() is True
+
+
+def keyframe_pipeline(tmp_path, cache_dir):
+    """A frame-profile pipeline sharing one cache tier across runs."""
+    pipeline = VideoIngestionPipeline(
+        tenant_id="prodfixingestion:scratch",
+        schema_name="scratchframes",
+        config=PipelineConfig(
+            generate_embeddings=False,
+            transcribe_audio=False,
+            generate_descriptions=False,
+            extract_keyframes=True,
+        ),
+        app_config={
+            "pipeline_cache": {
+                "enabled": True,
+                "backends": [
+                    {
+                        "backend_type": "structured_filesystem",
+                        "base_path": str(cache_dir),
+                        "serialization_format": "pickle",
+                        "priority": 0,
+                        "enable_ttl": False,
+                        "cleanup_on_startup": False,
+                    }
+                ],
+                "default_ttl": 0,
+                "serialization_format": "pickle",
+            },
+            "backend": {
+                "profiles": {
+                    "scratchframes": {
+                        "strategies": {
+                            "segmentation": {
+                                "class": "FrameSegmentationStrategy",
+                                "params": {"fps": 2.0, "threshold": 0.999},
+                            }
+                        },
+                    }
+                }
+            },
+        },
+    )
+    pipeline.profile_output_dir = tmp_path
+    return pipeline
+
+
+async def test_keyframe_cache_hit_releases_the_frames_it_rehydrates(tmp_path):
+    source = tmp_path / "source.mp4"
+    make_video(source, audio=False)
+    cache_dir = tmp_path / "cache"
+    output = tmp_path / "processing"
+    output.mkdir()
+
+    extracting = keyframe_pipeline(output, cache_dir)
+    first = await extracting.process_video_async_with_strategies(source)
+    assert first["status"] == "completed"
+    extracted = [kf["path"] for kf in first["results"]["keyframes"]["keyframes"]]
+    assert extracted != []
+    assert list(output.rglob("*")) == []
+
+    rehydrating = keyframe_pipeline(output, cache_dir)
+    second = await rehydrating.process_video_async_with_strategies(source)
+    assert second["status"] == "completed"
+    rehydrated = [kf["path"] for kf in second["results"]["keyframes"]["keyframes"]]
+    assert [Path(path).name for path in rehydrated] == [
+        Path(path).name for path in extracted
+    ]
+    assert rehydrated != extracted
+    assert list(output.rglob("*")) == []
+
+
+async def test_scratch_that_cannot_be_released_is_reported(tmp_path, caplog):
+    source = tmp_path / "source.mp4"
+    make_video(source, audio=False)
+    pipeline = scratch_pipeline(tmp_path)
+    held = []
+
+    original = pipeline._release_job_scratch
+
+    def block_then_release(scratch_dir):
+        held.append(scratch_dir)
+        scratch_dir.chmod(0o500)
+        try:
+            original(scratch_dir)
+        finally:
+            scratch_dir.chmod(0o700)
+
+    pipeline._release_job_scratch = block_then_release
+    with caplog.at_level("WARNING", logger=pipeline.logger.name):
+        result = await pipeline.process_video_async_with_strategies(source)
+    assert result["status"] == "completed"
+    assert len(held) == 1
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ] == [
+        f"Job scratch {held[0]} still holds "
+        f"{len(list(held[0].rglob('*')))} path(s) after release"
+    ]
+    original(held[0])
+    assert list(pipeline.profile_output_dir.rglob("*")) == []
