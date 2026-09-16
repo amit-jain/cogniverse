@@ -464,7 +464,7 @@ sequenceDiagram
 - **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
 - **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Code ColBERT** (`code_files` present → `_process_code_segments`): LateOn-Code-edge 48-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
-- **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content. The transcription result also supplies `audio_language` and `audio_duration`, which land in the schema fields of the same names.
+- **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content. The transcription result also supplies `audio_language` and `audio_duration`, which land in the schema fields of the same names. A profile that binds `inference_services.acoustic_embedding` fails the document when that service errors; without a bound service the acoustic vector is absent and the semantic document still feeds.
 
 ---
 

@@ -813,6 +813,34 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             metadata={"num_documents": len(segments), "num_windows": total_documents},
         )
 
+    def _acoustic_embedding(
+        self,
+        audio_generator: Any,
+        audio_path: Path,
+        *,
+        required: bool,
+        label: str,
+    ) -> Any:
+        """The clip's CLAP vector, or ``None`` where nothing serves one.
+
+        A profile that binds the acoustic-embedding service carries that
+        vector as part of every audio document, so a service that errors
+        fails the run instead of indexing the clip without it. With no
+        service bound the vector would come from an in-process model the
+        deployed image does not ship, and the semantic document stands on
+        its own.
+        """
+        if required:
+            return audio_generator.generate_acoustic_embedding(audio_path=audio_path)
+        try:
+            return audio_generator.generate_acoustic_embedding(audio_path=audio_path)
+        except Exception as exc:
+            self.logger.warning(
+                f"Acoustic embedding unavailable for {label}: {exc} — feeding "
+                f"semantic-only audio chunk"
+            )
+            return None
+
     def _process_audio_segments(
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
@@ -832,9 +860,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         clap_model_name = self.profile_config.get(
             "embedding_model", "laion/clap-htsat-unfused"
         )
+        clap_endpoint_url = self.profile_config.get("clap_endpoint_url")
         audio_generator = AudioEmbeddingGenerator(
             clap_model=clap_model_name,
-            clap_endpoint_url=self.profile_config.get("clap_endpoint_url"),
+            clap_endpoint_url=clap_endpoint_url,
         )
 
         transcript_data = video_data.get("transcript", {})
@@ -856,21 +885,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             try:
                 audio_path = Path(audio_info["path"])
 
-                # CLAP acoustic embedding (512-dim float list). Best-effort:
-                # it needs torch+CLAP in-process, which the deployed runtime
-                # image doesn't ship — an unavailable acoustic vector must
-                # not discard the semantic/transcript chunk.
-                try:
-                    acoustic_emb = audio_generator.generate_acoustic_embedding(
-                        audio_path=audio_path
-                    )
-                except Exception as exc:
-                    self.logger.warning(
-                        f"Acoustic embedding unavailable for "
-                        f"{audio_info.get('filename', idx)}: {exc} — feeding "
-                        f"semantic-only audio chunk"
-                    )
-                    acoustic_emb = None
+                acoustic_emb = self._acoustic_embedding(
+                    audio_generator,
+                    audio_path,
+                    required=bool(clap_endpoint_url),
+                    label=str(audio_info.get("filename", idx)),
+                )
 
                 if not transcript_text.strip():
                     raise ValueError(
