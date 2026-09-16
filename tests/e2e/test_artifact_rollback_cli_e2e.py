@@ -9,6 +9,9 @@ Pins:
     itself reversible);
   * ``ArtifactManager.load_for_request`` reflects active-version flips
     without restarting the Python process;
+  * a rollback moves the served artefact state, so every request seed —
+    including the ones a live canary was serving — reads the rolled-back
+    version;
   * Rolling back to the backup snapshot restores the original active
     prompts (rollback-of-rollback contract).
 """
@@ -18,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +32,13 @@ from tests.e2e.conftest import run_async, unique_id
 
 PHOENIX_HTTP = "http://localhost:33006"
 PHOENIX_GRPC = "localhost:33317"
+
+# Traffic share of the canary the served-state test stands up, and the request
+# seeds it reads through. At 50% these 32 seeds split 15 canary / 17 active
+# under the shipped ``_route_to_canary`` hash, so the pre-rollback view has
+# both slots live and the post-rollback view has to move every one of them.
+CANARY_TRAFFIC_PCT = 50
+REQUEST_SEEDS = tuple(f"seed_{index}" for index in range(32))
 
 
 def _make_artifact_manager(tenant_id: str) -> ArtifactManager:
@@ -170,6 +181,100 @@ class TestRollbackCLIRestoresPriorActive:
         assert version_numbers == [1, 2, backup_v], (
             f"expected v1, v2 and the backup {backup_v}; got {version_numbers}"
         )
+
+    def test_rollback_flips_the_served_active_version(self) -> None:
+        """Every request seed serves the rolled-back version afterwards.
+
+        The serving read is ``load_for_request``, which resolves the artefact
+        state — not the un-versioned prompts dataset. The rollback has to move
+        that state: the superseded active and the live canary both retire with
+        the rollback reason, the canary slot is cleared, and the seeds the
+        canary was serving read the rollback target like every other seed.
+        """
+        tenant_id = unique_id("opt_rbs") + ":t1"
+        agent_type = "search_agent"
+        am = _make_artifact_manager(tenant_id)
+
+        async def _setup() -> None:
+            await am.save_prompts_versioned(agent_type, {"system": "v1-text"})
+            await am.save_prompts_versioned(agent_type, {"system": "v2-text"})
+            await am.save_prompts_versioned(agent_type, {"system": "v3-text"})
+            await am.promote_to_canary(agent_type, version=2, traffic_pct=100)
+            await am.promote_canary_to_active(agent_type)
+            await am.promote_to_canary(
+                agent_type, version=3, traffic_pct=CANARY_TRAFFIC_PCT
+            )
+
+        _run(_setup())
+
+        # Derived from the shipped routing hash, not restated: the canary half
+        # of this split is what a rollback that only rewrites the un-versioned
+        # prompts leaves serving v3.
+        expected_before = {
+            seed: {
+                "prompts": {"system": "v3-text"},
+                "served_from": "canary",
+                "version": 3,
+                "variant_id": "default",
+            }
+            if ArtifactManager._route_to_canary(seed, CANARY_TRAFFIC_PCT)
+            else {
+                "prompts": {"system": "v2-text"},
+                "served_from": "active",
+                "version": 2,
+                "variant_id": "default",
+            }
+            for seed in REQUEST_SEEDS
+        }
+        assert {view["served_from"] for view in expected_before.values()} == {
+            "active",
+            "canary",
+        }, "the setup must leave both slots serving, or the canary half proves nothing"
+        before = {
+            seed: _run(am.load_for_request(agent_type, request_seed=seed))
+            for seed in REQUEST_SEEDS
+        }
+        assert before == expected_before
+
+        proc = _invoke_rollback_cli(
+            tenant_id=tenant_id, agent=agent_type, prompts_version=1
+        )
+        assert proc.returncode == 0, (
+            f"rollback CLI failed rc={proc.returncode}\nSTDOUT: {proc.stdout[:500]}\n"
+            f"STDERR: {proc.stderr[:500]}"
+        )
+        result = _parse_cli_json(proc.stdout)
+        assert result["agent_type"] == agent_type
+        assert result["restored"] == {"prompts_version": 1}
+        # v1, v2, v3 exist, so the snapshot of the v2 active content is v4.
+        assert result["backup_versions"] == {"prompts_version": 4}, result
+
+        # The rollback ran in its own process, so it invalidated its own
+        # request cache and not this manager's. Wait out the shipped TTL so the
+        # post-rollback read is a real store read.
+        time.sleep(ArtifactManager._REQUEST_CACHE_TTL_SECONDS + 1.0)
+
+        after = {
+            seed: _run(am.load_for_request(agent_type, request_seed=seed))
+            for seed in REQUEST_SEEDS
+        }
+        assert after == {
+            seed: {
+                "prompts": {"system": "v1-text"},
+                "served_from": "active",
+                "version": 1,
+                "variant_id": "default",
+            }
+            for seed in REQUEST_SEEDS
+        }
+
+        state = _run(am.get_artefact_state(agent_type))
+        assert state["active"]["version"] == 1, state
+        assert state["canary"] is None, state
+        assert [(row["version"], row["reason"]) for row in state["retired"]] == [
+            (2, "rollback"),
+            (3, "rollback"),
+        ], state
 
 
 # ---------------------------------------------------------------------------
