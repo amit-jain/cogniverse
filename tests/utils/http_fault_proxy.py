@@ -98,6 +98,7 @@ class HTTPFaultProxy:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        assert self.thread.is_alive() is False
 
 
 class InterceptFaultProxy:
@@ -182,4 +183,5 @@ class InterceptFaultProxy:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=10)
+        assert self._thread.is_alive() is False
         self._client.close()
