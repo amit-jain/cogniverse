@@ -99,6 +99,12 @@ def _healthy_hit_response():
     )
 
 
+def _missing_response():
+    response = requests.Response()
+    response.status_code = 404
+    return response
+
+
 def _store_with(response):
     return VespaConfigStore(vespa_app=_FakeVespaApp(response))
 
@@ -311,12 +317,39 @@ def test_get_stats_raises_on_soft_timeout():
         store.get_stats()
 
 
-def test_export_configs_history_raises_on_soft_timeout():
+def test_export_configs_history_raises_on_truncated_visit(monkeypatch):
     """export_configs(include_history=True) must not return a partial export a
-    caller would persist as authoritative when the scan is degraded."""
-    store = _store_with(_soft_timeout_response())
-    with pytest.raises(RuntimeError, match="degraded"):
+    caller would persist as authoritative when the traversal stops halfway."""
+    pages = [
+        _FakeVisitResponse(
+            {
+                "documents": [{"id": "id:config::1", "fields": _healthy_fields()}],
+                "continuation": "page-2",
+            }
+        ),
+        requests.HTTPError(response=_missing_response()),
+    ]
+    calls = {"count": 0}
+
+    def visit(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        page = pages[index]
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    monkeypatch.setattr(requests, "get", visit)
+    store = _store_with(_clean_absent_response())
+
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.export_configs("acme:acme", include_history=True)
+
+    assert calls["count"] == 2
+    assert str(exc_info.value) == (
+        "Vespa config visit answered HTTP 404 continuing past page 1 "
+        "(1 documents read); refusing to return a partial traversal"
+    )
 
 
 class _RaisingVespaApp:
@@ -332,7 +365,37 @@ def test_get_stats_raises_on_outage():
         store.get_stats()
 
 
-def test_export_configs_raises_on_outage():
-    store = VespaConfigStore(vespa_app=_RaisingVespaApp())
-    with pytest.raises(ConnectionError):
+def test_export_configs_raises_on_outage(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.ConnectionError("config store unreachable")] * attempts
+    calls = {"count": 0}
+
+    def unreachable(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        raise failures[min(index, len(failures) - 1)]
+
+    monkeypatch.setattr(requests, "get", unreachable)
+    store = VespaConfigStore(vespa_app=_FakeVespaApp(_clean_absent_response()))
+
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.export_configs("acme:acme", include_history=True)
+
+    assert calls["count"] == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
