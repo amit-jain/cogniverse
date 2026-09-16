@@ -46,7 +46,7 @@ def memory_store(shared_vespa):
         == "tensor<float>(d0[768])"
     )
     with InterceptFaultProxy(shared_vespa["base_url"]) as proxy:
-        endpoints = dict(shared_vespa, http_port=proxy.server.server_port)
+        endpoints = dict(shared_vespa, http_port=proxy.port)
         cm = make_config_manager(endpoints)
         managers = []
         for tid in ("stateclear:a", "stateclear:b"):
@@ -59,7 +59,7 @@ def memory_store(shared_vespa):
             mm = Mem0MemoryManager(tid)
             mm.initialize(
                 backend_host="http://127.0.0.1",
-                backend_port=proxy.server.server_port,
+                backend_port=proxy.port,
                 backend_config_port=shared_vespa["config_port"],
                 base_schema_name="agent_memories",
                 llm_model="storage-test-unused",
@@ -293,7 +293,7 @@ async def test_clear_refused_midway_fails_and_retry_removes_every_row(
 def retention_run(memory_store, memory_app, monkeypatch, tmp_path):
     managers, proxy, cm = memory_store
     monkeypatch.setenv("BACKEND_URL", "http://127.0.0.1")
-    monkeypatch.setenv("BACKEND_PORT", str(proxy.server.server_port))
+    monkeypatch.setenv("BACKEND_PORT", str(proxy.port))
     monkeypatch.setattr(tenant_manager, "_config_manager", cm)
     monkeypatch.setattr(tenant_manager, "_backend", managers[0]._resolve_backend())
     monkeypatch.setattr(
