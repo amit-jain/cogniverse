@@ -34,6 +34,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.conftest import RUNTIME, expected_initial_trust, unique_id
+from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
@@ -393,6 +394,75 @@ class TestAuditExplanationAgentSurfacesTrustAndContradictions:
             conflict = contradictions[0]
             assert conflict["subject_key"] == "company.ceo"
             assert sorted(conflict["conflicting_memory_ids"]) == sorted([a, b])
+        finally:
+            mm.clear_agent_memory(tenant_id, "citation_agent")
+            Mem0MemoryManager._instances.clear()
+
+
+# ---------------------------------------------------------------------------
+# 3. citation/trace keeps the serving replica answering while it walks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestCitationTraceServesOtherRequestsWhileItWalks:
+    """The walk runs off the API event loop: liveness keeps answering."""
+
+    def test_the_trace_walks_the_chain_without_holding_the_loop(self) -> None:
+        tenant_id = unique_id("kagent_cl") + ":t1"
+        mm = _build_manager(tenant_id)
+        try:
+            root = _write_with_provenance(
+                mm,
+                kind="external_doc",
+                content="ROOT primary source",
+                derivation_kind=DerivationKind.DIRECT_INGEST,
+                derived_from=[CitationRef.external("citation://loop_root")],
+                subject_key="cl.root",
+            )
+            _wait_for_provenance(mm, root)
+            mid = _write_with_provenance(
+                mm,
+                kind="entity_fact",
+                content="MID extracted from ROOT",
+                derivation_kind=DerivationKind.EXTRACTION,
+                derived_from=[CitationRef.memory(root)],
+                subject_key="cl.mid",
+            )
+            _wait_for_provenance(mm, mid)
+            leaf = _write_with_provenance(
+                mm,
+                kind="entity_fact",
+                content="LEAF synthesised from MID",
+                derivation_kind=DerivationKind.SYNTHESIS,
+                derived_from=[CitationRef.memory(mid)],
+                subject_key="cl.leaf",
+            )
+            _wait_for_provenance(mm, leaf)
+
+            with LoopProbe() as probe:
+                with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+                    resp = client.post(
+                        f"/admin/tenants/{tenant_id}/knowledge/citations/trace",
+                        json={"memory_id": leaf, "max_depth": 10, "max_nodes": 10},
+                    )
+                served = probe.stop()
+
+            assert resp.status_code == 200, resp.text[:300]
+            body = resp.json()
+            # The same chain the walk-to-primary test pins, unweakened.
+            assert body["root_memory_id"] == leaf
+            assert body["truncated"] is False
+            assert [n["memory_id"] for n in body["nodes"]] == [leaf, mid, root]
+            assert [n["depth"] for n in body["nodes"]] == [0, 1, 2]
+            assert [n["derivation_kind"] for n in body["nodes"]] == [
+                "synthesis",
+                "extraction",
+                "direct_ingest",
+            ]
+            assert body["metadata"]["nodes_visited"] == 3, body["metadata"]
+
+            assert_loop_served(served)
         finally:
             mm.clear_agent_memory(tenant_id, "citation_agent")
             Mem0MemoryManager._instances.clear()
