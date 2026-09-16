@@ -1835,17 +1835,19 @@ class TestOrchestratorSemanticRouting:
         patcher.start()
         return agent, patcher
 
-    def test_disabled_semantic_router_yields_nullcontext(self):
+    @pytest.mark.asyncio
+    async def test_disabled_semantic_router_yields_nullcontext(self):
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
         agent, patcher = self._agent_with_config(cfg)
         try:
-            ctx = agent._semantic_router_lm_context("acme:prod")
+            ctx = await agent._semantic_router_lm_context("acme:prod")
             assert isinstance(ctx, nullcontext)
         finally:
             patcher.stop()
 
-    def test_enabled_semantic_router_routes_the_active_lm(self):
+    @pytest.mark.asyncio
+    async def test_enabled_semantic_router_routes_the_active_lm(self):
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = SemanticRouterConfig(
             enabled=True,
@@ -1857,7 +1859,7 @@ class TestOrchestratorSemanticRouting:
         cfg.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
         agent, patcher = self._agent_with_config(cfg)
         try:
-            with agent._semantic_router_lm_context("acme:prod"):
+            with await agent._semantic_router_lm_context("acme:prod"):
                 active = dspy.settings.lm
             assert active.kwargs["api_base"] == "http://envoy:8801/v1"
             assert active.kwargs["extra_headers"] == {
@@ -1867,7 +1869,8 @@ class TestOrchestratorSemanticRouting:
         finally:
             patcher.stop()
 
-    def test_resolution_error_propagates(self):
+    @pytest.mark.asyncio
+    async def test_resolution_error_propagates(self):
         # No silent fallback: a broken config store surfaces rather than
         # quietly leaving the orchestrator on the ambient LM.
         cfg = MagicMock()
@@ -1875,7 +1878,7 @@ class TestOrchestratorSemanticRouting:
         agent, patcher = self._agent_with_config(cfg)
         try:
             with pytest.raises(RuntimeError, match="config store down"):
-                agent._semantic_router_lm_context("acme:prod")
+                await agent._semantic_router_lm_context("acme:prod")
         finally:
             patcher.stop()
 
