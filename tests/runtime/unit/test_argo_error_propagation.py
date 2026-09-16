@@ -10,6 +10,10 @@ firing on the cluster.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import threading
+
 import pytest
 from fastapi import HTTPException
 
@@ -285,14 +289,24 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.calls: list[tuple[str, str]] = []
+            self.submitted: list[dict] = []
+            self.delete_started = asyncio.Event()
+            self.delete_release: asyncio.Event | None = None
+            self.deletes_completed: list[str] = []
 
         async def post(self, url, *args, **kwargs):
             self.calls.append(("POST", url))
+            self.submitted.append(kwargs["json"])
             return await super().post(url, *args, **kwargs)
 
         async def delete(self, url, *args, **kwargs):
             self.calls.append(("DELETE", url))
-            return await super().delete(url, *args, **kwargs)
+            self.delete_started.set()
+            if self.delete_release is not None:
+                await self.delete_release.wait()
+            response = await super().delete(url, *args, **kwargs)
+            self.deletes_completed.append(url)
+            return response
 
     @staticmethod
     def _config_manager(monkeypatch, *, write_error=None):
@@ -338,10 +352,15 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
             ("POST", "http://argo.test/api/v1/cron-workflows/argo"),
             ("DELETE", f"http://argo.test/api/v1/cron-workflows/argo/{name}"),
         ]
+        # The name deleted is the name submitted, read off the manifest that
+        # went to Argo rather than re-derived from the same helper the route
+        # used.
+        assert client.submitted[0]["cronWorkflow"]["metadata"]["name"] == name
+        assert client.submitted[0]["cronWorkflow"]["metadata"]["namespace"] == "argo"
 
     @pytest.mark.asyncio
     async def test_a_compensating_delete_that_also_fails_surfaces_its_own_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Argo refusing the cleanup is reported, not swallowed.
 
@@ -354,6 +373,7 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
         self._config_manager(
             monkeypatch, write_error=ConnectionError("config store unreachable")
         )
+        caplog.set_level(logging.ERROR, logger=tenant_router.logger.name)
 
         with pytest.raises(HTTPException) as failure:
             await tenant_router.create_job("acme:production", self._body())
@@ -361,6 +381,76 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
         assert failure.value.status_code == 503
         assert failure.value.detail.startswith("Argo rejected CronWorkflow delete for ")
         assert [call[0] for call in client.calls] == ["POST", "DELETE"]
+        name = client.submitted[0]["cronWorkflow"]["metadata"]["name"]
+        orphan_records = [
+            record
+            for record in caplog.records
+            if "the schedule is still firing" in record.getMessage()
+        ]
+        assert [record.getMessage() for record in orphan_records] == [
+            f"Job {name.rsplit('-', 1)[-1]} for tenant acme:production failed to "
+            "commit (ConnectionError('config store unreachable')) and its "
+            f"CronWorkflow {name} in namespace argo could not be removed "
+            "(HTTPException(status_code=503, detail='Argo rejected CronWorkflow "
+            f"delete for {name}: HTTP 500 rejected by argo')): "
+            "the schedule is still firing"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_create_still_removes_the_submitted_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A client that disconnects mid-create must not leave the schedule.
+
+        The compensating delete runs inside the handler's own cancellation, so
+        it is shielded and driven to completion: a second cancellation arriving
+        while the DELETE is in flight would otherwise abandon it and leave the
+        CronWorkflow firing with no row describing it.
+        """
+        _set_argo_endpoint(monkeypatch)
+        client = self._RecordingClient(post_status=201, delete_status=200)
+        _patch_httpx(monkeypatch, client)
+        client.delete_release = asyncio.Event()
+
+        loop = asyncio.get_running_loop()
+        write_started = asyncio.Event()
+        write_release = threading.Event()
+        writes: list[dict] = []
+
+        def _set_config_value(**kwargs):
+            writes.append(kwargs)
+            loop.call_soon_threadsafe(write_started.set)
+            assert write_release.wait(10) is True
+
+        from unittest.mock import MagicMock
+
+        cm = MagicMock()
+        cm.set_config_value.side_effect = _set_config_value
+        monkeypatch.setattr(tenant_router, "_config_manager", cm)
+
+        task = asyncio.create_task(
+            tenant_router.create_job("acme:production", self._body())
+        )
+        await asyncio.wait_for(write_started.wait(), 10)
+        # First delivery: lands on the config write, entering the compensation.
+        task.cancel()
+        write_release.set()
+        await asyncio.wait_for(client.delete_started.wait(), 10)
+        # Second delivery, with the compensating DELETE in flight.
+        task.cancel()
+        await asyncio.sleep(0)
+        client.delete_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        job_id = writes[0]["config_key"].removeprefix("job_")
+        name = tenant_router._cron_workflow_name("acme:production", job_id)
+        deleted = f"http://argo.test/api/v1/cron-workflows/argo/{name}"
+        assert client.calls == [
+            ("POST", "http://argo.test/api/v1/cron-workflows/argo"),
+            ("DELETE", deleted),
+        ]
+        assert client.deletes_completed == [deleted]
 
     @pytest.mark.asyncio
     async def test_a_successful_create_deletes_nothing(
