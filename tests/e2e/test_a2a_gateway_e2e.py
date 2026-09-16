@@ -15,7 +15,6 @@ Requires live k3d-deployed runtime at http://localhost:33000.
 
 import hashlib
 import json
-import uuid
 
 import httpx
 import pytest
@@ -1503,6 +1502,7 @@ class TestOrchestrationOutcomeIsTheRecordedOne:
     def test_a_run_with_no_answer_is_terminal_on_dispatch_and_on_a2a(self):
         org_id = unique_id("orch_none")
         tenant_id = f"{org_id}:t1"
+        run = org_id.rsplit("_", 1)[1]
         register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
 
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -1532,13 +1532,13 @@ class TestOrchestrationOutcomeIsTheRecordedOne:
         events = _a2a_final_events(
             {
                 "jsonrpc": "2.0",
-                "id": f"orch-none-{uuid.uuid4().hex[:8]}",
+                "id": f"orch-none-{run}",
                 "method": "message/send",
                 "params": {
                     "message": {
                         "role": "user",
                         "parts": [{"kind": "text", "text": "orchestrate nothing"}],
-                        "messageId": uuid.uuid4().hex,
+                        "messageId": f"orch-none-message-{run}",
                     },
                     "configuration": {"acceptedOutputModes": ["text"]},
                     "metadata": {
