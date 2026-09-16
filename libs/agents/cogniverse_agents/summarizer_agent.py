@@ -27,7 +27,9 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
-from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+from cogniverse_foundation.config.semantic_router import (
+    routed_lm_context_for_async,
+)
 from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
@@ -335,12 +337,13 @@ class SummarizerAgent(
         attachment_failures: List[str] = []
         image_state: Dict[str, int] = {"keyframes_attached": 0, "keyframes_shed": 0}
 
-        with routed_lm_context_for(
+        routed_lm = await routed_lm_context_for_async(
             self._config_manager,
             getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID,
             "summarizer_agent",
             endpoint=self._llm_config,
-        ):
+        )
+        with routed_lm:
             try:
                 if self.thinking_enabled:
                     self.emit_progress("thinking", "Analyzing content...")

@@ -1098,7 +1098,7 @@ class OrchestratorAgent(
         tenant_token = _request_tenant_id.set(tenant_id)
         try:
             async with sem:
-                with self._semantic_router_lm_context(tenant_id):
+                with await self._semantic_router_lm_context(tenant_id):
                     return await self._process_impl_locked(
                         input,
                         workflow_id,
@@ -1121,7 +1121,7 @@ class OrchestratorAgent(
         finally:
             _request_tenant_id.reset(tenant_token)
 
-    def _semantic_router_lm_context(self, tenant_id: str):
+    async def _semantic_router_lm_context(self, tenant_id: str):
         """Per-request LM routing for the orchestrator's DSPy calls.
 
         The orchestrator serves every tenant from one instance and relies on
@@ -1137,10 +1137,10 @@ class OrchestratorAgent(
         ``nullcontext`` — the global LM path, byte-for-byte unchanged.
         """
         from cogniverse_foundation.config.semantic_router import (
-            routed_lm_context_for,
+            routed_lm_context_for_async,
         )
 
-        return routed_lm_context_for(
+        return await routed_lm_context_for_async(
             self._config_manager, tenant_id, "orchestrator_agent"
         )
 

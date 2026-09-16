@@ -28,7 +28,9 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+from cogniverse_foundation.config.semantic_router import (
+    routed_lm_context_for_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +201,10 @@ class DeepResearchAgent(
         # the REQUEST tenant's LM — semantic-routed when enabled, ambient
         # otherwise. Without this wrap the whole research run silently used
         # the process-global default LM regardless of tenant configuration.
-        with routed_lm_context_for(
+        routed_lm = await routed_lm_context_for_async(
             self._config_manager, input.tenant_id, "deep_research_agent"
-        ):
+        )
+        with routed_lm:
             return await self._research(input)
 
     async def _research(self, input: DeepResearchInput) -> DeepResearchOutput:

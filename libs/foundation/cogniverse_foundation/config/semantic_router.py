@@ -318,3 +318,27 @@ def routed_lm_context_for(
     return dspy.context(
         lm=create_routed_lm(ep, router, tenant_id, tier, call_site=agent_name)
     )
+
+
+async def routed_lm_context_for_async(
+    config_manager: object,
+    tenant_id: str,
+    agent_name: str,
+    endpoint: Optional[LLMEndpointConfig] = None,
+):
+    """Build :func:`routed_lm_context_for`'s context off the event loop.
+
+    The entry point for every coroutine: resolving the router config and the
+    tenant's tier is a TTL-expiring config-store read — a backend GET with
+    retries and backoff — which stalls the whole loop when it runs inline on a
+    serving task.
+
+    The returned context manager is **unentered**. ``dspy.context`` binds
+    through a ContextVar at ``__enter__``, so the caller enters it on its own
+    request task and the bind stays that request's.
+    """
+    import asyncio
+
+    return await asyncio.to_thread(
+        routed_lm_context_for, config_manager, tenant_id, agent_name, endpoint
+    )
