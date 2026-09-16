@@ -2364,16 +2364,21 @@ with main_tabs[9]:
                         content_type=uploaded_video.type or "application/octet-stream",
                         profile=profile,
                         tenant_id=tenant_id,
+                        on_state=lambda state, profile=profile: progress_bar.progress(
+                            0, text=f"Ingesting {profile}: {state}"
+                        ),
                     )
                     progress_bar.empty()
                     processing_results.append(result)
-                    if result["status"] == "success":
+                    if result["status"] != "success":
+                        st.error(f"❌ {profile}: {result['message']}")
+                    elif result["deduplicated"]:
+                        st.success(f"✅ {profile}: {result['message']}")
+                    else:
                         st.success(
                             f"✅ {profile}: fed {result['documents_fed']} documents "
                             f"as {result['video_id']}"
                         )
-                    else:
-                        st.error(f"❌ {profile}: {result['message']}")
 
                 st.session_state.processing_results = processing_results
 
@@ -2406,9 +2411,17 @@ with main_tabs[9]:
                         "Profile": result["profile"],
                         "Outcome": result["status"],
                         "Ingest ID": result.get("ingest_id", "—"),
-                        "Video ID": result.get("video_id", "—"),
-                        "Documents fed": result.get("documents_fed", 0),
-                        "Chunks": result.get("chunks_created", 0),
+                        "Video ID": result.get("video_id") or "—",
+                        "Documents fed": (
+                            "—"
+                            if result.get("documents_fed") is None
+                            else result["documents_fed"]
+                        ),
+                        "Chunks": (
+                            "—"
+                            if result.get("chunks_created") is None
+                            else result["chunks_created"]
+                        ),
                         "Detail": result.get("message", ""),
                     }
                     for result in st.session_state.processing_results
