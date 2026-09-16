@@ -232,22 +232,23 @@ def graph_manager_live(shared_vespa, pylate_server):
     else:
         pytest.fail(f"schema {schema_name} not ready within 120s")
 
-    backend = BackendRegistry.get_instance().get_ingestion_backend(
-        name="vespa",
-        tenant_id=TENANT_ID,
-        config={
-            "backend": {
-                "url": f"http://{VESPA_HOST}",
-                "config_port": vespa_config_port,
-                "port": vespa_port,
-            }
-        },
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
+    def resolve_backend():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id=TENANT_ID,
+            config={
+                "backend": {
+                    "url": f"http://{VESPA_HOST}",
+                    "config_port": vespa_config_port,
+                    "port": vespa_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
     manager = GraphManager(
-        backend_resolver=lambda: backend,
+        backend_resolver=resolve_backend,
         tenant_id=TENANT_ID,
         schema_name=schema_name,
         colbert_endpoint_url=pylate_server,
