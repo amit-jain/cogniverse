@@ -340,6 +340,7 @@ async def test_rollback_publication_preserves_complete_concurrent_reads(
             assert [
                 (read["prompts"]["summarizer"], read["version"]) for read in reads
             ] == [("PROMPT_2", 2)] * 8
+            assert {read["served_from"] for read in reads} == {"active"}
         finally:
             release.set()
             result = await cli
@@ -365,6 +366,9 @@ async def test_rollback_publication_preserves_complete_concurrent_reads(
                 "variant_id": "default",
             }
         )
+        state = await reader.get_artefact_state(agent)
+        assert state["canary"] is None
+        assert state["active"]["version"] == (2 if fail_publication else 1)
         assert await reader.load_prompts(agent) == {
             "summarizer": f"PROMPT_{2 if fail_publication else 1}"
         }

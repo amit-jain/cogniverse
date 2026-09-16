@@ -41,6 +41,7 @@ EXPECTED_WORKFLOW_CONTAINERS = frozenset(
         "cogniverse-job-runner/run-job",
         "cogniverse-monthly-reports/generate-reports",
         "cogniverse-monthly-reports/upload-reports",
+        "cogniverse-optimization-runner/check-profile-ground-truth",
         "cogniverse-optimization-runner/run-optimizer",
         "cogniverse-scheduled-distillation/scheduled-distillation",
         "cogniverse-synthetic-generation/generate-synthetic",

@@ -728,11 +728,38 @@ class OptimizeRunStatus(BaseModel):
     started_at: Optional[str]
     finished_at: Optional[str]
     message: Optional[str]
+    # Per-step phase, so a step Argo omitted (its ``when`` did not fire, e.g.
+    # the profile step for a tenant with no uploaded ground truth) reads as
+    # Skipped rather than disappearing into a green workflow.
+    steps: Dict[str, str] = {}
     # ``blocked_reason`` is populated when phase is ``Pending`` specifically
     # because the per-tenant optimization mutex is held by another Workflow.
     # The dashboard surfaces this so users don't confuse mutex-wait with
     # ordinary scheduler pending.
     blocked_reason: Optional[str] = None
+
+
+def _step_phases(status_block: Dict[str, Any]) -> Dict[str, str]:
+    """Phase per named workflow step.
+
+    Argo records a step whose ``when`` did not fire with phase ``Omitted`` and
+    node type ``Skipped``; both render here as ``Skipped``.
+    """
+    phases: Dict[str, str] = {}
+    for node in (status_block.get("nodes") or {}).values():
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type")
+        if node_type not in ("Pod", "Skipped"):
+            continue
+        name = node.get("displayName")
+        if not name:
+            continue
+        phase = node.get("phase") or "Pending"
+        if node_type == "Skipped" or phase == "Omitted":
+            phase = "Skipped"
+        phases[name] = phase
+    return phases
 
 
 def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
@@ -890,6 +917,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
+        steps=_step_phases(status_block),
     )
 
 
@@ -955,6 +983,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
+        steps=_step_phases(status_block),
     )
 
 
@@ -980,6 +1009,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
+        steps=_step_phases(status_block),
     )
 
 

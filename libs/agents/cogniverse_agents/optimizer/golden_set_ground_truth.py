@@ -1,27 +1,34 @@
 """Golden-set ground truth stored as a tenant-owned blob.
 
 The runtime admin upload path canonicalizes rows here, and the quality monitor
-loads the active blob through the same seam. Missing artifacts surface as a
-dedicated status, while store failures remain faults.
+loads the active blob through the same seam. The loader renders the shared
+ground-truth contract, so a tenant that never uploaded one skips the step while
+a store outage fails it.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
+from cogniverse_agents.optimizer.ground_truth_blob import (
+    GroundTruthError,
+    GroundTruthInvalidError,
+    GroundTruthMissingError,
+    GroundTruthStoreUnavailableError,
+    load_ground_truth_rows,
+)
 from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     canonicalize_profile_selection_ground_truth_rows as canonicalize_golden_set_ground_truth_rows,
 )
 from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     serialize_profile_selection_ground_truth_rows as serialize_golden_set_ground_truth_rows,
 )
-from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 __all__ = [
     "GOLDEN_SET_GROUND_TRUTH_BLOB_KEY",
     "GOLDEN_SET_GROUND_TRUTH_BLOB_KIND",
     "GoldenSetGroundTruthError",
+    "GoldenSetGroundTruthInvalidError",
     "GoldenSetGroundTruthMissingError",
     "GoldenSetGroundTruthStoreUnavailableError",
     "canonicalize_golden_set_ground_truth_rows",
@@ -33,35 +40,26 @@ GOLDEN_SET_GROUND_TRUTH_BLOB_KIND = "config"
 GOLDEN_SET_GROUND_TRUTH_BLOB_KEY = "golden_set_ground_truth"
 
 
-class GoldenSetGroundTruthError(RuntimeError):
+class GoldenSetGroundTruthError(GroundTruthError):
     """Base error for golden-set ground-truth loading."""
 
-    status = ""
-    retryable = False
 
-    def to_result(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "status": self.status,
-            "retryable": self.retryable,
-            "error": str(self),
-        }
-        cause = self.__cause__
-        if cause is not None:
-            result["cause"] = {
-                "type": type(cause).__name__,
-                "message": str(cause),
-            }
-        return result
+class GoldenSetGroundTruthMissingError(
+    GoldenSetGroundTruthError, GroundTruthMissingError
+):
+    reason = "golden_set_missing"
 
 
-class GoldenSetGroundTruthMissingError(GoldenSetGroundTruthError):
-    status = "golden_set_missing"
-    retryable = False
+class GoldenSetGroundTruthStoreUnavailableError(
+    GoldenSetGroundTruthError, GroundTruthStoreUnavailableError
+):
+    reason = "golden_set_store_unavailable"
 
 
-class GoldenSetGroundTruthStoreUnavailableError(GoldenSetGroundTruthError):
-    status = "golden_set_store_unavailable"
-    retryable = True
+class GoldenSetGroundTruthInvalidError(
+    GoldenSetGroundTruthError, GroundTruthInvalidError
+):
+    reason = "golden_set_invalid"
 
 
 async def load_golden_set_ground_truth_rows(
@@ -69,25 +67,12 @@ async def load_golden_set_ground_truth_rows(
 ) -> list[dict[str, Any]]:
     """Load the active tenant artifact and return canonicalized rows."""
 
-    tenant_id = getattr(artifact_manager, "_tenant_id", "unknown")
-    try:
-        raw = await artifact_manager.load_blob(
-            GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
-            GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
-        )
-    except DatasetNotFoundError as exc:
-        raise GoldenSetGroundTruthMissingError(
-            f"golden_set_ground_truth is not configured for tenant {tenant_id}"
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise GoldenSetGroundTruthStoreUnavailableError(
-            "golden_set_ground_truth store unavailable"
-        ) from exc
-
-    if raw is None:
-        raise GoldenSetGroundTruthMissingError(
-            f"golden_set_ground_truth is not configured for tenant {tenant_id}"
-        )
-
-    loaded = json.loads(raw)
-    return canonicalize_golden_set_ground_truth_rows(loaded)
+    return await load_ground_truth_rows(
+        artifact_manager,
+        kind=GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        key=GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+        canonicalize=canonicalize_golden_set_ground_truth_rows,
+        missing_error=GoldenSetGroundTruthMissingError,
+        unavailable_error=GoldenSetGroundTruthStoreUnavailableError,
+        invalid_error=GoldenSetGroundTruthInvalidError,
+    )

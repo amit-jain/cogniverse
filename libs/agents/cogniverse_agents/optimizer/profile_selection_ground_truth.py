@@ -1,8 +1,9 @@
 """Profile-selection ground truth stored as a tenant-owned blob.
 
 The runtime admin upload path canonicalizes rows here, and the optimizer loads
-the active blob through the same seam. The loader distinguishes a missing
-tenant artifact from a store failure so callers can surface a precise reason.
+the active blob through the same seam. The loader renders the shared
+ground-truth contract, so a tenant that never uploaded one skips the step while
+a store outage fails it.
 """
 
 from __future__ import annotations
@@ -10,47 +11,38 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from cogniverse_agents.optimizer.ground_truth_blob import (
+    GroundTruthError,
+    GroundTruthInvalidError,
+    GroundTruthMissingError,
+    GroundTruthStoreUnavailableError,
+    load_ground_truth_rows,
+)
+
 PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND = "config"
 PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY = "profile_selection_ground_truth"
 
 
-class ProfileSelectionGroundTruthError(RuntimeError):
-    """Base error for profile-selection ground-truth loading.
-
-    ``to_result`` renders the one terminal failure contract the CLI exit
-    classifier reads: ``status`` is always ``"failed"`` and ``reason`` carries
-    which failure it was.
-    """
-
-    reason = ""
-    retryable = False
-
-    def to_result(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "status": "failed",
-            "reason": self.reason,
-            "retryable": self.retryable,
-            "error": str(self),
-        }
-        cause = self.__cause__
-        if cause is not None:
-            result["cause"] = {
-                "type": type(cause).__name__,
-                "message": str(cause),
-            }
-        return result
+class ProfileSelectionGroundTruthError(GroundTruthError):
+    """Base error for profile-selection ground-truth loading."""
 
 
-class ProfileSelectionGroundTruthMissingError(ProfileSelectionGroundTruthError):
+class ProfileSelectionGroundTruthMissingError(
+    ProfileSelectionGroundTruthError, GroundTruthMissingError
+):
     reason = "profile_selection_ground_truth_missing"
-    retryable = False
 
 
 class ProfileSelectionGroundTruthStoreUnavailableError(
-    ProfileSelectionGroundTruthError
+    ProfileSelectionGroundTruthError, GroundTruthStoreUnavailableError
 ):
     reason = "profile_selection_ground_truth_store_unavailable"
-    retryable = True
+
+
+class ProfileSelectionGroundTruthInvalidError(
+    ProfileSelectionGroundTruthError, GroundTruthInvalidError
+):
+    reason = "profile_selection_ground_truth_invalid"
 
 
 def _normalize_expected_videos(value: Any) -> list[str]:
@@ -123,26 +115,12 @@ async def load_profile_selection_ground_truth_rows(
 ) -> list[dict[str, Any]]:
     """Load the active tenant artifact and return canonicalized rows."""
 
-    tenant_id = getattr(artifact_manager, "_tenant_id", "unknown")
-    try:
-        raw = await artifact_manager.load_blob(
-            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
-            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise ProfileSelectionGroundTruthStoreUnavailableError(
-            "profile_selection_ground_truth store unavailable"
-        ) from exc
-
-    if raw is None:
-        raise ProfileSelectionGroundTruthMissingError(
-            f"profile_selection_ground_truth is not configured for tenant {tenant_id}"
-        )
-
-    try:
-        loaded = json.loads(raw)
-        return canonicalize_profile_selection_ground_truth_rows(loaded)
-    except ValueError as exc:
-        raise ProfileSelectionGroundTruthStoreUnavailableError(
-            "profile_selection_ground_truth store unavailable"
-        ) from exc
+    return await load_ground_truth_rows(
+        artifact_manager,
+        kind=PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+        key=PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+        canonicalize=canonicalize_profile_selection_ground_truth_rows,
+        missing_error=ProfileSelectionGroundTruthMissingError,
+        unavailable_error=ProfileSelectionGroundTruthStoreUnavailableError,
+        invalid_error=ProfileSelectionGroundTruthInvalidError,
+    )

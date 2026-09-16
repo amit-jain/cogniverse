@@ -150,7 +150,8 @@ async def test_missing_blob_returns_status_without_opening_shipped_file(monkeypa
     result = await monitor.force_optimization_cycle()
 
     assert result == {
-        "status": "golden_set_missing",
+        "status": "skipped",
+        "reason": "golden_set_missing",
         "retryable": False,
         "error": "golden_set_ground_truth is not configured for tenant "
         "test_tenant:test_tenant",

@@ -308,9 +308,12 @@ async def run_profile_optimization(
        profiles. The label is the single profile whose results match all of the
        row's expected_videos. Queries with no serving profile emit the named
        `no_profile_serves_media_type` exclusion. A failed retrieval is attempted
-       at most three times; an exhausted comparison excludes the entire query
-       with `incomplete_comparison` and per-profile failure context. No
-       recovered video, untitled
+       at most three times, waiting `PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS`
+       before the second attempt and twice that before the third; an exhausted
+       comparison excludes the entire query with `incomplete_comparison` and
+       per-profile failure context, and a run whose `incomplete_comparison`
+       share exceeds `PROFILE_SELECTION_MAX_INCOMPLETE_SHARE` stops before
+       scoring. No recovered video, untitled
        results, or profile ties are also excluded and reported under
        label_exclusions. cogniverse.profile_selection spans are counted as
        spans_found and not read.
@@ -326,7 +329,8 @@ async def run_profile_optimization(
     Success and compile payloads also include `distinct_queries` and `holdout_queries`, so row counts and held-out query-key counts stay separate.
 
     Returns (every shape carries
-    "label_exclusions": {"count": int, "queries": list[str]}):
+    "label_exclusions": {"count": int, "queries": list[str],
+    "incomplete_comparison_rate": float}):
       - {"status": "success", "spans_found": int, "served_examples": int,
          "approved_examples": int, "served_scoreable_examples": int,
          "training_examples": int, "holdout_examples": int,
@@ -343,9 +347,13 @@ async def run_profile_optimization(
          "labels_by_profile": dict[str, int],
          "exclusions_by_reason": dict[str, int]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
-      - {"status": "failed", "reason": "profile_selection_ground_truth_missing", "retryable": False,
+      - {"status": "failed", "reason": "retrieval_exclusion_rate_exceeded", "retryable": True,
+         "error": str, "spans_found": int, "max_incomplete_share": float}
+      - {"status": "skipped", "reason": "profile_selection_ground_truth_missing", "retryable": False,
          "error": str}
       - {"status": "failed", "reason": "profile_selection_ground_truth_store_unavailable", "retryable": True,
+         "error": str, "cause": {"type": str, "message": str}}
+      - {"status": "failed", "reason": "profile_selection_ground_truth_invalid", "retryable": False,
          "error": str, "cause": {"type": str, "message": str}}
       - {"status": "no_eval_material", "spans_found": int,
          "served_scoreable_examples": int, "training_examples": int,
@@ -448,9 +456,11 @@ Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
 JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is
-`min_samples_for_optimization: 30` and `min_unique_queries: 15`. Missing ground truth returns
-`entity_extraction_ground_truth_missing`; store outages raise
-`EntityExtractionGroundTruthStoreUnavailableError`. The artifact key is
+`min_samples_for_optimization: 30` and `min_unique_queries: 15`. Ground-truth loading renders the
+shared contract in `ground_truth_blob.py`: nothing uploaded is `{"status": "skipped", "reason":
+"entity_extraction_ground_truth_missing"}`, a store outage is `{"status": "failed", ...
+"retryable": True}`, and an unusable payload is `{"status": "failed", ... "retryable": False}`.
+The artifact key is
 `("model", "entity_extraction")`; `EntityExtractionAgent` reloads it via
 `am.load_blob("model", "entity_extraction")`.
 
@@ -471,8 +481,8 @@ Returns:
      "candidate_score": float | None,
      "decision": "promote" | "keep" | "rollback" | "reject",
      "version": int, "consumed_example_ids": list[str]}
-  - {"status": "entity_extraction_ground_truth_missing", "retryable": False,
-     "error": str}
+  - {"status": "skipped", "reason": "entity_extraction_ground_truth_missing",
+     "retryable": False, "error": str}
   - {"status": "no_data", "spans_found": int, "served_examples": int,
      "served_scoreable_examples": int, "label_rows": int, "truth_rows": int,
      "approved_rows": int, "examples": 0}
@@ -569,14 +579,19 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    (`_EVAL_FIELD`: `enhanced_query` / `summary` / `executive_summary`) against the labeled output,
    and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT reproducing
    the recorded failing output. The baseline is the same served module with the active compiled state
-   loaded into it.
+   loaded into it (`_active_compiled_payload`). An agent whose active prompts are not a compiled
+   module state has no reconstructable baseline, so the run fails with
+   `reason: "baseline_not_reconstructable"` rather than scoring against a stock module.
 4. Publishes the compiled module's whole `dump_state()` via `_serve_compiled_prompts` **only if the candidate wins by
    at least the tenant's `optimization_improvement_threshold`** — the call routes through
    `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active). The
    published prompts dict has the single reserved key `__dspy_module__`
-   (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding the compiled state as JSON, so
-   the instructions AND the learned demonstrations that produced the winning score serve together:
-   the per-request overlay `load_state`s it into its per-call copy of the served module. A loser is recorded in the
+   (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding
+   `{"dspy_version", "module", "state"}` as JSON, so the instructions AND the learned demonstrations
+   that produced the winning score serve together: the per-request overlay loads it into its per-call
+   copy of the served module (`load_compiled_module_state`), which refuses a state produced for a
+   different module class. The payload is loaded into a fresh served module before promotion, so a
+   state the runtime cannot load fails the run instead of every request. A loser is recorded in the
    experiments ledger with `promoted=False`, `--mode rollback` restores a prior version, and the
    result reports the outcome under `"served"` (`served_agent`, `version`, `active`, `promoted`, plus
    `baseline_score`/`candidate_score` when eval material was available or a `reason` when it wasn't).
@@ -1301,7 +1316,7 @@ enabled/scheduled via `values.yaml`'s `argo.optimization.*`):
 
 | CronWorkflow name | Schedule (default) | What it runs |
 |---|---|---|
-| `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile` (48h lookback). Step 2: `workflow`. Step 3: rolling-restart the runtime Deployment to pick up new artifacts. |
+| `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile-ground-truth` (the `profile-ground-truth-check` mode, printing `present` or `absent`). Step 2: `profile` (48h lookback), run only `when` the check printed `present`, so a tenant with no uploaded ground truth has the step omitted and recorded as skipped. Step 3: `workflow`. Step 4: rolling-restart the runtime Deployment to pick up new artifacts. |
 | `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds` only — warm runtime pods pick up the recalibration via the dispatcher's gateway reload interval, no restart |
 | `{fullname}-daily-cleanup` | `0 4 * * *` (daily 4 AM UTC) | `cleanup` |
 | `{fullname}-synthetic-generation` | `0 1 * * 6` (Saturday 1 AM UTC) | `synthetic` |

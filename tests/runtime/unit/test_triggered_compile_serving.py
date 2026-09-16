@@ -73,10 +73,29 @@ def _compiled(instructions="Optimized: rank by intent.", agent_name="search"):
     return module
 
 
+_MODULE_PATH = {
+    "SearchOptimizationModule": "cogniverse_agents.search_agent.SearchOptimizationModule",
+    "SummarizationModule": "cogniverse_agents.summarizer_agent.SummarizationModule",
+    "ReportGenerationModule": (
+        "cogniverse_agents.detailed_report_agent.ReportGenerationModule"
+    ),
+}
+
+
 def _expected_state(module):
+    """The exact payload the serving path must publish for ``module``."""
     import json
 
-    return json.dumps(json.loads(json.dumps(module.dump_state())), sort_keys=True)
+    import dspy
+
+    return json.dumps(
+        {
+            "dspy_version": dspy.__version__,
+            "module": _MODULE_PATH[type(module).__name__],
+            "state": json.loads(json.dumps(module.dump_state())),
+        },
+        sort_keys=True,
+    )
 
 
 def test_serve_target_maps_compile_names_to_dispatch_agents():
@@ -416,8 +435,29 @@ async def test_triggered_publishes_the_complete_compiled_module_state():
     )
     assert result["promoted"] is True
     assert manager.gate_calls[0]["candidate_prompts"] == {
-        "__dspy_module__": json.dumps(expected, sort_keys=True)
+        "__dspy_module__": json.dumps(
+            {
+                "dspy_version": dspy.__version__,
+                "module": "cogniverse_agents.summarizer_agent.SummarizationModule",
+                "state": expected,
+            },
+            sort_keys=True,
+        )
     }
+
+
+def _payload_for(
+    state, module="cogniverse_agents.summarizer_agent.SummarizationModule"
+):
+    """A published compiled-module payload carrying ``state``."""
+    import json
+
+    import dspy
+
+    return json.dumps(
+        {"dspy_version": dspy.__version__, "module": module, "state": state},
+        sort_keys=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -441,7 +481,7 @@ async def test_compiled_module_overlay_isolated_across_concurrent_requests():
         state["summarizer.predict"]["demos"] = [{"content": label, "summary": label}]
         agent = MemoryAwareMixin()
         agent.set_dispatched_artefact(
-            {"prompts": {"__dspy_module__": json.dumps(state)}}
+            {"prompts": {"__dspy_module__": _payload_for(state)}}
         )
         arrivals += 1
         if arrivals == 2:
@@ -470,3 +510,143 @@ def test_corrupt_compiled_module_overlay_raises():
     with pytest.raises(json.JSONDecodeError):
         with _dispatched_prompt_overlay(agent, SummarizationModule()):
             pytest.fail("Corrupt compiled state was accepted")
+
+
+class _BaselineManager(_GateRecordingManager):
+    """A gate manager whose active artifact is whatever ``prompts`` holds."""
+
+    def __init__(self, prompts, promote=True):
+        super().__init__(promote=promote)
+        self.prompts = prompts
+        self.load_calls = []
+
+    async def load_prompts(self, agent_type):
+        self.load_calls.append(agent_type)
+        return self.prompts
+
+
+class TestBaselineReconstruction:
+    def test_stock_agent_has_no_active_payload(self):
+        from cogniverse_runtime.optimization_cli import _active_compiled_payload
+
+        assert _active_compiled_payload(None) is None
+        assert _active_compiled_payload({}) is None
+
+    def test_compiled_payload_is_returned_verbatim(self):
+        from cogniverse_runtime.optimization_cli import _active_compiled_payload
+
+        payload = _expected_state(_compiled())
+        assert (
+            _active_compiled_payload({"__dspy_module__": payload, "noise": ""})
+            == payload
+        )
+
+    def test_predictor_keyed_active_prompts_refuse_the_baseline(self):
+        from cogniverse_runtime.optimization_cli import (
+            BaselineNotReconstructableError,
+            _active_compiled_payload,
+        )
+
+        with pytest.raises(BaselineNotReconstructableError) as excinfo:
+            _active_compiled_payload(
+                {"summarizer": "Summarize tersely.", "report_generator": "Report."}
+            )
+        assert str(excinfo.value) == (
+            "active prompts carry ['report_generator', 'summarizer'] and no "
+            "__dspy_module__; the baseline cannot be rebuilt"
+        )
+
+    @pytest.mark.asyncio
+    async def test_predictor_keyed_active_artifact_fails_the_run(self):
+        """A tenant whose active artifact predates the compiled-state contract
+        must fail the run, not score against a silently stock baseline."""
+        from cogniverse_runtime.optimization_cli import _score_and_serve
+
+        manager = _BaselineManager({"summarizer": "Summarize tersely."})
+
+        result = await _score_and_serve(
+            manager,
+            "summary",
+            _compiled(agent_name="summary"),
+            holdout=[object()],
+            negatives=[],
+            optimizer_lm=None,
+            tenant_id="t1",
+            config_manager=None,
+            train_examples=4,
+        )
+
+        assert result == {
+            "status": "failed",
+            "reason": "baseline_not_reconstructable",
+            "error": (
+                "active prompts carry ['summarizer'] and no __dspy_module__; "
+                "the baseline cannot be rebuilt"
+            ),
+        }
+        assert manager.load_calls == ["summarizer_agent"]
+        assert manager.gate_calls == []
+
+
+class TestPublishedStateCompatibility:
+    def test_published_payload_loads_into_a_fresh_served_module(self):
+        import json
+
+        from cogniverse_core.agents.base import load_compiled_module_state
+        from cogniverse_runtime.optimization_cli import _served_module
+
+        compiled = _compiled("Rank by intent.", agent_name="summary")
+        payload = _expected_state(compiled)
+        fresh = _served_module("summary")
+
+        load_compiled_module_state(fresh, payload)
+
+        assert fresh.dump_state() == compiled.dump_state()
+        assert json.loads(payload)["module"] == (
+            "cogniverse_agents.summarizer_agent.SummarizationModule"
+        )
+
+    def test_state_for_another_module_is_refused_by_name(self):
+        from cogniverse_core.agents.base import load_compiled_module_state
+        from cogniverse_runtime.optimization_cli import _served_module
+
+        payload = _expected_state(_compiled(agent_name="summary"))
+
+        with pytest.raises(ValueError) as excinfo:
+            load_compiled_module_state(_served_module("search"), payload)
+
+        assert str(excinfo.value) == (
+            "compiled module state was produced for "
+            "cogniverse_agents.summarizer_agent.SummarizationModule, not "
+            "cogniverse_agents.search_agent.SearchOptimizationModule"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unloadable_state_fails_the_promotion_not_the_request(
+        self, monkeypatch
+    ):
+        import dspy
+
+        from cogniverse_agents.summarizer_agent import SummarizationModule
+
+        monkeypatch.setattr(
+            SummarizationModule, "dump_state", lambda self: {"unexpected": {}}
+        )
+        manager = _GateRecordingManager(promote=True)
+
+        with pytest.raises(ValueError) as excinfo:
+            await _serve_compiled_prompts(
+                manager,
+                "summary",
+                SummarizationModule(),
+                baseline_score=0.0,
+                candidate_score=1.0,
+            )
+
+        assert str(excinfo.value) == (
+            "compiled module state for "
+            "cogniverse_agents.summarizer_agent.SummarizationModule published by "
+            f"dspy {dspy.__version__} is not loadable by dspy {dspy.__version__}: "
+            "KeyError: 'summarizer.predict'"
+        )
+        assert manager.gate_calls == []

@@ -189,7 +189,19 @@ spec:
             # tighter feedback so 48h is the right scope for them.
             - name: lookback-hours
               value: "168"
-        - name: profile
+        - name: profile-ground-truth
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: check-profile-ground-truth
+          arguments:
+            parameters:
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+      # Step 2: Profile selection, only for a tenant that uploaded a ground
+      # truth. Without one Argo omits the step, so the run records it as
+      # skipped instead of succeeding on no work or failing on absent input.
+      - - name: profile
+          when: "{{`{{steps.profile-ground-truth.outputs.result}}`}} == present"
           templateRef:
             name: {{ $fullName }}-optimization-runner
             template: run-optimizer
@@ -201,7 +213,7 @@ spec:
               value: "{{`{{workflow.parameters.tenant-id}}`}}"
             - name: lookback-hours
               value: "48"
-      # Step 2: Workflow optimization (depends on agent artifacts)
+      # Step 3: Workflow optimization (depends on agent artifacts)
       - - name: workflow
           templateRef:
             name: {{ $fullName }}-optimization-runner
@@ -214,7 +226,7 @@ spec:
               value: "{{`{{workflow.parameters.tenant-id}}`}}"
             - name: lookback-hours
               value: "48"
-      # Step 3: Restart runtime to pick up new artifacts
+      # Step 4: Restart runtime to pick up new artifacts
       - - name: restart-runtime
           template: restart-deployment
 

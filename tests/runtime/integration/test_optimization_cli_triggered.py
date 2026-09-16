@@ -247,9 +247,14 @@ class TestTriggeredOptimization:
         # through the request path and load it into a stock served module.
         import json
 
+        import dspy
+
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
         from cogniverse_agents.search_agent import SearchOptimizationModule
-        from cogniverse_core.agents.base import COMPILED_MODULE_PROMPT_KEY
+        from cogniverse_core.agents.base import (
+            COMPILED_MODULE_PROMPT_KEY,
+            load_compiled_module_state,
+        )
         from cogniverse_runtime.optimization_cli import (
             _build_phoenix_provider_for_cli,
         )
@@ -263,10 +268,15 @@ class TestTriggeredOptimization:
         assert overlay["served_from"] == "active"
         assert overlay["version"] == served["version"]
         assert list(overlay["prompts"]) == [COMPILED_MODULE_PROMPT_KEY]
-        published = json.loads(overlay["prompts"][COMPILED_MODULE_PROMPT_KEY])
+        payload = overlay["prompts"][COMPILED_MODULE_PROMPT_KEY]
+        published = json.loads(payload)
+        assert published["module"] == (
+            "cogniverse_agents.search_agent.SearchOptimizationModule"
+        )
+        assert published["dspy_version"] == dspy.__version__
         module = SearchOptimizationModule()
-        module.load_state(published)
-        assert json.loads(json.dumps(module.dump_state())) == published
+        load_compiled_module_state(module, payload)
+        assert json.loads(json.dumps(module.dump_state())) == published["state"]
 
         # Strategy distillation should have run.
         assert "strategies_distilled" in result

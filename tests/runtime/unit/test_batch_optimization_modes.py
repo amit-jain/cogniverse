@@ -1387,7 +1387,7 @@ class TestEmptySpanHandling:
                 tenant_id="test:unit", lookback_hours=1
             )
         assert result == {
-            "status": "failed",
+            "status": "skipped",
             "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
@@ -1711,7 +1711,7 @@ class TestSpansWithNoExamples:
                 tenant_id="test:unit", lookback_hours=1
             )
         assert result == {
-            "status": "failed",
+            "status": "skipped",
             "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
@@ -3584,6 +3584,7 @@ class TestProfileSelectionOptimization:
         ground_truth_error: Exception | None = None,
         scoreable_fields: bool = True,
         search_service_factory=None,
+        label_exclusions: list[dict[str, Any]] | None = None,
     ):
         from cogniverse_agents.optimizer.profile_selection_ground_truth import (
             canonicalize_profile_selection_ground_truth_rows,
@@ -3670,7 +3671,9 @@ class TestProfileSelectionOptimization:
                     record["grounding_context"] = selected_profile
                 label_records.append(record)
 
-        label_source = ProfileLabelDerivationResult(label_map, label_records, [])
+        label_source = ProfileLabelDerivationResult(
+            label_map, label_records, list(label_exclusions or [])
+        )
 
         def _label_source_from_ground_truth(
             *,
@@ -3931,7 +3934,11 @@ class TestProfileSelectionOptimization:
             "status": "no_data",
             "spans_found": 0,
             "examples": 0,
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {},
             "dominant_label_share": 0.0,
             "exclusions_by_reason": {},
@@ -4969,6 +4976,7 @@ class TestProfileSelectionOptimization:
             "label_exclusions": {
                 "count": 1,
                 "queries": ["tenant clip nobody can recover"],
+                "incomplete_comparison_rate": 0.0,
             },
             "labels_by_profile": {profiles[0]: 3},
             "dominant_label_share": 1.0,
@@ -5081,6 +5089,7 @@ class TestProfileSelectionOptimization:
             "label_exclusions": {
                 "count": 1,
                 "queries": ["tenant clip nobody can recover"],
+                "incomplete_comparison_rate": 0.0,
             },
             "labels_by_profile": {profiles[0]: 3},
             "dominant_label_share": 1.0,
@@ -5531,7 +5540,11 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5663,7 +5676,11 @@ class TestProfileSelectionOptimization:
             "distinct_queries": 4,
             "holdout_queries": 1,
             "holdout_source": "derived_labels",
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5770,7 +5787,11 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5861,7 +5882,11 @@ class TestProfileSelectionOptimization:
         assert result == {
             "status": "failed",
             "error": "profile scorer failed",
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5910,6 +5935,113 @@ class TestProfileSelectionOptimization:
         assert result["selection"]["cap"] == 42, result
 
     @pytest.mark.asyncio
+    async def test_retrieval_exclusion_rate_over_the_cap_fails_the_run(self):
+        """A partial backend outage shrinks the training population without
+        biasing the labels that survive, so the run must refuse rather than
+        train on whatever cleared the diversity and population gates."""
+        from cogniverse_runtime.optimization_cli import (
+            PROFILE_SELECTION_MAX_INCOMPLETE_SHARE,
+        )
+
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+
+        state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            label_exclusions=[
+                {
+                    "query": f"unreachable {i}",
+                    "reason": "incomplete_comparison",
+                    "position": i,
+                    "failed_profiles": [
+                        {
+                            "profile": "video_colqwen_omni_mv_chunk_30s",
+                            "attempts": 3,
+                            "cause": {
+                                "type": "ConnectionError",
+                                "message": "backend down",
+                            },
+                        }
+                    ],
+                }
+                for i in range(2)
+            ],
+        )
+
+        assert result == {
+            "status": "failed",
+            "reason": "retrieval_exclusion_rate_exceeded",
+            "retryable": True,
+            "error": (
+                "2 of 6 ground-truth rows could not be compared across their "
+                "candidate profiles"
+            ),
+            "spans_found": 4,
+            "label_exclusions": {
+                "count": 2,
+                "queries": ["unreachable 0", "unreachable 1"],
+                "incomplete_comparison_rate": 2 / 6,
+            },
+            "max_incomplete_share": PROFILE_SELECTION_MAX_INCOMPLETE_SHARE,
+        }
+        assert state["score_calls"] == []
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+
+    @pytest.mark.asyncio
+    async def test_retrieval_exclusion_rate_under_the_cap_proceeds(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(19)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+
+        _, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            label_exclusions=[
+                {
+                    "query": "unreachable 0",
+                    "reason": "incomplete_comparison",
+                    "position": 0,
+                }
+            ],
+        )
+
+        assert result["status"] != "failed", result
+        assert result["label_exclusions"] == {
+            "count": 1,
+            "queries": ["unreachable 0"],
+            "incomplete_comparison_rate": 1 / 20,
+        }
+
+    @pytest.mark.asyncio
     async def test_profile_ground_truth_missing_stops_before_scoring_or_compile(self):
         rows = [
             _profile_span_row(
@@ -5936,7 +6068,7 @@ class TestProfileSelectionOptimization:
         )
 
         assert result == {
-            "status": "failed",
+            "status": "skipped",
             "reason": "profile_selection_ground_truth_missing",
             "retryable": False,
             "error": "profile_selection_ground_truth is not configured for tenant test:unit",
@@ -6029,7 +6161,11 @@ class TestProfileSelectionOptimization:
             "min_samples": 100,
             "min_unique_queries": 1,
             "version": 1,
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
@@ -6751,7 +6887,8 @@ class TestEntityExtractionOptimization:
         )
 
         assert result == {
-            "status": "entity_extraction_ground_truth_missing",
+            "status": "skipped",
+            "reason": "entity_extraction_ground_truth_missing",
             "retryable": False,
             "error": "entity_extraction_ground_truth is not configured for tenant test:unit",
         }
@@ -7329,11 +7466,7 @@ class TestEntityExtractionOptimization:
         )
 
     @pytest.mark.asyncio
-    async def test_entity_extraction_ground_truth_store_outage_raises(self):
-        from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
-            EntityExtractionGroundTruthStoreUnavailableError,
-        )
-
+    async def test_entity_extraction_ground_truth_store_outage_fails_the_step(self):
         spans_df = _make_spans_df(
             "cogniverse.entity_extraction",
             [
@@ -7345,18 +7478,23 @@ class TestEntityExtractionOptimization:
         )
         provider = FakeTelemetryProvider(spans_df)
 
-        with pytest.raises(
-            EntityExtractionGroundTruthStoreUnavailableError,
-            match="entity_extraction_ground_truth store unavailable",
-        ):
-            await self._run(
-                provider,
-                current_blob=None,
-                floor=(1, 1),
-                ground_truth_error=ConnectionError(
-                    "Phoenix refused the dataset request"
-                ),
-            )
+        _, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            ground_truth_error=ConnectionError("Phoenix refused the dataset request"),
+        )
+
+        assert result == {
+            "status": "failed",
+            "reason": "entity_extraction_ground_truth_store_unavailable",
+            "retryable": True,
+            "error": "entity_extraction_ground_truth store unavailable",
+            "cause": {
+                "type": "ConnectionError",
+                "message": "Phoenix refused the dataset request",
+            },
+        }
 
     @pytest.mark.asyncio
     async def test_training_selection_store_override_binds_entity_key(self):
@@ -9852,16 +9990,14 @@ class TestOptimizeAgentPersistence:
             def create_query_analysis_signature(self):
                 return object()
 
-        class _FakeCompiled:
-            def dump_state(self):
-                return {"demos": []}
-
         class _FakeTeleprompter:
             def __init__(self, *a, **k):
                 pass
 
             def compile(self, module, trainset=None):
-                return _FakeCompiled()
+                # BootstrapFewShot returns the student it compiled; serving
+                # publishes that module's own state.
+                return module
 
         high_df = pd.DataFrame([{"query": "find cats", "output": "{}", "score": 0.9}])
 
@@ -9914,16 +10050,12 @@ class TestOptimizeAgentPersistence:
             async def save_blob(self, kind, key, content):
                 return "artifact-teacher"
 
-        class _FakeCompiled:
-            def dump_state(self):
-                return {"demos": []}
-
         class _CapturingTeleprompter:
             def __init__(self, *a, **k):
                 captured["teleprompter_kwargs"] = k
 
             def compile(self, module, trainset=None):
-                return _FakeCompiled()
+                return module
 
         student = LLMEndpointConfig(
             model="hosted_vllm/org/Student", api_base="http://student:8000/v1"

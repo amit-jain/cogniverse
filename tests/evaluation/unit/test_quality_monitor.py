@@ -1294,7 +1294,8 @@ class TestForceOptimizationCycle:
             result = await monitor.force_optimization_cycle()
 
         assert result == {
-            "status": "golden_set_missing",
+            "status": "skipped",
+            "reason": "golden_set_missing",
             "retryable": False,
             "error": (
                 "golden_set_ground_truth is not configured for tenant "
