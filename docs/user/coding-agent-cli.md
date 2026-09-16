@@ -196,51 +196,34 @@ If the `openshell` CLI can't be installed or the gateway fails to start, `cogniv
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
-### Sandbox session pool
+### Sandbox task sessions
 
-`SandboxManager.exec_in_sandbox` reuses one OpenShell session per
-`agent_type` across calls. The pool is enabled by default and prunes
-sessions that have been idle longer than `max_idle_seconds`. Behaviour:
+A coding task leases one OpenShell session for its whole run through
+`SandboxManager.task_session(agent_type, tenant_id)`. The session is created
+on entry, owned exclusively for the duration of the task, and destroyed on
+release, so each task pays a cold sandbox start and no sandbox state crosses
+tasks. `SandboxSessionPool` tracks the live leases, counts them against
+`COGNIVERSE_SANDBOX_POOL_SIZE`, and raises `SandboxCapacityError` when every
+slot is taken — container creation is bounded by the gateway's capacity, not
+by request concurrency.
 
-- **First call for an agent**: create + wait_ready (lifecycle spans fire), exec, session retained.
-- **Subsequent calls for the same agent**: exec on the cached session (no create / no wait_ready).
-- **Different agent**: separate session.
-- **Pool full**: oldest idle session evicted before creating a new one.
-- **Idle eviction**: `pool.evict_idle()` destroys idle sessions.
-- **Callback exception**: the session is dropped from the pool; next checkout creates a fresh one.
-- **Teardown (`close_all`)**: called on runtime shutdown and on the mTLS
-  reconnect path (`SandboxManager._drop_stale_pool`). Idle sessions are
-  destroyed immediately; a session currently checked out for an in-flight
-  exec is instead marked to drain and destroyed once that exec releases it
-  — `close_all` never tears a session out from under a running call. Once a
-  pool has been closed it stays in a draining state: any later release goes
-  straight to session teardown instead of re-pooling.
+`close_all` destroys every live task session immediately. It runs on runtime
+shutdown and on the mTLS reconnect path (`SandboxManager._drop_stale_pool`),
+both of which close the gateway client right after; a task session outlives
+any single call, so deferring it to release would leave the container alive
+at the gateway. A lease whose session is still being created stays with its
+owner, which destroys it on release.
 
 | Env var | Default | Effect |
 |---|---|---|
-| `COGNIVERSE_SANDBOX_POOL_ENABLED` | `1` | Set to `false` to fall back to per-call create+destroy. |
-| `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Maximum pooled sessions (one per agent_type), and the ceiling on concurrent task sessions. |
-| `COGNIVERSE_SANDBOX_POOL_IDLE_S` | `60` | Seconds an entry can sit idle before eviction. |
-
-**Task sessions.** A coding task leases one session for its whole run through
-`SandboxManager.task_session`. Such a session is never pooled or reused: it is
-destroyed on release, so each task pays a cold sandbox start. The pool tracks
-live task sessions, counts them against `COGNIVERSE_SANDBOX_POOL_SIZE`, and
-raises `SandboxCapacityError` when every slot is taken. `close_all` destroys a
-live task session immediately — a task session outlives any single call, so
-deferring it to release would leave the container alive at the gateway after
-the client closes.
-
-The pool emits the same telemetry spans (`sandbox.create_session`,
-`sandbox.wait_ready`, `sandbox.delete`) on its lifecycle events, so the
-trace shape stays observable — they just fire less often when reuse hits.
+| `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Ceiling on concurrent task sessions. |
 
 ### Sandbox lifecycle telemetry
 
-Every call to `SandboxManager.exec_in_sandbox` emits a parent
-`sandbox.exec_in_sandbox` span plus child spans for each lifecycle phase
-(`sandbox.create_session`, `sandbox.wait_ready`, `sandbox.exec`,
-`sandbox.delete`). The `sandbox.exec` span carries:
+Taking a lease emits `sandbox.create_session` and `sandbox.wait_ready`;
+releasing it emits `sandbox.delete`. Each `SandboxTaskSession.exec` emits a
+parent `sandbox.task_exec` span with a child `sandbox.exec` span. The
+`sandbox.exec` span carries:
 
 | Attribute | Meaning |
 |---|---|
@@ -253,9 +236,10 @@ Every call to `SandboxManager.exec_in_sandbox` emits a parent
 | `openshell.policy_denied` | True when stderr matches `permission denied` / `syscall denied` / `blocked by policy` |
 | `openshell.error` | Exception class name (parent span only, on hard failure) |
 
-These spans become children of whichever agent span is active when
-`exec_in_sandbox` is called, so Phoenix shows the sandbox call inline
-with the rest of the agent's processing trace.
+The parent span also carries `openshell.tenant_id` and
+`openshell.session_name`. These spans become children of whichever agent span
+is active when the task runs, so Phoenix shows the sandbox call inline with
+the rest of the agent's processing trace.
 
 ### Application-layer egress enforcement
 
@@ -336,8 +320,9 @@ enough to be free, fast enough to catch rotations inside typical cert
 grace windows). When any watched file changes, it calls
 `SandboxManager.reconnect()` so the next exec uses the new client.
 
-The rotator is also wired into the exec error path: an auth/TLS-shaped
-error from `exec_in_sandbox` (matched on `auth`, `x509`, `tls`, `ssl`,
+The rotator is also wired into the task-session error path: an auth/TLS-shaped
+error from taking a lease or from `SandboxTaskSession.exec` (matched on
+`auth`, `x509`, `tls`, `ssl`,
 `certificate`, `permission`, `unauthenticated`, `unauthorized`) eagerly
 calls `rotator.trigger_on_auth_failure()` so rotation visibility doesn't
 have to wait for the next polling tick. The trigger is rate-limited

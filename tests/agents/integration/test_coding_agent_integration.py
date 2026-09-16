@@ -8,6 +8,7 @@ OpenShell sandbox (started/destroyed per test module).
 Requires: the configured LM endpoint, openshell CLI, Docker.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -16,6 +17,19 @@ import pytest
 
 from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 from tests.agents.integration.conftest import skip_if_no_lm
+
+_SANDBOX_TENANT = "prodfixagents:coding"
+
+
+async def _sandbox_exec_async(manager, command, timeout_seconds):
+    """Run one command in a fresh task sandbox and return its result dict."""
+    async with manager.task_session("coding_agent", _SANDBOX_TENANT) as session:
+        return await session.exec(command, timeout_seconds=timeout_seconds)
+
+
+def _sandbox_exec(manager, command, timeout_seconds):
+    """Synchronous caller for `_sandbox_exec_async` (module fixture setup)."""
+    return asyncio.run(_sandbox_exec_async(manager, command, timeout_seconds))
 
 
 def _memory_config_manager():
@@ -321,14 +335,12 @@ def code_search_infra(served_code_colbert, coding_test_gateway, vespa_with_schem
         cluster=CODING_GW_NAME,
         policy=SandboxPolicy.REQUIRED,
     )
-    canary = sandbox.exec_in_sandbox(
-        agent_type="coding_agent",
-        command=["echo", "gateway-ready"],
-        timeout_seconds=60,
-    )
-    assert canary["exit_code"] == 0, f"sandbox canary failed: {canary}"
-    assert canary["stderr"] == ""
-    assert canary["stdout"].strip() == "gateway-ready"
+    canary = _sandbox_exec(sandbox, ["echo", "gateway-ready"], timeout_seconds=60)
+    assert canary == {
+        "stdout": "gateway-ready\n",
+        "stderr": "",
+        "exit_code": 0,
+    }, f"sandbox canary failed: {canary}"
 
     yield {
         "sandbox": sandbox,
@@ -486,10 +498,8 @@ class TestCodingAgentWithRealLM:
         assert result.execution_results[-1]["stdout"].strip() == "5"
 
         generated_code = change["content"]
-        verify = sandbox.exec_in_sandbox(
-            agent_type="coding_agent",
-            command=["python3", "-c", generated_code],
-            timeout_seconds=30,
+        verify = await _sandbox_exec_async(
+            sandbox, ["python3", "-c", generated_code], timeout_seconds=30
         )
         logger.info(f"Sandbox run: {verify}")
         logger.info(f"Generated code:\n{generated_code}")
@@ -575,10 +585,8 @@ class TestCodingAgentWithRealLM:
             f"result = {fn_name}('test@example.com')\n"
             "print('PASS:', bool(result))\n"
         )
-        verify = sandbox.exec_in_sandbox(
-            agent_type="coding_agent",
-            command=["python3", "-c", test_harness],
-            timeout_seconds=30,
+        verify = await _sandbox_exec_async(
+            sandbox, ["python3", "-c", test_harness], timeout_seconds=30
         )
         logger.info(f"Sandbox run: {verify}")
         logger.info(f"Generated code:\n{generated_code}")

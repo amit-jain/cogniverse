@@ -346,21 +346,25 @@ class TestSandboxManagerIntegration:
         assert len(manager._policies) >= 4
         manager.close()
 
-    def test_run_in_sandbox_via_manager(self, openshell_gateway):
+    @pytest.mark.asyncio
+    async def test_run_in_sandbox_via_manager(self, openshell_gateway):
         manager = SandboxManager(
             policy_dir="configs/agent_policies",
             policy=SandboxPolicy.OPTIONAL,
         )
         assert manager.available
 
-        result = manager.exec_in_sandbox(
-            "search_agent",
-            ["echo", "sandbox-run-test"],
-            timeout_seconds=30,
-        )
-        assert result is not None
-        assert result["exit_code"] == 0
-        assert "sandbox-run-test" in result["stdout"]
+        async with manager.task_session(
+            "search_agent", "prodfixagents:sandbox"
+        ) as session:
+            result = await session.exec(
+                ["echo", "sandbox-run-test"], timeout_seconds=30
+            )
+        assert result == {
+            "stdout": "sandbox-run-test\n",
+            "stderr": "",
+            "exit_code": 0,
+        }
         manager.close()
 
     def test_policy_egress_rules(self, openshell_gateway):

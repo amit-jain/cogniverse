@@ -148,18 +148,20 @@ class TestRequiredPolicyAcceptsBootOnLiveGateway:
 
 
 # ---------------------------------------------------------------------------
-# 5. exec_in_sandbox emits the canonical span attributes
+# 5. A task-session exec emits the canonical span attributes
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
 class TestExecSpanAttributesEmitted:
-    """A successful exec_in_sandbox emits a sandbox.exec_in_sandbox parent span
+    """A successful task-session exec emits a sandbox.task_exec parent span
     with the policy attribute pinned and a child sandbox.exec span carrying
     exit_code + wall_ms.
     """
 
     def test_exec_emits_attributed_span(self) -> None:
+        import asyncio
+
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -183,13 +185,18 @@ class TestExecSpanAttributesEmitted:
             )
 
             agent_type = unique_id("sbx_exec")
-            # No policy YAML registered for this synthetic agent name —
-            # exec_in_sandbox warns and uses defaults; the contract we
-            # assert is the SPAN, not the exec result.
+
+            # No policy YAML registered for this synthetic agent name — the
+            # sandbox runs with defaults; the contract asserted here is the
+            # SPAN, not the exec result.
+            async def run() -> None:
+                async with mgr.task_session(agent_type, "e2e:sandbox") as session:
+                    await session.exec(
+                        ["echo", "hello-from-sandbox"], timeout_seconds=30
+                    )
+
             try:
-                mgr.exec_in_sandbox(
-                    agent_type, ["echo", "hello-from-sandbox"], timeout_seconds=30
-                )
+                asyncio.run(run())
             except Exception:
                 # Some sandbox executor errors raise; the span must still
                 # have been emitted before the error path returns.
@@ -201,6 +208,6 @@ class TestExecSpanAttributesEmitted:
 
         spans = exporter.get_finished_spans()
         names = [s.name for s in spans]
-        # The shipped exec_in_sandbox emits a "sandbox.exec_in_sandbox"
-        # parent span and a "sandbox.exec" child for the actual run.
+        # The shipped task-session exec emits a "sandbox.task_exec" parent
+        # span and a "sandbox.exec" child for the actual run.
         assert any("sandbox" in n for n in names), names

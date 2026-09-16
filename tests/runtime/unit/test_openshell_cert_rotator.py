@@ -292,95 +292,109 @@ def test_invalid_interval_rejected():
         CertRotator(sandbox_manager=mgr, interval_seconds=0.5)
 
 
-class TestSandboxManagerWiring:
-    """Round-trip: SandboxManager exec auth-failure → rotator trigger fires."""
+class _FakeSession:
+    def __init__(self, name: str = "sandbox-1"):
+        self.id = name
+        self.sandbox = MagicMock()
+        self.sandbox.name = name
+        self.delete_count = 0
 
-    def test_attach_then_exec_auth_error_triggers_rotator(self, monkeypatch):
-        from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+    def exec(self, command, timeout_seconds):
+        raise PermissionError("x509: certificate has expired")
 
-        # Build a manager skipping the boot connect.
-        monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_ENABLED", "false")
-        mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
+    def delete(self):
+        self.delete_count += 1
 
-        # Stub a client whose create_session raises an auth-shaped error.
+
+class _ReadyClient:
+    def __init__(self, session):
+        self._session = session
+
+    def create_session(self):
+        return self._session
+
+    def wait_ready(self, name, timeout_seconds):
+        return None
+
+
+def _manager_with_client(client):
+    from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+
+    mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
+    mgr._client = client
+    mgr._available = True
+    return mgr
+
+
+class TestTaskSessionWiring:
+    """Round-trip: a task sandbox's auth failure → rotator trigger fires."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_breakers(self):
+        from cogniverse_core.common.utils.circuit_breaker import CircuitBreaker
+
+        CircuitBreaker.reset_registry()
+        yield
+        CircuitBreaker.reset_registry()
+
+    @pytest.mark.asyncio
+    async def test_auth_error_creating_the_sandbox_triggers_rotator(self):
         class _BoomClient:
             def create_session(self):
                 raise PermissionError("x509: certificate has expired")
 
-        mgr._client = _BoomClient()
-        mgr._available = True
-
+        mgr = _manager_with_client(_BoomClient())
         rotator = MagicMock()
         rotator.trigger_on_auth_failure.return_value = True
         mgr.attach_cert_rotator(rotator)
 
-        result = mgr.exec_in_sandbox("test_agent", ["echo", "hi"])
-        # Manager swallowed the error and returned an error envelope.
-        assert result["exit_code"] == -1
-        # The rotator was triggered with a stringified version of the error.
-        rotator.trigger_on_auth_failure.assert_called_once()
-        called_with = rotator.trigger_on_auth_failure.call_args.args[0]
-        assert "x509" in called_with.lower() or "permission" in called_with.lower()
+        with pytest.raises(PermissionError, match="x509: certificate has expired"):
+            async with mgr.task_session("test_agent", "prodfixagents:certs"):
+                pass
 
-    def test_non_auth_error_does_not_trigger_rotator(self, monkeypatch):
-        from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+        assert rotator.trigger_on_auth_failure.call_count == 1
+        assert "x509" in rotator.trigger_on_auth_failure.call_args.args[0]
 
-        monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_ENABLED", "false")
-        mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
+    @pytest.mark.asyncio
+    async def test_auth_error_during_exec_triggers_rotator(self):
+        session = _FakeSession()
+        mgr = _manager_with_client(_ReadyClient(session))
+        rotator = MagicMock()
+        rotator.trigger_on_auth_failure.return_value = True
+        mgr.attach_cert_rotator(rotator)
 
+        with pytest.raises(PermissionError, match="x509: certificate has expired"):
+            async with mgr.task_session("test_agent", "prodfixagents:certs") as owned:
+                await owned.exec(["echo", "hi"], timeout_seconds=5)
+
+        assert rotator.trigger_on_auth_failure.call_count == 1
+        assert "x509" in rotator.trigger_on_auth_failure.call_args.args[0]
+        assert session.delete_count == 1
+
+    @pytest.mark.asyncio
+    async def test_non_auth_error_does_not_trigger_rotator(self):
         class _BoomClient:
             def create_session(self):
                 raise RuntimeError("OOM: container killed")
 
-        mgr._client = _BoomClient()
-        mgr._available = True
-
+        mgr = _manager_with_client(_BoomClient())
         rotator = MagicMock()
         mgr.attach_cert_rotator(rotator)
 
-        result = mgr.exec_in_sandbox("test_agent", ["echo", "hi"])
-        assert result["exit_code"] == -1
-        # OOM is not auth-shaped — rotator must stay quiet.
-        rotator.trigger_on_auth_failure.assert_not_called()
+        with pytest.raises(RuntimeError, match="OOM: container killed"):
+            async with mgr.task_session("test_agent", "prodfixagents:certs"):
+                pass
 
-    def test_no_rotator_attached_is_safe(self, monkeypatch):
-        from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+        assert rotator.trigger_on_auth_failure.call_count == 0
 
-        monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_ENABLED", "false")
-        mgr = SandboxManager(policy=SandboxPolicy.DISABLED)
-
+    @pytest.mark.asyncio
+    async def test_no_rotator_attached_surfaces_the_original_error(self):
         class _BoomClient:
             def create_session(self):
                 raise PermissionError("x509: bad cert")
 
-        mgr._client = _BoomClient()
-        mgr._available = True
-        # No attach_cert_rotator call — must not raise.
-        result = mgr.exec_in_sandbox("test_agent", ["echo", "hi"])
-        assert result["exit_code"] == -1
+        mgr = _manager_with_client(_BoomClient())
 
-
-class TestPooledExecTriggersRotator:
-    def test_pooled_auth_failure_triggers_rotator(self):
-        """An auth/TLS-shaped failure on the POOLED exec path must trigger
-        the cert rotator exactly like the non-pooled path does — otherwise
-        a rotation is only noticed by the rotator's polling tick while
-        every pooled exec keeps failing on the stale-cert session."""
-        from cogniverse_runtime.sandbox_manager import SandboxManager
-
-        mgr = SandboxManager(policy="disabled")
-        rotator = MagicMock()
-        mgr.attach_cert_rotator(rotator)
-
-        class _AuthFailPool:
-            def with_session(self, agent_type, fn):
-                raise RuntimeError("tls handshake failed: certificate expired")
-
-        out = mgr._exec_pooled(_AuthFailPool(), "coding_agent", ["echo", "hi"], 5)
-
-        assert out == {
-            "stdout": "",
-            "stderr": "tls handshake failed: certificate expired",
-            "exit_code": -1,
-        }
-        rotator.trigger_on_auth_failure.assert_called_once()
+        with pytest.raises(PermissionError, match="x509: bad cert"):
+            async with mgr.task_session("test_agent", "prodfixagents:certs"):
+                pass

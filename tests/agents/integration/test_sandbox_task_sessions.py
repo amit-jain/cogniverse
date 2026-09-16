@@ -273,26 +273,18 @@ async def test_readiness_failure_deletes_the_sandbox_it_created(gateway):
         gateway.readiness_error = grpc.StatusCode.UNAVAILABLE
         for _ in range(3):
             with pytest.raises(grpc.RpcError) as raised:
-                failing.with_session(
-                    "coding_agent", lambda s: pytest.fail("callback reached")
-                )
+                with failing.task_session():
+                    pytest.fail("session yielded")
             assert raised.value.code() is grpc.StatusCode.UNAVAILABLE
         assert gateway.created == ["sandbox-1", "sandbox-2", "sandbox-3"]
         assert gateway.deleted == ["sandbox-1", "sandbox-2", "sandbox-3"]
         assert gateway.live == {}
-        assert failing.stats() == {
-            "pool_size": 0,
-            "max_pool_size": 8,
-            "in_use": 0,
-            "task_sessions": 0,
-            "agents": [],
-        }
+        assert failing.stats() == {"max_pool_size": 8, "task_sessions": 0}
 
         gateway.readiness_error = None
         recovered = SandboxSessionPool(client)
-        result = recovered.with_session(
-            "coding_agent", lambda s: s.exec(["echo", "recovered"], timeout_seconds=5)
-        )
+        with recovered.task_session() as session:
+            result = session.exec(["echo", "recovered"], timeout_seconds=5)
         assert (result.exit_code, result.stdout, result.stderr) == (
             0,
             "recovered\n",
