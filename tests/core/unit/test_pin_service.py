@@ -51,12 +51,14 @@ class FakeManager:
     def delete_memory(self, *, memory_id, tenant_id, agent_name):
         return self.store.pop(memory_id, None) is not None
 
-    def get_all_memories(self, *, tenant_id, agent_name):
-        return [
+    def get_all_memories(self, *, tenant_id, agent_name, limit=100):
+        rows = [
             {"id": mid, "memory": v["content"], "metadata": v["metadata"]}
             for mid, v in self.store.items()
             if v["agent_name"] == agent_name and v["tenant_id"] == tenant_id
         ]
+        # The store returns the newest ``limit`` rows; ``None`` walks every page.
+        return rows if limit is None else rows[-limit:]
 
 
 @pytest.fixture
