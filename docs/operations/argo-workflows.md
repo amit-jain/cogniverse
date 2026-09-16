@@ -301,14 +301,16 @@ The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisi
 11. `verify-tenant` — the same entry point with `--step verify --profiles <list>`.
 12. `notify-completion` — logs a completion summary (webhook call commented out).
 
-Every container step runs `python -m cogniverse_runtime.provision_tenant` from the runtime image, which ships the installed packages and `configs/` but no `uv`, no `scripts/` and no `kubectl`. `BACKEND_URL` / `BACKEND_PORT` name the Vespa data endpoint and `VESPA_CONFIG_PORT` the config server the schema deploy posts to.
+Every container step runs `python -m cogniverse_runtime.provision_tenant` from the runtime image, which ships the installed packages and `configs/` but no `uv`, no `scripts/` and no `kubectl`. Every one of them carries `BACKEND_URL` / `BACKEND_PORT` (the Vespa data endpoint) and `VESPA_CONFIG_PORT` (the config server the schema deploy posts to), because each builds a `ConfigManager` over the tenant store — the telemetry step included. A step that fails prints one line naming the cause and exits 1.
+
+`--profiles` entries resolve through the tenant's merged backend catalog: the cluster profiles in `configs/config.json` with the tenant's stored overrides on top. A tenant that owns no backend rows yet provisions on the cluster catalog.
 
 `python -m cogniverse_runtime.provision_tenant` supports five `--step` values:
 
 | `--step` | What it does |
 |---|---|
-| `schemas` | Deploys each `--profiles` entry's schema through `SchemaRegistry.deploy_schema`, the seam `POST /admin/profiles/{name}/deploy` uses, under the tenant-scoped schema name |
-| `verify` | Confirms each `--profiles` entry's tenant schema is registered and queryable |
+| `schemas` | Deploys the `--profiles` entries' schemas through `SchemaRegistry.deploy_schemas` as one application package, under their tenant-scoped names; a profile that cannot be loaded leaves none of them registered |
+| `verify` | Confirms each `--profiles` entry's tenant schema carries a registry row and answers a YQL query |
 | `memory` | Creates the tenant's Mem0 memory schema via `Mem0MemoryManager` + `lazy_init_memory` |
 | `telemetry` | Exports a required probe span so the tenant's Phoenix project is created; an unreachable collector fails the step |
 | `tier` | Stores the tenant's semantic-router tier (`--tier`, one of `ROUTER_TIERS`) via `set_tenant_tier`, the seam `PUT /admin/tenants/{id}/tier` writes |

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -106,6 +107,10 @@ def test_init_telemetry_exports_the_probe_under_the_canonical_tenant(monkeypatch
     pt = _load()
     spans = []
     monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
         lambda *args, **kwargs: _telemetry_manager(spans),
     )
@@ -115,6 +120,10 @@ def test_init_telemetry_exports_the_probe_under_the_canonical_tenant(monkeypatch
 
 def test_init_telemetry_reports_a_collector_outage_as_a_failure(monkeypatch):
     pt = _load()
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: object(),
+    )
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
         lambda *args, **kwargs: _telemetry_manager(
@@ -129,6 +138,59 @@ def test_init_telemetry_reports_a_collector_outage_as_a_failure(monkeypatch):
     assert str(raised.value) == (
         "Provisioning telemetry failed for tenant acme:acme: "
         "Required telemetry export failed: endpoint=1.2.3.4:4317"
+    )
+
+
+def _run_cli(*args, env=None):
+    base = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("BACKEND_", "VESPA_", "TELEMETRY_"))
+    }
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=base | (env or {}),
+        cwd=_SCRIPT.parents[1],
+    )
+
+
+@pytest.mark.parametrize(
+    "step,args",
+    [
+        ("schemas", ("--profiles", "video_colpali_smol500_mv_frame")),
+        ("verify", ("--profiles", "video_colpali_smol500_mv_frame")),
+        ("telemetry", ()),
+        ("memory", ()),
+        ("tier", ("--tier", "pro")),
+    ],
+)
+def test_a_step_without_its_backend_endpoint_reports_the_cause_not_a_crash(step, args):
+    """Every step builds a ConfigManager, so a step the workflow launched
+    without ``BACKEND_URL`` must exit 1 naming the missing variable. A
+    traceback is an unhandled failure the workflow reports as a crash."""
+    proc = _run_cli("--tenant-id", "acme", "--step", step, *args)
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+    assert "Traceback" not in proc.stderr
+    assert proc.stderr.strip() == (
+        "Provisioning failed for tenant acme:acme: BACKEND_URL environment "
+        "variable is required. Set it to your backend server URL, e.g., "
+        "BACKEND_URL=http://localhost"
+    )
+
+
+def test_an_unknown_tier_is_reported_without_touching_a_store():
+    from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+
+    proc = _run_cli("--tenant-id", "acme", "--step", "tier", "--tier", "platinum")
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+    assert "Traceback" not in proc.stderr
+    assert proc.stderr.strip() == (
+        f"Unknown router tier 'platinum'. Valid tiers: {sorted(ROUTER_TIERS)}"
     )
 
 

@@ -516,12 +516,14 @@ for the full operator workflow and JSON shapes.
 --profiles LIST      # Comma-separated backend profiles (required by --step schemas|verify)
 ```
 
-**Environment:** `BACKEND_URL` / `BACKEND_PORT` name the Vespa data endpoint; `VESPA_CONFIG_PORT` names the config server the schema deploy posts to.
+**Environment:** every step needs `BACKEND_URL` / `BACKEND_PORT` (the Vespa data endpoint) because every step builds a `ConfigManager` over the tenant store; `VESPA_CONFIG_PORT` names the config server the schema deploy posts to. A failing step prints one line naming the cause and exits 1.
+
+`--profiles` entries resolve through the tenant's merged backend catalog — the cluster profiles in `configs/config.json` with the tenant's stored overrides on top — so a tenant with no backend rows yet still provisions.
 
 **Steps:**
 
-- `schemas` — Deploys each profile's schema through `SchemaRegistry.deploy_schema`, the seam `POST /admin/profiles/{name}/deploy` uses, under the tenant-scoped schema name
-- `verify` — Confirms each profile's tenant schema is registered and queryable
+- `schemas` — Deploys the profiles' schemas through `SchemaRegistry.deploy_schemas` as one application package, under their tenant-scoped names; a profile that cannot be loaded leaves none of them registered
+- `verify` — Confirms each profile's tenant schema carries a registry row and answers a YQL query
 - `memory` — Creates the tenant's Mem0 memory schema via `lazy_init_memory`
 - `telemetry` — Exports a required probe span via `TelemetryManager.required_span(...)` to create the Phoenix project; an unreachable collector fails the step
 - `tier` — Stores the tenant's semantic-router tier via `set_tenant_tier`; a tier outside `ROUTER_TIERS` is refused before any store is built
@@ -546,21 +548,25 @@ uv run python -m cogniverse_runtime.provision_tenant \
 
 **Implementation:**
 ```python
-def init_memory(tenant_id: str) -> None:
-    from cogniverse_core.memory.manager import Mem0MemoryManager
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_runtime.memory_init import lazy_init_memory
+def deploy_schemas(tenant_id: str, profiles: List[str]) -> List[str]:
+    tenant = canonical_tenant_id(tenant_id)
+    _, backend, schema_names = _resolve(tenant, profiles)
+    return backend.schema_registry.deploy_schemas(
+        tenant_id=tenant, base_schema_names=schema_names
+    )
 
-    config_manager = create_default_config_manager()
+def init_memory(tenant_id: str) -> None:
+    config_manager = _config_manager(tenant_id)
     mgr = Mem0MemoryManager(tenant_id)
-    if not lazy_init_memory(mgr, tenant_id, config_manager, auto_create_schema=True):
-        raise RuntimeError(f"Memory initialization failed for tenant '{tenant_id}'")
+    lazy_init_memory(mgr, tenant_id, config_manager, auto_create_schema=True)
 
 def init_telemetry(tenant_id: str) -> None:
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    tm = get_telemetry_manager()
-    with tm.span("provision.probe", tenant_id=tenant_id, component="search_service"):
+    tenant = canonical_tenant_id(tenant_id)
+    manager = get_telemetry_manager(
+        _config_manager(tenant),
+        otlp_endpoint=resolve_library_env_defaults()["telemetry_otlp_endpoint"],
+    )
+    async with manager.required_span("provision.probe", tenant_id=tenant):
         pass
 ```
 
