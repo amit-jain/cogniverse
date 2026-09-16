@@ -11,12 +11,20 @@ Features tested:
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID
+from cogniverse_core.agents.rlm_options import RLMOptions
+from tests.e2e.conftest import (
+    GATEWAY_VIDEO_QUERIES,
+    RUNTIME,
+    TENANT_ID,
+    expected_gateway_routing,
+)
+from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 
 
 @pytest.mark.e2e
@@ -206,3 +214,81 @@ class TestAnnotationQueueE2E:
                 json={"label": "correct_routing"},
             )
             assert resp.status_code == 404
+
+
+# The smallest budget the shipped options model accepts. Anything below it is
+# refused by RLMOptions, so this is the tightest deadline a caller can set.
+RLM_TIMEOUT_SECONDS = next(
+    constraint.ge
+    for constraint in RLMOptions.model_fields["timeout_seconds"].metadata
+    if hasattr(constraint, "ge")
+)
+
+
+@pytest.mark.e2e
+class TestRLMOptionsDoNotFreezeTheReplica:
+    """An `rlm` turn runs off the serving loop and stops at its deadline."""
+
+    def test_an_expired_rlm_budget_is_reported_and_the_replica_keeps_serving(self):
+        query = "What visual patterns appear in outdoor activity videos?"
+        neighbour_query = GATEWAY_VIDEO_QUERIES[0]
+
+        def _neighbour() -> httpx.Response:
+            return httpx.post(
+                f"{RUNTIME}/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": neighbour_query,
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 3,
+                },
+                timeout=900.0,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            probe = LoopProbe()
+            probe.__enter__()
+            neighbour = pool.submit(_neighbour)
+            research = pool.submit(
+                lambda: httpx.post(
+                    f"{RUNTIME}/agents/deep_research_agent/process",
+                    json={
+                        "agent_name": "deep_research_agent",
+                        "query": query,
+                        "context": {"tenant_id": TENANT_ID, "max_iterations": 1},
+                        "rlm": {
+                            "enabled": True,
+                            "timeout_seconds": RLM_TIMEOUT_SECONDS,
+                        },
+                    },
+                    timeout=900.0,
+                )
+            )
+            response = research.result()
+            neighbour_response = neighbour.result()
+            served = probe.stop()
+
+        assert response.status_code == 200, response.text[:500]
+        data = response.json()
+        assert data["status"] == "success", data
+        assert data["agent"] == "deep_research_agent", data
+        result = data["result"]
+        # The budget expired inside the REPL loop, so no synthesis was
+        # produced and the turn says which failure stopped it rather than
+        # reporting a completed synthesis.
+        assert result["rlm_synthesis"] is None, result
+        assert result["rlm_telemetry"] == {
+            "rlm_enabled": False,
+            "rlm_attempted": True,
+            "rlm_error": (f"RLM processing exceeded timeout of {RLM_TIMEOUT_SECONDS}s"),
+        }, result["rlm_telemetry"]
+
+        assert_loop_served(served)
+
+        assert neighbour_response.status_code == 200, neighbour_response.text[:400]
+        neighbour_body = neighbour_response.json()
+        assert neighbour_body["status"] == "success", neighbour_body
+        gw = neighbour_body["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            neighbour_query, gw
+        ), gw
