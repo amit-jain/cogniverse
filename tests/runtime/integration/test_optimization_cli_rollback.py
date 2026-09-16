@@ -320,41 +320,39 @@ async def test_rollback_publication_preserves_complete_concurrent_reads(
                     for index in range(8)
                 )
             )
-            # Every concurrent read returns ONE complete artefact: the rollback
-            # writes the target's content before it publishes the identity, and
-            # while the identity blob is being replaced a reader falls back to
-            # the un-versioned dataset, which already holds the target. No read
-            # ever mixes one version's prompts with another's identity.
+            # Every concurrent read returns the COMPLETE pre-rollback active
+            # view. A publication adds a revision the readers do not yet
+            # resolve, so the committed one stays readable for the whole write
+            # and no read ever falls back to the un-versioned dataset or mixes
+            # one version's prompts with another's identity.
             assert (
                 reads
                 == [
                     {
-                        "prompts": {"summarizer": "PROMPT_1"},
-                        "served_from": "default",
-                        "version": None,
+                        "prompts": {"summarizer": "PROMPT_2"},
+                        "served_from": "active",
+                        "version": 2,
                         "variant_id": "default",
                     }
                 ]
                 * 8
             )
-            assert [
-                (read["prompts"]["summarizer"], read["version"]) for read in reads
-            ] == [("PROMPT_1", None)] * 8
+            assert {read["served_from"] for read in reads} == {"active"}
         finally:
             release.set()
             result = await cli
         assert result.returncode == (1 if fail_publication else 0), result.stderr
         assert ("Rollback complete:" in result.stderr) is (not fail_publication)
         reader = ArtifactManager(manager._provider, tenant_id)
-        # A publication the store keeps refusing cannot restore the identity
-        # blob either, so serving falls back to the un-versioned dataset — but
-        # the content there is the pre-rollback version, never a half-applied
-        # mixture, and the CLI exits nonzero instead of claiming completion.
+        # A publication the store keeps refusing leaves the committed revision
+        # in place, so a failed rollback serves exactly what it served before:
+        # active v2, no canary, and the CLI exits nonzero instead of claiming
+        # completion.
         assert await reader.load_for_request(agent, request_seed="after") == (
             {
                 "prompts": {"summarizer": "PROMPT_2"},
-                "served_from": "default",
-                "version": None,
+                "served_from": "active",
+                "version": 2,
                 "variant_id": "default",
             }
             if fail_publication
@@ -365,6 +363,9 @@ async def test_rollback_publication_preserves_complete_concurrent_reads(
                 "variant_id": "default",
             }
         )
+        state = await reader.get_artefact_state(agent)
+        assert state["canary"] is None
+        assert state["active"]["version"] == (2 if fail_publication else 1)
         assert await reader.load_prompts(agent) == {
             "summarizer": f"PROMPT_{2 if fail_publication else 1}"
         }
