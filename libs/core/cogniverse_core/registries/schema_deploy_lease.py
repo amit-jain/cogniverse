@@ -3,6 +3,7 @@
 import logging
 import os
 import socket
+import threading
 import time
 import uuid
 from typing import Any, Optional
@@ -29,6 +30,25 @@ DEFAULT_LEASE_SECONDS = 600.0
 # re-queues.
 DEFAULT_WAIT_SECONDS = 120.0
 
+_process_state = threading.Lock()
+# holder -> (record version, monotonic time this process first saw it there).
+# Kept across acquire() calls, so a record that stands still is taken over
+# once its hold time has passed even though each wait is shorter than that.
+_stalled_records: dict[str, tuple[int, float]] = {}
+# Holders this process has released without the store confirming the record
+# was cleared. Nothing in this process activates under them any more.
+_released_holders: set[str] = set()
+
+
+def _stalled_for(holder: str, version: int) -> float:
+    now = time.monotonic()
+    with _process_state:
+        seen = _stalled_records.get(holder)
+        if seen is None or seen[0] != version:
+            _stalled_records[holder] = (version, now)
+            return 0.0
+        return now - seen[1]
+
 
 class DeploymentLeaseLost(RuntimeError):
     """The holder no longer owns the lease and must not activate a package."""
@@ -46,11 +66,11 @@ class SchemaDeployLease:
 
     Expiry is measured as elapsed time on the observer's own monotonic clock,
     never as a timestamp one node writes and another compares against its own
-    wall clock: a waiter takes over only after it has itself watched the
-    record's version stand still for the holder's hold time, and a holder
-    treats its own lease as lost once its own monotonic clock passes that
-    hold time since its last successful claim. Clock skew between nodes
-    therefore cannot break mutual exclusion.
+    wall clock: a process takes over only after it has itself watched the
+    record's version stand still for the holder's hold time, across as many
+    waits as that takes, and a holder treats its own lease as lost once its
+    own monotonic clock passes that hold time since its last successful
+    claim. Clock skew between nodes therefore cannot break mutual exclusion.
     """
 
     def __init__(
@@ -100,21 +120,27 @@ class SchemaDeployLease:
     def acquire(self) -> "SchemaDeployLease":
         """Take the lease, waiting out a live holder up to ``wait_seconds``."""
         deadline = time.monotonic() + self._wait_seconds
-        watched_version: Optional[int] = None
-        watched_since = time.monotonic()
+        watched: Optional[str] = None
         while True:
             record, version = self._read()
             current = None if record is None else record.get("holder")
-            if version != watched_version:
-                # The holder renewed, released, or changed: its hold time
-                # starts again from this observation.
-                watched_version = version
-                watched_since = time.monotonic()
-            stalled_for = time.monotonic() - watched_since
-            if (
-                current in (None, self.holder)
-                or stalled_for >= self._hold_seconds(record)
-            ) and self._claim(version, self.holder):
+            if watched is not None and watched != current:
+                with _process_state:
+                    _stalled_records.pop(watched, None)
+            watched = current
+            if current in (None, self.holder):
+                claimable = True
+            else:
+                with _process_state:
+                    released_here = current in _released_holders
+                claimable = released_here or _stalled_for(
+                    current, version
+                ) >= self._hold_seconds(record)
+            if claimable and self._claim(version, self.holder):
+                with _process_state:
+                    _stalled_records.pop(current, None)
+                    _released_holders.discard(current)
+                    _released_holders.discard(self.holder)
                 self._held_since = time.monotonic()
                 logger.info("Vespa deployment lease acquired by %s", self.holder)
                 return self
@@ -143,13 +169,15 @@ class SchemaDeployLease:
         """Hand the lease back; a lease already taken over is left alone.
 
         A store failure here is not the deploy's failure: the package is
-        already activated. The record is left to be taken over once peers
-        have watched it stand still for the hold time.
+        already activated. A record the store did not confirm cleared is
+        taken over at once by this process, and by peers once they have
+        watched it stand still for the hold time.
         """
+        cleared = False
         try:
             record, version = self._read()
             if record is not None and record.get("holder") == self.holder:
-                self._claim(version, None)
+                cleared = self._claim(version, None)
         except Exception as exc:
             logger.warning(
                 "Vespa deployment lease held by %s could not be released "
@@ -161,3 +189,6 @@ class SchemaDeployLease:
             )
         finally:
             self._held_since = None
+            if not cleared:
+                with _process_state:
+                    _released_holders.add(self.holder)
