@@ -209,7 +209,8 @@ def render_config_management_tab():
         st.session_state.config_manager = create_default_config_manager()
     manager = st.session_state.config_manager
 
-    tenant_id = st.text_input("Tenant ID", value=st.session_state["current_tenant"])
+    # The sidebar Active Tenant selector is the only place the tenant changes.
+    tenant_id = st.session_state["current_tenant"]
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🖥️ System Config",
@@ -882,10 +883,24 @@ selected_profiles = st.multiselect("Select profiles to test", [
     "video_xclip_sv_chunk_6s",
 ], default=["video_colpali_smol500_mv_frame"])
 
-# Per profile: builds a processing_task dict (action, video_path, profile, config)
-# and calls the video-processing agent via call_agent_async(...)
-result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
+# Per profile: streams the uploaded bytes to POST /ingestion/upload and polls
+# GET /ingestion/{ingest_id}/status to a terminal state.
+result = submit_video_ingestion(
+    get_runtime_client(),
+    RUNTIME_URL,
+    filename=uploaded_video.name,
+    content=uploaded_video.getvalue(),
+    content_type=uploaded_video.type,
+    profile=profile,
+    tenant_id=st.session_state["current_tenant"],
+)
 ```
+
+`submit_video_ingestion` (`cogniverse_dashboard/ingestion.py`) returns
+`status="success"` for a job that reached `complete` having fed at least one
+document, and for an upload the runtime deduplicated onto an earlier run of the
+same bytes, profile and tenant (`deduplicated=True`). Every other outcome is
+`status="error"` carrying the reason.
 
 **Available Profiles** (verified against `configs/schemas/*.json` embedding dims):
 1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)
@@ -894,18 +909,18 @@ result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
 
 ### 11. Interactive Search Tab
 
-**Purpose**: Live multi-turn search testing across processing profiles and ranking strategies.
+**Purpose**: Live multi-turn search testing.
 
 **Location**: inline in `cogniverse_dashboard/app.py` (`main_tabs[10]`)
 
 **Key Functions**: streams results through the A2A protocol via
-`display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ..., "modality": "video"})`.
-The profile selectbox here offers all 3 ingestion profiles
-(`video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
-`video_xclip_sv_chunk_6s`). Ranking-strategy multiselect offers
-`binary_binary` / `float_float` / `binary_float` / `float_binary`. Maintains a
-`session_id` and `conversation_history` in `st.session_state` for multi-turn context;
-a "🔄 New Session" button resets both.
+`display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ...})`.
+The request carries the result count and nothing else: the agent picks the
+profile and reports it back, and the page renders that one result list under the
+search mode and profile the agent served, naming any ensemble leg that did not
+run. A stored result carries the tenant it was fetched for and is refused under
+any other. Maintains a `session_id` and `conversation_history` in
+`st.session_state` for multi-turn context; a "🔄 New Session" button resets both.
 
 ### 12. Chat Tab
 
