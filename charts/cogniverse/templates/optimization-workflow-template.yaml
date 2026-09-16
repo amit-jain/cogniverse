@@ -90,6 +90,10 @@ spec:
         - "--tenant-id"
         - "{{`{{inputs.parameters.tenant-id}}`}}"
       env:
+      - name: BACKEND_URL
+        value: "http://{{ $fullName }}-vespa"
+      - name: BACKEND_PORT
+        value: "{{ .Values.vespa.service.ports.query }}"
       - name: TELEMETRY_HTTP_ENDPOINT
         value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
       - name: TELEMETRY_OTLP_ENDPOINT

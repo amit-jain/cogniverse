@@ -385,6 +385,22 @@ class TestProfileStepIsGatedOnUploadedGroundTruth:
             "{{inputs.parameters.tenant-id}}",
         ]
         assert [p["name"] for p in template["inputs"]["parameters"]] == ["tenant-id"]
+        # The CLI resolves telemetry config through the Vespa config store
+        # before it reads the blob, so the pod needs the same backend wiring
+        # the optimizer pods carry.
+        env = {
+            entry["name"]: entry.get("value") for entry in template["container"]["env"]
+        }
+        assert env["BACKEND_URL"] == "http://cogniverse-vespa"
+        assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
+        assert env["TELEMETRY_OTLP_ENDPOINT"] == "cogniverse-phoenix:4317"
+        assert set(env) == {
+            "BACKEND_URL",
+            "BACKEND_PORT",
+            "TELEMETRY_HTTP_ENDPOINT",
+            "TELEMETRY_OTLP_ENDPOINT",
+            "COGNIVERSE_INFERENCE_API_KEY",
+        }
 
     def test_profile_step_runs_only_when_the_precheck_says_present(self):
         docs = _render()
