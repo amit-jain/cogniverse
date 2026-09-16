@@ -2217,14 +2217,11 @@ class AgentDispatcher:
         # tenant's SEMANTIC_ROUTER tier instead of the process-global default —
         # the same routing the orchestrated path and the answer agents apply.
         from cogniverse_foundation.config.semantic_router import (
-            routed_lm_context_for,
+            routed_lm_context_for_async,
         )
 
-        # routed_lm_context_for resolves the tenant's router tier, which is a
-        # TTL-expiring Vespa config read — build the context off the loop, then
-        # enter it on the request task so the binding is this task's.
-        routed_lm = await asyncio.to_thread(
-            routed_lm_context_for, self._config_manager, tenant_id, agent_name
+        routed_lm = await routed_lm_context_for_async(
+            self._config_manager, tenant_id, agent_name
         )
 
         # EPHEMERAL_SESSION writes need metadata.session_id to pass schema
@@ -2603,14 +2600,12 @@ class AgentDispatcher:
         # honors the tenant's SEMANTIC_ROUTER tier on this direct-dispatch path,
         # not the process-global default.
         from cogniverse_foundation.config.semantic_router import (
-            routed_lm_context_for,
+            routed_lm_context_for_async,
         )
 
         session_id = context.get("session_id") if context else None
-        # The tier resolution behind this is a TTL-expiring Vespa config read;
-        # build the context off the loop and enter it on the request task.
-        routed_lm = await asyncio.to_thread(
-            routed_lm_context_for, self._config_manager, tenant_id, "search_agent"
+        routed_lm = await routed_lm_context_for_async(
+            self._config_manager, tenant_id, "search_agent"
         )
         with routed_lm:
             with self._session_context(search_agent, tenant_id, session_id):
@@ -3554,16 +3549,11 @@ class AgentDispatcher:
             search_results=grounding.hits,
         )
         from cogniverse_foundation.config.semantic_router import (
-            routed_lm_context_for,
+            routed_lm_context_for_async,
         )
 
-        # The tier resolution behind this is a TTL-expiring Vespa config read;
-        # build the context off the loop and enter it on the request task.
-        routed_lm = await asyncio.to_thread(
-            routed_lm_context_for,
-            self._config_manager,
-            tenant_id,
-            "detailed_report_agent",
+        routed_lm = await routed_lm_context_for_async(
+            self._config_manager, tenant_id, "detailed_report_agent"
         )
         with self._scoped_session(agent, (context or {}).get("session_id")):
             with routed_lm:

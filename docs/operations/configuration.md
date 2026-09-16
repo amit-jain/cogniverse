@@ -173,6 +173,18 @@ with routed_lm_context_for(config_manager, tenant_id="acme_corp", agent_name="se
     ...  # DSPy calls inside this block use the resolved (routed or direct) LM
 ```
 
+Inside a coroutine, `routed_lm_context_for_async()` resolves the same context in
+a worker thread and returns it unentered, so the tenant-tier config read never
+runs on the serving event loop:
+
+```python
+from cogniverse_foundation.config.semantic_router import routed_lm_context_for_async
+
+routed_lm = await routed_lm_context_for_async(config_manager, tenant_id="acme_corp", agent_name="search_agent")
+with routed_lm:
+    ...
+```
+
 Routing is opt-in and disabled by default (`SemanticRouterConfig.enabled = False`); when disabled, the endpoint's own `api_base` is used unchanged.
 
 ### 1b. Agent Registry Configuration
