@@ -3079,7 +3079,8 @@ class TestDocumentIngestionAndSearch:
         stored text was the whole file behind a single truncated embedding, and
         a phrase past the model's window was unreachable.
         """
-        marker = f"tailmarker-{uuid.uuid4().hex}"
+        tenant_id = unique_id("prode2epipe")
+        marker = f"tailmarker-{tenant_id.rsplit('_', 1)[1]}"
         _, window_tokens = _served_document_windows("probe")
         document_text = _text_over_three_windows(marker, window_tokens)
         windows, _ = _served_document_windows(document_text)
@@ -3096,7 +3097,6 @@ class TestDocumentIngestionAndSearch:
         document_path = tmp_path / "windowed_corpus.md"
         document_path.write_text(document_text, encoding="utf-8")
 
-        tenant_id = unique_id("prode2epipe")
         register_tenant_and_wait(tenant_id, created_by="e2e-test")
         schema = _tenant_schema_name(
             json.loads(CONFIG_PATH.read_text())["backend"]["profiles"][

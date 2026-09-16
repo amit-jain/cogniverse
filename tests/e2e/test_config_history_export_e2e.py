@@ -12,7 +12,6 @@ so no committed fixture can stand in for it.
 from __future__ import annotations
 
 import time
-import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -81,7 +80,7 @@ def history_corpus(request):
         store.export_configs(tenant_id, include_history=False)["configs"]
     )
 
-    run = uuid.uuid4().hex[:8]
+    run = tenant_id.split(":", 1)[0].rsplit("_", 1)[1]
     # Zero-padded so the exported (config_id, version) order is the order the
     # sequence numbers already imply.
     written = {
