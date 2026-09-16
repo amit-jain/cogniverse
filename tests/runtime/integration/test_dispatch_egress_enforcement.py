@@ -7,7 +7,7 @@ non-allow-listed outbound is denied at the sandbox boundary."
 
 Per-agent enforcement matrix today:
 
-  * **CodingAgent** → container isolation (``exec_in_sandbox``). The
+  * **CodingAgent** → container isolation (``SandboxManager.task_session``). The
     only agent that runs LLM-generated code; container is the right
     boundary regardless of egress policy.
   * **OrchestratorAgent** → application-layer egress check via

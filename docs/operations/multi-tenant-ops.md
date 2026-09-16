@@ -960,17 +960,17 @@ falls through with no dedicated policy and no dispatch-time check.
 
 | Agent | Container isolation | App-layer egress check | CNI NetworkPolicy | Dispatch-time validation |
 |---|---|---|---|---|
-| **CodingAgent** | ✅ ``exec_in_sandbox`` | n/a | ✅ | ✅ |
+| **CodingAgent** | ✅ ``task_session`` | n/a | ✅ | ✅ |
 | **OrchestratorAgent** (A2A subagent dispatch) | n/a | ✅ ``PolicyEnforcingTransport`` | ✅ | ✅ |
 | **SearchAgent / SummarizerAgent / GatewayAgent** (policy file: `routing_agent.yaml`) | n/a | ◯ deliberately not wired (see "Why no app-layer enforcement on Vespa egress" below) | ✅ | ✅ |
 | **All other 18 agents** — `image_search_agent`, `document_agent`, `text_analysis_agent`, `audio_analysis_agent`, `deep_research_agent`, `detailed_report_agent`, `profile_selection_agent`, `query_enhancement_agent`, `entity_extraction_agent`, `cross_tenant_comparison_agent`, `federated_query_agent`, and the 7 Knowledge-Graph & Reasoning agents (`CitationTracingAgent`, `ContradictionReconciliationAgent`, `MultiDocumentSynthesisAgent`, `KnowledgeGraphTraversalAgent`, `TemporalReasoningAgent`, `KnowledgeSummarizationAgent`, `AuditExplanationAgent`) | n/a | ◯ no policy registered | ✅ only via the shared runtime pod's unified egress union (no agent-specific rule) | ◯ `agent_dispatcher.py` has no `validate_dispatch_endpoints` call for these agent names |
 
 **What "wired" means**:
 
-  - `exec_in_sandbox`: the agent's outbound process runs inside an
-    OpenShell-managed container with syscall filtering, OOM caps, and
-    network egress restricted to the policy's allowlist. Required for
-    any agent that executes user-supplied code.
+  - `task_session`: the agent's task runs inside an OpenShell-managed
+    container with syscall filtering, OOM caps, and network egress
+    restricted to the policy's allowlist. Required for any agent that
+    executes user-supplied code.
   - `PolicyEnforcingTransport`: an httpx transport that intercepts
     every outbound request and raises `EgressDeniedError` (sub-ms,
     structured) when `(host, port)` is not on the agent's policy
@@ -1069,7 +1069,7 @@ connection error or a 4xx — the failure is loud, not silent.
 # in production). Useful for dev iteration on a new policy YAML.
 COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT=disabled
 
-# Disable the sandbox manager entirely (also disables exec_in_sandbox
+# Disable the sandbox manager entirely (also disables the task sandbox
 # for CodingAgent — only safe in trusted dev environments).
 COGNIVERSE_SANDBOX_POLICY=disabled
 ```

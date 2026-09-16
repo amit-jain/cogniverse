@@ -75,7 +75,7 @@ cogniverse_runtime/
 ├── quality_monitor_cli.py           # Quality-monitor CLI entry
 ├── sandbox_http.py                  # Sandbox HTTP transport layer
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
-├── sandbox_pool.py                  # Pool of warm sandbox instances
+├── sandbox_pool.py                  # Capacity-bounded per-task sandbox leases
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
 ├── startup_wait.py                  # Dependency-readiness command + in-process startup wait
@@ -2005,7 +2005,7 @@ Resolution order: `COGNIVERSE_SANDBOX_POLICY` env var → `config["sandbox"]["po
 
 ### Sandbox telemetry
 
-Every `exec_in_sandbox` call emits a `sandbox.exec_in_sandbox` OpenTelemetry span with child spans for each lifecycle phase (`sandbox.create_session`, `sandbox.wait_ready`, `sandbox.exec`, `sandbox.delete`). Key span attributes: `openshell.agent_type`, `openshell.exit_code`, `openshell.wall_ms`, `openshell.oom`, `openshell.policy_denied`.
+Taking a task lease emits `sandbox.create_session` and `sandbox.wait_ready` OpenTelemetry spans; releasing it emits `sandbox.delete`. Each `SandboxTaskSession.exec` emits a `sandbox.task_exec` span with a child `sandbox.exec` span. Key span attributes: `openshell.agent_type`, `openshell.tenant_id`, `openshell.session_name`, `openshell.exit_code`, `openshell.wall_ms`, `openshell.oom`, `openshell.policy_denied`.
 
 ### Gateway health probe
 
