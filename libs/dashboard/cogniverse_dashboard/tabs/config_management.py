@@ -12,7 +12,6 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_dashboard.tabs.backend_profile import render_backend_profile_tab
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -44,20 +43,18 @@ def render_config_management_tab():
 
     manager = st.session_state.config_manager
 
-    # Tenant selector
+    # The sidebar's Active Tenant is the one tenant selector: it canonicalizes
+    # the entry, gates it on registration and drops the previous tenant's
+    # session state. This tab reads that decision.
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        tenant_id = st.text_input(
+        tenant_id = st.session_state["current_tenant"]
+        st.text_input(
             "Tenant ID",
-            value=st.session_state["current_tenant"],
-            help="Multi-tenant configuration isolation",
+            value=tenant_id,
+            disabled=True,
+            help="Set by the sidebar's Active Tenant",
         )
-        # Canonicalize before any read or write: the manager canonicalizes
-        # writes internally, so a bare id typed here would list/read an
-        # empty parallel namespace and freshly saved configs would vanish.
-        if tenant_id:
-            tenant_id = canonical_tenant_id(tenant_id)
-        st.session_state.current_tenant = tenant_id
 
     with col2:
         # Storage backend info
