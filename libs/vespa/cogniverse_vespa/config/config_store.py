@@ -924,7 +924,11 @@ class VespaConfigStore(ImmutableConfigStore):
             include_history: Include all versions (True) or just latest (False)
 
         Returns:
-            Dictionary with all configurations
+            Dictionary with all configurations, ordered by config id then
+            ascending version. ``import_configs`` replays the rows in file
+            order through ``set_config``, so the last row of each key decides
+            the restored active value; ascending version makes that the
+            exported latest.
         """
         try:
             if include_history:
@@ -937,6 +941,7 @@ class VespaConfigStore(ImmutableConfigStore):
                 ]
             else:
                 configs = self.list_configs(tenant_id)
+            configs = sorted(configs, key=lambda c: (c.get_config_id(), c.version))
 
             return {
                 "tenant_id": tenant_id,

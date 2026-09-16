@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1009,6 +1010,70 @@ class TestCompleteHistoryExport:
             )
             == _expected_history()
         )
+
+    def test_export_orders_every_row_by_config_id_then_version(
+        self, export_history_corpus
+    ):
+        """The artifact is ordered, so replaying it restores the exported
+        latest: ``import_configs`` replays rows in file order through
+        ``set_config``, which ignores each row's version."""
+        store = export_history_corpus
+        exported = store.export_configs("export_history", include_history=True)
+        assert [
+            (
+                f"{row['tenant_id']}:{row['scope']}:{row['service']}:"
+                f"{row['config_key']}",
+                row["version"],
+            )
+            for row in exported["configs"]
+        ] == [
+            (f"export_history:system:runtime:key_{key:02}", version)
+            for key in range(41)
+            for version in range(1, 11)
+        ]
+
+    def test_history_export_restores_the_exported_latest(self, vespa_config_store):
+        store = vespa_config_store
+        source = f"export_roundtrip_{uuid.uuid4().hex[:8]}"
+        target = f"export_restored_{uuid.uuid4().hex[:8]}"
+        for revision in range(1, 4):
+            for key in ("alpha", "beta", "gamma"):
+                store.set_config(
+                    tenant_id=source,
+                    scope=ConfigScope.SYSTEM,
+                    service="runtime",
+                    config_key=key,
+                    config_value={"revision": revision},
+                )
+
+        exported = store.export_configs(source, include_history=True)
+        assert [(row["config_key"], row["version"]) for row in exported["configs"]] == [
+            ("alpha", 1),
+            ("alpha", 2),
+            ("alpha", 3),
+            ("beta", 1),
+            ("beta", 2),
+            ("beta", 3),
+            ("gamma", 1),
+            ("gamma", 2),
+            ("gamma", 3),
+        ]
+
+        assert store.import_configs(target, exported) == 9
+        restored = {
+            key: store.get_config(target, ConfigScope.SYSTEM, "runtime", key)
+            for key in ("alpha", "beta", "gamma")
+        }
+        assert {key: entry.config_value for key, entry in restored.items()} == {
+            "alpha": {"revision": 3},
+            "beta": {"revision": 3},
+            "gamma": {"revision": 3},
+        }
+        assert {key: entry.version for key, entry in restored.items()} == {
+            "alpha": 3,
+            "beta": 3,
+            "gamma": 3,
+        }
 
     def test_dashboard_download_contains_every_retained_version(
         self, export_history_corpus
