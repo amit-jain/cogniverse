@@ -12,7 +12,9 @@ import logging
 
 import pytest
 
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import (
@@ -20,8 +22,19 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
     resolve_provider,
 )
+from tests.utils.memory_store import InMemoryConfigStore
 
 logger = logging.getLogger(__name__)
+
+
+class _MixinHost(RLMAwareMixin):
+    """The mixin as an agent hosts it: a tenant and the injected ConfigManager."""
+
+    def __init__(self, tenant_id: str = "test:unit"):
+        self.tenant_id = tenant_id
+        store = InMemoryConfigStore()
+        store.initialize()
+        self.bind_config_manager(ConfigManager(store=store))
 
 
 @pytest.fixture
@@ -142,9 +155,7 @@ class TestRLMAwareMixinIntegration:
 
         Important for performance - avoid creating new RLM instances per query.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # Get first instance
         rlm1 = mixin.get_rlm(
@@ -172,9 +183,8 @@ class TestRLMAwareMixinIntegration:
         Telemetry is critical for comparing RLM vs standard inference.
         """
         from cogniverse_agents.inference.rlm_inference import RLMResult
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # Test with RLM result
         rlm_result = RLMResult(
@@ -267,9 +277,7 @@ class TestSearchInputRLMIntegration:
         assert search_input.rlm is None
 
         # Verify should_use_rlm returns False
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
         assert mixin.should_use_rlm_for_query(search_input.rlm, "any context") is False
 
         logger.info("Backward compatibility without RLM validated")
@@ -280,7 +288,6 @@ class TestSearchInputRLMIntegration:
 
         Auto-detect enables RLM only when context exceeds threshold.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
         from cogniverse_agents.search_agent import SearchInput
 
         api_request = {
@@ -295,7 +302,7 @@ class TestSearchInputRLMIntegration:
         }
 
         search_input = SearchInput.model_validate(api_request)
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # Below threshold - should NOT use RLM
         small_context = "x" * 50_000
@@ -342,7 +349,6 @@ class TestRLMSearchAgentIntegration:
 
         Note: This tests the class structure, not runtime behavior.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
         from cogniverse_agents.search_agent import SearchInput
 
         # Verify SearchInput supports RLM options
@@ -357,7 +363,7 @@ class TestRLMSearchAgentIntegration:
         assert search_input.rlm.enabled is True
 
         # VALIDATE: RLMAwareMixin methods exist
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
         assert hasattr(mixin, "should_use_rlm_for_query")
         assert hasattr(mixin, "process_with_rlm")
         assert hasattr(mixin, "get_rlm_telemetry")
@@ -473,7 +479,6 @@ class TestRLMABTestingIntegration:
 
         Simulates control group in A/B testing.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
         from cogniverse_agents.search_agent import SearchInput
 
         # Group A: No RLM
@@ -481,7 +486,7 @@ class TestRLMABTestingIntegration:
             query="test query", tenant_id="test_tenant", top_k=10, rlm=None
         )
 
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
         context = "x" * 100_000
 
         # VALIDATE: RLM not used
@@ -501,7 +506,6 @@ class TestRLMABTestingIntegration:
         Simulates treatment group in A/B testing.
         """
         from cogniverse_agents.inference.rlm_inference import RLMResult
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
         from cogniverse_agents.search_agent import SearchInput
 
         # Group B: RLM enabled
@@ -512,7 +516,7 @@ class TestRLMABTestingIntegration:
             rlm=RLMOptions(enabled=True, max_iterations=3),
         )
 
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
         context = "x" * 100_000
 
         # VALIDATE: RLM used
@@ -542,9 +546,8 @@ class TestRLMABTestingIntegration:
         Both groups should have context_size_chars for fair comparison.
         """
         from cogniverse_agents.inference.rlm_inference import RLMResult
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
         context_size = 150_000
 
         # Group A telemetry (no RLM)
@@ -624,7 +627,6 @@ class TestRLMVespaIntegration:
         assert input_dict["rlm"]["enabled"] is True
 
         # VALIDATE: Agent has RLM mixin capabilities
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
         assert hasattr(RLMAwareMixin, "should_use_rlm_for_query")
 
@@ -645,9 +647,7 @@ class TestRLMVespaIntegration:
         Uses auto-detect mode to determine if RLM should be used
         based on actual context size from search results.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # Simulate search results context (would come from Vespa)
         small_results_context = "Result 1: Short video about ML\n" * 10  # ~400 chars
@@ -687,9 +687,8 @@ class TestRLMVespaIntegration:
         4. Generate telemetry for both groups
         """
         from cogniverse_agents.inference.rlm_inference import RLMResult
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # Simulate context built from Vespa search results
         search_results_context = """
@@ -794,9 +793,7 @@ class TestRLMRealInferenceIntegration:
 
         Tests the mixin method that agents would use.
         """
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-
-        mixin = RLMAwareMixin()
+        mixin = _MixinHost()
 
         # RLMOptions.model is passed straight through to litellm via the
         # RLMAwareMixin's "if '/' not in model_name: prepend backend" shim,
@@ -883,7 +880,6 @@ class TestSearchAgentRLMIntegration:
 
     def test_search_agent_inherits_rlm_aware_mixin(self):
         """SearchAgent should inherit from RLMAwareMixin."""
-        from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
         from cogniverse_agents.search_agent import SearchAgent
 
         assert issubclass(SearchAgent, RLMAwareMixin)
