@@ -22,6 +22,7 @@ Architecture note (A2A gateway):
 """
 
 import json
+import math
 import re
 import time
 import uuid
@@ -36,6 +37,7 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_synthetic.generators.base import (
     CONTENT_DROP_CATEGORIES,
     UNEXPECTED_DROP_CATEGORY,
@@ -2661,31 +2663,57 @@ class TestPDFIngestionAndSearch:
             )
 
 
-def _served_document_windows(text: str) -> list[str]:
-    """The slices the deployed embedding service splits ``text`` into.
-
-    Ingestion asks the served model where its document window falls and
-    indexes one document per slice, so the expected document count comes
-    from that same call against the same sidecar, never from a literal.
-    """
+def _colbert_endpoint() -> str:
     from cogniverse_cli.images import detect_torch_backend
 
-    from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
     from tests.e2e.conftest import e2e_required_health_probes
 
-    endpoints = dict(e2e_required_health_probes(detect_torch_backend()))
+    return dict(e2e_required_health_probes(detect_torch_backend()))["colbert_pylate"]
+
+
+def _served_document_windows(text: str) -> tuple[list[str], int]:
+    """The deployed service's split of ``text``, with its per-window budget.
+
+    Ingestion asks the served model where its document window falls and
+    indexes one document per slice, so the split comes from that same call
+    against the same sidecar; the budget is what the expected count is
+    derived from.
+    """
+    from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+
+    endpoint = _colbert_endpoint()
     profile = json.loads(CONFIG_PATH.read_text())["backend"]["profiles"][
         DOCUMENT_PROFILE
     ]
     model, _ = RemoteColBERTLoader(
         profile["embedding_model"],
-        {"remote_inference_url": endpoints["colbert_pylate"]},
+        {"remote_inference_url": endpoint},
         _resolved_headers={},
     ).load_model()
     try:
-        return [text[start:end] for start, end in model.text_windows([text])[0]]
+        spans = model.text_windows([text])[0]
     finally:
         model._close()
+    with httpx.Client(timeout=300.0) as client:
+        response = client.post(
+            f"{endpoint}/windows",
+            json={"input": [text], "model": profile["embedding_model"]},
+        )
+    assert response.status_code == 200, response.text
+    return [text[start:end] for start, end in spans], response.json()["window_tokens"]
+
+
+def _served_document_tokens(text: str) -> list[int]:
+    """``text`` tokenized by the model the document profile is served from."""
+    from transformers import AutoTokenizer
+
+    spec = get_inference_service_spec("colbert_pylate")
+    tokenizer = AutoTokenizer.from_pretrained(
+        spec.model_id,
+        revision=spec.model_revision,
+        cache_dir=str(Path.home() / ".cache/cogniverse-tests/huggingface/hub"),
+    )
+    return tokenizer(text, add_special_tokens=False)["input_ids"]
 
 
 @pytest.mark.e2e
@@ -2698,7 +2726,15 @@ class TestDocumentIngestionAndSearch:
         document_text = real_document_path.read_text(encoding="utf-8").strip()
         assert "# Evaluation Dataset" in document_text
         assert "Provides:\n- **500 test videos** from ActivityNet-200" in document_text
-        windows = _served_document_windows(document_text)
+        windows, window_tokens = _served_document_windows(document_text)
+        # The count the upload must report, derived from the document's own
+        # token count and the model's window, not from the split under test.
+        tokens = _served_document_tokens(document_text)
+        assert len(tokens) == 1408
+        expected_windows = math.ceil(len(tokens) / window_tokens)
+        # One window would make every count below pass on a truncated index.
+        assert expected_windows == 5
+        assert len(windows) == expected_windows
         assert "".join(windows) == document_text
         expected_source_url = _expected_artifact_source_url(real_document_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -2722,8 +2758,8 @@ class TestDocumentIngestionAndSearch:
             assert upload_data["existing"] is False, upload_data
             assert upload_data["filename"] == real_document_path.name
             assert upload_data["source_url"] == expected_source_url
-            assert upload_data["chunks_created"] == len(windows), upload_data
-            assert upload_data["documents_fed"] == len(windows), upload_data
+            assert upload_data["chunks_created"] == expected_windows, upload_data
+            assert upload_data["documents_fed"] == expected_windows, upload_data
             assert upload_data["video_id"] == _content_sha256(real_document_path)
 
             time.sleep(3)
@@ -2752,8 +2788,13 @@ class TestDocumentIngestionAndSearch:
             # so the hit carries that window's slice, and it is the slice that
             # holds the sentence the query names.
             hit_text = search_resp.json()["results"][0]["metadata"]["full_text"]
-            assert hit_text in windows
-            assert "125 extracted queries" in hit_text
+            holding = [
+                index
+                for index, window in enumerate(windows)
+                if "125 extracted queries" in window
+            ]
+            assert len(holding) == 1
+            assert hit_text == windows[holding[0]]
 
 
 # Scenario 20 (API portion): Event queue listing

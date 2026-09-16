@@ -109,6 +109,36 @@ def sample_video_path(temp_dir):
 
 
 @pytest.fixture
+def sample_audio_bearing_path(temp_dir):
+    """A media file whose container carries a real audio stream.
+
+    Transcription settles a container without one as an empty transcript
+    without reaching the model, so a test that pins what the model returns
+    needs a source with audio. The stem matches ``sample_video_path`` so
+    both resolve to the same content id.
+    """
+    import av
+
+    audio_path = temp_dir / "test_video.wav"
+    container = av.open(str(audio_path), "w", format="wav")
+    stream = container.add_stream("pcm_s16le", rate=16000)
+    stream.layout = "mono"
+    samples = (np.sin(2 * np.pi * 440 * np.arange(16000) / 16000) * 12000).astype(
+        np.int16
+    )
+    frame = av.AudioFrame.from_ndarray(
+        samples.reshape(1, -1), format="s16", layout="mono"
+    )
+    frame.rate = 16000
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+    return audio_path
+
+
+@pytest.fixture
 def sample_audio_transcript():
     """Sample audio transcript for testing."""
     return {

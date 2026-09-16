@@ -121,14 +121,18 @@ the served ColBERT model reports the character spans it encodes whole, and each
 span becomes its own document carrying `chunk_index`, `chunk_count`,
 `chunk_start` and `chunk_end` alongside its slice of the text. All windows of
 one source share that source's identity field, and the `document_text_semantic`,
-`code_lateon_mv` and `audio_clap_semantic` profiles resolve results at source
-granularity, so a search returns one hit per source with its matched windows.
+`lateon_mv`, `code_lateon_mv` and `audio_clap_semantic` profiles resolve results
+at source granularity, so a search returns one hit per source with its matched
+windows. Each span is re-tokenized on its own and shortened until the encoder
+takes it whole, and a reply whose spans leave a gap, overlap or stop short of
+the text fails the document.
 
-Each run writes its keyframes, chunks, rendered pages, transcripts and their
-metadata under its own scratch directory beneath the profile output directory,
-and the pipeline removes that directory when the run ends, whether it
-completed, failed or was cancelled. A cancelled run lets the in-flight decoding
-stage settle before releasing the directory.
+Each run writes its keyframes — extracted or rehydrated from the cache —
+chunks, rendered pages, transcripts and their metadata under its own scratch
+directory beneath the profile output directory, and the pipeline removes that
+directory when the run ends, whether it completed, failed or was cancelled. A
+cancelled run lets the in-flight decoding stage settle before releasing the
+directory, and a directory that survives its release is logged as a warning.
 
 ### Key Features
 
@@ -463,7 +467,7 @@ sequenceDiagram
 - **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
 - **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Code ColBERT** (`code_files` present → `_process_code_segments`): LateOn-Code-edge 48-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
-- **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content. The transcription result also supplies `audio_language` and `audio_duration`, which land in the schema fields of the same names.
+- **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content. The transcription result also supplies `audio_language` and `audio_duration`, which land in the schema fields of the same names. A profile that binds `inference_services.acoustic_embedding` fails the document when that service errors; without a bound service the acoustic vector is absent and the semantic document still feeds.
 
 ---
 

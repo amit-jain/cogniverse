@@ -16,6 +16,7 @@ images can copy it alone.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 import threading
@@ -95,12 +96,12 @@ class WindowResponse(BaseModel):
 
 
 def _window_token_budget(model: Any) -> int:
-    """Content tokens that fit in one encode alongside the document prefix.
+    """Content tokens planned into one window.
 
-    PyLate tokenizes ``document_prefix + text`` and caps the sequence at
-    ``document_length - 1``, special tokens included, then drops whatever
-    does not fit. The budget is what is left of that cap once the prefix
-    and its special tokens are accounted for.
+    The encoder keeps ``document_length - 1`` tokens of a window, special
+    tokens included. The budget is what is left of that once the document
+    prefix and its special tokens are accounted for; the span that carries
+    those tokens is measured against the cap before it is returned.
     """
     tokenizer = model.tokenizer
     prefix_tokens = len(tokenizer(model.document_prefix)["input_ids"])
@@ -113,25 +114,80 @@ def _window_token_budget(model: Any) -> int:
     return budget
 
 
+def _window_token_cap(model: Any) -> int:
+    """Tokens of one window the encoder keeps.
+
+    A window is tokenized on its own at encode time and truncated at
+    ``document_length - 1``, the tokenizer's limit for this model; the
+    document marker is then inserted into the kept sequence. A window
+    whose standalone tokenization is longer loses its tail.
+    """
+    cap = int(model.document_length) - 1
+    if cap < 1:
+        raise ValueError(
+            f"document_length {model.document_length} leaves no room for content"
+        )
+    return cap
+
+
+def _fitted_window_end(model: Any, text: str, start: int, end: int, cap: int) -> int:
+    """Largest token boundary at or before ``end`` that encodes whole.
+
+    Grouping offsets from one tokenization of the whole text only
+    estimates the window: a slice tokenized on its own can come out
+    longer than its share of the whole, so the span is measured as the
+    encoder will see it and pulled back to a token boundary until it
+    fits.
+    """
+    tokenizer = model.tokenizer
+    while end > start:
+        piece = text[start:end]
+        length = len(tokenizer(piece)["input_ids"])
+        if length <= cap:
+            return end
+        offsets = tokenizer(
+            piece, add_special_tokens=False, return_offsets_mapping=True
+        )["offset_mapping"]
+        keep = len(offsets) - (length - cap)
+        while keep > 0 and start + int(offsets[keep - 1][1]) >= end:
+            keep -= 1
+        if keep < 1:
+            break
+        end = start + int(offsets[keep - 1][1])
+    raise ValueError(
+        f"no window boundary at character {start} of {len(text)} fits {cap} tokens"
+    )
+
+
 def _text_window_spans(model: Any, text: str, budget: int) -> list[tuple[int, int]]:
     """Character spans that tile ``text`` into encodable windows.
 
     Spans are contiguous and cover the whole string, so concatenating the
     windows reproduces the source exactly: each window ends at the last
-    character of its final token and the next one resumes there.
+    character of its final token and the next one resumes there. Every
+    span is re-tokenized on its own and shortened until the encoder takes
+    it whole.
     """
     offsets = model.tokenizer(
         text, add_special_tokens=False, return_offsets_mapping=True
     )["offset_mapping"]
     if not offsets:
         return [(0, len(text))]
+    cap = _window_token_cap(model)
+    token_ends = [int(end) for _, end in offsets]
     spans = []
     start = 0
-    for index in range(0, len(offsets), budget):
-        group = offsets[index : index + budget]
-        end = len(text) if index + budget >= len(offsets) else int(group[-1][1])
+    index = 0
+    while start < len(text):
+        last = min(index + budget, len(offsets))
+        if last >= len(offsets):
+            end = len(text)
+        else:
+            end = max(token_ends[last - 1], start + 1)
+        end = _fitted_window_end(model, text, start, end, cap)
         spans.append((start, end))
         start = end
+        index = bisect.bisect_right(token_ends, start)
     return spans
 
 

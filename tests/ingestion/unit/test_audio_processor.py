@@ -224,7 +224,7 @@ class TestAudioProcessor:
 
     @patch("whisper.load_model")
     def test_transcribe_audio_success(
-        self, mock_load_model, processor, temp_dir, sample_video_path
+        self, mock_load_model, processor, temp_dir, sample_audio_bearing_path
     ):
         """Test successful audio transcription."""
         # Mock Whisper model
@@ -247,7 +247,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
 
-            result = processor.transcribe_audio(sample_video_path)
+            result = processor.transcribe_audio(sample_audio_bearing_path)
 
         # Verify transcription result
         assert result["video_id"] == "test_video"
@@ -261,11 +261,11 @@ class TestAudioProcessor:
         # Should have called Whisper model
         mock_model.transcribe.assert_called_once()
         transcribe_args = mock_model.transcribe.call_args
-        assert str(sample_video_path) in str(transcribe_args)
+        assert str(sample_audio_bearing_path) in str(transcribe_args)
 
     @patch("whisper.load_model")
     def test_transcribe_audio_with_language_detection(
-        self, mock_load_model, mock_logger, temp_dir, sample_video_path
+        self, mock_load_model, mock_logger, temp_dir, sample_audio_bearing_path
     ):
         """Test transcription with automatic language detection."""
         processor = AudioProcessor(mock_logger, language="auto")
@@ -286,7 +286,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
 
-            result = processor.transcribe_audio(sample_video_path)
+            result = processor.transcribe_audio(sample_audio_bearing_path)
 
         assert result["language"] == "es"
         assert result["full_text"] == "Hola mundo"
@@ -296,7 +296,7 @@ class TestAudioProcessor:
 
     @patch("whisper.load_model")
     def test_transcribe_audio_with_specific_language(
-        self, mock_load_model, mock_logger, temp_dir, sample_video_path
+        self, mock_load_model, mock_logger, temp_dir, sample_audio_bearing_path
     ):
         """Test transcription with specific language setting."""
         processor = AudioProcessor(mock_logger, language="fr")
@@ -317,7 +317,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
 
-            processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_audio_bearing_path)
 
         # Should pass language parameter to Whisper
         mock_model.transcribe.assert_called_once()
@@ -343,13 +343,19 @@ class TestAudioProcessor:
             mock_output_manager.return_value = mock_output_manager_instance
 
             result = processor.transcribe_audio(nonexistent_file)
-            # Should return error result instead of raising
-            assert "error" in result
-            assert "File not found" in result["error"]
+            # The container is opened before either transcription branch, so
+            # a missing file is reported by that open and never reaches the
+            # model.
+            assert result["error"] == (
+                f"[Errno 2] No such file or directory: '{nonexistent_file}'"
+            )
+            assert result["full_text"] == ""
+            assert result["segments"] == []
+            mock_model.transcribe.assert_not_called()
 
     @patch("whisper.load_model")
     def test_transcribe_audio_whisper_error(
-        self, mock_load_model, processor, temp_dir, sample_video_path
+        self, mock_load_model, processor, temp_dir, sample_audio_bearing_path
     ):
         """Test handling of Whisper transcription errors."""
         mock_model = Mock()
@@ -363,13 +369,13 @@ class TestAudioProcessor:
             mock_output_manager_instance.get_processing_dir.return_value = temp_dir
             mock_output_manager.return_value = mock_output_manager_instance
 
-            result = processor.transcribe_audio(sample_video_path)
+            result = processor.transcribe_audio(sample_audio_bearing_path)
             # Should return error result instead of raising
             assert "error" in result
             assert "Whisper error" in result["error"]
 
     def test_transcribe_audio_output_directory_structure(
-        self, processor, temp_dir, sample_video_path
+        self, processor, temp_dir, sample_audio_bearing_path
     ):
         """Test that output directories are structured correctly."""
         with (
@@ -390,7 +396,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
 
-            processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_audio_bearing_path)
 
         # Should use output manager to get correct directory structure
         mock_get_output_manager.assert_called_once()
@@ -398,7 +404,7 @@ class TestAudioProcessor:
 
     @patch("whisper.load_model")
     def test_transcribe_audio_metadata_persistence(
-        self, mock_load_model, processor, temp_dir, sample_video_path
+        self, mock_load_model, processor, temp_dir, sample_audio_bearing_path
     ):
         """Test that transcription metadata is saved correctly."""
         mock_model = Mock()
@@ -424,7 +430,7 @@ class TestAudioProcessor:
             mock_file = Mock()
             mock_open.return_value.__enter__.return_value = mock_file
 
-            processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_audio_bearing_path)
 
         # Should have saved transcription to JSON file
         mock_json_dump.assert_called()

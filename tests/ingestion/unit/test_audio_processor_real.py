@@ -134,7 +134,7 @@ class TestAudioProcessor:
         mock_load_model,
         processor,
         temp_dir,
-        sample_video_path,
+        sample_audio_bearing_path,
     ):
         """Test successful audio transcription."""
         # Mock Whisper model
@@ -160,7 +160,7 @@ class TestAudioProcessor:
         mock_file = Mock()
         mock_open.return_value.__enter__.return_value = mock_file
 
-        result = processor.transcribe_audio(sample_video_path)
+        result = processor.transcribe_audio(sample_audio_bearing_path)
 
         # Verify transcription result structure
         assert result["video_id"] == "test_video"
@@ -184,7 +184,7 @@ class TestAudioProcessor:
         # Should have called Whisper model with correct options
         mock_model.transcribe.assert_called_once()
         transcribe_args = mock_model.transcribe.call_args
-        assert str(sample_video_path) in str(transcribe_args[0])
+        assert str(sample_audio_bearing_path) in str(transcribe_args[0])
 
         # Should have called with language="en" (not auto)
         transcribe_kwargs = transcribe_args[1]
@@ -205,7 +205,7 @@ class TestAudioProcessor:
         mock_load_model,
         auto_processor,
         temp_dir,
-        sample_video_path,
+        sample_audio_bearing_path,
     ):
         """Test transcription with automatic language detection."""
         # Mock Whisper model
@@ -225,7 +225,7 @@ class TestAudioProcessor:
         mock_output_manager.return_value = mock_manager
 
         with patch("builtins.open", create=True), patch("json.dump"):
-            result = auto_processor.transcribe_audio(sample_video_path)
+            result = auto_processor.transcribe_audio(sample_audio_bearing_path)
 
         assert result["language"] == "es"
         assert result["full_text"] == "Hola mundo"
@@ -267,7 +267,7 @@ class TestAudioProcessor:
         mock_load_model,
         processor,
         temp_dir,
-        sample_video_path,
+        sample_audio_bearing_path,
     ):
         """Test transcription with cache miss and subsequent save."""
         # Mock cache with no existing transcript
@@ -291,23 +291,23 @@ class TestAudioProcessor:
         mock_output_manager.return_value = mock_manager
 
         with patch("builtins.open", create=True), patch("json.dump"):
-            processor.transcribe_audio(sample_video_path, cache=mock_cache)
+            processor.transcribe_audio(sample_audio_bearing_path, cache=mock_cache)
 
         # Should have checked cache first
         mock_cache.get_transcript.assert_called_once_with(
-            sample_video_path, "test_video"
+            sample_audio_bearing_path, "test_video"
         )
 
         # Should have saved to cache after transcription
         mock_cache.set_transcript.assert_called_once()
         cache_save_args = mock_cache.set_transcript.call_args[0]
-        assert cache_save_args[0] == sample_video_path
+        assert cache_save_args[0] == sample_audio_bearing_path
         assert cache_save_args[1] == "test_video"
         assert cache_save_args[2]["full_text"] == "New transcript"
 
     @patch("whisper.load_model")
     def test_transcribe_audio_whisper_error(
-        self, mock_load_model, processor, sample_video_path
+        self, mock_load_model, processor, sample_audio_bearing_path
     ):
         """Test handling of Whisper transcription errors."""
         mock_model = Mock()
@@ -315,7 +315,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
-            result = processor.transcribe_audio(sample_video_path)
+            result = processor.transcribe_audio(sample_audio_bearing_path)
 
         # Should return error result instead of raising
         assert result["video_id"] == "test_video"

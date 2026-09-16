@@ -71,12 +71,14 @@ async def test_get_cached_keyframes_offloads_rehydrate(monkeypatch):
     pipe.cache = SimpleNamespace(get_keyframes=_get_keyframes)
     pipe._keyframe_cache_kwargs = lambda: {}
 
-    def _blocking_rehydrate(video_path, metadata, images):
+    def _blocking_rehydrate(video_path, metadata, images, output_dir):
         time.sleep(0.3)  # cv2.imwrite re-encode of every frame back to disk
 
     monkeypatch.setattr(pipe, "_rehydrate_keyframe_images", _blocking_rehydrate)
 
-    ticks = await _ticks_during(lambda: pipe.get_cached_keyframes(Path("/v.mp4")))
+    ticks = await _ticks_during(
+        lambda: pipe.get_cached_keyframes(Path("/v.mp4"), Path("/tmp"))
+    )
     assert ticks >= 10, f"only {ticks} ticks — cv2 frame re-encode ran on the loop"
 
 
@@ -91,7 +93,7 @@ async def test_segmentation_offloads_keyframe_upload(monkeypatch):
     def _blocking_upload(video_path, metadata):
         time.sleep(0.3)  # MinIO HTTP upload of every keyframe
 
-    async def _get_cached(video_path):
+    async def _get_cached(video_path, output_dir):
         return None
 
     async def _set_cached(video_path, result):
@@ -136,7 +138,7 @@ async def test_segmentation_skips_keyframes_when_disabled():
         extracted.append(video_path)
         return {"keyframes": [{"frame_id": 0}]}
 
-    async def _get_cached(video_path):
+    async def _get_cached(video_path, output_dir):
         return None
 
     async def _set_cached(video_path, result):
