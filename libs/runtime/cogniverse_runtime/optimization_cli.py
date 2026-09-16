@@ -6684,7 +6684,8 @@ def main():
 
         args.tenant_id = canonical_tenant_id(args.tenant_id)
 
-    # Keep stdout reserved for the final JSON document.
+    presence = None
+    # Keep stdout reserved for the final document.
     with _redirect_stdout_to_stderr():
         if args.mode == "cleanup":
             log_dir = os.environ.get("LOG_DIR")
@@ -6791,8 +6792,7 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            print(presence)
-            sys.exit(0)
+            result = None
         elif args.mode == "profile":
             result = asyncio.run(
                 run_profile_optimization(
@@ -6890,6 +6890,12 @@ def main():
             )
         else:
             raise ValueError(f"Unknown mode: {args.mode}")
+
+    if args.mode == "profile-ground-truth-check":
+        # Argo captures a step's stdout as ``outputs.result``, which the weekly
+        # workflow's ``when`` compares; the token is the whole document.
+        print(presence)
+        sys.exit(0)
 
     print(json.dumps(result, indent=2, default=str))
     sys.exit(1 if _run_failed(result) else 0)
