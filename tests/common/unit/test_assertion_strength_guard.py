@@ -8,6 +8,10 @@ wrong document comes back, and when the value is empty.
 
 The comparison base defaults to ``HEAD~1`` and is overridable with
 ``ASSERTION_GUARD_BASE`` so CI can point it at a merge base.
+
+A file the branch adds has no state at the base, so the range diff cannot
+see a later commit strip its assertions. Such a file is therefore also
+checked commit by commit against its own previous state.
 """
 
 from __future__ import annotations
@@ -114,20 +118,61 @@ def _is_guarded_none_check(name: str, text: str, added_lines: list[str]) -> bool
     )
 
 
-def _git_diff(base: str) -> str:
-    proc = subprocess.run(
-        ["git", "diff", "--unified=0", f"{base}...HEAD", "--", "tests/"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _run_git(args: list[str], repo: Path = REPO_ROOT, hint: str = "") -> str:
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
     if proc.returncode != 0:
         pytest.fail(
-            f"assertion-strength guard could not diff against {base!r}: "
-            f"{proc.stderr.strip()[:400]}. Set ASSERTION_GUARD_BASE to a "
-            f"reachable ref; the guard fails closed rather than skip."
+            f"assertion-strength guard could not run `git {' '.join(args)}` in "
+            f"{repo}: {proc.stderr.strip()[:400]}.{hint}"
         )
     return proc.stdout
+
+
+def _git_diff(base: str, repo: Path = REPO_ROOT) -> str:
+    return _run_git(
+        ["diff", "--unified=0", f"{base}...HEAD", "--", "tests/"],
+        repo,
+        hint=(
+            " Set ASSERTION_GUARD_BASE to a reachable ref; the guard fails "
+            "closed rather than skip."
+        ),
+    )
+
+
+def added_test_files(base: str, repo: Path = REPO_ROOT) -> list[str]:
+    """Return the ``tests/`` files that exist at HEAD but not at ``base``."""
+    listing = _run_git(
+        ["diff", "--name-only", "--diff-filter=A", f"{base}...HEAD", "--", "tests/"],
+        repo,
+    )
+    return [line for line in listing.splitlines() if line.endswith(".py")]
+
+
+def intra_branch_weakening(
+    base: str, repo: Path = REPO_ROOT
+) -> dict[str, dict[str, object]]:
+    """Return per-commit assertion losses in files the branch itself added.
+
+    Keyed ``"<sha> <path>"``. The range diff against ``base`` reports such a
+    file as wholly added, so each commit that touched it is compared against
+    the state that commit inherited instead.
+    """
+    offenders: dict[str, dict[str, object]] = {}
+    for path in added_test_files(base, repo):
+        shas = _run_git(
+            ["log", "--no-merges", "--format=%H", f"{base}..HEAD", "--", path], repo
+        ).split()
+        for sha in shas:
+            parents = _run_git(["rev-list", "--parents", "-n", "1", sha], repo).split()
+            before = parents[1] if len(parents) > 1 else EMPTY_TREE
+            diff = _run_git(["diff", "--unified=0", before, sha, "--", path], repo)
+            for changed, entry in analyze_diff(diff).items():
+                if int(entry["removed"]) > int(entry["added"]):  # type: ignore[arg-type]
+                    offenders[f"{sha} {changed}"] = entry
+    return offenders
 
 
 def test_no_net_assertion_loss_in_changed_tests():
@@ -157,6 +202,92 @@ def test_no_weak_assertion_forms_introduced():
         f"banned skip/xfail/unbounded assertion forms introduced (base={base}): "
         + "; ".join(f"{p}: {w}" for p, w in sorted(offenders.items()))
     )
+
+
+def test_no_intra_branch_weakening_of_tests_the_branch_added():
+    base = os.environ.get("ASSERTION_GUARD_BASE", "HEAD~1")
+    offenders = intra_branch_weakening(base)
+    assert offenders == {}, (
+        "these commits removed assertions from a test file added earlier in "
+        f"the same branch (base={base}): "
+        + "; ".join(
+            f"{k}: -{f['removed']} +{f['added']}" for k, f in sorted(offenders.items())
+        )
+    )
+
+
+def _commit(repo: Path, message: str, path: str) -> str:
+    _run_git(["add", "--", path], repo)
+    _run_git(["commit", "-q", "-m", message, "--", path], repo)
+    return _run_git(["rev-parse", "HEAD"], repo).strip()
+
+
+def _branch_repo(tmp_path: Path, second_version: str) -> tuple[Path, str]:
+    """Build a repo whose branch adds a test file and then rewrites it.
+
+    Returns the repository and the sha of the rewriting commit. This is the
+    shape the range diff cannot see: at ``main`` the file does not exist, so
+    the whole branch reads as one wholly added file.
+    """
+    repo = tmp_path / "repo"
+    (repo / "tests" / "foo").mkdir(parents=True)
+    _run_git(["init", "-q", "-b", "main", str(repo)], tmp_path)
+    _run_git(["config", "user.email", "guard@example.invalid"], repo)
+    _run_git(["config", "user.name", "Guard"], repo)
+    (repo / "README.md").write_text("base\n")
+    _commit(repo, "Seed the repository", "README.md")
+
+    _run_git(["checkout", "-q", "-b", "work"], repo)
+    target = repo / "tests" / "foo" / "test_x.py"
+    target.write_text(
+        "def test_notices():\n"
+        "    assert [m.value for m in app.info] == []\n"
+        "    assert len(notices) == 1\n"
+        "    assert '503' in notices[0]\n"
+    )
+    _commit(repo, "Add the test", "tests/foo/test_x.py")
+
+    target.write_text(second_version)
+    return repo, _commit(repo, "Rewrite the test", "tests/foo/test_x.py")
+
+
+_WEAKENED = (
+    "def test_notices():\n"
+    "    notices = [element.value for element in app.error]\n"
+    "    assert notices == [_EMPTY_WINDOW_NOTICE]\n"
+)
+
+_PRESERVED = (
+    "def test_notices():\n"
+    "    notices = [element.value for element in app.error]\n"
+    "    assert [m.value for m in app.info] == []\n"
+    "    assert len(notices) == 1\n"
+    "    assert '503' in notices[0]\n"
+    "    assert notices == [_EMPTY_WINDOW_NOTICE]\n"
+)
+
+
+def test_detector_catches_a_later_commit_stripping_a_branch_added_test(tmp_path):
+    repo, sha = _branch_repo(tmp_path, _WEAKENED)
+    assert intra_branch_weakening("main", repo) == {
+        f"{sha} tests/foo/test_x.py": {"removed": 3, "added": 1, "weak": []}
+    }
+
+
+def test_detector_passes_a_rewrite_that_keeps_every_assertion(tmp_path):
+    repo, _ = _branch_repo(tmp_path, _PRESERVED)
+    assert intra_branch_weakening("main", repo) == {}
+
+
+def test_range_diff_alone_misses_the_branch_added_weakening(tmp_path):
+    """The blind spot the per-commit walk exists to cover.
+
+    Against the merge base the weakened file is wholly added, so the range
+    diff reports nothing at all — the loss is only visible commit by commit.
+    """
+    repo, _ = _branch_repo(tmp_path, _WEAKENED)
+    assert analyze_diff(_git_diff("main", repo)) == {}
+    assert added_test_files("main", repo) == ["tests/foo/test_x.py"]
 
 
 def test_detector_catches_a_removed_assertion():
