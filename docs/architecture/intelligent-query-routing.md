@@ -356,7 +356,7 @@ sequenceDiagram
 
 | Agent | Port | Enabled | Role |
 |---|---|---|---|
-| `deep_research_agent` | 8009 | yes | Multi-step decompose → parallel search → evaluate → (iterate) → synthesize loop producing a cited report; falls back to empty evidence for a failed sub-question rather than aborting |
+| `deep_research_agent` | 8009 | yes | Multi-step decompose → parallel search → evaluate → (iterate) → synthesize loop producing a cited report; a failed sub-question search fails the run |
 | `coding_agent` | 8010 | yes | Iterative search → plan → generate → execute → evaluate loop; runs generated code in an OpenShell sandbox and hard-fails rather than run unsandboxed |
 
 ### Knowledge-Graph & Reasoning Agents

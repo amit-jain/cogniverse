@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import threading
 import time
@@ -401,7 +402,15 @@ class TestTenantBoundary:
         assert response.status_code == 200
         assert _content(response)["tenant_id"] == TENANT_A
 
-    async def test_key_store_outage_is_503_naming_the_dead_backend(self, client):
+    async def test_key_store_outage_is_503_naming_the_dependency_not_the_backend(
+        self, client, caplog
+    ):
+        """The client is told which dependency failed and how, never where.
+
+        The store's own message carries the backend host and port it could not
+        reach; on a credentialed endpoint that is the credential. It stays in
+        the log.
+        """
         from cogniverse_vespa.config.config_store import VespaConfigStore
 
         dead_store = VespaConfigStore(
@@ -409,20 +418,30 @@ class TestTenantBoundary:
         )
         openai_compat.set_key_resolver(HarnessKeyStore(dead_store).resolve)
 
-        response = await client.post(
-            "/v1/chat/completions", json=_body(), headers=_auth("any-unknown-key")
-        )
+        with caplog.at_level(logging.WARNING):
+            response = await client.post(
+                "/v1/chat/completions", json=_body(), headers=_auth("any-unknown-key")
+            )
 
         assert response.status_code == 503
-        error = response.json()["error"]
-        assert error["code"] == "service_unavailable"
-        assert error["type"] == "server_error"
-        assert error["message"].startswith(
-            "Harness key store unavailable: Failed to read Vespa config document "
-            f"after {CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
-        )
-        assert f"port={DEAD_BACKEND_PORT}" in error["message"]
-        assert "Connection refused" in error["message"]
+        assert response.json()["error"] == {
+            "message": (
+                "The harness key store is unavailable "
+                "(ConfigStoreUnavailableError). See server logs for detail."
+            ),
+            "type": "server_error",
+            "code": "service_unavailable",
+            "error_type": "ConfigStoreUnavailableError",
+        }
+        assert str(DEAD_BACKEND_PORT) not in response.text
+        assert "Connection refused" not in response.text
+        # Withheld from the client, kept for the operator.
+        assert (
+            "Failed to read Vespa config document after "
+            f"{CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
+        ) in caplog.text
+        assert f"port={DEAD_BACKEND_PORT}" in caplog.text
+        assert "Connection refused" in caplog.text
 
     async def test_a_hung_key_store_is_503_not_a_hang(self, client):
         """A backend that accepts and never answers still ends as a 503.
@@ -478,9 +497,16 @@ class TestTenantBoundary:
             f"structure spends {KEY_READ_BUDGET_SECONDS:.2f}s and must finish "
             f"within one further {CONFIG_STORE_DOCUMENT_TIMEOUT}s attempt"
         )
-        error = response.json()["error"]
-        assert error["code"] == "service_unavailable"
-        assert error["message"].startswith("Harness key store unavailable: ")
+        assert response.json()["error"] == {
+            "message": (
+                "The harness key store is unavailable "
+                "(ConfigStoreUnavailableError). See server logs for detail."
+            ),
+            "type": "server_error",
+            "code": "service_unavailable",
+            "error_type": "ConfigStoreUnavailableError",
+        }
+        assert "127.0.0.1" not in response.text
 
     async def test_models_route_reports_the_outage_as_503(self, client):
         from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -532,20 +558,29 @@ class TestTenantBoundary:
             "Runtime initialising; dispatcher not built yet."
         )
 
-    async def test_provider_raising_is_503_carrying_the_cause(self, client):
+    async def test_provider_raising_is_503_naming_the_dependency(self, client, caplog):
         def _boom():
             raise RuntimeError("AgentDispatcher not initialized")
 
         openai_compat.set_dispatcher_provider(_boom)
 
-        response = await client.post(
-            "/v1/chat/completions", json=_body(), headers=_auth(KEY_A)
-        )
+        with caplog.at_level(logging.ERROR):
+            response = await client.post(
+                "/v1/chat/completions", json=_body(), headers=_auth(KEY_A)
+            )
 
+        assert "AgentDispatcher not initialized" not in response.text
+        assert "AgentDispatcher not initialized" in caplog.text
         assert response.status_code == 503
-        assert response.json()["error"]["message"] == (
-            "Dispatcher unavailable: AgentDispatcher not initialized"
-        )
+        assert response.json()["error"] == {
+            "message": (
+                "The dispatcher is unavailable (RuntimeError). "
+                "See server logs for detail."
+            ),
+            "type": "server_error",
+            "code": "service_unavailable",
+            "error_type": "RuntimeError",
+        }
 
     async def test_unknown_model_is_404(self, client):
         response = await client.post(
@@ -564,18 +599,35 @@ class TestTenantBoundary:
             "code": "model_not_found",
         }
 
-    async def test_agent_failure_is_500_carrying_the_cause(self, client):
-        response = await client.post(
-            "/v1/chat/completions",
-            json=_body(model="cogniverse/failing"),
-            headers=_auth(KEY_A),
-        )
+    async def test_agent_failure_is_500_naming_the_agent_and_the_error_type(
+        self, client, caplog
+    ):
+        """The turn's exception text stays server-side.
+
+        It is written by whatever failed — a backend client, an LM client —
+        and carries the URL it was talking to. The client gets the agent and
+        the leaf exception type, the same identity the A2A surface emits.
+        """
+        with caplog.at_level(logging.ERROR):
+            response = await client.post(
+                "/v1/chat/completions",
+                json=_body(model="cogniverse/failing"),
+                headers=_auth(KEY_A),
+            )
 
         assert response.status_code == 500
-        error = response.json()["error"]
-        assert error["code"] == "internal_error"
-        assert error["type"] == "server_error"
-        assert f"boom-{QUERY}" in error["message"]
+        assert response.json()["error"] == {
+            "message": (
+                "failing_echo_agent failed with RuntimeError. "
+                "See server logs for detail."
+            ),
+            "type": "server_error",
+            "code": "internal_error",
+            "agent": "failing_echo_agent",
+            "error_type": "RuntimeError",
+        }
+        assert f"boom-{QUERY}" not in response.text
+        assert f"RuntimeError: boom-{QUERY}" in caplog.text
 
 
 class TestContinuationIsolation:

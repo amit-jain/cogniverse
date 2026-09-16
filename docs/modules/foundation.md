@@ -539,6 +539,7 @@ and has neither warning nor degradation marker.
 | `record_served_model(response)` | Stamp a completion's `model` on the current span; a no-op outside any span |
 | `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
 | `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents, tenant-bound either way — the entry point agents use |
+| `routed_lm_context_for_async(config_manager, tenant_id, agent_name, endpoint=None)` | Await the same context off the event loop — the entry point every coroutine uses, since the tier resolution behind it is a config-store read; the returned context manager is unentered so the caller binds it on its own task |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |
 
 A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniverse_foundation.config.routed_lm`, chained from the litellm error and carrying `status`, `router_code` (the provider's error `code`), `tenant_id`, `tier` and `routed_model`. The router passes the upstream status through, so the class follows it:

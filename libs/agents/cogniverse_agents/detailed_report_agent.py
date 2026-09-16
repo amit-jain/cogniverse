@@ -30,7 +30,9 @@ from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
-from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+from cogniverse_foundation.config.semantic_router import (
+    routed_lm_context_for_async,
+)
 from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
@@ -355,12 +357,13 @@ class DetailedReportAgent(
         logger.info(f"Generating detailed report for: '{request.query}'")
         self.validate_attachments(request)
 
-        with routed_lm_context_for(
+        routed_lm = await routed_lm_context_for_async(
             self._config_manager,
             getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID,
             "detailed_report_agent",
             endpoint=self._llm_config,
-        ):
+        )
+        with routed_lm:
             try:
                 # Thinking pass: comprehensive analysis
                 if self.thinking_enabled:

@@ -28,7 +28,9 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+from cogniverse_foundation.config.semantic_router import (
+    routed_lm_context_for_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +201,10 @@ class DeepResearchAgent(
         # the REQUEST tenant's LM — semantic-routed when enabled, ambient
         # otherwise. Without this wrap the whole research run silently used
         # the process-global default LM regardless of tenant configuration.
-        with routed_lm_context_for(
+        routed_lm = await routed_lm_context_for_async(
             self._config_manager, input.tenant_id, "deep_research_agent"
-        ):
+        )
+        with routed_lm:
             return await self._research(input)
 
     async def _research(self, input: DeepResearchInput) -> DeepResearchOutput:
@@ -234,20 +237,6 @@ class DeepResearchAgent(
             new_evidence = await self._search_parallel(gaps, input.tenant_id)
             all_evidence.extend(new_evidence)
             all_citations.extend(self._extract_citations(new_evidence))
-
-            # If every sub-question searched so far errored, the search backend
-            # is down — a total outage, not a genuine "no evidence" finding.
-            # Synthesizing a confident summary over zero evidence would read as
-            # a real answer. Raise so the caller sees the outage; a partial
-            # failure (any sub-question succeeded, even with empty results) still
-            # proceeds to synthesize over what was found. Mirrors the search
-            # ensemble, which raises when every leg fails.
-            if all_evidence and all("error" in e for e in all_evidence):
-                errors = "; ".join(e["error"] for e in all_evidence if e.get("error"))
-                raise RuntimeError(
-                    f"DeepResearchAgent: every sub-question search failed "
-                    f"(search backend unavailable): {errors[:500]}"
-                )
 
             self.emit_progress(
                 "evaluate", f"Evaluating evidence (iteration {iteration})..."
@@ -344,25 +333,23 @@ class DeepResearchAgent(
                 "before calling process()."
             )
 
-        import asyncio
-
         async def search_one(q: str) -> Dict[str, Any]:
-            try:
-                results = await self._search_fn(query=q, tenant_id=tenant_id)
-                return {"question": q, "results": results, "source": "search"}
-            except Exception as exc:
-                # One failed sub-question must not abort the whole research;
-                # record it as empty evidence so the rest still proceeds.
-                logger.warning("Sub-question search failed for %r: %s", q, exc)
-                return {
-                    "question": q,
-                    "results": [],
-                    "source": "search",
-                    "error": str(exc),
-                }
+            results = await self._search_fn(query=q, tenant_id=tenant_id)
+            return {"question": q, "results": results, "source": "search"}
 
-        tasks = [search_one(q) for q in questions]
-        return list(await asyncio.gather(*tasks))
+        # A failed search is a retrieval outage, not an empty result: the
+        # synthesis reads evidence by count and would write a confident report
+        # from the query alone. The failure propagates with its own identity so
+        # the turn fails, and the sibling searches against the same backend are
+        # cancelled rather than left running past it.
+        tasks = [asyncio.create_task(search_one(q)) for q in questions]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _evaluate_evidence(
         self,

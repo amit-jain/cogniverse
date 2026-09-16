@@ -476,19 +476,23 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
         if not owner:
             return pending.result()
 
+        # Retiring the entry and settling it are one step under the lock: a
+        # caller that reads ``inflight`` between them would otherwise join a
+        # build that is already over and be handed its outcome instead of
+        # starting a fresh one.
         try:
             mgr = _build(tenant_id)
         except BaseException as exc:
-            pending.set_exception(exc)
+            with lock:
+                inflight.pop(tenant_id, None)
+                pending.set_exception(exc)
             raise
         else:
             with lock:
                 managers[tenant_id] = mgr
-            pending.set_result(mgr)
-            return mgr
-        finally:
-            with lock:
                 inflight.pop(tenant_id, None)
+                pending.set_result(mgr)
+            return mgr
 
     return _wiki_manager_factory
 
