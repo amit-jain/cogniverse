@@ -78,7 +78,7 @@ async def test_lifecycle_pin_lookup_uses_the_same_loader(real_artifact_backed_ad
     pinned = await asyncio.to_thread(pin_lookup, manager)
 
     assert seen == [{"user": 2, "tenant_admin": 4, "org_admin": -1}]
-    assert manager.get_all_calls == [(TENANT, PIN_AGENT_NAME)]
+    assert manager.get_all_calls == [(TENANT, PIN_AGENT_NAME, None)]
     assert pinned == {"mem_target_1"}
 
 
@@ -130,15 +130,19 @@ class _RecordingRegistry:
 
 
 class _FakeManager:
-    """Mirrors the manager surface PinService reads: get_all_memories(tenant_id=, agent_name=)."""
+    """Mirrors the manager surface PinService reads.
+
+    ``limit`` is required: retention treats an unlisted pin as absent and
+    deletes its target, so the pin enumeration must walk the whole partition.
+    """
 
     def __init__(self, tenant_id: str) -> None:
         self.tenant_id = tenant_id
         self.memory = object()
-        self.get_all_calls: list[tuple[str, str]] = []
+        self.get_all_calls: list[tuple[str, str, int | None]] = []
 
-    def get_all_memories(self, *, tenant_id: str, agent_name: str):
-        self.get_all_calls.append((tenant_id, agent_name))
+    def get_all_memories(self, *, tenant_id: str, agent_name: str, limit):
+        self.get_all_calls.append((tenant_id, agent_name, limit))
         return [
             {
                 "id": "pin_rec_1",
