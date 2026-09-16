@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 # lock: the check-construct-set sequence has no await, so it is atomic on
 # its loop.
 _ARGO_CLIENT_TIMEOUT = httpx.Timeout(10.0)
+# Bound on finishing a compensating delete after the request was cancelled,
+# above the Argo client's own timeout so a slow delete still completes.
+_CLEANUP_COMPLETION_TIMEOUT_S = 15.0
 _argo_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
@@ -1019,14 +1022,41 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
             config_key=f"job_{job_id}",
             config_value=config_value,
         )
-    except BaseException:
+    except BaseException as write_error:
         # The schedule is live on the cluster and nothing describes it: list_jobs
         # reads config rows, delete_job 404s without one, and job_executor raises
         # on every tick. Remove it so the failed create leaves nothing behind.
-        if submitted_namespace is not None:
-            await _delete_cron_workflow(
-                _cron_workflow_name(tenant_id, job_id), submitted_namespace
+        if submitted_namespace is None:
+            raise
+        name = _cron_workflow_name(tenant_id, job_id)
+        cleanup = asyncio.ensure_future(
+            _delete_cron_workflow(name, submitted_namespace)
+        )
+        try:
+            # Shielded: the failure being compensated is often this task's own
+            # cancellation (the client disconnected), and an unshielded await
+            # would abandon the delete at its first suspension point.
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await asyncio.wait({cleanup}, timeout=_CLEANUP_COMPLETION_TIMEOUT_S)
+            raise
+        except BaseException as cleanup_error:
+            # Nothing anywhere records the orphan: the config row that would
+            # describe it is what failed to write. The cluster's own labels
+            # (app, tenant, job-id on the CronWorkflow) are the record, so name
+            # what an operator has to look for.
+            logger.error(
+                "Job %s for tenant %s failed to commit (%r) and its CronWorkflow "
+                "%s in namespace %s could not be removed (%r): the schedule is "
+                "still firing",
+                job_id,
+                tenant_id,
+                write_error,
+                name,
+                submitted_namespace,
+                cleanup_error,
             )
+            raise
         raise
     logger.info(
         "Created job %s for tenant %s (schedule=%s)", job_id, tenant_id, body.schedule

@@ -598,6 +598,51 @@ class TestStreamingCapabilityOrdering:
         assert type(typed_input).__name__ == "DetailedReportInput"
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestStreamingGroundsBeforeBuildingTheAgent:
+    """A streamed answer resolves its grounding first.
+
+    Building an answer agent runs its memory init and a schema-deploying
+    artifact read. A turn whose retrieval failed has no answer to stream, so
+    that work must not run — and the failure reaches the transport either way.
+    """
+
+    @pytest.mark.parametrize(
+        "agent_name,capabilities",
+        [
+            ("summarizer_agent", ["summarization"]),
+            ("detailed_report_agent", ["detailed_report", "text_generation"]),
+        ],
+    )
+    async def test_a_failed_grounding_builds_no_answer_agent(
+        self, dispatcher, agent_name, capabilities
+    ):
+        built: list = []
+
+        def _record_build(agent_cls, deps_cls, name, tenant_id):
+            built.append(name)
+            return object()
+
+        async def _boom(*a, **k):
+            raise ConnectionError("embedding service unreachable")
+
+        dispatcher._build_answer_agent = _record_build
+        dispatcher._execute_search_task = _boom
+        entry = MagicMock()
+        entry.capabilities = capabilities
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+
+        with pytest.raises(AnswerGroundingUnavailable) as failure:
+            await dispatcher.create_streaming_agent(agent_name, "q", "acme:acme")
+
+        assert failure.value.tenant_id == "acme:acme"
+        assert failure.value.reason == (
+            "search failed: ConnectionError('embedding service unreachable')"
+        )
+        assert built == []
+
+
 class TestAgentBehaviorConfigWiring:
     """The dispatcher threads per-tenant thinking_enabled / visual_analysis_enabled
     from the persisted AgentConfig into the summarizer / detailed-report Deps.

@@ -5,18 +5,20 @@ options, and serialization. The constructor probes for Deno (a real runtime
 dependency for DSPy RLM REPL execution) and fails fast when missing — correct
 behaviour at boot, but unhelpful for unit-only environments without Deno.
 
-This autouse fixture applies ``configure_deno_check(skip=True)`` for the unit
-test session so construction succeeds. Integration tests at
-``tests/agents/integration/`` deliberately do NOT apply it — they want the
-probe active so they exercise the real boot path.
+This autouse fixture applies ``configure_deno_check(skip=True)`` for the tests
+in this directory so construction succeeds, and restores the previous value
+when they finish — ``configure_deno_check`` writes a process-global, so a wider
+scope would carry the bypass into every suite that runs later in the same
+process. Integration tests at ``tests/agents/integration/`` deliberately do NOT
+apply it — they want the probe active so they exercise the real boot path.
 """
 
 import pytest
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def _skip_rlm_deno_check_for_unit_tests():
-    """Bypass RLMInference's Deno probe for unit-only test runs."""
+    """Bypass RLMInference's Deno probe for these unit tests."""
     from cogniverse_agents.inference import deno_check
 
     previous = deno_check._skip_deno_check

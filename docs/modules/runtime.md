@@ -1299,6 +1299,14 @@ deltas whose concatenation is the answer.
 
 **GET /v1/models** — the configured model map in OpenAI list form.
 
+Every failure the caller did not cause — a 500 from the turn, a 503 from an
+unreachable dependency, an SSE error frame — carries `agent` and `error_type`
+alongside the OpenAI `message`/`type`/`code`, and a server-authored message.
+The raising exception's own text stays in the log: it is written by whatever
+failed and carries the backend URL it was talking to. Request-shape errors
+(400, 404) keep the three OpenAI keys and their own text, which describes the
+caller's request.
+
 A streamed turn carries `usage` only when the request sends
 `stream_options: {"include_usage": true}`: one last chunk before `[DONE]`
 whose `choices` is empty. `include_usage` must be a boolean (400 otherwise).

@@ -476,12 +476,13 @@ class TestAnswerFieldFilter:
         assert _content_of(response.text) == DIVERGENT_PREFIX
         assert frames[-1]["error"] == {
             "message": (
-                f"Agent 'divergent_stream_agent' streamed {len(DIVERGENT_PREFIX)} "
-                "characters of 'summary' that its final answer does not begin "
-                "with; the streamed reply cannot be completed"
+                "divergent_stream_agent failed with StreamedAnswerDiverged. "
+                "See server logs for detail."
             ),
             "type": "server_error",
             "code": "internal_error",
+            "agent": "divergent_stream_agent",
+            "error_type": "StreamedAnswerDiverged",
         }
         assert _data_lines(response.text)[-1] == "[DONE]"
 
@@ -1071,7 +1072,19 @@ async def test_cold_cache_failed_dependency_settles_waiters_and_retries(
     with pytest.raises(DatasetStoreUnavailableError) as failure:
         await asyncio.wait_for(first, 10)
     assert failure.value.endpoint == "http://127.0.0.1:29071"
-    assert failure.value.dataset == "dspy-config-acme:acme-cold_agent"
+    # Serving blobs live in two alternating revision slots, which the read
+    # asks for concurrently, so the failure names whichever of the pair lost
+    # the race. Both names come from the production helper, so a rename of
+    # either half is flagged rather than absorbed.
+    slots = {
+        managers[TENANT_A]._blob_slot_name("config", "cold_agent", parity)
+        for parity in (0, 1)
+    }
+    assert slots == {
+        "dspy-config-acme:acme-cold_agent--r0",
+        "dspy-config-acme:acme-cold_agent--r1",
+    }
+    assert failure.value.dataset in slots
     dispatcher.managers = cold_artifact_managers
     assert await dispatcher.cached(TENANT_A) == {
         "answer": f"Stored answer for {TENANT_A}."
