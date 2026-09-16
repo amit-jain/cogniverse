@@ -1181,7 +1181,7 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **DELETE /admin/tenant/{tenant_id}/memories/{memory_id}** — Delete a single user-owned memory by id. 404 if not found.
 
-**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
+**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. Both branches walk the whole partition, archived rows included. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
 
 **GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant. Response: `{tenant_id, selections: {agent_type: variant_id}, pending_write}`.
 
