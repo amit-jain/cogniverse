@@ -191,6 +191,13 @@ BATCH1=(
   tests/e2e/test_a2a_gateway_e2e.py
   tests/e2e/test_a2a_multiturn_e2e.py
   tests/e2e/test_api_e2e.py
+  tests/e2e/test_admin_partial_update_concurrency_e2e.py
+  tests/e2e/test_blob_replace_visibility_e2e.py
+  tests/e2e/test_config_history_export_e2e.py
+  tests/e2e/test_ingress_routing_e2e.py
+  tests/e2e/test_lm_truncation_contract_e2e.py
+  tests/e2e/test_telemetry_circuit_breaker_e2e.py
+  tests/e2e/test_telemetry_tracer_expiry_e2e.py
 )
 
 # Batch 2: everything else, including the ingestion tests
@@ -217,8 +224,12 @@ BATCH2=(
   tests/e2e/test_optimizer_persistence_e2e.py
   tests/e2e/test_orchestrator_inbound_e2e.py
   tests/e2e/test_quality_monitor_e2e.py
+  tests/e2e/test_evaluation_cli_e2e.py
+  tests/e2e/test_grounding_failure_contract_e2e.py
+  tests/e2e/test_tenant_provisioning_workflow_e2e.py
   tests/e2e/test_coding_cli_e2e.py
   tests/e2e/test_pi_harness_e2e.py
+  tests/e2e/test_sandbox_tenant_isolation_e2e.py
   tests/e2e/test_deep_research_and_annotation_queue_e2e.py
   tests/e2e/test_graph_cli_e2e.py
   tests/e2e/test_messaging_e2e.py
