@@ -54,7 +54,7 @@ def profile_config_vespa():
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
         )._deploy_package(
-            _shared_vespa_application_package([create_config_metadata_schema()])
+            lambda: _shared_vespa_application_package([create_config_metadata_schema()])
         )
         manager.wait_for_application_ready(info)
         yield info["http_port"]
