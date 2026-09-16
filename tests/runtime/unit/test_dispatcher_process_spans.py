@@ -116,7 +116,12 @@ class OrchestratorAgent(RealOrchestratorAgent):
         ) as span:
             span.set_attribute("operation", "orchestration")
             span.set_attribute("query", input_data.query)
-        return SimpleNamespace(model_dump=lambda: {"workflow_id": "wf-123"})
+        return SimpleNamespace(
+            model_dump=lambda: {
+                "workflow_id": "wf-123",
+                "final_output": {"status": "success"},
+            }
+        )
 
 
 class GatewayAgent(RealGatewayAgent):
