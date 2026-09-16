@@ -74,10 +74,10 @@ def test_conflict_reposts_the_survivor_set_read_after_the_conflict(monkeypatch):
     posted: list[list[str]] = []
     statuses = [409, 200]
 
-    def post(deploy_url, app_zip):
-        assert deploy_url == (
-            "http://localhost:19071/application/v2/tenant/default/prepareandactivate"
-        )
+    def post(tenant_url, app_zip, fence=None):
+        assert tenant_url == "http://localhost:19071/application/v2/tenant/default"
+        # The fence renews immediately before the config server activates.
+        fence()
         posted.append(list(built[-1]))
         if len(posted) == 1:
             # A peer activates its own schema while our first attempt conflicts.
@@ -96,7 +96,14 @@ def test_conflict_reposts_the_survivor_set_read_after_the_conflict(monkeypatch):
         ["knowledge_graph_acme_acme", "wiki_pages_globex_globex"],
     ]
     assert posted == built
-    assert lease.events == ["acquire", "renew", "renew", "release"]
+    assert lease.events == [
+        "acquire",
+        "renew",
+        "renew",
+        "renew",
+        "renew",
+        "release",
+    ]
 
 
 def test_lost_lease_refuses_to_activate(monkeypatch):
@@ -110,7 +117,9 @@ def test_lost_lease_refuses_to_activate(monkeypatch):
     posted: list[bytes] = []
 
     monkeypatch.setattr(
-        manager, "_post_package", lambda url, zipped: posted.append(zipped)
+        manager,
+        "_post_package",
+        lambda url, zipped, fence=None: posted.append(zipped),
     )
 
     with pytest.raises(RuntimeError, match="lease expired or was replaced"):

@@ -20,6 +20,7 @@ import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from vespa.package import ApplicationPackage
@@ -28,6 +29,7 @@ from cogniverse_vespa.backend import VespaBackend
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 DEPLOY_PATH = "/application/v2/tenant/default/prepareandactivate"
+SESSION_PATH = "/application/v2/tenant/default/session"
 
 CONFLICT_BODY = {
     "error-code": "ACTIVATION_CONFLICT",
@@ -47,21 +49,23 @@ EXPECTED_PACKAGE_ENTRIES = {
 
 
 class _ConfigServer:
-    """Real config-server stand-in recording every request body."""
+    """Real config-server stand-in recording every request body.
+
+    Serves both deploy shapes: the single ``prepareandactivate`` the backend
+    posts, and the create/prepare/activate session flow the schema manager
+    uses so its activation is fenced by the config server. ``statuses`` is
+    consumed one entry per activation, whichever shape delivered it.
+    """
 
     def __init__(self, statuses, *, activated_session_id=4242, include_session_id=True):
         self.bodies: list[bytes] = []
         self.paths: list[str] = []
+        self.activations = 0
         statuses = list(statuses)
         recorder = self
 
         class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                length = int(self.headers.get("Content-Length") or 0)
-                recorder.bodies.append(self.rfile.read(length))
-                recorder.paths.append(self.path)
-                idx = len(recorder.bodies) - 1
-                status = statuses[min(idx, len(statuses) - 1)]
+            def _answer(self, status):
                 ok_body = {"message": f"Session {activated_session_id} activated."}
                 if include_session_id:
                     ok_body["session-id"] = str(activated_session_id)
@@ -75,6 +79,29 @@ class _ConfigServer:
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+
+            def _next_status(self):
+                idx = recorder.activations
+                recorder.activations += 1
+                return statuses[min(idx, len(statuses) - 1)]
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                recorder.bodies.append(self.rfile.read(length))
+                recorder.paths.append(self.path)
+                if self.path.endswith("/session"):
+                    # Session creation always succeeds; the conflict belongs
+                    # to the activation.
+                    self._answer(200)
+                    return
+                self._answer(self._next_status())
+
+            def do_PUT(self):
+                recorder.paths.append(self.path)
+                if self.path.endswith("/prepared"):
+                    self._answer(200)
+                    return
+                self._answer(self._next_status())
 
             def log_message(self, *args):
                 pass
@@ -219,3 +246,49 @@ def test_schema_manager_retry_rebuilds_and_resends_the_complete_package():
         EXPECTED_PACKAGE_ENTRIES,
         EXPECTED_PACKAGE_ENTRIES,
     ]
+    # Each attempt creates its own session and activates that session, so the
+    # config server refuses an activation whose session predates a peer's.
+    assert server.paths == [
+        SESSION_PATH,
+        f"{SESSION_PATH}/4242/prepared",
+        f"{SESSION_PATH}/4242/active",
+        SESSION_PATH,
+        f"{SESSION_PATH}/4242/prepared",
+        f"{SESSION_PATH}/4242/active",
+    ]
+
+
+def test_a_lease_lost_between_prepare_and_activate_never_activates():
+    """A holder stalled past its lease must not activate the package it
+    prepared. The fence runs immediately before the config server activates,
+    so the session is created and prepared and then abandoned."""
+
+    class _Lease:
+        def __init__(self):
+            self.renewals = 0
+
+        def acquire(self):
+            return self
+
+        def renew(self):
+            self.renewals += 1
+            if self.renewals > 1:
+                raise RuntimeError("Vespa deployment lease expired or was replaced")
+
+        def release(self):
+            return None
+
+    lease = _Lease()
+
+    with _ConfigServer([200]) as server:
+        manager = _make_schema_manager(server.port)
+        manager._schema_registry = SimpleNamespace(
+            deployment_lease=lambda **kwargs: lease
+        )
+        with pytest.raises(RuntimeError, match="lease expired or was replaced"):
+            manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
+
+    assert lease.renewals == 2
+    assert server.paths == [SESSION_PATH, f"{SESSION_PATH}/4242/prepared"]
+    assert server.activations == 0
+    assert [_entries(body) for body in server.bodies] == [EXPECTED_PACKAGE_ENTRIES]
