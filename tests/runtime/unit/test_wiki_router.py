@@ -322,6 +322,76 @@ class TestWikiFactoryCanonicalizesTenant:
         assert m_simple.kw["schema_name"] == f"wiki_pages_{canon.replace(':', '_')}"
 
 
+class TestWikiFactoryRetiresAFailedBuildAtomically:
+    """A failed build must leave nothing for a later caller to join. The
+    factory retires the in-flight entry and settles it as one step under its
+    lock; a caller that reads the map while the owner is settling must start a
+    fresh build rather than inherit the finished failure."""
+
+    def test_a_caller_arriving_as_a_build_fails_starts_a_fresh_build(self, monkeypatch):
+        import threading
+        import time
+        from concurrent.futures import Future
+
+        import cogniverse_agents.wiki.wiki_manager as wm
+        from cogniverse_runtime.main import build_wiki_manager_factory
+
+        class _FakeWiki:
+            def __init__(self, **kw):
+                self.kw = kw
+
+        monkeypatch.setattr(wm, "WikiManager", _FakeWiki)
+
+        deployed: list[str] = []
+
+        class _Reg:
+            def deploy_schema(self, tenant_id, base_schema_name):
+                deployed.append(tenant_id)
+                if len(deployed) == 1:
+                    raise ConnectionError("wiki_pages deploy refused")
+
+        class _Backend:
+            schema_registry = _Reg()
+
+            def get_tenant_schema_name(self, tenant_id, base):
+                return f"{base}_{tenant_id.replace(':', '_')}"
+
+        factory = build_wiki_manager_factory(
+            lambda: _Backend(), MagicMock(), MagicMock()
+        )
+
+        arriving: dict = {}
+        arrived = threading.Event()
+
+        def _late_caller():
+            arrived.set()
+            try:
+                arriving["outcome"] = factory("acme:acme")
+            except BaseException as exc:  # noqa: BLE001 - recorded, then asserted
+                arriving["outcome"] = exc
+
+        late = threading.Thread(target=_late_caller)
+        original_set_exception = Future.set_exception
+
+        def set_exception_with_a_late_caller(self, exc):
+            # Release the late caller exactly while the owner is settling.
+            late.start()
+            arrived.wait(5)
+            time.sleep(0.05)
+            return original_set_exception(self, exc)
+
+        monkeypatch.setattr(Future, "set_exception", set_exception_with_a_late_caller)
+
+        with pytest.raises(ConnectionError, match="^wiki_pages deploy refused$"):
+            factory("acme:acme")
+
+        late.join(10)
+        assert not late.is_alive()
+        assert isinstance(arriving["outcome"], _FakeWiki)
+        assert arriving["outcome"].kw["schema_name"] == "wiki_pages_acme_acme"
+        assert deployed == ["acme:acme", "acme:acme"]
+
+
 @pytest.mark.unit
 class TestWikiProfileReaffirmation:
     """Startup re-affirms the wiki_semantic profile by READING the loaded
