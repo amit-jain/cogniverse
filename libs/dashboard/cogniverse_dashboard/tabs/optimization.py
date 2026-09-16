@@ -17,9 +17,10 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, NamedTuple
+from typing import Any, Dict, List, NamedTuple, Optional
 from uuid import uuid4
 
+import httpx
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -35,6 +36,7 @@ from cogniverse_dashboard.tabs.approval_queue import (
     _review_reasoning,
     _schema_correction_template,
 )
+from cogniverse_dashboard.tabs.tenant_management import get_runtime_api_url
 from cogniverse_dashboard.telemetry_gate import (
     RENDER_SPAN_QUERY_TIMEOUT_S,
     TelemetryProbe,
@@ -43,7 +45,92 @@ from cogniverse_dashboard.telemetry_gate import (
 )
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
+from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+
+# Columns of the Recent Optimization History table, in render order.
+OPTIMIZATION_RUN_COLUMNS = (
+    "Workflow",
+    "Mode",
+    "Trigger",
+    "Phase",
+    "Started",
+    "Finished",
+)
+# Runs requested from the runtime for the overview tab.
+OPTIMIZATION_RUNS_PAGE_SIZE = 10
+
+
+class OptimizationRuns(NamedTuple):
+    """The tenant's optimization runs, or why they could not be read."""
+
+    runs: List[Dict[str, Any]]
+    error: Optional[str]
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _fetch_optimization_runs(tenant_id: str) -> OptimizationRuns:
+    """Read the tenant's optimization runs from the runtime.
+
+    A runtime or Argo outage returns the reason, never an empty list: zero
+    runs and "runs unreadable" are different facts and the tiles say which.
+
+    Streamlit renders every tab body on every rerun, so the result is cached
+    per tenant for 15 s the way the sidebar's agent and tenant probes are.
+    """
+    url = f"{get_runtime_api_url()}/admin/tenant/{tenant_id}/optimize/runs"
+    try:
+        response = get_runtime_client().get(
+            url, params={"limit": OPTIMIZATION_RUNS_PAGE_SIZE}
+        )
+    except httpx.HTTPError as exc:
+        return OptimizationRuns([], f"Optimization runs unavailable: {exc}")
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", response.text)
+        except ValueError:
+            detail = response.text
+        return OptimizationRuns(
+            [],
+            f"Optimization runs unavailable: HTTP {response.status_code}: {detail}",
+        )
+    return OptimizationRuns(response.json()["runs"], None)
+
+
+def _format_run_age(started_at: Optional[str], now: datetime) -> str:
+    """Whole-unit age of a run start, or ``"unknown"`` when Argo has none."""
+    if not started_at:
+        return "unknown"
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "unknown"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    minutes = int((now - started).total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    if minutes < 1440:
+        return f"{minutes // 60}h ago"
+    return f"{minutes // 1440}d ago"
+
+
+def _optimization_history_frame(runs: List[Dict[str, Any]]) -> pd.DataFrame:
+    """The history table's exact columns, newest first as the runtime ordered."""
+    return pd.DataFrame(
+        [
+            {
+                "Workflow": run["workflow_name"],
+                "Mode": run["mode"] or "—",
+                "Trigger": run["trigger"],
+                "Phase": run["phase"] or "Pending",
+                "Started": run["started_at"] or "—",
+                "Finished": run["finished_at"] or "—",
+            }
+            for run in runs
+        ],
+        columns=list(OPTIMIZATION_RUN_COLUMNS),
+    )
 
 
 def _filter_search_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
@@ -126,38 +213,36 @@ def _render_overview_tab():
             help="Queries with ground truth labels",
         )
 
+    runs_result = _fetch_optimization_runs(st.session_state["current_tenant"])
+    opt_runs = runs_result.runs
+
     with col3:
-        # Optimization runs
-        opt_runs = st.session_state.get("optimization_requests", [])
+        # Optimization runs the runtime lists for this tenant
         st.metric(
             "Optimization Runs",
-            len(opt_runs),
+            "—" if runs_result.error else len(opt_runs),
             delta=None,
-            help="Total optimization jobs triggered",
+            help="Optimization Workflows Argo holds for this tenant",
         )
 
     with col4:
         # Last optimization
-        if opt_runs:
-            last_run = opt_runs[-1]
-            # Normalise the stored timestamp to aware UTC so the subtraction
-            # cannot raise TypeError on a naive/aware mix when older runs were
-            # persisted before this dashboard ran tz-aware.
-            _now = datetime.now(timezone.utc)
-            last_time = last_run.get("timestamp", _now)
-            if isinstance(last_time, datetime) and last_time.tzinfo is None:
-                last_time = last_time.replace(tzinfo=timezone.utc)
-            time_ago = _now - last_time
+        if runs_result.error:
+            st.metric("Last Optimization", "—", delta=None)
+        elif opt_runs:
+            last_run = opt_runs[0]
+            age = _format_run_age(last_run["started_at"], datetime.now(timezone.utc))
             st.metric(
                 "Last Optimization",
-                f"{time_ago.seconds // 60}m ago"
-                if time_ago.seconds < 3600
-                else f"{time_ago.seconds // 3600}h ago",
+                f"{age} ({last_run['phase'] or 'Pending'})",
                 delta=None,
-                help="Time since last optimization",
+                help="Time since the newest run started, and its phase",
             )
         else:
             st.metric("Last Optimization", "Never", delta=None)
+
+    if runs_result.error:
+        st.error(runs_result.error)
 
     st.markdown("---")
 
@@ -180,29 +265,16 @@ def _render_overview_tab():
     # Recent optimization history
     st.subheader("📜 Recent Optimization History")
 
-    if opt_runs:
-        history_df = pd.DataFrame(
-            [
-                {
-                    "Timestamp": run.get("timestamp", datetime.now()).strftime(
-                        "%Y-%m-%d %H:%M"
-                    ),
-                    "Type": run.get("type", "unknown"),
-                    "Status": run.get("status", "unknown"),
-                    "Examples": run.get("examples_count", 0),
-                    "Optimizer": run.get("optimizer", "N/A"),
-                }
-                for run in opt_runs[-10:]  # Last 10 runs
-            ]
-        )
-
+    if runs_result.error:
+        st.warning("History unavailable while the runtime cannot list runs.")
+    elif opt_runs:
         st.dataframe(
-            history_df.sort_values("Timestamp", ascending=False),
+            _optimization_history_frame(opt_runs),
             use_container_width=True,
             hide_index=True,
         )
     else:
-        st.info("No optimization runs yet. Start by collecting annotations!")
+        st.info("No optimization runs yet. Trigger one from the Optimization panel.")
 
 
 def _render_search_annotation_tab():

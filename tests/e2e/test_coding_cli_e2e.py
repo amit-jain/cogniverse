@@ -115,14 +115,15 @@ def runtime_sandbox_ready() -> None:
     )
 
     probe_code = (
-        "import json\n"
+        "import asyncio, json\n"
         "from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy\n"
         "mgr = SandboxManager(policy=SandboxPolicy.REQUIRED)\n"
-        "out = mgr.exec_in_sandbox(\n"
-        "    'coding_agent',\n"
-        "    ['python3', '-c', \"print('coding-sandbox-ready')\"],\n"
-        "    timeout_seconds=60,\n"
-        ")\n"
+        "async def probe():\n"
+        "    async with mgr.task_session('coding_agent', 'e2e:coding') as s:\n"
+        "        return await s.exec(\n"
+        "            ['python3', '-c', \"print('coding-sandbox-ready')\"], 60\n"
+        "        )\n"
+        "out = asyncio.run(probe())\n"
         "print('__SANDBOX_PROBE__' + json.dumps(out))\n"
     )
     probe_command = [

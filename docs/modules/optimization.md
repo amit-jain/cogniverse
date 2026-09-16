@@ -266,6 +266,11 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 # Check run status:
 # GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}
 # Returns: {phase, started_at, finished_at, message}
+
+# List the tenant's runs (manual + CronWorkflow-spawned), newest first:
+# GET /admin/tenant/{tenant_id}/optimize/runs?limit=20
+# Returns: {runs: [{workflow_name, mode, trigger, phase,
+#                   started_at, finished_at}, ...]}
 ```
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
