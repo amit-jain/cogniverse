@@ -1026,31 +1026,17 @@ class VespaConfigStore(ImmutableConfigStore):
             Dictionary with storage statistics
         """
         try:
-            # Select all fields needed for stats
-            yql_total = f"select config_id, tenant_id, scope from {self.schema_name} where true limit 400"
-            response = self.vespa_app.query(yql=yql_total)
-            _raise_if_degraded(response, "stats")
-
-            total_versions = len(response.hits)
-            unique_config_ids = len(
-                set(hit["fields"]["config_id"] for hit in response.hits)
-            )
-
-            # Count tenants
-            unique_tenants = len(
-                set(hit["fields"]["tenant_id"] for hit in response.hits)
-            )
-
-            # Count per scope
+            entries = self._visit_config_entries(skip_malformed=True)
             scope_counts: Dict[str, int] = {}
-            for hit in response.hits:
-                scope = hit["fields"]["scope"]
-                scope_counts[scope] = scope_counts.get(scope, 0) + 1
+            for _, entry in entries:
+                scope_counts[entry.scope.value] = (
+                    scope_counts.get(entry.scope.value, 0) + 1
+                )
 
             return {
-                "total_configs": unique_config_ids,
-                "total_versions": total_versions,
-                "total_tenants": unique_tenants,
+                "total_configs": len({config_id for config_id, _ in entries}),
+                "total_versions": len(entries),
+                "total_tenants": len({entry.tenant_id for _, entry in entries}),
                 "configs_per_scope": scope_counts,
                 "storage_backend": "vespa",
                 "schema_name": self.schema_name,
