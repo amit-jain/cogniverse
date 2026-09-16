@@ -308,9 +308,12 @@ async def run_profile_optimization(
        profiles. The label is the single profile whose results match all of the
        row's expected_videos. Queries with no serving profile emit the named
        `no_profile_serves_media_type` exclusion. A failed retrieval is attempted
-       at most three times; an exhausted comparison excludes the entire query
-       with `incomplete_comparison` and per-profile failure context. No
-       recovered video, untitled
+       at most three times, waiting `PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS`
+       before the second attempt and twice that before the third; an exhausted
+       comparison excludes the entire query with `incomplete_comparison` and
+       per-profile failure context, and a run whose `incomplete_comparison`
+       share exceeds `PROFILE_SELECTION_MAX_INCOMPLETE_SHARE` stops before
+       scoring. No recovered video, untitled
        results, or profile ties are also excluded and reported under
        label_exclusions. cogniverse.profile_selection spans are counted as
        spans_found and not read.
@@ -326,7 +329,8 @@ async def run_profile_optimization(
     Success and compile payloads also include `distinct_queries` and `holdout_queries`, so row counts and held-out query-key counts stay separate.
 
     Returns (every shape carries
-    "label_exclusions": {"count": int, "queries": list[str]}):
+    "label_exclusions": {"count": int, "queries": list[str],
+    "incomplete_comparison_rate": float}):
       - {"status": "success", "spans_found": int, "served_examples": int,
          "approved_examples": int, "served_scoreable_examples": int,
          "training_examples": int, "holdout_examples": int,
@@ -343,6 +347,8 @@ async def run_profile_optimization(
          "labels_by_profile": dict[str, int],
          "exclusions_by_reason": dict[str, int]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
+      - {"status": "failed", "reason": "retrieval_exclusion_rate_exceeded", "retryable": True,
+         "error": str, "spans_found": int, "max_incomplete_share": float}
       - {"status": "skipped", "reason": "profile_selection_ground_truth_missing", "retryable": False,
          "error": str}
       - {"status": "failed", "reason": "profile_selection_ground_truth_store_unavailable", "retryable": True,
