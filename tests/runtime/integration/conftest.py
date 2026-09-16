@@ -300,8 +300,9 @@ def _set_test_backend_env(request):
     """Set BACKEND_URL/BACKEND_PORT env vars so create_default_config_manager()
     naturally resolves to the test Vespa container. No mocks needed.
 
-    Modules marked ``no_shared_vespa`` own a different real boundary and retain
-    the root fixture's dead backend sentinel instead of starting Vespa.
+    Modules marked ``no_shared_vespa`` own a different real boundary and run
+    against the root fixture's dead backend sentinel instead of starting Vespa,
+    whatever an earlier session-scoped fixture left in the environment.
 
     Also resets config singletons so they pick up the new env vars
     when a new module starts with a different Vespa container.
@@ -325,7 +326,23 @@ def _set_test_backend_env(request):
         )
     )
     if owns_other_boundaries:
+        original_url = os.environ.get("BACKEND_URL")
+        original_port = os.environ.get("BACKEND_PORT")
+        os.environ["BACKEND_URL"] = os.environ.get(
+            "TEST_BACKEND_URL", "http://localhost"
+        )
+        os.environ["BACKEND_PORT"] = os.environ.get("TEST_BACKEND_PORT", "29071")
+        config_utils._config_manager_singleton = None
         yield
+        config_utils._config_manager_singleton = None
+        for key, value in (
+            ("BACKEND_URL", original_url),
+            ("BACKEND_PORT", original_port),
+        ):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         return
 
     vespa_instance = request.getfixturevalue("vespa_instance")
