@@ -10,6 +10,7 @@ from cogniverse_agents.detailed_report_agent import (
     DetailedReportDeps,
 )
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
+from cogniverse_core.agents.base import AgentConfigurationError
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -19,16 +20,6 @@ from tests.fixtures.llm import (
     resolve_base_url,
     resolve_prefixed_model,
 )
-
-
-def _memory_config_manager():
-    """The injected ConfigManager every agent constructor requires."""
-    from cogniverse_foundation.config.manager import ConfigManager
-    from tests.utils.memory_store import InMemoryConfigStore
-
-    store = InMemoryConfigStore()
-    store.initialize()
-    return ConfigManager(store=store)
 
 
 @pytest.fixture
@@ -397,11 +388,14 @@ class TestDSPyLMConfigurationIntegration:
         self, lm_endpoint_reachable
     ):
         """Test agent error handling when DSPy.LM configuration fails"""
-        # Without config_manager, agent should raise ValueError
-        with pytest.raises(ValueError, match="config_manager is required"):
-            SummarizerAgent(
-                deps=SummarizerDeps(), config_manager=_memory_config_manager()
-            )
+        # Without config_manager, agent construction is refused
+        with pytest.raises(AgentConfigurationError) as caught:
+            SummarizerAgent(deps=SummarizerDeps())
+        assert str(caught.value) == (
+            "SummarizerAgent requires a config_manager; got None. Pass "
+            "config_manager=<ConfigManager> to the constructor; the runtime "
+            "injects its own manager."
+        )
 
 
 # Integration test configuration
