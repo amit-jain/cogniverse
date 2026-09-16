@@ -33,6 +33,15 @@ SEEDED_BLOBS = {
 }
 
 
+def _for_tenants(names, tenants):
+    """The dataset names that belong to this test's own tenants.
+
+    The Phoenix container is shared across the module, so it also holds the
+    base-name blobs earlier tests seeded for their tenants.
+    """
+    return sorted(name for name in names if any(f"-{t}-" in name for t in tenants))
+
+
 def _manager(endpoint, grpc_endpoint, tenant_id) -> ArtifactManager:
     provider = PhoenixProvider()
     provider.initialize(
@@ -89,7 +98,7 @@ async def test_migration_makes_every_base_name_blob_readable_through_the_ring(
 
     summary, unattributed = await migrate(endpoint, tenants)
 
-    assert unattributed == []
+    assert _for_tenants(unattributed, tenants) == []
     assert summary == {
         tenant_id: {
             "migrated": sorted(
@@ -131,7 +140,7 @@ async def test_second_run_changes_nothing_and_a_new_publication_follows_slot_zer
 
     repeat, unattributed = await migrate(endpoint, tenants)
 
-    assert unattributed == []
+    assert _for_tenants(unattributed, tenants) == []
     assert repeat == {
         tenant_id: {
             "already_in_ring": sorted(
@@ -163,6 +172,6 @@ async def test_a_tenant_left_out_is_reported_and_fails_the_run(seeded_tenants):
     summary, unattributed = await migrate(endpoint, [covered])
 
     assert list(summary) == [covered]
-    assert unattributed == sorted(
+    assert _for_tenants(unattributed, [covered, omitted]) == sorted(
         managers[omitted]._blob_dataset_name(kind, key) for kind, key in SEEDED_BLOBS
     )
