@@ -27,9 +27,21 @@ pytestmark = pytest.mark.integration
 # deadline — the loop is what the deadline has to stop.
 LOOPING_CODE = "```python\nprint('still working')\n```"
 
+SUB_CALLS = 6
+
+# One iteration's program spending the rest of the sub-LLM budget. Every
+# llm_query is a model call the deadline has to refuse.
+SUBCALL_CODE = (
+    "```python\n"
+    f"for _i in range({SUB_CALLS}):\n"
+    "    llm_query('sub-query')\n"
+    "print('done')\n"
+    "```"
+)
+
 
 @contextmanager
-def scripted_model(hold_seconds: float, *, status: int = 200):
+def scripted_model(hold_seconds: float, *, status: int = 200, code=LOOPING_CODE):
     """Serve chat completions, holding each one for ``hold_seconds``."""
     calls: list[dict] = []
     lock = threading.Lock()
@@ -64,7 +76,7 @@ def scripted_model(hold_seconds: float, *, status: int = 200):
                                     "content": json.dumps(
                                         {
                                             "reasoning": "Keep exploring.",
-                                            "code": LOOPING_CODE,
+                                            "code": code,
                                             "answer": "incomplete",
                                         }
                                     ),
@@ -144,22 +156,55 @@ def test_expired_deadline_stops_further_iterations():
         assert elapsed < hold * 2
 
 
-def test_one_callers_deadline_does_not_truncate_another():
-    """Concurrent callers each get their own budget on the same module."""
-    with scripted_model(2.0) as expiring, scripted_model(0.2) as surviving:
-        expired = _inference(expiring["api_base"], timeout_seconds=1.0)
-        survivor = _inference(surviving["api_base"], timeout_seconds=None)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(_run, expired, "tenant-a")
-            second = pool.submit(_run, survivor, "tenant-b")
-            with pytest.raises(RLMTimeoutError):
-                first.result(timeout=120)
-            result = second.result(timeout=120)
+def test_expired_deadline_stops_in_repl_model_calls():
+    """A generated program cannot spend its sub-LLM budget past the deadline."""
+    hold = 2.0
+    with scripted_model(hold, code=SUBCALL_CODE) as model:
+        inference = _inference(model["api_base"], timeout_seconds=hold / 2)
+        started = time.monotonic()
+        with pytest.raises(RLMTimeoutError) as raised:
+            _run(inference)
+        elapsed = time.monotonic() - started
 
+        assert str(raised.value) == f"RLM processing exceeded timeout of {hold / 2}s"
+        # The action call is the whole overrun: it was in flight when the
+        # deadline passed, and every llm_query after it is refused.
+        assert len(model["calls"]) == 1
+        time.sleep(hold * 2)
+        assert len(model["calls"]) == 1
+        # Serving the sub-calls would have taken SUB_CALLS more holds.
+        assert elapsed < hold * SUB_CALLS
+
+
+def test_one_callers_deadline_does_not_truncate_another():
+    """Two budgets on one module: neither caller sees the other's deadline."""
+    hold = 2.0
+    with scripted_model(hold) as model:
+        inference = _inference(model["api_base"], timeout_seconds=None)
+        rlm = inference._get_rlm()
+        assert inference._get_rlm() is rlm
+        both_inside = threading.Barrier(2)
+
+        def call(context: str, timeout_seconds):
+            with dspy.context(adapter=dspy.JSONAdapter()):
+                with rlm.deadline(timeout_seconds):
+                    both_inside.wait(timeout=60)
+                    return inference._execute_rlm(
+                        rlm, "Summarize the context.", context
+                    )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            expiring = pool.submit(call, "tenant-a", hold / 2)
+            surviving = pool.submit(call, "tenant-b", None)
+            with pytest.raises(RLMTimeoutError) as raised:
+                expiring.result(timeout=180)
+            result, _tokens = surviving.result(timeout=180)
+
+    assert str(raised.value) == f"RLM processing exceeded timeout of {hold / 2}s"
     assert result.answer == "incomplete"
-    # max_iterations action calls plus the extract fallback.
-    assert len(surviving["calls"]) == 5
-    assert len(expiring["calls"]) == 1
+    # One action call for the expiring caller; four action calls plus the
+    # extract fallback for the caller that ran to max_iterations.
+    assert len(model["calls"]) == 6
 
 
 def test_model_outage_raises_instead_of_answering():

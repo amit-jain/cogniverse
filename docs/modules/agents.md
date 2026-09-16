@@ -4495,9 +4495,11 @@ class SearchOutput(AgentOutput):
 ### Timeout and Error Handling
 
 `timeout_seconds` is enforced inside the REPL loop: `TolerantRLM` checks the
-deadline at each iteration boundary and raises `RLMTimeoutError` there, so the
-computation stops rather than continuing unobserved. The overrun is therefore
-bounded by the model call in flight when the deadline passes. `process` is
+deadline at each iteration boundary and in the in-REPL `llm_query` /
+`llm_query_batched` tools, raising `RLMTimeoutError` at the first of them
+reached after expiry, so the computation stops rather than continuing
+unobserved. The overrun is therefore bounded by the model call in flight when
+the deadline passes. The same check guards `aforward`/`acall`. `process` is
 synchronous; async callers run it through `asyncio.to_thread`.
 
 ```text

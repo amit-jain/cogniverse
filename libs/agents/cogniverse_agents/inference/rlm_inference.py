@@ -287,9 +287,7 @@ class RLMInference:
         """Execute RLM and return (result, total_tokens).
 
         Wraps the call in DSPy's track_usage context so we can report real
-        token counts on RLMResult.tokens_used. Separated for timeout handling
-        via ThreadPoolExecutor — the future returns both fields atomically so
-        the caller cannot accidentally drop the token count on a timeout path.
+        token counts on RLMResult.tokens_used.
 
         DSPy's UsageTracker only sees calls that hit the actual LM; cache
         hits never invoke the tracker, so a process() that fully resolves
@@ -365,11 +363,8 @@ class RLMInference:
             # RLM (and therefore a fresh interpreter), not a result.
             for attempt in (1, 2):
                 try:
-                    # The deadline is enforced inside the REPL loop, at the
-                    # iteration boundary. Running the call in a worker and
-                    # abandoning it on expiry left the computation running:
-                    # the timeout stopped nothing and the pool's shutdown
-                    # waited for it anyway.
+                    # The deadline is enforced inside the REPL loop: at the
+                    # iteration boundary and in the in-REPL model tools.
                     with rlm.deadline(self.timeout_seconds):
                         result, tokens_used = self._execute_rlm(
                             rlm, full_query, context
