@@ -895,6 +895,20 @@ class RemoteColBERTLoader(ModelLoader):
                             f"{parsed[0][0]}..{parsed[-1][1]} of {len(text)} characters "
                             f"from model {self.model_name!r} at {self.endpoint_url}"
                         )
+                    for index, (start, end) in enumerate(parsed):
+                        if end <= start:
+                            raise RuntimeError(
+                                "remote ColBERT windowing returned the empty span "
+                                f"{start}..{end} at index {index} from model "
+                                f"{self.model_name!r} at {self.endpoint_url}"
+                            )
+                        if index and parsed[index - 1][1] != start:
+                            raise RuntimeError(
+                                "remote ColBERT windowing returned spans that break "
+                                f"at {parsed[index - 1][1]}..{start} between index "
+                                f"{index - 1} and {index} from model "
+                                f"{self.model_name!r} at {self.endpoint_url}"
+                            )
                     spans.append(parsed)
                 return spans
 

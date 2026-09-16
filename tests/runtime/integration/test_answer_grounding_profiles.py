@@ -460,9 +460,10 @@ CORPUS = (
     },
 )
 CORPUS_ID = "grounding_corpus"
-# The pipeline ids a fed segment "<corpus>_<document id>"; the search returns
-# that id, so the pins name what ingestion actually wrote.
-HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}" for entry in CORPUS)
+# The pipeline ids a fed window "<corpus>_<document id>_w<index>" and a hit
+# resolves to the window that matched, so the pins name what ingestion actually
+# wrote. Each corpus entry fits one window, which the feed result below pins.
+HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}_w0000" for entry in CORPUS)
 HARBOUR_QUERY = "silt accumulation across the tidal basin"
 BEEKEEPING_QUERY = "candy board feeding for overwintering colonies"
 
