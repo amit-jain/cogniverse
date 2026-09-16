@@ -219,8 +219,17 @@ sessions that have been idle longer than `max_idle_seconds`. Behaviour:
 | Env var | Default | Effect |
 |---|---|---|
 | `COGNIVERSE_SANDBOX_POOL_ENABLED` | `1` | Set to `false` to fall back to per-call create+destroy. |
-| `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Maximum pooled sessions (one per agent_type). |
+| `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Maximum pooled sessions (one per agent_type), and the ceiling on concurrent task sessions. |
 | `COGNIVERSE_SANDBOX_POOL_IDLE_S` | `60` | Seconds an entry can sit idle before eviction. |
+
+**Task sessions.** A coding task leases one session for its whole run through
+`SandboxManager.task_session`. Such a session is never pooled or reused: it is
+destroyed on release, so each task pays a cold sandbox start. The pool tracks
+live task sessions, counts them against `COGNIVERSE_SANDBOX_POOL_SIZE`, and
+raises `SandboxCapacityError` when every slot is taken. `close_all` destroys a
+live task session immediately — a task session outlives any single call, so
+deferring it to release would leave the container alive at the gateway after
+the client closes.
 
 The pool emits the same telemetry spans (`sandbox.create_session`,
 `sandbox.wait_ready`, `sandbox.delete`) on its lifecycle events, so the

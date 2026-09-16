@@ -383,6 +383,14 @@ PARTIAL_STATUS = "partial"
 FAILED_STEP_STATUSES = frozenset({"error", FAILED_STATUS, "blocked"})
 
 
+def orchestration_status(final_output: Dict[str, Any]) -> str:
+    """The orchestration's terminal status, as every producer records it."""
+    status = final_output.get("status")
+    if not isinstance(status, str) or not status:
+        raise ValueError("Orchestration final_output carries no status")
+    return status
+
+
 class FusionStrategy(Enum):
     """Strategies for combining results from multiple agents across modalities"""
 
@@ -1277,9 +1285,7 @@ class OrchestratorAgent(
                 }
 
             # A planned step the loop never reached (budget, wall clock, an
-            # early exit) is a step that did not answer. Without an entry it
-            # is invisible to aggregation, and a plan that ran none of its
-            # steps aggregated to a success.
+            # early exit) is a step that did not answer.
             for step in plan.steps:
                 agent_results.setdefault(
                     step.agent_name,
@@ -1330,8 +1336,7 @@ class OrchestratorAgent(
             final_output["iterative_loop"] = iterative_loop
             execution_summary = self._generate_summary(plan, agent_results)
             # Only a plan every step of which answered is a success worth
-            # recalling; remembering a failed run taught the planner that the
-            # route that produced error strings worked.
+            # recalling.
             if final_output["status"] == "success":
                 # remember_success runs Mem0's LLM fact-extraction add — offload it.
                 await asyncio.to_thread(self.remember_success, query, execution_summary)
@@ -2826,9 +2831,8 @@ class OrchestratorAgent(
         for single-modality results.
 
         A step that failed carries no answer, so its error entry is kept in
-        ``results`` for the caller but never fused into ``aggregated_content``
-        — fusing it rendered child error strings as the orchestration's
-        answer. The returned ``status`` is the orchestration's outcome:
+        ``results`` for the caller but never fused into ``aggregated_content``.
+        The returned ``status`` is the orchestration's outcome:
         ``failed`` when no step produced an answer, ``partial`` when any step
         failed or reported a partial answer of its own, ``success`` otherwise.
         """
@@ -3330,7 +3334,7 @@ class OrchestratorAgent(
     def _dspy_to_a2a_output(self, result: OrchestrationResult) -> Dict[str, Any]:
         """Convert OrchestrationResult to A2A output format."""
         return {
-            "status": result.final_output.get("status", "success"),
+            "status": orchestration_status(result.final_output),
             "agent": self.agent_name,
             "query": result.query,
             "plan": {

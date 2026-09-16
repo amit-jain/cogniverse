@@ -2193,3 +2193,30 @@ class TestOrchestrationTerminalOutcome:
         output = orchestrator_agent._dspy_to_a2a_output(result)
         assert output["status"] == status
         assert output["final_output"] == result.final_output
+
+    def test_a_status_less_final_output_is_not_a_success(self, orchestrator_agent):
+        """An envelope with no recorded outcome is a producer bug, not a pass."""
+        result = OrchestrationResult(
+            query="find evidence",
+            plan=OrchestrationPlan(query="find evidence", steps=[]),
+            agent_results={},
+            final_output={"aggregated_content": "42"},
+            execution_summary="No complete execution",
+        )
+        with pytest.raises(ValueError) as raised:
+            orchestrator_agent._dspy_to_a2a_output(result)
+        assert str(raised.value) == "Orchestration final_output carries no status"
+
+    @pytest.mark.parametrize("final_output", [{}, {"status": ""}, {"status": None}])
+    def test_orchestration_status_refuses_an_unrecorded_outcome(self, final_output):
+        from cogniverse_agents.orchestrator_agent import orchestration_status
+
+        with pytest.raises(ValueError) as raised:
+            orchestration_status(final_output)
+        assert str(raised.value) == "Orchestration final_output carries no status"
+
+    @pytest.mark.parametrize("status", ["success", "partial", "failed"])
+    def test_orchestration_status_reads_the_recorded_outcome(self, status):
+        from cogniverse_agents.orchestrator_agent import orchestration_status
+
+        assert orchestration_status({"status": status, "results": {}}) == status
