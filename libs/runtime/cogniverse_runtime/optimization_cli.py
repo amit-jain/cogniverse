@@ -49,7 +49,9 @@ from cogniverse_agents.optimizer.example_selection import (
 )
 from cogniverse_core.agents.base import (
     COMPILED_MODULE_PROMPT_KEY,
+    load_compiled_module_state,
     require_config_manager,
+    serialize_compiled_module,
 )
 from cogniverse_core.durable import (
     PipelineCheckpoint,
@@ -1773,10 +1775,28 @@ async def _optimize_agent(
         return {"status": "failed", "error": str(e)}
 
 
-def _active_compiled_state(prompts) -> Optional[dict]:
-    """The active compiled module state, or None when the agent is stock."""
-    raw = (prompts or {}).get(COMPILED_MODULE_PROMPT_KEY)
-    return json.loads(raw) if raw else None
+class BaselineNotReconstructableError(RuntimeError):
+    """The active artifact is not a compiled module state the baseline can load."""
+
+
+def _active_compiled_payload(prompts) -> Optional[str]:
+    """The active compiled-module payload, or None when the agent is stock.
+
+    Raises:
+        BaselineNotReconstructableError: The agent has an active artifact that
+            is not a compiled module state, so the scored baseline cannot be
+            rebuilt and a candidate must not be promoted against the stock
+            module.
+    """
+    if not prompts:
+        return None
+    payload = prompts.get(COMPILED_MODULE_PROMPT_KEY)
+    if payload:
+        return payload
+    raise BaselineNotReconstructableError(
+        f"active prompts carry {sorted(prompts)} and no "
+        f"{COMPILED_MODULE_PROMPT_KEY}; the baseline cannot be rebuilt"
+    )
 
 
 def _served_module(agent_name: str):
@@ -1898,11 +1918,18 @@ async def _score_and_serve(
     baseline_score = candidate_score = None
     if holdout or negatives:
         baseline_module = _served_module(agent_name)
-        active_state = _active_compiled_state(
-            await artifact_manager.load_prompts(served_agent)
-        )
-        if active_state is not None:
-            baseline_module.load_state(active_state)
+        try:
+            active_payload = _active_compiled_payload(
+                await artifact_manager.load_prompts(served_agent)
+            )
+        except BaselineNotReconstructableError as exc:
+            return {
+                "status": "failed",
+                "reason": "baseline_not_reconstructable",
+                "error": str(exc),
+            }
+        if active_payload is not None:
+            load_compiled_module_state(baseline_module, active_payload)
         with dspy.context(lm=optimizer_lm):
             baseline_score, candidate_score = _holdout_scores(
                 baseline_module, compiled, holdout, negatives, agent_name
@@ -2738,7 +2765,10 @@ async def _serve_compiled_prompts(
     if not state:
         logger.warning("Compiled %s module has no state — nothing to serve", agent_name)
         return None
-    serialized = json.dumps(state, sort_keys=True)
+    serialized = serialize_compiled_module(compiled)
+    # Serving loads the payload into a fresh served module on every request, so
+    # a payload that module cannot load must not reach the active artifact.
+    load_compiled_module_state(_served_module(agent_name), serialized)
 
     if baseline_score is None or candidate_score is None:
         logger.warning(

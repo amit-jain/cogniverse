@@ -569,14 +569,19 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    (`_EVAL_FIELD`: `enhanced_query` / `summary` / `executive_summary`) against the labeled output,
    and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT reproducing
    the recorded failing output. The baseline is the same served module with the active compiled state
-   loaded into it.
+   loaded into it (`_active_compiled_payload`). An agent whose active prompts are not a compiled
+   module state has no reconstructable baseline, so the run fails with
+   `reason: "baseline_not_reconstructable"` rather than scoring against a stock module.
 4. Publishes the compiled module's whole `dump_state()` via `_serve_compiled_prompts` **only if the candidate wins by
    at least the tenant's `optimization_improvement_threshold`** — the call routes through
    `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active). The
    published prompts dict has the single reserved key `__dspy_module__`
-   (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding the compiled state as JSON, so
-   the instructions AND the learned demonstrations that produced the winning score serve together:
-   the per-request overlay `load_state`s it into its per-call copy of the served module. A loser is recorded in the
+   (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding
+   `{"dspy_version", "module", "state"}` as JSON, so the instructions AND the learned demonstrations
+   that produced the winning score serve together: the per-request overlay loads it into its per-call
+   copy of the served module (`load_compiled_module_state`), which refuses a state produced for a
+   different module class. The payload is loaded into a fresh served module before promotion, so a
+   state the runtime cannot load fails the run instead of every request. A loser is recorded in the
    experiments ledger with `promoted=False`, `--mode rollback` restores a prior version, and the
    result reports the outcome under `"served"` (`served_agent`, `version`, `active`, `promoted`, plus
    `baseline_score`/`candidate_score` when eval material was available or a `reason` when it wasn't).

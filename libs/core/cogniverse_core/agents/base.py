@@ -326,6 +326,52 @@ class ConfigManagerAware:
 COMPILED_MODULE_PROMPT_KEY = "__dspy_module__"
 
 
+def compiled_module_identity(module: Any) -> str:
+    """Dotted path of the DSPy module class a compiled state belongs to."""
+    cls = type(module)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def serialize_compiled_module(module: Any) -> str:
+    """The published payload for ``module``: its state, class and DSPy version."""
+    import dspy
+
+    return json.dumps(
+        {
+            "dspy_version": dspy.__version__,
+            "module": compiled_module_identity(module),
+            "state": module.dump_state(),
+        },
+        sort_keys=True,
+    )
+
+
+def load_compiled_module_state(module: Any, payload: str) -> None:
+    """Load a published compiled-module payload into ``module``.
+
+    Raises:
+        ValueError: The payload names a different module class, or its state
+            cannot be loaded by the running DSPy.
+    """
+    import dspy
+
+    envelope = json.loads(payload)
+    expected = compiled_module_identity(module)
+    published = envelope["module"]
+    if published != expected:
+        raise ValueError(
+            f"compiled module state was produced for {published}, not {expected}"
+        )
+    try:
+        module.load_state(envelope["state"])
+    except Exception as exc:
+        raise ValueError(
+            f"compiled module state for {expected} published by dspy "
+            f"{envelope['dspy_version']} is not loadable by dspy "
+            f"{dspy.__version__}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 def _signature_predictor(attr: Any) -> Any:
     """Return the signature-bearing predictor for a module attribute.
 
@@ -363,10 +409,11 @@ class _DispatchedPromptOverlayContext:
     ``module.search_optimizer``); the value replaces that predictor's
     ``signature.instructions``. Keys that don't match any predictor are
     silently skipped. The reserved key ``COMPILED_MODULE_PROMPT_KEY`` instead
-    carries a whole compiled module state (``dspy.Module.dump_state`` as JSON)
-    and is loaded into the copy, so instructions AND learned demonstrations
-    serve exactly as they were scored; a corrupt state raises rather than
-    serving a half-applied module. The whole thing degrades to the base module
+    carries a whole compiled module state — the module class, the publishing
+    DSPy version and ``dspy.Module.dump_state`` — and is loaded into the copy,
+    so instructions AND learned demonstrations serve exactly as they were
+    scored; a state for another module class, an unloadable state or a corrupt
+    payload raises rather than serving a half-applied module. The whole thing degrades to the base module
     when the agent exposes no ``get_dispatched_prompts`` hook, the getter
     raises, no prompts are in scope, or the clone fails — always
     preferring the active prompt over a crash.
@@ -404,7 +451,7 @@ class _DispatchedPromptOverlayContext:
         applied = []
         for name, value in prompts.items():
             if name == COMPILED_MODULE_PROMPT_KEY:
-                local.load_state(json.loads(value))
+                load_compiled_module_state(local, value)
                 applied.append(name)
                 continue
             predictor = _signature_predictor(getattr(local, name, None))
