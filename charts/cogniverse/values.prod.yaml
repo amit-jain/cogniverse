@@ -1,4 +1,11 @@
 # Production values
+# Nightly Vespa and Phoenix snapshots to the backup bucket. Phoenix runs on
+# its own claim here, so the snapshot reads that claim and pg_dumps the
+# phoenix-postgres database over its Service.
+hostStorage:
+  backup:
+    enabled: true
+
 llm:
   builtin:
     gpu:
