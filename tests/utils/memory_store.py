@@ -315,17 +315,22 @@ class InMemoryConfigStore(ImmutableConfigStore):
         tenant_id: str,
         configs: Dict[str, Any],
     ) -> int:
-        """Import configurations for a tenant."""
+        """Import configurations under the requested tenant.
+
+        The destination belongs to the call: tenant ids carried by the
+        payload are ignored, so an export taken from one tenant restores
+        into whichever tenant the caller names.
+        """
         with self._lock:
             count = 0
             for config_data in configs.get("configs", []):
-                entry = ConfigEntry.from_dict(config_data)
-                config_id = entry.get_config_id()
-
-                if config_id not in self._storage:
-                    self._storage[config_id] = {}
-
-                self._storage[config_id][entry.version] = entry
+                self.set_config(
+                    tenant_id=tenant_id,
+                    scope=ConfigScope(config_data["scope"]),
+                    service=config_data["service"],
+                    config_key=config_data["config_key"],
+                    config_value=config_data["config_value"],
+                )
                 count += 1
 
             return count
