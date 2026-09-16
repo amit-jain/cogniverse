@@ -23,6 +23,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import httpx
@@ -34,6 +35,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from streamlit.testing.v1 import AppTest
 
 from cogniverse_dashboard.ingestion import submit_video_ingestion
+from cogniverse_dashboard.tabs.optimization import OPTIMIZATION_RUN_COLUMNS
 from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 
 APP_PATH = "libs/dashboard/cogniverse_dashboard/app.py"
@@ -66,6 +68,10 @@ class RuntimeRecorder:
     search_profile: str = "video_colqwen_omni_mv_chunk_30s"
     search_degraded: List[Dict[str, str]] = field(default_factory=list)
     search_span_id: str = "0123456789abcdef"
+    # tenant_id -> the optimization runs GET .../optimize/runs answers with
+    optimize_runs: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    optimize_runs_status: int = 200
+    optimize_runs_requests: List[Dict[str, Any]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -140,6 +146,19 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
             return JSONResponse(status_code=404, content={"detail": "no such ingest"})
         payload = script[0] if len(script) == 1 else script.pop(0)
         return payload
+
+    @app.get("/admin/tenant/{tenant_id}/optimize/runs")
+    async def optimize_runs(tenant_id: str, limit: int = 20):
+        with recorder.lock:
+            recorder.optimize_runs_requests.append(
+                {"tenant_id": tenant_id, "limit": limit}
+            )
+        if recorder.optimize_runs_status != 200:
+            return JSONResponse(
+                status_code=recorder.optimize_runs_status,
+                content={"detail": "Argo API unreachable: connection refused"},
+            )
+        return {"runs": recorder.optimize_runs.get(tenant_id, [])[:limit]}
 
     @app.post("/a2a/")
     async def a2a(request: Request):
@@ -783,12 +802,123 @@ def test_a_result_landing_after_a_switch_is_refused_not_rendered(page, runtime):
     assert [box.value for box in _tenant_id_boxes(app)] == ["acme:b"]
 
 
-def test_tenant_switch_drops_the_previous_tenants_optimization_runs(page, runtime):
-    app = _open_tenant(page, "acme:a")
-    app.session_state["optimization_requests"] = [
-        {"tenant_id": "acme:a", "run": "opt-1"}
+def _recorded_runs(now: datetime) -> List[Dict[str, Any]]:
+    """Two runs as the runtime's optimize/runs route returns them, newest
+    first. The newest started 90 minutes ago, so its tile reads "1h ago"."""
+    return [
+        {
+            "workflow_name": "manual-optimize-simba-x7k2p",
+            "mode": "simba",
+            "trigger": "manual",
+            "phase": "Running",
+            "started_at": (now - timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "finished_at": None,
+        },
+        {
+            "workflow_name": "cogniverse-agent-optimization-1758009600",
+            "mode": None,
+            "trigger": "scheduled",
+            "phase": "Succeeded",
+            "started_at": "2026-09-15T03:00:00Z",
+            "finished_at": "2026-09-15T03:42:00Z",
+        },
     ]
+
+
+def _history_rows(app: AppTest) -> List[List[Any]]:
+    frames = [
+        frame.value
+        for frame in app.dataframe
+        if list(frame.value.columns) == list(OPTIMIZATION_RUN_COLUMNS)
+    ]
+    assert len(frames) == 1, [list(f.value.columns) for f in app.dataframe]
+    return frames[0].values.tolist()
+
+
+def test_optimization_overview_reads_the_runtimes_runs(page, runtime):
+    """The run count, last-run and history elements come from
+    ``GET /admin/tenant/{id}/optimize/runs`` — nothing writes them locally."""
+    now = datetime.now(timezone.utc)
+    recorded = _recorded_runs(now)
+    runtime.optimize_runs["acme:a"] = recorded
+
+    app = _open_tenant(page, "acme:a")
+
+    assert [
+        (request["tenant_id"], request["limit"])
+        for request in runtime.optimize_runs_requests
+    ] == [("acme:a", 10)]
+    tiles = {m.label: m.value for m in app.metric}
+    assert tiles["Optimization Runs"] == "2"
+    assert tiles["Last Optimization"] == "1h ago (Running)"
+    assert _history_rows(app) == [
+        [
+            "manual-optimize-simba-x7k2p",
+            "simba",
+            "manual",
+            "Running",
+            recorded[0]["started_at"],
+            "—",
+        ],
+        [
+            "cogniverse-agent-optimization-1758009600",
+            "—",
+            "scheduled",
+            "Succeeded",
+            "2026-09-15T03:00:00Z",
+            "2026-09-15T03:42:00Z",
+        ],
+    ]
+
+
+def test_tenant_switch_reads_the_new_tenants_optimization_runs(page, runtime):
+    """The tiles follow the sidebar's active tenant, never the previous
+    tenant's runs."""
+    now = datetime.now(timezone.utc)
+    runtime.optimize_runs["acme:a"] = _recorded_runs(now)
+    runtime.optimize_runs["acme:b"] = []
+
+    app = _open_tenant(page, "acme:a")
+    assert {m.label: m.value for m in app.metric}["Optimization Runs"] == "2"
+
     _switch_tenant(app, "acme:b")
 
-    assert "optimization_requests" not in app.session_state
-    assert {m.label: m.value for m in app.metric}["Optimization Runs"] == "0"
+    tiles = {m.label: m.value for m in app.metric}
+    assert tiles["Optimization Runs"] == "0"
+    assert tiles["Last Optimization"] == "Never"
+    assert [request["tenant_id"] for request in runtime.optimize_runs_requests][
+        -1
+    ] == "acme:b"
+    assert [
+        frame.value
+        for frame in app.dataframe
+        if list(frame.value.columns) == list(OPTIMIZATION_RUN_COLUMNS)
+    ] == []
+
+
+def test_optimization_overview_reports_a_runtime_outage_not_zero_runs(page, runtime):
+    """A 503 from the runtime shows the error; the count must not read 0."""
+    runtime.optimize_runs["acme:a"] = _recorded_runs(datetime.now(timezone.utc))
+    runtime.optimize_runs_status = 503
+
+    app = _open_tenant(page, "acme:a")
+
+    tiles = {m.label: m.value for m in app.metric}
+    assert tiles["Optimization Runs"] == "—"
+    assert tiles["Last Optimization"] == "—"
+    assert [
+        e.value
+        for e in app.error
+        if e.value.startswith("Optimization runs unavailable")
+    ] == [
+        "Optimization runs unavailable: HTTP 503: "
+        "Argo API unreachable: connection refused"
+    ]
+    assert [
+        w.value for w in app.warning if w.value.startswith("History unavailable")
+    ] == ["History unavailable while the runtime cannot list runs."]
+    assert [
+        frame.value
+        for frame in app.dataframe
+        if list(frame.value.columns) == list(OPTIMIZATION_RUN_COLUMNS)
+    ] == []
