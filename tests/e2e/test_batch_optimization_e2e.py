@@ -7237,3 +7237,174 @@ class TestReflectiveOptimizerAcceptsCandidates:
             "The recorded failing enhanced_query was 'recorded failing rewrite'. "
             "Produce a distinct, accurate enhanced_query that does not reproduce it."
         )
+
+
+# The dashboard's Optimization Overview reads this page size, and its history
+# table renders these columns in this order.
+OPTIMIZATION_RUNS_DASHBOARD_LIMIT = 10
+OPTIMIZATION_RUN_KEYS = (
+    "workflow_name",
+    "mode",
+    "trigger",
+    "phase",
+    "started_at",
+    "finished_at",
+)
+OPTIMIZATION_RUN_LISTING_MODE = "profile"
+RUN_PHASE_AGREEMENT_TIMEOUT_S = 120.0
+
+
+def _submit_manual_optimization(tenant_id: str, mode: str) -> str:
+    resp = httpx.post(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize",
+        json={"mode": mode},
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    body = resp.json()
+    assert set(body) == {"workflow_name", "namespace", "mode", "status_url"}, body
+    assert body["mode"] == mode, body
+    assert body["status_url"] == (
+        f"/admin/tenant/{tenant_id}/optimize/runs/{body['workflow_name']}"
+    ), body
+    return body["workflow_name"]
+
+
+def _list_optimization_runs(tenant_id: str, limit: int | None = None) -> list[dict]:
+    params = {} if limit is None else {"limit": limit}
+    resp = httpx.get(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize/runs",
+        params=params,
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    body = resp.json()
+    assert set(body) == {"runs"}, body
+    return body["runs"]
+
+
+def _optimization_run_status(tenant_id: str, workflow_name: str) -> dict:
+    resp = httpx.get(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize/runs/{workflow_name}",
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    return resp.json()
+
+
+def _runs_agreeing_with_status(tenant_id: str, names: list[str]) -> list[dict]:
+    """The listing, re-read until every entry's phase matches the status route.
+
+    Both read Argo, so a run that transitions between the two calls disagrees;
+    the phase is only pinnable once the two reads agree.
+    """
+    deadline = time.monotonic() + RUN_PHASE_AGREEMENT_TIMEOUT_S
+    runs: list[dict] = []
+    while time.monotonic() < deadline:
+        runs = _list_optimization_runs(tenant_id)
+        statuses = {
+            name: _optimization_run_status(tenant_id, name)["phase"] for name in names
+        }
+        if all(run["phase"] == statuses[run["workflow_name"]] for run in runs):
+            return runs
+        time.sleep(2.0)
+    raise AssertionError(
+        f"listing and status never agreed on a phase within "
+        f"{RUN_PHASE_AGREEMENT_TIMEOUT_S}s: {runs}"
+    )
+
+
+@pytest.fixture(scope="module")
+def optimization_run_listing_tenants() -> tuple[str, str, list[str]]:
+    """Two tenants; the first owns two submitted optimization runs."""
+    org_id = unique_id("opt_runs")
+    suffix = org_id.rsplit("_", 1)[1]
+    owner = f"{org_id}:t1"
+    other = f"{org_id}:t2"
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-runs-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+    register_tenant_and_wait(owner, created_by="e2e", timeout_s=600.0)
+    register_tenant_and_wait(other, created_by="e2e", timeout_s=600.0)
+    assert _list_optimization_runs(owner) == []
+    first = _submit_manual_optimization(owner, OPTIMIZATION_RUN_LISTING_MODE)
+    time.sleep(1.0)  # distinct creationTimestamp so "newest first" is decidable
+    second = _submit_manual_optimization(owner, OPTIMIZATION_RUN_LISTING_MODE)
+    return owner, other, [first, second]
+
+
+@pytest.mark.e2e
+class TestOptimizationRunListing:
+    """``GET /admin/tenant/{id}/optimize/runs`` lists the tenant's Argo runs."""
+
+    def test_the_listing_names_this_tenants_runs_newest_first(
+        self, optimization_run_listing_tenants
+    ):
+        owner, other, submitted = optimization_run_listing_tenants
+        runs = _runs_agreeing_with_status(owner, submitted)
+
+        assert [run["workflow_name"] for run in runs] == list(reversed(submitted)), runs
+        for run in runs:
+            assert tuple(run) == OPTIMIZATION_RUN_KEYS, run
+            assert run["mode"] == OPTIMIZATION_RUN_LISTING_MODE, run
+            assert run["trigger"] == "manual", run
+            assert (
+                run["phase"]
+                == (_optimization_run_status(owner, run["workflow_name"])["phase"])
+            ), run
+
+        assert [
+            run["workflow_name"] for run in _list_optimization_runs(owner, limit=1)
+        ] == [submitted[1]]
+        # Another tenant's listing is its own, not a filtered view of this one.
+        assert _list_optimization_runs(other) == []
+
+    @pytest.mark.browser
+    def test_the_optimization_overview_renders_the_tenants_runs(
+        self, page, optimization_run_listing_tenants
+    ):
+        from playwright.sync_api import expect
+
+        from tests.e2e.conftest import (
+            DASHBOARD,
+            active_sub_tab_panel,
+            click_sub_tab,
+            click_top_tab,
+            set_tenant,
+            wait_for_script_idle,
+            wait_for_streamlit,
+        )
+
+        owner, _, submitted = optimization_run_listing_tenants
+        runs = _runs_agreeing_with_status(owner, submitted)
+
+        page.goto(DASHBOARD, timeout=30_000)
+        wait_for_streamlit(page)
+        set_tenant(page, owner)
+        click_top_tab(page, "Synthetic Data")
+        wait_for_script_idle(page)
+        click_sub_tab(page, "Overview")
+        wait_for_script_idle(page)
+
+        panel = active_sub_tab_panel(page)
+        metrics = panel.locator('[data-testid="stMetric"]')
+        expect(metrics).to_have_count(4, timeout=30_000)
+        metric_text = " ".join(
+            metrics.nth(index).inner_text() for index in range(metrics.count())
+        )
+        assert f"Optimization Runs\n{len(runs)}" in metric_text, metric_text
+
+        table = panel.locator('[data-testid="stDataFrame"]')
+        expect(table).to_have_count(1, timeout=30_000)
+        table_text = table.inner_text()
+        for column in ("Workflow", "Mode", "Trigger", "Phase", "Started", "Finished"):
+            assert column in table_text, table_text
+        for run in runs:
+            assert run["workflow_name"] in table_text, table_text
