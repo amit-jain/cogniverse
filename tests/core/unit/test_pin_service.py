@@ -28,6 +28,7 @@ class FakeManager:
         self._next = 0
         # store: memory_id -> {content, agent_name, tenant_id, metadata}
         self.store: dict[str, dict] = {}
+        self.get_all_limits: list[int | None] = []
 
     def add_memory(
         self,
@@ -51,7 +52,11 @@ class FakeManager:
     def delete_memory(self, *, memory_id, tenant_id, agent_name):
         return self.store.pop(memory_id, None) is not None
 
-    def get_all_memories(self, *, tenant_id, agent_name):
+    def get_all_memories(self, *, tenant_id, agent_name, limit):
+        # ``limit`` is required, and recorded: the pin enumeration must walk
+        # the whole partition, and a bounded page reads a pinned memory as
+        # unpinned.
+        self.get_all_limits.append(limit)
         return [
             {"id": mid, "memory": v["content"], "metadata": v["metadata"]}
             for mid, v in self.store.items()
@@ -404,12 +409,16 @@ class TestPinRecordIsolation:
             tenant_id="t1",
         )
         # search_agent's bucket must have ONLY the original payload (not the pin record).
-        agent_rows = manager.get_all_memories(tenant_id="t1", agent_name="search_agent")
+        agent_rows = manager.get_all_memories(
+            tenant_id="t1", agent_name="search_agent", limit=None
+        )
         assert len(agent_rows) == 1
         assert agent_rows[0]["id"] == tid
 
         # The pin record lives under PIN_AGENT_NAME (sentinel).
-        pin_rows = manager.get_all_memories(tenant_id="t1", agent_name=PIN_AGENT_NAME)
+        pin_rows = manager.get_all_memories(
+            tenant_id="t1", agent_name=PIN_AGENT_NAME, limit=None
+        )
         assert len(pin_rows) == 1
         assert pin_rows[0]["metadata"]["kind"] == PIN_RECORD_KIND
 
@@ -481,3 +490,30 @@ class TestRowToRecordCorruptMetadata:
 
         assert rec is None
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_pin_enumeration_reads_every_page(manager, registry):
+    """Every read PinService makes on behalf of maintenance is unbounded.
+
+    Retention treats an unlisted pin as absent and deletes its target, so a
+    page limit on this read is a deletion of pinned memories.
+    """
+    service = PinService(manager, registry)
+    target = manager.add_memory(
+        content="keep me",
+        tenant_id="acme:acme",
+        agent_name="user_memory",
+        metadata={"kind": "fact"},
+    )
+    service.pin(
+        target_memory_id=target,
+        target_kind="fact",
+        pinned_by=Pinnable.TENANT_ADMIN,
+        actor_id="actor_1",
+        tenant_id="acme:acme",
+    )
+    manager.get_all_limits.clear()
+
+    assert service.pinned_target_ids("acme:acme") == {target}
+    assert service.list_pins("acme:acme")[0].target_memory_id == target
+    assert manager.get_all_limits == [None, None]
