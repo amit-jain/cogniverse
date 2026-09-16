@@ -151,7 +151,12 @@ class _ActivationProxy:
         class Handler(BaseHTTPRequestHandler):
             def forward(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                if self.path.endswith("/prepareandactivate") and proxy.conflicts == 0:
+                # Both deploy funnels: the backend's prepareandactivate and
+                # the schema manager's fenced session activation.
+                activating = self.path.endswith("/prepareandactivate") or (
+                    self.command == "PUT" and self.path.endswith("/active")
+                )
+                if activating and proxy.conflicts == 0:
                     proxy.conflicts += 1
                     on_conflict()
                     self.send_response(409)
@@ -342,6 +347,80 @@ def test_expired_holder_cannot_activate_after_a_successor_deployed(vespa_instanc
         }
     finally:
         release.set()
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=30)
+        result.close()
+
+
+def _stalled_holder(ports, prepared, released, result):
+    """Prepare a package that omits a peer's schema, stall past the lease,
+    then try to activate it with the schema-removal override enabled."""
+    from cogniverse_core.registries import schema_deploy_lease
+
+    schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
+    manager = _backend(ports).schema_manager
+    real_post = manager._post_package
+    statuses = []
+    stalled = []
+
+    def post(tenant_url, app_zip, fence=None):
+        def pause():
+            # Stall where the lease cannot help: the session is created and
+            # prepared, this holder's lease has already been taken over, and
+            # nothing re-checks it before the activate. Only the config
+            # server can refuse this activation.
+            if not stalled:
+                stalled.append(True)
+                prepared.set()
+                released.wait(600)
+
+        response = real_post(tenant_url, app_zip, fence=pause)
+        statuses.append(response.status_code)
+        return response
+
+    manager._post_package = post
+    try:
+        manager.upload_metadata_schemas(allow_schema_removal=True)
+        result.put(("activated", statuses))
+    except Exception as exc:
+        result.put((f"{type(exc).__name__}: {exc}", statuses))
+
+
+def test_stalled_holder_cannot_activate_a_session_a_successor_outran(vespa_instance):
+    """A session prepared before a successor's activation is refused by the
+    config server, so the successor's schema and document survive."""
+    ctx = multiprocessing.get_context("spawn")
+    prepared, released, result = ctx.Event(), ctx.Event(), ctx.Queue()
+    holder = ctx.Process(
+        target=_stalled_holder, args=(vespa_instance, prepared, released, result)
+    )
+    holder.start()
+    try:
+        assert prepared.wait(180) is True
+        backend = _backend(vespa_instance)
+        name = backend.schema_registry.deploy_schema("leasefence", BASE_SCHEMA)
+        _feed(vespa_instance, name, "fenced successor document")
+        released.set()
+
+        outcome, statuses = result.get(timeout=300)
+        assert statuses == [409]
+        assert outcome == (
+            "DeploymentLeaseLost: Vespa deployment lease expired or was replaced"
+        )
+        holder.join(timeout=60)
+        assert holder.exitcode == 0
+
+        assert _stored(vespa_instance, name) == {
+            "id": "marker",
+            "text": "fenced successor document",
+        }
+        live = set(
+            backend.schema_manager.list_deployed_document_types(raise_on_failure=True)
+        )
+        assert name in live
+    finally:
+        released.set()
         if holder.is_alive():
             holder.kill()
             holder.join(timeout=30)

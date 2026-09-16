@@ -619,7 +619,7 @@ operations:
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document. A genuine 404 is an idempotent success; connection failures and every other rejected status raise with the document route. |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids, schema_name)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope. When a shared search backend handles a batch read, the unified backend resolves the matching Document v1 namespace and passes both schema and namespace explicitly. |
-| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. The activation holds the cross-process deployment lease, so it cannot land between another process's enumeration and its own package post. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
+| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. The registry and config-server enumeration, the merge and the activation all run under the cross-process deployment lease, so the package cannot be built from a snapshot another process has already moved past; the convergence wait below runs outside the lease. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
 | `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
@@ -1539,6 +1539,22 @@ is `FLUSH_COMPONENT_MAXAGE_S` (1800 s), which bounds how long a
 document-less DocumentDB retains config operations in its transaction log
 (see [Vespa Restart Cost](../operations/troubleshooting.md#vespa-restart-cost)).
 
+#### Fenced Activation
+
+`VespaSchemaManager._post_package` creates, prepares and activates one config
+server session (`POST /application/v2/tenant/default/session`, then
+`PUT .../session/<id>/prepared` and `PUT .../session/<id>/active`) rather than
+posting `prepareandactivate`. The config server activates a session only while
+the generation it was created from is still the active one and answers 409
+`ACTIVATION_CONFLICT` otherwise, so a deployer stalled between preparing its
+package and activating it cannot replace an application a successor activated
+meanwhile; the 409 sends the deploy back through a fresh package build. The
+deployment lease is renewed once more immediately before the activate, so a
+deployer whose lease has already been taken over abandons its prepared session
+instead. `VespaBackend._deploy_package` posts `prepareandactivate` under the
+same lease and never passes the removal override, so a package that went stale
+there is refused by Vespa's schema-removal validation instead of executed.
+
 ---
 
 ## Search Backend
@@ -2173,12 +2189,14 @@ app_package = ApplicationPackage(name="cogniverse")
 # Add all metadata schemas
 add_metadata_schemas_to_package(app_package)
 
-# Deploy to Vespa using internal _deploy_package method
+# Deploy to Vespa using internal _deploy_package method. It takes a builder,
+# not a package: the builder runs again inside the deployment lease before
+# every attempt, so the package carries the survivor set Vespa holds then.
 schema_manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
     backend_port=19071
 )
-schema_manager._deploy_package(app_package)
+schema_manager._deploy_package(lambda: app_package)
 ```
 
 ### Best Practices
