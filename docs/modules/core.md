@@ -686,14 +686,23 @@ version and a completed prior intent; older snapshots are rejected.
 (built by `SchemaRegistry.deployment_lease()`) serialises application-package
 replacement across processes and pods. The record lives under the system
 tenant's `SCHEMA` scope, `schema_deploy_lease` service, `application` key, and
-holds the current holder id and its wall-clock expiry; it moves only through
-`compare_and_set_config`. `acquire()` waits out a live holder and takes over an
-expired one, `renew()` extends the lease and raises `DeploymentLeaseLost` once
-another holder owns it, and `release()` hands it back. A backend deploy
-(`deploy_schemas`), the runtime's startup metadata deploy, schema deletion and
-the orphan reconciler's redeploy all hold it while they enumerate the live
-schemas, build their package and post it, so no package is built from a
-snapshot another process has already moved past.
+holds the current holder id and the hold time (`DEFAULT_LEASE_SECONDS`, 600 s)
+it was taken with; it moves only through `compare_and_set_config`. `acquire()`
+waits out a live holder for up to `DEFAULT_WAIT_SECONDS` (120 s) and then
+raises `TimeoutError`; it takes over a holder only after watching the record's
+version stand still, on its own monotonic clock, for the hold time the record
+carries, and a holder treats its lease as lost once its own monotonic clock
+passes that hold time since its last successful claim — no timestamp is
+written by one node and compared on another, so clock skew cannot break mutual
+exclusion. `renew()` extends the lease and raises `DeploymentLeaseLost` once
+another holder owns it; a store failure inside `renew()` propagates as the
+store's error. `release()` hands the lease back and logs, rather than raises,
+when the store is unreachable: the package is already activated by then, and
+the record is taken over once peers have watched it stand still. A backend
+deploy (`deploy_schemas`), the runtime's startup metadata deploy, schema
+deletion and the orphan reconciler's redeploy all hold it while they enumerate
+the live schemas, build their package and post it, so no package is built from
+a snapshot another process has already moved past.
 
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
 conditionally; `grace_s` is a required keyword-only argument.

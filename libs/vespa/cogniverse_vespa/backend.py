@@ -928,131 +928,137 @@ class VespaBackend(Backend):
             # Deploy all schemas together in one ApplicationPackage
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
 
-            # Merge existing schemas into the deployment so the redeploy looks
-            # like an "add" rather than "remove + add". Two sources feed the
-            # merge:
-            #
-            #   1. SchemaRegistry — definitive schema JSON keyed by
-            #      (tenant_id, base_schema) pair. Used to pick up every
-            #      schema this process has ever deployed through the registry.
-            #   2. Vespa itself (via schema_manager.list_deployed_document_types)
-            #      — authoritative list of what the cluster currently has,
-            #      catching schemas deployed out-of-band (tests pushing their
-            #      own ApplicationPackage, prior crashes, or another process).
-            #
-            # A schema discovered only in Vespa is preserved using the
-            # best-effort reconstruction from registry data keyed by name;
-            # if no definition is available, deploy FAILS instead of silently
-            # dropping the schema.
-            new_schema_names = {s.name for s in schemas_to_deploy}
-            merged_schemas = list(schemas_to_deploy)
-            merged_schema_names = set(new_schema_names)
+            # One lease over the whole enumeration, merge and activation:
+            # the package must not be built from a snapshot another
+            # process moves past before this one posts. The convergence
+            # wait below runs outside it, so peers are not blocked while
+            # the content nodes bring the new document types online.
+            with self.schema_manager.deployment_lease():
+                # Merge existing schemas into the deployment so the redeploy looks
+                # like an "add" rather than "remove + add". Two sources feed the
+                # merge:
+                #
+                #   1. SchemaRegistry — definitive schema JSON keyed by
+                #      (tenant_id, base_schema) pair. Used to pick up every
+                #      schema this process has ever deployed through the registry.
+                #   2. Vespa itself (via schema_manager.list_deployed_document_types)
+                #      — authoritative list of what the cluster currently has,
+                #      catching schemas deployed out-of-band (tests pushing their
+                #      own ApplicationPackage, prior crashes, or another process).
+                #
+                # A schema discovered only in Vespa is preserved using the
+                # best-effort reconstruction from registry data keyed by name;
+                # if no definition is available, deploy FAILS instead of silently
+                # dropping the schema.
+                new_schema_names = {s.name for s in schemas_to_deploy}
+                merged_schemas = list(schemas_to_deploy)
+                merged_schema_names = set(new_schema_names)
 
-            parser_for_existing = JsonSchemaParser()
+                parser_for_existing = JsonSchemaParser()
 
-            registry_schemas: List[Any] = []
-            if self.schema_registry is not None:
-                try:
-                    registry_schemas = self.schema_registry._get_all_schemas() or []
-                    for schema_info in registry_schemas:
-                        full_name = schema_info.full_schema_name
-                        if full_name in merged_schema_names:
-                            continue
-                        try:
-                            existing_def = schema_info.schema_definition
-                            if isinstance(existing_def, str):
-                                if not existing_def.strip():
-                                    raise ValueError("schema definition is empty")
-                                existing_def = json.loads(existing_def)
-                            existing_obj = parser_for_existing.parse_schema(
-                                existing_def
-                            )
-                            merged_schemas.append(existing_obj)
-                            merged_schema_names.add(full_name)
-                        except Exception as merge_exc:
-                            raise BackendDeploymentError(
-                                f"Cannot reconstruct registry schema "
-                                f"{full_name!r}; refusing to deploy a package "
-                                f"that would omit it: {merge_exc}"
-                            ) from merge_exc
-                    logger.info(
-                        f"Merged {len(merged_schemas) - len(schemas_to_deploy)} "
-                        f"schemas from registry into deployment package"
-                    )
-                except Exception as registry_exc:
-                    if isinstance(registry_exc, BackendDeploymentError):
-                        raise
-                    raise BackendDeploymentError(
-                        "Cannot enumerate the schema registry before deploy: "
-                        f"{registry_exc}"
-                    ) from registry_exc
-
-            # Second source: ask the config server what is currently
-            # deployed. Any schema here that the registry didn't cover
-            # must be reconstructed or the deploy fails — silently
-            # dropping a peer-tenant schema is never acceptable. The
-            # config-server listing is authoritative. A successful empty list
-            # is a valid first deployment; a failed enumeration must abort.
-            try:
-                vespa_deployed = self.schema_manager.list_deployed_document_types(
-                    raise_on_failure=True
-                )
-            except Exception as probe_exc:
-                raise BackendDeploymentError(
-                    "Cannot enumerate Vespa-deployed schemas before deploy: "
-                    f"{probe_exc}"
-                ) from probe_exc
-            logger.info(
-                f"Vespa-discovered schemas: {sorted(vespa_deployed)} "
-                f"(registry merge added "
-                f"{len(merged_schemas) - len(schemas_to_deploy)} schemas)"
-            )
-
-            if self.schema_registry:
-                try:
-                    registry_schemas.extend(
-                        self.schema_registry.reconcile_deployment_intents(
-                            set(vespa_deployed)
+                registry_schemas: List[Any] = []
+                if self.schema_registry is not None:
+                    try:
+                        registry_schemas = self.schema_registry._get_all_schemas() or []
+                        for schema_info in registry_schemas:
+                            full_name = schema_info.full_schema_name
+                            if full_name in merged_schema_names:
+                                continue
+                            try:
+                                existing_def = schema_info.schema_definition
+                                if isinstance(existing_def, str):
+                                    if not existing_def.strip():
+                                        raise ValueError("schema definition is empty")
+                                    existing_def = json.loads(existing_def)
+                                existing_obj = parser_for_existing.parse_schema(
+                                    existing_def
+                                )
+                                merged_schemas.append(existing_obj)
+                                merged_schema_names.add(full_name)
+                            except Exception as merge_exc:
+                                raise BackendDeploymentError(
+                                    f"Cannot reconstruct registry schema "
+                                    f"{full_name!r}; refusing to deploy a package "
+                                    f"that would omit it: {merge_exc}"
+                                ) from merge_exc
+                        logger.info(
+                            f"Merged {len(merged_schemas) - len(schemas_to_deploy)} "
+                            f"schemas from registry into deployment package"
                         )
+                    except Exception as registry_exc:
+                        if isinstance(registry_exc, BackendDeploymentError):
+                            raise
+                        raise BackendDeploymentError(
+                            "Cannot enumerate the schema registry before deploy: "
+                            f"{registry_exc}"
+                        ) from registry_exc
+
+                # Second source: ask the config server what is currently
+                # deployed. Any schema here that the registry didn't cover
+                # must be reconstructed or the deploy fails — silently
+                # dropping a peer-tenant schema is never acceptable. The
+                # config-server listing is authoritative. A successful empty list
+                # is a valid first deployment; a failed enumeration must abort.
+                try:
+                    vespa_deployed = self.schema_manager.list_deployed_document_types(
+                        raise_on_failure=True
                     )
-                except Exception as recovery_exc:
+                except Exception as probe_exc:
                     raise BackendDeploymentError(
-                        f"Cannot reconcile schema deployment intents: {recovery_exc}"
-                    ) from recovery_exc
-
-            # A live schema the package does not carry is rebuilt from the
-            # registry, including registrations recovery just completed, or
-            # from the intent of an activation still in flight; anything else
-            # refuses the deploy.
-            merged_schemas.extend(
-                self.schema_manager.reconstruct_unknown_schemas(
-                    vespa_deployed,
-                    known=merged_schema_names,
-                    registry_schemas=registry_schemas,
+                        "Cannot enumerate Vespa-deployed schemas before deploy: "
+                        f"{probe_exc}"
+                    ) from probe_exc
+                logger.info(
+                    f"Vespa-discovered schemas: {sorted(vespa_deployed)} "
+                    f"(registry merge added "
+                    f"{len(merged_schemas) - len(schemas_to_deploy)} schemas)"
                 )
-            )
 
-            # Get application name from system config
-            system_config = self._config_manager_instance.get_system_config()
-            app_name = system_config.application_name
+                if self.schema_registry:
+                    try:
+                        registry_schemas.extend(
+                            self.schema_registry.reconcile_deployment_intents(
+                                set(vespa_deployed)
+                            )
+                        )
+                    except Exception as recovery_exc:
+                        raise BackendDeploymentError(
+                            f"Cannot reconcile schema deployment intents: {recovery_exc}"
+                        ) from recovery_exc
 
-            app_package = ApplicationPackage(name=app_name, schema=merged_schemas)
+                # A live schema the package does not carry is rebuilt from the
+                # registry, including registrations recovery just completed, or
+                # from the intent of an activation still in flight; anything else
+                # refuses the deploy.
+                merged_schemas.extend(
+                    self.schema_manager.reconstruct_unknown_schemas(
+                        vespa_deployed,
+                        known=merged_schema_names,
+                        registry_schemas=registry_schemas,
+                    )
+                )
 
-            # Add metadata schemas (Vespa-specific requirement)
-            from cogniverse_vespa.metadata_schemas import (
-                add_metadata_schemas_to_package,
-            )
+                # Get application name from system config
+                system_config = self._config_manager_instance.get_system_config()
+                app_name = system_config.application_name
 
-            add_metadata_schemas_to_package(app_package)
-            logger.debug("Added metadata schemas to deployment package")
+                app_package = ApplicationPackage(name=app_name, schema=merged_schemas)
 
-            # Only pass the Vespa validation override when the caller has
-            # explicitly asked for it. The merge above + live Vespa discovery
-            # should make the override unnecessary; if something still slips
-            # through, failing loudly beats silently dropping a schema.
-            generation = self._deploy_package(
-                app_package, allow_schema_removal=allow_schema_removal
-            )
+                # Add metadata schemas (Vespa-specific requirement)
+                from cogniverse_vespa.metadata_schemas import (
+                    add_metadata_schemas_to_package,
+                )
+
+                add_metadata_schemas_to_package(app_package)
+                logger.debug("Added metadata schemas to deployment package")
+
+                # Only pass the Vespa validation override when the caller has
+                # explicitly asked for it. The merge above + live Vespa discovery
+                # should make the override unnecessary; if something still slips
+                # through, failing loudly beats silently dropping a schema.
+                generation = self._deploy_package(
+                    app_package, allow_schema_removal=allow_schema_removal
+                )
 
             # The config server activates the package immediately; every
             # service picks the generation up on its own, and the content

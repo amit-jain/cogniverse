@@ -531,19 +531,24 @@ class VespaSchemaManager:
         enumeration the package is built from must be read inside this lease
         and the package must be posted inside it too. Reentrant: a nested
         deploy reuses the lease this thread already holds. Yields ``None``
-        when no schema registry is wired — the single-owner bootstrap case,
-        which has no config store to contend through.
+        and warns when no schema registry is wired — the single-owner
+        bootstrap case, which has no config store to contend through.
         """
         from cogniverse_core.registries.schema_registry import SchemaRegistry
 
         if getattr(_DEPLOY_LEASE_STATE, "depth", 0):
             yield _DEPLOY_LEASE_STATE.lease
             return
-        lease = (
-            None
-            if self._schema_registry is None
-            else self._schema_registry.deployment_lease()
-        )
+        if self._schema_registry is None:
+            lease = None
+            self._logger.warning(
+                "Replacing the Vespa application package without the deployment "
+                "lease: no schema registry is wired, so there is no config store "
+                "to contend through. Only the fresh-install bootstrap, which runs "
+                "before any application exists, may deploy this way."
+            )
+        else:
+            lease = self._schema_registry.deployment_lease()
         with SchemaRegistry._deploy_lock:
             if lease is not None:
                 lease.acquire()
@@ -557,15 +562,42 @@ class VespaSchemaManager:
                 if lease is not None:
                     lease.release()
 
-    def _post_package(self, deploy_url: str, app_zip: bytes):
-        """POST one application package to the config server."""
+    def _post_package(self, tenant_url: str, app_zip: bytes, fence=None):
+        """Create, prepare and activate one application session.
+
+        Split rather than posted to ``prepareandactivate`` so the activation
+        is fenced: the config server activates a session only while the
+        generation it was created from is still active, and answers 409
+        ACTIVATION_CONFLICT once a successor has activated. ``fence`` runs
+        immediately before the activate and raises to abandon a session this
+        deployer no longer owns, so a holder stalled past its lease either
+        refuses itself or is refused by the config server. Returns the
+        response of the first step that did not answer 200.
+        """
         import requests
 
         with _DEPLOY_LOCK:
-            return requests.post(
-                deploy_url,
+            created = requests.post(
+                f"{tenant_url}/session",
                 headers={"Content-Type": "application/zip"},
                 data=app_zip,
+                verify=False,
+                timeout=DEPLOY_REQUEST_TIMEOUT_S,
+            )
+            if created.status_code != 200:
+                return created
+            session_id = created.json()["session-id"]
+            prepared = requests.put(
+                f"{tenant_url}/session/{session_id}/prepared",
+                verify=False,
+                timeout=DEPLOY_REQUEST_TIMEOUT_S,
+            )
+            if prepared.status_code != 200:
+                return prepared
+            if fence is not None:
+                fence()
+            return requests.put(
+                f"{tenant_url}/session/{session_id}/active",
                 verify=False,
                 timeout=DEPLOY_REQUEST_TIMEOUT_S,
             )
@@ -593,7 +625,7 @@ class VespaSchemaManager:
 
         # Remove any existing port from endpoint
         base_url = re.sub(r":\d+$", "", self.backend_endpoint)
-        deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
+        tenant_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default"
 
         try:
             with self.deployment_lease() as lease:
@@ -639,10 +671,15 @@ class VespaSchemaManager:
                     # requests reads to EOF, so a retry would post an empty body.
                     app_zip = app_package.to_zip().getvalue()
                     if lease is not None:
-                        # Extend before the POST and refuse to activate a
-                        # package whose builder no longer owns the lease.
+                        # Refuse before uploading anything once the lease has
+                        # moved; the same renewal runs again as the fence
+                        # immediately before the activate.
                         lease.renew()
-                    response = self._post_package(deploy_url, app_zip)
+                    response = self._post_package(
+                        tenant_url,
+                        app_zip,
+                        fence=None if lease is None else lease.renew,
+                    )
                     if response.status_code == 200:
                         break
                     if response.status_code != 409 or attempt == max_attempts - 1:
