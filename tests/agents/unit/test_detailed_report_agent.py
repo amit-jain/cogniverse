@@ -17,6 +17,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.dspy import LenientJSONAdapter, LMOutputIncomplete
 
+
 def _incomplete_generation() -> LMOutputIncomplete:
     """The error the shipped adapter raises for a report the LM never wrote."""
     import dspy
