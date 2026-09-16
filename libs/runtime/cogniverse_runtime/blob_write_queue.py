@@ -15,8 +15,11 @@ Contracts:
     ``raise_if_failed`` surfaces on every subsequent read until a newer write
     supersedes it.
 
-Writes to one (tenant, kind, key) coalesce last-write-wins — the blob store
-holds whole-value snapshots, so only the newest content needs applying.
+Writes to one (tenant, kind, key) coalesce last-write-wins on the accepted
+content, keeping the merge base of the earliest coalesced write: applying a
+write re-reads the durable blob and replays the fields that write changed, so
+a peer's field persisted in between is not overwritten by this one's stale
+snapshot.
 """
 
 from __future__ import annotations
@@ -28,14 +31,21 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 BlobKey = Tuple[str, str, str]
-Applier = Callable[[str, str, str, str], Awaitable[None]]
+# (tenant_id, kind, key, accepted_content, merge_base_content)
+Applier = Callable[[str, str, str, str, str], Awaitable[None]]
 
 
 class BlobWriteFailed(Exception):
     """An accepted blob write could not be persisted."""
 
     def __init__(
-        self, tenant_id: str, kind: str, key: str, cause: BaseException, content: str
+        self,
+        tenant_id: str,
+        kind: str,
+        key: str,
+        cause: BaseException,
+        content: str,
+        base: str,
     ):
         super().__init__(
             f"blob write {kind}/{key} for tenant {tenant_id} failed: {cause}"
@@ -44,6 +54,7 @@ class BlobWriteFailed(Exception):
         self.kind = kind
         self.key = key
         self.content = content
+        self.base = base
         self.__cause__ = cause
 
 
@@ -61,17 +72,32 @@ class BlobWriteQueue:
         # Insertion-ordered; overwriting a key keeps its original position,
         # so first-enqueue order across keys is preserved while content
         # coalesces to the newest value.
-        self._pending: Dict[BlobKey, str] = {}
+        self._pending: Dict[BlobKey, Tuple[str, str]] = {}
         self._failed: Dict[BlobKey, BlobWriteFailed] = {}
         self._inflight: Optional[BlobKey] = None
         self._settled = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
-    def enqueue(self, tenant_id: str, kind: str, key: str, content: str) -> None:
-        """Accept a write. Returns before any store round-trip."""
+    def enqueue(
+        self, tenant_id: str, kind: str, key: str, content: str, *, base: str
+    ) -> None:
+        """Accept a write. Returns before any store round-trip.
+
+        ``base`` is the content ``content`` was merged onto; the difference
+        between them is the set of fields this write changed, which is what is
+        replayed onto the durable blob when the write is applied. A write that
+        supersedes an accepted or failed one keeps that one's base, so the
+        replayed set still covers every field the superseded write changed and
+        never persisted.
+        """
         blob_key = (tenant_id, kind, key)
-        self._failed.pop(blob_key, None)
-        self._pending[blob_key] = content
+        failed = self._failed.pop(blob_key, None)
+        existing = self._pending.get(blob_key)
+        if existing is not None:
+            base = existing[0]
+        elif failed is not None:
+            base = failed.base
+        self._pending[blob_key] = (base, content)
         if self._task is None or self._task.done():
             self._task = asyncio.get_running_loop().create_task(
                 self._drain(), name="blob-write-queue-drain"
@@ -79,7 +105,8 @@ class BlobWriteQueue:
 
     def pending_content(self, tenant_id: str, kind: str, key: str) -> Optional[str]:
         """The accepted-but-not-yet-applied content for a key, if any."""
-        return self._pending.get((tenant_id, kind, key))
+        entry = self._pending.get((tenant_id, kind, key))
+        return None if entry is None else entry[1]
 
     def raise_if_failed(self, tenant_id: str, kind: str, key: str) -> None:
         error = self._failed.get((tenant_id, kind, key))
@@ -104,12 +131,13 @@ class BlobWriteQueue:
     async def _drain(self) -> None:
         while self._pending:
             blob_key = next(iter(self._pending))
-            content = self._pending[blob_key]
+            entry = self._pending[blob_key]
+            base, content = entry
             self._inflight = blob_key
             try:
-                await self._apply_with_retries(blob_key, content)
+                await self._apply_with_retries(blob_key, content, base)
             except BlobWriteFailed as error:
-                if self._pending.get(blob_key) == content:
+                if self._pending.get(blob_key) == entry:
                     # Terminal for the content that failed; a newer enqueue
                     # supersedes both the entry and the error.
                     del self._pending[blob_key]
@@ -128,22 +156,26 @@ class BlobWriteQueue:
                     blob_key[2],
                     blob_key[0],
                 )
-                if self._pending.get(blob_key) == content:
+                if self._pending.get(blob_key) == entry:
                     del self._pending[blob_key]
                 # else: superseded mid-apply; reprocess with the newer content.
             finally:
                 self._inflight = None
                 self._settled.set()
 
-    async def _apply_with_retries(self, blob_key: BlobKey, content: str) -> None:
+    async def _apply_with_retries(
+        self, blob_key: BlobKey, content: str, base: str
+    ) -> None:
         tenant_id, kind, key = blob_key
         for attempt in range(1, self._max_attempts + 1):
             try:
-                await self._apply(tenant_id, kind, key, content)
+                await self._apply(tenant_id, kind, key, content, base)
                 return
             except Exception as exc:
                 if attempt == self._max_attempts:
-                    raise BlobWriteFailed(tenant_id, kind, key, exc, content) from exc
+                    raise BlobWriteFailed(
+                        tenant_id, kind, key, exc, content, base
+                    ) from exc
                 logger.warning(
                     "Blob write %s/%s for tenant %s failed on attempt %d/%d, "
                     "retrying: %s",

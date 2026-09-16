@@ -1190,9 +1190,13 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 Pin-quota and signature-selection partial PUTs merge the requested fields onto a
 fresh read of the durable blob, skipping the TTL serving cache, so a value
 another replica persisted survives. Content this process has accepted but not
-yet persisted still wins over the durable read. Per-tenant locks serialize
-updates within one process; Phoenix has no compare-and-set, so updates that
-truly overlap across replicas stay last-write-wins. A store outage on either
+yet persisted still wins over the durable read. The queue records the state each
+PUT merged onto, and persisting replays only the fields that PUT changed onto
+the blob as it stands at that moment, so a field a peer replica persisted while
+this one's write was still queued is kept. Per-tenant locks serialize updates
+within one process; Phoenix has no compare-and-set, so two updates whose
+persists overlap — between one applier's read of the durable blob and its
+publication — remain last-write-wins across replicas. A store outage on either
 route answers 503.
 
 **POST /admin/tenants/{tenant_id}/canary/{agent_type}/promote** — Promote a versioned artefact to canary at a traffic percentage.
