@@ -958,3 +958,204 @@ def test_every_mc_step_renders_the_values_pinned_image():
         ("CronWorkflow/cogniverse-backup-phoenix", "upload"): "IfNotPresent",
         ("CronWorkflow/cogniverse-monthly-reports", "upload-reports"): "IfNotPresent",
     }
+
+
+def _render_overlay(overlay: str | None, *set_args: str) -> list[dict]:
+    """Render the chart the way an operator installs it: base values plus one
+    environment overlay, with the secrets that overlay leaves empty."""
+    cmd = ["helm", "template", "cogniverse", str(CHART_PATH)]
+    if overlay is not None:
+        cmd.extend(["-f", str(CHART_PATH / overlay)])
+    cmd.extend(
+        [
+            "--set",
+            "runtime.qualityMonitor.tenantId=test-tenant",
+            "--set",
+            "minio.rootPassword=overlay-secret",
+            "--set",
+            "openshell.server.sshHandshakeSecret=overlay-secret",
+            "--set",
+            "phoenix.postgres.auth.password=overlay-secret",
+            "--set",
+            "redis.auth.password=overlay-secret",
+        ]
+    )
+    for arg in set_args:
+        cmd.extend(["--set", arg])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"helm template failed (exit {result.returncode}):\n{result.stderr}"
+        )
+    return [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+
+
+@pytest.mark.parametrize(
+    ("overlay", "expected"),
+    [
+        (None, []),
+        (
+            "values.prod.yaml",
+            ["cogniverse-backup-phoenix", "cogniverse-backup-vespa"],
+        ),
+        (
+            "values.k3s.yaml",
+            ["cogniverse-backup-phoenix", "cogniverse-backup-vespa"],
+        ),
+    ],
+)
+def test_backup_cronworkflow_set_per_overlay(overlay, expected):
+    """Every cluster that holds data an operator cannot recreate takes nightly
+    snapshots; the bare chart is a library install and takes none."""
+    docs = _render_overlay(overlay)
+    names = sorted(
+        d["metadata"]["name"]
+        for d in _by_kind(docs, "CronWorkflow")
+        if d["metadata"]["labels"].get("app.kubernetes.io/component") == "backup"
+    )
+    assert names == expected
+
+
+def test_prod_phoenix_snapshot_dumps_the_database_onto_its_own_claim():
+    """Production runs Phoenix on a claim rather than a host directory, so the
+    database half travels over the Service and the asset half follows the
+    claim the Phoenix StatefulSet writes."""
+    docs = _render_overlay("values.prod.yaml")
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    assert cw["spec"]["workflowSpec"]["volumes"] == [
+        {
+            "name": "source",
+            "persistentVolumeClaim": {
+                "claimName": "data-cogniverse-phoenix-0",
+                "readOnly": True,
+            },
+        }
+    ]
+    dump = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )
+    assert dump["container"]["image"] == "postgres:16.10-alpine"
+
+
+def test_phoenix_dump_rejects_an_archive_without_phoenix_tables_and_rows():
+    """A dump of a wiped, unmigrated or renamed database exits 0 and would be
+    published over the retention window, so the dump step reads the archive
+    back and fails on an archive that carries none of Phoenix's data."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+    )
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    (script,) = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )["container"]["args"]
+    assert (
+        "for table in projects traces spans datasets dataset_examples "
+        "dataset_example_revisions span_annotations; do" in script
+    )
+    assert 'grep -q " TABLE DATA public $table " "$WORK/database.list"' in script
+    assert (
+        'ROWS=$(pg_restore --data-only --table=projects -f - "$WORK/database.dump"'
+        in script
+    )
+    assert '[ "$ROWS" -gt 0 ]' in script
+    # Both checks precede the name the upload step globs, so a rejected
+    # archive never reaches the bucket.
+    assert script.index('[ "$ROWS" -gt 0 ]') < script.index(
+        'mv "$WORK/archive.tar" "/stage/phoenix-$STAMP.tar"'
+    )
+
+
+def test_phoenix_snapshot_reads_the_working_directory_when_postgres_is_off():
+    """With ``phoenix.postgres.enabled=false`` there is no Postgres Service,
+    Secret or StatefulSet to dump; the SQLite database in the working
+    directory is the store, so the snapshot copies that instead."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        "hostStorage.enabled=true",
+        "phoenix.postgres.enabled=false",
+    )
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    dump = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )["container"]
+    assert dump["image"] == "cogniverse/runtime-cuda:0.1.0"
+    assert [e["name"] for e in dump["env"]] == ["COGNIVERSE_INFERENCE_API_KEY"]
+    assert dump["volumeMounts"] == [
+        {"name": "stage", "mountPath": "/stage"},
+        {"name": "source", "mountPath": "/source"},
+    ]
+    assert cw["spec"]["workflowSpec"]["volumes"] == [
+        {
+            "name": "source",
+            "hostPath": {"path": "/host-data/phoenix", "type": "Directory"},
+        }
+    ]
+    (script,) = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )["container"]["args"]
+    assert "pg_dump" not in script
+    # The archive takes the name the upload step globs only once it is whole,
+    # so an interrupted dump publishes nothing.
+    assert 'tar -cf "$SNAP.tar" -C "$SNAP" .' in script
+    assert 'mv "$SNAP.tar" "/stage/phoenix-$STAMP.tar"' in script
+    assert script.index('tar -cf "$SNAP.tar"') < script.index('mv "$SNAP.tar"')
+
+
+def test_phoenix_backup_rejects_a_database_dump_when_postgres_is_off():
+    """An operator who pins ``mode: postgres`` while Postgres is disabled gets
+    a pod that cannot start; the render says so instead."""
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "cogniverse",
+            str(CHART_PATH),
+            "--set",
+            "runtime.qualityMonitor.tenantId=test-tenant",
+            "--set",
+            "hostStorage.backup.enabled=true",
+            "--set",
+            "phoenix.postgres.enabled=false",
+            "--set",
+            "hostStorage.backup.services[0].name=phoenix",
+            "--set",
+            "hostStorage.backup.services[0].mode=postgres",
+            "--set",
+            "hostStorage.backup.services[0].hostPath=/host-data/phoenix",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert (
+        "Phoenix stores its data in SQLite: hostStorage.backup.services entry "
+        "phoenix must use mode=volume-mount" in result.stderr
+    )
+
+
+@pytest.mark.parametrize("mode", ["postgres", "volume-mount"])
+def test_backup_source_volume_honours_the_operator_supplied_claim(mode):
+    """``pvcName`` names the volume the snapshot reads; it wins over both the
+    host directory and the claim the chart would derive."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        "hostStorage.enabled=true",
+        f"phoenix.postgres.enabled={'true' if mode == 'postgres' else 'false'}",
+        "hostStorage.backup.services[0].name=phoenix",
+        f"hostStorage.backup.services[0].mode={mode}",
+        "hostStorage.backup.services[0].pvcName=phoenix-snapshot-source",
+    )
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    assert cw["spec"]["workflowSpec"]["volumes"] == [
+        {
+            "name": "source",
+            "persistentVolumeClaim": {
+                "claimName": "phoenix-snapshot-source",
+                "readOnly": True,
+            },
+        }
+    ]

@@ -15,18 +15,24 @@ Three dump modes are supported per service:
 
   mode: volume-mount   — mount the source volume directly into the
     workflow pod, tar from local fs. Required for distroless source
-    containers (phoenix's arizephoenix/phoenix image). For hostStorage
-    setups, set ``hostPath``. For PVC-backed setups, set ``pvcName``
-    AND accept that RWO PVCs can't be backed up while the source pod is
-    running — either use ReadWriteMany / ReadOnlyMany volumes, take a
-    CSI VolumeSnapshot first, or scale the source pod to 0 during the
-    backup window.
+    containers (phoenix's arizephoenix/phoenix image). RWO PVCs can't be
+    backed up while the source pod is running — either use
+    ReadWriteMany / ReadOnlyMany volumes, take a CSI VolumeSnapshot
+    first, or scale the source pod to 0 during the backup window.
 
-  mode: postgres — required for phoenix whenever
-    ``phoenix.postgres.enabled``: the traces, datasets and annotations
-    live in the phoenix-postgres database, not in the working directory,
-    so the dump is a ``pg_dump`` custom-format archive of that database
-    alongside a tar of the mounted working directory.
+  mode: postgres — a ``pg_dump`` custom-format archive of the
+    phoenix-postgres database alongside a tar of the mounted working
+    directory.
+
+Phoenix's mode follows ``phoenix.postgres.enabled``: ``postgres`` while
+its traces, datasets and annotations live in the phoenix-postgres
+database, ``volume-mount`` while they live in the SQLite database in the
+working directory. A phoenix entry that names the other mode fails the
+render.
+
+In ``volume-mount`` and ``postgres`` modes the source volume is the
+claim named by ``pvcName``, else the host directory on hostStorage
+clusters, else the service's own StatefulSet claim.
 
 All modes share the same upload step (mc cp + retention pruning). The
 file-copy modes are not crash-consistent; the source process keeps
@@ -44,19 +50,24 @@ values — chart defaults from values.yaml don't reapply. */}}
 {{- $schedule := ($bk.schedule | default "0 3 * * *") }}
 {{- $retainLast := ($bk.retainLast | default 7) }}
 {{- $hostStoragePath := ($.Values.hostStorage.path | default "/host-data") }}
-{{- /* Default services — vespa via kubectl-exec, phoenix via volume-mount
-of its hostStorage path. Operator overrides as needed. */}}
+{{- /* Default services — vespa via kubectl-exec, phoenix in the mode its
+store dictates. Operator overrides as needed. */}}
 {{- $defaultServices := list
     (dict "name" "vespa" "mode" "kubectl-exec" "dataPath" "/opt/vespa/var" "podLabel" "app.kubernetes.io/component=vespa")
-    (dict "name" "phoenix" "mode" "postgres" "hostPath" (printf "%s/phoenix" $hostStoragePath)) }}
+    (dict "name" "phoenix" "hostPath" (printf "%s/phoenix" $hostStoragePath)) }}
 {{- $services := ($bk.services | default $defaultServices) }}
 {{- $fullName := include "cogniverse.fullname" . -}}
-{{- /* A file copy of Phoenix's working directory restores nothing once
-Phoenix keeps its traces, datasets and annotations in Postgres. */}}
-{{- if $.Values.phoenix.postgres.enabled }}
+{{- /* Phoenix's dump mode follows where Phoenix keeps its rows. A file copy
+of the working directory restores nothing while they are in Postgres, and a
+pg_dump has no Service, Secret or StatefulSet to reach while they are in the
+SQLite database that working directory holds. */}}
+{{- $phoenixMode := ternary "postgres" "volume-mount" $.Values.phoenix.postgres.enabled }}
 {{- range $svcCfg := $services }}
-{{- if and (eq $svcCfg.name "phoenix") (ne (default "kubectl-exec" $svcCfg.mode) "postgres") }}
+{{- if and (eq $svcCfg.name "phoenix") $svcCfg.mode (ne $svcCfg.mode $phoenixMode) }}
+{{- if $.Values.phoenix.postgres.enabled }}
 {{- fail "Phoenix uses Postgres: hostStorage.backup.services entry phoenix must use mode=postgres" }}
+{{- else }}
+{{- fail "Phoenix stores its data in SQLite: hostStorage.backup.services entry phoenix must use mode=volume-mount" }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -82,7 +93,11 @@ backup.existingSecret (legacy top-level) → in-cluster MinIO secret. */}}
 {{- end }}
 {{- /* Only render the pods/exec Role when at least one service uses kubectl-exec. */}}
 {{- $needsExec := false }}
-{{- range $svcCfg := $services }}{{- if or (eq (default "kubectl-exec" $svcCfg.mode) "kubectl-exec") (not $svcCfg.mode) }}{{- $needsExec = true }}{{- end }}{{- end }}
+{{- range $svcCfg := $services }}
+{{- $svcMode := default "kubectl-exec" $svcCfg.mode }}
+{{- if eq $svcCfg.name "phoenix" }}{{- $svcMode = $phoenixMode }}{{- end }}
+{{- if eq $svcMode "kubectl-exec" }}{{- $needsExec = true }}{{- end }}
+{{- end }}
 {{- if $needsExec }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -120,6 +135,7 @@ subjects:
 {{- range $svcCfg := $services }}
 {{- $svc := $svcCfg.name }}
 {{- $mode := default "kubectl-exec" $svcCfg.mode }}
+{{- if eq $svc "phoenix" }}{{- $mode = $phoenixMode }}{{- end }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
@@ -138,33 +154,23 @@ spec:
   workflowSpec:
     entrypoint: snapshot
     serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
-    {{- if eq $mode "volume-mount" }}
+    {{- if or (eq $mode "volume-mount") (eq $mode "postgres") }}
+    {{- /* The snapshot reads the volume the source pod writes: the claim
+    the operator named, the host directory on hostStorage clusters, or
+    that pod's own StatefulSet claim. */}}
     volumes:
     - name: source
-      {{- if $svcCfg.hostPath }}
-      hostPath:
-        path: {{ $svcCfg.hostPath }}
-        type: Directory
-      {{- else if $svcCfg.pvcName }}
+      {{- if $svcCfg.pvcName }}
       persistentVolumeClaim:
         claimName: {{ $svcCfg.pvcName }}
         readOnly: true
-      {{- else }}
-      {{- fail (printf "service %s has mode=volume-mount but neither hostPath nor pvcName set" $svc) }}
-      {{- end }}
-    {{- else if eq $mode "postgres" }}
-    {{- /* The working directory follows the same volume the source pod
-    uses: a host directory on hostStorage clusters, that pod's own claim
-    otherwise. The database half travels over the Service. */}}
-    volumes:
-    - name: source
-      {{- if $.Values.hostStorage.enabled }}
+      {{- else if $.Values.hostStorage.enabled }}
       hostPath:
         path: {{ $svcCfg.hostPath | default (printf "%s/%s" $hostStoragePath $svc) }}
         type: Directory
       {{- else }}
       persistentVolumeClaim:
-        claimName: {{ $svcCfg.pvcName | default (printf "data-%s-%s-0" $fullName $svc) }}
+        claimName: {{ printf "data-%s-%s-0" $fullName $svc }}
         readOnly: true
       {{- end }}
     {{- end }}
@@ -249,7 +255,10 @@ spec:
           find . -type f -name '*.db' | while read -r db; do
             python3 -c 'import sqlite3, sys; src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True); dst = sqlite3.connect(sys.argv[2]); src.backup(dst); dst.close(); src.close()' "$db" "$SNAP/$db"
           done
-          tar -cf /stage/{{ $svc }}-$STAMP.tar -C "$SNAP" .
+          tar -cf "$SNAP.tar" -C "$SNAP" .
+          # The upload step globs this name, so it appears only once the
+          # whole archive is on disk: an interrupted dump publishes nothing.
+          mv "$SNAP.tar" "/stage/{{ $svc }}-$STAMP.tar"
           rm -rf "$SNAP"
           ls -la /stage
         env:
@@ -278,10 +287,24 @@ spec:
           echo "Dumping $PGDATABASE on $PGHOST and /source -> /stage/{{ $svc }}-$STAMP.tar"
           pg_dump --format=custom --no-owner --no-privileges \
             --file="$WORK/database.dump"
-          # Reading the archive's table of contents back proves it is a
-          # complete archive, not a truncated file that only restores
-          # part of the database on the day it is needed.
+          # pg_dump of a database that is not Phoenix's — a wiped volume, a
+          # migration that never ran, a renamed phoenix.postgres.auth.database
+          # — exits 0 with an archive that restores nothing, and publishing it
+          # retires every good snapshot in the bucket. Read the archive back
+          # and keep it only if Phoenix's own tables and rows are in it.
           pg_restore --list "$WORK/database.dump" > "$WORK/database.list"
+          for table in projects traces spans datasets dataset_examples dataset_example_revisions span_annotations; do
+            grep -q " TABLE DATA public $table " "$WORK/database.list" || {
+              echo "archive has no $table table: $PGHOST is not Phoenix's database" >&2
+              exit 1
+            }
+          done
+          ROWS=$(pg_restore --data-only --table=projects -f - "$WORK/database.dump" \
+            | awk '/^COPY /{rows=1; next} /^\\\.$/{rows=0} rows{n++} END{print n+0}')
+          [ "$ROWS" -gt 0 ] || {
+            echo "archive has no rows in projects: $PGDATABASE holds no Phoenix data" >&2
+            exit 1
+          }
           printf 'PGHOST=%s\nPGPORT=%s\nPGDATABASE=%s\nPGUSER=%s\n' \
             "$PGHOST" "$PGPORT" "$PGDATABASE" "$PGUSER" > "$WORK/restore.env"
           tar -cf "$WORK/working-assets.tar" -C /source .

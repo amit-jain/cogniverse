@@ -58,6 +58,7 @@ def _golden_dataset_app(tmp_path: Path) -> AppTest:
         st.session_state["current_tenant"] = "acme"
 
         import cogniverse_foundation.telemetry.manager as tm
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         spans_df = pd.DataFrame(
             [
@@ -102,6 +103,8 @@ def _golden_dataset_app(tmp_path: Path) -> AppTest:
             traces = _Traces()
 
         class _Manager:
+            config = TelemetryConfig()
+
             def get_provider(self, tenant_id=None):
                 st.session_state.setdefault("_provider_tenants", []).append(tenant_id)
                 return _Provider()
@@ -124,7 +127,7 @@ def test_golden_dataset_build_filters_by_rating_and_span_name(tmp_path: Path) ->
     at.button[0].click().run()
 
     assert at.exception == []
-    assert at.session_state["_get_spans_calls"] == [("cogniverse-acme", 30)]
+    assert at.session_state["_get_spans_calls"] == [("cogniverse-acme:acme", 30)]
     assert at.session_state["_provider_tenants"] == ["acme"]
     assert "Built golden dataset with 1 queries" in [s.value for s in at.success]
 

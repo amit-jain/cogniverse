@@ -175,16 +175,32 @@ def test_tabs_read_only_selected_tenants_producer_spans(
             ] == []
 
 
-# What each tab renders for a window it read nothing from. profile_metrics
-# names the project it queried, which is where a wrong derivation shows up;
-# routing_evaluation names the producer instead.
+# What each tab renders for a window it read nothing from. A failed read must
+# produce none of these: "no data" and "the store refused" lead a reader to
+# opposite conclusions. routing_evaluation also captions the project it
+# queried, which is where a wrong derivation shows up.
 _EMPTY_WINDOW_NOTICES = {
     "routing_evaluation": [
         "No routing decisions found in the last 24 hours. Make sure the routing "
-        "agent has been processing requests and telemetry is capturing traces.",
-        "Querying spans from project: `{project}`",
+        "agent has been processing requests and telemetry is capturing traces."
     ],
     "profile_metrics": ["No spans found in `{project}` for the last 24h."],
+}
+_PROJECT_CAPTIONS = {
+    "routing_evaluation": ["Querying spans from project: `{project}`"],
+    "profile_metrics": [],
+}
+
+# The outage notice each tab renders, split around the cause the boundary
+# supplies. routing_evaluation routes the failure through the telemetry gate;
+# profile_metrics reports the bounded render-path query directly.
+_QUERY_FAILURE_NOTICE = {
+    "routing_evaluation": (
+        "The telemetry store rejected the query (RuntimeError: Failed to query "
+        "routing spans from telemetry provider: ",
+        "). Check the telemetry configuration for this tenant.",
+    ),
+    "profile_metrics": ("Phoenix span query failed: ", ""),
 }
 
 
@@ -192,20 +208,20 @@ _EMPTY_WINDOW_NOTICES = {
 def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
     phoenix_container, telemetry_manager_with_phoenix, monkeypatch, tab_reads, tab
 ):
-    """A store that answers 503 must not move the tab to another project.
+    """A span query the store refuses surfaces as an outage, not as no data.
 
-    ``PhoenixTraceStore.get_spans`` turns the 503 into an empty frame
-    (``libs/telemetry-phoenix/cogniverse_telemetry_phoenix/provider.py``), so
-    the tab reaches its empty-window branch. What this pins is that the one
-    query it issued named the derived project, that no metric is rendered
-    from the failed read, and that the notice is this tab's empty-window one
-    and nothing else.
+    ``PhoenixTraceStore.get_spans`` re-raises, so each tab reaches its own
+    failure branch. This pins that the query it issued named the derived
+    project, that the proxy really served the 503, that no metric is
+    rendered from the failed read, that neither empty-window notice appears,
+    and that the single notice names the refusal.
     """
     manager = telemetry_manager_with_phoenix
     tenant = f"metrics{uuid4().hex[:8]}:tenant"
     captured = _emit(manager, [tenant], monkeypatch)
     _wait_for_ids(manager, captured)
     paths = []
+    refused = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -217,8 +233,13 @@ def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
         def forward(self):
             paths.append((self.command, self.path))
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if self.command == "POST" and self.path == "/v1/spans":
+            # ``path`` carries the query string, so the span query is matched
+            # on the route alone -- comparing the whole path never fires and
+            # the proxy silently becomes a pass-through.
+            if self.command == "POST" and self.path.split("?")[0] == "/v1/spans":
                 status, content = 503, b'{"detail":"query interrupted"}'
+                content_type = "application/json"
+                refused.append(self.path)
             else:
                 response = httpx.request(
                     self.command,
@@ -228,8 +249,12 @@ def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
                     timeout=15,
                 )
                 status, content = response.status_code, response.content
+                # The span dataframe comes back multipart; forcing JSON on the
+                # way out corrupts it into an empty frame that reads as an
+                # empty window rather than as the injected fault.
+                content_type = response.headers.get("Content-Type", "application/json")
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
@@ -257,20 +282,29 @@ def test_tab_query_failure_keeps_the_derived_project_and_renders_no_metrics(
             "/v1/spans?project_name="
             + quote(manager.config.get_project_name(tenant), safe="")
         ]
-        assert [m.value for m in app.metric] == []
-        notices = (
-            [element.value for element in app.error]
-            + [element.value for element in app.warning]
-            + [element.value for element in app.info]
-        )
-        assert [
-            notice
-            for notice in notices
-            if not notice.startswith(_ANNOTATION_STORE_ERROR)
-        ] == [
-            notice.format(project=manager.config.get_project_name(tenant))
-            for notice in _EMPTY_WINDOW_NOTICES[tab]
+        # The proxy answered that query, and only that query, with the 503.
+        assert refused == [
+            "/v1/spans?project_name="
+            + quote(manager.config.get_project_name(tenant), safe="")
         ]
+        assert [m.value for m in app.metric] == []
+        assert [m.value for m in app.info if m.value.startswith("No spans found")] == []
+        project = manager.config.get_project_name(tenant)
+        rendered = [e.value for e in app.warning] + [e.value for e in app.info]
+        assert [
+            value
+            for value in rendered
+            if value in [n.format(project=project) for n in _EMPTY_WINDOW_NOTICES[tab]]
+        ] == []
+        assert [
+            value for value in rendered if value.startswith("Querying spans from ")
+        ] == [n.format(project=project) for n in _PROJECT_CAPTIONS[tab]]
+        notices = [e.value for e in app.error] + [e.value for e in app.warning]
+        assert len(notices) == 1
+        assert "503" in notices[0] or "unavailable" in notices[0].lower()
+        prefix, suffix = _QUERY_FAILURE_NOTICE[tab]
+        assert notices[0].startswith(prefix)
+        assert notices[0].endswith(suffix)
     finally:
         server.shutdown()
         server.server_close()

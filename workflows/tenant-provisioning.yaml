@@ -93,10 +93,11 @@ spec:
             tenant: "{{workflow.parameters.tenant-id}}"
             managed-by: cogniverse
 
-  # Deploy Vespa schemas for tenant. Each profile's schema goes through
-  # SchemaRegistry, the same seam POST /admin/profiles/{name}/deploy uses,
-  # so it lands under its tenant-scoped name beside every other tenant's
-  # schema instead of replacing the application package.
+  # Deploy Vespa schemas for tenant. The profiles resolve through the
+  # tenant's merged backend catalog and go through SchemaRegistry, the same
+  # seam POST /admin/profiles/{name}/deploy uses, as one application package,
+  # so they land together under their tenant-scoped names beside every other
+  # tenant's schema instead of replacing the application package.
   - name: deploy-schemas
     container:
       image: "{{workflow.parameters.runtime-image}}"
@@ -134,6 +135,14 @@ spec:
         - --tenant-id
         - "{{workflow.parameters.tenant-id}}"
       env:
+      # The telemetry manager is built from the tenant store, which this
+      # step reaches over the Vespa data endpoint like every other step.
+      - name: BACKEND_URL
+        value: "http://cogniverse-vespa"
+      - name: BACKEND_PORT
+        value: "8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
       - name: TELEMETRY_OTLP_ENDPOINT
         value: "cogniverse-phoenix:4317"
       - name: TELEMETRY_HTTP_ENDPOINT
@@ -238,9 +247,9 @@ spec:
           cpu: "1"
 
   # Verify tenant provisioning. The namespace and the claim are read back
-  # through Argo resource templates (the runtime image ships no kubectl),
-  # and each profile's tenant schema is checked through the same registry
-  # that deployed it.
+  # through Argo resource templates (the runtime image ships no kubectl);
+  # each profile's tenant schema is checked against the registry that
+  # deployed it and then queried over YQL.
   - name: verify-namespace
     resource:
       action: get
