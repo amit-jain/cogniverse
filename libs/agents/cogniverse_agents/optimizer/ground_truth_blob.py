@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
-
 GROUND_TRUTH_SKIPPED = "skipped"
 GROUND_TRUTH_FAILED = "failed"
 
@@ -77,8 +75,6 @@ async def load_ground_truth_rows(
     tenant_id = getattr(artifact_manager, "_tenant_id", "unknown")
     try:
         raw = await artifact_manager.load_blob(kind, key)
-    except DatasetNotFoundError as exc:
-        raise missing_error(f"{key} is not configured for tenant {tenant_id}") from exc
     except Exception as exc:  # noqa: BLE001
         raise unavailable_error(f"{key} store unavailable") from exc
 
