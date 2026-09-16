@@ -10,7 +10,7 @@ each tier in its own failure domain:
 
 | Tier | What | Examples |
 |---|---|---|
-| **Primary** | Where live data lives. Read+write hot path. | Vespa document store, Phoenix sqlite, MinIO bucket contents |
+| **Primary** | Where live data lives. Read+write hot path. | Vespa document store, the `phoenix-postgres` database, MinIO bucket contents |
 | **Backup** | Periodic snapshots in a different failure domain. Read on disaster recovery. | S3-compatible object storage (in-cluster MinIO for dev, R2 / B2 / AWS S3 for prod) |
 
 A backup target in the **same failure domain** as primary is the
@@ -127,9 +127,18 @@ this with `minio.persistence.hostPath` (above) so the bucket data
 actually survives cluster destruction.
 
 If `services` is omitted, the chart's built-in default already backs up
-both `vespa` (via `kubectl exec` + tar) and `phoenix` (via a volume
-mount, since the distroless Phoenix image has no `tar`/shell) nightly —
-only override `services` to change which pods are covered or add more.
+both `vespa` (via `kubectl exec` + tar) and `phoenix` nightly — only
+override `services` to change which pods are covered or add more.
+Phoenix's mode follows `phoenix.postgres.enabled`: `postgres` while its
+rows live in the `phoenix-postgres` database, `volume-mount` while they
+live in the SQLite database in the working directory. The `postgres`
+dump reads its own archive back and fails the step unless Phoenix's
+tables and rows are in it, so a wiped, unmigrated or renamed database
+never publishes a snapshot over the retention window.
+
+`values.prod.yaml` and `values.k3s.yaml` both set
+`hostStorage.backup.enabled: true`, so each renders
+`cogniverse-backup-vespa` and `cogniverse-backup-phoenix`.
 
 To point at an in-cluster MinIO Deployment whose secret was renamed,
 set `hostStorage.backup.s3.existingSecret`. The CronWorkflow uses that
@@ -293,7 +302,9 @@ volumes, not the K8s metadata.
 
 ## Restore procedure
 
-The dance to recover a stateful component from a MinIO/S3 backup:
+The dance to recover a stateful component from a MinIO/S3 backup.
+
+### Vespa
 
 1. **Take a final pre-restore backup** (in case the restore overwrites
    live state you didn't intend). The backup schedule is a `CronWorkflow`
@@ -352,6 +363,82 @@ The dance to recover a stateful component from a MinIO/S3 backup:
      curl -s 'http://cogniverse-vespa:8080/search/?yql=select+%2A+from+sources+%2A+where+true&hits=0' \
      | python3 -c 'import json,sys; print(json.load(sys.stdin)["root"]["fields"])'
    ```
+
+### Phoenix
+
+`phoenix/phoenix-<TIMESTAMP>.tar` holds four members:
+
+| Member | What |
+|---|---|
+| `database.dump` | custom-format `pg_dump` of the `phoenix` database — projects, traces, spans, datasets, annotations |
+| `database.list` | that archive's table of contents |
+| `restore.env` | the `PGHOST` / `PGPORT` / `PGDATABASE` / `PGUSER` it was dumped from |
+| `working-assets.tar` | the `PHOENIX_WORKING_DIR` tree, members relative to its root |
+
+1. **Stop Phoenix** so nothing writes while the database is replaced:
+   ```bash
+   kubectl -n cogniverse scale sts cogniverse-phoenix --replicas=0
+   ```
+
+2. **Unpack the snapshot** on the operator's machine:
+   ```bash
+   mc alias set dest "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+   mc cp dest/cogniverse-backups/phoenix/phoenix-<TIMESTAMP>.tar .
+   tar -xf phoenix-<TIMESTAMP>.tar
+   cat restore.env                     # the database this archive came from
+   grep ' TABLE DATA public ' database.list | wc -l
+   ```
+
+3. **Restore the database beside the live one, then swap.** `pg_restore`
+   into a populated database leaves the old rows in place, so it goes into a
+   new database that is renamed over the old one:
+   ```bash
+   kubectl -n cogniverse cp database.dump \
+     cogniverse-phoenix-postgres-0:/tmp/database.dump
+   kubectl -n cogniverse exec cogniverse-phoenix-postgres-0 -- sh -c '
+     set -eu
+     psql -U phoenix -d postgres -v ON_ERROR_STOP=1 \
+       -c "CREATE DATABASE phoenix_restored"
+     pg_restore --exit-on-error --single-transaction --no-owner \
+       --no-privileges -U phoenix -d phoenix_restored /tmp/database.dump
+     psql -U phoenix -d postgres -v ON_ERROR_STOP=1 \
+       -c "ALTER DATABASE phoenix RENAME TO phoenix_prerestore"
+     psql -U phoenix -d postgres -v ON_ERROR_STOP=1 \
+       -c "ALTER DATABASE phoenix_restored RENAME TO phoenix"'
+   ```
+   `phoenix_prerestore` holds the state the restore replaced; drop it once
+   the verification in step 5 passes.
+
+4. **Restore the working directory** into Phoenix's volume with a utility
+   pod shaped like the Vespa one above, mounting Phoenix's storage at
+   `/data` and unpacking `working-assets.tar`:
+   ```yaml
+       args:
+       - |
+         set -eu
+         python -c "import boto3, os; boto3.client('s3', endpoint_url=os.environ['MINIO_ENDPOINT'], aws_access_key_id=os.environ['MINIO_ACCESS_KEY'], aws_secret_access_key=os.environ['MINIO_SECRET_KEY']).download_file(os.environ['MINIO_BUCKET'], os.environ['MINIO_KEY'], '/tmp/restore.tar')"
+         mkdir -p /tmp/snapshot && tar -xf /tmp/restore.tar -C /tmp/snapshot
+         rm -rf /data/* /data/.[!.]* 2>/dev/null || true
+         tar -xf /tmp/snapshot/working-assets.tar -C /data
+   ```
+   with `MINIO_KEY` set to `phoenix/phoenix-<TIMESTAMP>.tar` and the volume
+   `hostPath: {path: /host-data/phoenix}` on hostStorage clusters or
+   `persistentVolumeClaim: {claimName: data-cogniverse-phoenix-0}` otherwise.
+
+5. **Start Phoenix and verify** the rows came back:
+   ```bash
+   kubectl -n cogniverse scale sts cogniverse-phoenix --replicas=1
+   kubectl -n cogniverse rollout status sts/cogniverse-phoenix
+   kubectl -n cogniverse exec cogniverse-phoenix-postgres-0 -- \
+     psql -U phoenix -d phoenix -At -c \
+     'SELECT (SELECT count(*) FROM projects), (SELECT count(*) FROM spans),
+             (SELECT count(*) FROM datasets), (SELECT count(*) FROM span_annotations)'
+   ```
+
+With `phoenix.postgres.enabled=false` the snapshot is a single tar of the
+working directory holding Phoenix's SQLite database; restore it with steps
+1, 4 and 5, unpacking the snapshot itself rather than an inner
+`working-assets.tar`.
 
 ## Backup verification (the "0" in 3-2-1-1-0)
 
