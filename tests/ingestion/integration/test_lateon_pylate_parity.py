@@ -67,7 +67,7 @@ def remote_lateon(resolved_inference_endpoints):
 def pylate_oracle():
     """The in-process reference at the exact served revision, loaded from
     the writable test-owned cache the service containers also use."""
-    pylate_models = pytest.importorskip("pylate.models")
+    import pylate.models as pylate_models
 
     from tests.utils.vllm_sidecar import writable_test_hf_cache
 
