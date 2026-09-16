@@ -122,6 +122,9 @@ INGESTION_TIMEOUT = 1_200_000
 # Vespa's query port on the e2e cluster, for the configuration rows this
 # module writes and reads back through the shipped store.
 VESPA_HTTP_PORT = 33080
+# Vespa answers a freshly fed document within seconds, but the suite's own
+# ingestion helper allows a two-minute settle under load; match it.
+SEARCH_INDEX_SETTLE_S = 180.0
 
 
 def _panel_metrics(panel) -> dict:
@@ -1331,11 +1334,10 @@ class TestProfileRoutingMetrics:
         # one, as _wait_for_rerun_complete already does.
         expect(active_panel.first).to_be_visible(timeout=SEARCH_TIMEOUT)
 
-        # Lookback (hours) input is the only always-rendered widget — the
-        # rest depends on whether Phoenix has profile_selection spans yet.
         # The panel turns visible carrying only its header, so wait for the
-        # widget itself: a count taken while the body is still streaming reads
-        # zero and blames the product for a render that had not finished.
+        # Lookback widget itself: a count taken while the body is still
+        # streaming reads zero and blames the product for a render that had
+        # not finished.
         lookback_input = active_panel.locator('[data-testid="stNumberInput"]')
         try:
             lookback_input.first.wait_for(state="visible", timeout=60_000)
@@ -2609,13 +2611,23 @@ class TestIngestionUploadOutcome:
         assert [text for text in alerts if "Ingestion failed" in text] == [], alerts
 
         # The documents the page reported are the documents the tenant serves.
-        matches, error = _search_sample_content(
-            content_id=SAMPLE_VIDEO_CONTENT_ID,
-            tenant_id=tenant_id,
-            profile=PROFILE,
-            suffix=SAMPLE_VIDEO_PATH.suffix,
-            media_type=media_type,
-        )
+        # Vespa is eventually consistent after the feed, so give the index the
+        # same budget the suite's own ingestion helper gives it.
+        deadline = time.monotonic() + SEARCH_INDEX_SETTLE_S
+        matches: list = []
+        error: str | None = None
+        while time.monotonic() < deadline:
+            found, error = _search_sample_content(
+                content_id=SAMPLE_VIDEO_CONTENT_ID,
+                tenant_id=tenant_id,
+                profile=PROFILE,
+                suffix=SAMPLE_VIDEO_PATH.suffix,
+                media_type=media_type,
+            )
+            matches = found or []
+            if len(matches) == expected_fed:
+                break
+            time.sleep(2.0)
         assert error is None, error
         assert len(matches) == expected_fed, (
             f"the page reported {expected_fed} documents; the tenant serves "
@@ -2643,13 +2655,14 @@ class TestIngestionUploadOutcome:
         assert f"🎉 All {len(selected)} profiles ingested" in alerts, alerts
         assert [text for text in alerts if "Ingestion failed" in text] == [], alerts
 
-        ingest_id = re.search(
-            r"Already ingested as (ingest_[0-9a-f]{32})", deduplicated[0]
-        )
-        assert ingest_id, deduplicated[0]
-        status = httpx.get(
-            f"{RUNTIME}/ingestion/{ingest_id.group(1)}/status", timeout=30.0
-        )
+        ingest_ids = re.findall(r"ingest_[0-9a-f]{32}", deduplicated[0])
+        assert len(ingest_ids) == 1, deduplicated[0]
+        assert deduplicated == [
+            f"✅ {PROFILE}: Already ingested as {ingest_ids[0]}; nothing was re-fed"
+        ], deduplicated
+
+        # The page's success names the job the runtime itself reports complete.
+        status = httpx.get(f"{RUNTIME}/ingestion/{ingest_ids[0]}/status", timeout=30.0)
         assert status.status_code == 200, status.text
         assert status.json()["state"] == "complete", status.json()
 
