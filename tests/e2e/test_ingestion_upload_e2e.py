@@ -39,7 +39,10 @@ The autouse E2E fixture provisions the stack. A missing runtime or tracked
 video fails with its exact endpoint or path.
 """
 
+import contextlib
+import json
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -51,8 +54,20 @@ from cogniverse_agents.graph.graph_schema import (
     node_id_from_doc_id,
     normalize_name,
 )
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_runtime.ingestion_worker.idempotency import DONE_KEY_PREFIX
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
-from tests.e2e.test_api_e2e import PROFILE
+from tests.e2e.conftest import (
+    E2E_ARTIFACT_DIR,
+    KUBECTL_CONTEXT,
+    _atomic_artifact,
+    _expected_sample_documents_fed,
+    _profile_selection_video_profiles,
+    _tenant_schema_name,
+    register_tenant_and_wait,
+    unique_id,
+)
+from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 from tests.utils.kg_lookup import resolve_persisted_kg_nodes
 
 pytestmark = pytest.mark.e2e
@@ -449,3 +464,436 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
                 assert isinstance(v, str) and v.strip(), (
                     f"seg={seg} malformed {field} entry: {v!r}"
                 )
+
+
+# --------------------------------------------------------------------- #
+# Required transcription, and the scratch a run leaves behind            #
+# --------------------------------------------------------------------- #
+
+_CONFIG = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+
+# The chunk profile the session already deploys alongside the frame profile.
+# It transcribes audio, so a transcription outage reaches it, and it writes
+# transcoded MP4 chunks to the ingestor's scratch.
+CHUNK_PROFILE = _profile_selection_video_profiles(_CONFIG)[1]
+CHUNK_SCHEMA = _CONFIG["backend"]["profiles"][CHUNK_PROFILE]["schema_name"]
+
+# The chart renders each inference service as ``{fullName}-{name | kebabcase}``;
+# this is the deployment behind the service ``test_asr_sidecar_e2e`` forwards.
+ASR_DEPLOYMENT = "cogniverse-vllm-asr"
+CLUSTER_NAMESPACE = "cogniverse"
+
+# The ingestor image runs with WORKDIR /app, and OutputManager writes its
+# processing tree under ``outputs/processing`` relative to it.
+INGESTOR_SCRATCH_ROOT = "/app/outputs/processing"
+
+REDIS_FORWARD_URL = "redis://localhost:26380/0"
+
+
+def _kubectl(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["kubectl", "--context", KUBECTL_CONTEXT, "-n", CLUSTER_NAMESPACE, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _kubectl_out(*args: str, timeout: int = 60) -> str:
+    result = _kubectl(*args, timeout=timeout)
+    if result.returncode != 0:
+        pytest.fail(
+            f"kubectl {' '.join(args)} failed with exit {result.returncode}: "
+            f"{(result.stderr or '').strip()[:500]}",
+            pytrace=False,
+        )
+    return result.stdout
+
+
+def _asr_probe() -> tuple[str, str]:
+    """The (base_url, model) the session readiness gate probes ASR with."""
+    from cogniverse_cli.images import detect_torch_backend
+
+    from tests.e2e.conftest import _E2E_ASR_MODELS, _e2e_required_model_probes
+
+    backend = detect_torch_backend()
+    expected_model = _E2E_ASR_MODELS[backend]
+    for url, model in _e2e_required_model_probes(backend):
+        if model == expected_model:
+            return url, model
+    pytest.fail(
+        f"the e2e readiness gate probes no transcription model for backend "
+        f"{backend!r}, so this test cannot prove the sidecar came back",
+        pytrace=False,
+    )
+
+
+def _asr_serving() -> bool:
+    from tests.utils.vllm_sidecar import serves_exact_model
+
+    url, model = _asr_probe()
+    return serves_exact_model(url, model, timeout=5.0)
+
+
+def _asr_declared_replicas() -> int:
+    return int(
+        _kubectl_out(
+            "get", "deployment", ASR_DEPLOYMENT, "-o", "jsonpath={.spec.replicas}"
+        ).strip()
+    )
+
+
+def _asr_ready_replicas() -> str:
+    return _kubectl_out(
+        "get", "deployment", ASR_DEPLOYMENT, "-o", "jsonpath={.status.readyReplicas}"
+    ).strip()
+
+
+def _scale_asr(replicas: int) -> None:
+    _kubectl_out("scale", "deployment", ASR_DEPLOYMENT, f"--replicas={replicas}")
+
+
+def _wait_for_asr_absent(deadline_s: float = 180.0) -> None:
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        if _asr_ready_replicas() in ("", "0") and not _asr_serving():
+            return
+        time.sleep(3)
+    pytest.fail(
+        f"{ASR_DEPLOYMENT} still served the transcription model {deadline_s:.0f}s "
+        "after it was scaled to zero",
+        pytrace=False,
+    )
+
+
+def _wait_for_asr_serving(replicas: int, deadline_s: float = 900.0) -> None:
+    """Block until the sidecar serves its model again.
+
+    The session readiness gate probes the same endpoint, so the cluster must
+    be handed back exactly as it was found.
+    """
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        if _asr_ready_replicas() == str(replicas) and _asr_serving():
+            return
+        time.sleep(5)
+    pytest.fail(
+        f"{ASR_DEPLOYMENT} did not serve the transcription model again within "
+        f"{deadline_s:.0f}s of being scaled back to {replicas} replica(s)",
+        pytrace=False,
+    )
+
+
+@pytest.fixture
+def asr_sidecar_scaled_to_zero():
+    """Take the transcription sidecar down for one test and put it back.
+
+    The restore runs on every outcome and waits for the model to be served
+    again, so a failure inside the test cannot leave the shared cluster
+    without transcription.
+    """
+    declared = _asr_declared_replicas()
+    _scale_asr(0)
+    _wait_for_asr_absent()
+    try:
+        yield declared
+    finally:
+        _scale_asr(declared)
+        _wait_for_asr_serving(declared)
+
+
+@contextlib.contextmanager
+def _cluster_redis():
+    """A sync Redis client on the cluster's queue, over the test's own tunnel."""
+    import redis as sync_redis
+
+    port = int(REDIS_FORWARD_URL.rsplit(":", 1)[1].split("/", 1)[0])
+    proc = subprocess.Popen(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "-n",
+            CLUSTER_NAMESPACE,
+            "port-forward",
+            "svc/cogniverse-redis",
+            f"{port}:6379",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    client = None
+    try:
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                candidate = sync_redis.Redis.from_url(
+                    REDIS_FORWARD_URL, socket_connect_timeout=3, decode_responses=True
+                )
+                candidate.ping()
+                client = candidate
+                break
+            except Exception:
+                time.sleep(0.5)
+        if client is None:
+            pytest.fail(
+                f"cluster Redis not reachable at {REDIS_FORWARD_URL} within 30s of "
+                "starting kubectl port-forward svc/cogniverse-redis",
+                pytrace=False,
+            )
+        yield client
+    finally:
+        if client is not None:
+            client.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def _silent_video_fixture(source: Path, dest: Path) -> Path:
+    """The tracked clip's video stream alone, in a container with no audio."""
+
+    def write(staged: Path) -> None:
+        import av
+
+        with av.open(str(source)) as src:
+            video_stream = src.streams.video[0]
+            with av.open(str(staged), mode="w", format="mp4") as dst:
+                out_stream = dst.add_stream(template=video_stream)
+                for packet in src.demux(video_stream):
+                    if packet.dts is None:
+                        continue
+                    packet.stream = out_stream
+                    dst.mux(packet)
+
+    return _atomic_artifact(dest, write)
+
+
+def _upload_and_wait(
+    client: httpx.Client, path: Path, *, profile: str, tenant_id: str
+) -> dict:
+    """Upload ``path`` and block on its terminal state, as the CLI does."""
+    with open(path, "rb") as handle:
+        resp = client.post(
+            "/ingestion/upload?wait=true&wait_timeout=900",
+            files={"file": (path.name, handle, "video/mp4")},
+            data={"profile": profile, "tenant_id": tenant_id},
+        )
+    assert resp.status_code == 200, (
+        f"upload of {path.name} failed: HTTP {resp.status_code} {resp.text[:500]}"
+    )
+    return resp.json()
+
+
+def _chunk_documents(schema: str, video_id: str) -> list[dict]:
+    return _vespa_search(
+        f'select * from sources {schema} where video_id contains "{video_id}"'
+    )
+
+
+@pytest.mark.e2e
+class TestRequiredTranscription:
+    """A transcription outage fails the run; a silent container does not."""
+
+    def test_transcription_outage_fails_the_run_and_leaves_it_resubmittable(
+        self, asr_sidecar_scaled_to_zero, real_video_path
+    ):
+        """With the transcription sidecar down the run is ``failed``, feeds no
+        document and writes no completion marker, and a plain resubmission
+        after the sidecar returns is accepted fresh and indexes the clip.
+
+        Counts come from the chunk count this profile's shipped segmentation
+        parameters produce for this clip, through the helper the session
+        fixture derives its own expectations with.
+        """
+        tenant_id = unique_id("prode2epipe")
+        register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        schema = _tenant_schema_name(CHUNK_SCHEMA, canonical_tenant_id(tenant_id))
+        expected_documents = _expected_sample_documents_fed(
+            real_video_path, CHUNK_PROFILE, "video/mp4"
+        )
+
+        with httpx.Client(base_url=RUNTIME_URL, timeout=1800.0) as client:
+            _deploy_profile_for_tenant(client, CHUNK_PROFILE, tenant_id)
+
+            failed = _upload_and_wait(
+                client, real_video_path, profile=CHUNK_PROFILE, tenant_id=tenant_id
+            )
+            assert failed["state"] == "failed", failed
+            assert failed["status"] == "failed", failed
+            assert failed["existing"] is False, failed
+            assert failed["error_type"] == "IngestPipelineError", failed
+            # The transcription stage raises ContentProcessingError with this
+            # message when the transcript carries an error, and the worker
+            # reports the pipeline's own text.
+            assert failed["error"].split(": ", 1)[0] == "Required transcription failed"
+            assert failed["documents_fed"] == 0, failed
+            assert failed["chunks_created"] == 0, failed
+
+            # Nothing for this content reached the tenant's index.
+            assert (
+                _vespa_count(
+                    f"select * from sources {schema} where "
+                    f'source_url contains "{failed["source_url"]}"'
+                )
+                == 0
+            )
+
+            # No completion marker, so the repair is a plain re-upload rather
+            # than one that has to carry force=true.
+            with _cluster_redis() as redis:
+                assert redis.get(f"{DONE_KEY_PREFIX}{failed['sha']}") is None
+
+            _scale_asr(asr_sidecar_scaled_to_zero)
+            _wait_for_asr_serving(asr_sidecar_scaled_to_zero)
+
+            repaired = _upload_and_wait(
+                client, real_video_path, profile=CHUNK_PROFILE, tenant_id=tenant_id
+            )
+            assert repaired["existing"] is False, repaired
+            assert repaired["sha"] == failed["sha"], repaired
+            assert repaired["ingest_id"] != failed["ingest_id"], repaired
+            assert repaired["state"] == "complete", repaired
+            assert repaired["status"] == "success", repaired
+            assert repaired["documents_fed"] == expected_documents, repaired
+            assert repaired["chunks_created"] == expected_documents, repaired
+
+            with _cluster_redis() as redis:
+                assert (
+                    redis.get(f"{DONE_KEY_PREFIX}{repaired['sha']}")
+                    == repaired["ingest_id"]
+                )
+
+        documents = _chunk_documents(schema, repaired["video_id"])
+        assert len(documents) == expected_documents
+        assert sorted(int(d["segment_id"]) for d in documents) == list(
+            range(expected_documents)
+        )
+        # The transcript the outage suppressed is on every chunk. Whisper
+        # chooses the words, so what is pinned is the discrimination the fix
+        # rests on: a served sidecar yields text, a container with no audio
+        # yields the empty string (the case below).
+        assert [d["audio_transcript"] == "" for d in documents] == [
+            False
+        ] * expected_documents
+
+    def test_a_container_without_audio_completes_with_an_empty_transcript(
+        self, real_video_path
+    ):
+        """A clip with no audio stream is not an outage: it reaches
+        ``complete`` with the full document count and an empty transcript.
+
+        This is the discrimination the failure above depends on — without it,
+        failing on any transcript error would fail every silent video.
+        """
+        import av
+
+        silent_path = _silent_video_fixture(
+            real_video_path, E2E_ARTIFACT_DIR / "tracked_video_silent.mp4"
+        )
+        with av.open(str(silent_path)) as container:
+            assert [stream.type for stream in container.streams] == ["video"]
+
+        tenant_id = unique_id("prode2epipe")
+        register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        schema = _tenant_schema_name(CHUNK_SCHEMA, canonical_tenant_id(tenant_id))
+        expected_documents = _expected_sample_documents_fed(
+            silent_path, CHUNK_PROFILE, "video/mp4"
+        )
+
+        with httpx.Client(base_url=RUNTIME_URL, timeout=1800.0) as client:
+            _deploy_profile_for_tenant(client, CHUNK_PROFILE, tenant_id)
+            result = _upload_and_wait(
+                client, silent_path, profile=CHUNK_PROFILE, tenant_id=tenant_id
+            )
+
+        assert result["state"] == "complete", result
+        assert result["status"] == "success", result
+        assert result["documents_fed"] == expected_documents, result
+        assert result["chunks_created"] == expected_documents, result
+
+        documents = _chunk_documents(schema, result["video_id"])
+        assert len(documents) == expected_documents
+        assert [d["audio_transcript"] for d in documents] == [""] * expected_documents
+
+
+def _ingestor_pod_names() -> list[str]:
+    names = [
+        line.split("/", 1)[1]
+        for line in _kubectl_out(
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=ingestor",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "name",
+        ).split()
+    ]
+    if not names:
+        pytest.fail(
+            "no Running pod carries app.kubernetes.io/component=ingestor, so the "
+            "scratch a job leaves behind cannot be read",
+            pytrace=False,
+        )
+    return sorted(names)
+
+
+def _scratch_snapshot(pod: str) -> tuple[list[str], int]:
+    """Every path under the ingestor's scratch root, and its total size."""
+    probe = _kubectl(
+        "exec",
+        pod,
+        "--",
+        "sh",
+        "-c",
+        f"mkdir -p {INGESTOR_SCRATCH_ROOT} && find {INGESTOR_SCRATCH_ROOT} | sort "
+        f"&& echo --- && du -sb {INGESTOR_SCRATCH_ROOT} | cut -f1",
+        timeout=180,
+    )
+    if probe.returncode != 0:
+        pytest.fail(
+            f"reading the ingestor scratch on {pod} failed with exit "
+            f"{probe.returncode}: {(probe.stderr or '').strip()[:500]}",
+            pytrace=False,
+        )
+    listing, _, total = probe.stdout.partition("---")
+    return [line for line in listing.splitlines() if line], int(total.strip())
+
+
+@pytest.mark.e2e
+def test_chunk_profile_upload_reclaims_its_scratch(real_video_path):
+    """A chunk-profile ingest leaves the ingestor's scratch exactly as it
+    found it, on every worker, while still feeding the profile's documents.
+
+    The transcoded chunk MP4s, rendered pages and extracted frames a run
+    writes are the growth this pins: path-set and byte-total equality per
+    pod, so a run that reclaims nothing is red by the size of what it wrote,
+    and one that reclaims by skipping the stage is red on the count.
+    """
+    tenant_id = unique_id("prode2epipe")
+    register_tenant_and_wait(tenant_id, created_by="e2e-test")
+    expected_documents = _expected_sample_documents_fed(
+        real_video_path, CHUNK_PROFILE, "video/mp4"
+    )
+
+    pods = _ingestor_pod_names()
+    before = {pod: _scratch_snapshot(pod) for pod in pods}
+
+    with httpx.Client(base_url=RUNTIME_URL, timeout=1800.0) as client:
+        _deploy_profile_for_tenant(client, CHUNK_PROFILE, tenant_id)
+        result = _upload_and_wait(
+            client, real_video_path, profile=CHUNK_PROFILE, tenant_id=tenant_id
+        )
+
+    assert result["state"] == "complete", result
+    assert result["documents_fed"] == expected_documents, result
+    assert result["chunks_created"] == expected_documents, result
+
+    assert _ingestor_pod_names() == pods, (
+        "an ingestor pod restarted during the run, so its scratch was reset by "
+        "the restart rather than released by the run"
+    )
+    assert {pod: _scratch_snapshot(pod) for pod in pods} == before
