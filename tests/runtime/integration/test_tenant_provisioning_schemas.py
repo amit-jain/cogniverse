@@ -130,13 +130,15 @@ def provisioning_store():
 
 WORKFLOW = ROOT / "workflows" / "tenant-provisioning.yaml"
 # The template that runs each ``--step``.
-STEP_TEMPLATES = {
-    "schemas": "deploy-schemas",
-    "verify": "verify-tenant",
-    "telemetry": "create-phoenix-project",
-    "memory": "initialize-memory",
-    "tier": "set-tier",
-}
+STEP_TEMPLATES = dict(
+    (
+        ("schemas", "deploy-schemas"),
+        ("verify", "verify-tenant"),
+        ("telemetry", "create-phoenix-project"),
+        ("memory", "initialize-memory"),
+        ("tier", "set-tier"),
+    )
+)
 
 
 def _workflow_template(name):

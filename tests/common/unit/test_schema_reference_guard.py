@@ -206,9 +206,13 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Postgres system view queried while pg_dump holds its lock",
         "pg_stat_activity",
     ),
+    "tests/runtime/integration/test_tenant_provisioning_schemas.py": (
+        "Unresolvable base schema and phantom tenant schema the provisioning step must reject",
+        "no_such_base_schema knowledge_graph_provisionphantom_production",
+    ),
     "tests/ingestion/integration/test_pipeline_scratch_cleanup.py": (
         "Pipeline schema label for the scratch-release run",
-        "scratch",
+        "scratch scratchframes",
     ),
     "tests/ingestion/integration/test_chunk_only_pipeline_real.py": (
         "Local processing context for ffmpeg chunk extraction",
