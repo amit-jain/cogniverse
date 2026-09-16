@@ -18,18 +18,23 @@ Three contracts are pinned here:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+import httpx
 import pytest
 import streamlit as st
 import uvicorn
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from streamlit.testing.v1 import AppTest
+
+from cogniverse_dashboard.ingestion import submit_video_ingestion
+from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 
 APP_PATH = "libs/dashboard/cogniverse_dashboard/app.py"
 
@@ -45,6 +50,11 @@ class RuntimeRecorder:
     registered_tenants: set = field(default_factory=lambda: {"acme:a", "acme:b"})
     uploads: List[Dict[str, Any]] = field(default_factory=list)
     status_polls: List[str] = field(default_factory=list)
+    job_for_profile: Dict[str, str] = field(default_factory=dict)
+    concurrent_uploads: int = 0
+    max_concurrent_uploads: int = 0
+    upload_barrier: Any = None
+    upload_extra: Dict[str, Any] = field(default_factory=dict)
     searches: List[Dict[str, Any]] = field(default_factory=list)
     # ingest_id -> ordered status payloads, last one repeats
     status_script: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
@@ -95,16 +105,25 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
                     "tenant_id": tenant_id,
                 }
             )
+            recorder.job_for_profile[profile] = f"ingest-{index}"
+            recorder.concurrent_uploads += 1
+            recorder.max_concurrent_uploads = max(
+                recorder.max_concurrent_uploads, recorder.concurrent_uploads
+            )
+        try:
+            if recorder.upload_barrier is not None:
+                await recorder.upload_barrier.wait()
+        finally:
+            with recorder.lock:
+                recorder.concurrent_uploads -= 1
         scripted = recorder.upload_response
         if scripted["status"] not in (200, 202):
             return JSONResponse(
                 status_code=scripted["status"], content=scripted["body"]
             )
-        ingest_id = f"ingest-{index}"
-        return JSONResponse(
-            status_code=scripted["status"],
-            content={"ingest_id": ingest_id, "state": "queued"},
-        )
+        body: Dict[str, Any] = {"ingest_id": f"ingest-{index}", "state": "queued"}
+        body.update(recorder.upload_extra)
+        return JSONResponse(status_code=scripted["status"], content=body)
 
     @app.get("/ingestion/{ingest_id}/status")
     async def status(ingest_id: str):
@@ -295,7 +314,7 @@ def test_process_video_uploads_the_bytes_and_reports_the_fed_documents(page, run
             "video_id": "clip_9f2",
             "documents_fed": 7,
             "chunks_created": 3,
-            "processing_time": 0,
+            "deduplicated": False,
         }
     ]
 
@@ -380,6 +399,158 @@ def test_each_profile_gets_its_own_job_and_outcomes_do_not_cross(page, runtime):
     assert _ingestion_messages(app.success) == [
         f"{DEFAULT_PROFILE}: fed 5 documents as clip_a"
     ]
+
+
+def test_reupload_of_ingested_bytes_is_reported_as_already_ingested(page, runtime):
+    """MinIO is content-addressed, so the same bytes/profile/tenant dedupe.
+
+    The runtime answers the resubmit with the earlier run's id and state and
+    none of its counts; the tab reports it as ingested, not as a failure.
+    """
+    runtime.upload_extra = {
+        "ingest_id": "ingest-earlier",
+        "state": "complete",
+        "existing": True,
+    }
+    runtime.status_script["ingest-earlier"] = [
+        {
+            "state": "complete",
+            "latest": {
+                "state": "complete",
+                "ingest_id": "ingest-earlier",
+                "existing": True,
+            },
+        }
+    ]
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert [e.message for e in app.exception] == []
+    assert runtime.status_polls == ["ingest-earlier"]
+    assert _ingestion_messages(app.error) == []
+    assert _ingestion_messages(app.success) == [
+        f"{DEFAULT_PROFILE}: Already ingested as ingest-earlier; nothing was re-fed",
+        "All 1 profiles ingested",
+    ]
+    assert app.session_state["processing_results"] == [
+        {
+            "status": "success",
+            "profile": DEFAULT_PROFILE,
+            "ingest_id": "ingest-earlier",
+            "deduplicated": True,
+            "video_id": None,
+            "documents_fed": None,
+            "chunks_created": None,
+            "message": ("Already ingested as ingest-earlier; nothing was re-fed"),
+        }
+    ]
+
+
+def test_reupload_keeps_the_earlier_runs_counts_when_its_trail_survives(page, runtime):
+    runtime.upload_extra = {
+        "ingest_id": "ingest-earlier",
+        "state": "complete",
+        "existing": True,
+    }
+    runtime.status_script["ingest-earlier"] = [_complete(7, "clip_9f2", 3)]
+    app = _open_tenant(page, "acme:a")
+    _upload_video(app)
+    _button(app, "🔄 Process Video").click().run()
+
+    assert _ingestion_messages(app.error) == []
+    assert app.session_state["processing_results"] == [
+        {
+            "status": "success",
+            "profile": DEFAULT_PROFILE,
+            "ingest_id": "ingest-earlier",
+            "deduplicated": True,
+            "video_id": "clip_9f2",
+            "documents_fed": 7,
+            "chunks_created": 3,
+            "message": ("Already ingested as ingest-earlier; nothing was re-fed"),
+        }
+    ]
+
+
+def test_submission_reports_every_state_the_job_passes_through(runtime):
+    runtime.status_script["ingest-0"] = [
+        {"state": "queued", "latest": {"state": "queued"}},
+        {"state": "running", "latest": {"state": "running"}},
+        _complete(3, "clip_t", 1),
+    ]
+    seen: List[str] = []
+    with httpx.Client() as client:
+        outcome = submit_video_ingestion(
+            client,
+            runtime.url,
+            filename=VIDEO_NAME,
+            content=VIDEO_BYTES,
+            content_type="video/mp4",
+            profile=DEFAULT_PROFILE,
+            tenant_id="acme:a",
+            sleep=lambda _seconds: None,
+            on_state=seen.append,
+        )
+
+    assert seen == ["queued", "running", "complete"]
+    assert runtime.status_polls == ["ingest-0", "ingest-0", "ingest-0"]
+    assert outcome["documents_fed"] == 3
+
+
+def test_concurrent_uploads_through_the_shared_client_keep_their_own_jobs(runtime):
+    """The dashboard process holds one pooled client for every interaction.
+
+    Two ingestions overlapping inside the runtime must come back with their
+    own job ids and their own counts; a client that serialised them would
+    never release the barrier.
+    """
+    second = "video_xclip_sv_chunk_6s"
+    runtime.upload_barrier = asyncio.Barrier(2)
+    runtime.status_script["ingest-0"] = [_complete(5, "clip_0", 2)]
+    runtime.status_script["ingest-1"] = [_complete(9, "clip_1", 4)]
+    expected = {"ingest-0": (5, "clip_0"), "ingest-1": (9, "clip_1")}
+
+    client = get_runtime_client()
+    start = threading.Barrier(2)
+    outcomes: Dict[str, Dict[str, Any]] = {}
+
+    def submit(profile: str) -> None:
+        start.wait(timeout=30)
+        outcomes[profile] = submit_video_ingestion(
+            client,
+            runtime.url,
+            filename=VIDEO_NAME,
+            content=VIDEO_BYTES,
+            content_type="video/mp4",
+            profile=profile,
+            tenant_id="acme:a",
+            sleep=lambda _seconds: None,
+        )
+
+    threads = [
+        threading.Thread(target=submit, args=(profile,))
+        for profile in (DEFAULT_PROFILE, second)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert [thread.is_alive() for thread in threads] == [False, False]
+
+    assert runtime.max_concurrent_uploads == 2
+    assert sorted(runtime.job_for_profile) == sorted([DEFAULT_PROFILE, second])
+    assert sorted(runtime.job_for_profile.values()) == ["ingest-0", "ingest-1"]
+    assert sorted(runtime.status_polls) == ["ingest-0", "ingest-1"]
+    assert sorted(outcomes) == sorted([DEFAULT_PROFILE, second])
+    for profile, outcome in outcomes.items():
+        job = runtime.job_for_profile[profile]
+        assert (
+            outcome["profile"],
+            outcome["ingest_id"],
+            outcome["documents_fed"],
+            outcome["video_id"],
+        ) == (profile, job, *expected[job])
 
 
 # --------------------------------------------------------------------------
