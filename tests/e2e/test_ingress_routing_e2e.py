@@ -25,6 +25,7 @@ import httpx
 import pytest
 import yaml
 
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
     DASHBOARD,
     K3S_VALUES,
@@ -179,7 +180,7 @@ def ingress_url():
 @pytest.fixture(scope="module")
 def harness_key():
     """A harness key bound to a tenant this module mints and tears down."""
-    tenant_id = unique_id("prode2eclients")
+    tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
     register_tenant_and_wait(tenant_id, created_by="e2e")
     with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
         minted = client.post(

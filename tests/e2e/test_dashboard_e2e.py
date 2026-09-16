@@ -1301,7 +1301,7 @@ class TestProfileRoutingMetrics:
         project no producer writes to, so it is a failure, not a terminal
         state this test accepts.
         """
-        tenant_id = unique_id("prode2eclients")
+        tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(tenant_id, created_by="e2e")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
@@ -2021,7 +2021,7 @@ class TestMonitoringDashboard:
         panel must not report that it found none: that is what a reader
         pointed at a project no producer writes to looks like.
         """
-        tenant_id = unique_id("prode2eclients")
+        tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(tenant_id, created_by="e2e")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
@@ -2548,7 +2548,7 @@ class TestIngestionUploadOutcome:
         content id, and a re-submission of the same bytes is reported as the
         deduplication it is rather than as a failure.
         """
-        tenant_id = unique_id("prode2eclients")
+        tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(tenant_id, created_by="e2e")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
@@ -2659,8 +2659,8 @@ class TestConfigurationImport:
     tenant the sidebar selected, whatever tenant the file names."""
 
     def test_import_lands_under_the_selected_tenant(self, page, tmp_path):
-        source = unique_id("prode2eclients")
-        destination = unique_id("prode2eclients")
+        source = canonical_tenant_id(unique_id("prode2eclients"))
+        destination = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(source, created_by="e2e")
         register_tenant_and_wait(destination, created_by="e2e")
         decoy = canonical_tenant_id(unique_id("prode2eclients"))
@@ -2744,7 +2744,7 @@ class TestConfigurationImport:
 
         tenant_box = active_tab_panel(page).locator('input[aria-label="Tenant ID"]')
         expect(tenant_box).to_have_count(1, timeout=INTERACTION_TIMEOUT)
-        assert tenant_box.first.input_value() == canonical_tenant_id(destination)
+        assert tenant_box.first.input_value() == destination
 
         active_tab_panel(page).locator(
             '[data-testid="stFileUploader"] input[type="file"]'
@@ -2768,7 +2768,7 @@ class TestConfigurationImport:
 
         # The rows landed under the selected tenant, the file's own tenant
         # gained none, and the source is untouched.
-        assert _rows(canonical_tenant_id(destination)) == expected_rows
+        assert _rows(destination) == expected_rows
         assert _rows(decoy) == set()
         assert _rows(source) == source_before
 
@@ -2778,8 +2778,8 @@ class TestTenantSwitchScopesEverything:
     page and nothing of it writable into the next tenant's project."""
 
     def test_a_switch_drops_the_previous_tenants_results_and_annotations(self, page):
-        holder = unique_id("prode2eclients")
-        empty = unique_id("prode2eclients")
+        holder = canonical_tenant_id(unique_id("prode2eclients"))
+        empty = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(holder, created_by="e2e")
         register_tenant_and_wait(empty, created_by="e2e")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
@@ -2808,6 +2808,19 @@ class TestTenantSwitchScopesEverything:
             found, timeout=INTERACTION_TIMEOUT
         )
 
+        # One chat turn, so the transcript this tenant owns is non-empty
+        # before the switch and the emptiness asserted after it is a change.
+        click_top_tab(page, "Chat")
+        _fill_chat_message(page, "What videos do you have about animals?")
+        click_button(page, "Send")
+        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
+        wait_for_script_idle(page)
+        expect(
+            active_tab_panel(page).locator('[data-testid="stChatMessage"]')
+        ).to_have_count(2, timeout=INTERACTION_TIMEOUT)
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        assert "💬 messages: 2" in (sidebar.inner_text() or "")
+
         set_tenant(page, empty)
         click_top_tab(page, "Interactive Search")
         wait_for_script_idle(page)
@@ -2830,6 +2843,9 @@ class TestTenantSwitchScopesEverything:
         assert (
             active_tab_panel(page).locator('[data-testid="stChatMessage"]').count() == 0
         )
+        assert "💬 messages:" not in (
+            page.locator('[data-testid="stSidebar"]').inner_text() or ""
+        )
 
         # The same search under the new tenant answers from the new tenant's
         # corpus, which holds none of the previous tenant's content.
@@ -2846,9 +2862,8 @@ class TestTenantSwitchScopesEverything:
 
     def test_the_configuration_tab_cannot_switch_the_tenant(self, page):
         """The sidebar is the one tenant selector; the tab reports it."""
-        tenant_id = unique_id("prode2eclients")
+        tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
         register_tenant_and_wait(tenant_id, created_by="e2e")
-        canonical = canonical_tenant_id(tenant_id)
 
         _nav(page)
         set_tenant(page, tenant_id)
@@ -2857,7 +2872,7 @@ class TestTenantSwitchScopesEverything:
 
         tenant_box = active_tab_panel(page).locator('input[aria-label="Tenant ID"]')
         expect(tenant_box).to_have_count(1, timeout=INTERACTION_TIMEOUT)
-        assert tenant_box.first.input_value() == canonical
+        assert tenant_box.first.input_value() == tenant_id
         assert tenant_box.first.is_disabled() is True
         assert tenant_box.first.is_editable() is False
 
@@ -2866,14 +2881,14 @@ class TestTenantSwitchScopesEverything:
         sidebar = page.locator('[data-testid="stSidebar"]')
         assert (
             sidebar.locator('input[aria-label="Active Tenant"]').first.input_value()
-            == canonical
+            == tenant_id
         )
         assert [
             (alert.inner_text() or "").strip()
             for alert in page.locator(
                 '[data-testid="stAlert"]:has-text("Current tenant")'
             ).all()
-        ] == [f"Current tenant: {canonical}"]
+        ] == [f"Current tenant: {tenant_id}"]
 
 
 class TestSearchNamesOnlyTheOperationItRan:
@@ -2895,9 +2910,8 @@ class TestSearchNamesOnlyTheOperationItRan:
         assert served.status_code == 200, served.text
         served_body = served.json()
         search_mode = served_body["search_mode"]
-        served_profile = served_body["profile"] or ", ".join(
-            served_body.get("profiles") or []
-        )
+        served_profiles = served_body.get("profiles") or []
+        served_profile = served_body["profile"] or ", ".join(served_profiles) or "—"
 
         _nav(page)
         set_tenant(page, TENANT_ID)
