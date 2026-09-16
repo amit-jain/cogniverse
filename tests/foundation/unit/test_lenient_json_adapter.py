@@ -107,6 +107,52 @@ class TestIncompleteOutputs:
         assert error.value.parsed_result == {}
         assert error.value.signature is BareCollectionsSignature
 
+    def test_null_value_is_not_a_produced_output(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(SummarySignature, '{"summary": null}')
+        assert error.value.missing_fields == ("summary",)
+        assert error.value.parsed_result == {}
+        assert error.value.signature is SummarySignature
+        assert error.value.lm_response == '{"summary": null}'
+        assert "The LM produced no summary" in str(error.value)
+
+    @pytest.mark.parametrize(
+        "blank", ['""', '"   "', r'"\n\t"'], ids=["empty", "spaces", "whitespace"]
+    )
+    def test_blank_string_is_not_a_produced_output(self, adapter, blank):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(SummarySignature, '{"summary": %s}' % blank)
+        assert error.value.missing_fields == ("summary",)
+        assert error.value.parsed_result == {}
+
+    def test_unfilled_fields_are_named_beside_absent_ones(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(PlanSignature, '{"reasoning": ""}')
+        assert error.value.missing_fields == ("reasoning", "sub_questions")
+        assert error.value.parsed_result == {}
+        assert "The LM produced no reasoning, sub_questions" in str(error.value)
+
+    def test_null_alias_does_not_fill_its_canonical_field(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(SummarySignature, '{"answer": null}')
+        assert error.value.missing_fields == ("summary",)
+        assert error.value.parsed_result == {}
+
+    def test_empty_collections_are_produced_outputs(self, adapter):
+        assert adapter.parse(
+            BareCollectionsSignature, '{"items": [], "mapping": {}}'
+        ) == {"items": [], "mapping": {}}
+
+    def test_false_and_zero_are_produced_outputs(self, adapter):
+        signature = dspy.Signature("query -> flag, score").with_updated_fields(
+            "flag", type_=bool
+        )
+        signature = signature.with_updated_fields("score", type_=int)
+        assert adapter.parse(signature, '{"flag": false, "score": 0}') == {
+            "flag": False,
+            "score": 0,
+        }
+
     def test_incomplete_output_is_an_adapter_parse_error(self, adapter):
         with pytest.raises(AdapterParseError) as error:
             adapter.parse(SummarySignature, '{"note": "nothing usable"}')

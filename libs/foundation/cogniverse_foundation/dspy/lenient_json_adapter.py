@@ -9,10 +9,11 @@ forms (`sub_question`) when the schema names the field plural
 
 This adapter applies a small set of canonical aliases before the strict
 field-key equality check in the parent parser. Unknown fields still get
-stripped; only known aliases are renamed. A response that names no alias for
-a required output is incomplete generation, and raises `LMOutputIncomplete`
-naming the fields the LM never produced. Everything else (tool calls, type
-casting, adapter fallback behaviour) is inherited from `JSONAdapter`.
+stripped; only known aliases are renamed. A required output the LM left
+unfilled — absent, `null`, or a blank string — is incomplete generation, and
+raises `LMOutputIncomplete` naming those fields. An empty collection is a
+value and passes. Everything else (tool calls, type casting, adapter fallback
+behaviour) is inherited from `JSONAdapter`.
 """
 
 from __future__ import annotations
@@ -22,6 +23,19 @@ from typing import Any, Iterable
 from dspy.adapters.json_adapter import JSONAdapter
 from dspy.signatures.signature import Signature
 from dspy.utils.exceptions import AdapterParseError
+
+
+def _is_filled(value: Any) -> bool:
+    """Whether the LM put a value in the field it named.
+
+    ``null`` and a blank string name the field without answering it. An empty
+    list, dict, ``0`` and ``False`` are answers.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    return True
 
 
 class LMOutputIncomplete(AdapterParseError):
@@ -108,7 +122,9 @@ class LenientJSONAdapter(JSONAdapter):
                             break
                 remapped[target] = value
 
-            produced = {k: v for k, v in remapped.items() if k in expected}
+            produced = {
+                k: v for k, v in remapped.items() if k in expected and _is_filled(v)
+            }
             missing = expected - produced.keys()
             if missing:
                 raise LMOutputIncomplete(
