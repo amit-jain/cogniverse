@@ -413,10 +413,11 @@ class _DispatchedPromptOverlayContext:
     DSPy version and ``dspy.Module.dump_state`` — and is loaded into the copy,
     so instructions AND learned demonstrations serve exactly as they were
     scored; a state for another module class, an unloadable state or a corrupt
-    payload raises rather than serving a half-applied module. The whole thing degrades to the base module
-    when the agent exposes no ``get_dispatched_prompts`` hook, the getter
-    raises, no prompts are in scope, or the clone fails — always
-    preferring the active prompt over a crash.
+    payload raises rather than serving a half-applied module. The whole thing
+    degrades to the base module when the agent exposes no
+    ``get_dispatched_prompts`` hook, the getter raises, no prompts are in
+    scope, or the clone fails — always preferring the active prompt over a
+    crash.
     """
 
     def __init__(self, agent: Any, module: Any) -> None:
