@@ -446,11 +446,13 @@ def render_routing_evaluation_tab():
 
 Quick dashboard showing:
 
-- **Total Annotations**, **Golden Dataset Size**, **Optimization Runs**, **Last Optimization** — all read from `st.session_state` counters (`annotation_count`, `golden_dataset_size`, `optimization_requests`), so they reset per browser session rather than being queried live from a persistent store
+- **Total Annotations**, **Golden Dataset Size** — `st.session_state` counters (`annotation_count`, `golden_dataset_size`), so they reset per browser session rather than being queried live from a persistent store
+
+- **Optimization Runs**, **Last Optimization** — read from `GET /admin/tenant/{tenant_id}/optimize/runs` for the sidebar's active tenant, cached per tenant for 15 s (see [runtime.md](../modules/runtime.md#tenant-optimization-runs)). The count is the runs Argo holds; the last-run tile shows the newest run's age and phase, or `Never` when the tenant has none. When the runtime cannot list runs both tiles show `—` and the tab renders the reason, so an outage never reads as zero runs
 
 - **Workflow Diagram**: markdown description of the Collect → Build → Train → Monitor → Iterate cycle
 
-- **Recent History**: table of the last 10 entries in `st.session_state["optimization_requests"]`
+- **Recent History**: table of the tenant's 10 newest runs from the same route, columns `Workflow`, `Mode`, `Trigger`, `Phase`, `Started`, `Finished`
 
 #### 4.2 Search Annotations Tab (`_render_search_annotation_tab`)
 

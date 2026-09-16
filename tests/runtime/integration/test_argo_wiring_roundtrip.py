@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import unquote
@@ -252,7 +253,7 @@ class TestManifestMatchesArgoSchema:
 
 
 @pytest.fixture(scope="module")
-def argo_server(tmp_path_factory):
+def argo_cluster(tmp_path_factory):
     """Run the real Argo API against a fixture-owned Kubernetes datastore."""
     cluster = start_k8s_api_server(tmp_path_factory.mktemp("job-argo"))
     kubeconfig = Path(cluster["kubeconfig"])
@@ -307,24 +308,31 @@ def argo_server(tmp_path_factory):
             ),
         )
         assert applied.returncode == 0, applied.stderr
-        template = {
-            "apiVersion": "argoproj.io/v1alpha1",
-            "kind": "WorkflowTemplate",
-            "metadata": {"name": "cogniverse-job-runner", "namespace": "cogniverse"},
-            "spec": {
-                "entrypoint": "job",
-                "templates": [
-                    {
-                        "name": "job",
-                        "container": {"image": "alpine:3.20", "command": ["true"]},
-                    }
-                ],
-            },
-        }
-        applied = _kubectl(
-            kubeconfig, "apply", "-f", "-", input_text=json.dumps(template)
-        )
-        assert applied.returncode == 0, applied.stderr
+        for template_name, entrypoint in (
+            ("cogniverse-job-runner", "job"),
+            ("cogniverse-optimization-runner", "run-optimizer"),
+        ):
+            template = {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "WorkflowTemplate",
+                "metadata": {"name": template_name, "namespace": "cogniverse"},
+                "spec": {
+                    "entrypoint": entrypoint,
+                    "templates": [
+                        {
+                            "name": entrypoint,
+                            "container": {
+                                "image": "alpine:3.20",
+                                "command": ["true"],
+                            },
+                        }
+                    ],
+                },
+            }
+            applied = _kubectl(
+                kubeconfig, "apply", "-f", "-", input_text=json.dumps(template)
+            )
+            assert applied.returncode == 0, applied.stderr
         subprocess.run(
             [
                 "docker",
@@ -374,10 +382,16 @@ def argo_server(tmp_path_factory):
             pytest.fail(
                 f"Argo server did not become ready: {logs.stdout}\n{logs.stderr}"
             )
-        yield url
+        yield {"url": url, "kubeconfig": kubeconfig}
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
         stop_k8s_api_server(cluster["container"])
+
+
+@pytest.fixture(scope="module")
+def argo_server(argo_cluster):
+    """The Argo API base URL of the fixture-owned cluster."""
+    return argo_cluster["url"]
 
 
 _CONFIG_SCHEMA = (
@@ -574,4 +588,336 @@ async def test_failed_job_compensation_does_not_remove_concurrent_tenant_schedul
             **body,
             "post_actions": [],
             "created_at": result["created_at"],
+        }
+
+
+_OPTIMIZE_TENANT = "optruns:alpha"
+_OTHER_TENANT = "optruns:beta"
+_CRON_LABEL = "workflows.argoproj.io/cron-workflow"
+
+
+def _cron_spawned_workflow(name: str, tenant_id: str, template: str, status: dict):
+    """A Workflow shaped like one Argo's CronWorkflow controller spawns.
+
+    The controller copies the CronWorkflow's ``workflowSpec`` and stamps the
+    ``workflows.argoproj.io/cron-workflow`` label; it does NOT copy the
+    CronWorkflow's own labels, which is why the runtime cannot select these
+    by ``cogniverse.ai/tenant``.
+    """
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+            "name": name,
+            "namespace": "cogniverse",
+            "labels": {_CRON_LABEL: f"cogniverse-{name.rsplit('-', 1)[0]}"},
+        },
+        "spec": {
+            "entrypoint": "pipeline",
+            "arguments": {"parameters": [{"name": "tenant-id", "value": tenant_id}]},
+            "templates": [
+                {
+                    "name": "pipeline",
+                    "steps": [
+                        [
+                            {
+                                "name": "run",
+                                "templateRef": {
+                                    "name": template,
+                                    "template": "run-optimizer",
+                                },
+                            }
+                        ]
+                    ],
+                }
+            ],
+        },
+        "status": status,
+    }
+
+
+def _apply(kubeconfig, manifest) -> None:
+    applied = _kubectl(kubeconfig, "apply", "-f", "-", input_text=json.dumps(manifest))
+    assert applied.returncode == 0, applied.stderr
+
+
+def _set_status(kubeconfig, name: str, status: dict) -> None:
+    patched = _kubectl(
+        kubeconfig,
+        "patch",
+        "workflow.argoproj.io",
+        name,
+        "-n",
+        "cogniverse",
+        "--type=merge",
+        "-p",
+        json.dumps({"status": status}),
+    )
+    assert patched.returncode == 0, patched.stderr
+
+
+def _runs_when_settled(client, tenant_id: str, expected: int, **params) -> list:
+    """Poll the route until Argo's cache reports ``expected`` runs with a phase.
+
+    The fixture runs no workflow controller, so the phases under test are the
+    ones the test patched in; argo-server serves them from an informer cache
+    that syncs a moment after the patch lands.
+    """
+    deadline = time.monotonic() + 60
+    last: list = []
+    while time.monotonic() < deadline:
+        response = client.get(f"/admin/tenant/{tenant_id}/optimize/runs", params=params)
+        assert response.status_code == 200, response.text
+        last = response.json()["runs"]
+        if len(last) == expected and all(run["phase"] for run in last):
+            return last
+        time.sleep(0.5)
+    return last
+
+
+@pytest.fixture(scope="module")
+def optimize_runs_seeded(argo_cluster):
+    """Seed this module's optimization runs into the real Argo cluster once.
+
+    Module-scoped: re-seeding per test would leave each earlier test's runs
+    behind and the exact-list assertions would drift with execution order.
+    """
+    _configure_workflow(api_url=argo_cluster["url"])
+    kubeconfig = argo_cluster["kubeconfig"]
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        simba = client.post(
+            f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize", json={"mode": "simba"}
+        )
+        assert simba.status_code == 200, simba.text
+        gateway = client.post(
+            f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize",
+            json={"mode": "gateway-thresholds"},
+        )
+        assert gateway.status_code == 200, gateway.text
+        other = client.post(
+            f"/admin/tenant/{_OTHER_TENANT}/optimize", json={"mode": "simba"}
+        )
+        assert other.status_code == 200, other.text
+
+        simba_name = simba.json()["workflow_name"]
+        gateway_name = gateway.json()["workflow_name"]
+        _set_status(
+            kubeconfig,
+            simba_name,
+            {
+                "phase": "Succeeded",
+                "startedAt": "2026-09-16T10:00:00Z",
+                "finishedAt": "2026-09-16T10:05:00Z",
+            },
+        )
+        _set_status(
+            kubeconfig,
+            gateway_name,
+            {"phase": "Running", "startedAt": "2026-09-16T11:00:00Z"},
+        )
+        _set_status(
+            kubeconfig,
+            other.json()["workflow_name"],
+            {
+                "phase": "Succeeded",
+                "startedAt": "2026-09-16T12:00:00Z",
+                "finishedAt": "2026-09-16T12:01:00Z",
+            },
+        )
+        # A scheduled optimization run for this tenant, and a scheduled
+        # tenant-JOB run that must not be mistaken for one.
+        _apply(
+            kubeconfig,
+            _cron_spawned_workflow(
+                "agent-optimization-1758009600",
+                _OPTIMIZE_TENANT,
+                "cogniverse-optimization-runner",
+                {
+                    "phase": "Failed",
+                    "startedAt": "2026-09-16T09:00:00Z",
+                    "finishedAt": "2026-09-16T09:30:00Z",
+                },
+            ),
+        )
+        _apply(
+            kubeconfig,
+            _cron_spawned_workflow(
+                "tenant-job-1758009600",
+                _OPTIMIZE_TENANT,
+                "cogniverse-job-runner",
+                {
+                    "phase": "Succeeded",
+                    "startedAt": "2026-09-16T09:45:00Z",
+                    "finishedAt": "2026-09-16T09:46:00Z",
+                },
+            ),
+        )
+        yield {"simba": simba_name, "gateway": gateway_name}
+
+
+@pytest.fixture
+def optimize_runs_env(argo_cluster, optimize_runs_seeded):
+    """Tenant router mounted against the real Argo API holding the seeded runs.
+
+    Returns the TestClient and the two manual run names.
+    """
+    _configure_workflow(api_url=argo_cluster["url"])
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        yield client, optimize_runs_seeded["simba"], optimize_runs_seeded["gateway"]
+
+
+@pytest.mark.integration
+class TestOptimizationRunListing:
+    """``GET /{tenant}/optimize/runs`` lists a tenant's optimization runs."""
+
+    def test_manual_and_scheduled_runs_listed_newest_first(self, optimize_runs_env):
+        client, simba_name, gateway_name = optimize_runs_env
+
+        runs = _runs_when_settled(client, _OPTIMIZE_TENANT, 3)
+
+        assert runs == [
+            {
+                "workflow_name": gateway_name,
+                "mode": "gateway-thresholds",
+                "trigger": "manual",
+                "phase": "Running",
+                "started_at": "2026-09-16T11:00:00Z",
+                "finished_at": None,
+            },
+            {
+                "workflow_name": simba_name,
+                "mode": "simba",
+                "trigger": "manual",
+                "phase": "Succeeded",
+                "started_at": "2026-09-16T10:00:00Z",
+                "finished_at": "2026-09-16T10:05:00Z",
+            },
+            {
+                "workflow_name": "agent-optimization-1758009600",
+                "mode": None,
+                "trigger": "scheduled",
+                "phase": "Failed",
+                "started_at": "2026-09-16T09:00:00Z",
+                "finished_at": "2026-09-16T09:30:00Z",
+            },
+        ]
+
+    def test_page_size_caps_the_response(self, optimize_runs_env):
+        client, _simba_name, gateway_name = optimize_runs_env
+
+        _runs_when_settled(client, _OPTIMIZE_TENANT, 3)
+        response = client.get(
+            f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs", params={"limit": 1}
+        )
+        assert response.status_code == 200, response.text
+        assert [run["workflow_name"] for run in response.json()["runs"]] == [
+            gateway_name
+        ]
+
+    def test_another_tenants_runs_are_not_listed(self, optimize_runs_env):
+        client, _simba_name, _gateway_name = optimize_runs_env
+
+        runs = _runs_when_settled(client, _OTHER_TENANT, 1)
+        assert [(run["mode"], run["trigger"]) for run in runs] == [("simba", "manual")]
+
+    def test_argo_outage_answers_503_not_an_empty_list(self, optimize_runs_env):
+        client, _simba_name, _gateway_name = optimize_runs_env
+
+        with socket.socket() as closed:
+            closed.bind(("127.0.0.1", 0))
+            dead_port = closed.getsockname()[1]
+        _configure_workflow(api_url=f"http://127.0.0.1:{dead_port}")
+
+        response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
+        assert response.status_code == 503, response.text
+        body = response.json()
+        assert list(body) == ["detail"]
+        assert body["detail"].startswith("Argo API unreachable:")
+
+    def test_unconfigured_argo_answers_503(self, optimize_runs_env):
+        client, _simba_name, _gateway_name = optimize_runs_env
+        _configure_workflow(api_url=None)
+
+        response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
+        assert response.status_code == 503, response.text
+        assert response.json() == {
+            "detail": "Argo is not configured on this deployment."
+        }
+
+
+class _BadArgoHandler(BaseHTTPRequestHandler):
+    """Answers every list with the scripted status and body."""
+
+    status = 500
+    body = b'{"message":"argo-server is restarting"}'
+    content_type = "application/json"
+
+    def log_message(self, *_args):
+        return
+
+    def do_GET(self):
+        self.send_response(self.status)
+        self.send_header("Content-Type", self.content_type)
+        self.send_header("Content-Length", str(len(self.body)))
+        self.end_headers()
+        self.wfile.write(self.body)
+
+
+@pytest.fixture
+def failing_argo():
+    """A stand-in Argo endpoint whose responses the test scripts."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BadArgoHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.mark.integration
+class TestOptimizationRunListingFaults:
+    """Argo answering badly must raise, never read as "no runs"."""
+
+    def _client(self, api_url):
+        _configure_workflow(api_url=api_url)
+        app = FastAPI()
+        app.include_router(tenant.router, prefix="/admin/tenant")
+        return TestClient(app)
+
+    def test_a_rejecting_argo_answers_503(self, failing_argo):
+        _BadArgoHandler.status = 500
+        _BadArgoHandler.body = b'{"message":"argo-server is restarting"}'
+        _BadArgoHandler.content_type = "application/json"
+        with self._client(failing_argo) as client:
+            response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
+        assert response.status_code == 503, response.text
+        assert response.json() == {
+            "detail": (
+                'Argo list failed (500): {"message":"argo-server is restarting"}'
+            )
+        }
+
+    def test_an_html_body_on_200_answers_503(self, failing_argo):
+        _BadArgoHandler.status = 200
+        _BadArgoHandler.body = b"<html><body>502 Bad Gateway</body></html>"
+        _BadArgoHandler.content_type = "text/html"
+        try:
+            with self._client(failing_argo) as client:
+                response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
+        finally:
+            _BadArgoHandler.status = 500
+            _BadArgoHandler.body = b'{"message":"argo-server is restarting"}'
+            _BadArgoHandler.content_type = "application/json"
+        assert response.status_code == 503, response.text
+        assert response.json() == {
+            "detail": (
+                "Argo list returned a non-JSON body: "
+                "<html><body>502 Bad Gateway</body></html>"
+            )
         }
