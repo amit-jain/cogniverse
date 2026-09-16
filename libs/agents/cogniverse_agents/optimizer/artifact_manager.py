@@ -548,10 +548,10 @@ class ArtifactManager:
                 revision = int(row.get("blob_revision"))
             except (TypeError, ValueError):
                 continue
-            # ``>=`` so the newest row of a slot wins: a publication appends,
-            # so two publications of one revision leave two rows and the later
-            # one is the committed content.
-            if best is None or revision >= best["revision"]:
+            # A publication appends, so two publications of one revision leave
+            # two rows in the slot. The earlier row wins the tie: a publication
+            # held up at the store cannot displace one that already landed.
+            if best is None or revision > best["revision"]:
                 best = {"revision": revision, "content": content}
         return best
 
@@ -596,10 +596,11 @@ class ArtifactManager:
 
         The slot holding revision ``revision - 2`` is pruned afterwards, and
         only when a re-read shows it still holds a revision that far behind.
-        Phoenix has no compare-and-set, so two publications that overlap are
-        last-write-wins within one slot; because no publication deletes the
-        slot it writes, and none deletes a slot a re-read showed carrying a
-        newer revision, readers resolve a complete revision throughout.
+        Phoenix has no compare-and-set, so two publications that take the same
+        revision both land in one slot and the one that landed first is served;
+        because no publication deletes the slot it writes, and none deletes a
+        slot a re-read showed carrying a newer revision, readers resolve a
+        complete revision throughout.
 
         Args:
             kind: Category (e.g. ``model``, ``checkpoint``, ``embeddings``).

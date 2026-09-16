@@ -142,12 +142,12 @@ def _fixed_artifact_datetime(monkeypatch):
 
 
 def _served_contents(store: _InMemoryDatasetStore, base_name: str) -> list[str]:
-    """Contents of the greatest published revision across a blob's two slots."""
+    """Contents of the greatest published revision across a blob's ring slots."""
     rows = [
         row
-        for parity in (0, 1)
-        if f"{base_name}--r{parity}" in store.datasets
-        for row in store.datasets[f"{base_name}--r{parity}"].to_dict("records")
+        for slot in range(_BLOB_RING_SLOTS)
+        if f"{base_name}--r{slot}" in store.datasets
+        for row in store.datasets[f"{base_name}--r{slot}"].to_dict("records")
     ]
     top = max(int(row["blob_revision"]) for row in rows)
     return [row["content"] for row in rows if int(row["blob_revision"]) == top]
