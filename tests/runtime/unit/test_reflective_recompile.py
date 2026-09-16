@@ -213,6 +213,7 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
 class TestReflectiveBranch:
     @pytest.mark.asyncio
     async def test_all_failure_summary_compiles_and_serves(self, monkeypatch):
+        import dspy
         from dspy.teleprompt.gepa.gepa import ScoreWithFeedback
 
         _patch_rules(
@@ -287,9 +288,13 @@ class TestReflectiveBranch:
         assert gate_calls[0]["agent_type"] == "summarizer_agent"
         published = json.loads(gate_calls[0]["candidate_prompts"]["__dspy_module__"])
         assert list(gate_calls[0]["candidate_prompts"]) == ["__dspy_module__"]
-        assert published == json.loads(json.dumps(fake_gepa.module.dump_state()))
+        assert published == {
+            "dspy_version": dspy.__version__,
+            "module": "cogniverse_agents.summarizer_agent.SummarizationModule",
+            "state": json.loads(json.dumps(fake_gepa.module.dump_state())),
+        }
         assert (
-            published["summarizer.predict"]["signature"]["instructions"]
+            published["state"]["summarizer.predict"]["signature"]["instructions"]
             == "Reflective: avoid the failing output."
         )
         assert gate_calls[0]["serve_versioned"] is True

@@ -361,18 +361,32 @@ class TestTriggeredCompileServesThroughOverlay:
     async def test_compiled_prompts_become_active_and_served(
         self, artifact_manager: ArtifactManager
     ):
-        from types import SimpleNamespace
+        import json
 
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            COMPILED_MODULE_PROMPT_KEY,
+            load_compiled_module_state,
+        )
         from cogniverse_runtime.optimization_cli import _serve_compiled_prompts
 
-        predictor = SimpleNamespace(
-            signature=SimpleNamespace(
-                instructions="Optimized: prioritize entity matches."
-            ),
-            demos=[],
-        )
-        compiled = SimpleNamespace(named_predictors=lambda: [("predict", predictor)])
+        def _compiled(instructions: str) -> SearchOptimizationModule:
+            module = SearchOptimizationModule()
+            for _, predictor in module.named_predictors():
+                predictor.signature = predictor.signature.with_instructions(
+                    instructions
+                )
+            return module
 
+        def _instructions(payload: str) -> list[str]:
+            state = json.loads(payload)["state"]
+            return [
+                entry["signature"]["instructions"]
+                for entry in state.values()
+                if isinstance(entry, dict) and "signature" in entry
+            ]
+
+        compiled = _compiled("Optimized: prioritize entity matches.")
         served = await _serve_compiled_prompts(
             artifact_manager,
             "search",
@@ -388,24 +402,29 @@ class TestTriggeredCompileServesThroughOverlay:
         assert served["promoted"] is True
 
         # The dispatcher-side read: any request seed now serves the compiled
-        # instructions from the ACTIVE artefact, keyed by the predictor
-        # attribute the overlay swaps on SearchOptimizationModule.
+        # module state from the ACTIVE artefact, and a stock served module
+        # reconstructs exactly the object that was scored.
         result = await artifact_manager.load_for_request(
             "search_agent", request_seed="any-seed-1"
         )
         assert result["served_from"] == "active"
         assert result["version"] == served["version"]
-        assert result["prompts"] == {
-            "search_optimizer": "Optimized: prioritize entity matches."
-        }
+        assert list(result["prompts"]) == [COMPILED_MODULE_PROMPT_KEY]
+        payload = result["prompts"][COMPILED_MODULE_PROMPT_KEY]
+        assert json.loads(payload)["module"] == (
+            "cogniverse_agents.search_agent.SearchOptimizationModule"
+        )
+        assert _instructions(payload) == ["Optimized: prioritize entity matches."]
+        reconstructed = SearchOptimizationModule()
+        load_compiled_module_state(reconstructed, payload)
+        assert reconstructed.dump_state() == compiled.dump_state()
 
         # A second compile supersedes the first: new version served, previous
         # retired (rollback keeps every version restorable).
-        predictor.signature = SimpleNamespace(instructions="Optimized v2.")
         served2 = await _serve_compiled_prompts(
             artifact_manager,
             "search",
-            compiled,
+            _compiled("Optimized v2."),
             baseline_score=0.40,
             candidate_score=0.90,
             min_improvement=0.05,
@@ -416,15 +435,17 @@ class TestTriggeredCompileServesThroughOverlay:
             "search_agent", request_seed="any-seed-2"
         )
         assert result2["served_from"] == "active"
-        assert result2["prompts"] == {"search_optimizer": "Optimized v2."}
+        assert list(result2["prompts"]) == [COMPILED_MODULE_PROMPT_KEY]
+        assert _instructions(result2["prompts"][COMPILED_MODULE_PROMPT_KEY]) == [
+            "Optimized v2."
+        ]
 
         # A LOSING compile must never touch what is served: the gate rejects
         # it, no new version exists, and the overlay still serves v2.
-        predictor.signature = SimpleNamespace(instructions="Optimized v3 (worse).")
         served3 = await _serve_compiled_prompts(
             artifact_manager,
             "search",
-            compiled,
+            _compiled("Optimized v3 (worse)."),
             baseline_score=0.90,
             candidate_score=0.50,
             min_improvement=0.05,
@@ -436,4 +457,7 @@ class TestTriggeredCompileServesThroughOverlay:
             "search_agent", request_seed="any-seed-3"
         )
         assert result3["served_from"] == "active"
-        assert result3["prompts"] == {"search_optimizer": "Optimized v2."}
+        assert result3["version"] == served2["version"]
+        assert _instructions(result3["prompts"][COMPILED_MODULE_PROMPT_KEY]) == [
+            "Optimized v2."
+        ]
