@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
 import dspy
+from dspy.utils.exceptions import AdapterParseError
 from pydantic import BaseModel, Field
 
 from cogniverse_agents._confidence import parse_confidence
@@ -265,12 +266,15 @@ class ProfileSelectionModule(dspy.Module):
         """Select optimal profile using LLM reasoning"""
         try:
             result = self.selector(query=query, available_profiles=available_profiles)
+        except AdapterParseError:
+            # The LM named no profile. A keyword guess presented with the
+            # same shape and a 0.5 confidence is a fabricated selection.
+            raise
         except Exception as e:
             logger.warning(f"Profile selection failed: {e}, using fallback")
             return self._fallback_selection(query, available_profiles)
-        # DSPy silently emits None for unparseable output fields on smaller
-        # local models. Route through the heuristic fallback when any
-        # required field is missing so downstream schema validation holds.
+        # An adapter that leaves a required field empty rather than raising
+        # routes through the heuristic so downstream schema validation holds.
         if not result.selected_profile or not result.modality:
             logger.warning("Profile selection produced empty fields, using fallback")
             return self._fallback_selection(query, available_profiles)
