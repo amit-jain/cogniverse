@@ -18,7 +18,10 @@ run once, new replicas are started.
 
 1. Stop every replica that writes serving blobs — the runtime deployment and
    any optimization CronWorkflow in flight.
-2. Collect the tenant ids to migrate:
+2. Collect the tenant ids to migrate. `scripts/discover_tenants.py` prints the
+   tenants that have a routing configuration; any tenant it misses is named by
+   the migration's own `UNATTRIBUTED` lines, so the list can be corrected and
+   the run repeated.
 
    ```bash
    uv run python scripts/discover_tenants.py
