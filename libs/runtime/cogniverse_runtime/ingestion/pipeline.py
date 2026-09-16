@@ -607,16 +607,19 @@ class VideoIngestionPipeline:
         video_path: Path,
         keyframes_metadata: dict[str, Any],
         images: dict[str, Any],
+        output_dir: Path,
     ) -> None:
         """Write cached frame images back to this pod's disk on a cache hit.
 
         Downstream VLM/embedding open frame images from the ``path`` recorded
         in the metadata; on a hit the originating pod's files are absent, so
-        write them under this pod's keyframes dir and repoint ``path``.
+        write them under the run's own scratch directory and repoint
+        ``path``. Extraction writes there too, so the run releases the frames
+        it rehydrated and two runs of one source keep separate files.
         """
         import cv2
 
-        keyframes_dir = self.profile_output_dir / "keyframes" / video_path.stem
+        keyframes_dir = output_dir / "keyframes" / video_path.stem
         keyframes_dir.mkdir(parents=True, exist_ok=True)
         for kf in keyframes_metadata.get("keyframes", []):
             image = images.get(str(kf.get("frame_id")))
@@ -632,8 +635,10 @@ class VideoIngestionPipeline:
             kf["path"] = str(target)
             kf["filename"] = filename
 
-    async def get_cached_keyframes(self, video_path: Path) -> dict[str, Any] | None:
-        """Return cached keyframe metadata, rehydrating frame files to disk."""
+    async def get_cached_keyframes(
+        self, video_path: Path, output_dir: Path
+    ) -> dict[str, Any] | None:
+        """Return cached keyframe metadata, rehydrating frames into ``output_dir``."""
         if not self.cache:
             return None
         cached = await self.cache.get_keyframes(
@@ -644,7 +649,7 @@ class VideoIngestionPipeline:
         metadata, images = cached if isinstance(cached, tuple) else (cached, {})
         # cv2.imwrite re-encodes every frame back to this pod's disk — off loop.
         await asyncio.to_thread(
-            self._rehydrate_keyframe_images, video_path, metadata, images
+            self._rehydrate_keyframe_images, video_path, metadata, images, output_dir
         )
         return metadata
 
@@ -1177,6 +1182,13 @@ class VideoIngestionPipeline:
         the pod disk.
         """
         shutil.rmtree(scratch_dir, ignore_errors=True)
+        if scratch_dir.exists():
+            self.logger.warning(
+                "Job scratch %s still holds %d path(s) after release",
+                scratch_dir,
+                len(list(scratch_dir.rglob("*"))),
+            )
+            return
         self.logger.debug("Released job scratch %s", scratch_dir)
 
     def _prepare_base_results(

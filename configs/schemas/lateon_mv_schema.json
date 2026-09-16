@@ -40,6 +40,27 @@
         "index": "enable-bm25"
       },
       {
+        "name": "chunk_index",
+        "type": "int",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "chunk_count",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "chunk_start",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "chunk_end",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
         "name": "creation_timestamp",
         "type": "long",
         "indexing": ["summary", "attribute"],
@@ -222,6 +243,9 @@
   "document_mapping": {
     "id": "text_id",
     "title": "title",
+    "metadata_fields": {
+      "document_id": "text_id"
+    },
     "text_content": "full_text",
     "content_id": "source_id",
     "created_at": "creation_timestamp",

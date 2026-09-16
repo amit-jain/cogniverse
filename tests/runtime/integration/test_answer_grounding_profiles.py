@@ -41,13 +41,13 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
-    GROUNDING_SEARCH_RESERVE_S,
     GROUNDING_SEARCH_TIMEOUT_KEY,
     GROUNDING_SEARCHED,
     GROUNDING_SEARCHED_DEGRADED,
     AgentDispatcher,
     AnswerGroundingUnavailable,
     GroundingPlan,
+    dispatched_query_rewrite_budget_s,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.memory_store import register_deployed_schema
@@ -139,7 +139,7 @@ def grounding_vespa():
         )
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
-        )._deploy_package(package)
+        )._deploy_package(lambda: package)
         manager.wait_for_application_ready(info)
         yield info
     finally:
@@ -460,9 +460,10 @@ CORPUS = (
     },
 )
 CORPUS_ID = "grounding_corpus"
-# The pipeline ids a fed segment "<corpus>_<document id>"; the search returns
-# that id, so the pins name what ingestion actually wrote.
-HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}" for entry in CORPUS)
+# The pipeline ids a fed window "<corpus>_<document id>_w<index>" and a hit
+# resolves to the window that matched, so the pins name what ingestion actually
+# wrote. Each corpus entry fits one window, which the feed result below pins.
+HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}_w0000" for entry in CORPUS)
 HARBOUR_QUERY = "silt accumulation across the tidal basin"
 BEEKEEPING_QUERY = "candy board feeding for overwintering colonies"
 
@@ -495,7 +496,7 @@ def retrieval_vespa():
         )
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
-        )._deploy_package(package)
+        )._deploy_package(lambda: package)
         manager.wait_for_application_ready(info)
         yield info
     finally:
@@ -888,6 +889,12 @@ class TestEnsembleFanOutCost:
 
         with _stub_encoder_service(delay_s=self.THIRD_LEG_DELAY_S) as stub:
             delayed = _dispatcher_with_colpali_at(retrieval_vespa, pylate_server, stub)
+            # The legs it is compared against are timed warm, so this one is
+            # too: the first call builds this dispatcher's search agents and
+            # encoder clients.
+            await delayed._resolve_answer_search_results(
+                HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+            )
             started = time.perf_counter()
             grounding = await delayed._resolve_answer_search_results(
                 HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
@@ -947,7 +954,12 @@ REWRITE_QUERY = "what did the survey say about silt in the tidal basin"
 REWRITE_QUERY_SINGLE_COST = "which berth needs its sediment removed before winter"
 REWRITE_QUERY_ENSEMBLE_COST = "how much silt did the basin survey record"
 REWRITE_QUERY_NO_LM = "silt in the northern berth before the winter season"
-GROUNDING_REWRITE_BUDGET_S = SHIPPED_GROUNDING_BUDGET_S - GROUNDING_SEARCH_RESERVE_S
+# The bound the dispatcher hands the rewrite out of the shipped budget: the
+# measured rewrite ceiling, capped by what the budget leaves after the
+# retrieval reserve.
+GROUNDING_REWRITE_BUDGET_S = dispatched_query_rewrite_budget_s(
+    SHIPPED_GROUNDING_BUDGET_S
+)
 
 
 def _counting_test_lm():

@@ -194,3 +194,64 @@ def test_connection_refusal_includes_endpoint_without_credential():
     )
     assert "Connection refused" in message
     assert token not in message
+
+
+def _audio_generator(clap_url, tmp_path):
+    """The production embedding generator for an audio profile bound to CLAP."""
+    import logging
+
+    from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (  # noqa: E501
+        EmbeddingGeneratorImpl,
+    )
+
+    generator = object.__new__(EmbeddingGeneratorImpl)
+    generator.logger = logging.getLogger("test_clap_contract")
+    generator.profile_config = {
+        "embedding_model": "laion/clap-htsat-unfused",
+        "clap_endpoint_url": clap_url,
+    }
+    generator.colbert_model = _UnreachedEncoder()
+    generator.model_name = "lightonai/LateOn"
+    fed = []
+    generator._feed_documents = lambda docs, errors=None: (fed.extend(docs), len(docs))[
+        1
+    ]
+    return generator, fed
+
+
+class _UnreachedEncoder:
+    """Stands in for the semantic encoder the acoustic failure precedes."""
+
+    def encode(self, texts, is_query=False):
+        raise AssertionError("semantic encoding must not run after CLAP fails")
+
+    def text_windows(self, texts):
+        raise AssertionError("windowing must not run after CLAP fails")
+
+
+def test_configured_clap_outage_fails_the_audio_document(tmp_path):
+    """A profile that binds clap_embed indexes no audio document without it."""
+    refused_url = f"http://127.0.0.1:{_free_port()}"
+    generator, fed = _audio_generator(refused_url, tmp_path)
+    clip = tmp_path / "clip.wav"
+    clip.write_bytes(b"RIFF")
+
+    result = generator._process_audio_segments(
+        video_data={
+            "video_id": "outage",
+            "transcript": {"full_text": "a bell rings twice"},
+        },
+        segments=[{"path": str(clip), "audio_id": "outage", "filename": "clip.wav"}],
+    )
+
+    assert (
+        result.total_documents,
+        result.documents_processed,
+        result.documents_fed,
+    ) == (1, 0, 0)
+    assert len(result.errors) == 1
+    assert result.errors[0].startswith(
+        f"Audio 0: CLAP request to {refused_url}/embed/audio failed: ConnectionError:"
+    )
+    assert "Connection refused" in result.errors[0]
+    assert fed == []
