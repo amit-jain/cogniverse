@@ -13,10 +13,26 @@ Tests validate:
 - A2A context isolation between conversations
 """
 
+import time
 import uuid
 
 import httpx
 import pytest
+
+from cogniverse_core.conversation import CONVERSATION_AGENT_NAME
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_HISTORY_LOADED,
+    CONVERSATION_SAVE_TIMEOUT_S,
+    AnswerGroundingUnavailable,
+)
+from tests.e2e.conftest import (
+    SAMPLE_DOCUMENT_TITLES,
+    TENANT_DEPLOY_TIMEOUT_S,
+    _ingest_sample_documents,
+    register_tenant_and_wait,
+    unique_id,
+)
+from tests.e2e.test_api_e2e import DOCUMENT_PROFILE, _deploy_profile_for_tenant
 
 RUNTIME = "http://localhost:33000"
 TENANT_ID = "flywheel_org:production"
@@ -290,3 +306,223 @@ class TestA2AProtocol:
         assert r_a["id"] != r_b["id"], (
             "Different conversations should have different task IDs"
         )
+
+
+@pytest.fixture(scope="module")
+def document_tenant():
+    """A tenant this module owns, serving the two committed caption documents."""
+    org_id = unique_id("a2a_convo")
+    tenant_id = f"{org_id}:t1"
+    with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+        created = client.post(
+            "/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": org_id.replace("_", "-"),
+                "created_by": "e2e",
+            },
+        )
+        assert created.status_code in (200, 201), created.text
+        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+        _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
+        seeded = _ingest_sample_documents(tenant_id=tenant_id)
+        assert set(seeded) == set(SAMPLE_DOCUMENT_TITLES), seeded
+        yield tenant_id
+
+
+def _conversation_rows(tenant_id: str, context_id: str) -> list[dict]:
+    """This context's stored turns, oldest first, straight out of Mem0.
+
+    Reads the partition ``ConversationStore`` writes into rather than the
+    dispatcher's own loader, so the assertion lands on the persisted row and
+    not on a re-render of it.
+    """
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        response = client.get(
+            f"/admin/tenant/{tenant_id}/memories",
+            params={"agent_name": CONVERSATION_AGENT_NAME, "limit": 200},
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"memories", "count"}, body
+    assert body["count"] == len(body["memories"]), body
+    rows = [
+        row
+        for row in body["memories"]
+        if row["metadata"].get("context_id") == context_id
+    ]
+    return sorted(rows, key=lambda row: float(row["metadata"]["seq"]))
+
+
+def _await_conversation_rows(
+    tenant_id: str, context_id: str, expected: int
+) -> list[dict]:
+    """Poll until the context holds ``expected`` rows, within the save budget.
+
+    The reply returns before the turns are persisted (the save runs on the
+    dispatcher's own chain), so the read has to wait for the write the way the
+    next turn would.
+    """
+    deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
+    rows: list[dict] = []
+    while time.monotonic() < deadline:
+        rows = _conversation_rows(tenant_id, context_id)
+        if len(rows) >= expected:
+            return rows
+        time.sleep(2.0)
+    return rows
+
+
+@pytest.mark.e2e
+class TestConversationHistoryStoresTheAnswer:
+    """A server-managed turn persists the answer the caller was given."""
+
+    def test_the_stored_assistant_turn_is_the_answer_not_the_status_line(
+        self, document_tenant
+    ):
+        context_id = f"e2e-convo-{uuid.uuid4().hex}"
+        query = "summarize what these documents say about washing dishes"
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            response = client.post(
+                "/agents/summarizer_agent/process",
+                json={
+                    "agent_name": "summarizer_agent",
+                    "query": query,
+                    "context": {"tenant_id": document_tenant},
+                    "context_id": context_id,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "success", body
+        assert body["agent"] == "summarizer_agent"
+        # The first turn of a fresh context reads no history, and says so.
+        assert body["conversation"] == {
+            "state": CONVERSATION_HISTORY_LOADED,
+            "turn_count": 0,
+            "reason": None,
+        }, body["conversation"]
+        # The two fields the persisted turn must not be confused for: the
+        # status line the dispatcher builds, and the rendered answer.
+        assert body["message"] == f"Generated summary for '{query}'", body["message"]
+        assert body["answer"] != body["message"], body["answer"]
+
+        rows = _await_conversation_rows(document_tenant, context_id, 2)
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+        ], rows
+        assert [row["metadata"]["type"] for row in rows] == [
+            "conversation",
+            "conversation",
+        ], rows
+        assert [row["metadata"]["session_id"] for row in rows] == [
+            context_id,
+            context_id,
+        ], rows
+        # The stored text is the store's own tagged form of the two turns:
+        # the query the caller sent and the answer it was handed back.
+        assert [row["memory"] for row in rows] == [
+            f"[ctx:{context_id}] [user] {query}",
+            f"[ctx:{context_id}] [assistant] {body['answer']}",
+        ], rows
+        assert f"[ctx:{context_id}] [assistant] {body['message']}" not in [
+            row["memory"] for row in rows
+        ], rows
+
+    def test_a_second_turn_reads_back_exactly_the_turns_the_first_one_left(
+        self, document_tenant
+    ):
+        context_id = f"e2e-convo-{uuid.uuid4().hex}"
+        first_query = "summarize what these documents say about washing dishes"
+        second_query = "summarize the same documents again"
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            first = client.post(
+                "/agents/summarizer_agent/process",
+                json={
+                    "agent_name": "summarizer_agent",
+                    "query": first_query,
+                    "context": {"tenant_id": document_tenant},
+                    "context_id": context_id,
+                },
+            )
+            assert first.status_code == 200, first.text
+            assert first.json()["conversation"] == {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 0,
+                "reason": None,
+            }
+
+            second = client.post(
+                "/agents/summarizer_agent/process",
+                json={
+                    "agent_name": "summarizer_agent",
+                    "query": second_query,
+                    "context": {"tenant_id": document_tenant},
+                    "context_id": context_id,
+                },
+            )
+
+        assert second.status_code == 200, second.text
+        body = second.json()
+        # The second turn waits for the first turn's save, so the count it
+        # reports is exactly the user + assistant pair the first turn wrote.
+        assert body["conversation"] == {
+            "state": CONVERSATION_HISTORY_LOADED,
+            "turn_count": 2,
+            "reason": None,
+        }, body["conversation"]
+
+        rows = _await_conversation_rows(document_tenant, context_id, 4)
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ], rows
+        assert [row["memory"] for row in rows][2] == (
+            f"[ctx:{context_id}] [user] {second_query}"
+        ), rows
+        assert [row["memory"] for row in rows][3] == (
+            f"[ctx:{context_id}] [assistant] {body['answer']}"
+        ), rows
+
+
+@pytest.mark.e2e
+class TestAFailedTurnPersistsNoAnswer:
+    """A turn that never produced an answer leaves no assistant turn behind."""
+
+    def test_a_grounding_failure_stores_no_turn_at_all(self, document_tenant):
+        context_id = f"e2e-convo-{uuid.uuid4().hex}"
+        session_id = f"e2e-grounding-{uuid.uuid4().hex}"
+        missing_profile = f"absent_profile_{uuid.uuid4().hex[:8]}"
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            response = client.post(
+                "/agents/summarizer_agent/process",
+                json={
+                    "agent_name": "summarizer_agent",
+                    "query": "summarize what these documents say about washing dishes",
+                    "context": {"tenant_id": document_tenant},
+                    "context_id": context_id,
+                    "session_id": session_id,
+                    "profiles": [missing_profile],
+                },
+            )
+
+        # The grounding search cannot run, so the turn fails; it does not
+        # answer from the query alone and it does not reach the save.
+        assert response.status_code == 500, response.text
+        assert response.json() == {
+            "detail": (
+                f"Agent 'summarizer_agent' failed with "
+                f"{AnswerGroundingUnavailable.__name__} "
+                f"(request_id={session_id}). See runtime logs for detail."
+            )
+        }, response.json()
+
+        rows = _await_conversation_rows(document_tenant, context_id, 1)
+        assert rows == [], rows
