@@ -256,13 +256,9 @@ async def test_a_failing_request_does_not_take_a_concurrent_one_with_it(runtime)
     ]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("query", "expected"), [("all-failed", "failed"), ("mixed", "partial")]
-)
-async def test_the_a2a_consumer_carries_the_same_status(runtime, query, expected):
+async def _a2a_final_event(runtime, query: str):
+    """Drive the A2A executor and return the task's final status event."""
     from a2a.server.events import EventQueue
-    from a2a.utils import get_message_text
 
     from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 
@@ -280,9 +276,41 @@ async def test_the_a2a_consumer_carries_the_same_status(runtime, query, expected
     event = await queue.dequeue_event()
     while not event.final:
         event = await queue.dequeue_event()
+    return event
 
+
+@pytest.mark.asyncio
+async def test_a_failed_orchestration_is_a_failed_a2a_task(runtime):
+    """No step answered, so the task ends failed and carries no answer."""
+    from a2a.types import TaskState
+    from a2a.utils import get_message_text
+
+    event = await _a2a_final_event(runtime, "all-failed")
+
+    assert event.status.state is TaskState.failed
+    assert json.loads(get_message_text(event.status.message)) == {
+        "type": "error",
+        "agent": "orchestrator_agent",
+        "error_type": "NoAnswerError",
+        "message": (
+            "Agent 'orchestrator_agent' failed with NoAnswerError. "
+            "See runtime logs for detail."
+        ),
+    }
+    assert runtime.memory_writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_partial_orchestration_carries_its_answer_to_a2a(runtime):
+    """A partial run answered, so it ends in the state an answered run ends in."""
+    from a2a.types import TaskState
+    from a2a.utils import get_message_text
+
+    event = await _a2a_final_event(runtime, "mixed")
+
+    assert event.status.state is TaskState.input_required
     payload = json.loads(get_message_text(event.status.message))
-    assert payload["status"] == expected
-    assert payload["orchestration_result"]["final_output"]["status"] == expected
-    assert ("answer" in payload) is (expected == "partial")
+    assert payload["status"] == "partial"
+    assert payload["orchestration_result"]["final_output"]["status"] == "partial"
+    assert payload["answer"] == "{'status': 'success', 'answer': 'first:mixed'}"
     assert runtime.memory_writes == []
