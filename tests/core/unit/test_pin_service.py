@@ -52,12 +52,20 @@ class FakeManager:
     def delete_memory(self, *, memory_id, tenant_id, agent_name):
         return self.store.pop(memory_id, None) is not None
 
-    def get_all_memories(self, *, tenant_id, agent_name, limit):
+    def get_all_memories(
+        self,
+        *,
+        tenant_id,
+        agent_name,
+        include_archived=False,
+        filters=None,
+        limit,
+    ):
         # ``limit`` is required, and recorded: the pin enumeration must walk
         # the whole partition, and a bounded page reads a pinned memory as
         # unpinned.
         self.get_all_limits.append(limit)
-        return [
+        rows = [
             {"id": mid, "memory": v["content"], "metadata": v["metadata"]}
             for mid, v in self.store.items()
             if v["agent_name"] == agent_name and v["tenant_id"] == tenant_id
@@ -423,6 +431,29 @@ class TestPinRecordIsolation:
         )
         assert len(pin_rows) == 1
         assert pin_rows[0]["metadata"]["kind"] == PIN_RECORD_KIND
+
+    def test_list_pins_sees_past_the_default_page(self, manager, registry):
+        """Maintenance deletes the target of any pin it cannot list, so the
+        listing reads the whole partition rather than the newest page."""
+        service = PinService(manager, registry)
+        expected = []
+        for index in range(105):
+            tid = manager.add_memory(
+                content=f"payload-{index}",
+                tenant_id="t1",
+                agent_name="search_agent",
+                metadata={"kind": "external_doc"},
+            )
+            service.pin(
+                target_memory_id=tid,
+                target_kind="external_doc",
+                pinned_by=Pinnable.TENANT_ADMIN,
+                actor_id="tadm",
+                tenant_id="t1",
+            )
+            expected.append(tid)
+        listed = [record.target_memory_id for record in service.list_pins("t1")]
+        assert sorted(listed) == sorted(expected)
 
 
 class TestPinStorageFailure:

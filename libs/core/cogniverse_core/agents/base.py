@@ -574,6 +574,42 @@ def _field_text(raw: str, adapter: Any) -> str:
     return raw.lstrip()
 
 
+def _require_streamed_output(
+    module: Any, adapter: Any, prediction: Any, output_field: str, lm_response: str
+) -> None:
+    """Refuse a streamed prediction that carries no value for its own field.
+
+    Streaming assembles the prediction from the token stream, so a response
+    the adapter could not turn into the field leaves it unset instead of
+    raising. That is the same incomplete generation, and it reaches the
+    caller as the same error.
+    """
+    from cogniverse_foundation.dspy import LMOutputIncomplete
+
+    value = getattr(prediction, output_field, None)
+    if value is not None and (not isinstance(value, str) or value.strip()):
+        return
+    predictor = next(iter(module.predictors()), None)
+    signature = getattr(predictor, "signature", None)
+    if signature is None:
+        raise ValueError(
+            f"Streamed module {type(module).__name__} produced no {output_field} "
+            "and declares no signature to name what it should have produced"
+        )
+    produced = {
+        name: field
+        for name, field in prediction.toDict().items()
+        if field is not None and (not isinstance(field, str) or field.strip())
+    }
+    raise LMOutputIncomplete(
+        adapter_name=type(adapter).__name__,
+        signature=signature,
+        lm_response=lm_response,
+        missing_fields=(output_field,),
+        parsed_result=produced,
+    )
+
+
 class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
     """
     Generic type-safe agent base class with streaming support.
@@ -902,6 +938,9 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                     prediction = await _within_deadline(
                         deadline, _call_in_lm_executor(call_module, **kwargs)
                     )
+                _require_streamed_output(
+                    call_module, adapter, prediction, output_field, raw
+                )
                 return prediction
             else:
                 # module(...) not module.forward(...): forward bypasses DSPy's

@@ -149,6 +149,30 @@ class TestProfileSelectionModule:
         assert result.query_intent == "video_search"
         assert result.selected_profile in ["video_colpali_base", "text_bge_base"]
 
+    def test_incomplete_generation_is_not_answered_with_a_keyword_guess(self):
+        """The LM named no profile. The heuristic selection carries the same
+        shape and a 0.5 confidence, so it reads as a real choice — the turn
+        ends as the generation error instead."""
+        from cogniverse_foundation.dspy import LenientJSONAdapter, LMOutputIncomplete
+
+        signature = dspy.Signature("query -> selected_profile, modality")
+        try:
+            LenientJSONAdapter().parse(signature, '{"modality": "video"}')
+        except LMOutputIncomplete as incomplete:
+            raised = incomplete
+        else:
+            raise AssertionError("the adapter accepted a selection with no profile")
+
+        module = ProfileSelectionModule()
+        module.selector = Mock(side_effect=raised)
+
+        with pytest.raises(LMOutputIncomplete) as error:
+            module.forward(
+                query="Show me videos about cats",
+                available_profiles="video_colpali_base, text_bge_base",
+            )
+        assert error.value.missing_fields == ("selected_profile",)
+
     def test_fallback_image_detection(self):
         """Test fallback detects image queries"""
         module = ProfileSelectionModule()
