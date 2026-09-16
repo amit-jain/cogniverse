@@ -79,7 +79,7 @@ def synthesis_client(captured_inputs):
             plan_steps=[],
             plan_reasoning="stub",
             agent_results={},
-            final_output={"answer": "stub"},
+            final_output={"status": "success", "answer": "stub"},
         )
 
     # Patch the orchestrator's _process_impl so we don't need a real
