@@ -123,9 +123,9 @@ def sample_audio_bearing_path(temp_dir):
     container = av.open(str(audio_path), "w", format="wav")
     stream = container.add_stream("pcm_s16le", rate=16000)
     stream.layout = "mono"
-    samples = (
-        np.sin(2 * np.pi * 440 * np.arange(16000) / 16000) * 12000
-    ).astype(np.int16)
+    samples = (np.sin(2 * np.pi * 440 * np.arange(16000) / 16000) * 12000).astype(
+        np.int16
+    )
     frame = av.AudioFrame.from_ndarray(
         samples.reshape(1, -1), format="s16", layout="mono"
     )
