@@ -447,3 +447,67 @@ def test_reflective_metric_runs_through_concurrent_dspy_evaluate():
         "alpha beta",
         "gamma delta",
     ]
+
+
+def test_reflective_compile_drives_the_metric_through_a_real_gepa_run(monkeypatch):
+    """GEPA's own adapter, not a direct call, decides the metric's arity.
+
+    A real ``dspy.GEPA.compile`` of the served summarizer module is run here, so
+    an arity regression inside GEPA — the shape that produced 94 TypeErrors —
+    fails this test rather than surviving a parametrized direct call.
+    """
+    import dspy
+    from dspy.utils.dummies import DummyLM
+
+    from cogniverse_runtime.optimization_cli import (
+        _reflective_compile,
+        _reflective_metric,
+    )
+
+    arities: list[int] = []
+    real_factory = _reflective_metric
+
+    def recording_factory(agent_name):
+        metric = real_factory(agent_name)
+
+        def recorded(*args, **kwargs):
+            arities.append(len(args) + len(kwargs))
+            return metric(*args, **kwargs)
+
+        return recorded
+
+    monkeypatch.setattr(optimization_cli, "_reflective_metric", recording_factory)
+
+    rows = [
+        {
+            "query": f"describe clip {index}",
+            "output": json.dumps({"summary": f"stale summary {index}"}),
+        }
+        for index in range(3)
+    ]
+    # The candidate reproduces a recorded failing summary, so the metric scores
+    # below 1.0 and GEPA runs its reflective mutation — the path that calls the
+    # metric with five positional arguments.
+    lm = DummyLM(
+        [
+            {
+                "summary": "stale summary 0",
+                "key_points": "[]",
+                "confidence_score": "0.9",
+                "reasoning": "n/a",
+                "improved_instruction": "Summarize the clip without repeating "
+                "the recorded failing summary.",
+            }
+        ]
+        * 80
+    )
+
+    with dspy.context(lm=lm):
+        compiled = _reflective_compile("summary", rows, lm, max_metric_calls=6)
+
+    from cogniverse_agents.summarizer_agent import SummarizationModule
+
+    assert isinstance(compiled, SummarizationModule)
+    # Every call GEPA made reached the metric; none raised TypeError, and GEPA
+    # used both the evaluation shape and the five-argument feedback shape.
+    assert arities == [2, 2, 2, 3, 3, 3, 5, 5, 5, 2, 2, 2]
