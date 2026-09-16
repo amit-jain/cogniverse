@@ -2137,6 +2137,8 @@ class AgentDispatcher:
             agent = await self._build_generic_agent(
                 agent_name, tenant_id, agent_cls, deps_cls
             )
+            # Re-fetch the per-tenant dict in case the tenant was LRU-evicted
+            # during the build's awaits.
             cache.get_or_set(tenant_id, dict)[agent_name] = _GenericAgentEntry(
                 agent=agent, loaded_at=time.monotonic()
             )
