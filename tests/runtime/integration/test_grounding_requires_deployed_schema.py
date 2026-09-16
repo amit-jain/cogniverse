@@ -128,7 +128,7 @@ def deploy_vespa():
         )
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
-        )._deploy_package(package)
+        )._deploy_package(lambda: package)
         manager.wait_for_application_ready(info)
         yield info
     finally:
