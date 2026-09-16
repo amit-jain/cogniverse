@@ -34,7 +34,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Mapping
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -1420,20 +1420,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Cogniverse Runtime shut down successfully")
 
 
-# Create FastAPI app
 # Public URL prefix the ingress publishes this runtime under (the chart
-# derives it from the ingress rules). Starlette strips it from a request
-# that carries it and leaves an in-cluster request on the Service path
-# alone, so one value serves both entry points and the generated docs and
-# OpenAPI URLs point at the public prefix.
-ROOT_PATH = os.environ.get("COGNIVERSE_ROOT_PATH", "")
+# derives it from the ingress rules).
+ROOT_PATH = os.environ.get("COGNIVERSE_ROOT_PATH", "").rstrip("/")
 
+
+class PublicPrefix:
+    """Resolve the ASGI root path from the prefix each request carries.
+
+    The ingress publishes the runtime under a public prefix and forwards the
+    path unchanged; in-cluster callers reach the Service on the bare path.
+    Routers and mounted sub-apps alike resolve their routes against
+    ``root_path``, so it names the prefix present on this request and nothing
+    else, and the generated docs and OpenAPI URLs follow the same entry point.
+    """
+
+    def __init__(self, app, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope, receive, send):
+        if self.prefix and scope["type"] in ("http", "websocket"):
+            path = scope["path"]
+            carried = path == self.prefix or path.startswith(self.prefix + "/")
+            scope = {**scope, "root_path": self.prefix if carried else ""}
+        await self.app(scope, receive, send)
+
+
+# Create FastAPI app
 app = FastAPI(
     title="Cogniverse Runtime",
     description="Multi-agent AI platform for content intelligence",
     version="1.0.0",
     lifespan=lifespan,
-    root_path=ROOT_PATH,
 )
 
 # Add CORS middleware
@@ -1444,6 +1463,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(PublicPrefix, prefix=ROOT_PATH)
 
 
 def register_degraded_search_handler(app: FastAPI) -> None:
@@ -1490,14 +1511,15 @@ if os.environ.get("REDIS_URL"):
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
     """Root endpoint with API information"""
+    prefix = request.scope.get("root_path", "")
     return {
         "service": "Cogniverse Runtime",
         "version": "1.0.0",
         "description": "Multi-agent AI platform for content intelligence",
-        "docs": f"{ROOT_PATH}/docs",
-        "health": f"{ROOT_PATH}/health",
+        "docs": f"{prefix}/docs",
+        "health": f"{prefix}/health",
     }
 
 
