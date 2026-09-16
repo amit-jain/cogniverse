@@ -657,7 +657,9 @@ async def test_disabled_visuals_rejected_before_stream(
                     {
                         "tenant_id": "test:unit",
                         "attachments": ["http://127.0.0.1:29071/photo.png"],
-                        "search_results": [],
+                        "search_results": [
+                            {"id": "hit-1", "title": "Eiffel Tower", "score": 1.0}
+                        ],
                     },
                 )
             ]
