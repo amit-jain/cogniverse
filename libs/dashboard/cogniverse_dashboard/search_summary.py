@@ -28,8 +28,16 @@ def render_search_summary() -> None:
 
     # Imported lazily so this module stays importable without running app.py.
     from cogniverse_dashboard.app import display_streaming_result
+    from cogniverse_dashboard.tenant_gate import require_result_tenant
 
-    results_data = st.session_state.current_search_results
+    try:
+        results_data = require_result_tenant(
+            st.session_state.current_search_results,
+            st.session_state["current_tenant"],
+        )
+    except ValueError as exc:
+        st.error(f"❌ {exc}")
+        return
     result_descriptions = [
         f"{item.get('video_id', 'unknown')}: "
         f"{item.get('description', 'no description')}"

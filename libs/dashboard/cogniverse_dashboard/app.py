@@ -2540,6 +2540,10 @@ with main_tabs[10]:
                         "search_mode": final_data.get("search_mode", ""),
                         "profile": final_data.get("profile"),
                         "profiles": final_data.get("profiles") or [],
+                        # Ensemble legs the agent could not run, as
+                        # {profile, reason}. A partial ensemble is not a
+                        # complete result and says so.
+                        "degraded_profiles": final_data.get("degraded_profiles") or [],
                         "results": results_list,
                         "timestamp": _captured_at,
                         # The search span's id — the Save Annotation button
@@ -2569,14 +2573,16 @@ with main_tabs[10]:
             st.error(f"🔧 Check runtime is running at {RUNTIME_URL}")
 
     # Display results from session state
-    if (
-        hasattr(st.session_state, "current_search_results")
-        and st.session_state.current_search_results
-    ):
-        _stored_search = require_result_tenant(
-            st.session_state.current_search_results,
-            st.session_state["current_tenant"],
-        )
+    _stored_search = st.session_state.get("current_search_results")
+    if _stored_search:
+        try:
+            _stored_search = require_result_tenant(
+                _stored_search, st.session_state["current_tenant"]
+            )
+        except ValueError as exc:
+            st.error(f"❌ {exc}")
+            _stored_search = None
+    if _stored_search:
         results = _stored_search["results"]
 
         # Summary metrics — Results count, Latency, Profile. The e2e
@@ -2601,6 +2607,12 @@ with main_tabs[10]:
             )
 
         st.markdown(f"### 📊 Results ({_stored_search.get('search_mode') or 'search'})")
+
+        for _degraded in _stored_search.get("degraded_profiles") or []:
+            st.warning(
+                f"⚠️ Partial results: {_degraded['profile']} did not run "
+                f"({_degraded['reason']})"
+            )
 
         for i, result in enumerate(results):
             # SearchResult.to_dict() returns "score" (not "confidence"),
@@ -2690,7 +2702,7 @@ with main_tabs[10]:
                                     "result_id": i,
                                     "video_id": video_id,
                                     "relevance": relevance,
-                                    "timestamp": datetime.now().isoformat(),
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
                                 }
                                 existing = next(
                                     (
@@ -2721,13 +2733,13 @@ with main_tabs[10]:
     if st.button("📥 Export Annotations") and st.session_state.get(
         "search_annotations"
     ):
-        _exported_search = st.session_state.get("current_search_results") or {}
+        _exported_search = _stored_search or {}
         annotations = {
             "search_session": {
                 "tenant_id": st.session_state["current_tenant"],
                 "query": _exported_search.get("query", search_query),
                 "profile": _exported_search.get("profile"),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             "annotations": st.session_state.search_annotations,
         }

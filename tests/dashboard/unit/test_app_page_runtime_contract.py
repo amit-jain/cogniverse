@@ -64,6 +64,7 @@ class RuntimeRecorder:
     status_response_status: int = 200
     search_results: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     search_profile: str = "video_colqwen_omni_mv_chunk_30s"
+    search_degraded: List[Dict[str, str]] = field(default_factory=list)
     search_span_id: str = "0123456789abcdef"
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -112,7 +113,7 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
             )
         try:
             if recorder.upload_barrier is not None:
-                await recorder.upload_barrier.wait()
+                await asyncio.wait_for(recorder.upload_barrier.wait(), timeout=60)
         finally:
             with recorder.lock:
                 recorder.concurrent_uploads -= 1
@@ -154,6 +155,7 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
                 "query": body["params"]["message"]["parts"][0]["text"],
                 "search_mode": "single_profile",
                 "profile": recorder.search_profile,
+                "degraded_profiles": recorder.search_degraded,
                 "results": results,
                 "total_results": len(results),
                 "span_id": recorder.search_span_id,
@@ -498,14 +500,16 @@ def test_submission_reports_every_state_the_job_passes_through(runtime):
     assert outcome["documents_fed"] == 3
 
 
-def test_concurrent_uploads_through_the_shared_client_keep_their_own_jobs(runtime):
+def test_concurrent_uploads_through_the_shared_client_keep_their_own_tenants(runtime):
     """The dashboard process holds one pooled client for every interaction.
 
-    Two ingestions overlapping inside the runtime must come back with their
-    own job ids and their own counts; a client that serialised them would
-    never release the barrier.
+    Two ingestions for two tenants overlapping inside the runtime must come
+    back with their own job ids and their own counts, and each upload must
+    carry its own tenant; a client that serialised them would never release
+    the barrier.
     """
     second = "video_xclip_sv_chunk_6s"
+    tenants = {DEFAULT_PROFILE: "acme:a", second: "acme:b"}
     runtime.upload_barrier = asyncio.Barrier(2)
     runtime.status_script["ingest-0"] = [_complete(5, "clip_0", 2)]
     runtime.status_script["ingest-1"] = [_complete(9, "clip_1", 4)]
@@ -524,7 +528,7 @@ def test_concurrent_uploads_through_the_shared_client_keep_their_own_jobs(runtim
             content=VIDEO_BYTES,
             content_type="video/mp4",
             profile=profile,
-            tenant_id="acme:a",
+            tenant_id=tenants[profile],
             sleep=lambda _seconds: None,
         )
 
@@ -542,6 +546,7 @@ def test_concurrent_uploads_through_the_shared_client_keep_their_own_jobs(runtim
     assert sorted(runtime.job_for_profile) == sorted([DEFAULT_PROFILE, second])
     assert sorted(runtime.job_for_profile.values()) == ["ingest-0", "ingest-1"]
     assert sorted(runtime.status_polls) == ["ingest-0", "ingest-1"]
+    assert {row["profile"]: row["tenant_id"] for row in runtime.uploads} == tenants
     assert sorted(outcomes) == sorted([DEFAULT_PROFILE, second])
     for profile, outcome in outcomes.items():
         job = runtime.job_for_profile[profile]
@@ -577,7 +582,7 @@ def test_search_renders_one_result_list_for_the_single_executed_operation(
     app = _open_tenant(page, "acme:a")
     _run_search(app, "robots")
 
-    assert [m.label for m in app.multiselect] != []
+    assert "Select profiles to test" in [m.label for m in app.multiselect]
     assert "Ranking Strategies" not in [m.label for m in app.multiselect]
     assert "Processing Profile" not in [s.label for s in app.selectbox]
     assert runtime.searches[-1]["top_k"] == 5
@@ -595,7 +600,9 @@ def test_search_renders_one_result_list_for_the_single_executed_operation(
     stored = app.session_state["current_search_results"]
     assert stored["tenant_id"] == "acme:a"
     assert stored["profile"] == "video_colqwen_omni_mv_chunk_30s"
+    assert stored["degraded_profiles"] == []
     assert [r["document_id"] for r in stored["results"]] == ["doc-1", "doc-2"]
+    assert [w.value for w in app.warning if w.value.startswith("Partial results")] == []
     assert app.session_state["conversation_history"] == [
         {
             "query": "robots",
@@ -692,3 +699,96 @@ def test_two_sessions_on_different_tenants_never_see_each_others_results(page, r
     assert {m.label: m.value for m in first.metric}["Results"] == "1"
     assert {m.label: m.value for m in second.metric}["Results"] == "2"
     assert first.session_state["session_id"] != second.session_state["session_id"]
+
+
+def test_partially_failed_ensemble_is_marked_degraded_not_a_complete_result(
+    page, runtime
+):
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    runtime.search_degraded = [
+        {"profile": "video_xclip_sv_chunk_6s", "reason": "query encoder unavailable"}
+    ]
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+
+    assert app.session_state["current_search_results"]["degraded_profiles"] == [
+        {"profile": "video_xclip_sv_chunk_6s", "reason": "query encoder unavailable"}
+    ]
+    # Streamlit lifts a leading emoji out of the body into the icon slot.
+    assert [w.value for w in app.warning if w.value.startswith("Partial results")] == [
+        "Partial results: video_xclip_sv_chunk_6s did not run "
+        "(query encoder unavailable)"
+    ]
+
+
+def _tenant_id_boxes(app: AppTest):
+    return [box for box in app.text_input if box.label == "Tenant ID"]
+
+
+def test_the_config_tab_cannot_switch_the_tenant_behind_the_sidebar(page, runtime):
+    """The sidebar is the only tenant selector.
+
+    Its change detection drops the previous tenant's state and its gate
+    refuses an unregistered tenant. A second free-text box would move the
+    tenant-management, memory and A/B tabs past both.
+    """
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+
+    boxes = _tenant_id_boxes(app)
+    assert [box.value for box in boxes] == ["acme:a"]
+    assert [box.disabled for box in boxes] == [True]
+
+    boxes[0].set_value("acme:b").run()
+
+    assert [e.message for e in app.exception] == []
+    assert app.session_state["current_tenant"] == "acme:a"
+    assert app.session_state["active_tenant"] == "acme:a"
+    assert app.session_state["current_search_results"]["tenant_id"] == "acme:a"
+    assert [
+        item.value for item in app.info if item.value.startswith("Current tenant:")
+    ] == ["Current tenant: **acme:a**"]
+
+
+def test_a_result_landing_after_a_switch_is_refused_not_rendered(page, runtime):
+    """A search that completes after the switch writes under the old tenant.
+
+    The reset runs at switch time, so a late write repopulates the key; the
+    page refuses that record where it would render or export it, and every
+    other tab keeps working.
+    """
+    runtime.search_results["acme:a"] = [_result("doc-1", "video_a", 0.91)]
+    runtime.search_results["acme:b"] = []
+    app = _open_tenant(page, "acme:a")
+    _run_search(app, "robots")
+    inflight = app.session_state["current_search_results"]
+
+    _switch_tenant(app, "acme:b")
+    assert "current_search_results" not in app.session_state
+
+    app.session_state["current_search_results"] = inflight
+    app.run()
+
+    assert [e.message for e in app.exception] == []
+    assert [
+        e.value for e in app.error if e.value.startswith("Search result belongs")
+    ] == ["Search result belongs to acme:a, not acme:b"]
+    assert [m.value for m in app.markdown if m.value.startswith("### 📊 Results")] == []
+    assert "video_a" not in "".join(
+        str(m.value) for m in app.markdown if isinstance(m.value, str)
+    )
+    assert [b.label for b in app.button if b.label == "💾 Save Annotation"] == []
+    assert len([b for b in app.button if b.label == "🔍 Search"]) == 1
+    assert [box.value for box in _tenant_id_boxes(app)] == ["acme:b"]
+
+
+def test_tenant_switch_drops_the_previous_tenants_optimization_runs(page, runtime):
+    app = _open_tenant(page, "acme:a")
+    app.session_state["optimization_requests"] = [
+        {"tenant_id": "acme:a", "run": "opt-1"}
+    ]
+    _switch_tenant(app, "acme:b")
+
+    assert "optimization_requests" not in app.session_state
+    assert {m.label: m.value for m in app.metric}["Optimization Runs"] == "0"
