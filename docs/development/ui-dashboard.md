@@ -474,7 +474,7 @@ start_time = end_time - timedelta(hours=lookback_hours)
 
 async def fetch_spans():
     return await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}",
+        project=tenant_project_name(telemetry_manager, tenant_id),
         start_time=start_time,
         end_time=end_time,
     )
@@ -497,7 +497,7 @@ await provider.annotations.add_annotation(
     label=label,          # positive/negative/neutral, derived from rating
     score=float(rating),
     metadata=annotation_data,
-    project=f"cogniverse-{tenant_id}",
+    project=tenant_project_name(telemetry_manager, tenant_id),
 )
 ```
 
@@ -534,7 +534,9 @@ async def _build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_day
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
     spans_df = await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
+        project=tenant_project_name(telemetry_manager, tenant_id),
+        start_time=start_time,
+        end_time=end_time,
     )
     search_spans = _filter_search_spans(spans_df)
 
@@ -822,7 +824,9 @@ provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
 async def fetch_spans():
     return await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
+        project=tenant_project_name(telemetry_manager, tenant_id),
+        start_time=start_time,
+        end_time=end_time,
     )
 
 spans_df = run_async_in_streamlit(fetch_spans())
@@ -1078,7 +1082,7 @@ Memory 2 - Score: 0.856
 
 Tenant: production
 Lookback Period (hours): [24]
-# 📊 Querying spans from project: cogniverse-production-orchestration
+# 📊 Querying spans from project: cogniverse-production:production
 
 # Summary Metrics:
 Routing Accuracy: 86.0%
@@ -1112,7 +1116,7 @@ def get_phoenix_metrics(tenant_id, start_time, end_time):
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     analytics = PhoenixAnalytics()
-    project_name = f"cogniverse-{tenant_id}"
+    project_name = tenant_project_name(get_telemetry_manager(), tenant_id)
     # Expensive API call - get traces for the specified time range
     return analytics.get_traces(
         start_time=start_time,
@@ -1180,8 +1184,8 @@ try:
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     from datetime import datetime, timedelta
-    tenant_id = st.session_state.tenant_id
-    project_name = f"cogniverse-{tenant_id}"
+    tenant_id = st.session_state["current_tenant"]
+    project_name = tenant_project_name(get_telemetry_manager(), tenant_id)
     analytics = PhoenixAnalytics()
     # Get traces for the last 24 hours
     end_time = datetime.now()

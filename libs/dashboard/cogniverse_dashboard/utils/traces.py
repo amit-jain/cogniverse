@@ -14,6 +14,8 @@ from typing import Any
 
 import pandas as pd
 
+from cogniverse_dashboard.utils import tenant_project_name
+
 
 def fetch_tenant_traces(
     analytics: Any,
@@ -28,14 +30,16 @@ def fetch_tenant_traces(
     Extracted so the Analytics tab cannot forget the ``project_name`` — omitting
     it made get_traces query Phoenix's ``default`` project, so real tenant
     traffic showed "No traces found". The tenant is required, so the project is
-    always derived here.
+    always derived here, from the same telemetry config the producers use.
     """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
     return analytics.get_traces(
         start_time=start_time,
         end_time=end_time,
         operation_filter=operation_filter,
         limit=limit,
-        project_name=f"cogniverse-{tenant_id}",
+        project_name=tenant_project_name(get_telemetry_manager(), tenant_id),
     )
 
 
