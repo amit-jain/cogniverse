@@ -53,10 +53,7 @@ def telemetry_manager(phoenix_container):
     )
     manager = TelemetryManager(config)
     yield manager
-    try:
-        manager.shutdown()
-    except Exception:
-        pass
+    TelemetryManager.reset()
 
 
 @pytest.mark.asyncio
