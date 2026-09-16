@@ -3261,7 +3261,10 @@ class AgentDispatcher:
         self.consult_egress_policy("orchestrator_agent")
         self._verify_egress("orchestrator_agent", tenant_id)
 
-        from cogniverse_agents.orchestrator_agent import OrchestratorInput
+        from cogniverse_agents.orchestrator_agent import (
+            OrchestratorInput,
+            orchestration_status,
+        )
 
         # Cached per tenant: the agent, its WorkflowIntelligence corpus, and its
         # policy http client are built once and TTL-reloaded, not rebuilt per
@@ -3311,7 +3314,7 @@ class AgentDispatcher:
         )
         final_output = orchestration_result.get("final_output") or {}
         return {
-            "status": final_output.get("status", "success"),
+            "status": orchestration_status(final_output),
             "agent": "orchestrator_agent",
             "message": final_output.get("message")
             or f"Orchestrated '{query[:50]}' via A2A pipeline",
@@ -3878,13 +3881,6 @@ class AgentDispatcher:
             result = await agent.process(input_data)
 
         payload = result.model_dump()
-        if result.error:
-            return {
-                "status": "error",
-                "agent": "coding_agent",
-                "error": result.error,
-                "result": payload,
-            }
         if result.pending_tool_calls:
             return {
                 "status": "input_required",
@@ -3892,6 +3888,13 @@ class AgentDispatcher:
                 "message": "Workspace tool execution required",
                 "pending_tool_calls": result.pending_tool_calls,
                 "continuation_state": result.continuation_state,
+                "result": payload,
+            }
+        if not result.success:
+            return {
+                "status": "error",
+                "agent": "coding_agent",
+                "error": result.error,
                 "result": payload,
             }
 

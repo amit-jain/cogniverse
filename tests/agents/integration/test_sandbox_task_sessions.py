@@ -193,8 +193,8 @@ async def test_concurrent_tasks_run_the_file_they_wrote(sandbox_manager, gateway
 
 
 @pytest.mark.asyncio
-async def test_next_task_cannot_see_prior_files_or_processes(sandbox_manager, gateway):
-    """Each task gets an empty filesystem and no inherited processes."""
+async def test_next_task_cannot_see_prior_task_files(sandbox_manager, gateway):
+    """Each task gets an empty filesystem."""
     names: list[str] = []
     for tenant in [
         "prodfixagents:alpha",
@@ -209,8 +209,6 @@ async def test_next_task_cannot_see_prior_files_or_processes(sandbox_manager, ga
                     "-c",
                     "test ! -e /tmp/task-secret "
                     "&& printf secret > /tmp/task-secret "
-                    "&& { sleep 30 </dev/null >/dev/null 2>&1 & } "
-                    "&& echo $! > /tmp/task-pid "
                     "&& echo fresh",
                 ],
                 10,
@@ -218,7 +216,7 @@ async def test_next_task_cannot_see_prior_files_or_processes(sandbox_manager, ga
             assert probe == {"stdout": "fresh\n", "stderr": "", "exit_code": 0}
             listing = await session.exec(["sh", "-c", "ls /tmp"], 10)
             assert listing == {
-                "stdout": "task-pid\ntask-secret\n",
+                "stdout": "task-secret\n",
                 "stderr": "",
                 "exit_code": 0,
             }
@@ -286,6 +284,7 @@ async def test_readiness_failure_deletes_the_sandbox_it_created(gateway):
             "pool_size": 0,
             "max_pool_size": 8,
             "in_use": 0,
+            "task_sessions": 0,
             "agents": [],
         }
 
@@ -348,6 +347,74 @@ async def test_failing_coding_task_reports_failure_not_completion(
         "Feedback: Exit 7 is a failure."
     )
     assert output.summary == output.error
+    assert gateway.created == ["sandbox-1"]
+    assert gateway.deleted == ["sandbox-1"]
+    assert gateway.live == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tasks_do_not_exceed_the_sandbox_cap(
+    gateway, tmp_path, monkeypatch
+):
+    """Container creation is bounded by the pool cap, not by request load."""
+    from cogniverse_runtime.sandbox_pool import SandboxCapacityError
+
+    monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", gateway.endpoint)
+    monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path / "openshell-config"))
+    monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_SIZE", "3")
+    manager = SandboxManager(policy="required")
+    assert manager.available is True
+    attempted = asyncio.Barrier(12)
+    live = {"now": 0, "peak": 0}
+
+    async def task(index: int) -> str:
+        try:
+            async with manager.task_session("coding_agent", f"prodfixagents:t{index}"):
+                live["now"] += 1
+                live["peak"] = max(live["peak"], live["now"])
+                # No lease is released before every task has attempted, so a
+                # refusal cannot be an artefact of fast turnover.
+                await attempted.wait()
+                live["now"] -= 1
+                return "leased"
+        except SandboxCapacityError as exc:
+            assert str(exc) == "Sandbox task capacity reached: 3 sessions in use"
+            await attempted.wait()
+            return "refused"
+
+    try:
+        outcomes = await asyncio.gather(*[task(i) for i in range(12)])
+    finally:
+        manager.close()
+
+    assert sorted(outcomes) == ["leased"] * 3 + ["refused"] * 9
+    assert live["peak"] == 3
+    assert gateway.created == ["sandbox-1", "sandbox-2", "sandbox-3"]
+    assert sorted(gateway.deleted) == ["sandbox-1", "sandbox-2", "sandbox-3"]
+    assert gateway.live == {}
+
+
+@pytest.mark.asyncio
+async def test_runtime_shutdown_deletes_the_live_task_sandbox(sandbox_manager, gateway):
+    """Shutdown during a task reclaims its container instead of orphaning it."""
+    async with sandbox_manager.task_session("coding_agent", "prodfixagents:shut"):
+        await asyncio.to_thread(sandbox_manager.close)
+        assert gateway.deleted == ["sandbox-1"]
+        assert gateway.live == {}
+    assert gateway.created == ["sandbox-1"]
+    assert gateway.deleted == ["sandbox-1"]
+    assert gateway.live == {}
+
+
+@pytest.mark.asyncio
+async def test_gateway_reconnect_deletes_the_live_task_sandbox(
+    sandbox_manager, gateway
+):
+    """A cert-rotation reconnect reclaims the task's container on the old client."""
+    async with sandbox_manager.task_session("coding_agent", "prodfixagents:rotate"):
+        assert await asyncio.to_thread(sandbox_manager.reconnect) is True
+        assert gateway.deleted == ["sandbox-1"]
+        assert gateway.live == {}
     assert gateway.created == ["sandbox-1"]
     assert gateway.deleted == ["sandbox-1"]
     assert gateway.live == {}

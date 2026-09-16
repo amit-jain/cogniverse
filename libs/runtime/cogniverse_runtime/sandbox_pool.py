@@ -58,6 +58,17 @@ class SandboxPoolConfig:
         )
 
 
+class SandboxCapacityError(RuntimeError):
+    """Raised when every task-session slot is already taken."""
+
+
+@dataclass
+class _TaskLease:
+    """One task's claim on a sandbox slot, holding its session once created."""
+
+    session: Any = None
+
+
 @dataclass
 class _PoolEntry:
     """One slot in the pool: a session plus its last-used timestamp.
@@ -109,6 +120,11 @@ class SandboxSessionPool:
         # needed later (e.g. multiple sessions per agent for parallelism),
         # extend the value to a list.
         self._entries: dict[str, _PoolEntry] = {}
+        # Leases handed out by ``task_session``. They never enter
+        # ``_entries`` — a task owns its sandbox exclusively and the session
+        # is destroyed on release — so the pool tracks them here to hold them
+        # inside ``max_pool_size`` and to reclaim them in ``close_all``.
+        self._task_leases: list[_TaskLease] = []
         # Set by close_all and never cleared: a closed pool is being
         # discarded (shutdown or reconnect swap), so released sessions are
         # destroyed instead of re-pooled.
@@ -127,6 +143,7 @@ class SandboxSessionPool:
                 "pool_size": len(self._entries),
                 "max_pool_size": self._config.max_pool_size,
                 "in_use": sum(1 for e in self._entries.values() if e.in_use),
+                "task_sessions": len(self._task_leases),
                 "agents": list(self._entries.keys()),
             }
 
@@ -169,14 +186,31 @@ class SandboxSessionPool:
 
     @contextmanager
     def task_session(self):
-        """Own a fresh session until task completion, then destroy it."""
-        session = self._create_with_spans()
+        """Own a fresh session until task completion, then destroy it.
+
+        Raises ``SandboxCapacityError`` when ``max_pool_size`` task sessions
+        are already live: container creation is bounded by the pool's
+        capacity, not by request concurrency.
+        """
+        lease = _TaskLease()
+        with self._lock:
+            if len(self._task_leases) >= self._config.max_pool_size:
+                raise SandboxCapacityError(
+                    f"Sandbox task capacity reached: "
+                    f"{self._config.max_pool_size} sessions in use"
+                )
+            self._task_leases.append(lease)
         try:
-            yield session
+            lease.session = self._create_with_spans()
+        except BaseException:
+            self._release_task_lease(lease)
+            raise
+        try:
+            yield lease.session
         finally:
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("sandbox.delete"):
-                session.delete()
+            owed = self._release_task_lease(lease)
+            if owed is not None:
+                self._destroy_with_span(owed)
 
     def evict_idle(self, *, now: Optional[float] = None) -> int:
         """Destroy entries idle longer than ``max_idle_seconds``.
@@ -204,15 +238,16 @@ class SandboxSessionPool:
         return evicted
 
     def close_all(self) -> None:
-        """Destroy idle sessions now; drain checked-out ones on release.
+        """Destroy idle and task sessions now; drain checked-out ones.
 
         Called from runtime shutdown and from the reconnect path
-        (``_drop_stale_pool``), which can run while a coding exec still
-        holds a checked-out session — deleting that session here would tear
-        it out from under the exec mid-call. Instead, in-use sessions are
-        marked to drain and destroyed by ``_release`` when the exec
-        returns. The pool stays draining afterwards, so nothing is ever
-        re-pooled onto a closed pool.
+        (``_drop_stale_pool``), both of which close the client right after,
+        so anything left alive here is a container the gateway keeps
+        forever. A pooled session checked out by an in-flight exec is marked
+        to drain and destroyed by ``_release`` when the exec returns; a task
+        session outlives any single call, so it is destroyed here and its
+        owner's release skips the delete. The pool stays draining
+        afterwards, so nothing is ever re-pooled onto a closed pool.
         """
         with self._lock:
             self._draining = True
@@ -222,11 +257,17 @@ class SandboxSessionPool:
                     entry.drain = True
             for entry in idle:
                 self._entries.pop(entry.agent_type, None)
+            leased = [lease for lease in self._task_leases if lease.session]
+            self._task_leases = [
+                lease for lease in self._task_leases if not lease.session
+            ]
         # Destroy OUTSIDE the lock: session.delete() is an un-timed gateway
         # RPC — holding self._lock across it would block every
         # checkout/release behind a hung gateway.
         for entry in idle:
             self._destroy_session_quiet(entry.session)
+        for lease in leased:
+            self._destroy_session_quiet(lease.session)
 
     # --- internals --------------------------------------------------------
 
@@ -272,6 +313,19 @@ class SandboxSessionPool:
                 return new_entry
             self._entries[agent_type] = new_entry
             return new_entry
+
+    def _release_task_lease(self, lease: _TaskLease) -> Any:
+        """Drop ``lease`` and return the session still owed a delete.
+
+        ``None`` means ``close_all`` already took the lease and destroyed its
+        session, so the task must not delete it a second time.
+        """
+        with self._lock:
+            for index, held in enumerate(self._task_leases):
+                if held is lease:
+                    del self._task_leases[index]
+                    return lease.session
+        return None
 
     def _release(self, entry: _PoolEntry) -> None:
         with self._lock:
