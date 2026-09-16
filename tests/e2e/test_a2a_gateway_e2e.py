@@ -15,10 +15,21 @@ Requires live k3d-deployed runtime at http://localhost:33000.
 
 import hashlib
 import json
+import uuid
 
 import httpx
 import pytest
 
+from cogniverse_agents.orchestrator_agent import (
+    FAILED_STATUS,
+    FAILED_STEP_STATUSES,
+    PARTIAL_STATUS,
+    orchestration_status,
+)
+from cogniverse_runtime.harness_turn import (
+    TERMINAL_FAILURE_STATUSES,
+    NoAnswerError,
+)
 from tests.e2e.conftest import (
     DATA_ROOT,
     PHOENIX_URL,
@@ -32,6 +43,7 @@ from tests.e2e.conftest import (
     sample_audio_content_id,
     unique_id,
 )
+from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 from tests.e2e.test_api_e2e import (
     DOCUMENT_PROFILE,
     PROFILE,
@@ -942,6 +954,52 @@ class TestGatewayAgentThin:
         else:
             assert_orchestrated(data, query, gw)
 
+    def test_document_search_does_not_block_the_loop(self, seeded_search_tenant):
+        """The document route's memory write runs off the serving loop.
+
+        Every hit-producing document search writes a memory through Mem0's
+        extraction pass. Held on the API event loop that write stops the
+        replica answering anything for its duration, so liveness is polled
+        for the request's window and every poll must come back.
+        """
+        tenant_id, seeded_documents = seeded_search_tenant
+        query = "find PDF documents about washing dishes"
+        expected_titles = ("v_0BtHd6dvm78.txt", "v_-nl4G-00PtA.txt")
+
+        with LoopProbe() as probe:
+            with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+                response = client.post(
+                    "/agents/document_agent/process",
+                    json={
+                        "agent_name": "document_agent",
+                        "query": query,
+                        "context": {"tenant_id": tenant_id},
+                        "top_k": 5,
+                    },
+                )
+            served = probe.stop()
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "success", data
+        assert data["agent"] == "document_agent", data
+        results = data["results"]
+        # The tenant owns only the two seeded captions, so the route returns
+        # exactly those, in rank order.
+        assert data["results_count"] == len(results), data
+        assert [result["title"] for result in results] == list(expected_titles), results
+        assert [result["document_id"] for result in results] == [
+            seeded_documents[title] for title in expected_titles
+        ], results
+        assert [result["strategy_used"] for result in results] == ["text", "text"], (
+            results
+        )
+        relevance = [result["relevance_score"] for result in results]
+        assert relevance == sorted(relevance, reverse=True), results
+        assert data["message"] == f"Found {len(results)} documents for '{query}'", data
+
+        assert_loop_served(served)
+
 
 # ---------------------------------------------------------------------------
 # 5. Entity extraction agent
@@ -1408,3 +1466,155 @@ class TestTelemetrySpans:
         assert found_span["name"] == SPAN_NAME_GATEWAY, (
             f"Span name should be {SPAN_NAME_GATEWAY!r}, got: {found_span['name']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 8. Orchestration outcomes
+# ---------------------------------------------------------------------------
+
+
+def _a2a_final_events(request_body: dict) -> list[dict]:
+    """The terminal task one non-streaming A2A call came back with."""
+    with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+        response = client.post("/a2a/", json=request_body)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) >= {"result"}, body
+    return [body["result"]]
+
+
+def _orchestrator_memory_rows(tenant_id: str) -> list[dict]:
+    """Every row the orchestrator's own memory partition holds for a tenant."""
+    with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        response = client.get(
+            f"/admin/tenant/{tenant_id}/memories",
+            params={"agent_name": "orchestrator_agent", "limit": 200},
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["count"] == len(body["memories"]), body
+    return body["memories"]
+
+
+@pytest.mark.e2e
+class TestOrchestrationOutcomeIsTheRecordedOne:
+    """A run that produced no answer is reported as one, on every surface."""
+
+    def test_a_run_with_no_answer_is_terminal_on_dispatch_and_on_a2a(self):
+        org_id = unique_id("orch_none")
+        tenant_id = f"{org_id}:t1"
+        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            dispatched = client.post(
+                "/agents/orchestrator_agent/process",
+                json={
+                    "agent_name": "orchestrator_agent",
+                    "query": "",
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 5,
+                },
+            )
+
+        assert dispatched.status_code == 200, dispatched.text
+        data = dispatched.json()
+        final_output = data["orchestration_result"]["final_output"]
+        # The envelope reports the status the run recorded, and a status the
+        # harness treats as terminal leaves no answer to render.
+        assert data["status"] == orchestration_status(final_output), data
+        assert data["status"] in TERMINAL_FAILURE_STATUSES, data
+        assert "answer" not in data, sorted(data)
+        assert data["agent"] == "orchestrator_agent", data
+        assert data["message"] == final_output["message"], data
+
+        # The same turn over A2A ends the task as failed, carrying the agent
+        # and the failure class and no answer text.
+        events = _a2a_final_events(
+            {
+                "jsonrpc": "2.0",
+                "id": f"orch-none-{uuid.uuid4().hex[:8]}",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": "orchestrate nothing"}],
+                        "messageId": uuid.uuid4().hex,
+                    },
+                    "configuration": {"acceptedOutputModes": ["text"]},
+                    "metadata": {
+                        "agent_name": "orchestrator_agent",
+                        "query": "",
+                        "tenant_id": tenant_id,
+                    },
+                },
+            }
+        )
+        assert len(events) == 1, events
+        status = events[0]["status"]
+        assert status["state"] == "failed", events[0]
+        parts = status["message"]["parts"]
+        assert [part["kind"] for part in parts] == ["text"], parts
+        assert json.loads(parts[0]["text"]) == {
+            "type": "error",
+            "agent": "orchestrator_agent",
+            "error_type": NoAnswerError.__name__,
+            "message": (
+                f"Agent 'orchestrator_agent' failed with {NoAnswerError.__name__}. "
+                "See runtime logs for detail."
+            ),
+        }, parts[0]["text"]
+
+        # Nothing about a run that answered nothing was remembered.
+        assert _orchestrator_memory_rows(tenant_id) == []
+
+    def test_the_run_status_is_what_the_steps_recorded(self):
+        org_id = unique_id("orch_fail")
+        tenant_id = f"{org_id}:t1"
+        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+        query = (
+            "Find videos about machine learning, compare them with "
+            "the PDF research papers, and write a detailed report"
+        )
+
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            response = client.post(
+                "/agents/orchestrator_agent/process",
+                json={
+                    "agent_name": "orchestrator_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 5,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        orchestration = data["orchestration_result"]
+        agent_results = orchestration["agent_results"]
+        final_output = orchestration["final_output"]
+
+        failed_steps = {
+            name
+            for name, step in agent_results.items()
+            if step.get("status") in FAILED_STEP_STATUSES
+        }
+        answered_steps = set(agent_results) - failed_steps
+        # The tenant deploys no profile, so this run has failing steps to
+        # aggregate — without one the rest of the assertion proves nothing.
+        assert failed_steps != set(), agent_results
+
+        if not answered_steps:
+            expected_status = FAILED_STATUS
+        elif failed_steps:
+            expected_status = PARTIAL_STATUS
+        else:
+            expected_status = "success"
+        assert final_output["status"] == expected_status, final_output
+        assert orchestration_status(final_output) == expected_status
+        assert data["status"] == expected_status, data
+        # A terminal status renders no answer; a partial run keeps the answer
+        # its answering steps produced.
+        assert ("answer" in data) is (expected_status not in TERMINAL_FAILURE_STATUSES)
+        # A run that is not a success is never remembered as one.
+        assert expected_status != "success", agent_results
+        assert _orchestrator_memory_rows(tenant_id) == []

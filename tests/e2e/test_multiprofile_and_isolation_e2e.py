@@ -24,9 +24,11 @@ import pytest
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
     DASHBOARD,
+    GATEWAY_VIDEO_QUERIES,
     RUNTIME,
     TENANT_ID,
     click_top_tab,
+    expected_gateway_routing,
     register_tenant_and_wait,
     set_tenant,
     unique_id,
@@ -878,6 +880,73 @@ class TestConcurrentMultiTenantSearch:
             finally:
                 for t in tenants:
                     _cleanup_tenant(client, t)
+
+    def test_a_cancelled_cold_build_does_not_poison_the_tenant(self):
+        """A client that hangs up during a tenant's first gateway dispatch
+        must not take its peers with it.
+
+        The first dispatch for a tenant builds that tenant's gateway agent,
+        and every concurrent dispatch for the same tenant waits on that one
+        build. Abandoning the request that started it leaves the build to run
+        for the requests still waiting: each of them, and a later one, must
+        answer normally.
+        """
+        org_id = unique_id("coldbuild")
+        tenant_id = f"{org_id}:t1"
+        query = GATEWAY_VIDEO_QUERIES[0]
+
+        def _dispatch(timeout_s: float) -> httpx.Response:
+            return httpx.post(
+                f"{RUNTIME}/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+                timeout=timeout_s,
+            )
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            try:
+                _create_tenant(client, tenant_id)
+                _deploy_schema(client, PROFILE, tenant_id)
+
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    # The build owner hangs up while the build is in flight.
+                    abandoned = pool.submit(_dispatch, 0.5)
+                    time.sleep(0.2)
+                    waiters = [pool.submit(_dispatch, 900.0) for _ in range(2)]
+                    with pytest.raises(httpx.ReadTimeout):
+                        abandoned.result()
+                    settled = [waiter.result() for waiter in waiters]
+
+                # One more after the abandoned build settled, to prove the
+                # tenant's cache is usable and not holding a dead entry.
+                settled.append(_dispatch(900.0))
+
+                assert [response.status_code for response in settled] == [
+                    200,
+                    200,
+                    200,
+                ], [response.text[:200] for response in settled]
+                bodies = [response.json() for response in settled]
+                assert [body["status"] for body in bodies] == [
+                    "success",
+                    "success",
+                    "success",
+                ], bodies
+                for body in bodies:
+                    gw = body["gateway"]
+                    assert (
+                        gw["complexity"],
+                        gw["routed_to"],
+                    ) == expected_gateway_routing(query, gw), gw
+                    assert body["downstream_result"]["status"] == "success", body
+                    assert body["downstream_result"]["agent"] == gw["routed_to"], body
+            finally:
+                _cleanup_tenant(client, tenant_id)
+                _cleanup_org(client, tenant_id)
 
     def test_concurrent_search_with_empty_tenant(self, real_video_path):
         """Concurrent search: tenant with data + tenant without data."""

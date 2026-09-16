@@ -26,6 +26,7 @@ import math
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -51,15 +52,19 @@ from cogniverse_synthetic.topics import (
 )
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
+    GATEWAY_VIDEO_QUERIES,
     KUBECTL_CONTEXT,
     RUNTIME,
     SAMPLE_VIDEO_PATH,
     TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
     _content_sha256,
+    _deployed_schema_names_strict,
     _ensure_sample_content_ingested,
     _ingest_sample_documents,
     _matching_sample_results,
+    _tenant_schema_name,
+    _tenant_schema_names_in_vespa,
     assert_orchestrated,
     expected_gateway_routing,
     register_tenant_and_wait,
@@ -68,6 +73,7 @@ from tests.e2e.conftest import (
 from tests.e2e.conftest import (
     _configured_profile_name as _configured_profile_name_from_config,
 )
+from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 
 CAPTION_CORPUS_DIR = (
     Path(__file__).resolve().parents[2]
@@ -84,6 +90,12 @@ SECOND_SAMPLE_VIDEO_PATH = (
     / "v_-D1gdv_gQyw.mp4"
 )
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+
+
+def _profile_schema_name(profile_name: str) -> str:
+    """The base Vespa schema the shipped config binds a profile to."""
+    config = json.loads(CONFIG_PATH.read_text())
+    return config["backend"]["profiles"][profile_name]["schema_name"]
 
 
 def _default_video_profile_name() -> str:
@@ -741,6 +753,94 @@ class TestProfileCRUD:
                     f"/admin/profiles/{profile_name}",
                     params={"tenant_id": TENANT_ID},
                 )
+
+    def test_profile_delete_does_not_stall_the_replica(self):
+        """Deleting a profile and its schema is a Vespa redeploy. It runs off
+        the serving loop: liveness keeps answering and an unrelated tenant's
+        dispatch completes while the delete is in flight."""
+        org_id = unique_id("profdel")
+        tenant_id = f"{org_id}:t1"
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+            created = client.post(
+                "/admin/organizations",
+                json={
+                    "org_id": org_id,
+                    "org_name": org_id.replace("_", "-"),
+                    "created_by": "e2e",
+                },
+            )
+            assert created.status_code in (200, 201), created.text
+            register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+
+            listed = client.get("/admin/profiles", params={"tenant_id": tenant_id})
+            assert listed.status_code == 200, listed.text
+            before_profiles = {row["profile_name"] for row in listed.json()["profiles"]}
+            assert PROFILE in before_profiles, before_profiles
+
+        before_schemas = _tenant_schema_names_in_vespa(
+            tenant_id, _deployed_schema_names_strict()
+        )
+        deleted_schema = _tenant_schema_name(_profile_schema_name(PROFILE), tenant_id)
+        assert deleted_schema in before_schemas, before_schemas
+
+        query = GATEWAY_VIDEO_QUERIES[0]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            probe = LoopProbe()
+            probe.__enter__()
+            concurrent = pool.submit(
+                lambda: httpx.post(
+                    f"{RUNTIME}/agents/gateway_agent/process",
+                    json={
+                        "agent_name": "gateway_agent",
+                        "query": query,
+                        "context": {"tenant_id": TENANT_ID},
+                        "top_k": 3,
+                    },
+                    timeout=900.0,
+                )
+            )
+            delete = pool.submit(
+                lambda: httpx.delete(
+                    f"{RUNTIME}/admin/profiles/{PROFILE}",
+                    params={"tenant_id": tenant_id, "delete_schema": True},
+                    timeout=900.0,
+                )
+            )
+            deleted = delete.result()
+            neighbour = concurrent.result()
+            served = probe.stop()
+
+        assert deleted.status_code == 200, deleted.text
+        body = deleted.json()
+        assert body["profile_name"] == PROFILE, body
+        assert body["tenant_id"] == tenant_id, body
+        assert body["schema_deleted"] is True, body
+
+        assert_loop_served(served)
+
+        assert neighbour.status_code == 200, neighbour.text[:400]
+        neighbour_body = neighbour.json()
+        assert neighbour_body["status"] == "success", neighbour_body
+        gw = neighbour_body["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
+        ), gw
+
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            remaining = client.get("/admin/profiles", params={"tenant_id": tenant_id})
+        assert remaining.status_code == 200, remaining.text
+        assert {
+            row["profile_name"] for row in remaining.json()["profiles"]
+        } == before_profiles - {PROFILE}, remaining.json()
+
+        after_schemas = _tenant_schema_names_in_vespa(
+            tenant_id, _deployed_schema_names_strict()
+        )
+        assert after_schemas == before_schemas - {deleted_schema}, (
+            before_schemas,
+            after_schemas,
+        )
 
 
 @pytest.mark.e2e

@@ -17,11 +17,13 @@ import pytest
 from cogniverse_cli.code import CodingSession
 from cogniverse_cli.index import collect_files, index_files
 from cogniverse_cli.streaming import (
+    CodingStreamError,
     _build_a2a_request,
     _parse_coding_result,
     stream_coding_response,
 )
 
+from cogniverse_runtime.harness_turn import NoAnswerError
 from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
@@ -477,3 +479,176 @@ class TestCodingSession:
         assert result.code_changes[0]["file_path"] == "x.py"
         assert result.summary == "Did it"
         assert result.iterations_used == 1
+
+
+# The program the failing-turn tests ask for: a fixed marker on stderr and a
+# fixed nonzero status, so the reported failure can be pinned to what the
+# sandbox actually produced.
+FAILING_EXIT_CODE = 7
+FAILING_STDERR_MARKER = "cogniverse-e2e-sandbox-failure"
+FAILING_QUERY = (
+    "write a python program whose only statements print the exact text "
+    f"{FAILING_STDERR_MARKER} to stderr and then exit the process with "
+    f"status code {FAILING_EXIT_CODE}"
+)
+
+
+def _coding_failure_error(iterations: int, execution: dict) -> str:
+    """The prefix the agent's failure text carries for this execution.
+
+    Everything up to the evaluator's own feedback is fixed by the exit code
+    and the stderr the sandbox returned, so it is pinned against the recorded
+    execution rather than restated.
+    """
+    return (
+        f"Coding task failed after {iterations} iteration(s): "
+        f"Exit code: {execution['exit_code']}\n"
+        f"stderr: {execution['stderr']}\n"
+        f"Feedback: "
+    )
+
+
+@pytest.mark.e2e
+class TestNonzeroSandboxExitIsAFailure:
+    """A program the sandbox ran and rejected is not completed work."""
+
+    def test_nonzero_sandbox_exit_is_reported_as_failure(self, runtime_sandbox_ready):
+        with httpx.Client(timeout=600.0) as client:
+            resp = client.post(
+                CODING_AGENT_URL,
+                json={
+                    "agent_name": "coding_agent",
+                    "query": FAILING_QUERY,
+                    "context": {
+                        "tenant_id": TENANT_ID,
+                        "max_iterations": 1,
+                    },
+                    "top_k": 3,
+                },
+            )
+
+        assert resp.status_code == 200, f"{resp.status_code}: {resp.text[:300]}"
+        data = resp.json()
+        # The failure envelope carries the error instead of a message, and
+        # nothing renders as an answer.
+        assert set(data) == {"status", "agent", "error", "result"}, data
+        assert data["status"] == "error", data
+        assert data["agent"] == "coding_agent", data
+
+        result = data["result"]
+        assert set(result) == {
+            "plan",
+            "code_changes",
+            "execution_results",
+            "summary",
+            "iterations_used",
+            "files_modified",
+            "rlm_synthesis",
+            "rlm_telemetry",
+            "pending_tool_calls",
+            "continuation_state",
+            "success",
+            "error",
+        }, result
+        assert result["success"] is False, result
+        assert result["pending_tool_calls"] == [], result
+        assert result["iterations_used"] == 1, result
+
+        exec_results = result["execution_results"]
+        assert len(exec_results) == 1, exec_results
+        execution = exec_results[0]
+        assert set(execution) == {
+            "stdout",
+            "stderr",
+            "exit_code",
+            "command",
+            "success",
+        }, execution
+        assert execution["exit_code"] == FAILING_EXIT_CODE, execution
+        assert execution["success"] is False, execution
+        assert FAILING_STDERR_MARKER in execution["stderr"], execution
+
+        expected_prefix = _coding_failure_error(1, execution)
+        assert result["error"].startswith(expected_prefix), result["error"]
+        # The failure text replaces the summary; the success template the
+        # completing turn produces must not be what this run reports.
+        assert result["summary"] == result["error"], result
+        assert result["summary"] != (
+            f"Completed coding task in 1 iteration(s). "
+            f"Generated {len(result['files_modified'])} file(s). "
+            f"Final execution: exit_code={execution['exit_code']}"
+        ), result["summary"]
+        assert data["error"] == result["error"], data
+
+
+def _a2a_events(request_body: dict) -> list[dict]:
+    """Every SSE payload the runtime emitted for one A2A request."""
+    events: list[dict] = []
+    with httpx.Client(timeout=900.0) as client:
+        with client.stream(
+            "POST",
+            f"{RUNTIME}/a2a/",
+            json=request_body,
+            headers={"Accept": "text/event-stream"},
+        ) as response:
+            assert response.status_code == 200, response.read()[:300]
+            for line in response.iter_lines():
+                line = line.strip()
+                if line.startswith("data:"):
+                    payload = line[len("data:") :].strip()
+                    if payload:
+                        events.append(json.loads(payload))
+    return events
+
+
+@pytest.mark.e2e
+class TestFailedCodingTurnIsTerminalFailure:
+    """A coding turn the sandbox rejected terminates as a failed A2A task."""
+
+    def test_the_stream_ends_in_a_failed_task_and_the_cli_raises(
+        self, runtime_sandbox_ready
+    ):
+        request_body = _build_a2a_request(
+            FAILING_QUERY,
+            agent_name="coding_agent",
+            tenant_id=TENANT_ID,
+        )
+        events = _a2a_events(request_body)
+
+        finals = [
+            event
+            for event in events
+            if event.get("result", {}).get("final") is True
+            or event.get("result", {}).get("status", {}).get("state")
+            in ("failed", "input-required", "canceled")
+        ]
+        assert len(finals) == 1, events
+        status = finals[0]["result"]["status"]
+        # The terminal state is the failure, not the state a turn awaiting
+        # more input ends in.
+        assert status["state"] == "failed", finals[0]
+        parts = status["message"]["parts"]
+        assert [part["kind"] for part in parts] == ["text"], parts
+        assert json.loads(parts[0]["text"]) == {
+            "type": "error",
+            "agent": "coding_agent",
+            "error_type": NoAnswerError.__name__,
+            "message": (
+                f"Agent 'coding_agent' failed with {NoAnswerError.__name__}. "
+                "See runtime logs for detail."
+            ),
+        }, parts[0]["text"]
+
+        # The CLI consumes that same terminal event and refuses to present it
+        # as a result.
+        with pytest.raises(CodingStreamError) as raised:
+            stream_coding_response(
+                query=FAILING_QUERY,
+                agent_name="coding_agent",
+                tenant_id=TENANT_ID,
+                runtime_url=RUNTIME,
+            )
+        assert str(raised.value) == (
+            f"coding_agent ({NoAnswerError.__name__}): Agent 'coding_agent' "
+            f"failed with {NoAnswerError.__name__}. See runtime logs for detail."
+        ), str(raised.value)
