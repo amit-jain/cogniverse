@@ -12,18 +12,35 @@ Requires:
 - flywheel_org:production tenant with ingested data
 """
 
+import json
 import re
 import time
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 from playwright.sync_api import expect
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_PROFILE_SELECTION,
+    SPAN_NAME_ROUTING,
+    TelemetryConfig,
+)
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.conftest import (
     DASHBOARD,
+    GATEWAY_VIDEO_QUERIES,
     RUNTIME,
+    SAMPLE_VIDEO_CONTENT_ID,
+    SAMPLE_VIDEO_PATH,
+    TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
+    _ensure_sample_content_ingested,
+    _expected_sample_documents_fed,
+    _sample_video_media_type,
+    _search_sample_content,
     active_sub_tab_panel,
     active_tab_panel,
     click_button,
@@ -38,6 +55,7 @@ from tests.e2e.conftest import (
     wait_for_script_idle,
     wait_for_streamlit,
 )
+from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
@@ -96,6 +114,158 @@ LLM_TIMEOUT = 300_000
 # own "timed out" notice was read as a backend fault. Budget the observed
 # maximum plus the sampling and rerun either side.
 SYNTHETIC_GENERATION_TIMEOUT = 600_000
+# The Ingestion tab polls the job it submitted to a terminal state, and the
+# worker extracts keyframes, transcribes and embeds the whole video before it
+# reports one. ``cogniverse_dashboard.ingestion`` gives that poll 900 s; the
+# browser has to outlast the poll plus the rerun that renders its outcome.
+INGESTION_TIMEOUT = 1_200_000
+# Vespa's query port on the e2e cluster, for the configuration rows this
+# module writes and reads back through the shipped store.
+VESPA_HTTP_PORT = 33080
+
+
+def _panel_metrics(panel) -> dict:
+    """Every metric the open panel renders, as label -> rendered value."""
+    metrics = {}
+    for widget in panel.locator('[data-testid="stMetric"]').all():
+        label = (
+            widget.locator('[data-testid="stMetricLabel"]').first.text_content() or ""
+        ).strip()
+        value = (
+            widget.locator('[data-testid="stMetricValue"]').first.text_content() or ""
+        ).strip()
+        metrics[label] = value
+    return metrics
+
+
+# One tenant's corpus is the tracked video alone, so any video query it
+# answers can only return that content.
+TENANT_SWITCH_QUERY = "sports activity"
+_RESULT_TITLE = re.compile(r"^Result \d+: (\S+) \(Score: -?\d+\.\d{3}\)$")
+
+
+def _rendered_result_ids(panel) -> set:
+    """The content ids the open search panel's result expanders name.
+
+    Expanders render collapsed, so their titles are read from the DOM text
+    rather than the rendered text.
+    """
+    ids = set()
+    for expander in panel.locator('[data-testid="stExpander"]:has-text("score")').all():
+        for line in (expander.text_content() or "").splitlines():
+            match = _RESULT_TITLE.match(line.strip())
+            if match:
+                ids.add(match.group(1))
+    return ids
+
+
+def _submit_search(page, query: str) -> None:
+    """Run one Interactive Search and wait for the page to settle.
+
+    Unlike ``_run_search`` this classifies nothing: it is for the cases whose
+    terminal state is the assertion itself.
+    """
+    panel = active_tab_panel(page)
+    search_input = panel.get_by_role("textbox", name="Enter your search query")
+    search_button = panel.locator('button[kind="primary"]:has-text("Search"):visible')
+    expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
+    expect(search_button).to_have_count(1, timeout=SEARCH_TIMEOUT)
+    search_input.fill(query)
+    search_input.press("Enter")
+    page.wait_for_timeout(5_000)
+    wait_for_script_idle(page)
+    search_button.click()
+    _wait_for_rerun_complete(page)
+    wait_for_script_idle(page)
+
+
+def _drive_gateway_decisions(tenant_id: str) -> None:
+    """Route the suite's video queries for ``tenant_id``: one decision each.
+
+    The tenant's deployed-but-empty video schema answers each simple search
+    with zero hits and no error, so every query produces exactly one routing
+    decision.
+    """
+    with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+        for query in GATEWAY_VIDEO_QUERIES:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["status"] == "success", body
+            gateway = body["gateway"]
+            assert (gateway["complexity"], gateway["routed_to"]) == (
+                "simple",
+                "search_agent",
+            ), body
+
+
+def _drive_profile_selections(tenant_id: str) -> str:
+    """Dispatch the suite's video queries to the profile selection agent.
+
+    Returns the modality every dispatch reported — the key the metrics page
+    groups its counts by.
+    """
+    modalities = set()
+    with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+        for query in GATEWAY_VIDEO_QUERIES:
+            resp = client.post(
+                "/agents/profile_selection_agent/process",
+                json={
+                    "agent_name": "profile_selection_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["status"] == "success", body
+            modalities.add(body["modality"])
+    assert modalities == {"video"}, modalities
+    return modalities.pop()
+
+
+def _wait_for_span_count(
+    phoenix_client,
+    project: str,
+    span_name: str,
+    since: datetime,
+    expected: int,
+    timeout_s: float = 300.0,
+) -> None:
+    """Block until Phoenix holds exactly ``expected`` ``span_name`` spans.
+
+    Span export is batched, so a page opened before the export lands reads an
+    empty window and says so; waiting for the exact count is what makes the
+    page's own number an exact assertion rather than a race.
+    """
+    from phoenix.client.types.spans import SpanQuery
+
+    query = SpanQuery().where(f"name == '{span_name}'")
+    deadline = time.monotonic() + timeout_s
+    seen = -1
+    while time.monotonic() < deadline:
+        frame = phoenix_client.spans.get_spans_dataframe(
+            project_identifier=project,
+            query=query,
+            start_time=since,
+            timeout=30,
+        )
+        seen = 0 if frame is None or frame.empty else len(frame)
+        if seen == expected:
+            return
+        time.sleep(5.0)
+    raise AssertionError(
+        f"Phoenix holds {seen} {span_name} spans in project {project!r}; "
+        f"expected {expected} within {timeout_s:.0f}s"
+    )
 
 
 def _fill_chat_message(page, message: str) -> None:
@@ -1122,9 +1292,33 @@ class TestProfileRoutingMetrics:
     """Top-level Profile Routing Metrics tab — runtime observability of
     ProfileSelectionAgent dispatches sourced from Phoenix spans."""
 
-    def test_profile_routing_metrics_tab(self, page):
+    def test_profile_routing_metrics_tab(self, page, phoenix_client_session):
+        """The page counts the profile decisions the tenant just made.
+
+        The tenant is minted and its dispatches are driven here, so its
+        Phoenix project holds exactly these decisions and the per-modality
+        metric is an exact count. An empty panel is a reader pointed at a
+        project no producer writes to, so it is a failure, not a terminal
+        state this test accepts.
+        """
+        tenant_id = unique_id("prode2eclients")
+        register_tenant_and_wait(tenant_id, created_by="e2e")
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+
+        since = datetime.now(timezone.utc)
+        modality = _drive_profile_selections(tenant_id)
+        project = TelemetryConfig().get_project_name(canonical_tenant_id(tenant_id))
+        _wait_for_span_count(
+            phoenix_client_session,
+            project,
+            SPAN_NAME_PROFILE_SELECTION,
+            since,
+            len(GATEWAY_VIDEO_QUERIES),
+        )
+
         _nav(page)
-        set_tenant(page, TENANT_ID)
+        set_tenant(page, tenant_id)
         click_top_tab(page, "Profile Routing Metrics")
         wait_for_script_idle(page)
         # Tab content lazy-renders after click; wait for the active panel
@@ -1156,8 +1350,6 @@ class TestProfileRoutingMetrics:
             f"{active_panel.first.inner_text()[:300]}"
         )
 
-        # Acceptable terminal states: empty-spans info, missing-attribute
-        # warning, or rendered metrics. Any error alert is a real failure.
         error_alerts = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Phoenix span query failed"), '
             '[data-testid="stAlert"]:has-text("Failed to initialise telemetry")'
@@ -1166,6 +1358,18 @@ class TestProfileRoutingMetrics:
             "Profile Routing Metrics surfaced an error: "
             f"{error_alerts.all_inner_texts()}"
         )
+
+        # The tenant's own decisions, counted by the modality they carried.
+        panel = active_tab_panel(page)
+        panel_text = panel.inner_text() or ""
+        assert f"No spans found in `{project}`" not in panel_text, panel_text[:600]
+        assert f"No `{SPAN_NAME_PROFILE_SELECTION}` spans" not in panel_text, (
+            panel_text[:600]
+        )
+
+        assert _panel_metrics(panel) == {
+            modality.upper(): str(len(GATEWAY_VIDEO_QUERIES))
+        }, _panel_metrics(panel)
 
 
 class TestTenantLifecycleDashboard:
@@ -1808,29 +2012,59 @@ class TestMonitoringDashboard:
             :300
         ]
 
-    def test_routing_evaluation_tab(self, page):
-        self._goto_dashboard(page)
+    def test_routing_evaluation_tab(self, page, phoenix_client_session):
+        """The page summarises the routing decisions the tenant just made.
+
+        The tenant is minted and its traffic is driven here, so its Phoenix
+        project holds exactly these decisions and the panel's own count is an
+        exact number rather than whatever the window happened to contain. The
+        panel must not report that it found none: that is what a reader
+        pointed at a project no producer writes to looks like.
+        """
+        tenant_id = unique_id("prode2eclients")
+        register_tenant_and_wait(tenant_id, created_by="e2e")
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+
+        since = datetime.now(timezone.utc)
+        _drive_gateway_decisions(tenant_id)
+        project = TelemetryConfig().get_project_name(canonical_tenant_id(tenant_id))
+        _wait_for_span_count(
+            phoenix_client_session,
+            project,
+            SPAN_NAME_ROUTING,
+            since,
+            len(GATEWAY_VIDEO_QUERIES),
+        )
+
+        _nav(page)
+        set_tenant(page, tenant_id)
         click_top_tab(page, "Routing Evaluation")
         wait_for_script_idle(page)
 
-        # routing_evaluation.py:98 renders this heading whenever the tab is
+        # routing_evaluation.py renders this heading whenever the tab is
         # reachable. The previous page-wide "not available" alert count was
         # satisfied by any other tab's notice.
         panel_text = assert_tab_rendered(page, "Routing Evaluation Dashboard")
-        if "Routing Evaluation Dashboard" in panel_text:
-            # The body reaches the summary block (routing_evaluation.py:195)
-            # only past two no-data returns (:167 and :175, both worded "No
-            # routing decisions found"). They are terminal and mutually
-            # exclusive with it, so exactly one may hold. Requiring the summary
-            # outright made an empty telemetry window a test failure; accepting
-            # either without the exclusion would pass on a panel showing both,
-            # or neither.
-            has_summary = "Summary Metrics" in panel_text
-            has_no_decisions = "No routing decisions found" in panel_text
-            assert has_summary != has_no_decisions, (
-                "Routing Evaluation must either summarise its decisions or say "
-                f"it found none, and not both:\n{panel_text[:400]}"
-            )
+        assert "No routing decisions found" not in panel_text, panel_text[:600]
+        assert "Summary Metrics" in panel_text, panel_text[:600]
+
+        panel = active_tab_panel(page)
+        metrics = _panel_metrics(panel)
+        assert sorted(metrics) == [
+            "Avg Routing Latency",
+            "Confidence Calibration",
+            "Routing Accuracy",
+            "Total Decisions",
+        ], sorted(metrics)
+        assert metrics["Total Decisions"] == str(len(GATEWAY_VIDEO_QUERIES)), metrics
+
+        # The project the reader queried is the one the producers wrote to.
+        # The caption sits inside a collapsed expander, so read the DOM text
+        # rather than the rendered text.
+        assert f"Querying spans from project: {project}" in (
+            panel.text_content() or ""
+        ).replace("`", ""), panel.text_content()[:800]
 
     def test_orchestration_tab(self, page):
         self._goto_dashboard(page)
@@ -2300,4 +2534,409 @@ class TestManualOptimizationTrigger:
         assert phase_ok, (
             "Refresh status must render `Phase: <Pending|Running|...>` "
             f"from Argo. Body tail:\n{body_text[-1500:]}"
+        )
+
+
+class TestIngestionUploadOutcome:
+    """The Ingestion tab submits real bytes and reports the job's own outcome."""
+
+    def test_video_upload_reports_the_terminal_job_outcome(self, page):
+        """The page's banner is the ingestion job's terminal result.
+
+        The tab streams the uploaded bytes to the runtime and polls the job to
+        a terminal state, so what it prints is the worker's own count and
+        content id, and a re-submission of the same bytes is reported as the
+        deduplication it is rather than as a failure.
+        """
+        tenant_id = unique_id("prode2eclients")
+        register_tenant_and_wait(tenant_id, created_by="e2e")
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+
+        _nav(page)
+        set_tenant(page, tenant_id)
+        click_top_tab(page, "Ingestion")
+        wait_for_script_idle(page)
+
+        panel = active_tab_panel(page)
+        selected = [
+            (tag.text_content() or "").strip()
+            for tag in panel.locator(
+                '[data-testid="stMultiSelect"] span[data-baseweb="tag"]'
+            ).all()
+        ]
+        assert selected == [PROFILE], (
+            f"the Ingestion tab must offer the configured video profile as its "
+            f"only default; it selected {selected}"
+        )
+
+        panel.locator(
+            '[data-testid="stFileUploader"] input[type="file"]'
+        ).set_input_files(str(SAMPLE_VIDEO_PATH))
+        wait_for_script_idle(page)
+
+        media_type = _sample_video_media_type(SAMPLE_VIDEO_PATH)
+        expected_fed = _expected_sample_documents_fed(
+            SAMPLE_VIDEO_PATH, PROFILE, media_type
+        )
+        first_run = (
+            f"✅ {PROFILE}: fed {expected_fed} documents as {SAMPLE_VIDEO_CONTENT_ID}"
+        )
+
+        process = active_tab_panel(page).locator(
+            'button:has-text("Process Video"):visible'
+        )
+        expect(process).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        assert process.first.is_enabled(), (
+            "Process Video must be enabled once a file is attached and the "
+            "runtime is reachable"
+        )
+        process.first.click()
+
+        outcome = active_tab_panel(page).locator(
+            f'[data-testid="stAlert"]:has-text("{PROFILE}:")'
+        )
+        expect(outcome.first).to_be_visible(timeout=INGESTION_TIMEOUT)
+        wait_for_script_idle(page)
+
+        panel = active_tab_panel(page)
+        alerts = [
+            (a.inner_text() or "").strip()
+            for a in panel.locator('[data-testid="stAlert"]').all()
+        ]
+        assert first_run in alerts, alerts
+        assert f"🎉 All {len(selected)} profiles ingested" in alerts, alerts
+        assert [text for text in alerts if "Ingestion failed" in text] == [], alerts
+
+        # The documents the page reported are the documents the tenant serves.
+        matches, error = _search_sample_content(
+            content_id=SAMPLE_VIDEO_CONTENT_ID,
+            tenant_id=tenant_id,
+            profile=PROFILE,
+            suffix=SAMPLE_VIDEO_PATH.suffix,
+            media_type=media_type,
+        )
+        assert error is None, error
+        assert len(matches) == expected_fed, (
+            f"the page reported {expected_fed} documents; the tenant serves "
+            f"{len(matches)}"
+        )
+
+        # The same bytes, profile and tenant again: the runtime deduplicates
+        # onto the first run, which is an already-ingested success, not a job
+        # that fed nothing.
+        active_tab_panel(page).locator(
+            'button:has-text("Process Video"):visible'
+        ).first.click()
+        wait_for_script_idle(page)
+        panel = active_tab_panel(page)
+        expect(
+            panel.locator('[data-testid="stAlert"]:has-text("Already ingested as")')
+        ).to_have_count(1, timeout=INGESTION_TIMEOUT)
+
+        alerts = [
+            (a.inner_text() or "").strip()
+            for a in panel.locator('[data-testid="stAlert"]').all()
+        ]
+        deduplicated = [text for text in alerts if "Already ingested as" in text]
+        assert len(deduplicated) == 1, alerts
+        assert f"🎉 All {len(selected)} profiles ingested" in alerts, alerts
+        assert [text for text in alerts if "Ingestion failed" in text] == [], alerts
+
+        ingest_id = re.search(
+            r"Already ingested as (ingest_[0-9a-f]{32})", deduplicated[0]
+        )
+        assert ingest_id, deduplicated[0]
+        status = httpx.get(
+            f"{RUNTIME}/ingestion/{ingest_id.group(1)}/status", timeout=30.0
+        )
+        assert status.status_code == 200, status.text
+        assert status.json()["state"] == "complete", status.json()
+
+
+class TestConfigurationImport:
+    """The Import/Export tab files every uploaded configuration under the
+    tenant the sidebar selected, whatever tenant the file names."""
+
+    def test_import_lands_under_the_selected_tenant(self, page, tmp_path):
+        source = unique_id("prode2eclients")
+        destination = unique_id("prode2eclients")
+        register_tenant_and_wait(source, created_by="e2e")
+        register_tenant_and_wait(destination, created_by="e2e")
+        decoy = canonical_tenant_id(unique_id("prode2eclients"))
+
+        store = VespaConfigStore(
+            backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+        )
+        written = {
+            f"clients_e2e_{index}": {"marker": f"{source}-{index}"}
+            for index in range(3)
+        }
+        for config_key, config_value in written.items():
+            store.set_config(
+                tenant_id=source,
+                scope=ConfigScope.AGENT,
+                service="clients_e2e",
+                config_key=config_key,
+                config_value=config_value,
+            )
+        expected_rows = {
+            (
+                ConfigScope.AGENT.value,
+                "clients_e2e",
+                key,
+                json.dumps(value, sort_keys=True),
+            )
+            for key, value in written.items()
+        }
+
+        def _rows(tenant_id: str) -> set:
+            return {
+                (
+                    entry.scope.value,
+                    entry.service,
+                    entry.config_key,
+                    json.dumps(entry.config_value, sort_keys=True),
+                )
+                for entry in store.list_configs(tenant_id)
+            }
+
+        assert _rows(source) == expected_rows
+        source_before = _rows(source)
+
+        # The export the tab produces for the source tenant, with every
+        # tenant id inside it replaced: the destination must win over the
+        # file, so the file has to name someone else.
+        exported = store.export_configs(tenant_id=source, include_history=False)
+        assert len(exported["configs"]) == len(written), exported
+        exported["tenant_id"] = decoy
+        for entry in exported["configs"]:
+            entry["tenant_id"] = decoy
+        upload = tmp_path / "config_export.json"
+        upload.write_text(json.dumps(exported))
+
+        _nav(page)
+        set_tenant(page, source)
+        click_top_tab(page, "Configuration")
+        wait_for_script_idle(page)
+        click_sub_tab(page, "Import/Export")
+        wait_for_script_idle(page)
+
+        export_btn = active_tab_panel(page).get_by_role(
+            "button", name="📥 Export Configurations", exact=True
+        )
+        expect(export_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        export_btn.first.click()
+        wait_for_script_idle(page)
+        exports = [
+            (alert.inner_text() or "").strip()
+            for alert in active_tab_panel(page)
+            .locator('[data-testid="stAlert"]:has-text("Exported")')
+            .all()
+        ]
+        assert exports == [f"✅ Exported {len(written)} configurations"], exports
+
+        set_tenant(page, destination)
+        click_top_tab(page, "Configuration")
+        wait_for_script_idle(page)
+        click_sub_tab(page, "Import/Export")
+        wait_for_script_idle(page)
+
+        tenant_box = active_tab_panel(page).locator('input[aria-label="Tenant ID"]')
+        expect(tenant_box).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        assert tenant_box.first.input_value() == canonical_tenant_id(destination)
+
+        active_tab_panel(page).locator(
+            '[data-testid="stFileUploader"] input[type="file"]'
+        ).set_input_files(str(upload))
+        wait_for_script_idle(page)
+
+        import_btn = active_tab_panel(page).get_by_role(
+            "button", name="📤 Import Configurations", exact=True
+        )
+        expect(import_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        import_btn.first.click()
+        wait_for_script_idle(page)
+
+        failures = [
+            (alert.inner_text() or "").strip()
+            for alert in active_tab_panel(page)
+            .locator('[data-testid="stAlert"]:has-text("Import failed")')
+            .all()
+        ]
+        assert failures == [], failures
+
+        # The rows landed under the selected tenant, the file's own tenant
+        # gained none, and the source is untouched.
+        assert _rows(canonical_tenant_id(destination)) == expected_rows
+        assert _rows(decoy) == set()
+        assert _rows(source) == source_before
+
+
+class TestTenantSwitchScopesEverything:
+    """A sidebar tenant switch leaves nothing of the previous tenant on the
+    page and nothing of it writable into the next tenant's project."""
+
+    def test_a_switch_drops_the_previous_tenants_results_and_annotations(self, page):
+        holder = unique_id("prode2eclients")
+        empty = unique_id("prode2eclients")
+        register_tenant_and_wait(holder, created_by="e2e")
+        register_tenant_and_wait(empty, created_by="e2e")
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+            _deploy_profile_for_tenant(client, PROFILE, holder)
+            _deploy_profile_for_tenant(client, PROFILE, empty)
+        _ensure_sample_content_ingested(
+            SAMPLE_VIDEO_PATH,
+            profile=PROFILE,
+            media_type=_sample_video_media_type(SAMPLE_VIDEO_PATH),
+            tenant_id=holder,
+        )
+
+        _nav(page)
+        set_tenant(page, holder)
+        click_top_tab(page, "Interactive Search")
+        found = _run_search(page, TENANT_SWITCH_QUERY)
+
+        # The tenant holds one piece of content, so every rendered row names
+        # it. An empty panel cannot satisfy this.
+        panel = active_tab_panel(page)
+        expect(
+            panel.locator('[data-testid="stExpander"]:has-text("score")')
+        ).to_have_count(found, timeout=INTERACTION_TIMEOUT)
+        assert _rendered_result_ids(panel) == {SAMPLE_VIDEO_CONTENT_ID}
+        expect(panel.locator('button:has-text("Save Annotation")')).to_have_count(
+            found, timeout=INTERACTION_TIMEOUT
+        )
+
+        set_tenant(page, empty)
+        click_top_tab(page, "Interactive Search")
+        wait_for_script_idle(page)
+
+        # Before any new search: the previous tenant's result rows, its
+        # metrics and its annotation controls are all gone, so nothing of it
+        # can be rendered under, or annotated into, this tenant.
+        panel = active_tab_panel(page)
+        assert (
+            panel.locator('[data-testid="stExpander"]:has-text("score")').count() == 0
+        )
+        assert panel.locator('button:has-text("Save Annotation")').count() == 0
+        assert (
+            panel.locator('[data-testid="stMetric"]:has-text("Results")').count() == 0
+        )
+        assert SAMPLE_VIDEO_CONTENT_ID not in (panel.inner_text() or "")
+
+        click_top_tab(page, "Chat")
+        wait_for_script_idle(page)
+        assert (
+            active_tab_panel(page).locator('[data-testid="stChatMessage"]').count() == 0
+        )
+
+        # The same search under the new tenant answers from the new tenant's
+        # corpus, which holds none of the previous tenant's content.
+        click_top_tab(page, "Interactive Search")
+        _submit_search(page, TENANT_SWITCH_QUERY)
+        panel = active_tab_panel(page)
+        alerts = [
+            (alert.inner_text() or "").strip()
+            for alert in panel.locator('[data-testid="stAlert"]').all()
+        ]
+        assert "❌ Agent returned success but no search results" in alerts, alerts
+        assert _rendered_result_ids(panel) == set()
+        assert SAMPLE_VIDEO_CONTENT_ID not in (panel.inner_text() or "")
+
+    def test_the_configuration_tab_cannot_switch_the_tenant(self, page):
+        """The sidebar is the one tenant selector; the tab reports it."""
+        tenant_id = unique_id("prode2eclients")
+        register_tenant_and_wait(tenant_id, created_by="e2e")
+        canonical = canonical_tenant_id(tenant_id)
+
+        _nav(page)
+        set_tenant(page, tenant_id)
+        click_top_tab(page, "Configuration")
+        wait_for_script_idle(page)
+
+        tenant_box = active_tab_panel(page).locator('input[aria-label="Tenant ID"]')
+        expect(tenant_box).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        assert tenant_box.first.input_value() == canonical
+        assert tenant_box.first.is_disabled() is True
+        assert tenant_box.first.is_editable() is False
+
+        # The sidebar still names the same tenant, so the tab has not moved
+        # the tenant behind it.
+        sidebar = page.locator('[data-testid="stSidebar"]')
+        assert (
+            sidebar.locator('input[aria-label="Active Tenant"]').first.input_value()
+            == canonical
+        )
+        assert [
+            (alert.inner_text() or "").strip()
+            for alert in page.locator(
+                '[data-testid="stAlert"]:has-text("Current tenant")'
+            ).all()
+        ] == [f"Current tenant: {canonical}"]
+
+
+class TestSearchNamesOnlyTheOperationItRan:
+    """Interactive Search renders one result list, headed by the operation the
+    agent reported, and offers no control the request does not carry."""
+
+    def test_the_panel_names_the_executed_operation_once(self, page):
+        query = "sports activity"
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            served = client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": query,
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 5,
+                },
+            )
+        assert served.status_code == 200, served.text
+        served_body = served.json()
+        search_mode = served_body["search_mode"]
+        served_profile = served_body["profile"] or ", ".join(
+            served_body.get("profiles") or []
+        )
+
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Interactive Search")
+        expected_results = _run_search(page, query)
+
+        panel = active_tab_panel(page)
+        # One heading, naming the operation the agent reported. The page
+        # relabelled a single list under several ranking strategies before;
+        # each extra label is another heading here.
+        headings = [
+            (heading.text_content() or "").strip()
+            for heading in panel.get_by_role("heading").all()
+            if (heading.text_content() or "").strip().startswith("📊 Results")
+        ]
+        assert headings == [f"📊 Results ({search_mode})"], headings
+
+        # The request carries no ranking strategy and no profile, so neither
+        # control may be offered.
+        assert (
+            panel.locator('[data-testid="stMultiSelect"]')
+            .filter(has_text="Ranking Strategies")
+            .count()
+            == 0
+        )
+        assert (
+            panel.locator('[data-testid="stSelectbox"]')
+            .filter(has_text="Processing Profile")
+            .count()
+            == 0
+        )
+
+        # The Profile metric reports what the agent served, not a selection.
+        assert _panel_metrics(panel)["Profile"] == served_profile, _panel_metrics(panel)
+
+        # One result list: one expander and one Save Annotation per result.
+        expect(
+            panel.locator('[data-testid="stExpander"]:has-text("score")')
+        ).to_have_count(expected_results, timeout=INTERACTION_TIMEOUT)
+        expect(panel.locator('button:has-text("Save Annotation")')).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
