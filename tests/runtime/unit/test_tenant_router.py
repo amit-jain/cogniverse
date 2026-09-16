@@ -984,6 +984,15 @@ class TestJobExecutor:
         assert payload["context"] == {"tenant_id": "jobexec"}
 
 
+# The dispatcher's fallback message for an orchestration whose final_output
+# carries no message of its own: the first 50 characters of the dispatched
+# query, which is the job query with the prior step's context folded in.
+_EXPECTED_JOB_AGENT_MESSAGE = (
+    "Orchestrated 'summarize this\n\nContext from the previous step:\npr' "
+    "via A2A pipeline"
+)
+
+
 @pytest.mark.integration
 class TestJobExecutorRoundTrip:
     """Drive the REAL job_executor._call_agent against the REAL
@@ -1020,7 +1029,9 @@ class TestJobExecutorRoundTrip:
                 plan_steps=[],
                 plan_reasoning="stub",
                 agent_results={},
-                final_output={"answer": "done"},
+                # Every orchestration producer records a terminal status;
+                # orchestration_status() rejects a final_output without one.
+                final_output={"status": "success", "answer": "done"},
             )
 
         cm = create_default_config_manager()
@@ -1079,7 +1090,7 @@ class TestJobExecutorRoundTrip:
         # prior-step result folded into the query so the agent sees it.
         assert dispatched.query.startswith("summarize this")
         assert "previous result text" in dispatched.query
-        assert isinstance(result, str) and result
+        assert result == _EXPECTED_JOB_AGENT_MESSAGE
 
 
 @pytest.mark.unit
