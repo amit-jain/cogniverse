@@ -108,9 +108,9 @@ class RLMAwareMixin(ConfigManagerAware):
             RLMInference instance (with InstrumentedRLM if event_queue provided)
         """
         # Route the endpoint through the gateway for this tenant before
-        # building the LM (task ``rlm_inference``). Best-effort: with no
-        # tenant, no config_manager, or routing disabled the endpoint is
-        # returned unchanged — the direct-to-backend path.
+        # building the LM (task ``rlm_inference``). With no tenant, or with
+        # routing disabled, the endpoint is returned unchanged — the
+        # direct-to-backend path.
         routing_tenant = tenant_id or getattr(self, "tenant_id", "") or ""
         routed = route_rlm_endpoint(llm_config, self.config_manager, routing_tenant)
 

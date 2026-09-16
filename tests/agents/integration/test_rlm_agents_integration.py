@@ -482,11 +482,17 @@ class TestRLMAwareMixinProcess:
 
     def _make_agent(self):
         from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
 
         class _Agent(RLMAwareMixin):
             pass
 
-        return _Agent()
+        agent = _Agent()
+        store = InMemoryConfigStore()
+        store.initialize()
+        agent.bind_config_manager(ConfigManager(store=store))
+        return agent
 
     def test_process_with_rlm_returns_rlm_result(self):
         from cogniverse_agents.inference.rlm_inference import RLMResult
