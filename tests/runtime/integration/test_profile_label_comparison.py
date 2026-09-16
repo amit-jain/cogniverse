@@ -58,7 +58,7 @@ def comparison_vespa():
         )
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
-        )._deploy_package(_shared_vespa_application_package([schema]))
+        )._deploy_package(lambda: _shared_vespa_application_package([schema]))
         manager.wait_for_application_ready(info)
         app = Vespa(url=info["base_url"])
         documents = [
