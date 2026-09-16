@@ -89,7 +89,7 @@ CORPUS = (
     },
 )
 CORPUS_ID = "deploy_corpus"
-KILN_ID, CANAL_ID = (f"{CORPUS_ID}_{entry['id']}" for entry in CORPUS)
+KILN_ID, CANAL_ID = (f"{CORPUS_ID}_{entry['id']}_w0000" for entry in CORPUS)
 KILN_QUERY = "glaze crazing after a slow cone six firing"
 # The rewrite an orchestrator already made. SearchAgent uses it as it stands
 # (search_agent.py _rewrite_query_for_search), so the grounding search these
