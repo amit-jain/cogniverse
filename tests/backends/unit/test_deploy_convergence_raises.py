@@ -59,6 +59,17 @@ def _make_backend() -> VespaBackend:
     return backend
 
 
+def _make_registryless_manager(config_port: int) -> VespaSchemaManager:
+    """A schema manager with no registry: no config store to lease through,
+    so the deploy reaches the config server POST directly."""
+    manager = object.__new__(VespaSchemaManager)
+    manager.backend_endpoint = "http://127.0.0.1"
+    manager.backend_port = config_port
+    manager._logger = logging.getLogger("test_schema_manager")
+    manager._schema_registry = None
+    return manager
+
+
 def _services(generation: int, *, behind=None):
     behind = behind or {}
     types = [
@@ -284,6 +295,7 @@ def test_backend_deploy_post_times_out_instead_of_hanging(stalled_server, monkey
     backend = object.__new__(VespaBackend)
     backend._url = "http://127.0.0.1"
     backend._config_port = stalled_server
+    backend.schema_manager = _make_registryless_manager(stalled_server)
 
     _assert_deploy_times_out(
         lambda: backend._deploy_package(ApplicationPackage(name="testapp"))
@@ -295,13 +307,10 @@ def test_schema_manager_deploy_post_times_out_instead_of_hanging(
 ):
     monkeypatch.setattr(vsm_module, "DEPLOY_REQUEST_TIMEOUT_S", (1, 1))
 
-    manager = object.__new__(VespaSchemaManager)
-    manager.backend_endpoint = "http://127.0.0.1"
-    manager.backend_port = stalled_server
-    manager._logger = logging.getLogger("test_schema_manager")
+    manager = _make_registryless_manager(stalled_server)
 
     _assert_deploy_times_out(
-        lambda: manager._deploy_package(ApplicationPackage(name="testapp"))
+        lambda: manager._deploy_package(lambda: ApplicationPackage(name="testapp"))
     )
 
 

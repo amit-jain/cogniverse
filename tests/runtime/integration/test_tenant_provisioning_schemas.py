@@ -62,7 +62,7 @@ def provisioning_store():
         ]
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=config_port
-        )._deploy_package(_shared_vespa_application_package(schemas))
+        )._deploy_package(lambda: _shared_vespa_application_package(schemas))
         assert _vespa_wait_for_query_ready(port) is True
         endpoint = {"http_port": port, "config_port": config_port}
         cm = make_config_manager(endpoint)

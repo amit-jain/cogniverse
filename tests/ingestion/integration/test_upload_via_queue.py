@@ -434,7 +434,7 @@ def _deploy_metadata_schemas(config_port: int) -> None:
     mgr = VespaSchemaManager(
         backend_endpoint="http://localhost", backend_port=config_port
     )
-    mgr._deploy_package(app_package)
+    mgr._deploy_package(lambda: app_package)
 
 
 @pytest.fixture(scope="module")
