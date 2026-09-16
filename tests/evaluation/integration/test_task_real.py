@@ -166,12 +166,17 @@ class TestBatchSolverRealPhoenix:
         self, search_evaluator_provider
     ):
         import asyncio
+        import json
         import time
         import uuid
         from datetime import datetime, timedelta, timezone
         from types import SimpleNamespace
 
+        from cogniverse_evaluation.core.ground_truth import (
+            SchemaAwareGroundTruthStrategy,
+        )
         from cogniverse_evaluation.core.solvers import create_batch_solver
+        from cogniverse_evaluation.data.traces import trace_dict_from_span_row
         from cogniverse_foundation.telemetry.context import (
             add_search_results_to_span,
             search_span,
@@ -243,25 +248,64 @@ class TestBatchSolverRealPhoenix:
         solver = create_batch_solver(
             trace_ids=[wanted_trace], config={"tenant_id": tenant_id}
         )
-        state = SimpleNamespace(outputs={}, metadata={})
+        state = SimpleNamespace(
+            input="kite surfing on a windy beach", outputs={}, metadata={}
+        )
         result = await solver(state, None)
 
-        loaded = result.metadata["loaded_traces"]
-        assert [t["trace_id"] for t in loaded] == [wanted_trace]
-        trace = loaded[0]
+        # The solver names the traces it scored and packs their retrievals into
+        # the output the scorers read.
+        assert result.metadata["trace_ids"] == [wanted_trace]
+        assert result.metadata["ground_truth_stats"] == {
+            "total_traces": 1,
+            "traces_with_ground_truth": 0,
+            "average_confidence": 0.0,
+        }
+
+        packed = json.loads(result.output.choices[0].message.content)
+        assert packed["query"] == "kite surfing on a windy beach"
+        assert packed["phoenix_trace_id"] == wanted_trace
+        assert list(packed["search_configs"]) == [wanted_trace]
+        config = packed["search_configs"][wanted_trace]
+        assert config["success"] is True
+        assert config["count"] == 2
+        assert config["profile"] == "unknown"
+        assert config["strategy"] == "unknown"
+        assert [row["document_id"] for row in config["results"]] == [
+            "vid_pos",
+            "vid_neg",
+        ]
+        assert [row["video_id"] for row in config["results"]] == ["vid_pos", "vid_neg"]
+        assert [row["score"] for row in config["results"]] == [0.93, 0.40]
+        assert packed["metadata"] == {
+            "mode": "batch",
+            "project": project_name,
+            "ground_truth_stats": {
+                "total_traces": 1,
+                "traces_with_ground_truth": 0,
+                "average_confidence": 0.0,
+            },
+        }
+
+        # The span-row derivation the solver builds those traces from, against
+        # the frame shape real Phoenix returned.
+        trace = trace_dict_from_span_row(wanted_row)
+        assert trace["trace_id"] == wanted_trace
         assert trace["query"] == "kite surfing on a windy beach"
+        assert trace["results"] == config["results"]
         assert (
             trace["duration_ms"]
             == (wanted_row["end_time"] - wanted_row["start_time"]).total_seconds()
             * 1000.0
         )
         assert trace["timestamp"] == wanted_row["start_time"]
+
         # No backend configured: the schema-aware strategy reports that
         # explicitly instead of fabricating ground truth.
-        assert trace["ground_truth"] == []
-        assert trace["ground_truth_source"] == "no_backend"
-        stats = result.metadata["ground_truth_stats"]
-        assert stats["total_traces"] == 1
+        gt = await SchemaAwareGroundTruthStrategy().extract_ground_truth(trace, None)
+        assert gt["expected_items"] == []
+        assert gt["confidence"] == 0.0
+        assert gt["source"] == "no_backend"
 
 
 _MEMO_PROBE_DATASET = "dataset-frame-memo-probe"

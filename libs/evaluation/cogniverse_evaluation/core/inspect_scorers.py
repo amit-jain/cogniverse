@@ -70,9 +70,6 @@ def relevance_scorer():
             # Unpack the structured output
             eval_output = unpack_solver_output(output_str)
 
-            if not eval_output.query:
-                return Score(value=0.0, explanation="No query found in output")
-
             # Calculate relevance for each configuration
             config_scores = {}
 
