@@ -231,6 +231,7 @@ nav:
     - Multi-Tenant Operations: operations/multi-tenant-ops.md
     - Multi-Tenant Management: operations/multi-tenant-management.md
     - Argo Workflows: operations/argo-workflows.md
+    - Serving Blob Ring Migration: operations/serving-blob-ring-migration.md
     - Istio Service Mesh: operations/istio-service-mesh.md
     - Performance Monitoring: operations/performance-monitoring.md
     - Troubleshooting: operations/troubleshooting.md

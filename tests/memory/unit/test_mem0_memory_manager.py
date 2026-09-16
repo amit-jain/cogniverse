@@ -337,6 +337,37 @@ class TestMem0MemoryManager:
         mock_memory.get_all.assert_not_called()
 
     @patch("cogniverse_core.memory.manager.Memory")
+    def test_cleanup_refuses_a_tenant_whose_partition_schema_is_gone(
+        self, mock_memory_class, manager
+    ):
+        """A vanished partition reads as "no memories", so it must not delete.
+
+        ``get_all_memories`` answers ``[]`` for an undeployed partition, which
+        is how the pin enumeration reads; sweeping against that answer treats
+        every pinned memory as unpinned.
+        """
+        from cogniverse_core.memory.manager import MemoryPartitionMissingError
+        from cogniverse_core.memory.schema import build_default_registry
+
+        mock_memory = MagicMock()
+        manager.memory = mock_memory
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+
+        mock_backend = MagicMock()
+        mock_backend.schema_exists.return_value = False
+        manager._resolve_backend = lambda: mock_backend
+
+        with pytest.raises(MemoryPartitionMissingError) as caught:
+            manager.cleanup_with_schema(build_default_registry(), {"pinned_1"})
+
+        assert str(caught.value) == (
+            "memory partition schema for tenant test_tenant:test_tenant is not "
+            "deployed; retention cannot tell a pinned memory from an absent one"
+        )
+        mock_memory.get_all.assert_not_called()
+        mock_memory.delete.assert_not_called()
+
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_tenant_partition_schema_exists(self, mock_memory_class, manager):
         """The public schema-exists predicate forwards the backend verdict."""
         mock_memory = MagicMock()

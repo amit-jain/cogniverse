@@ -12,7 +12,11 @@ import uuid
 
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    _BLOB_RING_SLOTS,
+    ArtifactManager,
+)
+from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 pytestmark = pytest.mark.integration
@@ -46,25 +50,28 @@ async def test_save_blob_publishes_single_row_revisions(manager):
 
     assert await manager.load_blob("model", "k1") == "v2"
 
-    slots = {
-        parity: (
-            await manager._provider.datasets.get_dataset(
-                name=manager._blob_slot_name("model", "k1", parity)
-            )
-        ).to_dict("records")
-        for parity in (0, 1)
-    }
+    slots = {}
+    for revision in range(_BLOB_RING_SLOTS):
+        try:
+            slots[revision] = (
+                await manager._provider.datasets.get_dataset(
+                    name=manager._blob_slot_name("model", "k1", revision)
+                )
+            ).to_dict("records")
+        except DatasetNotFoundError:
+            slots[revision] = None
     assert slots == {
-        0: [
+        0: None,
+        1: [
             {
-                "input": {"content": "v2", "blob_revision": "2"},
+                "input": {"content": "v1", "blob_revision": "1"},
                 "output": {},
                 "metadata": {},
             }
         ],
-        1: [
+        2: [
             {
-                "input": {"content": "v1", "blob_revision": "1"},
+                "input": {"content": "v2", "blob_revision": "2"},
                 "output": {},
                 "metadata": {},
             }
@@ -279,3 +286,114 @@ async def test_terminated_publisher_keeps_serving_revisions_readable(
     assert await manager.load_blob("config", "quotas") == "committed"
     await manager.save_blob("config", "quotas", "retried")
     assert await manager.load_blob("config", "quotas") == "retried"
+
+
+@pytest.mark.asyncio
+async def test_overlapping_publications_keep_a_revision_readable(
+    manager, phoenix_container
+):
+    """Three publications overlap, one of them stale, and readers keep resolving.
+
+    The stale publisher computes the same revision a committed publication
+    already took, and a third publisher is mid-publication at the same time.
+    That is the arrangement in which freeing a slot before writing it removes
+    the revision another publisher is serving.
+    """
+    import asyncio
+    import threading
+
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    await manager.save_blob("config", "quotas", "v1")
+
+    def _gate(entered: threading.Event, release: threading.Event):
+        def intercept(method, path, body):
+            if _is_publication(method, path):
+                entered.set()
+                if not release.wait(30):
+                    return 504, {"error": "publication barrier expired"}
+            return None
+
+        return intercept
+
+    gates = [(threading.Event(), threading.Event()) for _ in range(3)]
+    with (
+        InterceptFaultProxy(phoenix_container["http_endpoint"]) as first,
+        InterceptFaultProxy(phoenix_container["http_endpoint"]) as stale,
+        InterceptFaultProxy(phoenix_container["http_endpoint"]) as third,
+    ):
+        for proxy, (entered, release) in zip((first, stale, third), gates, strict=True):
+            proxy.intercept = _gate(entered, release)
+
+        stale_write = asyncio.create_task(
+            _manager_at(stale.url, manager._tenant_id).save_blob(
+                "config", "quotas", "stale"
+            )
+        )
+        assert await asyncio.to_thread(gates[1][0].wait, 20) is True
+
+        first_write = asyncio.create_task(
+            _manager_at(first.url, manager._tenant_id).save_blob(
+                "config", "quotas", "first"
+            )
+        )
+        assert await asyncio.to_thread(gates[0][0].wait, 20) is True
+        assert (
+            await asyncio.gather(
+                *[manager.load_blob("config", "quotas") for _ in range(4)]
+            )
+            == ["v1"] * 4
+        )
+
+        gates[0][1].set()
+        await first_write
+
+        third_write = asyncio.create_task(
+            _manager_at(third.url, manager._tenant_id).save_blob(
+                "config", "quotas", "third"
+            )
+        )
+        assert await asyncio.to_thread(gates[2][0].wait, 20) is True
+        assert (
+            await asyncio.gather(
+                *[manager.load_blob("config", "quotas") for _ in range(4)]
+            )
+            == ["first"] * 4
+        )
+
+        gates[2][1].set()
+        await third_write
+        assert (
+            await asyncio.gather(
+                *[manager.load_blob("config", "quotas") for _ in range(4)]
+            )
+            == ["third"] * 4
+        )
+
+        # The stale publication lands last, into the slot holding the
+        # predecessor of the committed revision. It must not take out the slot
+        # the newest publication filled while it was held.
+        gates[1][1].set()
+        await stale_write
+        assert (
+            await asyncio.gather(
+                *[manager.load_blob("config", "quotas") for _ in range(4)]
+            )
+            == ["third"] * 4
+        )
+        assert await manager._read_blob_slot("config", "quotas", 3) == {
+            "revision": 3,
+            "content": "third",
+        }
+
+        # Every publication writes before it deletes, and the slot it deletes
+        # is never the slot it wrote: that is what keeps a stale publication
+        # from removing a committed revision.
+        for proxy in (first, stale, third):
+            assert [
+                method
+                for method, path, _ in proxy.requests
+                if method == "DELETE" or _is_publication(method, path)
+            ][:1] == ["POST"]
+
+    assert await manager.load_blob("config", "quotas") == "third"

@@ -170,7 +170,8 @@ class InterceptFaultProxy:
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self.url = f"http://127.0.0.1:{self._server.server_port}"
+        self.port = self._server.server_port
+        self.url = f"http://127.0.0.1:{self.port}"
 
     def __enter__(self):
         self._thread.start()

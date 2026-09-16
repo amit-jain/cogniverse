@@ -433,11 +433,14 @@ async def clear_memories(
         def _clear_category() -> int:
             # Walk every page (limit=None): the category filter runs in
             # Python, so a capped read would leave matches past the store's
-            # 100-row page undeleted while reporting success.
+            # 100-row page undeleted while reporting success. Archived rows
+            # are cleared too — both branches of this route mean the same
+            # thing by "cleared".
             results = mgr.get_all_memories(
                 tenant_id=tenant_id,
                 agent_name=_USER_MEMORY_AGENT,
                 limit=None,
+                include_archived=True,
             )
             deleted = 0
             for r in results:

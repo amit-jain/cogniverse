@@ -7,6 +7,9 @@ immediately and applies it in the background, with three contracts:
 accepted is reportable as distinct from applied, readers see their own
 pending write, and a write the queue ultimately cannot persist surfaces as
 a typed error instead of silently reverting to the stale durable value.
+
+Each write also carries the content it was merged onto, so applying it
+replays only the fields it changed onto the blob as it stands then.
 """
 
 import asyncio
@@ -24,13 +27,17 @@ class GatedApplier:
 
     def __init__(self, fail_times: int = 0):
         self.calls: list[tuple[str, str, str, str]] = []
+        self.bases: list[str] = []
         self.gate = asyncio.Event()
         self.gate.set()
         self._fail_times = fail_times
 
-    async def __call__(self, tenant_id: str, kind: str, key: str, content: str):
+    async def __call__(
+        self, tenant_id: str, kind: str, key: str, content: str, base: str
+    ):
         await self.gate.wait()
         self.calls.append((tenant_id, kind, key, content))
+        self.bases.append(base)
         if self._fail_times > 0:
             self._fail_times -= 1
             raise ConnectionError("phoenix unreachable")
@@ -42,7 +49,7 @@ async def test_enqueue_is_accepted_before_apply_runs():
     applier.gate.clear()
     queue = BlobWriteQueue(applier)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base="{}")
 
     assert applier.calls == []
     assert queue.status() == {"pending": 1, "failed": []}
@@ -59,7 +66,7 @@ async def test_pending_content_serves_read_your_write():
     applier.gate.clear()
     queue = BlobWriteQueue(applier)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 9}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 9}', base="{}")
     assert queue.pending_content(TENANT, "config", "pin_quotas") == '{"user": 9}'
 
     applier.gate.set()
@@ -74,7 +81,7 @@ async def test_writes_to_one_key_coalesce_to_the_last_content():
     queue = BlobWriteQueue(applier)
 
     for n in range(1, 6):
-        queue.enqueue(TENANT, "config", "pin_quotas", f'{{"user": {n}}}')
+        queue.enqueue(TENANT, "config", "pin_quotas", f'{{"user": {n}}}', base="{}")
 
     applier.gate.set()
     await queue.flush()
@@ -87,9 +94,9 @@ async def test_distinct_keys_apply_in_enqueue_order():
     applier.gate.clear()
     queue = BlobWriteQueue(applier)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", "a")
-    queue.enqueue(TENANT, "config", "signature_variants", "b")
-    queue.enqueue("org:other", "config", "pin_quotas", "c")
+    queue.enqueue(TENANT, "config", "pin_quotas", "a", base="{}")
+    queue.enqueue(TENANT, "config", "signature_variants", "b", base="{}")
+    queue.enqueue("org:other", "config", "pin_quotas", "c", base="{}")
 
     applier.gate.set()
     await queue.flush()
@@ -105,7 +112,7 @@ async def test_terminal_failure_is_a_typed_error_that_survives():
     applier = GatedApplier(fail_times=99)
     queue = BlobWriteQueue(applier, max_attempts=2, backoff_s=0)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base="{}")
     await queue.flush()
 
     assert queue.status() == {
@@ -127,7 +134,7 @@ async def test_transient_failures_are_retried_to_success():
     applier = GatedApplier(fail_times=2)
     queue = BlobWriteQueue(applier, max_attempts=3, backoff_s=0)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 4}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 4}', base="{}")
     await queue.flush()
 
     assert queue.status() == {"pending": 0, "failed": []}
@@ -140,11 +147,11 @@ async def test_new_enqueue_supersedes_a_failed_write():
     applier = GatedApplier(fail_times=2)
     queue = BlobWriteQueue(applier, max_attempts=2, backoff_s=0)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base="{}")
     await queue.flush()
     assert queue.status()["failed"] == [(TENANT, "config", "pin_quotas")]
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 8}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 8}', base="{}")
     queue.raise_if_failed(TENANT, "config", "pin_quotas")  # cleared by re-enqueue
     await queue.flush()
 
@@ -160,7 +167,7 @@ async def test_concurrent_enqueues_across_keys_each_apply_exactly_once():
 
     async def put(n: int):
         await barrier.wait()
-        queue.enqueue(f"org:t{n}", "config", "pin_quotas", f"v{n}")
+        queue.enqueue(f"org:t{n}", "config", "pin_quotas", f"v{n}", base="{}")
 
     async with asyncio.TaskGroup() as tg:
         for n in range(8):
@@ -178,10 +185,10 @@ async def test_write_enqueued_during_inflight_apply_is_not_lost():
     queue = BlobWriteQueue(applier)
 
     applier.gate.clear()
-    queue.enqueue(TENANT, "config", "pin_quotas", "old")
+    queue.enqueue(TENANT, "config", "pin_quotas", "old", base="{}")
     # Give the worker a chance to take the snapshot and block inside apply.
     await asyncio.sleep(0.05)
-    queue.enqueue(TENANT, "config", "pin_quotas", "new")
+    queue.enqueue(TENANT, "config", "pin_quotas", "new", base="{}")
     applier.gate.set()
     await queue.flush()
 
@@ -203,7 +210,7 @@ async def test_failed_error_retains_the_accepted_content():
     applier = GatedApplier(fail_times=99)
     queue = BlobWriteQueue(applier, max_attempts=1, backoff_s=0)
 
-    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 5}')
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 5}', base="{}")
     await queue.flush()
 
     error = queue.failed_error(TENANT, "config", "pin_quotas")
@@ -231,7 +238,7 @@ async def test_applied_write_is_logged_with_its_identity(caplog):
     queue = BlobWriteQueue(GatedApplier())
 
     with caplog.at_level(logging.INFO, logger=QUEUE_LOGGER):
-        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base="{}")
         await queue.flush()
 
     assert _records(caplog, logging.INFO) == [
@@ -246,7 +253,7 @@ async def test_retried_write_logs_every_failed_attempt(caplog):
     queue = BlobWriteQueue(GatedApplier(fail_times=2), backoff_s=0)
 
     with caplog.at_level(logging.INFO, logger=QUEUE_LOGGER):
-        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base="{}")
         await queue.flush()
 
     assert _records(caplog, logging.WARNING) == [
@@ -258,3 +265,71 @@ async def test_retried_write_logs_every_failed_attempt(caplog):
     assert _records(caplog, logging.INFO) == [
         "Blob write config/pin_quotas for tenant org:tenant applied"
     ]
+
+
+@pytest.mark.asyncio
+async def test_coalesced_writes_keep_the_earliest_merge_base():
+    """Coalescing replaces the content but not what it is measured against.
+
+    Taking the newest write's base would drop the fields the earlier
+    coalesced writes changed, which never reached the store.
+    """
+    applier = GatedApplier()
+    applier.gate.clear()
+    queue = BlobWriteQueue(applier)
+
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base='{"user": 1}')
+    queue.enqueue(
+        TENANT,
+        "config",
+        "pin_quotas",
+        '{"user": 3, "tenant_admin": 4}',
+        base='{"user": 3}',
+    )
+
+    applier.gate.set()
+    await queue.flush()
+    assert applier.calls == [
+        (TENANT, "config", "pin_quotas", '{"user": 3, "tenant_admin": 4}')
+    ]
+    assert applier.bases == ['{"user": 1}']
+
+
+@pytest.mark.asyncio
+async def test_a_write_superseding_a_failed_one_inherits_its_merge_base():
+    """The failed write's own change never persisted, so it must be replayed."""
+    applier = GatedApplier(fail_times=1)
+    queue = BlobWriteQueue(applier, max_attempts=1, backoff_s=0)
+
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}', base='{"user": 1}')
+    await queue.flush()
+    assert queue.status()["failed"] == [(TENANT, "config", "pin_quotas")]
+
+    queue.enqueue(
+        TENANT,
+        "config",
+        "pin_quotas",
+        '{"user": 3, "tenant_admin": 4}',
+        base='{"user": 3}',
+    )
+    await queue.flush()
+
+    assert queue.status() == {"pending": 0, "failed": []}
+    assert applier.calls[-1] == (
+        TENANT,
+        "config",
+        "pin_quotas",
+        '{"user": 3, "tenant_admin": 4}',
+    )
+    assert applier.bases == ['{"user": 1}', '{"user": 1}']
+
+
+@pytest.mark.asyncio
+async def test_failed_error_retains_the_merge_base_it_was_accepted_against():
+    applier = GatedApplier(fail_times=99)
+    queue = BlobWriteQueue(applier, max_attempts=1, backoff_s=0)
+
+    queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 5}', base='{"user": 1}')
+    await queue.flush()
+
+    assert queue.failed_error(TENANT, "config", "pin_quotas").base == '{"user": 1}'

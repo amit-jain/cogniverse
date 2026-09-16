@@ -16,7 +16,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    _BLOB_RING_SLOTS,
+    ArtifactManager,
+)
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 from cogniverse_runtime.routers import admin as admin_router
 
@@ -139,12 +142,12 @@ def _fixed_artifact_datetime(monkeypatch):
 
 
 def _served_contents(store: _InMemoryDatasetStore, base_name: str) -> list[str]:
-    """Contents of the greatest published revision across a blob's two slots."""
+    """Contents of the greatest published revision across a blob's ring slots."""
     rows = [
         row
-        for parity in (0, 1)
-        if f"{base_name}--r{parity}" in store.datasets
-        for row in store.datasets[f"{base_name}--r{parity}"].to_dict("records")
+        for slot in range(_BLOB_RING_SLOTS)
+        if f"{base_name}--r{slot}" in store.datasets
+        for row in store.datasets[f"{base_name}--r{slot}"].to_dict("records")
     ]
     top = max(int(row["blob_revision"]) for row in rows)
     return [row["content"] for row in rows if int(row["blob_revision"]) == top]
@@ -360,8 +363,8 @@ async def test_loader_missing_returns_named_status(monkeypatch):
         "error": "entity_extraction_ground_truth is not configured for tenant acme:acme",
     }
     assert store.get_calls == [
-        am._blob_slot_name("config", "entity_extraction_ground_truth", 0),
-        am._blob_slot_name("config", "entity_extraction_ground_truth", 1),
+        am._blob_slot_name("config", "entity_extraction_ground_truth", slot)
+        for slot in range(_BLOB_RING_SLOTS)
     ]
 
 
@@ -390,8 +393,8 @@ async def test_loader_store_error_raises_fault_contract(monkeypatch):
         },
     }
     assert store.get_calls == [
-        am._blob_slot_name("config", "entity_extraction_ground_truth", 0),
-        am._blob_slot_name("config", "entity_extraction_ground_truth", 1),
+        am._blob_slot_name("config", "entity_extraction_ground_truth", slot)
+        for slot in range(_BLOB_RING_SLOTS)
     ]
 
 

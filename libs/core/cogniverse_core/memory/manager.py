@@ -151,6 +151,14 @@ def _register_backend_provider():
 _register_backend_provider()
 
 
+class MemoryPartitionMissingError(RuntimeError):
+    """The tenant's memory partition schema is not deployed.
+
+    Reads answer "no memories" for such a tenant, so retention cannot tell a
+    pinned memory from an absent one and refuses to delete.
+    """
+
+
 class Mem0MemoryManager:
     """
     Memory manager using Mem0 with Vespa vector store backend.
@@ -1243,6 +1251,17 @@ class Mem0MemoryManager:
 
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
+
+        # ``get_all_memories`` answers "no memories" for a tenant whose
+        # partition schema is not deployed, which is how the pin enumeration
+        # reads. Deleting against that answer treats every pin as absent, so
+        # the sweep refuses the tenant instead.
+        schema_tenant_id = canonical_tenant_id(self.tenant_id)
+        if not self.tenant_partition_schema_exists(schema_tenant_id):
+            raise MemoryPartitionMissingError(
+                f"memory partition schema for tenant {schema_tenant_id} is not "
+                "deployed; retention cannot tell a pinned memory from an absent one"
+            )
 
         pinned_ids = pinned_memory_ids or set()
         now_epoch = int(time.time())

@@ -686,10 +686,9 @@ class TestQualityMonitorTenantOwnership:
                 assert store_error.endpoint == unavailable_url
                 assert (
                     store_error.dataset
-                    == monitor._get_artifact_manager()._blob_slot_name(
+                    == monitor._get_artifact_manager()._blob_dataset_name(
                         GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
                         GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
-                        0,
                     )
                 )
                 assert type(store_error.__cause__) is httpx.ConnectError

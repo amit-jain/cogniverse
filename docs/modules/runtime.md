@@ -1181,7 +1181,7 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **DELETE /admin/tenant/{tenant_id}/memories/{memory_id}** — Delete a single user-owned memory by id. 404 if not found.
 
-**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
+**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. Both branches walk the whole partition, archived rows included. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
 
 **GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant. Response: `{tenant_id, selections: {agent_type: variant_id}, pending_write}`.
 
@@ -1190,9 +1190,13 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 Pin-quota and signature-selection partial PUTs merge the requested fields onto a
 fresh read of the durable blob, skipping the TTL serving cache, so a value
 another replica persisted survives. Content this process has accepted but not
-yet persisted still wins over the durable read. Per-tenant locks serialize
-updates within one process; Phoenix has no compare-and-set, so updates that
-truly overlap across replicas stay last-write-wins. A store outage on either
+yet persisted still wins over the durable read. The queue records the state each
+PUT merged onto, and persisting replays only the fields that PUT changed onto
+the blob as it stands at that moment, so a field a peer replica persisted while
+this one's write was still queued is kept. Per-tenant locks serialize updates
+within one process; Phoenix has no compare-and-set, so two updates whose
+persists overlap — between one applier's read of the durable blob and its
+publication — remain last-write-wins across replicas. A store outage on either
 route answers 503.
 
 **POST /admin/tenants/{tenant_id}/canary/{agent_type}/promote** — Promote a versioned artefact to canary at a traffic percentage.

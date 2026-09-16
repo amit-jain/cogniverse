@@ -10,7 +10,10 @@ from typing import Any, Dict, Optional
 import pandas as pd
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    _BLOB_RING_SLOTS,
+    ArtifactManager,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -222,12 +225,14 @@ class TestRollback:
 
 
 class _BlobStore:
-    """Blob-focused fake: delete commits immediately, create can be armed
-    to fail with specific exceptions (in order) to exercise torn writes."""
+    """Blob-focused fake: delete commits immediately, create appends to an
+    existing name the way Phoenix does, and create can be armed to fail with
+    specific exceptions (in order) to exercise torn writes."""
 
     def __init__(self):
         self.datasets: dict[str, pd.DataFrame] = {}
         self.create_failures: list[Exception] = []
+        self.calls: list[tuple[str, str]] = []
 
     async def replace_dataset(self, name, data, metadata=None):
         return await self.create_dataset(name=name, data=data, metadata=metadata)
@@ -240,10 +245,17 @@ class _BlobStore:
     ) -> str:
         if self.create_failures:
             raise self.create_failures.pop(0)
-        self.datasets[name] = data.copy()
+        self.calls.append(("create", name))
+        existing = self.datasets.get(name)
+        self.datasets[name] = (
+            data.copy()
+            if existing is None
+            else pd.concat([existing, data], ignore_index=True)
+        )
         return f"id::{name}"
 
     async def delete_dataset(self, name: str) -> bool:
+        self.calls.append(("delete", name))
         self.datasets.pop(name, None)
         return True
 
@@ -321,7 +333,7 @@ class TestSaveBlobCompensation:
 
         assert await manager.load_blob("config", "gateway_thresholds") == "OLD"
 
-    async def test_publication_alternates_two_single_row_slots(self):
+    async def test_publication_rotates_single_row_slots(self):
         provider = _BlobProvider()
         manager = ArtifactManager(provider, tenant_id="acme")
 
@@ -337,13 +349,32 @@ class TestSaveBlobCompensation:
             name: frame.to_dict("records")
             for name, frame in provider.datasets.datasets.items()
         } == {
-            manager._blob_slot_name("config", "k", 0): [
+            manager._blob_slot_name("config", "k", 2): [
                 {"content": "v2", "blob_revision": "2"}
             ],
-            manager._blob_slot_name("config", "k", 1): [
+            manager._blob_slot_name("config", "k", 3): [
                 {"content": "v3", "blob_revision": "3"}
             ],
         }
+
+    async def test_publication_writes_before_it_deletes(self):
+        provider = _BlobProvider()
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        await manager.save_blob("config", "k", "v1")
+        await manager.save_blob("config", "k", "v2")
+        provider.datasets.calls.clear()
+        await manager.save_blob("config", "k", "v3")
+
+        mutations = [
+            (verb, name)
+            for verb, name in provider.datasets.calls
+            if verb in ("create", "delete")
+        ]
+        assert mutations == [
+            ("create", manager._blob_slot_name("config", "k", 3)),
+            ("delete", manager._blob_slot_name("config", "k", 1)),
+        ]
 
 
 @pytest.mark.asyncio
@@ -362,6 +393,50 @@ class TestLoadBlobErrorBoundary:
 
         with pytest.raises(ValueError, match="boom-bad-shape"):
             await manager.load_blob("config", "missing")
+
+    @pytest.mark.parametrize("failing_slot", list(range(_BLOB_RING_SLOTS)))
+    async def test_store_outage_names_the_blob_not_the_slot(self, failing_slot):
+        from cogniverse_foundation.telemetry.providers.base import (
+            DatasetStoreUnavailableError,
+        )
+
+        manager_name = ArtifactManager(
+            SimpleNamespace(datasets=_BlobStore()), tenant_id="acme"
+        )
+        failing = manager_name._blob_slot_name("config", "quotas", failing_slot)
+
+        class _OneSlotOutageStore:
+            async def get_dataset(self, name: str) -> pd.DataFrame:
+                if name == failing:
+                    raise DatasetStoreUnavailableError(
+                        f"dataset store at http://phoenix:6006 could not answer "
+                        f"for dataset {name!r}",
+                        endpoint="http://phoenix:6006",
+                        dataset=name,
+                    ) from ConnectionError("connection refused")
+                from cogniverse_foundation.telemetry.providers.base import (
+                    DatasetNotFoundError,
+                )
+
+                raise DatasetNotFoundError(f"missing dataset {name}")
+
+        manager = ArtifactManager(
+            SimpleNamespace(datasets=_OneSlotOutageStore()), tenant_id="acme"
+        )
+
+        with pytest.raises(DatasetStoreUnavailableError) as caught:
+            await manager.load_blob("config", "quotas")
+
+        assert caught.value.dataset == "dspy-config-acme:acme-quotas"
+        assert caught.value.endpoint == "http://phoenix:6006"
+        assert str(caught.value) == (
+            "dataset store at http://phoenix:6006 could not answer for blob "
+            "'dspy-config-acme:acme-quotas': ConnectionError: connection refused"
+        )
+        # Callers classify the outage by the transport failure, so it stays the
+        # cause rather than the per-slot error the blob read wrapped.
+        assert type(caught.value.__cause__) is ConnectionError
+        assert str(caught.value.__cause__) == "connection refused"
 
 
 @pytest.mark.asyncio
