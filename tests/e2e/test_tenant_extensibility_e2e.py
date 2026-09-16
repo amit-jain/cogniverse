@@ -16,9 +16,15 @@ import httpx
 import pytest
 
 from cogniverse_agents.wiki.wiki_schema import generate_slug
+from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
+from cogniverse_runtime.config_loader import get_workflow_settings
+from cogniverse_runtime.routers.tenant import _cron_workflow_name
 from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
+    _kubectl_e2e,
+    _kubectl_e2e_command,
+    _require_kubectl_success,
     assert_orchestrated,
     expected_gateway_routing,
     register_tenant_and_wait,
@@ -29,6 +35,8 @@ from tests.e2e.test_api_e2e import PROFILE
 # DenseOn (768-dim, ModernBERT) served by vLLM (inference.denseon, vllm_embed).
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
 DENSEON_URL = "http://localhost:33906"
+# The namespace the runtime submits CronWorkflows into, as the chart sets it.
+WORKFLOW_NAMESPACE = get_workflow_settings().namespace
 
 
 def _embed(text: str) -> list:
@@ -250,6 +258,38 @@ class TestTenantInstructions:
             client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
 
 
+def _cron_workflow_names(selector: str) -> list[str]:
+    """CronWorkflow names the release namespace holds for a label selector."""
+    args = (
+        "-n",
+        WORKFLOW_NAMESPACE,
+        "get",
+        "cronworkflows.argoproj.io",
+        "-l",
+        selector,
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
+    )
+    result = _kubectl_e2e(*args)
+    _require_kubectl_success(result, _kubectl_e2e_command(*args))
+    return sorted(result.stdout.split())
+
+
+def _cron_workflow_labels(name: str) -> dict:
+    """The labels one CronWorkflow carries."""
+    args = (
+        "-n",
+        WORKFLOW_NAMESPACE,
+        "get",
+        f"cronworkflows.argoproj.io/{name}",
+        "-o",
+        "jsonpath={.metadata.labels}",
+    )
+    result = _kubectl_e2e(*args)
+    _require_kubectl_success(result, _kubectl_e2e_command(*args))
+    return json.loads(result.stdout)
+
+
 @pytest.mark.e2e
 class TestTenantJobs:
     def test_full_lifecycle_with_post_actions_preserved(self, owned_tenant):
@@ -303,6 +343,61 @@ class TestTenantJobs:
             remaining_ids = [j["job_id"] for j in resp.json()["jobs"]]
             assert job_id not in remaining_ids, "Deleted job still in list"
             assert remaining_ids == [], remaining_ids
+
+    def test_a_job_and_its_schedule_are_created_and_removed_together(self):
+        """The rows a tenant lists and the schedules the cluster fires agree.
+
+        The route submits the CronWorkflow and then writes the row that
+        describes it. A tenant that lists a job and a cluster that fires one
+        must name the same schedule, and deleting the job must leave neither
+        behind.
+        """
+        tenant_id = f"{unique_id('tenant_jobs')}:t1"
+        label = sanitize_k8s_label_value(tenant_id)
+        selector = f"app=cogniverse,tenant={label}"
+
+        assert _cron_workflow_names(selector) == [], selector
+
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            created = client.post(
+                f"/admin/tenant/{tenant_id}/jobs",
+                json={
+                    "name": "weekly_schedule_agreement",
+                    "schedule": "0 9 * * 1",
+                    "query": "papers on video retrieval",
+                    "post_actions": [],
+                },
+            )
+            assert created.status_code == 200, created.text
+            job = created.json()
+            job_id = job["job_id"]
+            assert job["status"] == "created", job
+
+            try:
+                # The cluster fires exactly the schedule the route named.
+                assert _cron_workflow_names(selector) == [
+                    _cron_workflow_name(tenant_id, job_id)
+                ]
+                assert _cron_workflow_labels(
+                    _cron_workflow_name(tenant_id, job_id)
+                ) == {
+                    "app": "cogniverse",
+                    "tenant": label,
+                    "job-id": job_id,
+                }
+                listed = client.get(f"/admin/tenant/{tenant_id}/jobs")
+                assert listed.status_code == 200, listed.text
+                assert [row["job_id"] for row in listed.json()["jobs"]] == [job_id]
+            finally:
+                removed = client.delete(f"/admin/tenant/{tenant_id}/jobs/{job_id}")
+
+            assert removed.status_code == 200, removed.text
+            assert removed.json() == {"status": "deleted", "job_id": job_id}
+            # Neither the row nor the schedule survives the delete.
+            assert _cron_workflow_names(selector) == []
+            after = client.get(f"/admin/tenant/{tenant_id}/jobs")
+            assert after.status_code == 200, after.text
+            assert after.json()["jobs"] == []
 
     def test_delete_nonexistent_returns_404(self, owned_tenant):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
