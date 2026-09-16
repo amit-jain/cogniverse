@@ -236,7 +236,7 @@ async def test_search_dispatch_roots_process_and_children(monkeypatch):
     agent = SearchAgent()
     agent.set_telemetry_manager(manager)
 
-    def _build_search_agent(profile):
+    def _build_search_agent(profile, tenant_id):
         return agent
 
     dispatcher._get_search_agent = _build_search_agent

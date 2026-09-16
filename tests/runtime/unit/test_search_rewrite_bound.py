@@ -134,7 +134,7 @@ def _dispatcher(budget_s=_TEST_BUDGET_S):
         config_manager=config_manager,
         schema_loader=MagicMock(),
     )
-    dispatcher._get_search_agent = lambda profile: agent
+    dispatcher._get_search_agent = lambda profile, tenant_id: agent
 
     captured: list[float | None] = []
     real_process = agent.process
@@ -782,7 +782,7 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
     not there raises an error naming the endpoint and the deadline."""
 
     async def test_a_prompt_upstream_answers_the_bounded_call(self):
-        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE)
+        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE, _TENANT)
         with _ScriptedUpstream([(0.0, 200)]) as upstream:
             with dspy.context(lm=_routed_rewrite_lm(upstream.api_base)):
                 prediction = await agent.call_dspy(
@@ -798,7 +798,7 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
         assert len(upstream.arrivals) == 1
 
     async def test_a_hung_upstream_raises_naming_the_endpoint_and_the_deadline(self):
-        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE)
+        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE, _TENANT)
         with _ScriptedUpstream([(3 * _SHIPPED_REWRITE_BOUND_S, 200)]) as upstream:
             started = time.monotonic()
             with (
@@ -825,7 +825,7 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
     async def test_an_unreachable_upstream_raises_naming_the_endpoint_and_the_deadline(
         self,
     ):
-        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE)
+        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE, _TENANT)
         dead = _dead_api_base()
         started = time.monotonic()
         with (
@@ -854,7 +854,7 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
     ):
         """An LM with no endpoint to bound hangs on its own; the caller waiting
         on it is released at the deadline all the same."""
-        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE)
+        agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE, _TENANT)
         lm = _HangingLM([{"enhanced_query": _REWRITTEN}])
         started = time.monotonic()
         with dspy.context(lm=lm), pytest.raises(LMCallDeadlineExceeded) as raised:
