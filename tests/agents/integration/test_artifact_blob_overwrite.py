@@ -361,17 +361,30 @@ async def test_overlapping_publications_keep_a_revision_readable(
             == ["first"] * 4
         )
 
+        gates[2][1].set()
+        await third_write
+        assert (
+            await asyncio.gather(
+                *[manager.load_blob("config", "quotas") for _ in range(4)]
+            )
+            == ["third"] * 4
+        )
+
+        # The stale publication lands last, into the slot holding the
+        # predecessor of the committed revision. It must not take out the slot
+        # the newest publication filled while it was held.
         gates[1][1].set()
         await stale_write
         assert (
             await asyncio.gather(
                 *[manager.load_blob("config", "quotas") for _ in range(4)]
             )
-            == ["stale"] * 4
+            == ["third"] * 4
         )
-
-        gates[2][1].set()
-        await third_write
+        assert await manager._read_blob_slot("config", "quotas", 3) == {
+            "revision": 3,
+            "content": "third",
+        }
 
         # Every publication writes before it deletes, and the slot it deletes
         # is never the slot it wrote: that is what keeps a stale publication
