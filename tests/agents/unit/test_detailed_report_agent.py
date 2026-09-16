@@ -15,6 +15,19 @@ from cogniverse_agents.detailed_report_agent import (
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.dspy import LenientJSONAdapter, LMOutputIncomplete
+
+def _incomplete_generation() -> LMOutputIncomplete:
+    """The error the shipped adapter raises for a report the LM never wrote."""
+    import dspy
+
+    signature = dspy.Signature("content -> executive_summary, recommendations")
+    try:
+        LenientJSONAdapter().parse(signature, '{"recommendations": "none"}')
+    except LMOutputIncomplete as incomplete:
+        return incomplete
+    raise AssertionError("the adapter accepted a report with no summary")
+
 
 # Endpoint the agent routes per request when _initialize_vlm_client is mocked.
 _GATEWAY_TEST_ENDPOINT = LLMEndpointConfig(
@@ -328,6 +341,34 @@ class TestDetailedReportAgent:
         # The summary is the templated fallback, not a grounded report.
         assert result.executive_summary.startswith("Analysis of 1 results")
         assert "test query" in result.executive_summary
+
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_incomplete_generation_propagates_not_masked_as_degraded(
+        self, mock_vlm_class
+    ):
+        """An LM that produced no report has nothing to degrade from: the
+        templated stub would be a fabricated executive summary served with
+        status success, so the turn ends as the generation error it is."""
+        mock_vlm_class.return_value = Mock()
+        with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+
+        agent.call_dspy = AsyncMock(side_effect=_incomplete_generation())
+
+        request = ReportRequest(
+            query="test query",
+            search_results=[{"id": "1", "title": "Test", "score": 0.8}],
+            report_type="comprehensive",
+            include_visual_analysis=False,
+        )
+        with pytest.raises(LMOutputIncomplete) as raised:
+            await agent._generate_report(request)
+        assert raised.value.missing_fields == ("executive_summary",)
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
