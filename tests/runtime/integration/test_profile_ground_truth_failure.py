@@ -168,22 +168,31 @@ async def test_cli_ground_truth_read_failure_is_terminal(
                 await run
 
         summary = json.loads(result.stdout)
-        expected_cause = (
-            f"dataset store at {proxy.url} could not answer for dataset "
-            f"{dataset_name!r}: HTTPStatusError: Server error '503 Service Unavailable' "
-            f"for url '{proxy.url}/v1/datasets?{urlencode({'name': dataset_name})}'\n"
-            "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
-        )
-        assert summary == {
+        # Both serving slots are read concurrently and the store names the slot
+        # dataset it was asked for, so the cause is one of the two — exactly,
+        # including the URL the proxy refused.
+        expected_causes = {
+            (
+                f"dataset store at {proxy.url} could not answer for dataset "
+                f"{slot!r}: HTTPStatusError: Server error '503 Service Unavailable' "
+                f"for url '{proxy.url}/v1/datasets?{urlencode({'name': slot})}'\n"
+                "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
+            )
+            for slot in (
+                manager._blob_slot_name(
+                    "config", "profile_selection_ground_truth", revision
+                )
+                for revision in (0, 1)
+            )
+        }
+        assert {key: value for key, value in summary.items() if key != "cause"} == {
             "status": "failed",
             "reason": "profile_selection_ground_truth_store_unavailable",
             "retryable": True,
             "error": "profile_selection_ground_truth store unavailable",
-            "cause": {
-                "type": "DatasetStoreUnavailableError",
-                "message": expected_cause,
-            },
         }
+        assert summary["cause"]["type"] == "DatasetStoreUnavailableError"
+        assert summary["cause"]["message"] in expected_causes
         assert result.returncode == 1, result.stderr
         assert _run_failed(summary) is True
         assert (
