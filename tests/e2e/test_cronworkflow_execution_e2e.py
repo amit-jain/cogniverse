@@ -344,6 +344,56 @@ def _add_aged_memory(
     return r.json()["id"]
 
 
+def _pin_memory(
+    tenant_full_id: str,
+    memory_id: str,
+    *,
+    target_kind: str,
+    pinned_by: str,
+    actor_id: str,
+) -> dict:
+    """Pin one memory through the admin route; return the created record."""
+    with httpx.Client(timeout=120.0) as client:
+        r = client.post(
+            f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories/{memory_id}/pin",
+            json={
+                "target_kind": target_kind,
+                "pinned_by": pinned_by,
+                "actor_id": actor_id,
+            },
+        )
+        assert r.status_code == 200, r.text[:300]
+    return r.json()
+
+
+def _pin_records(tenant_full_id: str) -> dict[str, dict]:
+    """The tenant's pins keyed by the memory each one protects."""
+    with httpx.Client(timeout=60.0) as client:
+        r = client.get(f"{RUNTIME}/admin/tenants/{tenant_full_id}/pins")
+        assert r.status_code == 200, r.text[:300]
+    return {
+        pin["target_memory_id"]: {
+            "target_memory_id": pin["target_memory_id"],
+            "target_kind": pin["target_kind"],
+            "pinned_by": pin["pinned_by"],
+            "pinned_by_actor": pin["pinned_by_actor"],
+        }
+        for pin in r.json()["pins"]
+    }
+
+
+def _memory_ids(tenant_full_id: str) -> set[str]:
+    """Every memory id the tenant's listing route returns."""
+    with httpx.Client(timeout=60.0) as client:
+        r = client.get(
+            f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories",
+            params={"limit": 200},
+            timeout=180.0,
+        )
+        assert r.status_code == 200, r.text[:300]
+    return {m["id"] for m in r.json()["memories"]}
+
+
 def _resolve_memory(tenant_full_id: str, mid: str) -> dict | None:
     """List memories for the tenant and return the one matching mid, or None."""
     with httpx.Client(timeout=30.0) as client:
@@ -616,6 +666,74 @@ class TestDailyCleanupWorkflow:
         assert _resolve_memory(tenant_id, permanent_id) is not None, (
             "daily-cleanup must not touch PERMANENT kinds; tenant_instruction was wiped"
         )
+
+    def test_workflow_does_not_delete_pinned_memories(self):
+        """Daily-cleanup must leave a pinned memory alone whatever its age.
+
+        The cron ran the sweep with no pinned ids, so every explicitly pinned
+        memory past its window was deleted along with the unpinned ones and
+        its pin record pointed at nothing.
+        """
+        _require_cronworkflow("cogniverse-daily-cleanup")
+
+        tenant_id = _seed_org_and_tenant()
+        # One expiring kind per pinnable role, each past its window, plus the
+        # unpinned control that must go.
+        pinned_turn = _add_aged_memory(
+            tenant_id, "conversation_turn", 40.0, "pinned-turn-survives"
+        )
+        unpinned_turn = _add_aged_memory(
+            tenant_id, "conversation_turn", 40.0, "unpinned-turn-goes"
+        )
+        pinned_strategy = _add_aged_memory(
+            tenant_id, "learned_strategy", 40.0, "pinned-strategy-survives"
+        )
+        for memory_id in (pinned_turn, unpinned_turn, pinned_strategy):
+            assert _poll_resolve(tenant_id, memory_id, expect_present=True) is not None
+
+        _pin_memory(
+            tenant_id,
+            pinned_turn,
+            target_kind="conversation_turn",
+            pinned_by="user",
+            actor_id="alice",
+        )
+        _pin_memory(
+            tenant_id,
+            pinned_strategy,
+            target_kind="learned_strategy",
+            pinned_by="tenant_admin",
+            actor_id="ops",
+        )
+        expected_pins = {
+            pinned_turn: {
+                "target_memory_id": pinned_turn,
+                "target_kind": "conversation_turn",
+                "pinned_by": "user",
+                "pinned_by_actor": "alice",
+            },
+            pinned_strategy: {
+                "target_memory_id": pinned_strategy,
+                "target_kind": "learned_strategy",
+                "pinned_by": "tenant_admin",
+                "pinned_by_actor": "ops",
+            },
+        }
+        assert _pin_records(tenant_id) == expected_pins
+
+        _submit_and_wait_succeeded(
+            "cogniverse-daily-cleanup", timeout_s=SUBMISSION_TIMEOUT_S
+        )
+
+        assert _poll_resolve(tenant_id, unpinned_turn, expect_present=False) is None, (
+            f"the unpinned 40d conversation_turn ({unpinned_turn}) survived the "
+            "sweep, so the pin read cannot be what spared the pinned rows"
+        )
+        # Exactly the pinned rows remain, so the sweep deleted exactly one row
+        # for this tenant.
+        assert _memory_ids(tenant_id) == {pinned_turn, pinned_strategy}
+        # And the pin records still point at them, unchanged.
+        assert _pin_records(tenant_id) == expected_pins
 
 
 def _run_gateway_traffic(tenant_id: str) -> list[tuple[str, float]]:
