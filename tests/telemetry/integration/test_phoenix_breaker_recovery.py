@@ -1,4 +1,9 @@
-"""Deadline-cancelled Phoenix reads release endpoint recovery reservations."""
+"""Endpoint breaker recovery against real Phoenix.
+
+A deadline-cancelled read releases its recovery reservation and concludes the
+trial; failures from reads admitted before the outage still count once they
+land.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +25,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 @pytest.fixture
 def delayed_phoenix(phoenix_container):
     control = SimpleNamespace(
-        mode="forward", entered=threading.Event(), release=threading.Event(), calls=0
+        mode="forward",
+        entered=threading.Event(),
+        release=threading.Event(),
+        calls=0,
+        held=[],
+        lock=threading.Lock(),
     )
 
     class Proxy(BaseHTTPRequestHandler):
@@ -31,9 +41,16 @@ def delayed_phoenix(phoenix_container):
             self.forward()
 
         def forward(self):
-            control.calls += 1
+            with control.lock:
+                control.calls += 1
             mode = control.mode
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if mode == "hold_fail":
+                with control.lock:
+                    control.held.append(self.path)
+                if not control.release.wait(30):
+                    raise TimeoutError("test did not release Phoenix response")
+                mode = "fail"
             if mode == "fail":
                 self.send_response(503)
                 self.end_headers()
@@ -132,12 +149,21 @@ async def test_deadline_cancelled_probe_recovers_exact_tenant_spans(
         assert delayed_phoenix.calls == calls
         with pytest.raises(TimeoutError):
             await pending
-        assert breaker.state is CircuitState.HALF_OPEN
+        assert breaker.state is CircuitState.OPEN
         assert breaker._half_open_calls == 0
     finally:
         delayed_phoenix.release.set()
         await asyncio.gather(pending, return_exceptions=True)
 
+    # The cancelled trial concluded. The next render fails fast instead of
+    # paying a second full probe deadline against the same slow endpoint.
+    calls = delayed_phoenix.calls
+    with pytest.raises(CircuitOpenError) as rejected:
+        await peer.get_spans(project=projects[1])
+    assert rejected.value.name == f"phoenix:{delayed_phoenix.endpoint}"
+    assert delayed_phoenix.calls == calls
+
+    clock[0] += breaker.config.reset_timeout_s
     delayed_phoenix.mode = "fail"
     with pytest.raises(httpx.HTTPStatusError) as failure:
         await peer.get_spans(project=projects[1])
@@ -154,3 +180,72 @@ async def test_deadline_cancelled_probe_recovers_exact_tenant_spans(
         assert frame["name"].tolist() == ["recovery-span"]
     assert breaker.state is CircuitState.CLOSED
     assert breaker._half_open_calls == 0
+
+
+async def test_reads_admitted_before_the_outage_reopen_after_a_lucky_probe(
+    delayed_phoenix, telemetry_manager_with_phoenix
+):
+    """Reads admitted while the breaker was CLOSED land after it has tripped
+    and reclosed on one good probe. Their failures are Phoenix's, so they
+    refill the window and the breaker reopens instead of reporting CLOSED
+    while the dependency is down."""
+    manager = telemetry_manager_with_phoenix
+    tenant = "prodfixfoundation:staleoutage"
+    project = manager.config.get_project_name(tenant)
+    with manager.span("stale-outage-span", tenant_id=tenant) as span:
+        span_id = f"{span.get_span_context().span_id:016x}"
+    manager.force_flush()
+
+    store = PhoenixTraceStore(delayed_phoenix.endpoint)
+    breaker = store._breaker
+    for _ in range(30):
+        frame = await store.get_spans(project=project)
+        if len(frame) == 1:
+            break
+        await asyncio.sleep(0.1)
+    assert frame["context.span_id"].tolist() == [span_id]
+
+    clock = [0.0]
+    breaker.config.clock = lambda: clock[0]
+    threshold = breaker.config.failure_threshold
+    delayed_phoenix.mode = "hold_fail"
+    in_flight = [
+        asyncio.create_task(store.get_spans(project=project)) for _ in range(threshold)
+    ]
+    try:
+        for _ in range(300):
+            if len(delayed_phoenix.held) == threshold:
+                break
+            await asyncio.sleep(0.05)
+        assert len(delayed_phoenix.held) == threshold
+        assert breaker.state is CircuitState.CLOSED
+
+        delayed_phoenix.mode = "fail"
+        for _ in range(threshold):
+            with pytest.raises(httpx.HTTPStatusError) as failure:
+                await store.get_spans(project=project)
+            assert failure.value.response.status_code == 503
+        assert breaker.state is CircuitState.OPEN
+
+        clock[0] += breaker.config.reset_timeout_s
+        delayed_phoenix.mode = "forward"
+        probed = await store.get_spans(project=project)
+        assert probed["context.span_id"].tolist() == [span_id]
+        assert probed["name"].tolist() == ["stale-outage-span"]
+        assert breaker.state is CircuitState.CLOSED
+
+        delayed_phoenix.release.set()
+        for task in in_flight:
+            with pytest.raises(httpx.HTTPStatusError) as failure:
+                await task
+            assert failure.value.response.status_code == 503
+        assert breaker.state is CircuitState.OPEN
+
+        calls = delayed_phoenix.calls
+        with pytest.raises(CircuitOpenError) as rejected:
+            await store.get_spans(project=project)
+        assert rejected.value.name == f"phoenix:{delayed_phoenix.endpoint}"
+        assert delayed_phoenix.calls == calls
+    finally:
+        delayed_phoenix.release.set()
+        await asyncio.gather(*in_flight, return_exceptions=True)
