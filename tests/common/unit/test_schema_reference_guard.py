@@ -198,6 +198,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Schema analyzer modality fixtures",
         "custom_data document_index documents image_collection images video_frames",
     ),
+    "tests/charts/test_phoenix_backup_restore.py": (
+        "PostgreSQL system catalog read in the backup lock-wait probe",
+        "pg_stat_activity",
+    ),
     "tests/foundation/unit/test_config_utils.py": (
         "Configuration cache mutation fixture",
         "s",
@@ -210,9 +214,17 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Cache namespace for isolated pipeline artifacts",
         "testprof",
     ),
+    "tests/ingestion/integration/test_pipeline_scratch_cleanup.py": (
+        "Local processing context for generated-media cleanup",
+        "scratch",
+    ),
     "tests/ingestion/integration/test_real_ingestion_pipeline.py": (
         "Local Strategy fixture for processor resolution",
         "video_colpali",
+    ),
+    "tests/ingestion/integration/test_required_transcription.py": (
+        "Local processing context for the transcription failure path",
+        "transcription",
     ),
     "tests/ingestion/integration/test_vllm_colpali_real_sidecar.py": (
         "Local embedding generator context without Vespa access",
