@@ -1129,6 +1129,15 @@ def _raise_if_qwen3_vl(model_name: str, error: Exception) -> None:
         raise RuntimeError(_REMOTE_ONLY_MESSAGE) from error
 
 
+# Processor revisions for Hub repositories whose later revisions add
+# additional_chat_templates, which the pinned transformers (4.56.2) resolves
+# to a path of None when it loads the processor online. The pinned revisions
+# carry the same tokenizer and image preprocessing.
+COLPALI_PROCESSOR_REVISIONS = {
+    "vidore/colsmol-500m": "1aa9325cba7ed2b3b9b97ede4d55026322504902",
+}
+
+
 class ColPaliModelLoader(ModelLoader):
     """Loader for ColPali models"""
 
@@ -1161,7 +1170,10 @@ class ColPaliModelLoader(ModelLoader):
                 model = model.to(device)
 
             # Load processor
-            processor = ColIdefics3Processor.from_pretrained(self.model_name)
+            processor = ColIdefics3Processor.from_pretrained(
+                self.model_name,
+                revision=COLPALI_PROCESSOR_REVISIONS.get(self.model_name),
+            )
 
             self.model = model
             self.processor = processor
