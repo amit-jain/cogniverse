@@ -191,26 +191,39 @@ def test_concurrent_provisioning_keeps_both_tenants_and_peer(provisioning_store)
     endpoint, cm, app, peer = provisioning_store
     from cogniverse_runtime import provision_tenant
 
-    barrier = threading.Barrier(2)
     arrivals = []
     arrival_lock = threading.Lock()
+    inflight = {"now": 0, "max": 0}
 
     class ConfigProxy(BaseHTTPRequestHandler):
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            activating = self.path.endswith("/prepareandactivate")
             with arrival_lock:
                 arrivals.append(self.path)
-                initial = len(arrivals) <= 2
-            if initial:
-                barrier.wait(timeout=60)
-            response = requests.post(
-                f"http://localhost:{endpoint['config_port']}{self.path}",
-                data=body,
-                headers={
-                    "Content-Type": self.headers.get("Content-Type", "application/zip")
-                },
-                timeout=180,
-            )
+                first = activating and len(arrivals) == 1
+                if activating:
+                    inflight["now"] += 1
+                    inflight["max"] = max(inflight["max"], inflight["now"])
+            if first:
+                # Hold the first activation open long enough that a second
+                # deployer unserialised by the lease would overlap it.
+                time.sleep(3)
+            try:
+                response = requests.post(
+                    f"http://localhost:{endpoint['config_port']}{self.path}",
+                    data=body,
+                    headers={
+                        "Content-Type": self.headers.get(
+                            "Content-Type", "application/zip"
+                        )
+                    },
+                    timeout=180,
+                )
+            finally:
+                if activating:
+                    with arrival_lock:
+                        inflight["now"] -= 1
             self.send_response(response.status_code)
             self.end_headers()
             self.wfile.write(response.content)
@@ -245,6 +258,9 @@ def test_concurrent_provisioning_keeps_both_tenants_and_peer(provisioning_store)
         proxy.server_close()
         thread.join(timeout=5)
     assert arrivals[:2] == ["/application/v2/tenant/default/prepareandactivate"] * 2
+    # The deployment lease admits one application replacement at a time, so
+    # the second deployer's activation starts only after the first returns.
+    assert inflight["max"] == 1
     assert [result.returncode for result in results] == [0, 0], [
         result.stderr for result in results
     ]
