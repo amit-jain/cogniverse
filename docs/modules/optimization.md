@@ -752,18 +752,21 @@ State shape:
 ### Serving blobs
 
 `ArtifactManager.save_blob(kind, key, content)` publishes a serving revision as
-a single immutable row. Revisions alternate between two datasets,
-`dspy-{kind}-{tenant}-{key}--r0` and `--r1`, each row carrying its
-`blob_revision`. A publication writes the slot holding the revision before the
-committed one, so the committed revision stays readable for the whole
-publication and a failed or killed publication leaves it in place. The slot's
-previous occupant is pruned there and only there — one publication after its
-successor became readable. `load_blob` reads both slots and returns the greater
-revision, or `None` when neither exists. Store failures propagate.
+a single immutable row. Revisions rotate through three datasets,
+`dspy-{kind}-{tenant}-{key}--r0`, `--r1` and `--r2`, each row carrying its
+`blob_revision`. A publication only adds: it writes revision `n` into slot
+`n % 3`, which holds revision `n - 3` and which no reader resolves, so the
+committed revision and its predecessor stay readable throughout and a failed or
+killed publication leaves both in place. The slot holding revision `n - 2` is
+pruned afterwards, and only when a re-read shows it still carries a revision
+that far behind. `load_blob` reads all three slots and returns the greatest
+revision, or `None` when none exists. A store failure propagates and names the
+logical blob, not the slot whose read failed.
 
 Phoenix has no compare-and-set, so two overlapping publications are
-last-write-wins on the same slot; neither can remove the revision the other
-serves.
+last-write-wins within one slot. No publication deletes the slot it writes, and
+none deletes a slot a re-read showed carrying a newer revision, so readers
+resolve a complete revision throughout.
 
 Serving revisions and optimizer candidates are separate namespaces.
 `save_blob_versioned` records candidates and their evaluation ledger under
