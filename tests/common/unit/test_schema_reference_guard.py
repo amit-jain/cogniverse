@@ -202,6 +202,14 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Configuration cache mutation fixture",
         "s",
     ),
+    "tests/charts/test_phoenix_backup_restore.py": (
+        "Postgres system view queried while pg_dump holds its lock",
+        "pg_stat_activity",
+    ),
+    "tests/ingestion/integration/test_pipeline_scratch_cleanup.py": (
+        "Pipeline schema label for the scratch-release run",
+        "scratch",
+    ),
     "tests/ingestion/integration/test_chunk_only_pipeline_real.py": (
         "Local processing context for ffmpeg chunk extraction",
         "video_colqwen_chunks",
@@ -209,6 +217,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/ingestion/integration/test_pipeline_cache_live_path.py": (
         "Cache namespace for isolated pipeline artifacts",
         "testprof",
+    ),
+    "tests/ingestion/integration/test_required_transcription.py": (
+        "Pipeline schema label for the required-transcription run",
+        "transcription",
     ),
     "tests/ingestion/integration/test_real_ingestion_pipeline.py": (
         "Local Strategy fixture for processor resolution",
