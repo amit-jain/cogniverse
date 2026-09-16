@@ -1469,6 +1469,63 @@ class TestGetManualOptimizeStatus:
         assert data["started_at"] == "2025-01-01T12:00:00Z"
         assert data["finished_at"] == "2025-01-01T12:04:00Z"
         assert data["message"] == "ok"
+        assert data["steps"] == {}
+
+    def test_omitted_step_reads_as_skipped_not_succeeded(self, argo_configured_client):
+        """A profile step Argo omitted (no ground truth uploaded) must reach the
+        dashboard as Skipped, not vanish inside a green workflow."""
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    **_ACME_SPEC,
+                    "status": {
+                        "phase": "Succeeded",
+                        "nodes": {
+                            "wf-skip": {
+                                "displayName": "optimize-all-agents",
+                                "type": "Steps",
+                                "phase": "Succeeded",
+                            },
+                            "wf-skip-1": {
+                                "displayName": "entity-extraction",
+                                "type": "Pod",
+                                "phase": "Succeeded",
+                            },
+                            "wf-skip-2": {
+                                "displayName": "profile-ground-truth",
+                                "type": "Pod",
+                                "phase": "Succeeded",
+                            },
+                            "wf-skip-3": {
+                                "displayName": "profile",
+                                "type": "Skipped",
+                                "phase": "Omitted",
+                            },
+                            "wf-skip-4": {
+                                "displayName": "workflow",
+                                "type": "Pod",
+                                "phase": "Running",
+                            },
+                        },
+                    },
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-skip")
+
+        assert resp.status_code == 200
+        assert resp.json()["steps"] == {
+            "entity-extraction": "Succeeded",
+            "profile-ground-truth": "Succeeded",
+            "profile": "Skipped",
+            "workflow": "Running",
+        }
 
     def test_pending_workflow_has_no_timestamps(self, argo_configured_client):
         client = argo_configured_client
@@ -1487,6 +1544,7 @@ class TestGetManualOptimizeStatus:
         assert data["phase"] is None
         assert data["started_at"] is None
         assert data["finished_at"] is None
+        assert data["steps"] == {}
 
     def test_404_from_argo_propagates(self, argo_configured_client):
         client = argo_configured_client

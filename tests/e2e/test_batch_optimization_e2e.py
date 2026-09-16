@@ -575,8 +575,13 @@ def _assert_profile_labels_partition_ground_truth(result: dict) -> None:
     exclusion."""
     source_queries = _profile_ground_truth_queries()
     exclusions = result["label_exclusions"]
-    assert set(exclusions) == {"count", "queries"}, result
+    assert set(exclusions) == {
+        "count",
+        "queries",
+        "incomplete_comparison_rate",
+    }, result
     assert exclusions["count"] == len(exclusions["queries"]), result
+    assert exclusions["incomplete_comparison_rate"] == 0.0, result
     assert result["served_examples"] == len(source_queries) - exclusions["count"], (
         result
     )

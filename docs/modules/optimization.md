@@ -343,9 +343,11 @@ async def run_profile_optimization(
          "labels_by_profile": dict[str, int],
          "exclusions_by_reason": dict[str, int]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
-      - {"status": "failed", "reason": "profile_selection_ground_truth_missing", "retryable": False,
+      - {"status": "skipped", "reason": "profile_selection_ground_truth_missing", "retryable": False,
          "error": str}
       - {"status": "failed", "reason": "profile_selection_ground_truth_store_unavailable", "retryable": True,
+         "error": str, "cause": {"type": str, "message": str}}
+      - {"status": "failed", "reason": "profile_selection_ground_truth_invalid", "retryable": False,
          "error": str, "cause": {"type": str, "message": str}}
       - {"status": "no_eval_material", "spans_found": int,
          "served_scoreable_examples": int, "training_examples": int,
@@ -448,9 +450,11 @@ Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
 JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is
-`min_samples_for_optimization: 30` and `min_unique_queries: 15`. Missing ground truth returns
-`entity_extraction_ground_truth_missing`; store outages raise
-`EntityExtractionGroundTruthStoreUnavailableError`. The artifact key is
+`min_samples_for_optimization: 30` and `min_unique_queries: 15`. Ground-truth loading renders the
+shared contract in `ground_truth_blob.py`: nothing uploaded is `{"status": "skipped", "reason":
+"entity_extraction_ground_truth_missing"}`, a store outage is `{"status": "failed", ...
+"retryable": True}`, and an unusable payload is `{"status": "failed", ... "retryable": False}`.
+The artifact key is
 `("model", "entity_extraction")`; `EntityExtractionAgent` reloads it via
 `am.load_blob("model", "entity_extraction")`.
 
@@ -471,8 +475,8 @@ Returns:
      "candidate_score": float | None,
      "decision": "promote" | "keep" | "rollback" | "reject",
      "version": int, "consumed_example_ids": list[str]}
-  - {"status": "entity_extraction_ground_truth_missing", "retryable": False,
-     "error": str}
+  - {"status": "skipped", "reason": "entity_extraction_ground_truth_missing",
+     "retryable": False, "error": str}
   - {"status": "no_data", "spans_found": int, "served_examples": int,
      "served_scoreable_examples": int, "label_rows": int, "truth_rows": int,
      "approved_rows": int, "examples": 0}
@@ -1303,7 +1307,7 @@ enabled/scheduled via `values.yaml`'s `argo.optimization.*`):
 
 | CronWorkflow name | Schedule (default) | What it runs |
 |---|---|---|
-| `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile` (48h lookback). Step 2: `workflow`. Step 3: rolling-restart the runtime Deployment to pick up new artifacts. |
+| `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile-ground-truth` (the `profile-ground-truth-check` mode, printing `present` or `absent`). Step 2: `profile` (48h lookback), run only `when` the check printed `present`, so a tenant with no uploaded ground truth has the step omitted and recorded as skipped. Step 3: `workflow`. Step 4: rolling-restart the runtime Deployment to pick up new artifacts. |
 | `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds` only — warm runtime pods pick up the recalibration via the dispatcher's gateway reload interval, no restart |
 | `{fullname}-daily-cleanup` | `0 4 * * *` (daily 4 AM UTC) | `cleanup` |
 | `{fullname}-synthetic-generation` | `0 1 * * 6` (Saturday 1 AM UTC) | `synthetic` |

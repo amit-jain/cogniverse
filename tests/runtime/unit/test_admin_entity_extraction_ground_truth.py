@@ -355,7 +355,8 @@ async def test_loader_missing_returns_named_status(monkeypatch):
         await load_entity_extraction_ground_truth_rows(am)
 
     assert exc.value.to_result() == {
-        "status": "entity_extraction_ground_truth_missing",
+        "status": "skipped",
+        "reason": "entity_extraction_ground_truth_missing",
         "retryable": False,
         "error": "entity_extraction_ground_truth is not configured for tenant acme:acme",
     }
@@ -381,7 +382,8 @@ async def test_loader_store_error_raises_fault_contract(monkeypatch):
         await load_entity_extraction_ground_truth_rows(am)
 
     assert exc.value.to_result() == {
-        "status": "entity_extraction_ground_truth_store_unavailable",
+        "status": "failed",
+        "reason": "entity_extraction_ground_truth_store_unavailable",
         "retryable": True,
         "error": "entity_extraction_ground_truth store unavailable",
         "cause": {

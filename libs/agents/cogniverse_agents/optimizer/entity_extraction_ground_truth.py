@@ -1,8 +1,9 @@
 """Entity-extraction ground truth stored as a tenant-owned blob.
 
 The runtime admin upload path canonicalizes rows here, and the loader reads the
-active blob through the same seam. Missing artifacts surface as a dedicated
-status, while store failures remain faults.
+active blob through the same seam. The loader renders the shared ground-truth
+contract, so a tenant that never uploaded one skips the step while a store
+outage fails it.
 """
 
 from __future__ import annotations
@@ -10,44 +11,39 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from cogniverse_agents.optimizer.ground_truth_blob import (
+    GroundTruthError,
+    GroundTruthInvalidError,
+    GroundTruthMissingError,
+    GroundTruthStoreUnavailableError,
+    load_ground_truth_rows,
+)
 from cogniverse_foundation.common.entity_types import ENTITY_TYPES
-from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND = "config"
 ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY = "entity_extraction_ground_truth"
 
 
-class EntityExtractionGroundTruthError(RuntimeError):
+class EntityExtractionGroundTruthError(GroundTruthError):
     """Base error for entity-extraction ground-truth loading."""
 
-    status = ""
-    retryable = False
 
-    def to_result(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "status": self.status,
-            "retryable": self.retryable,
-            "error": str(self),
-        }
-        cause = self.__cause__
-        if cause is not None:
-            result["cause"] = {
-                "type": type(cause).__name__,
-                "message": str(cause),
-            }
-        return result
-
-
-class EntityExtractionGroundTruthMissingError(EntityExtractionGroundTruthError):
-    status = "entity_extraction_ground_truth_missing"
-    retryable = False
+class EntityExtractionGroundTruthMissingError(
+    EntityExtractionGroundTruthError, GroundTruthMissingError
+):
+    reason = "entity_extraction_ground_truth_missing"
 
 
 class EntityExtractionGroundTruthStoreUnavailableError(
-    EntityExtractionGroundTruthError
+    EntityExtractionGroundTruthError, GroundTruthStoreUnavailableError
 ):
-    status = "entity_extraction_ground_truth_store_unavailable"
-    retryable = True
+    reason = "entity_extraction_ground_truth_store_unavailable"
+
+
+class EntityExtractionGroundTruthInvalidError(
+    EntityExtractionGroundTruthError, GroundTruthInvalidError
+):
+    reason = "entity_extraction_ground_truth_invalid"
 
 
 def _normalize_non_empty_string(
@@ -199,25 +195,12 @@ async def load_entity_extraction_ground_truth_rows(
 ) -> list[dict[str, Any]]:
     """Load the active tenant artifact and return canonicalized rows."""
 
-    tenant_id = getattr(artifact_manager, "_tenant_id", "unknown")
-    try:
-        raw = await artifact_manager.load_blob(
-            ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND,
-            ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
-        )
-    except DatasetNotFoundError as exc:
-        raise EntityExtractionGroundTruthMissingError(
-            f"entity_extraction_ground_truth is not configured for tenant {tenant_id}"
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise EntityExtractionGroundTruthStoreUnavailableError(
-            "entity_extraction_ground_truth store unavailable"
-        ) from exc
-
-    if raw is None:
-        raise EntityExtractionGroundTruthMissingError(
-            f"entity_extraction_ground_truth is not configured for tenant {tenant_id}"
-        )
-
-    loaded = json.loads(raw)
-    return canonicalize_entity_extraction_ground_truth_rows(loaded)
+    return await load_ground_truth_rows(
+        artifact_manager,
+        kind=ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND,
+        key=ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
+        canonicalize=canonicalize_entity_extraction_ground_truth_rows,
+        missing_error=EntityExtractionGroundTruthMissingError,
+        unavailable_error=EntityExtractionGroundTruthStoreUnavailableError,
+        invalid_error=EntityExtractionGroundTruthInvalidError,
+    )

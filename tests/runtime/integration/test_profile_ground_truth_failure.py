@@ -62,7 +62,13 @@ def profile_config_vespa():
         manager.stop_container(info)
 
 
-def _cli(tenant: str, endpoint: str, grpc_endpoint: str, backend_port: int):
+def _cli(
+    tenant: str,
+    endpoint: str,
+    grpc_endpoint: str,
+    backend_port: int,
+    mode: str = "profile",
+):
     config_manager = ConfigManager(
         store=VespaConfigStore(
             backend_url="http://localhost", backend_port=backend_port
@@ -90,7 +96,7 @@ def _cli(tenant: str, endpoint: str, grpc_endpoint: str, backend_port: int):
             "-m",
             "cogniverse_runtime.optimization_cli",
             "--mode",
-            "profile",
+            mode,
             "--tenant-id",
             tenant,
         ],
@@ -194,10 +200,12 @@ async def test_cli_ground_truth_read_failure_is_terminal(
 
 
 @pytest.mark.asyncio
-async def test_cli_absent_ground_truth_has_distinct_nonretryable_reason(
+async def test_cli_absent_ground_truth_skips_the_step(
     phoenix_container,
     profile_config_vespa,
 ):
+    """Nothing uploaded is no work, not a fault: the step reports skipped and
+    exits 0, and the presence check the workflow gates on says absent."""
     tenant = f"prodfixoptimization:t{uuid.uuid4().hex}"
     result = await asyncio.to_thread(
         _cli,
@@ -206,10 +214,56 @@ async def test_cli_absent_ground_truth_has_distinct_nonretryable_reason(
         phoenix_container["otlp_endpoint"],
         profile_config_vespa,
     )
-    assert json.loads(result.stdout) == {
-        "status": "failed",
+    summary = json.loads(result.stdout)
+    assert summary == {
+        "status": "skipped",
         "reason": "profile_selection_ground_truth_missing",
         "retryable": False,
         "error": f"profile_selection_ground_truth is not configured for tenant {tenant}",
     }
-    assert result.returncode == 1, result.stderr
+    assert result.returncode == 0, result.stderr
+    assert _run_failed(summary) is False
+    assert (
+        _run_failed({"status": "success", "requested": {"profile": summary}}) is False
+    )
+
+    check = await asyncio.to_thread(
+        _cli,
+        tenant,
+        phoenix_container["http_endpoint"],
+        phoenix_container["otlp_endpoint"],
+        profile_config_vespa,
+        "profile-ground-truth-check",
+    )
+    assert check.stdout == "absent\n"
+    assert check.returncode == 0, check.stderr
+
+
+@pytest.mark.asyncio
+async def test_cli_present_ground_truth_reports_present(
+    phoenix_container,
+    profile_config_vespa,
+):
+    tenant = f"prodfixoptimization:t{uuid.uuid4().hex}"
+    manager = _manager(
+        tenant,
+        phoenix_container["http_endpoint"],
+        phoenix_container["otlp_endpoint"],
+    )
+    rows = [{"query": "red kite over the field", "expected_videos": ["kite1"]}]
+    await manager.save_blob(
+        "config",
+        "profile_selection_ground_truth",
+        json.dumps(rows, separators=(",", ":")),
+    )
+
+    check = await asyncio.to_thread(
+        _cli,
+        tenant,
+        phoenix_container["http_endpoint"],
+        phoenix_container["otlp_endpoint"],
+        profile_config_vespa,
+        "profile-ground-truth-check",
+    )
+    assert check.stdout == "present\n"
+    assert check.returncode == 0, check.stderr

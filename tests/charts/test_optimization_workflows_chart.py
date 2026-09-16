@@ -140,8 +140,15 @@ def _find_cron_workflow(docs: list, name_suffix: str) -> dict:
 
 
 def _container_env(workload: dict) -> dict[str, str]:
+    """Env of the workload's entrypoint pod, by name — a WorkflowTemplate can
+    carry helper templates alongside the one its entrypoint runs."""
     if workload.get("kind") == "WorkflowTemplate":
-        container = workload["spec"]["templates"][0]["container"]
+        entrypoint = workload["spec"]["entrypoint"]
+        container = next(
+            template["container"]
+            for template in workload["spec"]["templates"]
+            if template["name"] == entrypoint
+        )
     elif workload.get("kind") == "CronWorkflow":
         templates = workload["spec"]["workflowSpec"]["templates"]
         for template in templates:
@@ -350,3 +357,56 @@ def test_every_workflow_pod_carries_the_modal_bearer():
                 )
 
     assert not missing, "missing bearer secretKeyRef:\n- " + "\n- ".join(missing)
+
+
+class TestProfileStepIsGatedOnUploadedGroundTruth:
+    """A tenant with no uploaded profile-selection ground truth has no profile
+    work to do. The step is gated on a presence check, so Argo omits it and the
+    run records it as skipped instead of succeeding on no work."""
+
+    def test_precheck_step_runs_the_presence_mode(self):
+        docs = _render()
+        runner = _find_workflow_template(docs, "-optimization-runner")
+        template = next(
+            t
+            for t in runner["spec"]["templates"]
+            if t["name"] == "check-profile-ground-truth"
+        )
+        args = template["container"]["args"]
+        assert template["container"]["command"] == [
+            "python",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+        ]
+        assert args == [
+            "--mode",
+            "profile-ground-truth-check",
+            "--tenant-id",
+            "{{inputs.parameters.tenant-id}}",
+        ]
+        assert [p["name"] for p in template["inputs"]["parameters"]] == ["tenant-id"]
+
+    def test_profile_step_runs_only_when_the_precheck_says_present(self):
+        docs = _render()
+        cron = _find_cron_workflow(docs, "agent-optimization")
+        steps_template = next(
+            t
+            for t in cron["spec"]["workflowSpec"]["templates"]
+            if t["name"] == "optimize-all-agents"
+        )
+        by_name = {
+            step["name"]: step for group in steps_template["steps"] for step in group
+        }
+        assert by_name["profile-ground-truth"]["templateRef"]["template"] == (
+            "check-profile-ground-truth"
+        )
+        assert by_name["profile"]["when"] == (
+            "{{steps.profile-ground-truth.outputs.result}} == present"
+        )
+        # The precheck must complete before the gate is evaluated.
+        groups = [[step["name"] for step in group] for group in steps_template["steps"]]
+        precheck_group = next(
+            i for i, names in enumerate(groups) if "profile-ground-truth" in names
+        )
+        profile_group = next(i for i, names in enumerate(groups) if "profile" in names)
+        assert precheck_group < profile_group
