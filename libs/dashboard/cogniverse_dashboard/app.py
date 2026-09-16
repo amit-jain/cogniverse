@@ -2225,6 +2225,14 @@ with main_tabs[6]:
                         f"Phase: **{phase}** | started={status.get('started_at') or '—'} "
                         f"| finished={status.get('finished_at') or '—'}"
                     )
+                    steps = status.get("steps") or {}
+                    if steps:
+                        st.caption(
+                            " | ".join(
+                                f"{name}: {phase}"
+                                for name, phase in sorted(steps.items())
+                            )
+                        )
                     blocked = status.get("blocked_reason")
                     if blocked:
                         st.warning(

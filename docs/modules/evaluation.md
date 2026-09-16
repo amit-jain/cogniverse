@@ -1755,8 +1755,9 @@ baseline), `LiveEvalResult` (per-`AgentType` `AgentEvalResult` map),
 **Fault contracts:** baseline reads (`_read_baseline_metric`,
 `_get_agent_baseline`) return `None` only for a genuinely absent baseline
 (first run / only partial runs) and raise on a telemetry outage; the golden
-blob loader returns `golden_set_missing` only when the tenant blob is absent,
-raises on store outages, and raises on corrupt payloads; the golden baseline
+blob loader reports `{"status": "skipped", "reason": "golden_set_missing"}`
+only when the tenant blob is absent, and raises with `{"status": "failed"}` on
+store outages and on corrupt payloads; the golden baseline
 write raises on failure (a silently lost write would freeze the baseline);
 `_store_trigger_dataset` returns the stored dataset name (or `None` when there
 were no example records) and `submit_optimization(trigger, trigger_dataset)`

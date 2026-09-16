@@ -544,6 +544,24 @@ class ProfileLabelDerivationResult(dict):
             Counter(exclusion.get("reason", "") for exclusion in self.exclusions)
         )
 
+    @property
+    def considered_rows(self) -> int:
+        """Ground-truth rows the derivation decided on: labeled plus excluded."""
+        return len(self.records) + self.excluded_count
+
+    @property
+    def incomplete_comparison_rate(self) -> float:
+        """Share of considered rows a retrieval failure could not compare.
+
+        A partial backend outage shrinks the training population without
+        biasing the surviving labels, so it is invisible in the labels
+        themselves; this is the signal that says how much was lost.
+        """
+        considered = self.considered_rows
+        if not considered:
+            return 0.0
+        return self.exclusions_by_reason.get("incomplete_comparison", 0) / considered
+
 
 def _profile_selection_content_key(value: Any) -> str:
     """Basename of ``value`` without its file extension."""
@@ -711,6 +729,12 @@ def _profile_selection_recovery_score(
 
 
 PROFILE_SELECTION_RETRIEVAL_ATTEMPTS = 3
+# Seconds before the second attempt; each further attempt waits twice as long,
+# so three attempts span ~1.5 s rather than burning out inside one blip.
+PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS = 0.5
+# Share of ground-truth rows that may be lost to retrieval failures before the
+# run refuses to train on what is left.
+PROFILE_SELECTION_MAX_INCOMPLETE_SHARE = 0.2
 
 
 def derive_profile_labels(
@@ -720,6 +744,7 @@ def derive_profile_labels(
     *,
     title_fields: Mapping[str, str],
     profile_types: Mapping[str, str] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> ProfileLabelDerivationResult:
     query_rows = list(queries)
     if not query_rows:
@@ -834,6 +859,10 @@ def derive_profile_labels(
                                 },
                             }
                         )
+                        break
+                    sleep(
+                        PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS * 2 ** (attempt - 1)
+                    )
             if rows is None:
                 continue
 
@@ -4713,6 +4742,37 @@ async def run_online_evaluation(
     }
 
 
+PROFILE_GROUND_TRUTH_PRESENT = "present"
+PROFILE_GROUND_TRUTH_ABSENT = "absent"
+
+
+async def check_profile_selection_ground_truth(
+    tenant_id: str,
+    telemetry_otlp_endpoint: Optional[str] = None,
+) -> str:
+    """Whether ``tenant_id`` has a usable profile-selection ground truth.
+
+    Returns ``"present"`` or ``"absent"``. A store that cannot answer, or a
+    payload that will not canonicalize, raises, so the workflow fails that step
+    instead of skipping the optimization on a fault.
+    """
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+        ProfileSelectionGroundTruthMissingError,
+        load_profile_selection_ground_truth_rows,
+    )
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    try:
+        rows = await load_profile_selection_ground_truth_rows(artifact_manager)
+    except ProfileSelectionGroundTruthMissingError:
+        return PROFILE_GROUND_TRUTH_ABSENT
+    return PROFILE_GROUND_TRUTH_PRESENT if rows else PROFILE_GROUND_TRUTH_ABSENT
+
+
 async def run_profile_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
@@ -4747,8 +4807,7 @@ async def run_profile_optimization(
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_agents.optimizer.profile_selection_ground_truth import (
-        ProfileSelectionGroundTruthMissingError,
-        ProfileSelectionGroundTruthStoreUnavailableError,
+        ProfileSelectionGroundTruthError,
         load_profile_selection_ground_truth_rows,
     )
 
@@ -4757,9 +4816,7 @@ async def run_profile_optimization(
         ground_truth_rows = await load_profile_selection_ground_truth_rows(
             artifact_manager
         )
-    except ProfileSelectionGroundTruthMissingError as exc:
-        return exc.to_result()
-    except ProfileSelectionGroundTruthStoreUnavailableError as exc:
+    except ProfileSelectionGroundTruthError as exc:
         return exc.to_result()
 
     logger.info(
@@ -4800,7 +4857,29 @@ async def run_profile_optimization(
     label_exclusions = {
         "count": label_source.excluded_count,
         "queries": list(label_source.excluded_queries),
+        "incomplete_comparison_rate": label_source.incomplete_comparison_rate,
     }
+    if label_source.incomplete_comparison_rate > PROFILE_SELECTION_MAX_INCOMPLETE_SHARE:
+        logger.warning(
+            "Profile label derivation lost %.1f%% of %d ground-truth rows to "
+            "retrieval failures for %s; refusing to train on the remainder",
+            label_source.incomplete_comparison_rate * 100,
+            label_source.considered_rows,
+            tenant_id,
+        )
+        return {
+            "status": "failed",
+            "reason": "retrieval_exclusion_rate_exceeded",
+            "retryable": True,
+            "error": (
+                f"{label_source.exclusions_by_reason.get('incomplete_comparison', 0)} "
+                f"of {label_source.considered_rows} ground-truth rows could not be "
+                "compared across their candidate profiles"
+            ),
+            "spans_found": len(spans_df),
+            "label_exclusions": label_exclusions,
+            "max_incomplete_share": PROFILE_SELECTION_MAX_INCOMPLETE_SHARE,
+        }
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("profile", demo)
         consumed_example_ids.append(demo["example_id"])
@@ -5092,7 +5171,7 @@ async def run_entity_extraction_optimization(
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
-        EntityExtractionGroundTruthMissingError,
+        EntityExtractionGroundTruthError,
         load_entity_extraction_ground_truth_rows,
     )
 
@@ -5101,7 +5180,7 @@ async def run_entity_extraction_optimization(
         ground_truth_rows = await load_entity_extraction_ground_truth_rows(
             artifact_manager
         )
-    except EntityExtractionGroundTruthMissingError as exc:
+    except EntityExtractionGroundTruthError as exc:
         return exc.to_result()
 
     spans_df = await _query_spans_by_name(
@@ -6385,6 +6464,7 @@ def build_parser() -> argparse.ArgumentParser:
             "online-routing-eval",
             "online-eval",
             "profile",
+            "profile-ground-truth-check",
             "entity-extraction",
             "synthetic",
             "rollback",
@@ -6693,6 +6773,26 @@ def main():
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
+        elif args.mode == "profile-ground-truth-check":
+            from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+                ProfileSelectionGroundTruthError,
+            )
+
+            try:
+                presence = asyncio.run(
+                    check_profile_selection_ground_truth(
+                        tenant_id=args.tenant_id,
+                        telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    )
+                )
+            except ProfileSelectionGroundTruthError as exc:
+                print(
+                    json.dumps(exc.to_result(), indent=2, default=str),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            print(presence)
+            sys.exit(0)
         elif args.mode == "profile":
             result = asyncio.run(
                 run_profile_optimization(
