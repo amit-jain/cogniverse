@@ -145,7 +145,7 @@ def _canonical_tenant_app(tmp_path: Path) -> AppTest:
             config_key="agent_config",
             config_value={"model": "test-model"},
         )
-        st.session_state["current_tenant"] = "acme"
+        st.session_state["current_tenant"] = "acme:acme"
         st.session_state["config_manager"] = mgr
         cm_tab.render_config_management_tab()
         """
@@ -155,15 +155,24 @@ def _canonical_tenant_app(tmp_path: Path) -> AppTest:
     return AppTest.from_file(str(path), default_timeout=30)
 
 
-def test_tab_canonicalizes_typed_tenant_before_reads(tmp_path: Path) -> None:
-    """A bare tenant id typed into the selector must be canonicalized before
-    any read: the manager canonicalizes writes internally, so listing with
-    the raw id reads an empty parallel namespace and configs saved through
-    this same tab appear to vanish."""
+def test_tab_reads_the_sidebar_tenant_and_never_rewrites_it(tmp_path: Path) -> None:
+    """The sidebar's Active Tenant is the one tenant selector.
+
+    It canonicalizes the entry, gates it on registration and drops the
+    previous tenant's session state. This tab reads that decision, shows it
+    read-only, and lists the configs stored under it.
+    """
     at = _canonical_tenant_app(tmp_path)
     at.run()
 
     assert not at.exception, [str(e) for e in at.exception]
     assert at.session_state["current_tenant"] == "acme:acme"
+    boxes = [box for box in at.text_input if box.label == "Tenant ID"]
+    assert [box.value for box in boxes] == ["acme:acme"]
+    assert [box.disabled for box in boxes] == [True]
+
+    boxes[0].set_value("other:tenant").run()
+    assert at.session_state["current_tenant"] == "acme:acme"
+
     rendered = " ".join(str(m.value) for m in at.markdown)
     assert "Existing Agent Configurations" in rendered

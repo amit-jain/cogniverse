@@ -24,7 +24,7 @@ def test_fetch_tenant_traces_scopes_to_tenant_project(
     phoenix_container, telemetry_manager_with_phoenix
 ):
     manager = telemetry_manager_with_phoenix
-    tenant_id = f"antrace{uuid4().hex[:8]}"
+    tenant_id = f"antrace{uuid4().hex[:8]}:tenant"
     op_name = f"AnalyticsRoot_{uuid4().hex[:6]}"
 
     with manager.span(
