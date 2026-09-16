@@ -15,6 +15,7 @@ from cogniverse_core.common.utils.circuit_breaker import (
     BreakerConfig,
     CircuitBreaker,
     CircuitOpenError,
+    CircuitState,
 )
 from cogniverse_runtime.sandbox_manager import SandboxManager
 from cogniverse_runtime.sandbox_pool import SandboxPoolConfig, SandboxSessionPool
@@ -86,6 +87,7 @@ async def test_task_session_fails_fast_once_gateway_breaker_open():
     assert calls["n"] == 2
 
     # Third: breaker open -> fast-fail, no further dial.
+    assert breaker.state is CircuitState.OPEN
     with pytest.raises(CircuitOpenError):
         async with mgr.task_session("coding", "prodfixagents:breaker"):
             pass
