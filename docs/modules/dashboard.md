@@ -672,7 +672,7 @@ def load_traces(tenant_id, start_time=None, end_time=None):
         start_time=start_time,
         end_time=end_time,
         limit=10000,
-        project_name=f"cogniverse-{tenant_id}"
+        project_name=tenant_project_name(get_telemetry_manager(), tenant_id),
     )
 
 # Use cached function
