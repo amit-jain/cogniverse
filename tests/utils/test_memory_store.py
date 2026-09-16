@@ -90,3 +90,28 @@ def test_concurrent_conditional_creates_have_one_winner(monkeypatch):
         (entry.version, entry.config_value)
         for entry in store.get_config_history(**_KEY)
     ] == [(1, {"state": "pending"})]
+
+
+def test_import_files_every_config_under_the_requested_tenant():
+    """The destination tenant is the caller's, never the file's.
+
+    ``VespaConfigStore.import_configs`` writes every entry under the
+    ``tenant_id`` it was given and never reads the payload's own id, so a
+    double that stores under the exported tenant hides a cross-tenant write.
+    """
+    store = InMemoryConfigStore()
+    store.set_config(
+        "source:tenant", ConfigScope.AGENT, "search_agent", "settings", {"model": "m"}
+    )
+    exported = store.export_configs("source:tenant")
+
+    assert store.import_configs(tenant_id="target:tenant", configs=exported) == 1
+    assert store.get_config(
+        "target:tenant", ConfigScope.AGENT, "search_agent", "settings"
+    ).config_value == {"model": "m"}
+    assert [
+        entry["tenant_id"] for entry in store.export_configs("target:tenant")["configs"]
+    ] == ["target:tenant"]
+    assert [
+        entry["tenant_id"] for entry in store.export_configs("source:tenant")["configs"]
+    ] == ["source:tenant"]
