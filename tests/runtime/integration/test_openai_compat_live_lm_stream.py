@@ -445,6 +445,8 @@ class TestLmFaults:
                     ),
                     "type": "server_error",
                     "code": "internal_error",
+                    "agent": AGENT_CLASS,
+                    "error_type": LM_UNREACHABLE_ERROR_TYPE,
                 }
             }
         ]
@@ -478,6 +480,8 @@ class TestLmFaults:
                     ),
                     "type": "server_error",
                     "code": "internal_error",
+                    "agent": AGENT_CLASS,
+                    "error_type": LM_413_ERROR_TYPE,
                 }
             }
         ]

@@ -39,6 +39,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
+from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime.harness_keys import HarnessKeyNotFoundError
 from cogniverse_runtime.harness_turn import (
@@ -562,12 +563,49 @@ def _error_response(
     code: str,
     err_type: str = "invalid_request_error",
     headers: Optional[Dict[str, str]] = None,
+    agent: Optional[str] = None,
+    error_type: Optional[str] = None,
 ) -> JSONResponse:
+    body: Dict[str, Any] = {"message": message, "type": err_type, "code": code}
+    if agent is not None:
+        body["agent"] = agent
+    if error_type is not None:
+        body["error_type"] = error_type
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"message": message, "type": err_type, "code": code}},
+        content={"error": body},
         headers=headers,
     )
+
+
+class StreamedAnswerDiverged(RuntimeError):
+    """The final answer does not continue the text already streamed.
+
+    The client holds a prefix the completed answer contradicts, so the turn
+    cannot be finished as a reply.
+    """
+
+
+def _failure_body(exc: BaseException, agent: str) -> Dict[str, str]:
+    """What a ``/v1`` client is told about a failure it did not cause.
+
+    The exception text stays server-side: a backend error carries the URL it
+    could not reach, and that URL carries credentials. The client gets the
+    agent and the leaf exception type, which is what the A2A surface and the
+    agent layer already emit, and enough to route the report.
+    """
+    leaves = leaf_exceptions(exc)
+    leaf_names: List[str] = []
+    for leaf in leaves:
+        if type(leaf).__name__ not in leaf_names:
+            leaf_names.append(type(leaf).__name__)
+    return {
+        "message": (
+            f"{agent} failed with {'; '.join(leaf_names)}. See server logs for detail."
+        ),
+        "agent": agent,
+        "error_type": type(leaves[0]).__name__,
+    }
 
 
 _UNAUTHORIZED = dict(
@@ -580,6 +618,22 @@ _UNAUTHORIZED = dict(
 
 def _unavailable(message: str) -> JSONResponse:
     return _error_response(503, message, "service_unavailable", err_type="server_error")
+
+
+def _dependency_unavailable(exc: BaseException, dependency: str) -> JSONResponse:
+    """503 for a dependency this replica could not reach.
+
+    The client is told which dependency and which exception type; the text,
+    which carries the backend URL and its credentials, stays in the log.
+    """
+    error_type = type(leaf_exceptions(exc)[0]).__name__
+    return _error_response(
+        503,
+        f"The {dependency} is unavailable ({error_type}). See server logs for detail.",
+        "service_unavailable",
+        err_type="server_error",
+        error_type=error_type,
+    )
 
 
 class ChatCompletionRequest(BaseModel):
@@ -798,11 +852,11 @@ def _chunk(
     return _sse(payload)
 
 
-def _error_frame(exc: BaseException) -> str:
+def _error_frame(exc: BaseException, agent_name: str) -> str:
     return _sse(
         {
             "error": {
-                "message": str(exc),
+                **_failure_body(exc, agent_name),
                 "type": "server_error",
                 "code": "internal_error",
             }
@@ -917,7 +971,7 @@ async def _stream_turn(
         raise
     except Exception as exc:
         logger.exception("chat.completions turn failed mid-stream")
-        yield _error_frame(exc)
+        yield _error_frame(exc, agent_name)
         yield "data: [DONE]\n\n"
     finally:
         if not task.done():
@@ -999,12 +1053,16 @@ async def _stream_tokens(
         ) as events:
             async for event in events:
                 if event.get("type") == "error":
+                    # The agent layer already withheld the exception text; carry
+                    # the identity it named through unchanged.
                     yield _sse(
                         {
                             "error": {
                                 "message": str(event.get("message", "")),
                                 "type": "server_error",
                                 "code": "internal_error",
+                                "agent": str(event.get("agent", agent_name)),
+                                "error_type": str(event.get("error_type", "")),
                             }
                         }
                     )
@@ -1087,7 +1145,7 @@ async def _stream_tokens(
                         yield content(answer)
                 elif answer != streamed:
                     if not answer.startswith(streamed):
-                        raise ValueError(
+                        raise StreamedAnswerDiverged(
                             f"Agent '{agent_name}' streamed {len(streamed)} "
                             f"characters of {answer_field!r} that its final "
                             "answer does not begin with; the streamed reply "
@@ -1117,7 +1175,7 @@ async def _stream_tokens(
         raise
     except Exception as exc:
         logger.exception("chat.completions token stream failed mid-stream")
-        yield _error_frame(exc)
+        yield _error_frame(exc, agent_name)
         yield "data: [DONE]\n\n"
     finally:
         _in_flight.discard(handle)
@@ -1187,7 +1245,7 @@ async def list_models(authorization: Optional[str] = Header(default=None)):
         tenant_id = await _resolve_tenant_off_loop(authorization)
     except ConfigStoreUnavailableError as exc:
         logger.warning("harness key store unavailable on /v1/models: %s", exc)
-        return _unavailable(f"Harness key store unavailable: {exc}")
+        return _dependency_unavailable(exc, "harness key store")
     if tenant_id is None:
         return _error_response(**_UNAUTHORIZED)
     created = int(time.time())
@@ -1217,7 +1275,7 @@ async def chat_completions(
         tenant_id = await _resolve_tenant_off_loop(authorization)
     except ConfigStoreUnavailableError as exc:
         logger.warning("harness key store unavailable on /v1/chat: %s", exc)
-        return _unavailable(f"Harness key store unavailable: {exc}")
+        return _dependency_unavailable(exc, "harness key store")
     if tenant_id is None:
         return _error_response(**_UNAUTHORIZED)
 
@@ -1243,7 +1301,7 @@ async def chat_completions(
         dispatcher = _dispatcher_provider()
     except Exception as exc:
         logger.exception("dispatcher provider failed")
-        return _unavailable(f"Dispatcher unavailable: {exc}")
+        return _dependency_unavailable(exc, "dispatcher")
     if dispatcher is None:
         return _unavailable("Runtime initialising; dispatcher not built yet.")
 
@@ -1305,7 +1363,12 @@ async def chat_completions(
         # the dispatch turn (including a ValueError from agent-input
         # validation) is a server-side failure, not a bad model name.
         logger.exception("chat.completions turn failed")
-        return _error_response(500, str(exc), "internal_error", err_type="server_error")
+        return _error_response(
+            500,
+            code="internal_error",
+            err_type="server_error",
+            **_failure_body(exc, agent_name),
+        )
 
     if outcome is None:
         logger.info(

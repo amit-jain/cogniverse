@@ -476,12 +476,13 @@ class TestAnswerFieldFilter:
         assert _content_of(response.text) == DIVERGENT_PREFIX
         assert frames[-1]["error"] == {
             "message": (
-                f"Agent 'divergent_stream_agent' streamed {len(DIVERGENT_PREFIX)} "
-                "characters of 'summary' that its final answer does not begin "
-                "with; the streamed reply cannot be completed"
+                "divergent_stream_agent failed with StreamedAnswerDiverged. "
+                "See server logs for detail."
             ),
             "type": "server_error",
             "code": "internal_error",
+            "agent": "divergent_stream_agent",
+            "error_type": "StreamedAnswerDiverged",
         }
         assert _data_lines(response.text)[-1] == "[DONE]"
 
