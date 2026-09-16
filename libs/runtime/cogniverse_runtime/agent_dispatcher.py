@@ -2278,6 +2278,12 @@ class AgentDispatcher:
                 DetailedReportInput,
             )
 
+            # Ground first: a turn whose retrieval failed has no answer to
+            # stream, and building the agent runs its memory init and a
+            # schema-deploying artifact read for nothing.
+            grounding = await self._resolve_answer_search_results(
+                query, tenant_id, context, top_k=20
+            )
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 DetailedReportAgent,
@@ -2290,11 +2296,7 @@ class AgentDispatcher:
                 query=query,
                 tenant_id=tenant_id,
                 context=context,
-                search_results=(
-                    await self._resolve_answer_search_results(
-                        query, tenant_id, context, top_k=20
-                    )
-                ).hits,
+                search_results=grounding.hits,
             )
             return agent, typed_input
 
@@ -2305,6 +2307,9 @@ class AgentDispatcher:
                 SummarizerInput,
             )
 
+            grounding = await self._resolve_answer_search_results(
+                query, tenant_id, context, top_k=10
+            )
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 SummarizerAgent,
@@ -2317,11 +2322,7 @@ class AgentDispatcher:
                 query=query,
                 tenant_id=tenant_id,
                 context=context,
-                search_results=(
-                    await self._resolve_answer_search_results(
-                        query, tenant_id, context, top_k=10
-                    )
-                ).hits,
+                search_results=grounding.hits,
             )
             return agent, typed_input
 
