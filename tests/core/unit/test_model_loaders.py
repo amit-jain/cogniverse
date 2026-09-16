@@ -1708,3 +1708,50 @@ def test_remote_lateon_unreachable_sidecar_concurrent_encodes_all_raise():
         errors = list(pool.map(encode_after_barrier, ["a", "b", "c", "d"]))
 
     assert [type(e) for e in errors] == [InferenceServiceUnavailableError] * 4
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "model_name,processor_revision",
+    [
+        ("vidore/colsmol-500m", "1aa9325cba7ed2b3b9b97ede4d55026322504902"),
+        ("vidore/colpali-v1.3", None),
+    ],
+)
+def test_colpali_processor_loads_its_pinned_revision(
+    monkeypatch, model_name, processor_revision
+):
+    import colpali_engine.models as cem
+
+    calls = []
+
+    class _Model:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            calls.append(("model", name, kwargs))
+            return _Model()
+
+        def eval(self):
+            return self
+
+    class _Processor:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            calls.append(("processor", name, kwargs))
+            return _Processor()
+
+    monkeypatch.setattr(cem, "ColIdefics3", _Model, raising=False)
+    monkeypatch.setattr(cem, "ColIdefics3Processor", _Processor, raising=False)
+
+    loader = ColPaliModelLoader(
+        model_name=model_name,
+        config={"device": "cpu", "model_loader": "colpali"},
+    )
+    loader.load_model()
+
+    assert [(kind, name) for kind, name, _ in calls] == [
+        ("model", model_name),
+        ("processor", model_name),
+    ]
+    assert set(calls[0][2]) == {"torch_dtype"}
+    assert calls[1][2] == {"revision": processor_revision}
