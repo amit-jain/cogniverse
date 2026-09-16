@@ -820,6 +820,7 @@ def test_readiness_failure_deletes_created_session(failure):
         "pool_size": 0,
         "max_pool_size": 8,
         "in_use": 0,
+        "task_sessions": 0,
         "agents": [],
     }
 
@@ -854,6 +855,7 @@ def test_failed_readiness_does_not_orphan_during_concurrent_recovery():
         "pool_size": 0,
         "max_pool_size": 8,
         "in_use": 0,
+        "task_sessions": 0,
         "agents": [],
     }
 
@@ -933,3 +935,160 @@ async def test_task_cancellation_waits_for_execution_before_destroying():
             await task
     assert events == ["exec finished", "deleted"]
     assert client.created[0].delete_count == 1
+
+
+class TestTaskSessionCapacity:
+    """Task sessions are bounded by the pool's capacity, not by concurrency."""
+
+    def test_concurrent_tasks_beyond_capacity_are_refused(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier, Lock
+
+        from cogniverse_runtime.sandbox_pool import SandboxCapacityError
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=3))
+        attempted = Barrier(12)
+        live = {"now": 0, "peak": 0}
+        counter = Lock()
+
+        def task() -> str:
+            try:
+                with pool.task_session() as session:
+                    with counter:
+                        live["now"] += 1
+                        live["peak"] = max(live["peak"], live["now"])
+                    # No holder releases before every worker has attempted,
+                    # so the refusals cannot be an artefact of fast turnover.
+                    attempted.wait(timeout=10)
+                    with counter:
+                        live["now"] -= 1
+                    return session.id
+            except SandboxCapacityError as exc:
+                attempted.wait(timeout=10)
+                return str(exc)
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            outcomes = [
+                f.result(timeout=15) for f in [executor.submit(task) for _ in range(12)]
+            ]
+
+        refusals = [o for o in outcomes if o.startswith("Sandbox task capacity")]
+        assert sorted(o for o in outcomes if o not in refusals) == [
+            "sandbox-1",
+            "sandbox-2",
+            "sandbox-3",
+        ]
+        assert refusals == ["Sandbox task capacity reached: 3 sessions in use"] * 9
+        assert live["peak"] == 3
+        assert client.create_calls == 3
+        assert [s.delete_count for s in client.created] == [1, 1, 1]
+        assert pool.stats()["task_sessions"] == 0
+
+    def test_a_finished_task_frees_its_slot(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=1))
+
+        names = []
+        for _ in range(3):
+            with pool.task_session() as session:
+                assert pool.stats()["task_sessions"] == 1
+                names.append(session.id)
+
+        assert names == ["sandbox-1", "sandbox-2", "sandbox-3"]
+        assert [s.delete_count for s in client.created] == [1, 1, 1]
+        assert pool.stats()["task_sessions"] == 0
+
+    def test_a_failed_creation_frees_its_slot(self):
+        """A readiness failure must not consume capacity forever."""
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=1))
+        failures = {"left": 1}
+        ready = client.wait_ready
+
+        def wait_ready(name, timeout_seconds):
+            if failures["left"]:
+                failures["left"] -= 1
+                raise RuntimeError("readiness unavailable")
+            ready(name, timeout_seconds)
+
+        client.wait_ready = wait_ready
+
+        with pytest.raises(RuntimeError, match="readiness unavailable"):
+            with pool.task_session():
+                pytest.fail("session yielded")
+        assert pool.stats()["task_sessions"] == 0
+
+        with pool.task_session() as session:
+            assert session.id == "sandbox-2"
+        assert [s.delete_count for s in client.created] == [1, 1]
+
+
+class TestTaskSessionShutdown:
+    """close_all reclaims a task's sandbox while the client is still open."""
+
+    def test_close_all_destroys_a_live_task_session(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+
+        with pool.task_session() as session:
+            pool.close_all()
+            assert session.delete_count == 1
+            assert pool.stats()["task_sessions"] == 0
+
+        assert session.delete_count == 1
+
+    def test_manager_close_destroys_the_task_sandbox_before_the_client(self):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        order = []
+
+        class _Client:
+            def close(self):
+                order.append("client closed")
+
+        mgr = SandboxManager(policy="disabled")
+        mgr._pool = pool
+        mgr._client = _Client()
+        mgr._available = True
+
+        with pool.task_session() as session:
+            original_delete = session.delete
+
+            def delete():
+                order.append("sandbox deleted")
+                original_delete()
+
+            session.delete = delete
+            mgr.close()
+
+        assert order == ["sandbox deleted", "client closed"]
+        assert session.delete_count == 1
+
+    def test_a_failing_delete_does_not_replace_the_task_s_error(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+
+        with pytest.raises(ValueError, match="task blew up"):
+            with pool.task_session() as session:
+                session.delete = lambda: (_ for _ in ()).throw(
+                    RuntimeError("gateway refused the delete")
+                )
+                raise ValueError("task blew up")
+        assert pool.stats()["task_sessions"] == 0
+
+    def test_a_failing_delete_does_not_fail_a_finished_task(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        seen = []
+
+        with pool.task_session() as session:
+            session.delete = lambda: (_ for _ in ()).throw(
+                RuntimeError("gateway refused the delete")
+            )
+            seen.append(session.id)
+
+        assert seen == ["sandbox-1"]
+        assert pool.stats()["task_sessions"] == 0
