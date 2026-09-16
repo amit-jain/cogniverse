@@ -742,6 +742,7 @@ def _test_owned_telemetry():
         return
     installed = None
     if telemetry_manager_module._telemetry_manager is None:
+        TelemetryManager.reset()
         installed = TelemetryManager(TelemetryConfig(enabled=False))
         telemetry_manager_module._telemetry_manager = installed
     yield
