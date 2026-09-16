@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
+from dspy.utils.exceptions import AdapterParseError
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import Field
 
@@ -861,12 +862,15 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             )
             executive_summary = dspy_result.executive_summary
             raw_recommendations = getattr(dspy_result, "recommendations", "")
+        except AdapterParseError:
+            # The LM produced no report. A templated stub in its place is a
+            # fabricated answer, not a degraded one — end the turn instead.
+            raise
         except Exception as e:
             # The answer LM call failed (e.g. a payload/context overflow from
-            # the attached keyframes) or returned an unusable shape. Degrade
-            # to a templated stub so the request still returns — but FLAG it
-            # in the metadata below, so a fallback is never indistinguishable
-            # from a real grounded report.
+            # the attached keyframes). Degrade to a templated stub so the
+            # request still returns — but FLAG it in the metadata below, so a
+            # fallback is never indistinguishable from a real grounded report.
             logger.error(f"DSPy summary generation failed: {e}")
             call_state["report_degraded"] = True
             call_state["report_degraded_reason"] = "; ".join(

@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import dspy
+from dspy.utils.exceptions import AdapterParseError
 from pydantic import Field, field_validator
 
 from cogniverse_agents._coercion import coerce_float
@@ -494,6 +495,10 @@ class KnowledgeSummarizationAgent(
                 # No per-agent LM override — use ambient dspy.settings.lm.
                 result = self._dspy_module(title=title, memories=block)
             return getattr(result, "summary", "") or "", True
+        except AdapterParseError:
+            # The LM produced no synthesis. The raw block prefixed as a
+            # summary is a fabricated artefact — end the turn instead.
+            raise
         except Exception as exc:
             logger.warning("ksum: DSPy synth failed (%s); falling back to raw", exc)
             # Fallback: return the block itself, prefixed — caller still

@@ -19,6 +19,19 @@ from cogniverse_agents.knowledge_summarization_agent import (
 )
 from cogniverse_agents.temporal_reasoning_agent import _parse_iso
 from cogniverse_core.memory.schema import build_default_registry
+from cogniverse_foundation.dspy import LenientJSONAdapter, LMOutputIncomplete
+
+
+def _incomplete_generation() -> LMOutputIncomplete:
+    """The error the shipped adapter raises for a synthesis the LM never wrote."""
+    import dspy
+
+    signature = dspy.Signature("memories -> summary")
+    try:
+        LenientJSONAdapter().parse(signature, '{"note": "nothing usable"}')
+    except LMOutputIncomplete as incomplete:
+        return incomplete
+    raise AssertionError("the adapter accepted a synthesis with no summary")
 
 
 def _memory_config_manager():
@@ -312,6 +325,28 @@ class TestPromotion:
         assert out.promoted_to_org_trunk is False
         assert out.promoted_memory_id is None
         # The org trunk got nothing — no pollution.
+        assert promoted.get("acme:_org_trunk", []) == []
+
+    async def test_incomplete_generation_is_not_answered_with_the_raw_block(self):
+        """The LM produced no synthesis. Returning the raw memory block under
+        a "[FALLBACK: synthesis failed]" prefix is a fabricated summary the
+        caller stores and serves, so the turn ends as the generation error."""
+        rows = [_row("m1", "fact")]
+        agent, promoted = _build({"acme:production": rows})
+        agent._dspy_module = MagicMock(side_effect=_incomplete_generation())
+
+        with pytest.raises(LMOutputIncomplete) as raised:
+            await agent._process_impl(
+                KnowledgeSummarizationInput(
+                    tenant_id="acme:production",
+                    subject_keys=["policy:refunds"],
+                    title="incomplete_generation",
+                    promote=True,
+                    actor_role="tenant_admin",
+                    actor_id="tadm",
+                )
+            )
+        assert raised.value.missing_fields == ("summary",)
         assert promoted.get("acme:_org_trunk", []) == []
 
     async def test_promote_false_skips_promotion_entirely(self):
