@@ -214,3 +214,38 @@ async def test_concurrent_silent_video_succeeds_while_asr_request_fails(
     assert failed["status"] == "failed"
     assert failed["error_context"]["stage"] == "transcription"
     assert failed["error_context"]["content_path"] == str(spoken)
+
+
+@pytest.mark.asyncio
+async def test_silent_video_completes_on_the_local_branch(tmp_path):
+    silent = tmp_path / "silent.mp4"
+    make_video(silent, audio=False)
+    pipeline = transcription_pipeline(tmp_path, None)
+    processor = pipeline.processor_manager._processors["audio"]
+    assert processor.endpoint is None
+    result = await pipeline.process_video_async_with_strategies(silent)
+    assert result["status"] == "completed"
+    transcript = result["results"]["transcript"]
+    assert {k: transcript[k] for k in ("video_id", "full_text", "segments")} == {
+        "video_id": "silent",
+        "full_text": "",
+        "segments": [],
+    }
+    assert "error" not in transcript
+    # Nothing to transcribe is settled before either branch runs, so the
+    # local model is never loaded for a container with no audio stream.
+    assert processor._whisper is None
+
+
+@pytest.mark.asyncio
+async def test_local_transcription_failure_fails_the_job(job_redis, tmp_path):
+    spoken = tmp_path / "spoken.mp4"
+    make_video(spoken, audio=True)
+    pipeline = transcription_pipeline(tmp_path, None)
+    pipeline.processor_manager._processors["audio"] = AudioProcessor(
+        logging.getLogger(__name__), model="whisper-nonexistent"
+    )
+    submitted, events = await run_job(job_redis, pipeline, spoken)
+    assert [event["state"] for event in events] == ["queued", "running", "failed"]
+    assert events[-1]["error_type"] == "IngestPipelineError"
+    assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None

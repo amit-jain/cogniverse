@@ -145,7 +145,10 @@ class AudioProcessor(BaseProcessor):
         start_time = time.time()
 
         try:
-            if self.endpoint:
+            if not self._has_audio_stream(video_path):
+                self.logger.info(f"   🔇 No audio stream in {video_path.name}")
+                transcript_data = self._silent_transcript(video_path, video_id)
+            elif self.endpoint:
                 transcript_data = self._transcribe_remote(video_path, video_id)
             else:
                 self._load_whisper()
@@ -179,6 +182,31 @@ class AudioProcessor(BaseProcessor):
                 "segments": [],
             }
 
+    @staticmethod
+    def _has_audio_stream(video_path: Path) -> bool:
+        """Whether the container carries an audio stream.
+
+        A container with none has nothing to transcribe on either branch,
+        which is a complete transcript rather than a transcription failure.
+        """
+        import av
+
+        container = av.open(str(video_path))
+        try:
+            return any(stream.type == "audio" for stream in container.streams)
+        finally:
+            container.close()
+
+    @staticmethod
+    def _silent_transcript(video_path: Path, video_id: str) -> dict[str, Any]:
+        """The transcript of a container with no audio stream."""
+        return {
+            "video_id": video_id,
+            "video_path": str(video_path),
+            "full_text": "",
+            "segments": [],
+        }
+
     def _transcribe_local(self, video_path: Path, video_id: str) -> dict[str, Any]:
         """Run transcription via the in-process openai-whisper model."""
         options = {
@@ -207,7 +235,7 @@ class AudioProcessor(BaseProcessor):
         }
 
     @staticmethod
-    def _extract_audio_wav(video_path: Path) -> bytes | None:
+    def _extract_audio_wav(video_path: Path) -> bytes:
         """Extract the audio stream from ``video_path`` and return it as
         16 kHz mono PCM WAV bytes.
 
@@ -224,7 +252,7 @@ class AudioProcessor(BaseProcessor):
         in_stream = next((s for s in container.streams if s.type == "audio"), None)
         if in_stream is None:
             container.close()
-            return None
+            raise ValueError(f"{video_path}: no audio stream present")
 
         buf = io.BytesIO()
         out = av.open(buf, "w", format="wav")
@@ -263,13 +291,6 @@ class AudioProcessor(BaseProcessor):
         url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
         headers = self.auth_headers()
         audio_bytes = self._extract_audio_wav(video_path)
-        if audio_bytes is None:
-            return {
-                "video_id": video_id,
-                "video_path": str(video_path),
-                "full_text": "",
-                "segments": [],
-            }
         files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
         try:
             models_resp = requests.get(
