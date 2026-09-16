@@ -2814,6 +2814,8 @@ _TEST_TENANT_PREFIXES = (
     # deliberately failing fixture mints.
     "mschema_",
     "teardown_",
+    # Ingestion, state and storage regression coverage.
+    "prode2epipe_",
 )
 
 

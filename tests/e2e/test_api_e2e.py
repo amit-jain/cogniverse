@@ -52,12 +52,14 @@ from cogniverse_synthetic.topics import (
 )
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
+    E2E_ARTIFACT_DIR,
     GATEWAY_VIDEO_QUERIES,
     KUBECTL_CONTEXT,
     RUNTIME,
     SAMPLE_VIDEO_PATH,
     TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
+    _atomic_artifact,
     _content_sha256,
     _deployed_schema_names_strict,
     _ensure_sample_content_ingested,
@@ -2664,6 +2666,103 @@ class TestAudioIngestionAndSearch:
                 },
             )
 
+    def test_a_transcript_is_indexed_in_model_sized_windows(self, extracted_audio_path):
+        """A transcript is indexed as one document per model window, the
+        windows reconstruct it exactly, and the clip answers as one hit.
+
+        The tracked ten-second fixture repeated end to end is the only audio
+        long enough to reach past one window on this cluster; the transcript
+        is Whisper's, so the pins are on the window structure the persisted
+        rows carry, never on the words.
+        """
+        import wave
+
+        repeats = 36
+        long_audio_path = _repeated_audio_fixture(
+            extracted_audio_path,
+            E2E_ARTIFACT_DIR / f"tracked_video_audio_x{repeats}.wav",
+            repeats,
+        )
+        with wave.open(str(long_audio_path), "rb") as audio:
+            assert (
+                audio.getnchannels(),
+                audio.getsampwidth(),
+                audio.getframerate(),
+                audio.getnframes(),
+            ) == (1, 2, 16_000, 160_000 * repeats)
+
+        tenant_id = unique_id("prode2epipe")
+        register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        schema = _tenant_schema_name(
+            json.loads(CONFIG_PATH.read_text())["backend"]["profiles"][AUDIO_PROFILE][
+                "schema_name"
+            ],
+            canonical_tenant_id(tenant_id),
+        )
+        expected_source_url = _expected_artifact_source_url(long_audio_path, tenant_id)
+
+        with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
+            _deploy_profile_for_tenant(client, AUDIO_PROFILE, tenant_id)
+            with open(long_audio_path, "rb") as handle:
+                resp = client.post(
+                    "/ingestion/upload?wait=true&wait_timeout=900",
+                    files={"file": (long_audio_path.name, handle, "audio/wav")},
+                    data={"profile": AUDIO_PROFILE, "tenant_id": tenant_id},
+                )
+            assert resp.status_code == 200, f"Audio upload failed: {resp.text}"
+            upload_data = resp.json()
+            assert upload_data["status"] == "success", upload_data
+            assert upload_data["state"] == "complete", upload_data
+            assert upload_data["existing"] is False, upload_data
+            assert upload_data["source_url"] == expected_source_url, upload_data
+            audio_id = _content_sha256(long_audio_path)
+            assert upload_data["video_id"] == audio_id, upload_data
+
+            time.sleep(3)
+
+            rows = _vespa_rows(schema, "audio_id", audio_id, 200)
+            by_index = {int(row["chunk_index"]): row for row in rows}
+            window_count = len(rows)
+            assert sorted(by_index) == list(range(window_count))
+            ordered = [by_index[index] for index in range(window_count)]
+            transcript = "".join(row["audio_transcript"] for row in ordered)
+
+            # The split the persisted rows carry is the split the served model
+            # makes of that transcript, at the count its own budget implies.
+            served_windows, window_tokens = _served_document_windows(transcript)
+            assert [row["audio_transcript"] for row in ordered] == served_windows
+            assert [
+                (int(row["chunk_start"]), int(row["chunk_end"])) for row in ordered
+            ] == _window_spans(served_windows)
+            assert [int(row["chunk_count"]) for row in ordered] == [
+                window_count
+            ] * window_count
+            assert window_count == math.ceil(
+                len(_served_document_tokens(transcript)) / window_tokens
+            )
+            assert [row["doc_id"] for row in ordered] == [
+                f"{audio_id}_{audio_id}_w{index:04d}" for index in range(window_count)
+            ]
+            assert upload_data["chunks_created"] == window_count, upload_data
+            assert upload_data["documents_fed"] == window_count, upload_data
+
+            # Source granularity: the clip's windows collapse to its one hit
+            # even when the caller asks for as many results as it has windows.
+            search_resp = client.post(
+                "/search/",
+                json={
+                    "query": "man speaking outdoors",
+                    "profile": AUDIO_PROFILE,
+                    "top_k": window_count,
+                    "tenant_id": tenant_id,
+                },
+            )
+            assert search_resp.status_code == 200, search_resp.text[:500]
+            payload = search_resp.json()
+            assert payload["results_count"] == 1, payload
+            assert len(payload["results"]) == 1, payload
+            assert payload["results"][0]["metadata"]["audio_id"] == audio_id
+
 
 @pytest.mark.e2e
 class TestPDFIngestionAndSearch:
@@ -2816,6 +2915,81 @@ def _served_document_tokens(text: str) -> list[int]:
     return tokenizer(text, add_special_tokens=False)["input_ids"]
 
 
+def _repeated_audio_fixture(source: Path, dest: Path, repeats: int) -> Path:
+    """``source``'s frames written back to back ``repeats`` times."""
+
+    def write(staged: Path) -> None:
+        import wave
+
+        with wave.open(str(source), "rb") as handle:
+            params = handle.getparams()
+            frames = handle.readframes(handle.getnframes())
+        with wave.open(str(staged), "wb") as out:
+            out.setnchannels(params.nchannels)
+            out.setsampwidth(params.sampwidth)
+            out.setframerate(params.framerate)
+            for _ in range(repeats):
+                out.writeframes(frames)
+
+    return _atomic_artifact(dest, write)
+
+
+VESPA_QUERY_URL = "http://localhost:33080"
+
+
+def _vespa_rows(schema: str, field: str, value: str, hits: int) -> list[dict]:
+    """Persisted rows of ``schema`` whose ``field`` holds ``value``.
+
+    Each row carries the Vespa document id under ``doc_id`` alongside its
+    fields, so a test can pin the id form the ingestion path builds.
+    """
+    resp = httpx.post(
+        f"{VESPA_QUERY_URL}/search/",
+        json={
+            "yql": f'select * from sources {schema} where {field} contains "{value}"',
+            "hits": hits,
+        },
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    children = resp.json().get("root", {}).get("children", []) or []
+    return [
+        {"doc_id": child["id"].rsplit("::", 1)[-1], **child["fields"]}
+        for child in children
+    ]
+
+
+def _window_spans(windows: list[str]) -> list[tuple[int, int]]:
+    """The (start, end) offsets the contiguous ``windows`` tile their source at."""
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    for window in windows:
+        spans.append((offset, offset + len(window)))
+        offset += len(window)
+    return spans
+
+
+def _text_over_three_windows(marker: str, window_tokens: int) -> str:
+    """A document whose token count is at least three of the model's windows,
+    carrying ``marker`` only in its final paragraph.
+
+    The paragraph count is derived from the served model's own budget, so the
+    fixture keeps its size when the model or its window changes.
+    """
+    paragraph = (
+        "Section {index}. The retrieval corpus records how each indexed source "
+        "is segmented, embedded and served, and the evaluation harness replays "
+        "those segments against the queries an operator registered for the "
+        "tenant that owns them."
+    )
+    unit_tokens = len(_served_document_tokens(paragraph.format(index=0)))
+    paragraph_count = math.ceil(3 * window_tokens / unit_tokens) + 1
+    body = "\n\n".join(
+        paragraph.format(index=index) for index in range(paragraph_count)
+    )
+    return f"{body}\n\nClosing section. {marker}\n"
+
+
 @pytest.mark.e2e
 class TestDocumentIngestionAndSearch:
     """Upload tracked dataset_summary.md and retrieve its exact content."""
@@ -2895,6 +3069,104 @@ class TestDocumentIngestionAndSearch:
             ]
             assert len(holding) == 1
             assert hit_text == windows[holding[0]]
+
+    def test_a_document_larger_than_the_window_is_indexed_whole(self, tmp_path):
+        """A document several model windows long is indexed as one document per
+        window, the windows reconstruct the source exactly, a phrase that lives
+        only in the last window retrieves it, and the source answers as one hit.
+
+        Before the source was windowed the upload reported one document, the
+        stored text was the whole file behind a single truncated embedding, and
+        a phrase past the model's window was unreachable.
+        """
+        marker = f"tailmarker-{uuid.uuid4().hex}"
+        _, window_tokens = _served_document_windows("probe")
+        document_text = _text_over_three_windows(marker, window_tokens)
+        windows, _ = _served_document_windows(document_text)
+        tokens = _served_document_tokens(document_text)
+        expected_windows = math.ceil(len(tokens) / window_tokens)
+        assert len(windows) == expected_windows
+        assert "".join(windows) == document_text
+        # The whole document in one window is exactly the truncated index this
+        # replaces, so the fixture has to outgrow a single window.
+        assert windows[0] != document_text
+        holding = [index for index, window in enumerate(windows) if marker in window]
+        assert holding == [expected_windows - 1]
+
+        document_path = tmp_path / "windowed_corpus.md"
+        document_path.write_text(document_text, encoding="utf-8")
+
+        tenant_id = unique_id("prode2epipe")
+        register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        schema = _tenant_schema_name(
+            json.loads(CONFIG_PATH.read_text())["backend"]["profiles"][
+                DOCUMENT_PROFILE
+            ]["schema_name"],
+            canonical_tenant_id(tenant_id),
+        )
+        expected_source_url = _expected_artifact_source_url(document_path, tenant_id)
+
+        with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
+            _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
+            with open(document_path, "rb") as handle:
+                resp = client.post(
+                    "/ingestion/upload?wait=true&wait_timeout=900",
+                    files={"file": (document_path.name, handle, "text/markdown")},
+                    data={"profile": DOCUMENT_PROFILE, "tenant_id": tenant_id},
+                )
+            assert resp.status_code == 200, f"Document upload failed: {resp.text}"
+            upload_data = resp.json()
+            assert upload_data["status"] == "success", upload_data
+            assert upload_data["state"] == "complete", upload_data
+            assert upload_data["existing"] is False, upload_data
+            assert upload_data["source_url"] == expected_source_url, upload_data
+            assert upload_data["chunks_created"] == expected_windows, upload_data
+            assert upload_data["documents_fed"] == expected_windows, upload_data
+            document_id = _content_sha256(document_path)
+            assert upload_data["video_id"] == document_id, upload_data
+
+            time.sleep(3)
+
+            search_resp = client.post(
+                "/search/",
+                json={
+                    "query": marker,
+                    "profile": DOCUMENT_PROFILE,
+                    "top_k": expected_windows,
+                    "tenant_id": tenant_id,
+                },
+            )
+            assert search_resp.status_code == 200, search_resp.text[:500]
+            payload = search_resp.json()
+            # Source granularity: every window of one source collapses to the
+            # one hit for that source, even when the caller asks for as many
+            # results as the source has windows.
+            assert payload["results_count"] == 1, payload
+            assert len(payload["results"]) == 1, payload
+            hit = payload["results"][0]
+            assert hit["document_id"] == (
+                f"{document_id}_{document_id}_w{expected_windows - 1:04d}"
+            ), hit
+            assert hit["metadata"]["document_id"] == document_id, hit
+            assert hit["metadata"]["full_text"] == windows[expected_windows - 1], hit
+
+        rows = _vespa_rows(schema, "document_id", document_id, expected_windows + 5)
+        assert len(rows) == expected_windows
+        by_index = {int(row["chunk_index"]): row for row in rows}
+        assert sorted(by_index) == list(range(expected_windows))
+        ordered = [by_index[index] for index in range(expected_windows)]
+        assert [int(row["chunk_count"]) for row in ordered] == [
+            expected_windows
+        ] * expected_windows
+        assert [
+            (int(row["chunk_start"]), int(row["chunk_end"])) for row in ordered
+        ] == _window_spans(windows)
+        assert [row["full_text"] for row in ordered] == windows
+        assert "".join(row["full_text"] for row in ordered) == document_text
+        assert [row["doc_id"] for row in ordered] == [
+            f"{document_id}_{document_id}_w{index:04d}"
+            for index in range(expected_windows)
+        ]
 
 
 # Scenario 20 (API portion): Event queue listing

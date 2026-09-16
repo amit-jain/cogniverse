@@ -16,8 +16,12 @@ import httpx
 import pytest
 
 from cogniverse_agents.wiki.wiki_schema import generate_slug
-from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
+from cogniverse_foundation.common.tenant_utils import (
+    canonical_tenant_id,
+    sanitize_k8s_label_value,
+)
 from cogniverse_runtime.config_loader import get_workflow_settings
+from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
 from cogniverse_runtime.routers.tenant import _cron_workflow_name
 from tests.e2e.conftest import (
     RUNTIME,
@@ -25,12 +29,15 @@ from tests.e2e.conftest import (
     _kubectl_e2e,
     _kubectl_e2e_command,
     _require_kubectl_success,
+    _tenant_schema_name,
     assert_orchestrated,
     expected_gateway_routing,
     register_tenant_and_wait,
     unique_id,
 )
 from tests.e2e.test_api_e2e import PROFILE
+
+VESPA_URL = "http://localhost:33080"
 
 # DenseOn (768-dim, ModernBERT) served by vLLM (inference.denseon, vllm_embed).
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
@@ -58,6 +65,33 @@ def _cosine_sim(a: list, b: list) -> float:
 
 def _semantic_similarity(text_a: str, text_b: str) -> float:
     return _cosine_sim(_embed(text_a), _embed(text_b))
+
+
+def _memory_rows_in_vespa(tenant_id: str, agent_name: str) -> int:
+    """Rows the tenant's memory partition holds for one namespace.
+
+    Archived rows are ordinary rows the listing route hides, so the store is
+    the only place a clear can be proved complete.
+    """
+    schema = _tenant_schema_name(MEMORY_BASE_SCHEMA, canonical_tenant_id(tenant_id))
+    resp = httpx.post(
+        f"{VESPA_URL}/search/",
+        json={
+            "yql": (
+                f'select * from sources {schema} where agent_id contains "{agent_name}"'
+            ),
+            "hits": 0,
+        },
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["root"]["fields"]["totalCount"]
+
+
+# The namespace the user-memory routes write to, and the page the enumeration
+# behind a clear walks. The corpus below crosses that page so an enumeration
+# that stops at one page leaves rows behind.
+USER_MEMORY_AGENT = "_user_memories"
 
 
 @pytest.fixture(scope="module")
@@ -552,6 +586,88 @@ class TestTenantMemories:
                 f"Strategies should survive user clear: {strategies_before} → {strategies_after}"
             )
             assert strategies_after == 0, strategies_after
+
+    @pytest.mark.parametrize("route", ["tenant", "admin"])
+    def test_clear_all_removes_every_memory_including_archived(self, route):
+        """Clearing a namespace removes every row it holds, past the page the
+        enumeration reads and including rows marked archived.
+
+        A clear that read one page and skipped archived rows answered
+        ``cleared`` while leaving the older rows in place; here the store is
+        read directly, so a listing that hides them cannot mask it.
+        """
+        active_rows = 130
+        archived_rows = 20
+        total_rows = active_rows + archived_rows
+
+        tenant_id = unique_id("prode2epipe") + ":t1"
+        register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        archived_at = datetime.now(timezone.utc).isoformat()
+
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            assert client.get(f"/admin/tenant/{tenant_id}/memories").json() == {
+                "memories": [],
+                "count": 0,
+            }
+            written = []
+            for index in range(total_rows):
+                metadata = {"sequence": index}
+                if index >= active_rows:
+                    # The shape the retention sweep writes when it soft-deletes
+                    # a row: the listing route hides it, the store still holds it.
+                    metadata["archived"] = True
+                    metadata["archived_at"] = archived_at
+                resp = client.post(
+                    f"/admin/tenant/{tenant_id}/memories",
+                    json={
+                        "text": f"retention corpus row {index}",
+                        "kind": "conversation_turn",
+                        "metadata": metadata,
+                    },
+                )
+                assert resp.status_code == 200, resp.text[:300]
+                written.append(resp.json()["id"])
+            assert len(set(written)) == total_rows
+
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                if _memory_rows_in_vespa(tenant_id, USER_MEMORY_AGENT) == total_rows:
+                    break
+                time.sleep(2)
+            assert _memory_rows_in_vespa(tenant_id, USER_MEMORY_AGENT) == total_rows
+
+            # The listing shows only the unarchived rows, so it can never be
+            # the evidence that a clear was complete.
+            listed = client.get(
+                f"/admin/tenant/{tenant_id}/memories",
+                params={"type": "preference", "limit": 200},
+            ).json()
+            assert listed["count"] == active_rows, listed["count"]
+
+            if route == "tenant":
+                cleared = client.delete(f"/admin/tenant/{tenant_id}/memories")
+                assert cleared.json() == {"status": "cleared"}, cleared.json()
+            else:
+                cleared = client.delete(
+                    f"/admin/memories/{tenant_id}", params={"type": "preference"}
+                )
+                assert cleared.json() == {
+                    "status": "cleared",
+                    "type": "preference",
+                }, cleared.json()
+            assert cleared.status_code == 200, cleared.text[:300]
+
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                if _memory_rows_in_vespa(tenant_id, USER_MEMORY_AGENT) == 0:
+                    break
+                time.sleep(2)
+            assert _memory_rows_in_vespa(tenant_id, USER_MEMORY_AGENT) == 0
+
+            assert client.get(
+                f"/admin/tenant/{tenant_id}/memories",
+                params={"type": "preference", "limit": 200},
+            ).json() == {"memories": [], "count": 0}
 
 
 @pytest.mark.e2e
