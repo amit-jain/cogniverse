@@ -30,6 +30,7 @@ import pytest
 import yaml
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     IN_POD_TELEMETRY_PRELUDE,
@@ -623,6 +624,238 @@ def _mc_ls_names(prefix: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Phoenix snapshot inspection (restore the published archive)
+# ---------------------------------------------------------------------------
+
+_MINIO_CREDENTIAL_ENV = [
+    {
+        "name": "ACCESS",
+        "valueFrom": {"secretKeyRef": {"name": "cogniverse-minio", "key": "rootUser"}},
+    },
+    {
+        "name": "SECRET",
+        "valueFrom": {
+            "secretKeyRef": {"name": "cogniverse-minio", "key": "rootPassword"}
+        },
+    },
+]
+
+
+def _phoenix_postgres() -> dict:
+    """The chart's phoenix-postgres block: the image and credentials to use.
+
+    The dump is written by the database's own client image, so the restore
+    reads it back with the same one.
+    """
+    return yaml.safe_load(CHART_VALUES.read_text())["phoenix"]["postgres"]
+
+
+def _phoenix_postgres_env(scratch_db: str) -> list[dict]:
+    postgres = _phoenix_postgres()
+    return [
+        {"name": "PGHOST", "value": "cogniverse-phoenix-postgres"},
+        {"name": "PGPORT", "value": "5432"},
+        {"name": "PGUSER", "value": postgres["auth"]["username"]},
+        {"name": "PGDATABASE", "value": postgres["auth"]["database"]},
+        {
+            "name": "PGPASSWORD",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "cogniverse-phoenix-postgres-auth",
+                    "key": "password",
+                }
+            },
+        },
+        {"name": "SCRATCH", "value": scratch_db},
+    ]
+
+
+def _run_probe_pod(prefix: str, overrides: dict, image: str, *, timeout: int) -> str:
+    """Run a one-off pod to completion and return its logs.
+
+    Same access pattern as the MinIO listing probe: images the cluster already
+    runs, deleted whatever the outcome, and a failure that reports the pod's
+    own state rather than an empty string.
+    """
+    pod = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    create = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "run",
+        pod,
+        "-n",
+        NAMESPACE,
+        "--restart=Never",
+        f"--image={image}",
+        "--overrides",
+        json.dumps(overrides),
+    ]
+    wait = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "wait",
+        f"pod/{pod}",
+        "-n",
+        NAMESPACE,
+        "--for=jsonpath={.status.phase}=Succeeded",
+        f"--timeout={timeout}s",
+    ]
+    logs = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "logs",
+        pod,
+        "-n",
+        NAMESPACE,
+        "--all-containers",
+    ]
+    try:
+        for step in (create, wait, logs):
+            try:
+                result = subprocess.run(
+                    step, capture_output=True, text=True, timeout=timeout + 120
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                pytest.fail(
+                    f"probe pod {pod} failed: {type(exc).__name__}: {exc}\n"
+                    f"{_mc_probe_diagnosis(pod)}\ncommand={shlex.join(step)}",
+                    pytrace=False,
+                )
+            if result.returncode != 0:
+                pytest.fail(
+                    f"probe pod {pod} failed: exit={result.returncode}\n"
+                    f"stdout={result.stdout!r}\nstderr={result.stderr!r}\n"
+                    f"{_mc_probe_diagnosis(pod)}\ncommand={shlex.join(step)}",
+                    pytrace=False,
+                )
+    finally:
+        subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "delete",
+                "pod",
+                pod,
+                "-n",
+                NAMESPACE,
+                "--ignore-not-found",
+                "--now",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    return result.stdout
+
+
+def _between(logs: str, marker: str) -> list[str]:
+    """The lines the probe script fenced between ``<marker><<`` and ``>><marker>``."""
+    opening, closing = f"{marker}<<", f">>{marker}"
+    lines = logs.splitlines()
+    assert opening in lines and closing in lines, (
+        f"probe output carries no {marker} block:\n{logs[-4000:]}"
+    )
+    return [
+        line.strip()
+        for line in lines[lines.index(opening) + 1 : lines.index(closing)]
+        if line.strip()
+    ]
+
+
+def _restore_phoenix_snapshot(object_name: str, scratch_db: str) -> tuple[list, list]:
+    """Restore the published snapshot into ``scratch_db``.
+
+    Returns the archive's member list and the ``projects`` rows the restored
+    database holds. The archive is fetched with the same ``mc`` image the
+    upload step runs and restored with the database's own client image, so
+    neither half of the snapshot is re-created here.
+    """
+    mc = _mc_image()
+    mc_image = f"{mc['repository']}:{mc['tag']}"
+    postgres = _phoenix_postgres()
+    postgres_image = f"{postgres['image']['repository']}:{postgres['image']['tag']}"
+    script = (
+        "set -eu\n"
+        "mkdir -p /work/extracted\n"
+        "tar -xf /work/archive.tar -C /work/extracted\n"
+        'echo "MEMBERS<<"\n'
+        "tar -tf /work/archive.tar\n"
+        'echo ">>MEMBERS"\n'
+        'dropdb --if-exists "$SCRATCH"\n'
+        'createdb "$SCRATCH"\n'
+        "pg_restore --no-owner --no-privileges --exit-on-error "
+        '--dbname="$SCRATCH" /work/extracted/database.dump\n'
+        'echo "PROJECTS<<"\n'
+        'psql -d "$SCRATCH" -At -c "select name from projects order by name"\n'
+        'echo ">>PROJECTS"\n'
+        'dropdb "$SCRATCH"\n'
+    )
+    overrides = {
+        "spec": {
+            "restartPolicy": "Never",
+            "volumes": [{"name": "work", "emptyDir": {}}],
+            "initContainers": [
+                {
+                    "name": "fetch",
+                    "image": mc_image,
+                    "imagePullPolicy": mc["pullPolicy"],
+                    "env": _MINIO_CREDENTIAL_ENV,
+                    "command": ["sh", "-c"],
+                    "args": [
+                        "mc alias set dest http://cogniverse-minio:9000 "
+                        '"$ACCESS" "$SECRET" >/dev/null 2>&1 && '
+                        f"mc cp dest/cogniverse-backups/phoenix/{object_name} "
+                        "/work/archive.tar"
+                    ],
+                    "volumeMounts": [{"name": "work", "mountPath": "/work"}],
+                }
+            ],
+            "containers": [
+                {
+                    "name": "restore",
+                    "image": postgres_image,
+                    "imagePullPolicy": postgres["image"]["pullPolicy"],
+                    "env": _phoenix_postgres_env(scratch_db),
+                    "command": ["sh", "-c"],
+                    "args": [script],
+                    "volumeMounts": [{"name": "work", "mountPath": "/work"}],
+                }
+            ],
+        }
+    }
+    logs = _run_probe_pod(
+        "phoenix-restore-probe", overrides, postgres_image, timeout=600
+    )
+    return _between(logs, "MEMBERS"), _between(logs, "PROJECTS")
+
+
+def _drop_scratch_database(scratch_db: str) -> None:
+    """Drop the restore target, so a failed probe leaves no database behind."""
+    postgres = _phoenix_postgres()
+    postgres_image = f"{postgres['image']['repository']}:{postgres['image']['tag']}"
+    overrides = {
+        "spec": {
+            "restartPolicy": "Never",
+            "containers": [
+                {
+                    "name": "drop",
+                    "image": postgres_image,
+                    "imagePullPolicy": postgres["image"]["pullPolicy"],
+                    "env": _phoenix_postgres_env(scratch_db),
+                    "command": ["sh", "-c"],
+                    "args": ['set -eu\ndropdb --if-exists "$SCRATCH"\n'],
+                }
+            ],
+        }
+    }
+    _run_probe_pod("phoenix-restore-drop", overrides, postgres_image, timeout=180)
+
+
+# ---------------------------------------------------------------------------
 # Light-tier tests
 # ---------------------------------------------------------------------------
 
@@ -943,6 +1176,60 @@ class TestBackupPhoenixWorkflow:
                 f"retention pruning regressed: {len(names_before)} → "
                 f"{len(names_after)} objects"
             )
+
+    def test_phoenix_snapshot_restores_the_database_holding_its_rows(self):
+        """The snapshot carries a pg_dump that restores Phoenix's own rows.
+
+        Phoenix keeps its projects, traces, spans, datasets and annotations in
+        the phoenix-postgres database; the working directory holds assets. A
+        snapshot of the working directory alone is a new object with none of
+        the data, so this drives a tenant's spans into Phoenix, runs the
+        backup, and restores the archive's dump into a scratch database to
+        read that tenant's project back out of it.
+        """
+        _require_cronworkflow("cogniverse-backup-phoenix")
+
+        tenant_id = _seed_org_and_tenant()
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+        _run_gateway_traffic(tenant_id)
+        _wait_for_gateway_spans(tenant_id, len(GATEWAY_VIDEO_QUERIES))
+        project = TelemetryConfig().get_project_name(canonical_tenant_id(tenant_id))
+
+        names_before = _mc_ls_names("phoenix")
+        newest_before = names_before[-1] if names_before else ""
+        _submit_and_wait_succeeded(
+            "cogniverse-backup-phoenix", timeout_s=SUBMISSION_TIMEOUT_S
+        )
+        names_after = _mc_ls_names("phoenix")
+        assert names_after, "could not list cogniverse-backups/phoenix/ after the run"
+        assert names_after[-1] > newest_before, (
+            f"backup-phoenix Succeeded but published no newer snapshot "
+            f"({newest_before!r} → {names_after[-1]!r})"
+        )
+
+        scratch = f"phoenix_restore_{uuid.uuid4().hex[:8]}"
+        try:
+            members, projects = _restore_phoenix_snapshot(names_after[-1], scratch)
+        finally:
+            _drop_scratch_database(scratch)
+
+        # The dump step assembles the archive from exactly these parts, so an
+        # archive that is only the working directory fails here on its member
+        # list rather than on a later query.
+        assert members == [
+            "database.dump",
+            "database.list",
+            "restore.env",
+            "working-assets.tar",
+        ], members
+        # Restored from the archive alone: the tenant's project is a row this
+        # test caused Phoenix to write, so it can only be here if the dump
+        # captured the database rather than the asset directory.
+        assert project in projects, (
+            f"the restored dump holds no project {project!r}; it restored "
+            f"{sorted(projects)[:20]}"
+        )
 
 
 @pytest.mark.e2e
