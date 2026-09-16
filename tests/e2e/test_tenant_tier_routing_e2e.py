@@ -71,6 +71,7 @@ from tests.e2e.conftest import (
     register_tenant_and_wait,
     unique_id,
 )
+from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 
 pytestmark = [pytest.mark.e2e, pytest.mark.integration]
 
@@ -1095,3 +1096,40 @@ def test_the_verdict_rejects_a_decision_the_counters_did_not_record():
         "'base-default': 0, 'classification-base': 0} != {'pro-default': 1, "
         "'classification-pro': 1, 'base-default': 0, 'classification-base': 0}"
     ]
+
+
+def test_the_tier_refresh_does_not_stall_the_event_loop(request):
+    """The refresh the admin write forces is paid off the serving loop.
+
+    Writing the tier drops it from every reader in the replica, so the next
+    dispatch resolves it again out of the config store — a Vespa read with
+    retries and backoff. That read is the whole of this test's window: a
+    second client polls liveness for the dispatch's duration and every poll
+    must be answered.
+    """
+    request.addfinalizer(bootstrap_seeded_tenant_tier)
+    canonical = canonical_tenant_id(TENANT_ID)
+    declared = {"tenant_id": canonical, "tier": SEEDED_TENANT_TIER}
+    assert _set_tier(TENANT_ID, SEEDED_TENANT_TIER) == declared
+
+    with LoopProbe() as probe:
+        with httpx.Client(timeout=600.0) as client:
+            response = client.post(
+                f"{RUNTIME}/agents/{AGENT}/process",
+                json={
+                    "agent_name": AGENT,
+                    "query": QUERY,
+                    "context": {"tenant_id": TENANT_ID},
+                },
+            )
+        served = probe.stop()
+
+    assert response.status_code == 200, response.text[:600]
+    body = response.json()
+    assert body["status"] == "success", body
+    assert body["agent"] == AGENT, body
+    assert body["message"] == f"Generated summary for '{QUERY}'", body["message"]
+    assert_loop_served(served)
+    # The refresh resolved the tier the admin write stored, so the offload
+    # cannot be achieved by skipping the read.
+    assert _get_tier(TENANT_ID) == declared
