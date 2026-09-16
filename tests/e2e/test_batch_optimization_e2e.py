@@ -26,9 +26,11 @@ import os
 import subprocess
 import textwrap
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
+import pandas as pd
 import pytest
 
 from cogniverse_agents.entity_extraction_agent import (
@@ -36,13 +38,27 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionModule,
     EntityExtractionOutput,
 )
-from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
+from cogniverse_agents.optimizer.artifact_manager import (
+    BLOB_VERSION_DECISIONS,
+    ArtifactManager,
+)
+from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+    PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+    PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+    ProfileSelectionGroundTruthMissingError,
+    ProfileSelectionGroundTruthStoreUnavailableError,
+)
 from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_runtime.optimization_cli import (
     OPTIMIZER_METRIC_IDS,
+    PROFILE_GROUND_TRUTH_ABSENT,
+    PROFILE_GROUND_TRUTH_PRESENT,
+    PROFILE_SELECTION_MAX_INCOMPLETE_SHARE,
+    PROFILE_SELECTION_RETRIEVAL_ATTEMPTS,
     SIMBA_ARTIFACT_KEY,
     _entity_extraction_is_scoreable,
     _entity_extraction_pairs,
@@ -50,6 +66,7 @@ from cogniverse_runtime.optimization_cli import (
     _served_scoreable_indices,
     is_scoreable,
 )
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from tests.e2e.conftest import (
     EVALUATION_QUERY_ASSET,
     GATEWAY_VIDEO_QUERIES,
@@ -62,6 +79,7 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     optimization_cli_document,
     register_tenant_and_wait,
+    run_async,
     unique_id,
 )
 from tests.e2e.span_capture import (
@@ -2431,6 +2449,80 @@ def _record_batch_job_duration(mode: str, seconds: float, *, timed_out: bool) ->
     )
 
 
+def _optimization_cli_argv(
+    mode: str,
+    tenant_id: str,
+    lookback_hours: float,
+    env_overrides: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
+) -> list[str]:
+    """The operator's in-pod optimization CLI invocation.
+
+    ``env_overrides`` are applied by ``env`` in front of the interpreter, so a
+    single invocation sees them and the serving process does not.
+    """
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "exec",
+        "-n",
+        NAMESPACE,
+        DEPLOYMENT,
+        "-c",
+        CONTAINER,
+        "--",
+    ]
+    if env_overrides:
+        command.append("env")
+        command.extend(
+            f"{name}={value}" for name, value in sorted(env_overrides.items())
+        )
+    command.extend(
+        [
+            "python3",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+            "--mode",
+            mode,
+            "--tenant-id",
+            tenant_id,
+            "--lookback-hours",
+            str(lookback_hours),
+        ]
+    )
+    command.extend(extra_args or [])
+    return command
+
+
+def _exec_optimization_cli_in_pod(
+    mode: str,
+    tenant_id: str,
+    *,
+    lookback_hours: float | None = None,
+    env_overrides: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess:
+    """Run the optimization CLI in the pod and return the raw process.
+
+    ``_run_batch_job`` is the successful-run form; this one keeps the exit code
+    and both streams so a test can pin a refused run.
+    """
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+    if timeout is None:
+        timeout = _batch_job_timeout_s()
+    return subprocess.run(
+        _optimization_cli_argv(
+            mode, tenant_id, lookback_hours, env_overrides, extra_args
+        ),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
 def _run_batch_job(
     mode: str,
     tenant_id: str = TENANT_ID,
@@ -2448,27 +2540,7 @@ def _run_batch_job(
     started_at = time.monotonic()
     try:
         result = subprocess.run(
-            [
-                "kubectl",
-                "--context",
-                KUBECTL_CONTEXT,
-                "exec",
-                "-n",
-                NAMESPACE,
-                DEPLOYMENT,
-                "-c",
-                CONTAINER,
-                "--",
-                "python3",
-                "-m",
-                "cogniverse_runtime.optimization_cli",
-                "--mode",
-                mode,
-                "--tenant-id",
-                tenant_id,
-                "--lookback-hours",
-                str(lookback_hours),
-            ],
+            _optimization_cli_argv(mode, tenant_id, lookback_hours),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -4460,6 +4532,320 @@ class TestProfileOptimization:
                 f"Demo selected profile {demo['selected_profile']!r} is absent from "
                 f"available_profiles {available}"
             )
+
+
+# A port nothing in the runtime pod binds. The telemetry endpoint env carries
+# no ":4317", so TelemetryManager.get_provider hands the dataset HTTP client
+# the same host:port and the artifact read lands on a closed socket. Only the
+# one invocation that carries this env sees it; the serving process does not.
+UNREACHABLE_TELEMETRY_ENDPOINT = "127.0.0.1:59599"
+UNREACHABLE_TELEMETRY_HTTP_ENDPOINT = f"http://{UNREACHABLE_TELEMETRY_ENDPOINT}"
+
+PHOENIX_GRPC = "localhost:33317"
+
+
+def _host_artifact_manager(tenant_id: str) -> ArtifactManager:
+    """An ArtifactManager over the deployed Phoenix, for the shipped naming."""
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": PHOENIX_URL,
+            "grpc_endpoint": PHOENIX_GRPC,
+        }
+    )
+    return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+
+
+@pytest.fixture(scope="module")
+def ground_truth_contract_tenants() -> tuple[str, str]:
+    """Two tenants of one org: one holding a ground truth, one holding none."""
+    org_id = unique_id("opt_gt")
+    suffix = org_id.rsplit("_", 1)[1]
+    seeded = f"{org_id}:t1"
+    bare = f"{org_id}:t2"
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-gt-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+    register_tenant_and_wait(seeded, created_by="e2e", timeout_s=600.0)
+    register_tenant_and_wait(bare, created_by="e2e", timeout_s=600.0)
+    _seed_profile_selection_ground_truth(seeded)
+    assert _active_profile_ground_truth_in_pod(bare) is None
+    return seeded, bare
+
+
+@pytest.mark.e2e
+class TestProfileGroundTruthContract:
+    """The profile step tells "nothing uploaded" apart from "store silent".
+
+    A tenant that never uploaded a ground truth has no work: the step reports
+    ``skipped`` and exits 0, so the weekly workflow renders it as skipped. An
+    artifact store that cannot answer leaves the tenant's ground truth unknown:
+    the step reports ``failed`` with a retryable reason and exits nonzero, even
+    for the tenant that does hold one.
+    """
+
+    def test_absent_ground_truth_skips_the_profile_step(
+        self, ground_truth_contract_tenants
+    ):
+        seeded, bare = ground_truth_contract_tenants
+        # The same check on the tenant that did upload one reports present, so
+        # the token the weekly workflow gates the step on discriminates.
+        seeded_presence = _exec_optimization_cli_in_pod(
+            "profile-ground-truth-check", seeded, timeout=600
+        )
+        assert seeded_presence.returncode == 0, seeded_presence.stderr[-2000:]
+        assert seeded_presence.stdout == f"{PROFILE_GROUND_TRUTH_PRESENT}\n", (
+            seeded_presence.stdout
+        )
+        lineage_before = _blob_version_lineage_in_pod(
+            "model", "profile_selection", tenant_id=bare
+        )
+        assert lineage_before == []
+
+        presence = _exec_optimization_cli_in_pod(
+            "profile-ground-truth-check", bare, timeout=600
+        )
+        assert presence.returncode == 0, presence.stderr[-2000:]
+        assert presence.stdout == f"{PROFILE_GROUND_TRUTH_ABSENT}\n", presence.stdout
+
+        run = _exec_optimization_cli_in_pod("profile", bare, timeout=900)
+        assert run.returncode == 0, run.stderr[-2000:]
+        document = optimization_cli_document(
+            run.stdout, operation=f"profile mode, tenant_id={bare!r}"
+        )
+        assert document == {
+            "status": ProfileSelectionGroundTruthMissingError.status,
+            "reason": ProfileSelectionGroundTruthMissingError.reason,
+            "retryable": False,
+            "error": (
+                f"{PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY} is not configured "
+                f"for tenant {canonical_tenant_id(bare)}"
+            ),
+        }
+        assert (
+            _blob_version_lineage_in_pod("model", "profile_selection", tenant_id=bare)
+            == []
+        )
+
+    def test_an_unreachable_store_fails_the_profile_step(
+        self, ground_truth_contract_tenants
+    ):
+        seeded, _ = ground_truth_contract_tenants
+        lineage_before = _blob_version_lineage_in_pod(
+            "model", "profile_selection", tenant_id=seeded
+        )
+        blob_dataset = _host_artifact_manager(seeded)._blob_dataset_name(
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+        )
+        env_overrides = {"TELEMETRY_OTLP_ENDPOINT": UNREACHABLE_TELEMETRY_ENDPOINT}
+
+        presence = _exec_optimization_cli_in_pod(
+            "profile-ground-truth-check",
+            seeded,
+            env_overrides=env_overrides,
+            timeout=600,
+        )
+        assert presence.returncode == 1, presence.stdout
+        assert presence.stdout == ""
+
+        run = _exec_optimization_cli_in_pod(
+            "profile", seeded, env_overrides=env_overrides, timeout=900
+        )
+        assert run.returncode == 1, run.stdout
+        document = optimization_cli_document(
+            run.stdout, operation=f"profile mode, tenant_id={seeded!r}"
+        )
+        assert set(document) == {
+            "status",
+            "reason",
+            "retryable",
+            "error",
+            "cause",
+        }, document
+        assert document["status"] == (
+            ProfileSelectionGroundTruthStoreUnavailableError.status
+        ), document
+        assert document["reason"] == (
+            ProfileSelectionGroundTruthStoreUnavailableError.reason
+        ), document
+        assert document["retryable"] is True, document
+        assert document["error"] == (
+            f"{PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY} store unavailable"
+        ), document
+        assert set(document["cause"]) == {"type", "message"}, document
+        assert document["cause"]["type"] == "DatasetStoreUnavailableError", document
+        assert document["cause"]["message"].startswith(
+            f"dataset store at {UNREACHABLE_TELEMETRY_HTTP_ENDPOINT} could not "
+            f"answer for blob {blob_dataset!r}: "
+        ), document
+
+        assert (
+            _blob_version_lineage_in_pod("model", "profile_selection", tenant_id=seeded)
+            == lineage_before
+        )
+        assert _active_profile_ground_truth_in_pod(seeded) == list(
+            _profile_ground_truth_rows()
+        )
+
+
+# The query encoder POSTs to the profile's inference service. Redirecting every
+# service URL in a copy of the pod's own config to a closed port fails the
+# encode, and therefore the retrieval, without touching the config store (which
+# binds from BACKEND_URL, not from the file) or the artifact store.
+UNREACHABLE_INFERENCE_URL = "http://127.0.0.1:59601"
+UNREACHABLE_ENCODER_CONFIG_PATH = "/tmp/cogniverse-e2e-unreachable-encoders.json"
+
+
+def _write_unreachable_encoder_config_in_pod(dest_path: str) -> list[str]:
+    """Write a copy of the pod's config whose inference services are closed.
+
+    Returns the service names that were redirected.
+    """
+    script = (
+        "import json, pathlib; "
+        "from cogniverse_foundation.config.utils import ConfigUtils; "
+        "src = ConfigUtils._discover_config_file(); "
+        "data = json.loads(pathlib.Path(src).read_text()); "
+        "services = sorted(data.get('inference_service_urls') or {}); "
+        "data['inference_service_urls'] = "
+        f"{{name: {UNREACHABLE_INFERENCE_URL!r} for name in services}}; "
+        f"pathlib.Path({dest_path!r}).write_text(json.dumps(data)); "
+        "print('__SERVICES__' + json.dumps(services))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "unreachable_encoder_config",
+                result,
+                operation=f"write {dest_path!r} with closed inference services",
+            )
+        )
+    line = next(
+        ln for ln in result.stdout.splitlines() if ln.startswith("__SERVICES__")
+    )
+    return json.loads(line[len("__SERVICES__") :])
+
+
+@pytest.mark.e2e
+class TestProfileLabelRetrievalOutage:
+    """A retrieval that never completes excludes the row, it never labels it.
+
+    Each candidate profile is retried to the shipped attempt bound; a query
+    whose comparison still cannot complete is reported under
+    ``incomplete_comparison`` instead of being labelled from the profiles that
+    did answer, and a run that loses more than the shipped share of its
+    ground truth refuses to train on the remainder.
+    """
+
+    def test_a_retrieval_outage_excludes_every_row_and_stops_the_run(
+        self, ground_truth_contract_tenants
+    ):
+        seeded, _ = ground_truth_contract_tenants
+        lineage_before = _blob_version_lineage_in_pod(
+            "model", "profile_selection", tenant_id=seeded
+        )
+        redirected = _write_unreachable_encoder_config_in_pod(
+            UNREACHABLE_ENCODER_CONFIG_PATH
+        )
+
+        run = _exec_optimization_cli_in_pod(
+            "profile",
+            seeded,
+            env_overrides={"COGNIVERSE_CONFIG": UNREACHABLE_ENCODER_CONFIG_PATH},
+        )
+        assert run.returncode == 1, (
+            f"redirected inference services {redirected}; stdout={run.stdout[-2000:]}"
+        )
+        document = optimization_cli_document(
+            run.stdout, operation=f"profile mode, tenant_id={seeded!r}"
+        )
+        assert set(document) == {
+            "status",
+            "reason",
+            "retryable",
+            "error",
+            "spans_found",
+            "label_exclusions",
+            "max_incomplete_share",
+        }, document
+        assert document["status"] == "failed", document
+        assert document["reason"] == "retrieval_exclusion_rate_exceeded", document
+        assert document["retryable"] is True, document
+        assert document["max_incomplete_share"] == (
+            PROFILE_SELECTION_MAX_INCOMPLETE_SHARE
+        ), document
+
+        source_queries = _profile_ground_truth_queries()
+        exclusions = document["label_exclusions"]
+        assert set(exclusions) == {
+            "count",
+            "queries",
+            "incomplete_comparison_rate",
+        }, document
+        # Every seeded row is excluded, none is labelled: with the encoders
+        # closed no comparison can complete, and a partial comparison is not a
+        # label.
+        assert collections.Counter(exclusions["queries"]) == collections.Counter(
+            source_queries
+        ), document
+        assert exclusions["count"] == len(source_queries), document
+        assert exclusions["incomplete_comparison_rate"] == 1.0, document
+        assert document["error"] == (
+            f"{len(source_queries)} of {len(source_queries)} ground-truth rows "
+            "could not be compared across their candidate profiles"
+        ), document
+
+        # The run stops before scoring, so nothing is persisted and the served
+        # artifact is untouched.
+        assert (
+            _blob_version_lineage_in_pod("model", "profile_selection", tenant_id=seeded)
+            == lineage_before
+        )
+
+    def test_a_healthy_run_reports_no_incomplete_comparison(
+        self, ground_truth_contract_tenants
+    ):
+        """The same tenant, same ground truth, reachable encoders: the rate the
+        outage run reports as 1.0 is 0.0 and every row carries a label."""
+        seeded, _ = ground_truth_contract_tenants
+        result = _run_batch_job("profile", tenant_id=seeded)
+        assert result["status"] == "success", result
+        _assert_profile_labels_partition_ground_truth(result)
+        assert result["exclusions_by_reason"].get("incomplete_comparison", 0) == 0, (
+            result
+        )
+        assert PROFILE_SELECTION_RETRIEVAL_ATTEMPTS == 3, (
+            "the exclusion contract is written against the shipped attempt bound"
+        )
 
 
 @pytest.mark.e2e
@@ -6616,3 +7002,409 @@ class TestTrainingSelectionDecay:
         assert ledger["candidate_score"] == result["candidate_score"], ledger
         assert ledger["score"] == result["candidate_score"], ledger
         assert version_blob != "", ledger
+
+
+# Columns the annotation-feedback cycle writes into an optimization trigger
+# dataset (quality_monitor_cli.run_annotation_feedback_cycle).
+TRIGGER_INPUT_KEYS = ["agent", "category", "query"]
+TRIGGER_OUTPUT_KEYS = ["score", "output"]
+TRIGGER_HIGH_SCORE = 0.9
+TRIGGER_LOW_SCORE = 0.1
+# _split_train_holdout keeps a tail quarter, so 14 failing rows leave 11 for
+# GEPA and 3 held-out negatives — past the shipped min_reflective_failures.
+REFLECTIVE_FAILING_ROWS = 14
+
+
+def _trigger_rows(category: str, queries: Sequence[str], score: float) -> list[dict]:
+    """Search-agent trigger rows in the shape the feedback cycle persists."""
+    return [
+        {
+            "agent": "search",
+            "category": category,
+            "query": query,
+            "score": score,
+            "output": json.dumps({"enhanced_query": f"{query} recorded rewrite"}),
+        }
+        for query in queries
+    ]
+
+
+def _create_trigger_dataset(name: str, rows: list[dict]) -> None:
+    from phoenix.client import Client as PhoenixSyncClient
+
+    PhoenixSyncClient(base_url=PHOENIX_URL).datasets.create_dataset(
+        name=name,
+        dataframe=pd.DataFrame(rows),
+        input_keys=TRIGGER_INPUT_KEYS,
+        output_keys=TRIGGER_OUTPUT_KEYS,
+    )
+
+
+def _run_triggered(tenant_id: str, dataset_name: str, timeout: int) -> dict:
+    run = _exec_optimization_cli_in_pod(
+        "triggered",
+        tenant_id,
+        extra_args=["--agents", "search", "--trigger-dataset", dataset_name],
+        timeout=timeout,
+    )
+    document = optimization_cli_document(
+        run.stdout,
+        operation=f"triggered mode, tenant_id={tenant_id!r}, dataset={dataset_name!r}",
+    )
+    return document
+
+
+@pytest.fixture(scope="function")
+def triggered_optimization_tenant() -> str:
+    org_id = unique_id("opt_trig")
+    suffix = org_id.rsplit("_", 1)[1]
+    tenant_id = f"{org_id}:t1"
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-trig-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+    return tenant_id
+
+
+@pytest.fixture(scope="function")
+def owned_trigger_datasets():
+    """Phoenix trigger datasets this test writes, deleted when it ends."""
+    created: list[str] = []
+
+    def _make(rows: list[dict]) -> str:
+        name = f"optimization-trigger-{unique_id('trig').replace(':', '-')}"
+        _create_trigger_dataset(name, rows)
+        created.append(name)
+        return name
+
+    yield _make
+
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": TENANT_ID,
+            "http_endpoint": PHOENIX_URL,
+            "grpc_endpoint": PHOENIX_GRPC,
+        }
+    )
+    for name in created:
+        run_async(provider.datasets.delete_dataset(name))
+
+
+@pytest.mark.e2e
+@pytest.mark.requires_teacher_model
+class TestTriggeredOptimizationScoresWhatItActivates:
+    """The artifact a triggered run activates is the module it scored.
+
+    The compiled module's whole state is published under the reserved prompt
+    key, so the served agent loads exactly the instructions and demonstrations
+    the held-out scoring measured. A run that produces no scored candidate
+    activates nothing.
+    """
+
+    def test_the_activated_artifact_is_the_scored_compiled_module(
+        self, triggered_optimization_tenant, owned_trigger_datasets
+    ):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            COMPILED_MODULE_PROMPT_KEY,
+            compiled_module_identity,
+            load_compiled_module_state,
+        )
+
+        tenant_id = triggered_optimization_tenant
+        am = _host_artifact_manager(tenant_id)
+        assert run_async(am.load_prompts("search_agent")) is None
+
+        queries = list(_evaluation_query_values("query"))[:8]
+        dataset = owned_trigger_datasets(
+            _trigger_rows("high_scoring", queries, TRIGGER_HIGH_SCORE)
+        )
+        document = _run_triggered(tenant_id, dataset, timeout=_batch_job_timeout_s())
+
+        outcome = document["search"]
+        assert outcome["status"] == "success", document
+        served = outcome["served"]
+        assert served["served_agent"] == "search_agent", document
+        assert served["promoted"] is True, document
+        assert served["active"] is True, document
+
+        prompts = run_async(am.load_prompts("search_agent"))
+        assert list(prompts) == [COMPILED_MODULE_PROMPT_KEY], prompts
+        payload = json.loads(prompts[COMPILED_MODULE_PROMPT_KEY])
+        assert set(payload) == {"dspy_version", "module", "state"}, payload
+        assert payload["module"] == compiled_module_identity(
+            SearchOptimizationModule()
+        ), payload
+        # The published state loads into the module the runtime serves, which
+        # is the module the run compiled and scored.
+        load_compiled_module_state(SearchOptimizationModule(), json.dumps(payload))
+
+        view = run_async(am.load_for_request("search_agent", request_seed="seed_a"))
+        assert view == {
+            "prompts": prompts,
+            "served_from": "active",
+            "version": served["version"],
+            "variant_id": "default",
+        }, view
+
+    def test_a_run_with_no_scored_candidate_activates_nothing(
+        self, triggered_optimization_tenant, owned_trigger_datasets
+    ):
+        tenant_id = triggered_optimization_tenant
+        am = _host_artifact_manager(tenant_id)
+        state_before = run_async(am.get_artefact_state("search_agent"))
+
+        # One positive row leaves no held-out split and no negatives, so the
+        # run has nothing to score the candidate against.
+        dataset = owned_trigger_datasets(
+            _trigger_rows(
+                "high_scoring",
+                list(_evaluation_query_values("query"))[:1],
+                TRIGGER_HIGH_SCORE,
+            )
+        )
+        document = _run_triggered(tenant_id, dataset, timeout=_batch_job_timeout_s())
+
+        outcome = document["search"]
+        assert outcome["status"] == "success", document
+        assert outcome["served"] == {
+            "served_agent": "search_agent",
+            "version": None,
+            "active": False,
+            "promoted": False,
+            "reason": "no_eval_material",
+        }, document
+        assert run_async(am.get_artefact_state("search_agent")) == state_before
+        assert run_async(am.load_prompts("search_agent")) is None
+
+
+@pytest.mark.e2e
+@pytest.mark.requires_optimizer_data
+@pytest.mark.requires_teacher_model
+class TestReflectiveOptimizerAcceptsCandidates:
+    """An all-failure population recompiles reflectively instead of skipping.
+
+    Every DSPy caller of the reflective metric passes a different arity — two
+    from ``Evaluate``, three from bootstrapped tracing, five from GEPA's
+    feedback path — and all three must score the same example identically.
+    """
+
+    def test_an_all_failure_population_runs_a_reflective_recompile(
+        self, triggered_optimization_tenant, owned_trigger_datasets
+    ):
+        tenant_id = triggered_optimization_tenant
+        queries = list(_evaluation_query_values("query"))[:REFLECTIVE_FAILING_ROWS]
+        assert len(queries) == REFLECTIVE_FAILING_ROWS
+        dataset = owned_trigger_datasets(
+            _trigger_rows("low_scoring", queries, TRIGGER_LOW_SCORE)
+        )
+
+        document = _run_triggered(tenant_id, dataset, timeout=_batch_job_timeout_s())
+        outcome = document["search"]
+        assert outcome["status"] == "success", document
+        assert outcome["reflective"] is True, document
+        holdout = REFLECTIVE_FAILING_ROWS // 4
+        assert outcome["training_examples"] == REFLECTIVE_FAILING_ROWS - holdout, (
+            document
+        )
+        assert outcome["holdout_examples"] == 0, document
+        assert outcome["negative_probes"] == holdout, document
+        assert outcome["served"]["served_agent"] == "search_agent", document
+
+    def test_the_reflective_metric_scores_one_example_the_same_at_every_arity(self):
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import _reflective_metric
+
+        metric = _reflective_metric("search")
+        gold = dspy.Example(query="q", _bad_output="recorded failing rewrite")
+        pred = dspy.Prediction(enhanced_query="a distinct rewrite")
+
+        two = metric(gold, pred)
+        three = metric(gold, pred, None)
+        five = metric(gold, pred, None, "search_optimizer", None)
+        assert two.score == three.score == five.score
+        assert two.feedback == three.feedback == five.feedback
+        assert two.feedback == (
+            "The recorded failing enhanced_query was 'recorded failing rewrite'. "
+            "Produce a distinct, accurate enhanced_query that does not reproduce it."
+        )
+
+
+# The dashboard's Optimization Overview reads this page size, and its history
+# table renders these columns in this order.
+OPTIMIZATION_RUNS_DASHBOARD_LIMIT = 10
+OPTIMIZATION_RUN_KEYS = (
+    "workflow_name",
+    "mode",
+    "trigger",
+    "phase",
+    "started_at",
+    "finished_at",
+)
+OPTIMIZATION_RUN_LISTING_MODE = "profile"
+RUN_PHASE_AGREEMENT_TIMEOUT_S = 120.0
+
+
+def _submit_manual_optimization(tenant_id: str, mode: str) -> str:
+    resp = httpx.post(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize",
+        json={"mode": mode},
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    body = resp.json()
+    assert set(body) == {"workflow_name", "namespace", "mode", "status_url"}, body
+    assert body["mode"] == mode, body
+    assert body["status_url"] == (
+        f"/admin/tenant/{tenant_id}/optimize/runs/{body['workflow_name']}"
+    ), body
+    return body["workflow_name"]
+
+
+def _list_optimization_runs(tenant_id: str, limit: int | None = None) -> list[dict]:
+    params = {} if limit is None else {"limit": limit}
+    resp = httpx.get(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize/runs",
+        params=params,
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    body = resp.json()
+    assert set(body) == {"runs"}, body
+    return body["runs"]
+
+
+def _optimization_run_status(tenant_id: str, workflow_name: str) -> dict:
+    resp = httpx.get(
+        f"{RUNTIME}/admin/tenant/{tenant_id}/optimize/runs/{workflow_name}",
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text[:500]
+    return resp.json()
+
+
+def _runs_agreeing_with_status(tenant_id: str, names: list[str]) -> list[dict]:
+    """The listing, re-read until every entry's phase matches the status route.
+
+    Both read Argo, so a run that transitions between the two calls disagrees;
+    the phase is only pinnable once the two reads agree.
+    """
+    deadline = time.monotonic() + RUN_PHASE_AGREEMENT_TIMEOUT_S
+    runs: list[dict] = []
+    while time.monotonic() < deadline:
+        runs = _list_optimization_runs(tenant_id)
+        statuses = {
+            name: _optimization_run_status(tenant_id, name)["phase"] for name in names
+        }
+        if all(run["phase"] == statuses[run["workflow_name"]] for run in runs):
+            return runs
+        time.sleep(2.0)
+    raise AssertionError(
+        f"listing and status never agreed on a phase within "
+        f"{RUN_PHASE_AGREEMENT_TIMEOUT_S}s: {runs}"
+    )
+
+
+@pytest.fixture(scope="module")
+def optimization_run_listing_tenants() -> tuple[str, str, list[str]]:
+    """Two tenants; the first owns two submitted optimization runs."""
+    org_id = unique_id("opt_runs")
+    suffix = org_id.rsplit("_", 1)[1]
+    owner = f"{org_id}:t1"
+    other = f"{org_id}:t2"
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-runs-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+    register_tenant_and_wait(owner, created_by="e2e", timeout_s=600.0)
+    register_tenant_and_wait(other, created_by="e2e", timeout_s=600.0)
+    assert _list_optimization_runs(owner) == []
+    first = _submit_manual_optimization(owner, OPTIMIZATION_RUN_LISTING_MODE)
+    time.sleep(1.0)  # distinct creationTimestamp so "newest first" is decidable
+    second = _submit_manual_optimization(owner, OPTIMIZATION_RUN_LISTING_MODE)
+    return owner, other, [first, second]
+
+
+@pytest.mark.e2e
+class TestOptimizationRunListing:
+    """``GET /admin/tenant/{id}/optimize/runs`` lists the tenant's Argo runs."""
+
+    def test_the_listing_names_this_tenants_runs_newest_first(
+        self, optimization_run_listing_tenants
+    ):
+        owner, other, submitted = optimization_run_listing_tenants
+        runs = _runs_agreeing_with_status(owner, submitted)
+
+        assert [run["workflow_name"] for run in runs] == list(reversed(submitted)), runs
+        for run in runs:
+            assert tuple(run) == OPTIMIZATION_RUN_KEYS, run
+            assert run["mode"] == OPTIMIZATION_RUN_LISTING_MODE, run
+            assert run["trigger"] == "manual", run
+            assert (
+                run["phase"]
+                == (_optimization_run_status(owner, run["workflow_name"])["phase"])
+            ), run
+
+        assert [
+            run["workflow_name"] for run in _list_optimization_runs(owner, limit=1)
+        ] == [submitted[1]]
+        # Another tenant's listing is its own, not a filtered view of this one.
+        assert _list_optimization_runs(other) == []
+
+    @pytest.mark.browser
+    def test_the_optimization_overview_renders_the_tenants_runs(
+        self, page, optimization_run_listing_tenants
+    ):
+        from playwright.sync_api import expect
+
+        from tests.e2e.conftest import (
+            DASHBOARD,
+            active_sub_tab_panel,
+            click_sub_tab,
+            click_top_tab,
+            set_tenant,
+            wait_for_script_idle,
+            wait_for_streamlit,
+        )
+
+        owner, _, submitted = optimization_run_listing_tenants
+        runs = _runs_agreeing_with_status(owner, submitted)
+
+        page.goto(DASHBOARD, timeout=30_000)
+        wait_for_streamlit(page)
+        set_tenant(page, owner)
+        click_top_tab(page, "Synthetic Data")
+        wait_for_script_idle(page)
+        click_sub_tab(page, "Overview")
+        wait_for_script_idle(page)
+
+        panel = active_sub_tab_panel(page)
+        metrics = panel.locator('[data-testid="stMetric"]')
+        expect(metrics).to_have_count(4, timeout=30_000)
+        metric_text = " ".join(
+            metrics.nth(index).inner_text() for index in range(metrics.count())
+        )
+        assert f"Optimization Runs\n{len(runs)}" in metric_text, metric_text
+
+        table = panel.locator('[data-testid="stDataFrame"]')
+        expect(table).to_have_count(1, timeout=30_000)
+        table_text = table.inner_text()
+        for column in ("Workflow", "Mode", "Trigger", "Phase", "Started", "Finished"):
+            assert column in table_text, table_text
+        for run in runs:
+            assert run["workflow_name"] in table_text, table_text

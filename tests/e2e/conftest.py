@@ -271,17 +271,23 @@ def pytest_collection_modifyitems(config, items):
     teacher_optim_explicit = os.environ.get(
         "RUN_TEACHER_OPTIMIZATION_E2E"
     ) == "1" or "requires_teacher_model" in (config.option.markexpr or "")
+    teacher_marked: list = []
     if not teacher_optim_explicit:
         skip_substrings.append("test_router_optimization_e2e")
+        teacher_marked = [
+            item for item in items if item.get_closest_marker("requires_teacher_model")
+        ]
 
     modal_deselections = _modal_inference_deselections(config, items)
     telegram_deselections, telegram_reason = _telegram_real_flow_deselections(items)
-    if skip_substrings or modal_deselections:
+    if skip_substrings or modal_deselections or teacher_marked:
         keep = []
         deselected = []
         for item in items:
-            if item in modal_deselections or any(
-                substring in item.nodeid for substring in skip_substrings
+            if (
+                item in modal_deselections
+                or item in teacher_marked
+                or any(substring in item.nodeid for substring in skip_substrings)
             ):
                 deselected.append(item)
             else:
