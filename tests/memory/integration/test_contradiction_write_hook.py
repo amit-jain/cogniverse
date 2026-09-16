@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.memory.contradiction import (
     CONFLICT_AGENT_NAME,
     CONFLICT_RECORD_KIND,
@@ -283,7 +284,9 @@ class TestSubjectKeyServerSideFilter:
         )
         assert a1 and b1
 
-        raw = mm.memory.get_all(user_id=TENANT, filters={"subject_key": alpha})
+        raw = mm.memory.get_all(
+            user_id=canonical_tenant_id(TENANT), filters={"subject_key": alpha}
+        )
         rows = raw.get("results", []) if isinstance(raw, dict) else (raw or [])
         subjects = {(r.get("metadata") or {}).get("subject_key") for r in rows}
 
