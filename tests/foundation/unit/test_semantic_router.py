@@ -657,10 +657,22 @@ class _EchoingChatEndpoint:
                 self.send_response(wanted)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
+                # This endpoint owns every connection it serves: closing each
+                # one keeps it out of the LM client's shared pool, so a later
+                # call cannot be answered on a socket this server is closing.
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(payload)
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            # Non-daemon handlers are tracked and joined by server_close().
+            daemon_threads = False
+            # Every connection the tests open at once is accepted: the
+            # socketserver default of 5 is smaller than the concurrency case,
+            # and connections past the accept queue are reset.
+            request_queue_size = 128
+
+        self._server = Server(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def __enter__(self):
