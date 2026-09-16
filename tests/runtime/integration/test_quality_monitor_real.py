@@ -694,7 +694,8 @@ class TestQualityMonitorTenantOwnership:
                 assert type(store_error.__cause__) is httpx.ConnectError
                 assert str(store_error.__cause__) == "[Errno 111] Connection refused"
                 assert caught.value.to_result() == {
-                    "status": "golden_set_store_unavailable",
+                    "status": "failed",
+                    "reason": "golden_set_store_unavailable",
                     "retryable": True,
                     "error": "golden_set_ground_truth store unavailable",
                     "cause": {

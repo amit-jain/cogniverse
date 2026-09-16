@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from contextlib import ExitStack, asynccontextmanager, contextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.trace import Status, StatusCode, Tracer, use_span
@@ -34,19 +34,42 @@ SPAN_ENVELOPE_ATTRIBUTES = frozenset(
 
 
 class _ProviderSpanLease(SpanProcessor):
-    """Keep an evicted provider alive until its recording spans have ended."""
+    """Keep an evicted provider alive until its recording spans have ended.
+
+    A tracer is resolved under the manager lock but the span it starts can be
+    started after that lock is released — ``TelemetryManager.get_tracer`` hands
+    the tracer to the caller, and the tenant-routing provider resolves one per
+    span. The provider behind that tracer can be retired and drained in
+    between, so a lease is taken only while the provider still holds one and is
+    not already draining; the span ids that took a lease are the only ones that
+    release one.
+    """
 
     def __init__(self, manager, provider):
         self._manager = manager
         self._provider = provider
+        self._leased_spans: set[int] = set()
 
     def on_start(self, span, parent_context=None):
         with self._manager._lock:
-            self._manager._provider_leases[self._provider] += 1
+            leases = self._manager._provider_leases
+            if (
+                self._provider not in leases
+                or self._provider in self._manager._draining_providers
+            ):
+                return
+            leases[self._provider] += 1
+            self._leased_spans.add(span.context.span_id)
 
     def on_end(self, span):
         with self._manager._retirement_condition:
-            self._manager._provider_leases[self._provider] -= 1
+            if span.context.span_id not in self._leased_spans:
+                return
+            self._leased_spans.discard(span.context.span_id)
+            leases = self._manager._provider_leases
+            if self._provider not in leases:
+                return
+            leases[self._provider] -= 1
             self._manager._retirement_condition.notify_all()
 
     def force_flush(self, timeout_millis=30000):
@@ -111,6 +134,11 @@ class TelemetryManager:
             self._retirement_condition = threading.Condition(self._lock)
             self._provider_leases: Dict[TracerProvider, int] = {}
             self._retired_providers: Dict[TracerProvider, str] = {}
+            # provider -> time.monotonic() after which it is shut down even
+            # while leased, so one span that never ends cannot hold a
+            # retirement slot for the life of the process.
+            self._retirement_deadlines: Dict[TracerProvider, float] = {}
+            self._draining_providers: Set[TracerProvider] = set()
             self._retirement_thread: Optional[threading.Thread] = None
             self._shutdown = False
 
@@ -928,6 +956,9 @@ class TelemetryManager:
                     continue
                 provider = self._tenant_providers.pop(provider_key)
                 self._retired_providers[provider] = provider_key
+                self._retirement_deadlines[provider] = (
+                    time.monotonic() + self.config.retirement_lease_timeout_seconds
+                )
             self._start_retirement_worker()
 
     def _start_retirement_worker(self):
@@ -941,6 +972,12 @@ class TelemetryManager:
         self._retirement_condition.notify_all()
 
     def _drain_retired_providers(self):
+        """Shut retired providers down once unleased, or once their deadline passes.
+
+        A span that never ends would otherwise hold its provider's retirement
+        slot for the life of the process and, at capacity, stop tracer creation
+        for every tenant.
+        """
         while True:
             with self._retirement_condition:
                 if not self._retired_providers:
@@ -956,9 +993,26 @@ class TelemetryManager:
                     None,
                 )
                 if ready is None:
-                    self._retirement_condition.wait()
-                    continue
+                    now = time.monotonic()
+                    deadlines = {
+                        provider: self._retirement_deadlines.get(provider, now)
+                        for provider in self._retired_providers
+                    }
+                    expired = [
+                        provider for provider, due in deadlines.items() if due <= now
+                    ]
+                    if not expired:
+                        self._retirement_condition.wait(min(deadlines.values()) - now)
+                        continue
+                    ready = expired[0]
+                    logger.warning(
+                        "Telemetry provider retirement deadline passed with %d "
+                        "span(s) still recording; shutting down provider=%s",
+                        self._provider_leases.get(ready, 0),
+                        self._retired_providers[ready],
+                    )
                 provider_key = self._retired_providers[ready]
+                self._draining_providers.add(ready)
             try:
                 ready.shutdown()
             except Exception:
@@ -971,6 +1025,8 @@ class TelemetryManager:
                 with self._retirement_condition:
                     self._retired_providers.pop(ready)
                     self._provider_leases.pop(ready, None)
+                    self._retirement_deadlines.pop(ready, None)
+                    self._draining_providers.discard(ready)
                     self._retirement_condition.notify_all()
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1023,9 +1079,10 @@ class TelemetryManager:
         """Stop new spans and wait at most 30 seconds for leased providers."""
         with self._retirement_condition:
             self._shutdown = True
-            self._retired_providers.update(
-                (provider, key) for key, provider in self._tenant_providers.items()
-            )
+            deadline = time.monotonic() + self.config.retirement_lease_timeout_seconds
+            for key, provider in self._tenant_providers.items():
+                self._retired_providers[provider] = key
+                self._retirement_deadlines.setdefault(provider, deadline)
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
             self._tracer_provider_keys.clear()

@@ -775,8 +775,13 @@ _failed_initializations: int
 cache miss. It first enforces the LRU count cap (`max_cached_tenants`),
 then detaches providers no cached tracer references. One background worker
 drains detached providers outside the manager lock after all their recording
-spans end. Request spans acquire their tracer and start recording under the
-same manager lock. Cancellation releases the lease when the span scope exits.
+spans end. `TelemetryManager.span()` acquires its tracer and starts recording
+under the same manager lock; callers that hold a tracer across that lock
+(`get_tracer()`, `TenantRoutingTracerProvider`) can start a span on a provider
+that has since drained, and the lease processor records no lease for it.
+Cancellation releases the lease when the span scope exits. A retired provider
+whose spans have not ended within `retirement_lease_timeout_seconds` is shut
+down anyway, with a warning naming the provider and the outstanding span count.
 `_cached_tracer()` checks `tenant_cache_ttl_seconds` on each lookup and
 retires expired entries through the same worker. A TTL of 0 or less disables
 expiry.
@@ -1248,6 +1253,7 @@ tenant_project_template: str       # "cogniverse-{tenant_id}"
 tenant_service_template: str       # "cogniverse-{tenant_id}-{service}"
 max_cached_tenants: int            # LRU cache size (default: 100)
 tenant_cache_ttl_seconds: int      # Cache TTL (default: 3600)
+retirement_lease_timeout_seconds: float  # Retired-provider lease wait (default: 30.0)
 
 # Batch export settings
 batch_config: BatchExportConfig    # Batch export configuration

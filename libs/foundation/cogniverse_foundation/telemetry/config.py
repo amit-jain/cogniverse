@@ -77,6 +77,9 @@ class TelemetryConfig:
     tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
     max_cached_tenants: int = 100  # LRU cache size
     tenant_cache_ttl_seconds: int = 3600  # 1 hour
+    # Seconds a retired provider waits for its recording spans to end before
+    # it is shut down anyway. Bounds the retirement slot a leaked span holds.
+    retirement_lease_timeout_seconds: float = 30.0
 
     # Batch export settings
     batch_config: BatchExportConfig = field(default_factory=BatchExportConfig)
@@ -165,6 +168,7 @@ class TelemetryConfig:
             "tenant_service_template": self.tenant_service_template,
             "max_cached_tenants": self.max_cached_tenants,
             "tenant_cache_ttl_seconds": self.tenant_cache_ttl_seconds,
+            "retirement_lease_timeout_seconds": self.retirement_lease_timeout_seconds,
             "max_queue_size": self.batch_config.max_queue_size,
             "max_export_batch_size": self.batch_config.max_export_batch_size,
             "export_timeout_millis": self.batch_config.export_timeout_millis,
@@ -209,6 +213,9 @@ class TelemetryConfig:
             ),
             max_cached_tenants=data.get("max_cached_tenants", 100),
             tenant_cache_ttl_seconds=data.get("tenant_cache_ttl_seconds", 3600),
+            retirement_lease_timeout_seconds=data.get(
+                "retirement_lease_timeout_seconds", 30.0
+            ),
             batch_config=batch_config,
             service_name=data.get("service_name", "video-search"),
             service_version=data.get("service_version", "1.0.0"),
@@ -226,3 +233,6 @@ class TelemetryConfig:
 
         if self.max_cached_tenants <= 0:
             raise ValueError("max_cached_tenants must be positive")
+
+        if self.retirement_lease_timeout_seconds <= 0:
+            raise ValueError("retirement_lease_timeout_seconds must be positive")

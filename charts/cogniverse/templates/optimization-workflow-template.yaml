@@ -73,6 +73,51 @@ spec:
       type: Directory
   {{- end }}
   templates:
+  # Presence check for the profile step's ground truth. Prints "present" or
+  # "absent" on stdout, which Argo captures as outputs.result; a store that
+  # cannot answer exits 1 so the run fails rather than silently skipping.
+  - name: check-profile-ground-truth
+    inputs:
+      parameters:
+      - name: tenant-id
+    container:
+      image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+      imagePullPolicy: {{ $workflowImage.pullPolicy }}
+      command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+      args:
+        - "--mode"
+        - "profile-ground-truth-check"
+        - "--tenant-id"
+        - "{{`{{inputs.parameters.tenant-id}}`}}"
+      env:
+      - name: BACKEND_URL
+        value: "http://{{ $fullName }}-vespa"
+      - name: BACKEND_PORT
+        value: "{{ .Values.vespa.service.ports.query }}"
+      - name: TELEMETRY_HTTP_ENDPOINT
+        value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+      - name: TELEMETRY_OTLP_ENDPOINT
+        value: "{{ $fullName }}-phoenix:4317"
+      - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 8 }}
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+      volumeMounts:
+      - name: config
+        mountPath: /app/configs/config.json
+        subPath: config.json
+        readOnly: true
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        mountPath: /app/libs
+      - name: src-scripts
+        mountPath: /app/scripts
+      {{- end }}
   - name: run-optimizer
     inputs:
       parameters:

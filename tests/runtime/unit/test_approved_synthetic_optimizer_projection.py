@@ -367,7 +367,11 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "served_examples": 0,
             "approved_examples": 1,
             "served_scoreable_examples": 0,
-            "label_exclusions": {"count": 0, "queries": []},
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
             "labels_by_profile": {},
             "dominant_label_share": 0.0,
             "exclusions_by_reason": {},
@@ -377,7 +381,8 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
 
     if optimizer_type == "entity_extraction":
         assert result == {
-            "status": "entity_extraction_ground_truth_missing",
+            "status": "skipped",
+            "reason": "entity_extraction_ground_truth_missing",
             "retryable": False,
             "error": (
                 "entity_extraction_ground_truth is not configured for tenant "

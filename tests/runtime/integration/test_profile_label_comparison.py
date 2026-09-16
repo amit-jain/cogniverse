@@ -14,7 +14,10 @@ import requests
 from vespa.application import Vespa
 from vespa.package import Document, Field, FirstPhaseRanking, RankProfile, Schema
 
-from cogniverse_runtime.optimization_cli import derive_profile_labels
+from cogniverse_runtime.optimization_cli import (
+    PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS,
+    derive_profile_labels,
+)
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.conftest import _shared_vespa_application_package
 from tests.utils.http_fault_proxy import InterceptFaultProxy
@@ -55,7 +58,7 @@ def comparison_vespa():
         )
         VespaSchemaManager(
             backend_endpoint="http://localhost", backend_port=info["config_port"]
-        )._deploy_package(_shared_vespa_application_package([schema]))
+        )._deploy_package(lambda: _shared_vespa_application_package([schema]))
         manager.wait_for_application_ready(info)
         app = Vespa(url=info["base_url"])
         documents = [
@@ -94,7 +97,7 @@ def comparison_vespa():
         manager.stop_container(info)
 
 
-def _derive(endpoint, queries):
+def _derive(endpoint, queries, waits=None):
     def retrieve(query, profile):
         response = requests.post(
             endpoint + "/search/",
@@ -117,6 +120,9 @@ def _derive(endpoint, queries):
         retrieve,
         title_fields={profile: "title" for profile in PROFILES},
         profile_types={profile: "video" for profile in PROFILES},
+        sleep=(lambda seconds: waits.append(seconds))
+        if waits is not None
+        else (lambda seconds: None),
     )
 
 
@@ -139,15 +145,19 @@ def test_transient_retrieval_retries_before_selecting_winner(comparison_vespa):
                 return 503, b'{"detail":"encoder unavailable"}'
         return None
 
+    waits: list[float] = []
     with InterceptFaultProxy(comparison_vespa, fail_once) as proxy:
-        labels = _derive(proxy.url, ["affected"])
+        labels = _derive(proxy.url, ["affected"], waits)
         assert labels == {"affected": "video_a"}
         assert labels.records[0]["confidence"] == 1.0
         assert labels.exclusions == ()
+        assert labels.incomplete_comparison_rate == 0.0
         assert _attempts(proxy) == {
             ("affected", "video_a"): 2,
             ("affected", "video_b"): 1,
         }
+    # One retry waits the base backoff; a short blip is not burned through.
+    assert waits == [PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS]
 
 
 def test_exhausted_retrieval_excludes_only_incomplete_row(comparison_vespa):
@@ -157,8 +167,9 @@ def test_exhausted_retrieval_excludes_only_incomplete_row(comparison_vespa):
             return 503, b'{"detail":"Vespa unavailable"}'
         return None
 
+    waits: list[float] = []
     with InterceptFaultProxy(comparison_vespa, fail_affected) as proxy:
-        labels = _derive(proxy.url, ["early", "affected", "later"])
+        labels = _derive(proxy.url, ["early", "affected", "later"], waits)
         assert labels == {"early": "video_a", "later": "video_b"}
         assert [
             (row["query"], row["selected_profile"], row["confidence"])
@@ -184,6 +195,14 @@ def test_exhausted_retrieval_excludes_only_incomplete_row(comparison_vespa):
             },
         )
         assert labels.exclusions_by_reason == {"incomplete_comparison": 1}
+        assert labels.considered_rows == 3
+        assert labels.incomplete_comparison_rate == 1 / 3
+        # Exponential: the waits before attempts 2 and 3, and none after the
+        # last failure.
+        assert waits == [
+            PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS,
+            PROFILE_SELECTION_RETRIEVAL_BACKOFF_SECONDS * 2,
+        ]
         assert _attempts(proxy) == {
             ("early", "video_a"): 1,
             ("early", "video_b"): 1,

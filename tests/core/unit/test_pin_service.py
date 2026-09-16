@@ -62,6 +62,8 @@ class FakeManager:
             for mid, v in self.store.items()
             if v["agent_name"] == agent_name and v["tenant_id"] == tenant_id
         ]
+        # The store returns the newest ``limit`` rows; ``None`` walks every page.
+        return rows if limit is None else rows[-limit:]
 
 
 @pytest.fixture
