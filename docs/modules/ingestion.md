@@ -121,8 +121,11 @@ the served ColBERT model reports the character spans it encodes whole, and each
 span becomes its own document carrying `chunk_index`, `chunk_count`,
 `chunk_start` and `chunk_end` alongside its slice of the text. All windows of
 one source share that source's identity field, and the `document_text_semantic`,
-`code_lateon_mv` and `audio_clap_semantic` profiles resolve results at source
-granularity, so a search returns one hit per source with its matched windows.
+`lateon_mv`, `code_lateon_mv` and `audio_clap_semantic` profiles resolve results
+at source granularity, so a search returns one hit per source with its matched
+windows. Each span is re-tokenized on its own and shortened until the encoder
+takes it whole, and a reply whose spans leave a gap, overlap or stop short of
+the text fails the document.
 
 Each run writes its keyframes — extracted or rehydrated from the cache —
 chunks, rendered pages, transcripts and their metadata under its own scratch

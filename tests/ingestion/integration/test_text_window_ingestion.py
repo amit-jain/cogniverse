@@ -171,6 +171,7 @@ def window_backend():
                 Vespa(url=f"http://127.0.0.1:{http_port}"),
                 config["profiles"]["document_text_semantic"],
                 tenant,
+                http_port,
             )
 
 
@@ -196,10 +197,12 @@ def ingest(gen, source, text):
     )
 
 
-def rows(app, schema, source):
+def rows(app, schema, source, identity_field="document_id"):
     response = app.query(
         body={
-            "yql": f'select * from {schema} where document_id contains "{source}"',
+            "yql": (
+                f'select * from {schema} where {identity_field} contains "{source}"'
+            ),
             "hits": 400,
         }
     )
@@ -227,7 +230,7 @@ def model_windows(encoder, text):
 def test_document_windows_cover_the_source_and_suffix_search_ranks_it(
     window_backend, window_encoder
 ):
-    backend, schema, app, profile, tenant = window_backend
+    backend, schema, app, profile, tenant, _ = window_backend
     gen = generator(backend, profile, window_encoder)
     prefix = "background " * 650
     sources = {
@@ -285,7 +288,7 @@ def test_document_windows_cover_the_source_and_suffix_search_ranks_it(
 
 
 def test_concurrent_long_sources_keep_their_own_windows(window_backend, window_encoder):
-    backend, schema, app, profile, tenant = window_backend
+    backend, schema, app, profile, tenant, _ = window_backend
     gen = generator(backend, profile, window_encoder)
     sources = {
         "parallelone": "background " * 650 + "orchard tractors harvest apples",
@@ -405,4 +408,168 @@ def test_partial_window_coverage_fails_the_document():
         assert result.errors == [
             "Document 0: remote ColBERT windowing returned spans covering "
             f"0..100 of {len(text)} characters from model {MODEL!r} at {endpoint}"
+        ]
+
+
+def test_gapped_window_coverage_fails_the_document():
+    text = "background " * 650
+    with stub_windows_service(
+        _json_handler(
+            200,
+            {
+                "object": "list",
+                "data": [{"index": 0, "spans": [[0, 100], [200, len(text)]]}],
+                "model": MODEL,
+                "document_length": 300,
+                "window_tokens": 293,
+            },
+        )
+    ) as endpoint:
+        gen = stub_generator(endpoint)
+        result = gen._process_document_segments(
+            {"video_id": "gapped"},
+            [{"document_id": "gapped", "extracted_text": text}],
+        )
+        assert (
+            result.total_documents,
+            result.documents_processed,
+            result.documents_fed,
+        ) == (1, 0, 0)
+        assert result.errors == [
+            "Document 0: remote ColBERT windowing returned spans that break at "
+            f"100..200 between index 0 and 1 from model {MODEL!r} at {endpoint}"
+        ]
+
+
+def test_overlapping_window_coverage_fails_the_document():
+    text = "background " * 650
+    with stub_windows_service(
+        _json_handler(
+            200,
+            {
+                "object": "list",
+                "data": [{"index": 0, "spans": [[0, 200], [100, len(text)]]}],
+                "model": MODEL,
+                "document_length": 300,
+                "window_tokens": 293,
+            },
+        )
+    ) as endpoint:
+        gen = stub_generator(endpoint)
+        result = gen._process_document_segments(
+            {"video_id": "overlapped"},
+            [{"document_id": "overlapped", "extracted_text": text}],
+        )
+        assert (
+            result.total_documents,
+            result.documents_processed,
+            result.documents_fed,
+        ) == (1, 0, 0)
+        assert result.errors == [
+            "Document 0: remote ColBERT windowing returned spans that break at "
+            f"200..100 between index 0 and 1 from model {MODEL!r} at {endpoint}"
+        ]
+
+
+CJK_TEXT = "深度学习模型在检索任务中的表现取决于文档窗口的大小和分词器的行为。" * 40
+
+
+def served_tokenizer():
+    """The pinned model's own tokenizer, loaded from the shared test cache."""
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(
+        MODEL,
+        revision=REVISION,
+        cache_dir=str(Path.home() / ".cache/cogniverse-tests/huggingface/hub"),
+    )
+
+
+def test_cjk_windows_fit_the_models_token_cap(window_encoder):
+    """Each span is measured as the encoder tokenizes it, not as it was cut.
+
+    Grouping offsets from one tokenization of the whole text puts more
+    tokens into a window than the slice costs on its own for scripts that
+    tokenize per character, and the encoder drops the overflow.
+    """
+    spans, document_length = model_windows(window_encoder, CJK_TEXT)
+    tokenizer = served_tokenizer()
+    assert document_length == tokenizer.model_max_length + 1
+
+    counts = [len(tokenizer(CJK_TEXT[start:end])["input_ids"]) for start, end in spans]
+    assert [count for count in counts if count > tokenizer.model_max_length] == []
+    # The corpus reaches the cap, so the pin fails on a window one token over.
+    assert max(counts) == tokenizer.model_max_length
+    assert len(spans) == 6
+    assert spans[0][0] == 0
+    assert spans[-1][1] == len(CJK_TEXT)
+    assert [end for _, end in spans[:-1]] == [start for start, _ in spans[1:]]
+    assert "".join(CJK_TEXT[start:end] for start, end in spans) == CJK_TEXT
+
+
+def test_lateon_windows_carry_their_chunk_fields_and_rank_by_source(
+    window_backend, window_encoder
+):
+    backend, _, app, _, tenant, http_port = window_backend
+    profile = json.loads(Path("configs/config.json").read_text())["backend"][
+        "profiles"
+    ]["lateon_mv"]
+    backend.schema_registry.deploy_schema(
+        tenant_id=tenant, base_schema_name="lateon_mv"
+    )
+    schema = backend.get_tenant_schema_name(tenant, "lateon_mv")
+    assert _wait_for_schema_ready(http_port, schema) is True
+    gen = generator(backend, profile, window_encoder)
+    prefix = "background " * 650
+    sources = {
+        "mvorchard": prefix
+        + "Orchard tractors harvest ripe apples from the fruit trees.",
+        "mvorbit": prefix
+        + "Orbital rockets launch astronauts aboard spacecraft to the moon.",
+    }
+    expected = {}
+    for source, text in sources.items():
+        spans, _ = model_windows(window_encoder, text)
+        expected[source] = spans
+        result = ingest(gen, source, text)
+        assert (
+            result.total_documents,
+            result.documents_processed,
+            result.documents_fed,
+            result.errors,
+        ) == (len(spans), len(spans), len(spans), [])
+
+        stored = rows(app, schema, source, identity_field="text_id")
+        assert [(row["chunk_start"], row["chunk_end"]) for row in stored] == spans
+        assert [row["chunk_index"] for row in stored] == list(range(len(spans)))
+        assert [row["chunk_count"] for row in stored] == [len(spans)] * len(spans)
+        assert [row["text_id"] for row in stored] == [source] * len(spans)
+        assert "".join(row["full_text"] for row in stored) == text
+
+    for query, expected_source in [
+        ("harvesting apples with a tractor", "mvorchard"),
+        ("astronauts flying a rocket to the moon", "mvorbit"),
+    ]:
+        embeddings = np.asarray(
+            window_encoder.encode([query], is_query=True)[0], dtype=np.float32
+        )
+        results = backend.search(
+            {
+                "query": query,
+                "type": profile["type"],
+                "query_embeddings": embeddings,
+                "profile": "lateon_mv",
+                "tenant_id": tenant,
+                "top_k": 2,
+            }
+        )
+        other = "mvorbit" if expected_source == "mvorchard" else "mvorchard"
+        assert [hit.document.metadata["source_id"] for hit in results] == [
+            expected_source,
+            other,
+        ]
+        assert results.result_granularity == "source"
+        assert [hit.segments_in_window for hit in results] == [
+            len(expected[expected_source]),
+            len(expected[other]),
         ]

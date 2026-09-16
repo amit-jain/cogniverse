@@ -1090,6 +1090,7 @@
         "type": "document",
         "description": "General text retrieval with LateOn multi-vector embeddings (128-dim per token). Binary-first MaxSim with bfloat16 rerank.",
         "schema_name": "lateon_mv",
+        "result_granularity": "source",
         "embedding_model": "lightonai/LateOn",
         "pipeline_config": {
           "extract_keyframes": false,
