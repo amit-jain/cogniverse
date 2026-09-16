@@ -689,16 +689,18 @@ tenant's `SCHEMA` scope, `schema_deploy_lease` service, `application` key, and
 holds the current holder id and the hold time (`DEFAULT_LEASE_SECONDS`, 600 s)
 it was taken with; it moves only through `compare_and_set_config`. `acquire()`
 waits out a live holder for up to `DEFAULT_WAIT_SECONDS` (120 s) and then
-raises `TimeoutError`; it takes over a holder only after watching the record's
-version stand still, on its own monotonic clock, for the hold time the record
-carries, and a holder treats its lease as lost once its own monotonic clock
-passes that hold time since its last successful claim — no timestamp is
+raises `TimeoutError`; a process takes over a holder only after watching the
+record's version stand still, on its own monotonic clock, for the hold time the
+record carries, across as many waits as that takes, and a holder treats its
+lease as lost once its own monotonic clock passes that hold time since its last
+successful claim — no timestamp is
 written by one node and compared on another, so clock skew cannot break mutual
 exclusion. `renew()` extends the lease and raises `DeploymentLeaseLost` once
 another holder owns it; a store failure inside `renew()` propagates as the
 store's error. `release()` hands the lease back and logs, rather than raises,
-when the store is unreachable: the package is already activated by then, and
-the record is taken over once peers have watched it stand still. A backend
+when the store is unreachable: the package is already activated by then. A
+record the store did not confirm cleared is taken over at once by the process
+that released it, and by peers once they have watched it stand still. A backend
 deploy (`deploy_schemas`), the runtime's startup metadata deploy, schema
 deletion and the orphan reconciler's redeploy all hold it while they enumerate
 the live schemas, build their package and post it, so no package is built from
