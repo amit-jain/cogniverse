@@ -47,6 +47,12 @@ ARTIFACT_LOAD_LOADED = "loaded"
 ARTIFACT_LOAD_STORE_UNAVAILABLE = "store_unavailable"
 ARTIFACT_LOAD_ERROR = "error"
 
+# Serving revisions rotate through this many slot datasets. A publication
+# writes the slot two revisions behind the committed one, so the committed
+# revision and its predecessor each sit in a slot no concurrent publication
+# targets.
+_BLOB_RING_SLOTS = 3
+
 
 @dataclass(frozen=True)
 class ExperimentMetrics:
@@ -504,10 +510,11 @@ class ArtifactManager:
     def _blob_slot_name(self, kind: str, key: str, revision: int) -> str:
         """Dataset holding serving revision ``revision`` of blob ``kind/key``.
 
-        Revisions alternate between two slots, so the store holds the current
-        revision and its predecessor and nothing else.
+        Revisions rotate through ``_BLOB_RING_SLOTS`` slots, so the store holds
+        the current revision and its predecessor and nothing else, and the slot
+        a publication writes is neither of them.
         """
-        return f"{self._blob_dataset_name(kind, key)}--r{revision % 2}"
+        return f"{self._blob_dataset_name(kind, key)}--r{revision % _BLOB_RING_SLOTS}"
 
     async def _read_blob_slot(
         self, kind: str, key: str, revision_parity: int
@@ -541,19 +548,39 @@ class ArtifactManager:
                 revision = int(row.get("blob_revision"))
             except (TypeError, ValueError):
                 continue
-            if best is None or revision > best["revision"]:
+            # ``>=`` so the newest row of a slot wins: a publication appends,
+            # so two publications of one revision leave two rows and the later
+            # one is the committed content.
+            if best is None or revision >= best["revision"]:
                 best = {"revision": revision, "content": content}
         return best
 
     async def _read_blob_slots(
         self, kind: str, key: str
-    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Both serving slots of blob ``kind/key``, read concurrently."""
-        even, odd = await asyncio.gather(
-            self._read_blob_slot(kind, key, 0),
-            self._read_blob_slot(kind, key, 1),
-        )
-        return even, odd
+    ) -> List[Optional[Dict[str, Any]]]:
+        """Every serving slot of blob ``kind/key``, read concurrently.
+
+        A store outage names the logical blob, not the slot that happened to
+        fail first: the slots are read concurrently, so the failing one is
+        completion order, and operators and alerts key on the blob.
+        """
+        try:
+            return list(
+                await asyncio.gather(
+                    *(
+                        self._read_blob_slot(kind, key, slot)
+                        for slot in range(_BLOB_RING_SLOTS)
+                    )
+                )
+            )
+        except DatasetStoreUnavailableError as exc:
+            blob = self._blob_dataset_name(kind, key)
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {exc.endpoint} could not answer for blob "
+                f"{blob!r}: {type(exc.__cause__).__name__}: {exc.__cause__}",
+                endpoint=exc.endpoint,
+                dataset=blob,
+            ) from exc
 
     async def save_blob(self, kind: str, key: str, content: str) -> str:
         """Publish an arbitrary string blob as the next serving revision.
@@ -561,16 +588,18 @@ class ArtifactManager:
         Intended for serialized models (DSPy JSON, XGBoost JSON),
         checkpoints, embedding caches, and other opaque string payloads.
 
-        Revisions alternate between two single-row datasets. The successor is
-        created in the slot holding the revision before the committed one, so
-        the committed revision stays readable for the whole publication and a
-        failed or interrupted publication leaves it in place. That slot's
-        previous occupant is pruned only here, one publication after its
-        successor became readable.
+        Revisions rotate through ``_BLOB_RING_SLOTS`` single-row datasets. A
+        publication only ever adds: it writes its revision into the slot two
+        revisions behind the committed one, which no reader resolves, so the
+        committed revision and its predecessor stay readable throughout and a
+        failed or interrupted publication leaves both in place.
 
+        The slot holding revision ``revision - 2`` is pruned afterwards, and
+        only when a re-read shows it still holds a revision that far behind.
         Phoenix has no compare-and-set, so two publications that overlap are
-        last-write-wins on the same slot; neither can remove the revision the
-        other is serving.
+        last-write-wins within one slot; because no publication deletes the
+        slot it writes, and none deletes a slot a re-read showed carrying a
+        newer revision, readers resolve a complete revision throughout.
 
         Args:
             kind: Category (e.g. ``model``, ``checkpoint``, ``embeddings``).
@@ -580,9 +609,9 @@ class ArtifactManager:
         Returns:
             Dataset identifier assigned by the store.
         """
-        even, odd = await self._read_blob_slots(kind, key)
+        slots = await self._read_blob_slots(kind, key)
         committed = max(
-            (slot for slot in (even, odd) if slot is not None),
+            (slot for slot in slots if slot is not None),
             key=lambda slot: slot["revision"],
             default=None,
         )
@@ -597,22 +626,18 @@ class ArtifactManager:
             "input_keys": ["content", "blob_revision"],
             "output_keys": [],
         }
-        # Free the target slot before publishing: create_dataset on an existing
-        # name appends, which would leave two revisions in one slot and grow
-        # load's download without bound. The slot being freed is the revision
-        # before the committed one, which no reader resolves.
-        await self._provider.datasets.delete_dataset(dataset_name)
         dataset_id = await self._provider.datasets.create_dataset(
             name=dataset_name,
             data=pd.DataFrame([{"content": content, "blob_revision": str(revision)}]),
             metadata=metadata,
         )
         published = await self._read_blob_slot(kind, key, revision)
-        if published is None or published["revision"] != revision:
+        if published is None or published["revision"] < revision:
             raise RuntimeError(
                 f"Blob {kind}/{key} revision {revision} for tenant "
                 f"{self._tenant_id} is not readable after publication"
             )
+        await self._prune_superseded_slot(kind, key, revision)
         logger.info(
             "Published blob %s/%s r%d for %s → dataset %s",
             kind,
@@ -623,14 +648,32 @@ class ArtifactManager:
         )
         return dataset_id
 
+    async def _prune_superseded_slot(self, kind: str, key: str, revision: int) -> None:
+        """Drop the slot two revisions behind ``revision`` once it is readable.
+
+        The slot is re-read first and left alone unless it still holds a
+        revision at least two behind: a publication that lost a race would
+        otherwise delete the slot a newer publication has already filled.
+        """
+        superseded = revision - 2
+        if superseded < 0:
+            return
+        occupant = await self._read_blob_slot(kind, key, superseded)
+        if occupant is None or occupant["revision"] > superseded:
+            return
+        await self._provider.datasets.delete_dataset(
+            self._blob_slot_name(kind, key, superseded)
+        )
+
     async def load_blob(self, kind: str, key: str) -> Optional[str]:
         """Load a string blob from its greatest readable serving revision.
 
         Returns:
             The stored string or ``None`` if no revision exists.
         """
-        even, odd = await self._read_blob_slots(kind, key)
-        slots = [slot for slot in (even, odd) if slot is not None]
+        slots = [
+            slot for slot in await self._read_blob_slots(kind, key) if slot is not None
+        ]
         if not slots:
             logger.debug(
                 "No blob revision found for %s/%s/%s", self._tenant_id, kind, key

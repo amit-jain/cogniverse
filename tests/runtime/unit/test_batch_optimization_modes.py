@@ -2796,13 +2796,15 @@ class TestSimbaQueryEnhancement:
     @staticmethod
     def _persisted_state(provider) -> dict:
         """The content of the greatest published serving revision."""
+        from cogniverse_agents.optimizer.artifact_manager import _BLOB_RING_SLOTS
+
         rows = [
             row
-            for parity in (0, 1)
-            if f"dspy-model-test:unit-simba_query_enhancement--r{parity}"
+            for slot in range(_BLOB_RING_SLOTS)
+            if f"dspy-model-test:unit-simba_query_enhancement--r{slot}"
             in provider.datasets.datasets
             for row in provider.datasets.datasets[
-                f"dspy-model-test:unit-simba_query_enhancement--r{parity}"
+                f"dspy-model-test:unit-simba_query_enhancement--r{slot}"
             ].to_dict("records")
         ]
         served = max(rows, key=lambda row: int(row["blob_revision"]))
