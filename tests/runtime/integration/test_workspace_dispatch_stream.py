@@ -395,7 +395,15 @@ async def test_dispatch_prepares_attachment_at_answer_module(
 
     monkeypatch.setattr(cls, "__init__", initialize)
 
-    async def search(query, tenant_id, top_k):
+    async def search(
+        query,
+        tenant_id,
+        top_k,
+        conversation_history=None,
+        enrichment=None,
+        context=None,
+        query_rewrite_timeout_s=None,
+    ):
         return {"results": []}
 
     monkeypatch.setattr(stream_dispatcher, "_execute_search_task", search)
