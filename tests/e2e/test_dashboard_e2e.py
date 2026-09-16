@@ -2898,10 +2898,16 @@ class TestTenantSwitchScopesEverything:
         )
         assert [
             (alert.inner_text() or "").strip()
-            for alert in page.locator(
+            for alert in sidebar.locator(
                 '[data-testid="stAlert"]:has-text("Current tenant")'
             ).all()
         ] == [f"Current tenant: {tenant_id}"]
+        assert (
+            active_tab_panel(page)
+            .locator('[data-testid="stAlert"]:has-text("Current tenant")')
+            .all()
+            == []
+        )
 
 
 class TestSearchNamesOnlyTheOperationItRan:
