@@ -281,3 +281,34 @@ def test_lifespan_shutdown_drains_the_queue():
     source = inspect.getsource(runtime_main.lifespan)
     shutdown = source.split("yield", 1)[1]
     assert "drain_blob_writes(" in shutdown
+
+
+def test_applying_a_queued_write_replays_only_the_fields_that_put_changed():
+    """The merge base is what the PUT read, so a peer's field is not reverted.
+
+    A PUT is accepted against the blob as it was when the route read it. By
+    the time the queue applies it, another replica may have persisted a
+    different field; writing the accepted snapshot whole would erase it.
+    """
+    merged = admin_router._merge_accepted_blob_write(
+        json.dumps({"user": 1, "tenant_admin": 2, "org_admin": -1}),
+        json.dumps({"user": 7, "tenant_admin": 2, "org_admin": -1}),
+        json.dumps({"user": 1, "tenant_admin": 9, "org_admin": -1}),
+    )
+    assert merged == json.dumps({"user": 7, "tenant_admin": 9, "org_admin": -1})
+
+
+def test_applying_the_first_write_persists_the_accepted_content():
+    assert admin_router._merge_accepted_blob_write(
+        json.dumps({}),
+        json.dumps({"search_agent": "v2"}),
+        None,
+    ) == json.dumps({"search_agent": "v2"})
+
+
+def test_a_field_the_put_removed_is_removed_from_the_durable_blob():
+    assert admin_router._merge_accepted_blob_write(
+        json.dumps({"search_agent": "v1", "summarizer_agent": "v9"}),
+        json.dumps({"search_agent": "v2"}),
+        json.dumps({"search_agent": "v1", "summarizer_agent": "v9", "coding": "c1"}),
+    ) == json.dumps({"search_agent": "v2", "coding": "c1"})

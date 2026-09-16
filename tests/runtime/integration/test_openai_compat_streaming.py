@@ -909,7 +909,10 @@ class ArtifactCacheDispatcher(AgentDispatcher):
 
 @pytest.fixture
 async def cold_artifact_managers(phoenix_container):
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.artifact_manager import (
+        _BLOB_RING_SLOTS,
+        ArtifactManager,
+    )
     from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
     managers = {}
@@ -931,9 +934,10 @@ async def cold_artifact_managers(phoenix_container):
         managers[tenant] = manager
     yield managers
     for manager in managers.values():
-        await manager._provider.datasets.delete_dataset(
-            manager._blob_dataset_name("config", "cold_agent")
-        )
+        for slot in range(_BLOB_RING_SLOTS):
+            await manager._provider.datasets.delete_dataset(
+                manager._blob_slot_name("config", "cold_agent", slot)
+            )
 
 
 async def _wait_cache_predicate(predicate):

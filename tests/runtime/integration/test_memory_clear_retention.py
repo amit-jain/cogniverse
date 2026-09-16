@@ -46,7 +46,7 @@ def memory_store(shared_vespa):
         == "tensor<float>(d0[768])"
     )
     with InterceptFaultProxy(shared_vespa["base_url"]) as proxy:
-        endpoints = dict(shared_vespa, http_port=proxy.server.server_port)
+        endpoints = dict(shared_vespa, http_port=proxy.port)
         cm = make_config_manager(endpoints)
         managers = []
         for tid in ("stateclear:a", "stateclear:b"):
@@ -59,7 +59,7 @@ def memory_store(shared_vespa):
             mm = Mem0MemoryManager(tid)
             mm.initialize(
                 backend_host="http://127.0.0.1",
-                backend_port=proxy.server.server_port,
+                backend_port=proxy.port,
                 backend_config_port=shared_vespa["config_port"],
                 base_schema_name="agent_memories",
                 llm_model="storage-test-unused",
@@ -163,6 +163,60 @@ async def test_clear_all_removes_205_active_and_archived_rows(
     assert _ids(peer, "_user_memories") == other_tenant
 
 
+def _seed_categorised(mm, namespace, categories):
+    """Seed one row per (category, index), a third of them archived."""
+    ids, payloads = [], []
+    for category, count in categories.items():
+        for i in range(count):
+            mid = f"{mm.tenant_id}-{category}-{i:03}"
+            ids.append(mid)
+            payloads.append(
+                {
+                    "data": f"stored content {mid}",
+                    "user_id": mm.tenant_id,
+                    "agent_id": namespace,
+                    "created_at": 1700000000 + i,
+                    "archived": i % 3 == 0,
+                    "category": category,
+                }
+            )
+    mm.memory.vector_store.insert([[0.01] * 768] * len(ids), payloads, ids)
+    assert _ids(mm, namespace) == set(ids)
+    return {
+        category: {mid for mid in ids if mid.rsplit("-", 2)[1] == category}
+        for category in categories
+    }
+
+
+@pytest.mark.asyncio
+async def test_clear_by_category_removes_archived_rows_of_that_category(
+    memory_store, memory_app
+):
+    """A category clear means the same thing the whole-namespace clear means.
+
+    Archived rows are still that tenant's rows; leaving them behind under
+    ``{"status": "cleared"}`` is the whole-namespace defect at category scope.
+    """
+    managers, _, _ = memory_store
+    target, _peer = managers
+    seeded = _seed_categorised(target, "_user_memories", {"preference": 120, "fact": 5})
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        response = await client.delete(
+            f"/{target.tenant_id}/memories", params={"category": "preference"}
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "cleared",
+        "category": "preference",
+        "deleted": 120,
+    }
+    assert _ids(target, "_user_memories") == seeded["fact"]
+
+
 @pytest.mark.asyncio
 async def test_independent_tenant_clears_interleave_without_cross_deletion(
     memory_store, memory_app
@@ -239,7 +293,7 @@ async def test_clear_refused_midway_fails_and_retry_removes_every_row(
 def retention_run(memory_store, memory_app, monkeypatch, tmp_path):
     managers, proxy, cm = memory_store
     monkeypatch.setenv("BACKEND_URL", "http://127.0.0.1")
-    monkeypatch.setenv("BACKEND_PORT", str(proxy.server.server_port))
+    monkeypatch.setenv("BACKEND_PORT", str(proxy.port))
     monkeypatch.setattr(tenant_manager, "_config_manager", cm)
     monkeypatch.setattr(tenant_manager, "_backend", managers[0]._resolve_backend())
     monkeypatch.setattr(

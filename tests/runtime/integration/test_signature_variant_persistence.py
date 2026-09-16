@@ -172,6 +172,90 @@ async def test_warm_replica_partial_put_preserves_other_replica_fields(replicas,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
+async def test_sequential_puts_keep_a_peer_field_whose_persist_has_not_landed(
+    replicas, kind
+):
+    """The second PUT lands after the first replica's persist is still queued.
+
+    Both PUTs are strictly sequential — the first replica answered 200 before
+    the second was issued — but the first replica's write-behind persist has
+    not reached the store, so the second replica's merge base cannot contain
+    it. The field each PUT changed is replayed when that PUT is persisted, so
+    neither erases the other.
+    """
+    import asyncio
+    import json
+    import uuid
+
+    from cogniverse_runtime.blob_write_queue import BlobWriteQueue
+
+    tenant = f"prodfixstate:t{uuid.uuid4().hex}"
+    first, second = replicas
+    manager = first._build_artifact_manager(tenant)
+    initial = (
+        {"user": 1, "tenant_admin": 2, "org_admin": -1}
+        if kind == "pin_quotas"
+        else {"search_agent": "initial"}
+    )
+    await manager.save_blob("config", kind, json.dumps(initial))
+    path = f"/admin/tenants/{tenant}/{kind}"
+    field = "quotas" if kind == "pin_quotas" else "selections"
+
+    persist = asyncio.Event()
+    applier = first._apply_blob_write
+
+    async def gated_apply(*args):
+        await persist.wait()
+        await applier(*args)
+
+    first._blob_write_queue = BlobWriteQueue(gated_apply)
+
+    async with _replica_client(first) as a, _replica_client(second) as b:
+        assert (await b.get(path)).json()[field] == initial
+        first_path = path if kind == "pin_quotas" else path + "/search_agent"
+        second_path = path if kind == "pin_quotas" else path + "/summarizer_agent"
+
+        accepted = await a.put(
+            first_path,
+            json={"user": 7} if kind == "pin_quotas" else {"variant_id": "search-v2"},
+        )
+        assert accepted.status_code == 200
+        assert accepted.json() == {
+            "tenant_id": tenant,
+            field: (
+                {"user": 7, "tenant_admin": 2, "org_admin": -1}
+                if kind == "pin_quotas"
+                else {"search_agent": "search-v2"}
+            ),
+            "pending_write": True,
+        }
+        # Nothing of the first PUT has reached the store yet.
+        assert json.loads(await manager.load_blob("config", kind)) == initial
+
+        peer = await b.put(
+            second_path,
+            json={"tenant_admin": 9}
+            if kind == "pin_quotas"
+            else {"variant_id": "summary-v3"},
+        )
+        assert peer.status_code == 200
+        await second._blob_write_queue.flush()
+
+        persist.set()
+        await first._blob_write_queue.flush()
+
+    expected = (
+        {"user": 7, "tenant_admin": 9, "org_admin": -1}
+        if kind == "pin_quotas"
+        else {"search_agent": "search-v2", "summarizer_agent": "summary-v3"}
+    )
+    assert json.loads(await manager.load_blob("config", kind)) == expected
+    assert first._blob_write_queue.status() == {"pending": 0, "failed": []}
+    assert second._blob_write_queue.status() == {"pending": 0, "failed": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
 async def test_partial_put_serializes_fresh_read_and_pending_overlay(
     replicas, phoenix_container, kind
 ):
