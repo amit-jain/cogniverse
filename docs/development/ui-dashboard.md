@@ -209,7 +209,8 @@ def render_config_management_tab():
         st.session_state.config_manager = create_default_config_manager()
     manager = st.session_state.config_manager
 
-    tenant_id = st.text_input("Tenant ID", value=st.session_state["current_tenant"])
+    # The sidebar Active Tenant selector is the only place the tenant changes.
+    tenant_id = st.session_state["current_tenant"]
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🖥️ System Config",
@@ -474,7 +475,7 @@ start_time = end_time - timedelta(hours=lookback_hours)
 
 async def fetch_spans():
     return await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}",
+        project=tenant_project_name(telemetry_manager, tenant_id),
         start_time=start_time,
         end_time=end_time,
     )
@@ -497,7 +498,7 @@ await provider.annotations.add_annotation(
     label=label,          # positive/negative/neutral, derived from rating
     score=float(rating),
     metadata=annotation_data,
-    project=f"cogniverse-{tenant_id}",
+    project=tenant_project_name(telemetry_manager, tenant_id),
 )
 ```
 
@@ -534,7 +535,9 @@ async def _build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_day
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
     spans_df = await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
+        project=tenant_project_name(telemetry_manager, tenant_id),
+        start_time=start_time,
+        end_time=end_time,
     )
     search_spans = _filter_search_spans(spans_df)
 
@@ -822,7 +825,9 @@ provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
 async def fetch_spans():
     return await provider.traces.get_spans(
-        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
+        project=tenant_project_name(telemetry_manager, tenant_id),
+        start_time=start_time,
+        end_time=end_time,
     )
 
 spans_df = run_async_in_streamlit(fetch_spans())
@@ -878,10 +883,24 @@ selected_profiles = st.multiselect("Select profiles to test", [
     "video_xclip_sv_chunk_6s",
 ], default=["video_colpali_smol500_mv_frame"])
 
-# Per profile: builds a processing_task dict (action, video_path, profile, config)
-# and calls the video-processing agent via call_agent_async(...)
-result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
+# Per profile: streams the uploaded bytes to POST /ingestion/upload and polls
+# GET /ingestion/{ingest_id}/status to a terminal state.
+result = submit_video_ingestion(
+    get_runtime_client(),
+    RUNTIME_URL,
+    filename=uploaded_video.name,
+    content=uploaded_video.getvalue(),
+    content_type=uploaded_video.type,
+    profile=profile,
+    tenant_id=st.session_state["current_tenant"],
+)
 ```
+
+`submit_video_ingestion` (`cogniverse_dashboard/ingestion.py`) returns
+`status="success"` for a job that reached `complete` having fed at least one
+document, and for an upload the runtime deduplicated onto an earlier run of the
+same bytes, profile and tenant (`deduplicated=True`). Every other outcome is
+`status="error"` carrying the reason.
 
 **Available Profiles** (verified against `configs/schemas/*.json` embedding dims):
 1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)
@@ -890,18 +909,18 @@ result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
 
 ### 11. Interactive Search Tab
 
-**Purpose**: Live multi-turn search testing across processing profiles and ranking strategies.
+**Purpose**: Live multi-turn search testing.
 
 **Location**: inline in `cogniverse_dashboard/app.py` (`main_tabs[10]`)
 
 **Key Functions**: streams results through the A2A protocol via
-`display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ..., "modality": "video"})`.
-The profile selectbox here offers all 3 ingestion profiles
-(`video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
-`video_xclip_sv_chunk_6s`). Ranking-strategy multiselect offers
-`binary_binary` / `float_float` / `binary_float` / `float_binary`. Maintains a
-`session_id` and `conversation_history` in `st.session_state` for multi-turn context;
-a "🔄 New Session" button resets both.
+`display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ...})`.
+The request carries the result count and nothing else: the agent picks the
+profile and reports it back, and the page renders that one result list under the
+search mode and profile the agent served, naming any ensemble leg that did not
+run. A stored result carries the tenant it was fetched for and is refused under
+any other. Maintains a `session_id` and `conversation_history` in
+`st.session_state` for multi-turn context; a "🔄 New Session" button resets both.
 
 ### 12. Chat Tab
 
@@ -1078,7 +1097,7 @@ Memory 2 - Score: 0.856
 
 Tenant: production
 Lookback Period (hours): [24]
-# 📊 Querying spans from project: cogniverse-production-orchestration
+# 📊 Querying spans from project: cogniverse-production:production
 
 # Summary Metrics:
 Routing Accuracy: 86.0%
@@ -1112,7 +1131,7 @@ def get_phoenix_metrics(tenant_id, start_time, end_time):
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     analytics = PhoenixAnalytics()
-    project_name = f"cogniverse-{tenant_id}"
+    project_name = tenant_project_name(get_telemetry_manager(), tenant_id)
     # Expensive API call - get traces for the specified time range
     return analytics.get_traces(
         start_time=start_time,
@@ -1180,8 +1199,8 @@ try:
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     from datetime import datetime, timedelta
-    tenant_id = st.session_state.tenant_id
-    project_name = f"cogniverse-{tenant_id}"
+    tenant_id = st.session_state["current_tenant"]
+    project_name = tenant_project_name(get_telemetry_manager(), tenant_id)
     analytics = PhoenixAnalytics()
     # Get traces for the last 24 hours
     end_time = datetime.now()

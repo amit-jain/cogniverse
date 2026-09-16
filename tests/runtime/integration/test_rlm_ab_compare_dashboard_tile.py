@@ -202,7 +202,7 @@ class TestLoaderAgainstRealPhoenix:
         )
         from opentelemetry.sdk.resources import Resource
 
-        tenant_id = f"b5tile_{uuid.uuid4().hex[:8]}"
+        tenant_id = f"b5tile{uuid.uuid4().hex[:8]}:tile"
         project_name = f"cogniverse-{tenant_id}"
         resource = Resource.create({"openinference.project.name": project_name})
         provider = TracerProvider(resource=resource)
@@ -216,7 +216,7 @@ class TestLoaderAgainstRealPhoenix:
     def test_empty_phoenix_returns_zero_rows(self, phoenix_container):
         # A unique tenant id with no emitted spans → loader returns the
         # zero aggregate, not an error.
-        tenant_id = f"b5empty_{uuid.uuid4().hex[:8]}"
+        tenant_id = f"b5empty{uuid.uuid4().hex[:8]}:tile"
         agg = asyncio.run(
             load_ab_compare_data(
                 phoenix_http_endpoint=phoenix_container["http_endpoint"],

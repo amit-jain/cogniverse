@@ -22,7 +22,7 @@ CHART = REPO / "charts/cogniverse"
 TENANT = "prodfixclients:ingress"
 
 
-def _render(profile, *settings):
+def _documents(profile, *settings):
     command = ["helm", "template", "cogniverse", str(CHART), "-f", str(CHART / profile)]
     for setting in (
         "runtime.qualityMonitor.tenantId=ingress-test",
@@ -35,22 +35,29 @@ def _render(profile, *settings):
         command.extend(["--set", setting])
     rendered = subprocess.run(command, capture_output=True, text=True, timeout=60)
     assert rendered.returncode == 0, rendered.stderr
-    documents = list(yaml.safe_load_all(rendered.stdout))
+    return list(yaml.safe_load_all(rendered.stdout))
+
+
+def _render(profile, *settings):
+    documents = _documents(profile, *settings)
     ingress = next(doc for doc in documents if doc and doc["kind"] == "Ingress")
-    runtime = next(
+    return ingress, _container_env(documents, "runtime")
+
+
+def _container_env(documents, name):
+    deployment = next(
         doc
         for doc in documents
         if doc
         and doc["kind"] == "Deployment"
-        and doc["metadata"]["name"] == "cogniverse-runtime"
+        and doc["metadata"]["name"] == f"cogniverse-{name}"
     )
     container = next(
         item
-        for item in runtime["spec"]["template"]["spec"]["containers"]
-        if item["name"] == "runtime"
+        for item in deployment["spec"]["template"]["spec"]["containers"]
+        if item["name"] == name
     )
-    env = {item["name"]: item.get("value") for item in container["env"]}
-    return ingress, env
+    return {item["name"]: item.get("value") for item in container["env"]}
 
 
 @pytest.mark.parametrize("profile", ["values.prod.yaml", "values.k3s.yaml"])
@@ -102,6 +109,76 @@ def test_runtime_mount_routes_with_asgi_transport(root_path):
         timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("profile", ["values.prod.yaml", "values.k3s.yaml"])
+def test_in_cluster_callers_address_the_runtime_without_the_public_prefix(profile):
+    documents = _documents(profile)
+    assert _container_env(documents, "runtime")["COGNIVERSE_ROOT_PATH"] == "/api"
+    assert (
+        _container_env(documents, "dashboard")["RUNTIME_URL"]
+        == "http://cogniverse-runtime:8000"
+    )
+
+
+def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(tmp_path):
+    """Both entry points resolve every router and every mounted sub-app.
+
+    The ingress forwards ``/api/...`` unrewritten while the dashboard, the CLI
+    and the e2e suite reach the Service on the bare path, so the same process
+    answers both shapes of every route.
+    """
+    port = _free_port()
+    env = dict(os.environ, COGNIVERSE_ROOT_PATH="/api")
+    env.pop("REDIS_URL", None)
+    with _process(
+        [sys.executable, "-m", "tests.charts.test_ingress_runtime", str(port)],
+        tmp_path / "runtime.log",
+        env,
+    ) as runtime:
+        _wait_http(f"http://127.0.0.1:{port}/api/health/live", runtime)
+        base = f"http://127.0.0.1:{port}"
+        headers = {"Authorization": "Bearer ingress-test-key"}
+        for prefix in ("/api", ""):
+            live = httpx.get(f"{base}{prefix}/health/live", timeout=10)
+            assert (prefix, live.status_code) == (prefix, 200)
+            assert live.json() == {"status": "alive"}
+
+            models = httpx.get(f"{base}{prefix}/v1/models", headers=headers, timeout=10)
+            assert (prefix, models.status_code) == (prefix, 200)
+            assert [item["id"] for item in models.json()["data"]] == [
+                "cogniverse/search"
+            ]
+
+            card = httpx.get(
+                f"{base}{prefix}/a2a/.well-known/agent-card.json", timeout=10
+            )
+            assert (prefix, card.status_code) == (prefix, 200)
+            assert card.json()["name"] == "Cogniverse Runtime"
+            assert [skill["id"] for skill in card.json()["skills"]] == ["search_agent"]
+
+            rpc = httpx.post(
+                f"{base}{prefix}/a2a/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "1",
+                    "method": "nosuch/method",
+                    "params": {},
+                },
+                timeout=10,
+            )
+            assert (prefix, rpc.status_code) == (prefix, 200)
+            assert rpc.json() == {
+                "jsonrpc": "2.0",
+                "id": "1",
+                "error": {"code": -32601, "message": "Method not found"},
+            }
+
+            index = httpx.get(f"{base}{prefix}/", timeout=10)
+            assert index.json()["docs"] == f"{prefix}/docs"
+            docs = httpx.get(f"{base}{prefix}/docs", timeout=10)
+            assert (prefix, docs.status_code) == (prefix, 200)
+            assert f"url: '{prefix}/openapi.json'," in docs.text
 
 
 def _free_port():
@@ -417,13 +494,47 @@ async def test_ingress_runtime_failure_breaks_stream_and_returns_gateway_error(
 
 async def _serve_runtime(port):
     import uvicorn
+    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
     from cogniverse_core.events import get_queue_manager
+    from cogniverse_runtime.a2a_executor import (
+        BoundedInMemoryTaskStore,
+        CogniverseAgentExecutor,
+    )
     from cogniverse_runtime.main import app
     from cogniverse_runtime.routers.openai_compat import set_api_keys, set_model_map
 
     set_api_keys({"ingress-test-key": TENANT})
     set_model_map({"cogniverse/search": "search_agent"})
+    agent_card = AgentCard(
+        name="Cogniverse Runtime",
+        description="Multi-agent AI platform for content intelligence",
+        url="http://localhost:8000/a2a",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=True),
+        skills=[
+            AgentSkill(
+                id="search_agent",
+                name="search_agent",
+                description="Agent: search_agent (search)",
+                tags=["search"],
+            )
+        ],
+    )
+    app.mount(
+        "/a2a",
+        A2AStarletteApplication(
+            agent_card=agent_card,
+            http_handler=DefaultRequestHandler(
+                agent_executor=CogniverseAgentExecutor(dispatcher=None),
+                task_store=BoundedInMemoryTaskStore(),
+            ),
+        ).build(),
+    )
     for task in ("roundtrip", "left", "right", "fault"):
         await get_queue_manager().create_queue(task_id=task, tenant_id=TENANT)
     server = uvicorn.Server(

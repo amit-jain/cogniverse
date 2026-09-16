@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -43,6 +44,43 @@ render_import_export_ui(SimpleNamespace(store=st.session_state['store']),
     ).run()
     next(b for b in app.button if b.label == "📤 Import Configurations").click().run()
     return app
+
+
+def _child_import(port, tenant, payload, output):
+    """Drive one upload in its own process.
+
+    ``AppTest`` drives the single global Streamlit runtime, so two uploads
+    overlap only across processes; the write barrier they meet at lives in
+    the proxy in the parent.
+    """
+    app = _upload_app(port, tenant, payload)
+    output.put(
+        {
+            "tenant": tenant,
+            "errors": [e.value for e in app.error],
+            "exceptions": [e.message for e in app.exception],
+        }
+    )
+
+
+@contextmanager
+def _children_start_from_this_module():
+    """Keep a spawned child out of the parent's ``__main__``.
+
+    ``AppTest`` replaces ``sys.modules["__main__"]`` with the temp script it
+    renders, and a spawned child re-runs that path before its target; the
+    script fails outside a Streamlit session. Without the path a child
+    starts from ``_child_import`` alone.
+    """
+    main = sys.modules["__main__"]
+    path = getattr(main, "__file__", None)
+    if path is not None:
+        del main.__file__
+    try:
+        yield
+    finally:
+        if path is not None:
+            main.__file__ = path
 
 
 @contextmanager
@@ -165,26 +203,51 @@ def test_concurrent_import_uploads_keep_each_destination(shared_vespa):
     """
     source = f"source{uuid4().hex[:8]}:tenant"
     tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    context = multiprocessing.get_context("spawn")
+    output = context.Queue()
     barrier = threading.Barrier(2)
     with _vespa_proxy(shared_vespa["base_url"], barrier=barrier) as (port, state):
-        store = _store(port)
-
-        def restore(tenant):
-            return store.import_configs(
-                tenant_id=tenant,
-                configs=_payload(source, {"settings": {"owner": tenant}}),
+        children = [
+            context.Process(
+                target=_child_import,
+                args=(
+                    port,
+                    tenant,
+                    _payload(source, {"settings": {"owner": tenant}}),
+                    output,
+                ),
             )
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            assert list(pool.map(restore, tenants)) == [1, 1]
-        assert sorted(state.writes) == sorted(
-            (tenant, "settings") for tenant in tenants
-        )
+            for tenant in tenants
+        ]
+        try:
+            with _children_start_from_this_module():
+                for child in children:
+                    child.start()
+            results = [output.get(timeout=180) for _ in children]
+            for child in children:
+                child.join(timeout=10)
+            assert [child.exitcode for child in children] == [0, 0]
+            assert sorted(results, key=lambda row: row["tenant"]) == sorted(
+                (
+                    {"tenant": tenant, "errors": [], "exceptions": []}
+                    for tenant in tenants
+                ),
+                key=lambda row: row["tenant"],
+            )
+            assert sorted(state.writes) == sorted(
+                (tenant, "settings") for tenant in tenants
+            )
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.terminate()
+                child.join(timeout=5)
     store = _store(shared_vespa["http_port"])
     for tenant in tenants:
         assert store.get_config(
             tenant, ConfigScope.AGENT, "search_agent", "settings"
         ).config_value == {"owner": tenant}
+        assert len(store.list_configs(tenant)) == 1
     assert store.list_configs(source) == []
 
 

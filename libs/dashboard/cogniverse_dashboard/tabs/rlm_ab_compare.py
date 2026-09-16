@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from cogniverse_dashboard.utils import tenant_project_name
+
 logger = logging.getLogger(__name__)
 
 SPAN_NAME = "rlm.ab_compare"
@@ -179,6 +181,7 @@ async def load_ab_compare_data(
     dashboard's data path is exercised end-to-end without a Streamlit
     runtime.
     """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
     from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
     provider = PhoenixProvider()
@@ -192,10 +195,9 @@ async def load_ab_compare_data(
         }
     )
 
-    # Phoenix project naming: the provider derives project_name from
-    # tenant_id + service_template. The harness emits spans with the
-    # default tracer, which lands in the tenant's project.
-    project_name = f"cogniverse-{tenant_id}"
+    # ``cogniverse-optim --mode ab-compare`` emits into the tenant project the
+    # telemetry config names, so the tile derives it from the same config.
+    project_name = tenant_project_name(get_telemetry_manager(), tenant_id)
 
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)

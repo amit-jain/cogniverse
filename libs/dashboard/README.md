@@ -518,7 +518,7 @@ def load_traces(tenant_id, start_time, end_time):
         start_time=start_time,
         end_time=end_time,
         limit=1000,
-        project_name=f"cogniverse-{tenant_id}",
+        project_name=tenant_project_name(get_telemetry_manager(), tenant_id),
     )
 ```
 

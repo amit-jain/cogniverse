@@ -21,6 +21,32 @@ TENANT = "prodfixclients:backup"
 PROJECT = f"cogniverse-{TENANT}"
 SPAN_ID = "1234567890abcdef"
 TRACE_ID = "1234567890abcdef1234567890abcdef"
+# Two snapshots already in the bucket while ``retainLast=1``: the next
+# successful upload retires both, so anything that publishes a useless
+# archive destroys the whole retention window.
+RETAINED = [
+    "phoenix/phoenix-20000101T000000Z.tar",
+    "phoenix/phoenix-20000102T000000Z.tar",
+]
+REFUSED_WRITES_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketLocation",
+                "s3:CreateBucket",
+                "s3:GetObject",
+                "s3:DeleteObject",
+            ],
+            "Resource": [
+                "arn:aws:s3:::cogniverse-backups",
+                "arn:aws:s3:::cogniverse-backups/*",
+            ],
+        }
+    ],
+}
 
 
 def render(*extra):
@@ -219,7 +245,7 @@ class BackupServices:
             f"SQL did not return {expected!r}: {query}; got {result!r}"
         )
 
-    def run_step(self, name):
+    def run_step(self, name, **overrides):
         config = self.templates[name]["container"]
         if name == "dump":
             assert config["image"] == self.postgres_image
@@ -233,6 +259,7 @@ class BackupServices:
                 env[entry["name"]] = "fixture-user"
             else:
                 env[entry["name"]] = "fixture-key"
+        env.update(overrides)
         args = []
         for key, value in env.items():
             args.extend(["-e", f"{key}={value}"])
@@ -258,17 +285,120 @@ class BackupServices:
         )
         return exit_code, logs.stdout + logs.stderr
 
-    def objects(self):
+    def s3(self):
         import boto3
 
-        client = boto3.client(
+        return boto3.client(
             "s3",
             endpoint_url=self.minio_url,
             aws_access_key_id="fixture-user",
             aws_secret_access_key="fixture-password",
         )
+
+    def objects(self):
+        client = self.s3()
         response = client.list_objects_v2(Bucket="cogniverse-backups")
         return client, sorted(row["Key"] for row in response.get("Contents", []))
+
+    def start_postgres(self):
+        self.postgres = self.start(
+            "postgres",
+            self.postgres_image,
+            "--network-alias",
+            "cogniverse-phoenix-postgres",
+            "--memory",
+            "512m",
+            "-e",
+            "POSTGRES_USER=phoenix",
+            "-e",
+            "POSTGRES_DB=phoenix",
+            "-e",
+            "POSTGRES_PASSWORD=fixture-password",
+        )
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                ["docker", "exec", self.postgres, "pg_isready", "-U", "phoenix"],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                break
+            time.sleep(0.2)
+        assert result.returncode == 0, docker("logs", self.postgres)
+        return self.postgres
+
+    def start_minio(self):
+        minio = self.start(
+            "minio",
+            self.image(self.values["minio"]["image"]),
+            "--network-alias",
+            "cogniverse-minio",
+            "--memory",
+            "512m",
+            "-p",
+            "127.0.0.1::9000",
+            "-e",
+            "MINIO_ROOT_USER=fixture-user",
+            "-e",
+            "MINIO_ROOT_PASSWORD=fixture-password",
+            command=("server", "/data"),
+        )
+        self.minio_url = "http://" + docker("port", minio, "9000/tcp")
+        client = self.s3()
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                client.create_bucket(Bucket="cogniverse-backups")
+                break
+            except Exception:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.2)
+        for key in RETAINED:
+            client.put_object(
+                Bucket="cogniverse-backups", Key=key, Body=b"prior-backup"
+            )
+        return minio
+
+    def mc(self, script):
+        """Run ``mc`` against MinIO as its root user, through the image the
+        upload step runs."""
+        container = self.start(
+            f"mc-{uuid4().hex[:6]}",
+            self.mc_image,
+            "--entrypoint",
+            "bash",
+            "-v",
+            f"{self.directory}:/fixture:ro",
+            command=("-c", script),
+        )
+        code = int(docker("wait", container))
+        logs = subprocess.run(
+            ["docker", "logs", container],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+        )
+        assert code == 0, logs.stdout + logs.stderr
+        return logs.stdout
+
+    def refused_writer(self):
+        """A MinIO account allowed to list and delete in the backup bucket but
+        never to write it — a credential whose copy fails while its prune would
+        succeed."""
+        (self.directory / "refused-writes.json").write_text(
+            json.dumps(REFUSED_WRITES_POLICY)
+        )
+        self.mc(
+            "set -eu\n"
+            'mc alias set root "http://cogniverse-minio:9000" '
+            "fixture-user fixture-password\n"
+            "mc admin user add root refused refused-secret\n"
+            "mc admin policy create root refused-writes /fixture/refused-writes.json\n"
+            "mc admin policy attach root refused-writes --user refused\n"
+        )
+        return {"MINIO_ACCESS_KEY": "refused", "MINIO_SECRET_KEY": "refused-secret"}
 
     def rows(self, database="phoenix"):
         result = {}
@@ -376,30 +506,7 @@ def services(tmp_path):
         service.network,
     )
     try:
-        service.postgres = service.start(
-            "postgres",
-            service.postgres_image,
-            "--network-alias",
-            "cogniverse-phoenix-postgres",
-            "--memory",
-            "512m",
-            "-e",
-            "POSTGRES_USER=phoenix",
-            "-e",
-            "POSTGRES_DB=phoenix",
-            "-e",
-            "POSTGRES_PASSWORD=fixture-password",
-        )
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            result = subprocess.run(
-                ["docker", "exec", service.postgres, "pg_isready", "-U", "phoenix"],
-                capture_output=True,
-            )
-            if result.returncode == 0:
-                break
-            time.sleep(0.2)
-        assert result.returncode == 0, docker("logs", service.postgres)
+        service.start_postgres()
         phoenix = service.start(
             "phoenix",
             service.image(service.values["phoenix"]["image"]),
@@ -460,37 +567,37 @@ def services(tmp_path):
             sync=True,
         )
         service.wait_sql("SELECT count(*) FROM span_annotations", "1")
-        minio = service.start(
-            "minio",
-            service.image(service.values["minio"]["image"]),
-            "--network-alias",
-            "cogniverse-minio",
-            "--memory",
-            "512m",
-            "-p",
-            "127.0.0.1::9000",
-            "-e",
-            "MINIO_ROOT_USER=fixture-user",
-            "-e",
-            "MINIO_ROOT_PASSWORD=fixture-password",
-            command=("server", "/data"),
-        )
-        service.minio_url = "http://" + docker("port", minio, "9000/tcp")
-        import boto3
+        service.start_minio()
+        yield service
+    finally:
+        for container in reversed(service.containers):
+            docker("rm", "-fv", container)
+        docker("network", "rm", service.network)
 
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=service.minio_url,
-            aws_access_key_id="fixture-user",
-            aws_secret_access_key="fixture-password",
-        )
-        s3.create_bucket(Bucket="cogniverse-backups")
-        for stamp in ("20000101T000000Z", "20000102T000000Z"):
-            s3.put_object(
-                Bucket="cogniverse-backups",
-                Key=f"phoenix/phoenix-{stamp}.tar",
-                Body=b"prior-backup",
+
+@pytest.fixture
+def empty_database(tmp_path):
+    """The state a wiped pgdata directory, a failed migration or a renamed
+    ``phoenix.postgres.auth.database`` leaves behind: Postgres up, the database
+    Phoenix names present and empty, and good snapshots already in the bucket.
+    """
+    service = BackupServices(tmp_path)
+    docker(
+        "network",
+        "create",
+        "--label",
+        f"cogniverse-test-owner-pid={os.getpid()}",
+        service.network,
+    )
+    try:
+        service.start_postgres()
+        service.start_minio()
+        assert (
+            service.sql(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
             )
+            == "0"
+        )
         yield service
     finally:
         for container in reversed(service.containers):
@@ -572,3 +679,73 @@ def test_mid_dump_disconnect_prevents_publication_and_retention(services):
     assert list(services.stage.glob("phoenix-*.tar")) == []
     assert list(services.stage.glob("*.partial")) == []
     assert services.objects()[1] == before
+
+
+@pytest.mark.requires_docker
+def test_empty_database_dump_fails_and_keeps_every_retained_snapshot(empty_database):
+    """A dump that captured none of Phoenix's data must not be published: at
+    ``retainLast=1`` publishing it retires every good snapshot in the bucket."""
+    code, output = empty_database.run_step("dump")
+    assert code == 1, output
+    assert "cogniverse-phoenix-postgres is not Phoenix's database" in output
+    assert list(empty_database.stage.glob("phoenix-*.tar")) == []
+    code, output = empty_database.run_step("upload")
+    assert code == 1, output
+    assert empty_database.objects()[1] == RETAINED
+
+
+@pytest.mark.requires_docker
+def test_dump_of_phoenix_tables_without_rows_fails_and_publishes_nothing(services):
+    """Phoenix's schema restored into an empty database carries every table and
+    no rows — an archive that restores a Phoenix with nothing in it."""
+    code, output = services.run_step("dump")
+    assert code == 0, output
+    archive = next(services.stage.glob("phoenix-*.tar"))
+    with tarfile.open(archive) as opened:
+        opened.extract("database.dump", services.stage / "schema", filter="data")
+    services.sql("CREATE DATABASE schema_only", database="postgres")
+    docker(
+        "cp",
+        str(services.stage / "schema/database.dump"),
+        f"{services.postgres}:/tmp/schema.dump",
+    )
+    docker(
+        "exec",
+        services.postgres,
+        "pg_restore",
+        "--schema-only",
+        "--exit-on-error",
+        "--no-owner",
+        "--no-privileges",
+        "-U",
+        "phoenix",
+        "-d",
+        "schema_only",
+        "/tmp/schema.dump",
+    )
+    assert services.sql("SELECT count(*) FROM projects", "schema_only") == "0"
+    archive.unlink()
+
+    code, output = services.run_step("dump", PGDATABASE="schema_only")
+    assert code == 1, output
+    assert "schema_only holds no Phoenix data" in output
+    assert list(services.stage.glob("phoenix-*.tar")) == []
+
+
+@pytest.mark.requires_docker
+def test_refused_upload_keeps_every_retained_snapshot(services):
+    """The copy and the retention prune run in one step. A credential that may
+    delete but not write must leave the bucket exactly as it found it."""
+    code, output = services.run_step("dump")
+    assert code == 0, output
+    archive = next(services.stage.glob("phoenix-*.tar"))
+
+    code, output = services.run_step("upload", **services.refused_writer())
+    assert code == 1, output
+    assert (
+        f"Failed to copy `/stage/{archive.name}`. Insufficient permissions to "
+        f"access this path `http://cogniverse-minio:9000/cogniverse-backups/"
+        f"phoenix/{archive.name}`" in output
+    )
+    assert services.objects()[1] == RETAINED
+    assert archive.exists()

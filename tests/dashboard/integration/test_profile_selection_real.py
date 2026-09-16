@@ -23,6 +23,7 @@ from cogniverse_dashboard.telemetry_gate import (
     classify_telemetry_probe,
     decide_telemetry_gate,
 )
+from cogniverse_dashboard.utils import tenant_project_name
 
 pytestmark = pytest.mark.integration
 
@@ -31,8 +32,8 @@ def test_profile_selection_tab_shows_search_spans(
     phoenix_container, telemetry_manager_with_phoenix, tmp_path
 ):
     manager = telemetry_manager_with_phoenix
-    tenant_id = f"profsel{uuid4().hex[:8]}"
-    project = f"cogniverse-{tenant_id}"
+    tenant_id = f"profsel{uuid4().hex[:8]}:tenant"
+    project = tenant_project_name(manager, tenant_id)
 
     with manager.span(
         name="video_search",

@@ -160,14 +160,26 @@ hostStorage:
   #
   # - ``volume-mount``: mount the source volume into the workflow pod and
   #   tar from local fs. Required for distroless source containers
-  #   (phoenix). Set ``hostPath`` for hostStorage clusters or ``pvcName``
-  #   for PVC-backed clusters. RWO PVCs cannot be mounted while the
-  #   source pod is running — for cloud deployments use RWX, take a CSI
-  #   VolumeSnapshot first, or scale the source pod to 0 during backup.
+  #   (phoenix). RWO PVCs cannot be mounted while the source pod is
+  #   running — for cloud deployments use RWX, take a CSI VolumeSnapshot
+  #   first, or scale the source pod to 0 during backup.
   #
-  # Default services list backs up vespa (kubectl-exec) AND phoenix
-  # (volume-mount of the hostStorage path). When unset, both are backed
-  # up nightly per ``schedule``.
+  # - ``postgres``: a custom-format ``pg_dump`` of the phoenix-postgres
+  #   database plus a tar of the mounted working directory. The dump is
+  #   read back and kept only if Phoenix's own tables and rows are in it.
+  #
+  # Phoenix's mode follows ``phoenix.postgres.enabled``: ``postgres``
+  # while its traces, datasets and annotations live in the
+  # phoenix-postgres database, ``volume-mount`` while they live in the
+  # SQLite database in the working directory. A phoenix entry naming the
+  # other mode fails the render.
+  #
+  # In ``volume-mount`` and ``postgres`` modes the source volume is the
+  # claim named by ``pvcName``, else the host directory on hostStorage
+  # clusters, else the service's own StatefulSet claim.
+  #
+  # Default services list backs up vespa AND phoenix. When unset, both
+  # are backed up nightly per ``schedule``.
   backup:
     enabled: false
     bucket: cogniverse-backups
@@ -180,11 +192,8 @@ hostStorage:
         dataPath: /opt/vespa/var
         podLabel: app.kubernetes.io/component=vespa
       - name: phoenix
-        mode: postgres
-        # Phoenix keeps its traces, datasets and annotations in the
-        # phoenix-postgres database; ``hostPath`` only carries the
-        # working directory, and is replaced by phoenix's own claim when
-        # ``hostStorage.enabled`` is false.
+        # The working directory on hostStorage clusters; phoenix's own
+        # claim when ``hostStorage.enabled`` is false.
         hostPath: /host-data/phoenix
     # Backup destination — single config block that switches between
     # local-dev (in-cluster MinIO, default) and cloud (R2 / B2 / AWS S3).

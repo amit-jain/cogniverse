@@ -102,6 +102,7 @@ TENANT_SCOPED_SESSION_KEYS: tuple[str, ...] = (
     "synthetic_data_result",
     "embedding_atlas_file",
     "last_optimize_run",
+    "optimization_requests",
     "_root_cause_analysis",
 )
 
