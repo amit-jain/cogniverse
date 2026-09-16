@@ -412,7 +412,7 @@ class TestSearchUsesActiveVideoProfile:
         )
         captured = {}
 
-        def _capture(profile):
+        def _capture(profile, tenant_id):
             captured["profile"] = profile
             return _SearchAgentStub(profile)
 
@@ -967,7 +967,7 @@ class TestDownstreamDispatchThreadsRequestContext:
             lambda **kwargs: fake_config,
         )
         stub = _SearchAgentStub(_SHIPPED_ACTIVE_PROFILE)
-        dispatcher._get_search_agent = lambda profile: stub
+        dispatcher._get_search_agent = lambda profile, tenant_id: stub
         dispatcher.consult_egress_policy = lambda *a, **k: None
         dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._registry.get_agent = lambda name: SimpleNamespace(
@@ -1204,7 +1204,9 @@ class TestRlmThreadsIntoTypedInputs:
                 captured["input"] = inp
                 return await super()._process_impl(inp)
 
-        dispatcher._get_search_agent = lambda profile: _CapturingSearchStub(profile)
+        dispatcher._get_search_agent = lambda profile, tenant_id: _CapturingSearchStub(
+            profile
+        )
         dispatcher.consult_egress_policy = lambda *a, **k: None
         dispatcher._verify_egress = lambda *a, **k: None
 
@@ -1820,7 +1822,7 @@ class TestGroundingFollowsTenantServableProfiles:
             lambda **kwargs: fake_config,
         )
         built = []
-        dispatcher._get_search_agent = lambda profile: (
+        dispatcher._get_search_agent = lambda profile, tenant_id: (
             built.append(profile) or _SearchAgentStub(profile)
         )
         dispatcher.consult_egress_policy = lambda *a, **k: None
@@ -2301,7 +2303,9 @@ class TestTenantTierResolutionRunsOffTheEventLoop:
                 bound["lm"] = dspy.settings.lm
                 return await super()._process_impl(inp)
 
-        dispatcher._get_search_agent = lambda profile: _LMRecordingStub(profile)
+        dispatcher._get_search_agent = lambda profile, tenant_id: _LMRecordingStub(
+            profile
+        )
         dispatcher.consult_egress_policy = lambda *a, **k: None
         dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
@@ -2395,7 +2399,9 @@ class TestTenantTierResolutionRunsOffTheEventLoop:
                 bound[inp.tenant_id] = dspy.settings.lm
                 return await super()._process_impl(inp)
 
-        dispatcher._get_search_agent = lambda profile: _LMRecordingStub(profile)
+        dispatcher._get_search_agent = lambda profile, tenant_id: _LMRecordingStub(
+            profile
+        )
         dispatcher.consult_egress_policy = lambda *a, **k: None
         dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None

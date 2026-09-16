@@ -24,9 +24,9 @@ TENANT_INSTRUCTIONS_SPAN_ATTRIBUTE = "enrichment.tenant_instructions"
 
 # Per-request state lives in ContextVars, NOT instance attributes: the dispatcher
 # caches and SHARES one agent instance across requests (e.g. _get_search_agent
-# shares one SearchAgent per profile across ALL tenants), so storing the
-# per-request tenant / artefact overlay / session id on the instance let
-# concurrent requests overwrite each other (request bleed — one tenant's
+# shares one SearchAgent per tenant profile across that tenant's requests), so
+# storing the per-request tenant / artefact overlay / session id on the instance
+# let concurrent requests overwrite each other (request bleed — one tenant's
 # query-rewrite prompt enriched with another tenant's private instructions).
 # ContextVars are isolated per asyncio task (and copied into asyncio.to_thread),
 # so each in-flight request sees only its own value on the shared agent.
