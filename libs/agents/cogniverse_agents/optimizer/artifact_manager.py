@@ -562,7 +562,8 @@ class ArtifactManager:
 
         A store outage names the logical blob, not the slot that happened to
         fail first: the slots are read concurrently, so the failing one is
-        completion order, and operators and alerts key on the blob.
+        completion order, and operators and alerts key on the blob. The
+        transport failure stays the cause.
         """
         try:
             return list(
@@ -580,7 +581,7 @@ class ArtifactManager:
                 f"{blob!r}: {type(exc.__cause__).__name__}: {exc.__cause__}",
                 endpoint=exc.endpoint,
                 dataset=blob,
-            ) from exc
+            ) from exc.__cause__
 
     async def save_blob(self, kind: str, key: str, content: str) -> str:
         """Publish an arbitrary string blob as the next serving revision.

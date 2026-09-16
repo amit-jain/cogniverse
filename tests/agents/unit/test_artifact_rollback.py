@@ -433,6 +433,10 @@ class TestLoadBlobErrorBoundary:
             "dataset store at http://phoenix:6006 could not answer for blob "
             "'dspy-config-acme:acme-quotas': ConnectionError: connection refused"
         )
+        # Callers classify the outage by the transport failure, so it stays the
+        # cause rather than the per-slot error the blob read wrapped.
+        assert type(caught.value.__cause__) is ConnectionError
+        assert str(caught.value.__cause__) == "connection refused"
 
 
 @pytest.mark.asyncio
