@@ -39,7 +39,6 @@ def _docker_available() -> bool:
 def minio():
     if not _docker_available():
         pytest.skip("Docker not available")
-    pytest.importorskip("boto3")
     manager = MinIOTestManager()
     instance = manager.start()
     try:

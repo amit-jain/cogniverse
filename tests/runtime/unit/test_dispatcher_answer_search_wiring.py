@@ -1964,6 +1964,90 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "result_count": 0,
         }
 
+    @pytest.mark.parametrize(
+        "agent_name,capabilities,answer",
+        [
+            ("summarizer_agent", ["summarization"], "_execute_summarization_task"),
+            (
+                "detailed_report_agent",
+                ["detailed_report", "text_generation"],
+                "_execute_detailed_report_task",
+            ),
+        ],
+    )
+    async def test_streamed_nothing_to_search_ends_on_the_non_streamed_envelope(
+        self, agent_name, capabilities, answer
+    ):
+        from cogniverse_runtime.a2a_executor import stream_agent_events
+
+        dispatcher = self._dispatcher(_document_profiles())
+        built: list = []
+        dispatcher._build_answer_agent = lambda *args: built.append(args)
+        entry = MagicMock()
+        entry.capabilities = capabilities
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+        query = "summarize the videos about robotics"
+        context = {"tenant_id": "acme:acme"}
+
+        streamed = [
+            event
+            async for event in stream_agent_events(
+                dispatcher, agent_name, query, "acme:acme", context
+            )
+        ]
+        dispatched = await getattr(dispatcher, answer)(query, "acme:acme", context)
+
+        expected = (
+            "Tenant acme:acme serves no video content, so there is nothing to "
+            "search for this request."
+        )
+        assert streamed == [{"type": "final", "data": dispatched}]
+        assert (dispatched["agent"], dispatched["message"]) == (agent_name, expected)
+        assert built == []
+
+    @pytest.mark.parametrize(
+        "agent_name,capabilities,input_name",
+        [
+            ("summarizer_agent", ["summarization"], "SummarizerInput"),
+            (
+                "detailed_report_agent",
+                ["detailed_report", "text_generation"],
+                "DetailedReportInput",
+            ),
+        ],
+    )
+    async def test_streamed_nothing_to_search_with_attachments_builds_the_agent(
+        self, agent_name, capabilities, input_name
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+        built: list = []
+        answer_agent = object()
+
+        def _record_build(agent_cls, deps_cls, name, tenant_id):
+            built.append((name, tenant_id))
+            return answer_agent
+
+        dispatcher._build_answer_agent = _record_build
+        entry = MagicMock()
+        entry.capabilities = capabilities
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+        attachments = ["s3://cogniverse-ingest/acme:acme/frame.png"]
+
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            agent_name,
+            "summarize the videos about robotics",
+            "acme:acme",
+            context={"attachments": attachments},
+        )
+
+        assert agent is answer_agent
+        assert (type(typed_input).__name__, typed_input.attachments) == (
+            input_name,
+            attachments,
+        )
+        assert typed_input.search_results == []
+        assert built == [(agent_name, "acme:acme")]
+
     async def test_search_outage_fails_the_summary_instead_of_answering(
         self, monkeypatch
     ):
@@ -1994,6 +2078,59 @@ class TestAnswerEnvelopeCarriesGroundingState:
             failure.value.reason == "search failed: RuntimeError('vespa unreachable')"
         )
         assert _CaptureAgent.captured == {}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGroundingConfigReadsLeaveTheLoop:
+    """``get_config`` is lazy: its config-store reads run when a value is read.
+
+    Each grounding read of a tenant config value has to run on a worker
+    thread, or every concurrent turn stalls behind a backend GET on the loop.
+    The fake records the thread each read ran on.
+    """
+
+    async def test_budget_default_profile_and_search_profile_reads_run_off_the_loop(
+        self, monkeypatch
+    ):
+        readers: list = []
+
+        def get(key, default=None):
+            readers.append((key, threading.get_ident()))
+            return _fake_config_get(_SHIPPED_ACTIVE_PROFILE)(key, default)
+
+        fake_config = MagicMock()
+        fake_config.get = get
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(profiles={}),
+            schema_loader=MagicMock(),
+        )
+        dispatcher._get_search_agent = lambda profile, tenant_id: _SearchAgentStub(
+            profile
+        )
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        loop_thread = threading.get_ident()
+
+        budget = await dispatcher._grounding_search_budget_s("acme:acme")
+        plan = await dispatcher._grounding_plan("robots", "acme:acme", {}, None)
+        await dispatcher._execute_search_task(
+            "robots", "acme:acme", top_k=5, query_rewrite_timeout_s=1.0
+        )
+
+        assert budget == _SHIPPED_GROUNDING_BUDGET_S
+        assert plan.profiles == (_SHIPPED_ACTIVE_PROFILE,)
+        assert [(key, ident == loop_thread) for key, ident in readers] == [
+            (GROUNDING_SEARCH_TIMEOUT_KEY, False),
+            ("active_video_profile", False),
+            ("active_video_profile", False),
+        ]
 
 
 class TestGroundingSearchBudgetFaultContract:

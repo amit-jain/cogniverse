@@ -42,7 +42,6 @@ def minio_container():
 
 @pytest.fixture
 def minio_s3_client(minio_container):
-    pytest.importorskip("boto3")
     return minio_container["instance"].boto3_client()
 
 

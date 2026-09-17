@@ -34,6 +34,11 @@ Comprehensive guide to testing practices in Cogniverse.
 - **pytest-cov**: Coverage reporting
 - **pytest-mock**: Mocking support
 
+`uv sync` installs everything the tests import, including the reference
+libraries some integration tests load directly: `pylate` (dev dependency
+group), `xgboost`, `boto3` and `sentence-transformers`. Tests import them
+plainly; a missing one is an import error, not a skip.
+
 ---
 
 ## Test Organization
