@@ -908,6 +908,8 @@ imported_count = manager.store.import_configs(
 print(f"Imported {imported_count} configurations")
 ```
 
+Schema-scope rows record the schema registry's deployments for the exported tenant's own Vespa schemas, so an export omits them and `import_configs` refuses a payload that carries one (`ValueError`, nothing written).
+
 ## Monitoring and Health
 
 ### Configuration Health Checks

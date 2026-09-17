@@ -827,8 +827,8 @@ cogniverse_sdk/
 - `list_configs(tenant_id, scope, service)`: List configs with filters
 - `list_all_configs(scope, service)`: List all configurations across all tenants
 - `delete_config(tenant_id, scope, service, config_key)`: Delete all versions
-- `export_configs(tenant_id, include_history)`: Export tenant configs
-- `import_configs(tenant_id, configs)`: Import configs
+- `export_configs(tenant_id, include_history)`: Export tenant configs, without schema-scope rows (the schema registry's deployment records)
+- `import_configs(tenant_id, configs)`: Import configs under `tenant_id`; a payload carrying a schema-scope row is refused with `ValueError` before any write
 - `get_stats()`: Get storage statistics
 - `health_check()`: Check storage health
 

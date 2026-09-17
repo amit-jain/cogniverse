@@ -15,6 +15,10 @@ import httpx
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from cogniverse_core.registries.schema_registry import (
+    SCHEMA_REGISTRY_SERVICE,
+    SchemaRegistry,
+)
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -268,3 +272,168 @@ def test_import_write_failure_is_visible_without_success(shared_vespa):
         target, ConfigScope.AGENT, "search_agent", "first"
     ).config_value == {"value": 1}
     assert store.get_config(target, ConfigScope.AGENT, "search_agent", "second") is None
+
+
+def _register_schema(store, tenant, base_schema):
+    """File a deployment in the registry the way the schema registry does."""
+    registry = SchemaRegistry(
+        SimpleNamespace(store=store), backend=object(), schema_loader=object()
+    )
+    registry.register_schema(
+        tenant_id=tenant,
+        base_schema_name=base_schema,
+        full_schema_name=_full_schema_name(base_schema, tenant),
+        schema_definition=json.dumps({"name": _full_schema_name(base_schema, tenant)}),
+    )
+
+
+def _full_schema_name(base_schema, tenant):
+    return f"{base_schema}_{tenant.replace(':', '_')}"
+
+
+def _registry_rows(store, tenants):
+    """(row tenant, key, tenant the row names, schema the row names) per
+    registry row under ``tenants``, as the schema registry reads them."""
+    return sorted(
+        (
+            row.tenant_id,
+            row.config_key,
+            row.config_value["tenant_id"],
+            row.config_value["full_schema_name"],
+        )
+        for row in store.list_all_configs(
+            scope=ConfigScope.SCHEMA, service=SCHEMA_REGISTRY_SERVICE
+        )
+        if row.tenant_id in tenants
+    )
+
+
+def test_an_export_restores_configurations_without_the_sources_deployments(
+    shared_vespa,
+):
+    store = _store(shared_vespa["http_port"])
+    source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    base_schema = "document_text"
+    _register_schema(store, source, base_schema)
+    _register_schema(store, target, base_schema)
+    store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 3})
+
+    payload = store.export_configs(source)
+    assert [
+        (entry["scope"], entry["service"], entry["config_key"])
+        for entry in payload["configs"]
+    ] == [("agent", "search_agent", "settings")]
+
+    app = _upload_app(shared_vespa["http_port"], target, payload)
+    assert [e.value for e in app.error] == []
+    assert [e.message for e in app.exception] == []
+    assert store.get_config(
+        target, ConfigScope.AGENT, "search_agent", "settings"
+    ).config_value == {"k": 3}
+    assert sorted(
+        (entry.scope.value, entry.service, entry.config_key)
+        for entry in store.list_configs(target)
+    ) == [
+        ("agent", "search_agent", "settings"),
+        ("schema", SCHEMA_REGISTRY_SERVICE, f"schema_{base_schema}"),
+    ]
+    # Each tenant's registry names only that tenant's own deployment.
+    assert _registry_rows(store, {source, target}) == sorted(
+        [
+            (
+                tenant,
+                f"schema_{base_schema}",
+                tenant,
+                _full_schema_name(base_schema, tenant),
+            )
+            for tenant in (source, target)
+        ]
+    )
+
+
+def test_an_upload_carrying_schema_rows_is_refused_before_any_write(shared_vespa):
+    source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    payload = _payload(source, {"settings": {"k": 3}})
+    payload["configs"].append(
+        {
+            "tenant_id": source,
+            "scope": "schema",
+            "service": SCHEMA_REGISTRY_SERVICE,
+            "config_key": "schema_document_text",
+            "config_value": {
+                "tenant_id": source,
+                "base_schema_name": "document_text",
+                "full_schema_name": _full_schema_name("document_text", source),
+                "schema_definition": "{}",
+                "config": {},
+                "deployment_time": "2026-09-17T00:00:00+00:00",
+            },
+        }
+    )
+    with _vespa_proxy(shared_vespa["base_url"]) as (port, state):
+        app = _upload_app(port, target, payload)
+        assert [e.value for e in app.error] == [
+            f"Import failed: Configuration import for tenant {target} refused: "
+            "schema rows record deployments made by the schema registry and are "
+            f"not importable: {SCHEMA_REGISTRY_SERVICE}/schema_document_text"
+        ]
+        assert [s.value for s in app.success] == []
+        assert state.writes == []
+    store = _store(shared_vespa["http_port"])
+    assert store.list_configs(target) == []
+    assert _registry_rows(store, {source, target}) == []
+
+
+def test_concurrent_restores_keep_each_tenants_own_registry(shared_vespa):
+    """Two operators restore one source's export into two registered tenants
+    at once; each tenant's registry still names only its own deployment."""
+    store = _store(shared_vespa["http_port"])
+    source = f"source{uuid4().hex[:8]}:tenant"
+    tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    base_schema = "document_text"
+    for tenant in [source, *tenants]:
+        _register_schema(store, tenant, base_schema)
+    store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 5})
+    payload = store.export_configs(source)
+
+    context = multiprocessing.get_context("spawn")
+    output = context.Queue()
+    barrier = threading.Barrier(2)
+    with _vespa_proxy(shared_vespa["base_url"], barrier=barrier) as (port, state):
+        children = [
+            context.Process(target=_child_import, args=(port, tenant, payload, output))
+            for tenant in tenants
+        ]
+        try:
+            with _children_start_from_this_module():
+                for child in children:
+                    child.start()
+            results = [output.get(timeout=180) for _ in children]
+            for child in children:
+                child.join(timeout=10)
+            assert [child.exitcode for child in children] == [0, 0]
+            assert sorted(results, key=lambda row: row["tenant"]) == [
+                {"tenant": tenant, "errors": [], "exceptions": []}
+                for tenant in sorted(tenants)
+            ]
+            assert sorted(state.writes) == sorted(
+                (tenant, "settings") for tenant in tenants
+            )
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.terminate()
+                child.join(timeout=5)
+    for tenant in tenants:
+        assert store.get_config(
+            tenant, ConfigScope.AGENT, "search_agent", "settings"
+        ).config_value == {"k": 5}
+    assert _registry_rows(store, {source, *tenants}) == sorted(
+        (
+            tenant,
+            f"schema_{base_schema}",
+            tenant,
+            _full_schema_name(base_schema, tenant),
+        )
+        for tenant in [source, *tenants]
+    )
