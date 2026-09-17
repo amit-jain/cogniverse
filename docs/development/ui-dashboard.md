@@ -962,12 +962,16 @@ Organization/tenant listing is fetched via `_fetch_organizations()` /
 
 **Location**: `libs/dashboard/cogniverse_dashboard/tabs/rlm_ab_compare.py` (`render_rlm_ab_compare_tab`)
 
-**Key Functions**: `load_ab_compare_data(phoenix_http_endpoint, tenant_id, lookback_hours)`
+**Key Functions**: `load_ab_compare_data(phoenix_http_endpoint, phoenix_grpc_endpoint, tenant_id, lookback_hours)`
 is a pure async function (independently integration-testable against a real Phoenix
 instance) that queries and aggregates into an `ABCompareAggregate` dataclass
 (`rows`, `avg_latency_delta_ms`, `avg_tokens_delta`, `avg_judge_delta`,
-`fallback_rate`, `per_row`, `per_dataset`). The tenant defaults to the sidebar's
-`current_tenant`; Phoenix URL and lookback hours are separate inputs.
+`fallback_rate`, `per_row`, `per_dataset`); a span query that fails raises
+naming the tenant and endpoint. The tenant defaults to the sidebar's
+`current_tenant`; the Phoenix endpoints come from the session's `phoenix_url` and
+`telemetry_collector_endpoint` (the system config's `telemetry_url` and
+`telemetry_collector_endpoint`), and the tab renders an error when either is
+unset. Lookback hours is a separate input.
 
 ### 15. Sidebar Controls
 
