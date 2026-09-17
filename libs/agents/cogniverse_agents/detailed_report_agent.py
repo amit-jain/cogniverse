@@ -808,8 +808,13 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         content_parts = [f"Total Results: {total_results}"]
         for result in request.search_results[:10]:
             title = result.get("title", result.get("video_id", "Unknown"))
+            content_type = result.get("content_type", "video")
             score = result.get("score", result.get("relevance", 0))
-            content_parts.append(f"- {title} (score: {score:.2f})")
+            description = result.get("description", result.get("text_content", ""))
+            line = f"- {title} ({content_type}, score: {score:.2f})"
+            if description:
+                line += f": {description}"
+            content_parts.append(line)
 
         content_text = "\n".join(content_parts)
 

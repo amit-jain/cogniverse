@@ -554,6 +554,68 @@ class TestFlattenSearchHit:
         assert flat["title"] == "Keynote"
         assert flat["description"] == "welcome all"
 
+    @pytest.mark.parametrize(
+        ("metadata", "expected"),
+        [
+            (
+                {
+                    "video_id": "harbour",
+                    "video_title": "harbour_dawn.mp4",
+                    "segment_description": "A tugboat pushes a barge.",
+                    "audio_transcript": "Engines idle.",
+                },
+                (
+                    "harbour_dawn.mp4",
+                    "video",
+                    "A tugboat pushes a barge.\nEngines idle.",
+                ),
+            ),
+            (
+                {
+                    "code_id": "tides",
+                    "file_path": "src/tides.py",
+                    "chunk_name": "parse_tide_table",
+                    "source_code": "def parse_tide_table(text): ...",
+                },
+                (
+                    "src/tides.py:parse_tide_table",
+                    "code",
+                    "def parse_tide_table(text): ...",
+                ),
+            ),
+            (
+                {
+                    "image_id": "pier",
+                    "image_title": "pier.jpg",
+                    "image_description": "A wooden pier at low tide.",
+                },
+                ("pier.jpg", "image", "A wooden pier at low tide."),
+            ),
+            (
+                {
+                    "audio_id": "apiary",
+                    "audio_title": "apiary.wav",
+                    "audio_transcript": "The smoker is lit.",
+                },
+                ("apiary.wav", "audio", "The smoker is lit."),
+            ),
+            (
+                {
+                    "document_id": "silt",
+                    "document_title": "silt.md",
+                    "full_text": "Silt settles.",
+                },
+                ("silt.md", "document", "Silt settles."),
+            ),
+        ],
+    )
+    def test_every_profile_type_yields_its_title_type_and_content(
+        self, metadata, expected
+    ):
+        flat = _flatten_search_hit({"id": "hit", "score": 1.5, "metadata": metadata})
+        assert (flat["title"], flat["content_type"], flat["description"]) == expected
+        assert flat["text_content"] == expected[2]
+
     def test_hit_without_metadata_returned_unchanged(self):
         hit = {"video_id": "v", "source_url": "s3://b/t/v.mp4", "segment_id": 0}
         assert _flatten_search_hit(hit) is hit

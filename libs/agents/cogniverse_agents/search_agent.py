@@ -855,9 +855,10 @@ class SearchAgent(
             profiles = {}
 
         if active_profile and isinstance(profiles, dict) and active_profile in profiles:
-            model_name = profiles[active_profile].get(
-                "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
-            )
+            # The encoder factory resolves the query model from the profile:
+            # a ColBERT profile carrying a second, acoustic embedding queries
+            # its semantic_model, never its embedding_model.
+            model_name = None
             self.embedding_type = profiles[active_profile].get(
                 "embedding_type", "multi_vector"
             )

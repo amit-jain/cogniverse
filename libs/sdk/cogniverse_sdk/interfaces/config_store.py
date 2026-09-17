@@ -378,7 +378,9 @@ class ConfigStore(ABC):
         Import configurations for a tenant
 
         A payload carrying a schema-scope row raises ``ValueError`` before
-        any write: those rows are written only by the schema registry.
+        any write: those rows are written only by the schema registry. A row
+        that cannot be written raises ``RuntimeError`` after the versions the
+        import already wrote are removed: an import lands whole or not at all.
 
         Args:
             tenant_id: Tenant identifier

@@ -2902,15 +2902,25 @@ def _served_document_windows(text: str) -> tuple[list[str], int]:
     return [text[start:end] for start, end in spans], response.json()["window_tokens"]
 
 
-def _served_document_tokens(text: str) -> list[int]:
-    """``text`` tokenized by the model the document profile is served from."""
+E2E_HF_HUB_CACHE = Path.home() / ".cache/cogniverse-tests/huggingface/hub"
+
+
+def _served_document_tokens(
+    text: str, *, cache_dir: Path = E2E_HF_HUB_CACHE
+) -> list[int]:
+    """``text`` tokenized by the model the document profile is served from.
+
+    The tokenizer loads from the local cache only: a revision missing from
+    ``cache_dir`` raises at once instead of waiting on the Hub.
+    """
     from transformers import AutoTokenizer
 
     spec = get_inference_service_spec("colbert_pylate")
     tokenizer = AutoTokenizer.from_pretrained(
         spec.model_id,
         revision=spec.model_revision,
-        cache_dir=str(Path.home() / ".cache/cogniverse-tests/huggingface/hub"),
+        cache_dir=str(cache_dir),
+        local_files_only=True,
     )
     return tokenizer(text, add_special_tokens=False)["input_ids"]
 
@@ -3038,7 +3048,9 @@ class TestDocumentIngestionAndSearch:
 
             time.sleep(3)
 
-            query = "125 extracted sample video retrieval queries"
+            # A heading the fixture states once, so exactly one window holds it.
+            query = "Blender Foundation (Creative Commons)"
+            assert document_text.count(query) == 1
             search_resp = client.post(
                 "/search/",
                 json={
@@ -3062,12 +3074,8 @@ class TestDocumentIngestionAndSearch:
             # so the hit carries that window's slice, and it is the slice that
             # holds the sentence the query names.
             hit_text = search_resp.json()["results"][0]["metadata"]["full_text"]
-            holding = [
-                index
-                for index, window in enumerate(windows)
-                if "125 extracted queries" in window
-            ]
-            assert len(holding) == 1
+            holding = [index for index, window in enumerate(windows) if query in window]
+            assert holding == [1], [windows[index] for index in holding]
             assert hit_text == windows[holding[0]]
 
     def test_a_document_larger_than_the_window_is_indexed_whole(self, tmp_path):
@@ -3083,14 +3091,18 @@ class TestDocumentIngestionAndSearch:
         marker = f"tailmarker-{tenant_id.rsplit('_', 1)[1]}"
         _, window_tokens = _served_document_windows("probe")
         document_text = _text_over_three_windows(marker, window_tokens)
-        windows, _ = _served_document_windows(document_text)
-        tokens = _served_document_tokens(document_text)
+        # Ingestion windows the extracted text, which is the file stripped of
+        # surrounding whitespace; the fixture differs only by its final newline.
+        indexed_text = document_text.strip()
+        assert document_text == f"{indexed_text}\n"
+        windows, _ = _served_document_windows(indexed_text)
+        tokens = _served_document_tokens(indexed_text)
         expected_windows = math.ceil(len(tokens) / window_tokens)
         assert len(windows) == expected_windows
-        assert "".join(windows) == document_text
+        assert "".join(windows) == indexed_text
         # The whole document in one window is exactly the truncated index this
         # replaces, so the fixture has to outgrow a single window.
-        assert windows[0] != document_text
+        assert windows[0] != indexed_text
         holding = [index for index, window in enumerate(windows) if marker in window]
         assert holding == [expected_windows - 1]
 
@@ -3162,7 +3174,7 @@ class TestDocumentIngestionAndSearch:
             (int(row["chunk_start"]), int(row["chunk_end"])) for row in ordered
         ] == _window_spans(windows)
         assert [row["full_text"] for row in ordered] == windows
-        assert "".join(row["full_text"] for row in ordered) == document_text
+        assert "".join(row["full_text"] for row in ordered) == indexed_text
         assert [row["doc_id"] for row in ordered] == [
             f"{document_id}_{document_id}_w{index:04d}"
             for index in range(expected_windows)

@@ -156,3 +156,48 @@ def test_schema_rows_are_neither_exported_nor_imported():
         "schema_registry/schema_document_text"
     )
     assert store.export_configs("target:tenant")["configs"] == []
+
+
+def test_an_import_that_fails_partway_leaves_the_store_as_it_was():
+    """Mirrors ``VespaConfigStore``: an import is all or nothing."""
+    store = InMemoryConfigStore()
+    store.set_config(
+        "target:tenant", ConfigScope.AGENT, "search_agent", "settings", {"model": "m"}
+    )
+    payload = {
+        "configs": [
+            {
+                "scope": "agent",
+                "service": "search_agent",
+                "config_key": "settings",
+                "config_value": {"model": "imported"},
+            },
+            {
+                "scope": "agent",
+                "service": "search_agent",
+                "config_key": "fresh",
+                "config_value": {"n": 1},
+            },
+            {
+                "scope": "no-such-scope",
+                "service": "search_agent",
+                "config_key": "broken",
+                "config_value": {},
+            },
+        ]
+    }
+
+    with pytest.raises(RuntimeError) as raised:
+        store.import_configs(tenant_id="target:tenant", configs=payload)
+
+    assert str(raised.value) == (
+        "Configuration import for tenant target:tenant failed at row 3 of 3 "
+        "(search_agent/broken): 'no-such-scope' is not a valid ConfigScope; "
+        "removed 2 of the 2 versions it had written"
+    )
+    assert [
+        (entry["config_key"], entry["version"], entry["config_value"])
+        for entry in store.export_configs("target:tenant", include_history=True)[
+            "configs"
+        ]
+    ] == [("settings", 1, {"model": "m"})]

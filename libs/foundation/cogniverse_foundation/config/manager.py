@@ -99,6 +99,9 @@ class ConfigManager:
         # `set_system_config` so live updates still propagate.
         self._system_config_cache: Optional[SystemConfig] = None
         self._system_config_lock = threading.Lock()
+        # A process's explicitly deployed inference endpoints, served in
+        # place of the persisted ones and never written to the store.
+        self._pinned_inference_service_urls: Optional[Dict[str, str]] = None
         # Per-tenant scoped configs (routing/telemetry/backend) are read on
         # every request via ConfigUtils' ensure cascade — each read was a
         # separate store round-trip (a YQL query against Vespa). Cache the
@@ -171,11 +174,11 @@ class ConfigManager:
         # The cache still saves the expensive store round-trip; the copy of a
         # small dataclass is cheap by comparison.
         if self._system_config_cache is not None:
-            return copy.deepcopy(self._system_config_cache)
+            return self._served_system_config(self._system_config_cache)
 
         with self._system_config_lock:
             if self._system_config_cache is not None:
-                return copy.deepcopy(self._system_config_cache)
+                return self._served_system_config(self._system_config_cache)
 
             entry = self.store.get_config(
                 tenant_id=self._SYSTEM_TENANT_ID,
@@ -191,7 +194,24 @@ class ConfigManager:
                 cfg = SystemConfig.from_dict(entry.config_value)
 
             self._system_config_cache = cfg
-            return copy.deepcopy(cfg)
+            return self._served_system_config(cfg)
+
+    def _served_system_config(self, cached: SystemConfig) -> SystemConfig:
+        served = copy.deepcopy(cached)
+        pinned = self._pinned_inference_service_urls
+        if pinned is not None:
+            served.inference_service_urls = dict(pinned)
+        return served
+
+    def pin_inference_service_urls(self, service_urls: Dict[str, str]) -> None:
+        """Serve ``service_urls`` as the system config's inference endpoints.
+
+        Every later ``get_system_config`` from this manager carries exactly
+        these endpoints in place of the persisted discovery. Nothing is
+        written to the store, so other processes keep reading the persisted
+        endpoints.
+        """
+        self._pinned_inference_service_urls = dict(service_urls)
 
     def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
         """Set system-wide infrastructure configuration.

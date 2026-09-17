@@ -16,6 +16,7 @@ import subprocess
 
 import httpx
 import pytest
+from inspect_ai._util.registry import registry_unqualified_name
 
 from cogniverse_evaluation.core.inspect_scorers import get_configured_scorers
 from cogniverse_evaluation.data.datasets import INPUT_KEYS, OUTPUT_KEYS, DatasetManager
@@ -71,14 +72,16 @@ def _exec_in_pod(argv: list[str], *, timeout: int = 300) -> subprocess.Completed
     )
 
 
+def _eval_config(runtime_url: str) -> dict:
+    return {
+        "runtime_url": runtime_url,
+        "tenant_id": TENANT_ID,
+        "top_k": EVAL_TOP_K,
+    }
+
+
 def _write_eval_config_in_pod(path: str, runtime_url: str) -> None:
-    payload = json.dumps(
-        {
-            "runtime_url": runtime_url,
-            "tenant_id": TENANT_ID,
-            "top_k": EVAL_TOP_K,
-        }
-    )
+    payload = json.dumps(_eval_config(runtime_url))
     result = _exec_in_pod(
         [
             "python3",
@@ -173,8 +176,13 @@ def evaluation_dataset() -> tuple[str, list[dict]]:
     run_async(provider.datasets.delete_dataset(name))
 
 
-def _configured_scorer_names() -> set[str]:
-    return {scorer.__name__ for scorer in get_configured_scorers({})}
+def _configured_scorer_names(config: dict) -> set[str]:
+    """The names Inspect keys a sample's scores by, for the scorers the CLI
+    builds from ``config``: each scorer's registry name, not the name of the
+    inner function it returns."""
+    return {
+        registry_unqualified_name(scorer) for scorer in get_configured_scorers(config)
+    }
 
 
 def _runtime_result_ids(query: str, profile: str) -> list[str]:
@@ -233,7 +241,14 @@ class TestEvaluationCLIReportsTheRunsRealStatus:
             [row["expected_videos"]] for row in rows
         ], exported
 
-        scorer_names = _configured_scorer_names()
+        scorer_names = _configured_scorer_names(_eval_config(IN_POD_RUNTIME_URL))
+        assert scorer_names == {
+            "relevance_scorer",
+            "diversity_scorer",
+            "result_count_scorer",
+            "precision_scorer",
+            "recall_scorer",
+        }, scorer_names
         for exported_row, source_row in zip(exported, rows, strict=True):
             assert set(exported_row) == {
                 "eval_id",

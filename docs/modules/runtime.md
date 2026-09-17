@@ -908,6 +908,8 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 
 **POST /agents/{agent_name}/process** - Process task with agent in-process. Dispatches by capability: `routing` routes through `OrchestratorAgent` (with memory, query enhancement, entity extraction) and executes the recommended downstream agent via `_execute_downstream_agent`; `search`/`video_search`/`retrieval` execute via `SearchService`; `summarization`/`detailed_report`/`text_analysis` instantiate their respective agents; unsupported capabilities raise `ValueError`. Supports multi-turn conversations via `conversation_history` field — a list of `{"role": "user"|"agent", "content": "..."}` dicts. When present, search agents rewrite queries using `ConversationalQueryRewriteModule` to resolve anaphoric references (e.g., "show me more" → "show me more basketball videos"). The response includes `original_query` and `rewritten_query` fields when rewriting occurs.
 
+`context.max_output_tokens`, when set, caps the completion every LM call of the dispatch may produce; the endpoint's configured `max_tokens` still applies when smaller. A value that is not a positive integer returns 400 before any generation.
+
 Error mapping: `VespaSearchDegraded` returns 503; `InferenceServiceUnavailableError` returns 503 naming the unavailable service — either an unconfigured service missing its in-process backend (an audio query with no `clap_embed` sidecar) or a configured sidecar that is unreachable (ColBERT pooling when the `colbert-pylate` pod is down); `ValueError` returns 404, 501 or 400 by message. Any other failure returns 500 with a JSON `detail` naming the agent, the exception type and the `request_id` — the traceback and the exception text stay in the runtime log, since backend URLs there can carry credentials.
 
 **POST /agents/{agent_name}/message** - Enqueue an inbound message for a running agent session (202 on success)
@@ -958,6 +960,8 @@ router's own decision, read from `context["detected_modalities"]` when the
 request came through the gateway, otherwise the model-independent branch of
 that same classifier. Several matching profiles are searched together and
 merged by the SearchAgent's RRF ensemble.
+
+Each hit reaches the answer agent with `title` (the schema's title field; a code chunk's `file_path:chunk_name`), `content_type` (from its `video_id`, `audio_id`, `code_id`, `image_id` or `document_id`) and `description` / `text_content`: every text field it carries — `segment_description`, `audio_transcript`, `full_text`, `image_description`, `source_code` — joined by newlines in that order. The summary and the detailed report hand each hit to the LM as `- title (content_type, relevance|score: N.NN): content`.
 
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
 `profiles`, `degraded_profiles`, `degraded_query_rewrite`,

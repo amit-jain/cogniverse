@@ -320,7 +320,8 @@ class InMemoryConfigStore(ImmutableConfigStore):
         The destination belongs to the call: tenant ids carried by the
         payload are ignored, so an export taken from one tenant restores
         into whichever tenant the caller names. Schema-scope rows are refused
-        before any write, as ``VespaConfigStore.import_configs`` refuses them.
+        before any write, and a row that cannot be written leaves the store as
+        it was before the import, as ``VespaConfigStore.import_configs`` does.
         """
         schema_rows = [
             f"{entry.get('service')}/{entry.get('config_key')}"
@@ -334,19 +335,39 @@ class InMemoryConfigStore(ImmutableConfigStore):
                 "record deployments made by the schema registry and are not "
                 f"importable: {', '.join(schema_rows)}"
             )
+        config_entries = configs.get("configs", [])
         with self._lock:
-            count = 0
-            for config_data in configs.get("configs", []):
-                self.set_config(
-                    tenant_id=tenant_id,
-                    scope=ConfigScope(config_data["scope"]),
-                    service=config_data["service"],
-                    config_key=config_data["config_key"],
-                    config_value=config_data["config_value"],
-                )
-                count += 1
+            before = {
+                config_id: dict(versions)
+                for config_id, versions in self._storage.items()
+            }
+            for index, config_data in enumerate(config_entries):
+                try:
+                    self.set_config(
+                        tenant_id=tenant_id,
+                        scope=ConfigScope(config_data["scope"]),
+                        service=config_data["service"],
+                        config_key=config_data["config_key"],
+                        config_value=config_data["config_value"],
+                    )
+                except Exception as error:
+                    written = sum(
+                        len(versions) - len(before.get(config_id, {}))
+                        for config_id, versions in self._storage.items()
+                    )
+                    self._storage = before
+                    label = (
+                        f"{config_data.get('service')}/{config_data.get('config_key')}"
+                        if isinstance(config_data, dict)
+                        else f"index {index}"
+                    )
+                    raise RuntimeError(
+                        f"Configuration import for tenant {tenant_id} failed at row "
+                        f"{index + 1} of {len(config_entries)} ({label}): {error}; "
+                        f"removed {written} of the {written} versions it had written"
+                    ) from error
 
-            return count
+            return len(config_entries)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get storage statistics."""

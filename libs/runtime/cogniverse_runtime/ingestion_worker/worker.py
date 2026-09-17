@@ -477,10 +477,7 @@ def _prepare_job_context(service_urls: dict[str, str] | None):
     # absence leaves persisted discovery unchanged. Local-only; no
     # Vespa persist (main.py remains authoritative).
     if service_urls is not None:
-        explicit_urls = dict(service_urls)
-        system_config = config_manager.get_system_config()
-        if system_config.inference_service_urls != explicit_urls:
-            system_config.inference_service_urls = explicit_urls
+        config_manager.pin_inference_service_urls(service_urls)
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
