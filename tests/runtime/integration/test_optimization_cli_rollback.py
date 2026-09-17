@@ -65,8 +65,8 @@ def _run_cli(
     env = dict(os.environ)
     # Point the subprocess at the docker-managed Phoenix from
     # tests/conftest.py (per-pid HTTP / OTLP gRPC ports).
-    env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
-    env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
+    env["TELEMETRY_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
+    env["TELEMETRY_OTLP_ENDPOINT"] = phoenix_container["otlp_endpoint"]
     if env_overlay:
         env.update(env_overlay)
     return subprocess.run(
@@ -308,7 +308,7 @@ async def test_rollback_publication_preserves_complete_concurrent_reads(
                     "1",
                 ],
                 phoenix_container,
-                {"PHOENIX_HTTP_ENDPOINT": proxy.url},
+                {"TELEMETRY_HTTP_ENDPOINT": proxy.url},
             )
         )
         try:

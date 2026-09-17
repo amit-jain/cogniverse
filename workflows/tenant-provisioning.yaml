@@ -5,6 +5,7 @@ metadata:
   namespace: cogniverse
 spec:
   entrypoint: provisioning-pipeline
+  serviceAccountName: cogniverse-tenant-provisioning
 
   arguments:
     parameters:
@@ -63,15 +64,22 @@ spec:
       args:
         - |
           set -e
+          export LC_ALL=C
           echo "Validating tenant configuration..."
 
-          # Check tenant ID format
-          if [[ ! "{{workflow.parameters.tenant-id}}" =~ ^[a-z0-9_]+$ ]]; then
-            echo "ERROR: Invalid tenant ID format (use lowercase alphanumeric and underscores)"
+          # The tenant id labels the tenant's resources and names the namespace
+          # cogniverse-<tenant-id> with underscores as hyphens, which must be
+          # an RFC 1123 label (at most 63 characters, alphanumeric at both
+          # ends). Hyphens are refused so that mapping is one-to-one.
+          if [[ ! "$TENANT_ID" =~ ^[a-z0-9]([a-z0-9_]{0,50}[a-z0-9])?$ ]]; then
+            echo "ERROR: Invalid tenant ID '$TENANT_ID': use 1 to 52 lowercase alphanumerics and underscores, starting and ending with an alphanumeric, so that cogniverse-<tenant-id> with underscores as hyphens is a valid namespace name"
             exit 1
           fi
 
           echo "Tenant validation passed"
+      env:
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
       resources:
         requests:
           memory: "1Gi"
@@ -80,7 +88,8 @@ spec:
           memory: "2Gi"
           cpu: "1"
 
-  # Create Kubernetes namespace for tenant
+  # Create Kubernetes namespace for tenant. A namespace name allows no
+  # underscores, so the tenant id's underscores become hyphens in it.
   - name: create-namespace
     resource:
       action: create
@@ -88,7 +97,7 @@ spec:
         apiVersion: v1
         kind: Namespace
         metadata:
-          name: cogniverse-{{workflow.parameters.tenant-id}}
+          name: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
           labels:
             tenant: "{{workflow.parameters.tenant-id}}"
             managed-by: cogniverse
@@ -164,7 +173,7 @@ spec:
         kind: ResourceQuota
         metadata:
           name: tenant-quota
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
         spec:
           hard:
             requests.cpu: "{{workflow.parameters.cpu-quota}}"
@@ -182,7 +191,7 @@ spec:
         kind: PersistentVolumeClaim
         metadata:
           name: tenant-data
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
           labels:
             tenant: "{{workflow.parameters.tenant-id}}"
         spec:
@@ -257,7 +266,7 @@ spec:
         apiVersion: v1
         kind: Namespace
         metadata:
-          name: cogniverse-{{workflow.parameters.tenant-id}}
+          name: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
 
   - name: verify-storage
     resource:
@@ -267,7 +276,7 @@ spec:
         kind: PersistentVolumeClaim
         metadata:
           name: tenant-data
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
 
   - name: verify-tenant
     container:

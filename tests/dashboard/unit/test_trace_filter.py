@@ -9,10 +9,12 @@ matches literal substrings (regex=False, na=False).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import pytest
 
-from cogniverse_dashboard.utils.traces import filter_traces_df
+from cogniverse_dashboard.utils.traces import filter_traces_df, span_window_end
 
 pytestmark = [pytest.mark.unit]
 
@@ -60,3 +62,43 @@ def test_nan_cell_excluded_without_exception():
     out = filter_traces_df(df, "Trace ID", "abc")
     assert list(out["trace_id"]) == ["abc123"]
     assert len(out) == 1
+
+
+@pytest.mark.parametrize(
+    ("now", "end"),
+    [
+        (
+            datetime(2026, 9, 17, 5, 36, 54, 687000, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 5, 37, 0, tzinfo=timezone.utc),
+        ),
+        (
+            datetime(2026, 9, 17, 5, 36, 30, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 5, 37, 0, tzinfo=timezone.utc),
+        ),
+        (
+            datetime(2026, 9, 17, 5, 36, 29, 999999, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 5, 36, 30, tzinfo=timezone.utc),
+        ),
+        (
+            datetime(2026, 9, 17, 23, 59, 45, tzinfo=timezone.utc),
+            datetime(2026, 9, 18, 0, 0, 0, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_span_window_end_is_the_bucket_boundary_after_now(now, end):
+    """A page rendered at ``now`` holds every span started up to ``now``.
+
+    The first case is the dashboard's render time for a tenant whose routing
+    decisions started at 05:36:42-05:36:48: a window ending at 05:36:30 held
+    none of them.
+    """
+    assert span_window_end(now) == end
+
+
+def test_renders_within_one_bucket_share_the_window_end():
+    """Reruns inside one 30-second bucket reuse one cache key."""
+    ends = {
+        span_window_end(datetime(2026, 9, 17, 5, 36, second, tzinfo=timezone.utc))
+        for second in range(30, 60)
+    }
+    assert ends == {datetime(2026, 9, 17, 5, 37, 0, tzinfo=timezone.utc)}

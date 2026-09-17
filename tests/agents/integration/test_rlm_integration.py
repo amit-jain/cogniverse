@@ -28,10 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class _MixinHost(RLMAwareMixin):
-    """The mixin as an agent hosts it: a tenant and the injected ConfigManager."""
+    """The mixin as an agent hosts it: the injected ConfigManager."""
 
-    def __init__(self, tenant_id: str = "test:unit"):
-        self.tenant_id = tenant_id
+    def __init__(self):
         store = InMemoryConfigStore()
         store.initialize()
         self.bind_config_manager(ConfigManager(store=store))
@@ -159,18 +158,24 @@ class TestRLMAwareMixinIntegration:
 
         # Get first instance
         rlm1 = mixin.get_rlm(
-            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=10
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
+            tenant_id="test:unit",
+            max_iterations=10,
         )
 
         # Get same config - should return same instance
         rlm2 = mixin.get_rlm(
-            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=10
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
+            tenant_id="test:unit",
+            max_iterations=10,
         )
         assert rlm1 is rlm2, "Same config should return cached instance"
 
         # Get different config - should return new instance
         rlm3 = mixin.get_rlm(
-            llm_config=LLMEndpointConfig(model="openai/gpt-4o"), max_iterations=20
+            llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
+            tenant_id="test:unit",
+            max_iterations=20,
         )
         assert rlm3 is not rlm1, "Different config should create new instance"
 
@@ -812,8 +817,6 @@ class TestRLMRealInferenceIntegration:
 
         context = "Python is a popular programming language for data science and ML."
 
-        # Production dispatcher stamps tenant_id on the agent before calling
-        # the mixin. Bare-mixin callers (tests/tooling) pass it explicitly.
         result = mixin.process_with_rlm(
             query="What is Python used for?",
             context=context,

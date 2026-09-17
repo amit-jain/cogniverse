@@ -237,14 +237,17 @@ provider = telemetry.get_provider(tenant_id="acme_corp")
 `cogniverse_telemetry_phoenix` itself reads no environment variables —
 `PhoenixProvider.initialize()` takes `http_endpoint`/`grpc_endpoint` from the
 `provider_config` dict shown above (or from `TelemetryManager.get_provider()`'s
-endpoint derivation off `TelemetryConfig.otlp_endpoint`). The runtime CLIs
-(`optimization_cli.py`, `quality_monitor_cli.py`) and the admin router read
-these two as a convenience for pointing tooling at a Phoenix instance:
+endpoint derivation off `TelemetryConfig.otlp_endpoint`). The runtime entrypoints
+and CLIs (`cogniverse-eval`, `optimization_cli.py`, `quality_monitor_cli.py`)
+read the deployment's Phoenix from the variables the chart sets:
 
 ```bash
-export PHOENIX_HTTP_ENDPOINT="http://localhost:6006"
-export PHOENIX_GRPC_ENDPOINT="localhost:4317"
+export TELEMETRY_HTTP_ENDPOINT="http://localhost:6006"
+export TELEMETRY_OTLP_ENDPOINT="localhost:4317"
 ```
+
+`quality_monitor_cli.py` additionally honours `PHOENIX_GRPC_ENDPOINT` for its
+XGBoost gate's provider.
 
 There is no `PHOENIX_API_KEY` support anywhere in this codebase today.
 

@@ -174,7 +174,11 @@ def test_the_dashboard_export_reports_every_record(page, history_corpus):
     panel = active_tab_panel(page)
     history_checkbox = panel.get_by_role("checkbox", name="Include Version History")
     expect(history_checkbox).to_have_count(1, timeout=30_000)
-    history_checkbox.check()
+    expect(history_checkbox).not_to_be_checked(timeout=30_000)
+    # Streamlit renders the input visually hidden; its label takes the click.
+    panel.locator('[data-testid="stCheckbox"]').filter(
+        has=page.get_by_role("checkbox", name="Include Version History")
+    ).locator("label").first.click()
     wait_for_script_idle(page)
     expect(history_checkbox).to_be_checked(timeout=30_000)
 

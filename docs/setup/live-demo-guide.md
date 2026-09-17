@@ -716,6 +716,7 @@ flowchart TD
 
 ```bash
 # Development — single evaluation cycle and exit
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id acme:production \
   --runtime-url http://localhost:28000 \
@@ -724,6 +725,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --once
 
 # Continuous monitoring (production Deployment)
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id acme:production \
   --runtime-url http://localhost:28000 \
@@ -734,6 +736,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --live-sample-count 20
 
 # With Argo integration (auto-submits optimization workflows)
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id acme:production \
   --runtime-url http://localhost:28000 \
@@ -748,7 +751,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--runtime-url` | `http://localhost:28000` | Runtime API URL for running golden queries |
-| `--phoenix-url` | `http://localhost:6006` | Phoenix HTTP endpoint — override to `http://localhost:26006` when targeting a `cogniverse up` (k3d) deployment from the host |
+| `--phoenix-url` | *(none)* | Phoenix HTTP endpoint, used when `TELEMETRY_HTTP_ENDPOINT` is unset (`http://localhost:26006` for a `cogniverse up` deployment from the host). `TELEMETRY_OTLP_ENDPOINT` is also required; the CLI exits 2 when either endpoint is missing |
 | `--golden-interval` | 7200 (2h) | Seconds between golden set evaluations |
 | `--live-interval` | 14400 (4h) | Seconds between live traffic evaluations |
 | `--live-sample-count` | 20 | Spans to sample per agent for live eval |
@@ -1169,6 +1172,7 @@ python -m cogniverse_runtime.optimization_cli \
   --mode workflow --tenant-id acme:production
 
 # 7. Start quality monitor (continuous)
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id acme:production \
   --runtime-url http://localhost:28000 \

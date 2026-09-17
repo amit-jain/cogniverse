@@ -92,6 +92,7 @@ CHART_ROUTER_CONFIG = (
 )
 QUERY = "summarise what this tenant has ingested"
 AGENT = "summarizer_agent"
+TIER_REFRESH_AGENT = "search_agent"
 # Spans reach Phoenix through the runtime's batch exporter; measured on this
 # cluster the served-model attribute is readable 4-9 s after the dispatch
 # returns, so the read polls up to this long before it reports what it saw.
@@ -1106,6 +1107,11 @@ def test_the_tier_refresh_does_not_stall_the_event_loop(request):
     retries and backoff. That read is the whole of this test's window: a
     second client polls liveness for the dispatch's duration and every poll
     must be answered.
+
+    The dispatch is a search: it resolves the tier to bind the routed LM for
+    its query rewrite, and a rewrite the LM does not complete degrades to the
+    query as written, so the request's outcome is the search's, whatever the
+    LM writes.
     """
     request.addfinalizer(bootstrap_seeded_tenant_tier)
     canonical = canonical_tenant_id(TENANT_ID)
@@ -1115,9 +1121,9 @@ def test_the_tier_refresh_does_not_stall_the_event_loop(request):
     with LoopProbe() as probe:
         with httpx.Client(timeout=600.0) as client:
             response = client.post(
-                f"{RUNTIME}/agents/{AGENT}/process",
+                f"{RUNTIME}/agents/{TIER_REFRESH_AGENT}/process",
                 json={
-                    "agent_name": AGENT,
+                    "agent_name": TIER_REFRESH_AGENT,
                     "query": QUERY,
                     "context": {"tenant_id": TENANT_ID},
                 },
@@ -1127,8 +1133,14 @@ def test_the_tier_refresh_does_not_stall_the_event_loop(request):
     assert response.status_code == 200, response.text[:600]
     body = response.json()
     assert body["status"] == "success", body
-    assert body["agent"] == AGENT, body
-    assert body["message"] == f"Generated summary for '{QUERY}'", body["message"]
+    assert body["agent"] == TIER_REFRESH_AGENT, body
+    assert body["results_count"] == len(body["results"]), body
+    searched = body["query_rewrite"]["enhanced_query"] or QUERY
+    assert body["message"] == (
+        f"Found {body['results_count']} results for '{searched}'"
+        if body["results_count"]
+        else f"No results found for '{searched}'"
+    ), body["message"]
     assert_loop_served(served)
     # The refresh resolved the tier the admin write stored, so the offload
     # cannot be achieved by skipping the read.

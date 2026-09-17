@@ -1105,6 +1105,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                     query=input.query,
                     context=results_context,
                     rlm_options=input.rlm,
+                    tenant_id=input.tenant_id or SYSTEM_TENANT_ID,
                 )
                 rlm_synthesis = rlm_result.answer
                 rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(results_context))

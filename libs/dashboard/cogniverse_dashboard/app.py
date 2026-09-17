@@ -49,13 +49,13 @@ sys.path.insert(0, str(project_root))
 # Import A2A client for agent communication
 import httpx
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 from cogniverse_dashboard.utils.traces import (
     fetch_tenant_traces_safely,
     filter_traces_df,
+    span_window_end,
 )
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
@@ -64,7 +64,7 @@ from cogniverse_evaluation.analysis.root_cause_analysis import (
 # PhoenixAnalytics is Phoenix-specific (concrete fetcher of spans);
 # TraceMetrics is the provider-agnostic dataclass and lives at the
 # canonical evaluation-provider location.
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.context import trace_headers
 from cogniverse_telemetry_phoenix.evaluation.analytics import (
     PhoenixAnalytics as Analytics,
@@ -74,13 +74,13 @@ _config_manager = create_default_config_manager()
 _system_config = _config_manager.get_system_config()
 RUNTIME_URL = _system_config.agent_registry_url
 
-# Propagate telemetry endpoint from SystemConfig to TelemetryManager singleton
-if _system_config.telemetry_collector_endpoint != "localhost:4317":
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+# Propagate telemetry endpoints from SystemConfig to the TelemetryManager
+from cogniverse_foundation.telemetry.manager import configure_telemetry_endpoints
 
-    _tm = get_telemetry_manager()
-    _tm.config.otlp_endpoint = _system_config.telemetry_collector_endpoint
-    _tm._tenant_providers.clear()
+configure_telemetry_endpoints(
+    otlp_endpoint=_system_config.telemetry_collector_endpoint,
+    http_endpoint=_system_config.telemetry_url,
+)
 
 
 def stream_agent_call(
@@ -396,6 +396,9 @@ st.session_state["backend_url"] = _system_config.backend_url
 st.session_state["backend_port"] = str(_system_config.backend_port)
 st.session_state["runtime_url"] = RUNTIME_URL
 st.session_state["phoenix_url"] = _system_config.telemetry_url
+st.session_state["telemetry_collector_endpoint"] = (
+    _system_config.telemetry_collector_endpoint
+)
 st.session_state["redis_url"] = os.environ.get("REDIS_URL")
 
 # Sidebar configuration
@@ -451,10 +454,7 @@ with st.sidebar:
 
     # Phoenix stores span timestamps in UTC. Streamlit's date_input / time_input
     # return naive Python objects — attach tzinfo=UTC so the window matches.
-    # Quantized to 30s so the trace-fetch cache key repeats across reruns
-    # instead of being busted by a fresh now() on every widget interaction.
-    _now_utc = datetime.now(timezone.utc).replace(microsecond=0)
-    _now_utc = _now_utc.replace(second=(_now_utc.second // 30) * 30)
+    _now_utc = span_window_end(datetime.now(timezone.utc))
     if time_range == "Custom range":
         col1, col2 = st.columns(2)
         with col1:
@@ -1582,14 +1582,7 @@ if enable_rca and len(tabs) > 6:
                                     )
                                     st.code(trace_ids_query, language="python")
 
-                                    config_manager = create_default_config_manager()
-                                    config = get_config(
-                                        tenant_id=SYSTEM_TENANT_ID,
-                                        config_manager=config_manager,
-                                    )
-                                    phoenix_base_url = config.get(
-                                        "phoenix_base_url", "http://localhost:6006"
-                                    )
+                                    phoenix_base_url = _system_config.telemetry_url
                                     import base64
 
                                     project_encoded = base64.b64encode(
@@ -1693,13 +1686,7 @@ if enable_rca and len(tabs) > 6:
 
                 # Add link to view all failed traces
                 if summary.get("failed_traces", 0) > 0:
-                    config_manager = create_default_config_manager()
-                    config = get_config(
-                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-                    )
-                    phoenix_base_url = config.get(
-                        "phoenix_base_url", "http://localhost:6006"
-                    )
+                    phoenix_base_url = _system_config.telemetry_url
                     import base64
 
                     project_encoded = base64.b64encode(b"Project:1").decode("utf-8")
@@ -1787,13 +1774,7 @@ if enable_rca and len(tabs) > 6:
 
                     # Create DataFrame for temporal patterns
                     burst_data = []
-                    config_manager = create_default_config_manager()
-                    config = get_config(
-                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-                    )
-                    phoenix_base_url = config.get(
-                        "phoenix_base_url", "http://localhost:6006"
-                    )
+                    phoenix_base_url = _system_config.telemetry_url
                     import base64
 
                     project_encoded = base64.b64encode(b"Project:1").decode("utf-8")
@@ -1842,14 +1823,7 @@ if enable_rca and len(tabs) > 6:
                                     )
                                     phoenix_time_query = f'timestamp >= "{start_iso}" and timestamp <= "{end_iso}"'
                                     st.code(phoenix_time_query, language="python")
-                            config_manager = create_default_config_manager()
-                            config = get_config(
-                                tenant_id=SYSTEM_TENANT_ID,
-                                config_manager=config_manager,
-                            )
-                            phoenix_base_url = config.get(
-                                "phoenix_base_url", "http://localhost:6006"
-                            )
+                            phoenix_base_url = _system_config.telemetry_url
                             import base64
 
                             project_encoded = base64.b64encode(b"Project:1").decode(
@@ -1869,13 +1843,7 @@ if enable_rca and len(tabs) > 6:
 
                 # Add link to view slow traces
                 if summary.get("performance_degraded", 0) > 0 and "threshold" in perf:
-                    config_manager = create_default_config_manager()
-                    config = get_config(
-                        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-                    )
-                    phoenix_base_url = config.get(
-                        "phoenix_base_url", "http://localhost:6006"
-                    )
+                    phoenix_base_url = _system_config.telemetry_url
                     import base64
 
                     project_encoded = base64.b64encode(b"Project:1").decode("utf-8")
@@ -2811,9 +2779,7 @@ with main_tabs[10]:
                             name="phoenix",
                             tenant_id=st.session_state.get("current_tenant"),
                             config={
-                                "http_endpoint": agent_config.get(
-                                    "phoenix_base_url", "http://localhost:6006"
-                                ),
+                                "http_endpoint": _system_config.telemetry_url,
                                 "project_name": "cogniverse-search",
                             },
                         )

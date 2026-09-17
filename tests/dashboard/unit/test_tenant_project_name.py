@@ -185,6 +185,7 @@ def test_ab_compare_tile_names_the_producers_project(projects, monkeypatch) -> N
         load_ab_compare_data(
             tenant_id=_TENANT,
             phoenix_http_endpoint="http://127.0.0.1:1",
+            phoenix_grpc_endpoint="127.0.0.1:2",
             lookback_hours=1,
         )
     )

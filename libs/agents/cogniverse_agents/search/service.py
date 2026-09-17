@@ -65,44 +65,48 @@ class SearchService:
         logger.info("SearchService initialized (profile-agnostic)")
 
     def _get_profile_config(self, profile: str, tenant_id: str) -> Dict[str, Any]:
-        """Get profile configuration from backend config.
+        """Resolve ``profile`` for ``tenant_id`` as the backend and ingestion see it.
 
-        Reads from ConfigManager at query time so profiles added via
-        ``POST /admin/profiles`` or ``ConfigManager.add_backend_profile``
-        after SearchService was constructed are visible. Falls back to the
-        startup snapshot in ``self.config`` if ConfigManager lookup fails
-        (supports tests that don't fully wire one up).
-
-        Profiles are per-tenant, so the lookup is scoped by the caller's
-        request tenant.
+        The service's config snapshot holds the profile as its base; the
+        tenant's stored profile, read from ConfigManager at query time so a
+        profile added after construction is visible, is merged over that
+        base with the same rules ``ConfigUtils`` applies. A stored tenant
+        profile therefore overrides only the keys it sets, and keys it does
+        not carry (``result_granularity``, ``inference_services``) keep the
+        base value. A failed store read raises rather than answering from
+        the snapshot alone.
         """
+        from cogniverse_foundation.config.utils import merge_tenant_profile
+
         try:
             live = self.config_manager.get_backend_config(
                 tenant_id=tenant_id, service="backend"
             )
-            live_profile = live.profiles.get(profile) if live else None
-            if live_profile is not None:
-                to_dict = getattr(live_profile, "to_dict", None)
-                return to_dict() if callable(to_dict) else dict(live_profile)
         except Exception as exc:
-            logger.debug(
-                "Live profile lookup via ConfigManager failed for '%s' "
-                "(falling back to startup snapshot): %s",
-                profile,
-                exc,
-            )
+            raise RuntimeError(
+                f"Reading backend profile '{profile}' for tenant '{tenant_id}' "
+                f"failed: {exc}"
+            ) from exc
+        live_profile = live.profiles.get(profile) if live else None
 
         backend_config = self.config.get("backend", {})
         profiles = backend_config.get("profiles", {})
-        profile_config = profiles.get(profile)
+        base_profile = profiles.get(profile)
 
-        if not profile_config:
+        if live_profile is not None:
+            to_dict = getattr(live_profile, "to_dict", None)
+            tenant_profile = to_dict() if callable(to_dict) else dict(live_profile)
+            if not base_profile:
+                return tenant_profile
+            return merge_tenant_profile(dict(base_profile), tenant_profile)
+
+        if not base_profile:
             raise ValueError(
                 f"Profile '{profile}' not found in backend.profiles. "
                 f"Available profiles: {list(profiles.keys())}"
             )
 
-        return profile_config
+        return base_profile
 
     def _get_encoder(self, profile: str, profile_config: Dict[str, Any]):
         """Get or create the cached query encoder for the given profile.

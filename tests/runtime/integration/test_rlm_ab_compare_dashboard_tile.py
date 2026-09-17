@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import httpx
 import pandas as pd
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -220,6 +221,7 @@ class TestLoaderAgainstRealPhoenix:
         agg = asyncio.run(
             load_ab_compare_data(
                 phoenix_http_endpoint=phoenix_container["http_endpoint"],
+                phoenix_grpc_endpoint=phoenix_container["grpc_endpoint"],
                 tenant_id=tenant_id,
                 lookback_hours=24,
             )
@@ -256,6 +258,7 @@ class TestLoaderAgainstRealPhoenix:
         agg = asyncio.run(
             load_ab_compare_data(
                 phoenix_http_endpoint=phoenix_container["http_endpoint"],
+                phoenix_grpc_endpoint=phoenix_container["grpc_endpoint"],
                 tenant_id=tenant_id,
                 lookback_hours=1,
             )
@@ -276,6 +279,117 @@ class TestLoaderAgainstRealPhoenix:
         # InMemorySpanExporter end-to-end test. This real-Phoenix test's
         # job is to prove the spans land in Phoenix and the loader
         # finds them — that's what ``rows >= 1`` confirms.
+
+
+def test_an_unreachable_phoenix_raises_naming_the_endpoint():
+    """A span query that cannot reach Phoenix fails the load; it never reads
+    as the zero-row aggregate an empty project returns."""
+    dead_endpoint = "http://127.0.0.1:29073"
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(
+            load_ab_compare_data(
+                phoenix_http_endpoint=dead_endpoint,
+                phoenix_grpc_endpoint="127.0.0.1:29074",
+                tenant_id="b5dead:tile",
+                lookback_hours=1,
+            )
+        )
+
+    assert str(excinfo.value) == (
+        "ab-compare spans for tenant 'b5dead:tile' could not be read from "
+        f"Phoenix at {dead_endpoint}: All connection attempts failed"
+    )
+    assert (
+        type(excinfo.value.__cause__),
+        str(excinfo.value.__cause__),
+    ) == (httpx.ConnectError, "All connection attempts failed")
+
+
+def test_the_tile_renders_an_unconfigured_phoenix_as_an_error():
+    from streamlit.testing.v1 import AppTest
+
+    def _script():
+        import streamlit as st
+
+        from cogniverse_dashboard.tabs.rlm_ab_compare import render_rlm_ab_compare_tab
+
+        st.session_state["current_tenant"] = "acme:acme"
+        render_rlm_ab_compare_tab()
+
+    app = AppTest.from_function(_script, default_timeout=60).run()
+
+    assert [e.message for e in app.exception] == []
+    assert [e.value for e in app.error] == [
+        "Phoenix is not configured for this dashboard: telemetry_url=None, "
+        "telemetry_collector_endpoint=None"
+    ]
+    assert [t.label for t in app.text_input] == []
+
+
+def test_the_tile_loads_spans_from_the_session_endpoints(
+    phoenix_container,
+):
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.resources import Resource
+    from streamlit.testing.v1 import AppTest
+
+    tenant_id = f"b5sess{uuid.uuid4().hex[:8]}:tile"
+    provider = TracerProvider(
+        resource=Resource.create(
+            {"openinference.project.name": f"cogniverse-{tenant_id}"}
+        )
+    )
+    provider.add_span_processor(
+        SimpleSpanProcessor(
+            OTLPSpanExporter(endpoint=phoenix_container["otlp_endpoint"], insecure=True)
+        )
+    )
+    tracer = provider.get_tracer("test")
+    for ab_id in ("sess_a", "sess_b"):
+        with tracer.start_as_current_span(SPAN_NAME) as span:
+            span.set_attribute("openinference.ab_id", ab_id)
+            span.set_attribute("openinference.ab_latency_delta_ms", 5.0)
+            span.set_attribute("openinference.ab_tokens_delta", 3)
+            span.set_attribute("openinference.queries_dataset", "ds_session")
+    provider.shutdown()
+
+    def _script(http_endpoint, grpc_endpoint, tenant):
+        import streamlit as st
+
+        from cogniverse_dashboard.tabs.rlm_ab_compare import render_rlm_ab_compare_tab
+
+        st.session_state["current_tenant"] = tenant
+        st.session_state["phoenix_url"] = http_endpoint
+        st.session_state["telemetry_collector_endpoint"] = grpc_endpoint
+        render_rlm_ab_compare_tab()
+
+    import time
+
+    deadline = time.monotonic() + 60
+    comparisons: list[str] = []
+    while time.monotonic() < deadline:
+        app = AppTest.from_function(
+            _script,
+            args=(
+                phoenix_container["http_endpoint"],
+                phoenix_container["grpc_endpoint"],
+                tenant_id,
+            ),
+            default_timeout=60,
+        ).run()
+        app.button[0].click().run()
+        comparisons = [m.value for m in app.metric if m.label == "Comparisons"]
+        # Phoenix ingests the two spans independently; one visible span
+        # renders "1" before the second lands.
+        if comparisons == ["2"]:
+            break
+        time.sleep(1)
+
+    assert [e.message for e in app.exception] == []
+    assert [e.value for e in app.error] == []
+    assert comparisons == ["2"]
 
 
 def test_in_memory_exporter_round_trip():

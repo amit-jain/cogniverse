@@ -22,6 +22,22 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 @pytest.fixture(autouse=True)
+def _restore_rlm_library_defaults(monkeypatch):
+    """Every entrypoint applies ``rlm_skip_deno_check`` and the promotion
+    knobs from the stub env; later tests in the process see the defaults."""
+    from cogniverse_agents import _rlm_promotion
+    from cogniverse_agents.inference import deno_check
+
+    monkeypatch.setattr(deno_check, "_skip_deno_check", deno_check._skip_deno_check)
+    monkeypatch.setattr(
+        _rlm_promotion, "_promotion_enabled", _rlm_promotion._promotion_enabled
+    )
+    monkeypatch.setattr(
+        _rlm_promotion, "_promotion_fraction", _rlm_promotion._promotion_fraction
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_s3_backend_defaults():
     s3_backend.configure_s3_backend_defaults(
         endpoint=None, access_key=None, secret_key=None
@@ -200,6 +216,8 @@ def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
             "acme",
             "--llm-model",
             "gemma",
+            "--phoenix-url",
+            "http://phoenix-test:6006",
             "--annotation-cycle",
         ],
     )

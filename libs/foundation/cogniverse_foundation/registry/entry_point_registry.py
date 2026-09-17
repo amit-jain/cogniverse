@@ -52,6 +52,9 @@ _CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
 _EVICTED_CLOSE_GRACE_S = 60.0
 _pending_close: "List[Tuple[float, str, Any]]" = []
 _pending_close_lock = threading.Lock()
+# Reentrant: loading one registry's plugin can import a module that runs
+# another registry's discovery on the same thread.
+_discover_lock = threading.RLock()
 
 
 def _close_instance_now(key: str, instance: Any) -> None:
@@ -185,7 +188,15 @@ class EntryPointRegistry(Generic[T]):
         """
         if cls._entry_points_loaded:
             return
+        # Single flight: a second pass over the entry points would meet the
+        # names the first pass registered and report them as conflicts.
+        with _discover_lock:
+            if cls._entry_points_loaded:
+                return
+            cls._discover_locked()
 
+    @classmethod
+    def _discover_locked(cls) -> None:
         logger.info("Discovering %ss via entry points...", cls._label)
 
         try:

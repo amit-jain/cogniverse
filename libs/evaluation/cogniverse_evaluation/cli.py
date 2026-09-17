@@ -5,6 +5,7 @@ Unified CLI for evaluation framework.
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from inspect_ai import eval as inspect_eval
 from cogniverse_evaluation.core import evaluation_task
 from cogniverse_evaluation.data import DatasetManager, TraceManager
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.telemetry.manager import configure_telemetry_endpoints
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +35,12 @@ def cli(verbose):
     """Cogniverse Evaluation Framework CLI."""
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    # The deployment names its Phoenix through these variables; every
+    # provider this process builds reads them from the telemetry manager.
+    configure_telemetry_endpoints(
+        otlp_endpoint=os.environ.get("TELEMETRY_OTLP_ENDPOINT"),
+        http_endpoint=os.environ.get("TELEMETRY_HTTP_ENDPOINT"),
+    )
 
 
 def _require_successful(results) -> list:

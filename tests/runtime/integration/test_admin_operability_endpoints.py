@@ -41,12 +41,12 @@ def phoenix_env(phoenix_container):
     """Point the canary/pin-quota endpoints at the docker-managed Phoenix
     (per-pid port). The router reads the module state wired at startup via
     set_phoenix_endpoints, not the process environment."""
-    saved = dict(admin._phoenix_endpoints)
+    saved = admin._phoenix_endpoints
     admin.set_phoenix_endpoints(
         phoenix_container["http_endpoint"], phoenix_container["otlp_endpoint"]
     )
     yield
-    admin.set_phoenix_endpoints(saved["http_endpoint"], saved["grpc_endpoint"])
+    admin._phoenix_endpoints = saved
 
 
 # ----- pin-quota endpoints ----------------------------------------------

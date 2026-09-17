@@ -46,6 +46,7 @@ from cogniverse_dashboard.telemetry_gate import (
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_dashboard.utils.runtime_client import get_runtime_client
+from cogniverse_dashboard.utils.traces import span_window_end
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 # Columns of the Recent Optimization History table, in render order.
@@ -98,9 +99,14 @@ def _fetch_optimization_runs(tenant_id: str) -> OptimizationRuns:
 
 
 def _format_run_age(started_at: Optional[str], now: datetime) -> str:
-    """Whole-unit age of a run start, or ``"unknown"`` when Argo has none."""
+    """Whole-unit age of a run start.
+
+    Argo sets ``startedAt`` when its controller starts the Workflow, so a run
+    without one has ``"not started"``; a start Argo reports but that does not
+    parse is ``"unknown"``.
+    """
     if not started_at:
-        return "unknown"
+        return "not started"
     try:
         started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
     except ValueError:
@@ -1785,10 +1791,7 @@ def _render_metrics_dashboard_tab():
             tenant_id=st.session_state["current_tenant"]
         )
 
-        # Calculate time range, quantized to 30s so cache keys repeat
-        # across reruns.
-        end_time = datetime.now(timezone.utc).replace(microsecond=0)
-        end_time = end_time.replace(second=(end_time.second // 30) * 30)
+        end_time = span_window_end(datetime.now(timezone.utc))
         start_time = end_time - timedelta(days=lookback_days)
 
         # Get spans from provider — cached; a miss pulls the full project

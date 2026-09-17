@@ -1050,13 +1050,19 @@ def _lookup_artifact_manager(tenant_id: str, config_manager: ConfigManager):
     grpc_endpoint = sys_cfg.telemetry_collector_endpoint
     if not http_endpoint and not grpc_endpoint:
         return None
+    if not http_endpoint or not grpc_endpoint:
+        raise ValueError(
+            f"artifact store for tenant {tenant_id!r} needs both Phoenix "
+            f"endpoints; SystemConfig has telemetry_url={http_endpoint!r}, "
+            f"telemetry_collector_endpoint={grpc_endpoint!r}"
+        )
 
     provider = PhoenixProvider()
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": http_endpoint or "http://localhost:6006",
-            "grpc_endpoint": grpc_endpoint or "localhost:4317",
+            "http_endpoint": http_endpoint,
+            "grpc_endpoint": grpc_endpoint,
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
