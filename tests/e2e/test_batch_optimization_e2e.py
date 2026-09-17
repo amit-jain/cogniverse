@@ -7407,8 +7407,11 @@ class TestOptimizationRunListing:
     def test_the_optimization_overview_renders_the_tenants_runs(
         self, page, optimization_run_listing_tenants
     ):
+        from datetime import datetime, timezone
+
         from playwright.sync_api import expect
 
+        from cogniverse_dashboard.tabs.optimization import _format_run_age
         from tests.e2e.conftest import (
             DASHBOARD,
             active_sub_tab_panel,
@@ -7421,6 +7424,7 @@ class TestOptimizationRunListing:
 
         owner, _, submitted = optimization_run_listing_tenants
         runs = _runs_agreeing_with_status(owner, submitted)
+        rendered_from = datetime.now(timezone.utc)
 
         page.goto(DASHBOARD, timeout=30_000)
         wait_for_streamlit(page)
@@ -7433,10 +7437,43 @@ class TestOptimizationRunListing:
         panel = active_sub_tab_panel(page)
         metrics = panel.locator('[data-testid="stMetric"]')
         expect(metrics).to_have_count(4, timeout=30_000)
-        metric_text = " ".join(
-            metrics.nth(index).inner_text() for index in range(metrics.count())
+        tiles = {
+            (metric.locator('[data-testid="stMetricLabel"]').inner_text()).strip(): (
+                metric.locator('[data-testid="stMetricValue"]').inner_text()
+            ).strip()
+            for metric in metrics.all()
+        }
+        rendered_by = datetime.now(timezone.utc)
+        runs_after = _runs_agreeing_with_status(owner, submitted)
+
+        # The newest run can start, or its age can cross a minute, while the
+        # page renders; the tile is the newest run as listed on either side of
+        # the render, aged at either end of it.
+        last_optimization = {
+            f"{_format_run_age(listed[0]['started_at'], at)} "
+            f"({listed[0]['phase'] or 'Pending'})"
+            for listed in (runs, runs_after)
+            for at in (rendered_from, rendered_by)
+        }
+        assert set(tiles) == {
+            "Total Annotations",
+            "Golden Dataset Size",
+            "Optimization Runs",
+            "Last Optimization",
+        }, tiles
+        assert tiles["Last Optimization"] in last_optimization, (
+            tiles,
+            last_optimization,
         )
-        assert f"Optimization Runs\n{len(runs)}" in metric_text, metric_text
+        assert {
+            label: value
+            for label, value in tiles.items()
+            if label != "Last Optimization"
+        } == {
+            "Total Annotations": "0",
+            "Golden Dataset Size": "0",
+            "Optimization Runs": str(len(runs)),
+        }, tiles
 
         table = panel.locator('[data-testid="stDataFrame"]')
         expect(table).to_have_count(1, timeout=30_000)
