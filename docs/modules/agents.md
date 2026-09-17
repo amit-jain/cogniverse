@@ -3869,6 +3869,7 @@ class SearchAgent(RLMAwareMixin, MemoryAwareMixin, A2AAgent[...]):
                 query=input.query,
                 context=results_context,
                 rlm_options=input.rlm,
+                tenant_id=input.tenant_id,
             )
             return SearchOutput(
                 results=results,
@@ -3877,13 +3878,17 @@ class SearchAgent(RLMAwareMixin, MemoryAwareMixin, A2AAgent[...]):
             )
 ```
 
+`process_with_rlm` and `get_rlm` take the request's `tenant_id` as a required
+keyword argument (an empty one raises `ValueError`): one agent instance serves
+every tenant, so the tenant travels with the call, never on the instance.
 `get_rlm` routes the RLM endpoint through the gateway (task `rlm_inference`)
-for the host's tenant before building the LM. It reads the host's
-`config_manager` (SearchAgent exposes `config_manager`; CodingAgent,
-DeepResearchAgent, and DetailedReportAgent store `_config_manager`) and the
-resolved tenant; when either is absent or routing is disabled the endpoint is
-used unchanged. The non-event cache keys on the routed identity (model +
-`api_base` + headers), so a tenant change invalidates a stale routed instance.
+for that tenant before building the LM, reading the host's `config_manager`
+(SearchAgent exposes `config_manager`; CodingAgent, DeepResearchAgent, and
+DetailedReportAgent store `_config_manager`); with routing disabled the endpoint
+is used unchanged. The non-event instance is reused only while the tenant, the
+routed identity (model + `api_base` + headers) and the caps match, and each
+call returns the instance built for its own key even when a concurrent request
+replaces the cached one.
 `WikiManager._merge_with_rlm` routes the same way via its own `config_manager`.
 
 ### A/B Testing with RLM

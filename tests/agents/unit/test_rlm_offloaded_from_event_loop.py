@@ -26,6 +26,7 @@ from cogniverse_agents.multi_document_synthesis_agent import (
     MultiDocumentSynthesisAgent,
 )
 from cogniverse_agents.temporal_reasoning_agent import TemporalReasoningAgent
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -47,7 +48,7 @@ async def test_optional_rlm_keeps_concurrent_requests_running(agent_kind, fail):
     calls = []
 
     def synthesis(**kwargs):
-        calls.append(kwargs["query"])
+        calls.append((kwargs["query"], kwargs["tenant_id"]))
         entered.set()
         assert release.wait(3), "RLM held the serving event loop"
         if fail:
@@ -118,7 +119,7 @@ async def test_optional_rlm_keeps_concurrent_requests_running(agent_kind, fail):
 
     output, independent = await asyncio.gather(operation(request), concurrent_request())
     assert independent == {"tenant": "tenant:b", "status": "healthy"}
-    assert calls == ["tenant-a task"]
+    assert calls == [("tenant-a task", "tenant:a")]
     if fail:
         assert output.rlm_synthesis is None
         assert output.rlm_telemetry == {
@@ -213,8 +214,10 @@ async def test_detailed_report_process_impl_offloads_rlm():
     from cogniverse_core.agents.rlm_options import RLMOptions
 
     release = threading.Event()
+    rlm_tenants = []
 
-    def blocking_process_with_rlm(query, context, rlm_options):
+    def blocking_process_with_rlm(query, context, rlm_options, tenant_id):
+        rlm_tenants.append(tenant_id)
         assert release.wait(timeout=5), "event loop was blocked by process_with_rlm"
         return RLMResult(
             answer="synth",
@@ -267,6 +270,9 @@ async def test_detailed_report_process_impl_offloads_rlm():
     assert out.rlm_synthesis == "synth"
     assert out.rlm_telemetry["rlm_enabled"] is True
     assert out.rlm_telemetry["rlm_total_calls"] == 1
+    # A report with no tenant runs its RLM as the system tenant, the tenant
+    # its LM is routed for.
+    assert rlm_tenants == [SYSTEM_TENANT_ID]
 
 
 @pytest.mark.asyncio
