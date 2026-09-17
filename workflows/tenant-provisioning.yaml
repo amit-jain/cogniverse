@@ -5,6 +5,7 @@ metadata:
   namespace: cogniverse
 spec:
   entrypoint: provisioning-pipeline
+  serviceAccountName: cogniverse-tenant-provisioning
 
   arguments:
     parameters:
