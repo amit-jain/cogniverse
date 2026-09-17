@@ -114,7 +114,7 @@ surface without repeating their implementation guides.
 
 | Model module | Public API | Purpose |
 | --- | --- | --- |
-| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model` | Local loader contracts, concrete loaders, loader selection, and cache lookup. |
+| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model`, `COLPALI_PROCESSOR_REVISIONS` | Local loader contracts, concrete loaders, loader selection, cache lookup, and the Hub processor revisions the ColPali loader pins. |
 | `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner` | Authenticated remote inference clients and cached GLiNER resolution. |
 | `models.semantic_embedder` | `SemanticEmbedder`, `LocalSentenceTransformerEmbedder`, `RemoteOpenAIEmbedder`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | Local or OpenAI-compatible semantic embedding and cache control. |
 

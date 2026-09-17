@@ -28,6 +28,7 @@ import threading
 from binascii import unhexlify
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -239,9 +240,19 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(graph_manage
 
 def test_query_encoding_sends_raw_text_with_is_query(graph_manager):
     manager, capture = graph_manager
+    existence_checks = []
+
+    def tenant_schema_exists(tenant_id, base_schema_name):
+        existence_checks.append((tenant_id, base_schema_name))
+        return (tenant_id, base_schema_name) == ("test_tenant", "knowledge_graph")
+
+    manager._resolve_backend().schema_manager = SimpleNamespace(
+        tenant_schema_exists=tenant_schema_exists
+    )
 
     results = manager.search_nodes("find me alpha", top_k=5)
     assert results == []
+    assert existence_checks == [("test_tenant", "knowledge_graph")]
 
     # The encoder sent the raw query text with is_query true — the service
     # applies the [Q] marker and query expansion itself.

@@ -27,7 +27,7 @@ def lateon_model():
     """The pinned LateOn revision loaded from the writable test-owned cache
     (the personal ~/.cache/huggingface can hold root-owned entries written
     by earlier containers, which break host-side loads)."""
-    pylate_models = pytest.importorskip("pylate.models")
+    import pylate.models as pylate_models
 
     from tests.utils.vllm_sidecar import writable_test_hf_cache
 

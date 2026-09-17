@@ -2672,3 +2672,54 @@ class TestQueryRewriteDegradesToTheOriginalQuery:
         assert 0.5 <= elapsed < 2.0, (
             f"a 0.5s rewrite budget against a 5s LM returned in {elapsed:.2f}s"
         )
+
+
+@pytest.mark.unit
+class TestSearchAgentResolvesItsTenantsProfiles:
+    """A profile a tenant defined for itself is resolved from that tenant's
+    config; the system tenant's config does not carry it."""
+
+    def _config_manager_with_tenant_profile(self):
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+        config_manager = _memory_config_manager()
+        config_manager.add_backend_profile(
+            BackendProfileConfig(
+                profile_name="acme_frames",
+                type="video",
+                schema_name="video_colpali_smol500_mv_frame",
+                embedding_model="acme/frame-encoder",
+                model_loader="colpali",
+            ),
+            tenant_id="acme:acme",
+        )
+        return config_manager
+
+    def test_the_tenant_profile_builds_its_encoder(self):
+        config_manager = self._config_manager_with_tenant_profile()
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            agent = SearchAgent(
+                deps=SearchAgentDeps(profile="acme_frames", tenant_id="acme:acme"),
+                schema_loader=mock_schema_loader,
+                config_manager=config_manager,
+            )
+
+        [call] = create_encoder.call_args_list
+        assert call.args[:2] == ("acme_frames", "acme/frame-encoder")
+        assert call.kwargs["config"] is agent.search_config
+        assert agent.search_config.tenant_id == "acme:acme"
+        assert agent.active_profile == "acme_frames"
+
+    def test_without_the_tenant_the_profile_is_unknown(self):
+        config_manager = self._config_manager_with_tenant_profile()
+        with pytest.raises(ValueError) as caught:
+            SearchAgent(
+                deps=SearchAgentDeps(profile="acme_frames"),
+                schema_loader=mock_schema_loader,
+                config_manager=config_manager,
+            )
+        assert str(caught.value).startswith(
+            "Unknown profile: acme_frames. Available profiles: ["
+        )

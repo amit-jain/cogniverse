@@ -926,7 +926,7 @@ class TestBrightVideoProbesOrchestrator:
         endpoint = LLMEndpointConfig(
             model=primary.get("model"),
             api_base=primary.get("api_base"),
-            api_key=primary.get("api_key") or "not-required",
+            api_key=primary.get("api_key"),
             temperature=0.0,
             max_tokens=800,
         )

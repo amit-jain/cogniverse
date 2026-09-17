@@ -191,3 +191,98 @@ def test_a_replaced_holder_in_renew_is_not_a_transient_error():
     with pytest.raises(DeploymentLeaseLost) as caught:
         holder.renew()
     assert str(caught.value) == "Vespa deployment lease expired or was replaced"
+
+
+def _lease_record(store):
+    return store.get_config(
+        tenant_id="__system__",
+        scope=schema_deploy_lease.ConfigScope.SCHEMA,
+        service="schema_deploy_lease",
+        config_key="application",
+    )
+
+
+def test_a_stalled_record_is_taken_over_by_waits_shorter_than_its_hold_time():
+    """Each deploy waits less than the hold time; the stall a process has
+    watched carries over from one wait to the next, so a holder that died
+    without releasing blocks deploys only for its hold time."""
+    store = InMemoryConfigStore()
+    dead = _lease(store, lease_seconds=0.6, wait_seconds=0)
+    dead.acquire()
+
+    started = time.monotonic()
+    outcomes = []
+    while time.monotonic() - started < 5:
+        waiter = _lease(store, wait_seconds=0.1)
+        try:
+            waiter.acquire()
+        except TimeoutError as exc:
+            outcomes.append(str(exc))
+            continue
+        outcomes.append(waiter.holder)
+        break
+    elapsed = time.monotonic() - started
+
+    assert outcomes[-1] == waiter.holder
+    assert set(outcomes[:-1]) == {
+        f"Vespa deployment lease still held by {dead.holder!r} after 0.1s; "
+        f"refusing to replace the application package concurrently with another "
+        f"deployer"
+    }
+    assert 0.6 <= elapsed < 1.5
+    assert _lease_record(store).config_value["holder"] == waiter.holder
+
+
+def test_a_renewal_between_two_waits_restarts_the_watched_stall():
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=0.6, wait_seconds=0)
+    holder.acquire()
+
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0).acquire()
+    time.sleep(0.4)
+    assert holder.renew() is None
+    time.sleep(0.4)
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0).acquire()
+
+    assert holder.renew() is None
+    assert _lease_record(store).config_value["holder"] == holder.holder
+
+
+@pytest.mark.parametrize("store_fault", ["unreachable", "record_not_visible"])
+def test_a_holder_this_process_released_uncleared_is_taken_over_at_once(
+    store_fault,
+):
+    """The holder's own process knows nothing activates under it any more,
+    so its record does not block the next deploy for the hold time."""
+    store = InMemoryConfigStore()
+    released = _lease(store, wait_seconds=0)
+    released.acquire()
+
+    real_get = store.get_config
+
+    def _fault(*args, **kwargs):
+        if store_fault == "unreachable":
+            raise ConnectionError("config store unreachable")
+        return None
+
+    store.get_config = _fault
+    assert released.release() is None
+    store.get_config = real_get
+    assert _lease_record(store).config_value["holder"] == released.holder
+
+    successor = _lease(store, wait_seconds=0)
+    assert successor.acquire() is successor
+    assert _lease_record(store).config_value["holder"] == successor.holder
+
+
+def test_a_live_holder_in_the_same_process_is_not_taken_over():
+    store = InMemoryConfigStore()
+    holder = _lease(store, wait_seconds=0)
+    holder.acquire()
+
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0.3).acquire()
+    assert holder.renew() is None
+    assert _lease_record(store).config_value["holder"] == holder.holder

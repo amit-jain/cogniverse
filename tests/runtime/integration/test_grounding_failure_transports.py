@@ -88,7 +88,7 @@ class _SearchBackend(RealSearchAgent):
     envelope — is production code.
     """
 
-    def __init__(self, profile):
+    def __init__(self, profile, tenant_id):
         self.telemetry_manager = None
         self._input_rails = None
         self._output_rails = None

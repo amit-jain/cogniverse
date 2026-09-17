@@ -400,8 +400,9 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
     persisted = ConversationStore(mm, TENANT).get_history(ctx)
     assert persisted == [
         {"role": "user", "content": "show kubernetes storage"},
-        {"role": "assistant", "content": answer},
+        {"role": "assistant", "content": f"{answer}\n- v1\n- v2"},
     ]
+    assert persisted[1]["content"] == result["answer"]
 
 
 @pytest.mark.unit

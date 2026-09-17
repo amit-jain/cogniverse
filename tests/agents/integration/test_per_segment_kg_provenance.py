@@ -345,22 +345,23 @@ def graph_manager(graph_vespa, pylate_server):
     _prev_singleton = _cfg_utils._config_manager_singleton
     _cfg_utils._config_manager_singleton = config_manager
 
-    backend = BackendRegistry.get_instance().get_ingestion_backend(
-        name="vespa",
-        tenant_id=TENANT_ID,
-        config={
-            "backend": {
-                "url": "http://localhost",
-                "config_port": config_port,
-                "port": http_port,
-            }
-        },
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
+    def resolve_backend():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id=TENANT_ID,
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "config_port": config_port,
+                    "port": http_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
     manager = GraphManager(
-        backend_resolver=lambda: backend,
+        backend_resolver=resolve_backend,
         tenant_id=TENANT_ID,
         schema_name=GRAPH_SCHEMA,
         colbert_endpoint_url=pylate_server,

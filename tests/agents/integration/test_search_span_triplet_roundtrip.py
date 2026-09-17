@@ -72,6 +72,16 @@ class _StubBackend:
         ]
 
 
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _build_search_agent(tenant_id: str) -> SearchAgent:
     with patch(
         "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
@@ -85,7 +95,7 @@ def _build_search_agent(tenant_id: str) -> SearchAgent:
                 auto_create_memory_schema=False,
             ),
             schema_loader=FilesystemSchemaLoader(base_path=Path("configs/schemas")),
-            config_manager=None,
+            config_manager=_memory_config_manager(),
             port=8033,
         )
     agent.query_encoder = _StubEncoder()

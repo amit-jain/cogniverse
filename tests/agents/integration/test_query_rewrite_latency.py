@@ -74,6 +74,7 @@ def serving_lm():
             "the real endpoint and cannot run without it"
         )
 
+    process_cache = dspy.cache
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
     lm = create_dspy_lm(
         LLMEndpointConfig(
@@ -84,7 +85,8 @@ def serving_lm():
         )
     )
     lm.cache = False
-    return lm
+    yield lm
+    dspy.cache = process_cache
 
 
 class TestRewriteShape:

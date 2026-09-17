@@ -104,12 +104,6 @@ def tab_reads(monkeypatch):
     st.cache_data.clear()
 
 
-# The routing tab's annotation section reads its storage from the Vespa
-# config store; this module owns Phoenix, not Vespa, so that one failure is
-# expected and is pinned by prefix rather than ignored.
-_ANNOTATION_STORE_ERROR = "Failed to initialize annotation agents:"
-
-
 def _render(tab, tenant):
     app = AppTest.from_string(
         f"""
@@ -148,31 +142,42 @@ def _wait_for_ids(manager, captured):
 
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_tabs_read_only_selected_tenants_producer_spans(
-    telemetry_manager_with_phoenix, monkeypatch, tab_reads, concurrent
+    seeded_config_vespa,
+    telemetry_manager_with_phoenix,
+    monkeypatch,
+    tab_reads,
+    concurrent,
 ):
     manager = telemetry_manager_with_phoenix
     tenants = [f"metrics{uuid4().hex[:8]}:tenant" for _ in range(2)]
     captured = _emit(manager, tenants, monkeypatch, concurrent=concurrent)
     _wait_for_ids(manager, captured)
     for tenant in tenants:
-        for tab, span_name, metric in [
-            ("routing_evaluation", "cogniverse.routing", "Total Decisions"),
-            ("profile_metrics", "cogniverse.profile_selection", "VIDEO"),
+        project = manager.config.get_project_name(tenant)
+        routing_id = captured[(tenant, "cogniverse.routing")]
+        profile_id = captured[(tenant, "cogniverse.profile_selection")]
+        for tab, metric, reads in [
+            (
+                "routing_evaluation",
+                "Total Decisions",
+                # The routing spans, then the annotation section's
+                # unfiltered pull of the same project.
+                [
+                    {"project": project, "ids": {routing_id}},
+                    {"project": project, "ids": {routing_id, profile_id}},
+                ],
+            ),
+            (
+                "profile_metrics",
+                "VIDEO",
+                [{"project": project, "ids": {profile_id}}],
+            ),
         ]:
             tab_reads.clear()
             app = _render(tab, tenant)
             assert {m.label: m.value for m in app.metric}[metric] == "1"
-            assert tab_reads == [
-                {
-                    "project": manager.config.get_project_name(tenant),
-                    "ids": {captured[(tenant, span_name)]},
-                }
-            ]
-            assert [
-                error.value
-                for error in app.error
-                if not error.value.startswith(_ANNOTATION_STORE_ERROR)
-            ] == []
+            assert tab_reads == reads
+            assert [error.value for error in app.error] == []
 
 
 # What each tab renders for a window it read nothing from. A failed read must

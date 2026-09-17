@@ -1072,19 +1072,13 @@ async def test_cold_cache_failed_dependency_settles_waiters_and_retries(
     with pytest.raises(DatasetStoreUnavailableError) as failure:
         await asyncio.wait_for(first, 10)
     assert failure.value.endpoint == "http://127.0.0.1:29071"
-    # Serving blobs live in two alternating revision slots, which the read
-    # asks for concurrently, so the failure names whichever of the pair lost
-    # the race. Both names come from the production helper, so a rename of
-    # either half is flagged rather than absorbed.
-    slots = {
-        managers[TENANT_A]._blob_slot_name("config", "cold_agent", parity)
-        for parity in (0, 1)
-    }
-    assert slots == {
-        "dspy-config-acme:acme-cold_agent--r0",
-        "dspy-config-acme:acme-cold_agent--r1",
-    }
-    assert failure.value.dataset in slots
+    # The revision slots are read concurrently; the failure names the logical
+    # blob, whichever slot's read failed first.
+    assert failure.value.dataset == managers[TENANT_A]._blob_dataset_name(
+        "config", "cold_agent"
+    )
+    assert failure.value.dataset == "dspy-config-acme:acme-cold_agent"
+    assert type(failure.value.__cause__) is httpx.ConnectError
     dispatcher.managers = cold_artifact_managers
     assert await dispatcher.cached(TENANT_A) == {
         "answer": f"Stored answer for {TENANT_A}."

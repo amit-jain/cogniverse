@@ -115,7 +115,7 @@ async def runtime(monkeypatch):
         def remember_success(self, query, summary):
             state.memory_writes.append((query, summary))
 
-        def _semantic_router_lm_context(self, tenant_id):
+        async def _semantic_router_lm_context(self, tenant_id):
             return nullcontext()
 
     async with httpx.AsyncClient(

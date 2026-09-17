@@ -311,12 +311,9 @@ async def test_schema_removal_failure_retains_tenant_record_and_documents(
         unavailable_port = unavailable.getsockname()[1]
 
         def deploy_to_unavailable_port(manager, package, **kwargs):
-            previous_port = manager.backend_port
-            manager.backend_port = unavailable_port
-            try:
-                return real_deploy(manager, package, **kwargs)
-            finally:
-                manager.backend_port = previous_port
+            isolated_manager = copy.copy(manager)
+            isolated_manager.backend_port = unavailable_port
+            return real_deploy(isolated_manager, package, **kwargs)
 
         with monkeypatch.context() as patch:
             patch.setattr(
@@ -328,7 +325,7 @@ async def test_schema_removal_failure_retains_tenant_record_and_documents(
         assert requests == [
             (
                 "POST",
-                f"http://localhost:{unavailable_port}/application/v2/tenant/default/prepareandactivate",
+                f"http://localhost:{unavailable_port}/application/v2/tenant/default/session",
             )
         ]
 
