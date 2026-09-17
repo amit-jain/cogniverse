@@ -448,7 +448,7 @@ Quick dashboard showing:
 
 - **Total Annotations**, **Golden Dataset Size** — `st.session_state` counters (`annotation_count`, `golden_dataset_size`), so they reset per browser session rather than being queried live from a persistent store
 
-- **Optimization Runs**, **Last Optimization** — read from `GET /admin/tenant/{tenant_id}/optimize/runs` for the sidebar's active tenant, cached per tenant for 15 s (see [runtime.md](../modules/runtime.md#tenant-optimization-runs)). The count is the runs Argo holds; the last-run tile shows the newest run's age and phase, or `Never` when the tenant has none. When the runtime cannot list runs both tiles show `—` and the tab renders the reason, so an outage never reads as zero runs
+- **Optimization Runs**, **Last Optimization** — read from `GET /admin/tenant/{tenant_id}/optimize/runs` for the sidebar's active tenant, cached per tenant for 15 s (see [runtime.md](../modules/runtime.md#tenant-optimization-runs)). The count is the runs Argo holds; the last-run tile shows the newest run's age and phase (`not started (Pending)` before Argo's controller starts it), or `Never` when the tenant has none. When the runtime cannot list runs both tiles show `—` and the tab renders the reason, so an outage never reads as zero runs
 
 - **Workflow Diagram**: markdown description of the Collect → Build → Train → Monitor → Iterate cycle
 

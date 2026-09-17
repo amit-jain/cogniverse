@@ -871,6 +871,27 @@ def test_optimization_overview_reads_the_runtimes_runs(page, runtime):
     ]
 
 
+def test_a_run_argo_has_not_started_reads_as_not_started(page, runtime):
+    """A submitted Workflow the controller has not picked up has no
+    ``startedAt`` and no phase; the tile says so rather than "unknown"."""
+    runtime.optimize_runs["acme:a"] = [
+        {
+            "workflow_name": "manual-optimize-profile-6hfm5",
+            "mode": "profile",
+            "trigger": "manual",
+            "phase": None,
+            "started_at": None,
+            "finished_at": None,
+        }
+    ]
+
+    app = _open_tenant(page, "acme:a")
+
+    tiles = {m.label: m.value for m in app.metric}
+    assert tiles["Optimization Runs"] == "1"
+    assert tiles["Last Optimization"] == "not started (Pending)"
+
+
 def test_tenant_switch_reads_the_new_tenants_optimization_runs(page, runtime):
     """The tiles follow the sidebar's active tenant, never the previous
     tenant's runs."""
