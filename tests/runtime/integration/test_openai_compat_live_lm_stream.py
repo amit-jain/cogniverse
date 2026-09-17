@@ -200,12 +200,10 @@ class StatusServer:
 
 
 def _config_with_primary(api_base: str, directory: Path) -> Path:
-    """The activated session config with the primary LM moved to ``api_base``
-    and no default search profile, so a turn has nothing to ground in."""
+    """The activated session config with the primary LM moved to ``api_base``."""
     source = json.loads(Path(os.environ["COGNIVERSE_CONFIG"]).read_text())
     config = copy.deepcopy(source)
     config["llm_config"]["primary"]["api_base"] = api_base
-    config.pop("active_video_profile")
     target = directory / f"config-{uuid.uuid4().hex[:8]}.json"
     target.write_text(json.dumps(config))
     return target
