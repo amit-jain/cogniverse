@@ -6,7 +6,8 @@ a defaulted object. The input is sized from the shipped completion budget, so
 the generation runs out of room before it can fill the signature's outputs.
 
 Precondition: the cluster's primary LM runs with the ``max_tokens`` the shipped
-config declares. The test reads that budget rather than restating it, and sizes
+config declares. The test reads that budget from the config the chart rendered
+into the cluster rather than restating it, and sizes
 its own content from it, so the turn's failure is the test's choice and not the
 model's.
 """
@@ -14,15 +15,28 @@ model's.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, register_tenant_and_wait, unique_id
+from tests.e2e.conftest import (
+    RUNTIME,
+    _kubectl_e2e,
+    _kubectl_e2e_command,
+    _require_kubectl_success,
+    register_tenant_and_wait,
+    unique_id,
+)
 
-SHIPPED_CONFIG = (
-    Path(__file__).resolve().parents[2] / "charts/cogniverse/files/config.json"
+# ``charts/cogniverse/files/config.json`` is a Helm template; the runtime reads
+# the rendered copy this ConfigMap carries.
+RENDERED_CONFIG_ARGS = (
+    "-n",
+    "cogniverse",
+    "get",
+    "configmap/cogniverse-config",
+    "-o",
+    "jsonpath={.data.config\\.json}",
 )
 # One recorded passage per multiple of the completion budget: a faithful
 # detailed summary of this many distinct passages cannot fit in the budget, so
@@ -37,7 +51,9 @@ PROCESS_TIMEOUT_S = 600.0
 
 
 def _shipped_primary_max_tokens() -> int:
-    config = json.loads(SHIPPED_CONFIG.read_text())
+    result = _kubectl_e2e(*RENDERED_CONFIG_ARGS)
+    _require_kubectl_success(result, _kubectl_e2e_command(*RENDERED_CONFIG_ARGS))
+    config = json.loads(result.stdout)
     return int(config["llm_config"]["primary"]["max_tokens"])
 
 
