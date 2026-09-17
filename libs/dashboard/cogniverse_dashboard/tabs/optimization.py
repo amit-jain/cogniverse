@@ -99,9 +99,14 @@ def _fetch_optimization_runs(tenant_id: str) -> OptimizationRuns:
 
 
 def _format_run_age(started_at: Optional[str], now: datetime) -> str:
-    """Whole-unit age of a run start, or ``"unknown"`` when Argo has none."""
+    """Whole-unit age of a run start.
+
+    Argo sets ``startedAt`` when its controller starts the Workflow, so a run
+    without one has ``"not started"``; a start Argo reports but that does not
+    parse is ``"unknown"``.
+    """
     if not started_at:
-        return "unknown"
+        return "not started"
     try:
         started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
     except ValueError:
