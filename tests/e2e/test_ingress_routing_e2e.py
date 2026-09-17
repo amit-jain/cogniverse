@@ -32,12 +32,15 @@ from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     RUNTIME,
     SAMPLE_VIDEO_CONTENT_ID,
+    SAMPLE_VIDEO_PATH,
     TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
+    _ensure_sample_content_ingested,
+    _sample_video_media_type,
     register_tenant_and_wait,
     unique_id,
 )
-from tests.e2e.test_api_e2e import PROFILE
+from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 from tests.e2e.test_pi_harness_e2e import harness_models
 
 pytestmark = [pytest.mark.e2e]
@@ -382,13 +385,34 @@ def test_the_mounted_a2a_app_answers_on_the_service_and_under_the_prefix(ingress
     assert through_prefix_turn.json()["result"]["contextId"]
 
 
-def test_the_seeded_search_answers_the_same_hits_through_the_ingress(ingress_url):
+@pytest.fixture(scope="module")
+def seeded_search_tenant() -> str:
+    """A tenant this module mints whose only content is the tracked sample."""
+    tenant_id = canonical_tenant_id(unique_id("prode2eclients"))
+    register_tenant_and_wait(tenant_id, created_by="e2e")
+    with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+        _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+    assert (
+        _ensure_sample_content_ingested(
+            SAMPLE_VIDEO_PATH,
+            profile=PROFILE,
+            media_type=_sample_video_media_type(SAMPLE_VIDEO_PATH),
+            tenant_id=tenant_id,
+        )
+        == SAMPLE_VIDEO_CONTENT_ID
+    )
+    return tenant_id
+
+
+def test_the_seeded_search_answers_the_same_hits_through_the_ingress(
+    ingress_url, seeded_search_tenant
+):
     """``POST /search/`` returns the seeded content identically on both paths."""
     payload = {
         "query": SAMPLE_VIDEO_CONTENT_ID,
         "profile": PROFILE,
         "top_k": 5,
-        "tenant_id": TENANT_ID,
+        "tenant_id": seeded_search_tenant,
     }
     on_service = httpx.post(f"{RUNTIME}/search/", json=payload, timeout=900.0).json()
     through_prefix = _through_ingress(
@@ -400,9 +424,12 @@ def test_the_seeded_search_answers_the_same_hits_through_the_ingress(ingress_url
     )
     served = through_prefix.json()
 
-    # The tracked fixture is the only content whose id is the query, so the
-    # equality below cannot be satisfied by two empty result lists.
+    # The tenant holds only the tracked fixture, so every hit is that source
+    # and the equality below cannot be satisfied by two empty result lists.
     assert served["results"][0]["source_id"] == SAMPLE_VIDEO_CONTENT_ID
+    assert {row["source_id"] for row in served["results"]} == {
+        SAMPLE_VIDEO_CONTENT_ID
+    }, served["results"]
     assert (served["query"], served["profile"], served["results_count"]) == (
         on_service["query"],
         on_service["profile"],
