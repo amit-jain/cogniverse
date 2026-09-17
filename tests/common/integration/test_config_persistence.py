@@ -5,6 +5,7 @@ Tests complete flow: ConfigManager → Vespa → ConfigAPIMixin → Hot Reload
 
 import logging
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -337,26 +338,45 @@ class TestConfigPersistence:
         assert "telemetry:telemetry:telemetry_config" in all_configs
 
     def test_config_stats(self, config_manager):
-        """Test configuration statistics"""
-        # Use unique tenant IDs to avoid state from other tests
-        tenant1 = "stats_tenant1"
+        """Stats count every config the store holds: distinct configs, their
+        versions, tenants and per-scope versions.
 
-        # Create some configs
-        config_manager.set_system_config(SystemConfig(llm_model="model1"))
-        config_manager.set_system_config(SystemConfig(llm_model="model2"))
+        The store is shared with the other tests in this session, so the test
+        pins the exact change its own writes make, under a tenant no other
+        test writes.
+        """
+        tenant_id = f"stats_tenant_{time.time_ns()}"
+        before = config_manager.get_stats()
+
         config_manager.set_routing_config(
-            RoutingConfigUnified(tenant_id=tenant1, routing_mode="tiered")
+            RoutingConfigUnified(tenant_id=tenant_id, routing_mode="tiered"),
+            tenant_id=tenant_id,
+        )
+        config_manager.set_routing_config(
+            RoutingConfigUnified(tenant_id=tenant_id, routing_mode="hybrid"),
+            tenant_id=tenant_id,
+        )
+        config_manager.set_telemetry_config(
+            TelemetryConfig(service_name="stats"), tenant_id=tenant_id
         )
 
-        # Get stats - verify basic structure (counts may include other test data)
-        stats = config_manager.get_stats()
+        after = config_manager.get_stats()
 
-        # Stats should include at least these new configs
-        assert stats["total_configs"] >= 3
-        assert stats["total_tenants"] >= 2
-        assert stats["configs_per_scope"]["system"] >= 2
-        assert stats["configs_per_scope"]["routing"] >= 1
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        # Two routing versions share one config id; telemetry adds a second id.
+        assert after["total_configs"] - before["total_configs"] == 2
+        assert after["total_versions"] - before["total_versions"] == 3
+        assert after["total_tenants"] - before["total_tenants"] == 1
+        scope_delta = {
+            scope: after["configs_per_scope"].get(scope, 0)
+            - before["configs_per_scope"].get(scope, 0)
+            for scope in set(after["configs_per_scope"])
+            | set(before["configs_per_scope"])
+        }
+        assert {k: v for k, v in scope_delta.items() if v} == {
+            ConfigScope.ROUTING.value: 2,
+            ConfigScope.TELEMETRY.value: 1,
+        }
+        assert (after["storage_backend"], after["schema_name"]) == (
+            "vespa",
+            before["schema_name"],
+        )
