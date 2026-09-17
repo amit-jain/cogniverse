@@ -914,7 +914,8 @@ default = "my_pkg.stores.default_impl:DefaultStore"
 Callers fetch instances with `MyStoreRegistry.get(name="default",
 config={...})`. Conflict detection is always on — if two installed
 packages both register `name="default"` under the same group,
-`discover()` raises `ValueError` rather than silently picking one. For a
+`discover()` raises `ValueError` rather than silently picking one.
+Discovery runs once per registry even when threads race the first lookup. For a
 tenant-scoped registry, `get()` canonicalizes its `tenant_id` argument and
 places that canonical value in the initialization mapping after caller config
 is merged, so a config payload cannot override the cache's tenant identity.
