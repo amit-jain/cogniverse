@@ -205,10 +205,6 @@ sandbox = [
 ]
 test = [
     "playwright>=1.58.0",
-    # pylate is a test-only parity oracle (vLLM LateOn/DenseOn round-trips)
-    # and future finetuning tool; production serves these models via vLLM
-    # through Remote*Loader and never imports pylate at runtime.
-    "pylate==1.4.0",
 ]
 
 [tool.black]
@@ -325,6 +321,10 @@ dev = [
     "cogniverse-cli",
     "pytest-playwright>=0.7.2",
     "tomli-w>=1.0.0",
+    # pylate is a test-only parity oracle (vLLM LateOn/DenseOn round-trips)
+    # and future finetuning tool; production serves these models via vLLM
+    # through Remote*Loader and never imports pylate at runtime.
+    "pylate==1.4.0",
 ]
 docs = [
     "mkdocs==1.6.1",

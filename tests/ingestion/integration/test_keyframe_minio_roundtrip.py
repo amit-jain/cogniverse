@@ -32,7 +32,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 @pytest.fixture(scope="module")
 def minio():
-    pytest.importorskip("boto3")
     manager = MinIOTestManager()
     instance = manager.start()
     try:

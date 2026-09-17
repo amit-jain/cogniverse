@@ -23,6 +23,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+import xgboost as xgb
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -122,7 +123,6 @@ class TestXGBoostMetaModelRoundTrip:
     @pytest.mark.asyncio
     async def test_training_decision_model_round_trip(self, real_provider):
         """Train a TrainingDecisionModel, save, load in new instance, verify."""
-        xgb = pytest.importorskip("xgboost")
         import numpy as np
 
         from cogniverse_agents.routing.xgboost_meta_models import (
@@ -161,7 +161,6 @@ class TestXGBoostMetaModelRoundTrip:
     @pytest.mark.asyncio
     async def test_training_strategy_model_round_trip(self, real_provider):
         """Train a TrainingStrategyModel, save, load, verify predictions."""
-        xgb = pytest.importorskip("xgboost")
         import numpy as np
 
         from cogniverse_agents.routing.xgboost_meta_models import (
@@ -202,7 +201,6 @@ class TestXGBoostMetaModelRoundTrip:
     @pytest.mark.asyncio
     async def test_fusion_benefit_model_round_trip(self, real_provider):
         """Train a FusionBenefitModel, save, load, verify predictions."""
-        xgb = pytest.importorskip("xgboost")
         import numpy as np
 
         from cogniverse_agents.routing.xgboost_meta_models import FusionBenefitModel
