@@ -20,6 +20,7 @@ import shutil
 import numpy as np
 import pytest
 import requests
+import sentence_transformers
 
 from cogniverse_core.common.models.semantic_embedder import RemoteOpenAIEmbedder
 
@@ -44,7 +45,6 @@ def denseon_url(vllm_sidecar):
 
 @pytest.fixture(scope="module")
 def sentence_transformer_oracle():
-    sentence_transformers = pytest.importorskip("sentence_transformers")
     return sentence_transformers.SentenceTransformer(DENSEON_MODEL, device="cpu")
 
 
