@@ -2023,7 +2023,9 @@ Resolution order: `COGNIVERSE_SANDBOX_POLICY` env var → `config["sandbox"]["po
 
 ### Multi-agent policy wiring
 
-`SandboxManager` is used by both `coding_agent.py` (code execution) and `orchestrator_agent.py` (A2A sub-agent calls via `make_http_client("orchestrator_agent")`). Each agent's policy file lives at `configs/agent_policies/<agent_name>.yaml`.
+`SandboxManager` is used by both `coding_agent.py` (code execution) and `orchestrator_agent.py` (A2A sub-agent calls via `make_http_client("orchestrator_agent", endpoint_bindings=...)`). Each agent's policy file lives at `configs/agent_policies/<agent_name>.yaml`.
+
+Policy rules name services at their `SystemConfig` default addresses (`localhost:8000` for the runtime, `localhost:8080` for Vespa). The dispatcher passes `sandbox_http.deployed_endpoint_bindings(system_config)`, which maps each default address to the deployed one (`agent_registry_url`, `backend_url:backend_port`), so a rule also admits its service's deployed address — `http://cogniverse-runtime:8000` in the chart — and nothing else.
 
 ### Sandbox telemetry
 

@@ -32,6 +32,14 @@ class SummarySignature(dspy.Signature):
     summary: str = dspy.OutputField()
 
 
+class PlanStepsSignature(dspy.Signature):
+    """Plan agents with steps that may run together."""
+
+    query: str = dspy.InputField()
+    agent_sequence: str = dspy.OutputField()
+    parallel_steps: str = dspy.OutputField(default="")
+
+
 class BareCollectionsSignature(dspy.Signature):
     """Signature with bare (unparameterized) collection annotations."""
 
@@ -124,6 +132,38 @@ class TestIncompleteOutputs:
             adapter.parse(SummarySignature, '{"summary": %s}' % blank)
         assert error.value.missing_fields == ("summary",)
         assert error.value.parsed_result == {}
+
+    @pytest.mark.parametrize(
+        "blank", ['""', '"   "', "null"], ids=["empty", "spaces", "null"]
+    )
+    def test_defaulted_output_takes_its_default_for_a_blank_answer(
+        self, adapter, blank
+    ):
+        assert adapter.parse(
+            PlanStepsSignature,
+            '{"agent_sequence": "search_agent,summarizer_agent", '
+            '"parallel_steps": %s}' % blank,
+        ) == {"agent_sequence": "search_agent,summarizer_agent", "parallel_steps": ""}
+
+    def test_defaulted_output_keeps_a_filled_answer(self, adapter):
+        assert adapter.parse(
+            PlanStepsSignature,
+            '{"agent_sequence": "a,b,c", "parallel_steps": "0,1|2"}',
+        ) == {"agent_sequence": "a,b,c", "parallel_steps": "0,1|2"}
+
+    def test_defaulted_output_is_incomplete_when_absent(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(PlanStepsSignature, '{"agent_sequence": "search_agent"}')
+        assert error.value.missing_fields == ("parallel_steps",)
+        assert error.value.parsed_result == {"agent_sequence": "search_agent"}
+
+    def test_required_output_stays_incomplete_beside_a_defaulted_blank(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter.parse(
+                PlanStepsSignature, '{"agent_sequence": "", "parallel_steps": ""}'
+            )
+        assert error.value.missing_fields == ("agent_sequence",)
+        assert error.value.parsed_result == {"parallel_steps": ""}
 
     def test_unfilled_fields_are_named_beside_absent_ones(self, adapter):
         with pytest.raises(LMOutputIncomplete) as error:
