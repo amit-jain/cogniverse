@@ -729,7 +729,10 @@ the retrieved documents for that source in relevance order and
 `segments_in_window` with the number of retrieved hits for that source.
 `segment` returns every matching document and omits those fields. Video
 profiles default to `source`; non-video profiles default to `segment` unless
-their profile config says otherwise.
+their profile config says otherwise. A tenant's stored profile (for example
+one created through `POST /admin/profiles`) is merged over the shipped profile
+of the same name, so a key it does not set, such as `result_granularity`,
+keeps the shipped value; a failed read of the tenant's stored profile raises.
 
 **Search Strategies:**
 
