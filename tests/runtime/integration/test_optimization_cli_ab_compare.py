@@ -104,8 +104,7 @@ def _run_cli(
     env = dict(os.environ)
     env["BACKEND_URL"] = os.environ["BACKEND_URL"]  # set by the
     # autouse shared-vespa fixture; never the k3d cluster.
-    env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
-    env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
+    env["TELEMETRY_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
     # The CLI's tenant tracer exports through TELEMETRY_OTLP_ENDPOINT; point it
     # at the container so rlm.ab_compare spans land where the test reads them.
     env["TELEMETRY_OTLP_ENDPOINT"] = phoenix_container["otlp_endpoint"]

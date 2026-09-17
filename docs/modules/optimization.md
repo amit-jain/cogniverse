@@ -863,7 +863,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --demos-version 3
 ```
 
-Required: `--tenant-id`, `--agent`, plus at least one of `--prompts-version` / `--demos-version`. The Phoenix provider is built directly from `PHOENIX_HTTP_ENDPOINT` / `PHOENIX_GRPC_ENDPOINT` env vars so a CLI invocation can target a specific Phoenix without going through the global telemetry config.
+Required: `--tenant-id`, `--agent`, plus at least one of `--prompts-version` / `--demos-version`. The Phoenix provider is built from `TELEMETRY_HTTP_ENDPOINT` / `TELEMETRY_OTLP_ENDPOINT`, the variables the chart sets on the pod; either one unset fails the run.
 
 Returns `{summary: ..., backup_versions: {prompts: int?, demos: int?}}` — pass those versions to a follow-up `--mode rollback` to undo.
 

@@ -88,9 +88,7 @@ def _cli(
     env.update(
         BACKEND_URL="http://127.0.0.1",
         BACKEND_PORT=str(backend_port),
-        PHOENIX_HTTP_ENDPOINT=endpoint,
         TELEMETRY_HTTP_ENDPOINT=endpoint,
-        PHOENIX_GRPC_ENDPOINT=grpc_endpoint,
         TELEMETRY_OTLP_ENDPOINT=grpc_endpoint,
     )
     return subprocess.run(

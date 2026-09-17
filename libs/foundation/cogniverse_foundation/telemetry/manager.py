@@ -724,6 +724,25 @@ class TelemetryManager:
                 f"endpoint={endpoint}"
             ) from exc
 
+    def provider_endpoints(self) -> Dict[str, str]:
+        """The ``grpc_endpoint`` and ``http_endpoint`` providers are built with.
+
+        Explicit ``provider_config`` entries win; otherwise both derive from
+        ``otlp_endpoint`` (the ``:4317`` gRPC port swapped for Phoenix's
+        ``:6006`` HTTP port).
+        """
+        otlp_ep = self.config.otlp_endpoint
+        scheme = "https" if self.config.otlp_use_tls else "http"
+        grpc_default = f"{scheme}://{otlp_ep}" if "://" not in otlp_ep else otlp_ep
+        return {
+            "grpc_endpoint": self.config.provider_config.get(
+                "grpc_endpoint", grpc_default
+            ),
+            "http_endpoint": self.config.provider_config.get(
+                "http_endpoint", grpc_default.replace(":4317", ":6006")
+            ),
+        }
+
     def get_provider(self, tenant_id: str, project_name: Optional[str] = None):
         """
         Get telemetry provider for querying spans/annotations/datasets.
@@ -774,20 +793,10 @@ class TelemetryManager:
         registry = get_telemetry_registry()
 
         # Build generic config for provider (provider interprets keys)
-        # Derive grpc_endpoint and http_endpoint from otlp_endpoint when not
-        # explicitly set in provider_config, so providers like Phoenix can
-        # initialise without requiring manual provider_config entries.
-        otlp_ep = self.config.otlp_endpoint  # e.g. "localhost:4317"
-        scheme = "https" if self.config.otlp_use_tls else "http"
-        grpc_default = f"{scheme}://{otlp_ep}" if "://" not in otlp_ep else otlp_ep
-        # HTTP endpoint: replace gRPC port (4317) with HTTP port (6006)
-        http_default = grpc_default.replace(":4317", ":6006")
-
         provider_config = {
             "tenant_id": tenant_id,
-            "grpc_endpoint": grpc_default,
-            "http_endpoint": http_default,
-            **self.config.provider_config,  # Explicit overrides take precedence
+            **self.config.provider_config,
+            **self.provider_endpoints(),
         }
         # Carry the project so the registry caches one provider PER project —
         # otherwise the project-specific endpoint overlay below is computed but
@@ -1150,6 +1159,10 @@ _telemetry_manager: Optional[TelemetryManager] = None
 # lock (which __new__/__init__ acquire) so building the singleton under this
 # lock cannot deadlock against it.
 _telemetry_manager_lock = threading.Lock()
+_endpoint_overrides: Dict[str, Optional[str]] = {
+    "otlp_endpoint": None,
+    "http_endpoint": None,
+}
 
 
 def _apply_otlp_endpoint_override(
@@ -1161,6 +1174,30 @@ def _apply_otlp_endpoint_override(
     mgr._tenant_providers.clear()
     mgr._tenant_tracers.clear()
     mgr._tracer_provider_keys.clear()
+
+
+def _apply_http_endpoint_override(
+    mgr: TelemetryManager, http_endpoint: Optional[str]
+) -> None:
+    if http_endpoint is not None:
+        mgr.config.provider_config["http_endpoint"] = http_endpoint
+
+
+def configure_telemetry_endpoints(
+    *, otlp_endpoint: Optional[str], http_endpoint: Optional[str]
+) -> None:
+    """Record the endpoints a deployment names for this process.
+
+    For entrypoints that must not build the manager eagerly: the endpoints are
+    applied to the singleton when it is built, and to one already built. An
+    endpoint given as ``None`` leaves the stored telemetry config's value.
+    """
+    with _telemetry_manager_lock:
+        _endpoint_overrides["otlp_endpoint"] = otlp_endpoint
+        _endpoint_overrides["http_endpoint"] = http_endpoint
+        if _telemetry_manager is not None:
+            _apply_otlp_endpoint_override(_telemetry_manager, otlp_endpoint)
+            _apply_http_endpoint_override(_telemetry_manager, http_endpoint)
 
 
 def get_telemetry_manager(
@@ -1193,6 +1230,8 @@ def get_telemetry_manager(
                     config_manager = create_default_config_manager()
                 config = config_manager.get_telemetry_config(SYSTEM_TENANT_ID)
                 mgr = TelemetryManager(config)
+                _apply_otlp_endpoint_override(mgr, _endpoint_overrides["otlp_endpoint"])
+                _apply_http_endpoint_override(mgr, _endpoint_overrides["http_endpoint"])
                 _apply_otlp_endpoint_override(mgr, otlp_endpoint)
                 # Publish only after fully built + configured so a concurrent
                 # reader never sees a half-initialized singleton.

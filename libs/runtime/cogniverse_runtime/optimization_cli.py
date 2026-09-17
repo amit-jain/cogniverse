@@ -6001,8 +6001,9 @@ async def run_ab_compare(
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_primary = cfg.get_llm_config().primary
 
-    phoenix_http = os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006")
-    sync_client = PhoenixSyncClient(base_url=phoenix_http)
+    sync_client = PhoenixSyncClient(
+        base_url=_cli_telemetry_endpoints()["http_endpoint"]
+    )
 
     try:
         dataset = sync_client.datasets.get_dataset(dataset=queries_dataset)
@@ -6382,28 +6383,36 @@ def run_egress_netpol(
     }
 
 
-def _build_phoenix_provider_for_cli(tenant_id: str):
-    """Construct a PhoenixProvider directly from env vars for CLI runs.
+def _cli_telemetry_endpoints() -> Dict[str, str]:
+    """The Phoenix endpoints the deployment names for this CLI process.
 
-    Operators (and integration tests) set ``PHOENIX_HTTP_ENDPOINT`` and
-    ``PHOENIX_GRPC_ENDPOINT`` to point at the Phoenix instance the CLI
-    should talk to. We build the provider directly here rather than
-    going through ``get_telemetry_manager()`` so a CLI invocation can
-    target a specific Phoenix without the global telemetry config (which
-    is loaded from ConfigManager and pinned to the cluster's primary).
+    Read from ``TELEMETRY_HTTP_ENDPOINT`` and ``TELEMETRY_OTLP_ENDPOINT``, the
+    variables the chart sets on every pod that runs this CLI. Either one unset
+    raises: a CLI that reaches for a default Phoenix reads and writes a store
+    the deployment never uses.
     """
+    missing = [
+        name
+        for name in ("TELEMETRY_HTTP_ENDPOINT", "TELEMETRY_OTLP_ENDPOINT")
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise ValueError(
+            f"{' and '.join(missing)} must name the deployment's Phoenix "
+            "for this optimization CLI mode"
+        )
+    return {
+        "http_endpoint": os.environ["TELEMETRY_HTTP_ENDPOINT"],
+        "grpc_endpoint": os.environ["TELEMETRY_OTLP_ENDPOINT"],
+    }
+
+
+def _build_phoenix_provider_for_cli(tenant_id: str):
+    """Construct a PhoenixProvider on the deployment's Phoenix endpoints."""
     from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-    http_endpoint = os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006")
-    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317")
     provider = PhoenixProvider()
-    provider.initialize(
-        {
-            "tenant_id": tenant_id,
-            "http_endpoint": http_endpoint,
-            "grpc_endpoint": grpc_endpoint,
-        }
-    )
+    provider.initialize({"tenant_id": tenant_id, **_cli_telemetry_endpoints()})
     return provider
 
 

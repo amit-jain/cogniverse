@@ -29,7 +29,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         """Initialize Phoenix evaluation provider."""
         super().__init__()
         self.tenant_id: Optional[str] = None
-        self.http_endpoint: str = "http://localhost:6006"
+        self.http_endpoint: Optional[str] = None
         self._telemetry_provider: Optional[Any] = None
         self._project_name: str = "evaluation"
         self._framework = PhoenixEvaluatorFramework()
@@ -77,17 +77,11 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         # This ensures evaluation providers use the same endpoints as telemetry providers
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        telemetry_manager = get_telemetry_manager()
-        manager_config = telemetry_manager.config.provider_config
-
+        manager_endpoints = get_telemetry_manager().provider_endpoints()
         self.http_endpoint = config.get(
-            "http_endpoint",
-            manager_config.get("http_endpoint", "http://localhost:6006"),
+            "http_endpoint", manager_endpoints["http_endpoint"]
         )
-        grpc_endpoint = config.get(
-            "grpc_endpoint",
-            manager_config.get("grpc_endpoint", "http://localhost:4317"),
-        )
+        grpc_endpoint = config.get("grpc_endpoint", manager_endpoints["grpc_endpoint"])
 
         # Get telemetry provider for this tenant. A failure here RAISES:
         # swallowing it left a provider that looked constructed but had
