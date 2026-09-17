@@ -1460,13 +1460,19 @@ class AgentDispatcher:
         from dspy.utils.exceptions import AdapterParseError
 
         from cogniverse_agents.memory_aware_mixin import clear_request_tenant
+        from cogniverse_foundation.config.lm_output_budget import (
+            bound_output_token_budget,
+            output_token_budget_from,
+        )
         from cogniverse_foundation.config.routed_lm import tier_degradation_context
         from cogniverse_foundation.telemetry.tenant_context import tenant_span_context
 
+        output_budget = output_token_budget_from(context)
         try:
             with (
                 tenant_span_context(canonical_tenant_id(tenant_id)),
                 tier_degradation_context() as degradation,
+                bound_output_token_budget(output_budget),
             ):
                 try:
                     result = await self._dispatch_for_tenant(
