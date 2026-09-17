@@ -211,7 +211,10 @@ other URLs get no headers. `endpoint_root(url)` reduces any endpoint URL
 (`.../v1`, `.../v1/chat/completions`) to that root.
 
 The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
-`cogniverse_runtime.inference_services.parse_inference_service_urls`.
+`cogniverse_runtime.inference_services.parse_inference_service_urls`. The
+runtime API persists the parsed endpoints into `SystemConfig`; the ingestion
+worker pins them on its `ConfigManager` with `pin_inference_service_urls`, so
+its reads carry them without writing to the store.
 
 **API Reference:**
 
@@ -219,6 +222,7 @@ The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
 |--------|-------------|
 | `get_system_config()` | Get global system configuration (deployment-wide, not per-tenant) |
 | `set_system_config(system_config)` | Set global system configuration |
+| `pin_inference_service_urls(service_urls)` | Serve `service_urls` as `SystemConfig.inference_service_urls` on this manager's reads, without persisting them |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
 | `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
 | `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get version history after canonicalizing the tenant identifier |

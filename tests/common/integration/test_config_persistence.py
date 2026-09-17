@@ -281,6 +281,36 @@ class TestConfigPersistence:
 
         assert loaded_config.llm_model == "persistent-model"
 
+    def test_pinned_inference_urls_are_served_but_not_persisted(
+        self, vespa_instance, config_manager
+    ):
+        """A process's explicit inference endpoints replace the persisted
+        discovery on its own reads and never reach the store."""
+        persisted = {"vllm_colpali": "http://cogniverse-vllm-colpali:8000"}
+        config_manager.set_system_config(
+            SystemConfig(llm_model="pinned-model", inference_service_urls=persisted)
+        )
+
+        def restarted_manager() -> ConfigManager:
+            return ConfigManager(
+                store=VespaConfigStore(
+                    backend_url="http://localhost",
+                    backend_port=vespa_instance["http_port"],
+                )
+            )
+
+        pinned = restarted_manager()
+        pinned.pin_inference_service_urls({"vllm_colpali": "http://127.0.0.1:59601"})
+        served = pinned.get_system_config()
+
+        assert (served.llm_model, served.inference_service_urls) == (
+            "pinned-model",
+            {"vllm_colpali": "http://127.0.0.1:59601"},
+        )
+        assert restarted_manager().get_system_config().inference_service_urls == (
+            persisted
+        )
+
     def test_export_import_configs(self, config_manager, temp_db):
         """Test configuration export and import"""
         # Use unique tenant_id to avoid state from other tests
