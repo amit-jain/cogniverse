@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import httpx
 import pandas as pd
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -294,11 +295,14 @@ def test_an_unreachable_phoenix_raises_naming_the_endpoint():
             )
         )
 
-    assert str(excinfo.value).startswith(
+    assert str(excinfo.value) == (
         "ab-compare spans for tenant 'b5dead:tile' could not be read from "
-        f"Phoenix at {dead_endpoint}: "
+        f"Phoenix at {dead_endpoint}: All connection attempts failed"
     )
-    assert excinfo.value.__cause__ is not None
+    assert (
+        type(excinfo.value.__cause__),
+        str(excinfo.value.__cause__),
+    ) == (httpx.ConnectError, "All connection attempts failed")
 
 
 def test_the_tile_renders_an_unconfigured_phoenix_as_an_error():
@@ -377,7 +381,9 @@ def test_the_tile_loads_spans_from_the_session_endpoints(
         ).run()
         app.button[0].click().run()
         comparisons = [m.value for m in app.metric if m.label == "Comparisons"]
-        if comparisons:
+        # Phoenix ingests the two spans independently; one visible span
+        # renders "1" before the second lands.
+        if comparisons == ["2"]:
             break
         time.sleep(1)
 
