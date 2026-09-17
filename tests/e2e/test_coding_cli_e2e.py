@@ -28,7 +28,12 @@ from cogniverse_cli.streaming import (
 
 from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
 from cogniverse_runtime.sandbox_pool import SandboxSessionPool
-from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import (
+    IN_POD_TELEMETRY_PRELUDE,
+    KUBECTL_CONTEXT,
+    RUNTIME,
+    TENANT_ID,
+)
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
@@ -527,27 +532,153 @@ def _coding_failure_error(iterations: int, execution: dict) -> str:
     )
 
 
+# What the coding turn's LM calls answer: a plan, the failing program, and an
+# evaluation rejecting it. Each answer is keyed by an input field only its own
+# signature renders, so the turn is the same whatever order the calls land in.
+FAILING_PLAN = "Write the marker to stderr, then exit with the fixed status."
+FAILING_PROGRAM = (
+    "import sys\n"
+    f"sys.stderr.write({FAILING_STDERR_MARKER + chr(10)!r})\n"
+    f"sys.exit({FAILING_EXIT_CODE})"
+)
+FAILING_FEEDBACK = "The program exited with a nonzero status."
+FAILING_LM_ANSWERS = {
+    "[[ ## previous_error ## ]]": {
+        "reasoning": "The task names the program exactly.",
+        "code": FAILING_PROGRAM,
+        "test_command": "python solution.py",
+    },
+    "[[ ## stderr ## ]]": {
+        "reasoning": "The exit status is nonzero.",
+        "is_successful": False,
+        "feedback": FAILING_FEEDBACK,
+    },
+    "[[ ## code_context ## ]]": {
+        "reasoning": "One file is enough.",
+        "plan": FAILING_PLAN,
+    },
+}
+FAILING_TURN_RESULT = "__FAILING_TURN__"
+FAILING_TURN_DEADLINE_S = SANDBOX_PROBE_DEADLINE_S + 300
+"""The probe's budget for leasing a sandbox, plus the turn's own search,
+memory and program run."""
+
+# A second runtime process in the runtime pod: the agents router wired the way
+# the runtime's lifespan wires it, with the real registry, config store and
+# OpenShell sandbox manager. Only the LM is fixed, bound through the routed-LM
+# constructor the coding dispatch calls, so the program the sandbox runs is the
+# one this test names.
+_FAILING_TURN_SOURCE = (
+    IN_POD_TELEMETRY_PRELUDE
+    + """
+import asyncio, json
+from pathlib import Path
+from dspy.adapters.json_adapter import JSONAdapter
+from dspy.utils import DummyLM
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+import cogniverse_foundation.config.semantic_router as semantic_router
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_runtime.config_loader import get_config_loader
+from cogniverse_runtime.main import configure_ambient_dspy
+from cogniverse_runtime.routers import agents
+from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+
+lm = DummyLM({answers!r}, adapter=JSONAdapter())
+configure_ambient_dspy(lm)
+semantic_router.create_routed_lm = lambda *args, **kwargs: lm
+
+config_manager = create_default_config_manager()
+registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+loader = get_config_loader()
+loader.load_backends()
+loader.load_agents(agent_registry=registry)
+agents.set_agent_registry(registry)
+agents.set_agent_dependencies(
+    config_manager, FilesystemSchemaLoader(Path("configs/schemas"))
+)
+agents.set_sandbox_manager(SandboxManager(policy=SandboxPolicy.REQUIRED))
+app = FastAPI()
+app.include_router(agents.router, prefix="/agents")
+
+
+async def main():
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://replica", timeout=None
+    ) as client:
+        response = await client.post(
+            "/agents/coding_agent/process", json={body!r}
+        )
+    payload = {{"status": response.status_code, "body": response.json()}}
+    print({marker!r} + json.dumps(payload), flush=True)
+
+
+asyncio.run(main())
+"""
+)
+
+
+def _failing_turn() -> dict:
+    """POST the failing coding turn through the in-pod runtime process."""
+    source = _FAILING_TURN_SOURCE.format(
+        answers=FAILING_LM_ANSWERS,
+        body={
+            "agent_name": "coding_agent",
+            "query": FAILING_QUERY,
+            "context": {"tenant_id": TENANT_ID, "max_iterations": 1},
+            "top_k": 3,
+        },
+        marker=FAILING_TURN_RESULT,
+    )
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        "cogniverse",
+        "exec",
+        "deploy/cogniverse-runtime",
+        "-c",
+        "runtime",
+        "--",
+        "python3",
+        "-c",
+        source,
+    ]
+    turn = _run_prerequisite_command(command, timeout=FAILING_TURN_DEADLINE_S)
+    assert turn.returncode == 0, (
+        f"the in-pod coding turn exited {turn.returncode}; "
+        f"stdout={turn.stdout[-2000:]!r}; stderr={turn.stderr[-2000:]!r}"
+    )
+    lines = [
+        line.removeprefix(FAILING_TURN_RESULT)
+        for line in turn.stdout.splitlines()
+        if line.startswith(FAILING_TURN_RESULT)
+    ]
+    assert len(lines) == 1, (
+        f"the in-pod coding turn printed {len(lines)} results; "
+        f"stdout={turn.stdout[-2000:]!r}; stderr={turn.stderr[-2000:]!r}"
+    )
+    return json.loads(lines[0])
+
+
 @pytest.mark.e2e
 class TestNonzeroSandboxExitIsAFailure:
-    """A program the sandbox ran and rejected is not completed work."""
+    """A program the sandbox ran and rejected is not completed work.
+
+    The turn runs through the runtime's agents route and dispatcher in the
+    runtime pod against the real OpenShell sandbox. Its LM answers are fixed,
+    so the turn always reaches the sandbox with the program named here.
+    """
 
     def test_nonzero_sandbox_exit_is_reported_as_failure(self, runtime_sandbox_ready):
-        with httpx.Client(timeout=600.0) as client:
-            resp = client.post(
-                CODING_AGENT_URL,
-                json={
-                    "agent_name": "coding_agent",
-                    "query": FAILING_QUERY,
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "max_iterations": 1,
-                    },
-                    "top_k": 3,
-                },
-            )
+        resp = _failing_turn()
 
-        assert resp.status_code == 200, f"{resp.status_code}: {resp.text[:300]}"
-        data = resp.json()
+        assert resp["status"] == 200, resp
+        data = resp["body"]
         # The failure envelope carries the error instead of a message, and
         # nothing renders as an answer.
         assert set(data) == {"status", "agent", "error", "result"}, data
@@ -572,6 +703,14 @@ class TestNonzeroSandboxExitIsAFailure:
         assert result["success"] is False, result
         assert result["pending_tool_calls"] == [], result
         assert result["iterations_used"] == 1, result
+        assert result["plan"] == FAILING_PLAN, result
+
+        assert len(result["files_modified"]) == 1, result
+        solution = result["files_modified"][0]
+        assert solution.endswith("/solution.py"), result
+        assert result["code_changes"] == [
+            {"file_path": solution, "content": FAILING_PROGRAM, "change_type": "create"}
+        ], result
 
         exec_results = result["execution_results"]
         assert len(exec_results) == 1, exec_results
@@ -586,9 +725,13 @@ class TestNonzeroSandboxExitIsAFailure:
         assert execution["exit_code"] == FAILING_EXIT_CODE, execution
         assert execution["success"] is False, execution
         assert FAILING_STDERR_MARKER in execution["stderr"], execution
+        assert execution["stderr"] == f"{FAILING_STDERR_MARKER}\n", execution
+        assert execution["stdout"] == "", execution
+        assert execution["command"] == f"python {solution}", execution
 
         expected_prefix = _coding_failure_error(1, execution)
         assert result["error"].startswith(expected_prefix), result["error"]
+        assert result["error"] == expected_prefix + FAILING_FEEDBACK, result["error"]
         # The failure text replaces the summary; the success template the
         # completing turn produces must not be what this run reports.
         assert result["summary"] == result["error"], result
