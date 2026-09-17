@@ -74,10 +74,15 @@ from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
+    _content_sha256,
+    _ensure_sample_content_ingested,
     _evaluation_query_rows,
+    _profile_selection_video_profiles,
+    _sample_video_media_type,
     expected_gateway_calibration,
     expected_gateway_routing,
     optimization_cli_document,
+    profile_selection_corpus_videos,
     register_tenant_and_wait,
     run_async,
     unique_id,
@@ -4577,8 +4582,40 @@ def ground_truth_contract_tenants() -> tuple[str, str]:
     register_tenant_and_wait(seeded, created_by="e2e", timeout_s=600.0)
     register_tenant_and_wait(bare, created_by="e2e", timeout_s=600.0)
     _seed_profile_selection_ground_truth(seeded)
+    _seed_profile_selection_corpus(seeded)
     assert _active_profile_ground_truth_in_pod(bare) is None
     return seeded, bare
+
+
+def _seed_profile_selection_corpus(tenant_id: str) -> None:
+    """Give the tenant the candidate profiles the profile step compares and
+    the corpus its ground truth names, as the session tenant has them.
+
+    A fresh tenant configures no backend profiles, so the step has nothing to
+    compare and fails before any retrieval; without the corpus every
+    comparison completes with nothing recovered and no row is labelled.
+    """
+    config = json.loads(
+        (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
+    )
+    profiles = _profile_selection_video_profiles(config)
+    with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        for profile_name in profiles:
+            _deploy_profile_for_tenant(client, profile_name, tenant_id)
+        listed = client.get("/admin/profiles", params={"tenant_id": tenant_id})
+    assert listed.status_code == 200, listed.text
+    assert {
+        (profile["profile_name"], profile["schema_deployed"])
+        for profile in listed.json()["profiles"]
+    } == {(profile_name, True) for profile_name in profiles}, listed.json()
+    for profile_name in profiles:
+        for path in profile_selection_corpus_videos():
+            assert _ensure_sample_content_ingested(
+                path,
+                profile=profile_name,
+                media_type=_sample_video_media_type(path),
+                tenant_id=tenant_id,
+            ) == _content_sha256(path)
 
 
 @pytest.mark.e2e
