@@ -2902,15 +2902,25 @@ def _served_document_windows(text: str) -> tuple[list[str], int]:
     return [text[start:end] for start, end in spans], response.json()["window_tokens"]
 
 
-def _served_document_tokens(text: str) -> list[int]:
-    """``text`` tokenized by the model the document profile is served from."""
+E2E_HF_HUB_CACHE = Path.home() / ".cache/cogniverse-tests/huggingface/hub"
+
+
+def _served_document_tokens(
+    text: str, *, cache_dir: Path = E2E_HF_HUB_CACHE
+) -> list[int]:
+    """``text`` tokenized by the model the document profile is served from.
+
+    The tokenizer loads from the local cache only: a revision missing from
+    ``cache_dir`` raises at once instead of waiting on the Hub.
+    """
     from transformers import AutoTokenizer
 
     spec = get_inference_service_spec("colbert_pylate")
     tokenizer = AutoTokenizer.from_pretrained(
         spec.model_id,
         revision=spec.model_revision,
-        cache_dir=str(Path.home() / ".cache/cogniverse-tests/huggingface/hub"),
+        cache_dir=str(cache_dir),
+        local_files_only=True,
     )
     return tokenizer(text, add_special_tokens=False)["input_ids"]
 
