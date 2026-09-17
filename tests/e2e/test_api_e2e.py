@@ -3038,7 +3038,9 @@ class TestDocumentIngestionAndSearch:
 
             time.sleep(3)
 
-            query = "125 extracted sample video retrieval queries"
+            # A heading the fixture states once, so exactly one window holds it.
+            query = "Blender Foundation (Creative Commons)"
+            assert document_text.count(query) == 1
             search_resp = client.post(
                 "/search/",
                 json={
@@ -3062,12 +3064,8 @@ class TestDocumentIngestionAndSearch:
             # so the hit carries that window's slice, and it is the slice that
             # holds the sentence the query names.
             hit_text = search_resp.json()["results"][0]["metadata"]["full_text"]
-            holding = [
-                index
-                for index, window in enumerate(windows)
-                if "125 extracted queries" in window
-            ]
-            assert len(holding) == 1
+            holding = [index for index, window in enumerate(windows) if query in window]
+            assert holding == [1], [windows[index] for index in holding]
             assert hit_text == windows[holding[0]]
 
     def test_a_document_larger_than_the_window_is_indexed_whole(self, tmp_path):
