@@ -11,6 +11,8 @@ import inspect
 import json
 import subprocess
 import tempfile
+import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -24,7 +26,7 @@ from cogniverse_cli.streaming import (
     stream_coding_response,
 )
 
-from cogniverse_runtime.harness_turn import NoAnswerError
+from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
 from cogniverse_runtime.sandbox_pool import SandboxSessionPool
 from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
@@ -618,15 +620,99 @@ def _a2a_events(request_body: dict) -> list[dict]:
     return events
 
 
+ROUTER_ENVOY_DEPLOYMENT = "cogniverse-semantic-router-envoy"
+
+
+def _router_envoy_kubectl(*args: str) -> str:
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        "cogniverse",
+        *args,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, (
+        f"{' '.join(command)!r} failed with exit {result.returncode}: "
+        f"{result.stderr.strip()[:500]}"
+    )
+    return result.stdout
+
+
+def _wait_for_router_envoy(*, serving: bool, deadline_s: float) -> None:
+    """Block until the router Envoy the runtime's LM calls go through answers
+    (``serving``) or refuses, judged by the session readiness gate's probe."""
+    from tests.e2e.conftest import _required_e2e_semantic_router_ready
+
+    deadline = time.monotonic() + deadline_s
+    while time.monotonic() < deadline:
+        ready, _detail = _required_e2e_semantic_router_ready()
+        if ready is serving:
+            return
+        time.sleep(3)
+    pytest.fail(
+        f"{ROUTER_ENVOY_DEPLOYMENT} was not "
+        f"{'serving' if serving else 'refusing'} within {deadline_s:.0f}s",
+        pytrace=False,
+    )
+
+
+@pytest.fixture
+def router_envoy_scaled_to_zero():
+    """Take the Envoy in front of the semantic router down for one test.
+
+    Every runtime LM call goes through it (``SEMANTIC_ROUTER_URL``), so with no
+    replica the coding turn's first LM call is refused. The restore runs on
+    every outcome and waits for the readiness gate's probe to answer again.
+    """
+    declared = int(
+        _router_envoy_kubectl(
+            "get",
+            "deployment",
+            ROUTER_ENVOY_DEPLOYMENT,
+            "-o",
+            "jsonpath={.spec.replicas}",
+        ).strip()
+    )
+    _router_envoy_kubectl(
+        "scale", "deployment", ROUTER_ENVOY_DEPLOYMENT, "--replicas=0"
+    )
+    try:
+        _wait_for_router_envoy(serving=False, deadline_s=120.0)
+        yield
+    finally:
+        _router_envoy_kubectl(
+            "scale", "deployment", ROUTER_ENVOY_DEPLOYMENT, f"--replicas={declared}"
+        )
+        _wait_for_router_envoy(serving=True, deadline_s=300.0)
+
+
 @pytest.mark.e2e
 class TestFailedCodingTurnIsTerminalFailure:
-    """A coding turn the sandbox rejected terminates as a failed A2A task."""
+    """A coding turn whose LM is unreachable terminates as a failed A2A task.
+
+    The runtime's LM calls go through the router Envoy, which the fixture
+    scales to zero, so the turn's planning call is refused before any
+    generation or sandbox work: the failure does not depend on what an LM
+    writes. Each request carries its own token so no cached completion from an
+    earlier run can answer it.
+    """
 
     def test_the_stream_ends_in_a_failed_task_and_the_cli_raises(
-        self, runtime_sandbox_ready
+        self, router_envoy_scaled_to_zero
     ):
+        expected_error = {
+            "type": "error",
+            "agent": "coding_agent",
+            "error_type": UpstreamUnavailable.__name__,
+            "message": (
+                f"CodingAgent streaming failed with {UpstreamUnavailable.__name__}. "
+                "See server logs for detail."
+            ),
+        }
         request_body = _build_a2a_request(
-            FAILING_QUERY,
+            f"{FAILING_QUERY} (request {uuid.uuid4().hex})",
             agent_name="coding_agent",
             tenant_id=TENANT_ID,
         )
@@ -646,26 +732,18 @@ class TestFailedCodingTurnIsTerminalFailure:
         assert status["state"] == "failed", finals[0]
         parts = status["message"]["parts"]
         assert [part["kind"] for part in parts] == ["text"], parts
-        assert json.loads(parts[0]["text"]) == {
-            "type": "error",
-            "agent": "coding_agent",
-            "error_type": NoAnswerError.__name__,
-            "message": (
-                f"Agent 'coding_agent' failed with {NoAnswerError.__name__}. "
-                "See runtime logs for detail."
-            ),
-        }, parts[0]["text"]
+        assert json.loads(parts[0]["text"]) == expected_error, parts[0]["text"]
 
         # The CLI consumes that same terminal event and refuses to present it
         # as a result.
         with pytest.raises(CodingStreamError) as raised:
             stream_coding_response(
-                query=FAILING_QUERY,
+                query=f"{FAILING_QUERY} (request {uuid.uuid4().hex})",
                 agent_name="coding_agent",
                 tenant_id=TENANT_ID,
                 runtime_url=RUNTIME,
             )
         assert str(raised.value) == (
-            f"coding_agent ({NoAnswerError.__name__}): Agent 'coding_agent' "
-            f"failed with {NoAnswerError.__name__}. See runtime logs for detail."
+            f"coding_agent ({UpstreamUnavailable.__name__}): "
+            f"{expected_error['message']}"
         ), str(raised.value)
