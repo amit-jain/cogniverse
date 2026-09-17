@@ -150,15 +150,24 @@ _RESULT_TITLE = re.compile(r"^Result \d+: (\S+) \(Score: -?\d+\.\d{3}\)$")
 def _rendered_result_ids(panel) -> set:
     """The content ids the open search panel's result expanders name.
 
-    Expanders render collapsed, so their titles are read from the DOM text
-    rather than the rendered text.
+    An expander's title is the markdown label inside its ``<summary>``, next
+    to the toggle icon whose ligature text ("keyboard_arrow_right") is not
+    part of the title. Expanders render collapsed, so the label is read from
+    the DOM text rather than the rendered text.
     """
     ids = set()
     for expander in panel.locator('[data-testid="stExpander"]:has-text("score")').all():
-        for line in (expander.text_content() or "").splitlines():
-            match = _RESULT_TITLE.match(line.strip())
-            if match:
-                ids.add(match.group(1))
+        title = (
+            expander.locator(
+                'summary [data-testid="stMarkdownContainer"]'
+            ).text_content()
+            or ""
+        ).strip()
+        if not title.startswith("Result "):
+            continue
+        match = _RESULT_TITLE.fullmatch(title)
+        assert match, f"result expander title {title!r} is not {_RESULT_TITLE.pattern}"
+        ids.add(match.group(1))
     return ids
 
 
