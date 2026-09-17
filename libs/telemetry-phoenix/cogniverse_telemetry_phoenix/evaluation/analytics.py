@@ -60,7 +60,7 @@ def _epoch_to_utc_timestamp(value: float):
 class PhoenixAnalytics:
     """Analytics engine for Phoenix traces and spans"""
 
-    def __init__(self, telemetry_url: str = "http://localhost:6006"):
+    def __init__(self, telemetry_url: str):
         self.telemetry_url = telemetry_url
         self.client = _PhoenixSyncClient(base_url=telemetry_url)
         # Same per-endpoint Phoenix breaker as the trace store: repeated

@@ -13,21 +13,26 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
-def _phoenix_base_url() -> str:
-    """Phoenix base URL from the dashboard's configured telemetry URL.
-
-    The app shell sets ``st.session_state["phoenix_url"]`` from the system
-    config's ``telemetry_url``; fall back to the local default only when the
-    tab is rendered outside that shell.
-    """
-    return st.session_state.get("phoenix_url") or "http://localhost:6006"
-
-
 _PHOENIX_REQUEST_TIMEOUT_S = 15
 
 
 class PhoenixUnavailableError(RuntimeError):
     """Phoenix could not be reached or answered with an error status."""
+
+
+def _phoenix_base_url() -> str:
+    """Phoenix base URL from the dashboard's configured telemetry URL.
+
+    The app shell sets ``st.session_state["phoenix_url"]`` from the system
+    config's ``telemetry_url``.
+    """
+    url = st.session_state.get("phoenix_url")
+    if not url:
+        raise PhoenixUnavailableError(
+            "Phoenix is not configured for this dashboard: the session has no "
+            "phoenix_url (SystemConfig.telemetry_url)"
+        )
+    return url
 
 
 def query_phoenix_graphql(query: str) -> Dict[str, Any]:
