@@ -298,7 +298,7 @@ class InMemoryConfigStore(ImmutableConfigStore):
 
             # Check if any version belongs to this tenant
             sample = next(iter(versions.values()))
-            if sample.tenant_id != tenant_id:
+            if sample.tenant_id != tenant_id or sample.scope == ConfigScope.SCHEMA:
                 continue
 
             if include_history:
@@ -319,8 +319,21 @@ class InMemoryConfigStore(ImmutableConfigStore):
 
         The destination belongs to the call: tenant ids carried by the
         payload are ignored, so an export taken from one tenant restores
-        into whichever tenant the caller names.
+        into whichever tenant the caller names. Schema-scope rows are refused
+        before any write, as ``VespaConfigStore.import_configs`` refuses them.
         """
+        schema_rows = [
+            f"{entry.get('service')}/{entry.get('config_key')}"
+            for entry in configs.get("configs", [])
+            if isinstance(entry, dict)
+            and entry.get("scope") == ConfigScope.SCHEMA.value
+        ]
+        if schema_rows:
+            raise ValueError(
+                f"Configuration import for tenant {tenant_id} refused: schema rows "
+                "record deployments made by the schema registry and are not "
+                f"importable: {', '.join(schema_rows)}"
+            )
         with self._lock:
             count = 0
             for config_data in configs.get("configs", []):

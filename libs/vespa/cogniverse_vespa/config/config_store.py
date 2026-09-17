@@ -923,6 +923,10 @@ class VespaConfigStore(ImmutableConfigStore):
             tenant_id: Tenant identifier
             include_history: Include all versions (True) or just latest (False)
 
+        Schema-scope rows are left out: they record the schema registry's
+        deployments, lease and deployment journal for this tenant's Vespa
+        schemas, not configuration another tenant can take.
+
         Returns:
             Dictionary with all configurations, ordered by config id then
             ascending version. ``import_configs`` replays the rows in file
@@ -941,7 +945,10 @@ class VespaConfigStore(ImmutableConfigStore):
                 ]
             else:
                 configs = self.list_configs(tenant_id)
-            configs = sorted(configs, key=lambda c: (c.get_config_id(), c.version))
+            configs = sorted(
+                (c for c in configs if c.scope != ConfigScope.SCHEMA),
+                key=lambda c: (c.get_config_id(), c.version),
+            )
 
             return {
                 "tenant_id": tenant_id,
@@ -984,8 +991,25 @@ class VespaConfigStore(ImmutableConfigStore):
 
         Returns:
             Number of configurations imported
+
+        Raises:
+            ValueError: The payload carries schema-scope rows. Those are
+                written only by the schema registry once Vespa holds the
+                schema, so the whole payload is refused before any write.
         """
         config_entries = configs.get("configs", [])
+        schema_rows = [
+            f"{entry.get('service')}/{entry.get('config_key')}"
+            for entry in config_entries
+            if isinstance(entry, dict)
+            and entry.get("scope") == ConfigScope.SCHEMA.value
+        ]
+        if schema_rows:
+            raise ValueError(
+                f"Configuration import for tenant {tenant_id} refused: schema rows "
+                "record deployments made by the schema registry and are not "
+                f"importable: {', '.join(schema_rows)}"
+            )
         imported_count = 0
         failures: List[tuple[str, Exception]] = []
 

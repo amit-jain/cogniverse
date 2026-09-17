@@ -2786,18 +2786,16 @@ class TestConfigurationImport:
         # tenant id inside it replaced: the destination must win over the
         # file, so the file has to name someone else.
         exported = store.export_configs(tenant_id=source, include_history=False)
-        assert len(exported["configs"]) == len(written) + 1, exported
-        # The upload carries the written configurations. The source's schema
-        # registration names the source's own Vespa schema, so it is not
-        # material for another tenant's registry.
-        exported["configs"] = [
-            entry
+        assert len(exported["configs"]) == len(written), exported
+        # The export carries exactly the written configurations: the source's
+        # schema registration records the source's own Vespa deployment, so
+        # the export leaves it out.
+        assert sorted(
+            (entry["scope"], entry["service"], entry["config_key"])
             for entry in exported["configs"]
-            if entry["scope"] != ConfigScope.SCHEMA.value
-        ]
-        assert sorted(entry["config_key"] for entry in exported["configs"]) == sorted(
-            written
-        ), exported
+        ) == sorted((ConfigScope.AGENT.value, "clients_e2e", key) for key in written), (
+            exported
+        )
         exported["tenant_id"] = decoy
         for entry in exported["configs"]:
             entry["tenant_id"] = decoy
@@ -2823,7 +2821,7 @@ class TestConfigurationImport:
             .locator('[data-testid="stAlert"]:has-text("Exported")')
             .all()
         ]
-        assert exports == [f"✅ Exported {len(written) + 1} configurations"], exports
+        assert exports == [f"✅ Exported {len(written)} configurations"], exports
 
         set_tenant(page, destination)
         click_top_tab(page, "Configuration")
