@@ -681,62 +681,248 @@ class TestExportImportRoundTrip:
         )
         assert restored_agent.config_value == {"thinking_enabled": False}
 
-    def test_import_raises_after_a_mid_import_failure(
-        self, vespa_config_store, monkeypatch
-    ):
-        import uuid
-
-        store = vespa_config_store
-        tenant = f"exp_fault_{uuid.uuid4().hex[:6]}"
-        configs = {
+    @staticmethod
+    def _fault_rows() -> dict:
+        return {
             "configs": [
                 {
                     "scope": "system",
                     "service": "runtime",
-                    "config_key": "first",
-                    "config_value": {"position": 1},
-                },
-                {
-                    "scope": "system",
-                    "service": "runtime",
-                    "config_key": "second",
-                    "config_value": {"position": 2},
-                },
+                    "config_key": key,
+                    "config_value": {"position": position},
+                }
+                for position, key in enumerate(("first", "second", "third"), start=1)
             ]
         }
-        original_set_config = store.set_config
 
-        def fail_second_config(**kwargs):
-            if kwargs["config_key"] == "second":
-                raise ConnectionError("Vespa disconnected during config import")
-            return original_set_config(**kwargs)
+    @staticmethod
+    def _feeds_key(method: str, path: str, body: bytes, key: str) -> bool:
+        return (
+            method == "POST"
+            and path.startswith("/document/v1/")
+            and json.loads(body)["fields"]["config_key"] == key
+        )
 
-        monkeypatch.setattr(store, "set_config", fail_second_config)
-        try:
-            with pytest.raises(
-                RuntimeError,
-                match="Failed to import 1 of 2 configurations.*second",
-            ):
-                store.import_configs(tenant, configs)
+    @staticmethod
+    def _history(store, tenant: str, key: str) -> list:
+        return [
+            (entry.version, entry.config_value)
+            for entry in store.get_config_history(
+                tenant_id=tenant,
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+                config_key=key,
+            )
+        ]
 
-            entries = [
-                entry
-                for entry in store.list_all_configs(
-                    scope=ConfigScope.SYSTEM, service="runtime"
-                )
-                if entry.tenant_id == tenant
-            ]
-            assert [(entry.config_key, entry.config_value) for entry in entries] == [
-                ("first", {"position": 1})
-            ]
-        finally:
-            monkeypatch.setattr(store, "set_config", original_set_config)
+    @staticmethod
+    def _delete_tenant(store, tenant: str) -> None:
+        for key in ("first", "second", "third"):
             store.delete_config(
                 tenant_id=tenant,
                 scope=ConfigScope.SYSTEM,
                 service="runtime",
-                config_key="first",
+                config_key=key,
             )
+
+    def test_a_store_failure_mid_import_removes_every_version_it_wrote(
+        self, vespa_instance, vespa_config_store
+    ):
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+        store = vespa_config_store
+        tenant = f"exp_fault_{uuid.uuid4().hex[:6]}"
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="first",
+            config_value={"position": 0},
+        )
+
+        def refuse_third(method, path, body):
+            if self._feeds_key(method, path, body, "third"):
+                return 500, {"message": "injected feed failure"}
+            return None
+
+        try:
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}", refuse_third
+            ) as proxy:
+                importer = VespaConfigStore(
+                    backend_url="http://127.0.0.1",
+                    backend_port=proxy.port,
+                    keep_versions=1,
+                )
+                try:
+                    with pytest.raises(RuntimeError) as raised:
+                        importer.import_configs(tenant, self._fault_rows())
+                finally:
+                    importer.close()
+
+            assert str(raised.value) == (
+                f"Configuration import for tenant {tenant} failed at row 3 of 3 "
+                "(runtime/third): injected feed failure; removed 2 of the 2 "
+                "versions it had written"
+            )
+            assert type(raised.value.__cause__).__name__ == "VespaError"
+            # The two written versions are deleted newest first, and nothing
+            # was pruned before the import failed.
+            assert [
+                path.split("/docid/", 1)[1]
+                for method, path, _body in proxy.requests
+                if method == "DELETE"
+            ] == [
+                f"config_metadata%3A%3A{tenant}%3Asystem%3Aruntime%3Asecond%3A%3A1",
+                f"config_metadata%3A%3A{tenant}%3Asystem%3Aruntime%3Afirst%3A%3A2",
+            ]
+            # The tenant holds exactly what it held before the import.
+            assert self._history(store, tenant, "first") == [(1, {"position": 0})]
+            assert self._history(store, tenant, "second") == []
+            assert self._history(store, tenant, "third") == []
+        finally:
+            self._delete_tenant(store, tenant)
+
+    def test_versions_a_failed_rollback_leaves_are_named(
+        self, vespa_instance, vespa_config_store
+    ):
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+        store = vespa_config_store
+        tenant = f"exp_stuck_{uuid.uuid4().hex[:6]}"
+
+        def refuse_third_and_deletes(method, path, body):
+            if method == "DELETE" or self._feeds_key(method, path, body, "third"):
+                return 500, {"message": "injected storage failure"}
+            return None
+
+        try:
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}",
+                refuse_third_and_deletes,
+            ) as proxy:
+                importer = VespaConfigStore(
+                    backend_url="http://127.0.0.1", backend_port=proxy.port
+                )
+                try:
+                    with pytest.raises(RuntimeError) as raised:
+                        importer.import_configs(tenant, self._fault_rows())
+                finally:
+                    importer.close()
+
+            assert str(raised.value) == (
+                f"Configuration import for tenant {tenant} failed at row 3 of 3 "
+                "(runtime/third): injected storage failure; removed 0 of the 2 "
+                "versions it had written; still stored: runtime/second v1: "
+                "injected storage failure; runtime/first v1: injected storage failure"
+            )
+            assert [
+                method for method, _path, _body in proxy.requests if method == "DELETE"
+            ] == ["DELETE", "DELETE"]
+            # The versions the message names are the versions still stored.
+            assert self._history(store, tenant, "first") == [(1, {"position": 1})]
+            assert self._history(store, tenant, "second") == [(1, {"position": 2})]
+        finally:
+            self._delete_tenant(store, tenant)
+
+    def test_a_rollback_removes_only_the_imports_own_versions(
+        self, vespa_instance, vespa_config_store
+    ):
+        """A writer that lands a version of the same key while the import is
+        in flight keeps it: the rollback deletes the import's versions by
+        number, never the key."""
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+        store = vespa_config_store
+        tenant = f"exp_race_{uuid.uuid4().hex[:6]}"
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="first",
+            config_value={"position": 0},
+        )
+
+        def concurrent_write_then_refuse_third(method, path, body):
+            if self._feeds_key(method, path, body, "third"):
+                store.set_config(
+                    tenant_id=tenant,
+                    scope=ConfigScope.SYSTEM,
+                    service="runtime",
+                    config_key="first",
+                    config_value={"concurrent": True},
+                )
+                return 500, {"message": "injected feed failure"}
+            return None
+
+        try:
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}",
+                concurrent_write_then_refuse_third,
+            ) as proxy:
+                importer = VespaConfigStore(
+                    backend_url="http://127.0.0.1", backend_port=proxy.port
+                )
+                try:
+                    with pytest.raises(RuntimeError) as raised:
+                        importer.import_configs(tenant, self._fault_rows())
+                finally:
+                    importer.close()
+
+            assert str(raised.value) == (
+                f"Configuration import for tenant {tenant} failed at row 3 of 3 "
+                "(runtime/third): injected feed failure; removed 2 of the 2 "
+                "versions it had written"
+            )
+            assert self._history(store, tenant, "first") == [
+                (3, {"concurrent": True}),
+                (1, {"position": 0}),
+            ]
+            assert self._history(store, tenant, "second") == []
+        finally:
+            self._delete_tenant(store, tenant)
+
+    def test_a_complete_import_prunes_only_after_every_row_is_written(
+        self, vespa_instance, vespa_config_store
+    ):
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+        store = vespa_config_store
+        tenant = f"exp_prune_{uuid.uuid4().hex[:6]}"
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="first",
+            config_value={"position": 0},
+        )
+
+        try:
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}"
+            ) as proxy:
+                importer = VespaConfigStore(
+                    backend_url="http://127.0.0.1",
+                    backend_port=proxy.port,
+                    keep_versions=1,
+                )
+                try:
+                    assert importer.import_configs(tenant, self._fault_rows()) == 3
+                finally:
+                    importer.close()
+
+            methods = [
+                (method, path.startswith("/document/v1/"))
+                for method, path, _body in proxy.requests
+            ]
+            feeds = [i for i, call in enumerate(methods) if call == ("POST", True)]
+            deletes = [i for i, call in enumerate(methods) if call[0] == "DELETE"]
+            assert (len(feeds), len(deletes)) == (3, 1), methods
+            assert max(feeds) < min(deletes), methods
+            assert self._history(store, tenant, "first") == [(2, {"position": 1})]
+            assert self._history(store, tenant, "third") == [(1, {"position": 3})]
+        finally:
+            self._delete_tenant(store, tenant)
 
     def test_export_with_history_returns_all_versions(self, vespa_config_store):
         import time
