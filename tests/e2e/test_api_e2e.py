@@ -3081,14 +3081,18 @@ class TestDocumentIngestionAndSearch:
         marker = f"tailmarker-{tenant_id.rsplit('_', 1)[1]}"
         _, window_tokens = _served_document_windows("probe")
         document_text = _text_over_three_windows(marker, window_tokens)
-        windows, _ = _served_document_windows(document_text)
-        tokens = _served_document_tokens(document_text)
+        # Ingestion windows the extracted text, which is the file stripped of
+        # surrounding whitespace; the fixture differs only by its final newline.
+        indexed_text = document_text.strip()
+        assert document_text == f"{indexed_text}\n"
+        windows, _ = _served_document_windows(indexed_text)
+        tokens = _served_document_tokens(indexed_text)
         expected_windows = math.ceil(len(tokens) / window_tokens)
         assert len(windows) == expected_windows
-        assert "".join(windows) == document_text
+        assert "".join(windows) == indexed_text
         # The whole document in one window is exactly the truncated index this
         # replaces, so the fixture has to outgrow a single window.
-        assert windows[0] != document_text
+        assert windows[0] != indexed_text
         holding = [index for index, window in enumerate(windows) if marker in window]
         assert holding == [expected_windows - 1]
 
@@ -3160,7 +3164,7 @@ class TestDocumentIngestionAndSearch:
             (int(row["chunk_start"]), int(row["chunk_end"])) for row in ordered
         ] == _window_spans(windows)
         assert [row["full_text"] for row in ordered] == windows
-        assert "".join(row["full_text"] for row in ordered) == document_text
+        assert "".join(row["full_text"] for row in ordered) == indexed_text
         assert [row["doc_id"] for row in ordered] == [
             f"{document_id}_{document_id}_w{index:04d}"
             for index in range(expected_windows)
