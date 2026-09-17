@@ -126,7 +126,7 @@ async def test_profile_delete_keeps_loop_responsive_and_preserves_config_on_fail
     )
     env.cm.add_backend_profile(profile, tenant_id=env.tenant)
     env.proxy.arm(
-        lambda method, path, body: method == "POST" and "prepareandactivate" in path,
+        lambda method, path, body: method == "PUT" and path.endswith("/active"),
         failure=failure,
     )
     async with AsyncClient(

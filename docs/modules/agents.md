@@ -226,6 +226,11 @@ resolver seam — it resolves through `BackendRegistry` on every call — and
 `_search_backend(query_dict)` runs one search with that instance leased for
 the call. `AudioAnalysisAgent` and `SearchService` use the same two methods.
 
+**Profile resolution**: profiles, models and encoder services come from the
+config of `SearchAgentDeps.tenant_id` — the tenant's own profiles merged over
+the system's — and from the system tenant when it is unset. The dispatcher
+caches one agent per tenant and profile.
+
 #### Multi-Modal Support
 
 ```mermaid

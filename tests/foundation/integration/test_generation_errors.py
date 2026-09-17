@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import http.server
 import json
+import logging
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -514,25 +515,43 @@ async def test_v1_nonstreaming_refuses_the_turn(compat_route, provider):
     }
 
 
-async def test_v1_buffered_stream_ends_in_an_error_frame(compat_route, provider):
-    async with compat_route(streams_answer_tokens=False) as client:
-        response = await client.post(
-            "/v1/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            json=chat_request(TEXT_MODEL, "prose", stream=True),
-        )
+async def test_v1_buffered_stream_ends_in_an_error_frame(
+    compat_route, provider, caplog
+):
+    with caplog.at_level(logging.ERROR, logger=openai_compat.__name__):
+        async with compat_route(streams_answer_tokens=False) as client:
+            response = await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                json=chat_request(TEXT_MODEL, "prose", stream=True),
+            )
     assert provider.cases == ["prose"]
     assert response.status_code == 200, response.text
     assert response.text.endswith("data: [DONE]\n\n")
     frames = sse_frames(response.text)
     assert frames[-1] == {
         "error": {
-            "message": no_answer_detail("text_analysis_agent", "prose"),
+            "message": (
+                "text_analysis_agent failed with NoAnswerError. "
+                "See server logs for detail."
+            ),
+            "agent": "text_analysis_agent",
+            "error_type": "NoAnswerError",
             "type": "server_error",
             "code": "internal_error",
         }
     }
     assert delta_text(frames) == ""
+    assert [
+        (record.getMessage(), str(record.exc_info[1]))
+        for record in caplog.records
+        if record.name == openai_compat.__name__
+    ] == [
+        (
+            "chat.completions turn failed mid-stream",
+            no_answer_detail("text_analysis_agent", "prose"),
+        )
+    ]
 
 
 async def test_v1_token_stream_ends_in_an_error_frame(compat_route, provider):
@@ -551,6 +570,8 @@ async def test_v1_token_stream_ends_in_an_error_frame(compat_route, provider):
             "message": STREAM_FAILURE,
             "type": "server_error",
             "code": "internal_error",
+            "agent": "SummarizerAgent",
+            "error_type": "LMOutputIncomplete",
         }
     }
     assert delta_text(frames) == ""

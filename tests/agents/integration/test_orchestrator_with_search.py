@@ -127,9 +127,11 @@ def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url, real_telem
 
     # Create real agent instances
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.bind_config_manager(config_manager)
     profile_agent = ProfileSelectionAgent(deps=ProfileSelectionDeps())
-    profile_agent._config_manager = config_manager
+    profile_agent.bind_config_manager(config_manager)
     query_agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    query_agent.bind_config_manager(config_manager)
     search_agent = SearchAgent(
         deps=SearchAgentDeps(
             backend_url="http://localhost",

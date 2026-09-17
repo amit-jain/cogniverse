@@ -259,6 +259,8 @@ class TestTriggeredOptimization:
             _build_phoenix_provider_for_cli,
         )
 
+        monkeypatch.setenv("PHOENIX_HTTP_ENDPOINT", phoenix_container["http_endpoint"])
+        monkeypatch.setenv("PHOENIX_GRPC_ENDPOINT", phoenix_container["otlp_endpoint"])
         reader = ArtifactManager(
             _build_phoenix_provider_for_cli("test:unit"), "test:unit"
         )

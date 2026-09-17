@@ -123,7 +123,12 @@ class TestA2AMultiTurnHistoryAccumulation:
     """Test multi-turn conversation history via A2A contextId."""
 
     def test_multiturn_history_accumulates_three_turns(
-        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+        self,
+        a2a_client,
+        dspy_lm,
+        vespa_instance,
+        dispatch_history_spy,
+        tomoro_search_url,
     ):
         """3 A2A calls with same contextId -> turn 3 carries history from turns 1+2."""
         context_id = f"test-accumulate-{uuid.uuid4()}"
@@ -205,7 +210,12 @@ class TestA2AMultiTurnHistoryAccumulation:
         assert "found three cat clips" in seen_contents
 
     def test_context_id_isolation(
-        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+        self,
+        a2a_client,
+        dspy_lm,
+        vespa_instance,
+        dispatch_history_spy,
+        tomoro_search_url,
     ):
         """Messages to different contextIds don't cross-contaminate history."""
         ctx_a = f"test-iso-a-{uuid.uuid4()}"
@@ -243,7 +253,9 @@ class TestA2AMultiTurnHistoryAccumulation:
         assert any("cat videos" in c for c in a2_contents), a2_contents
         assert not any("dog videos" in c for c in a2_contents), a2_contents
 
-    def test_task_stays_alive_input_required(self, a2a_client, dspy_lm, vespa_instance):
+    def test_task_stays_alive_input_required(
+        self, a2a_client, dspy_lm, vespa_instance, tomoro_search_url
+    ):
         """TaskState.input_required keeps task non-terminal for subsequent turns."""
         context_id = f"test-alive-{uuid.uuid4()}"
 
@@ -270,7 +282,12 @@ class TestA2AMultiTurnHistoryAccumulation:
         assert "result" in resp2, "Turn 2 should succeed on alive task"
 
     def test_agent_response_in_history(
-        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+        self,
+        a2a_client,
+        dspy_lm,
+        vespa_instance,
+        dispatch_history_spy,
+        tomoro_search_url,
     ):
         """Turn 1 agent response appears in turn 2's conversation context."""
         context_id = f"test-agent-hist-{uuid.uuid4()}"

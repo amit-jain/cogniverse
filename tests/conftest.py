@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -23,6 +24,19 @@ import pytest
 import requests
 
 from tests.utils.async_polling import simulate_processing_delay
+
+
+@pytest.fixture(autouse=True)
+def _restore_main_module():
+    """Put back the ``__main__`` module a test replaced.
+
+    Streamlit's ``AppTest`` swaps ``sys.modules["__main__"]`` for the script
+    it renders and never restores it; every later spawned child re-runs that
+    script before its target and dies outside a Streamlit session.
+    """
+    main = sys.modules["__main__"]
+    yield
+    sys.modules["__main__"] = main
 
 
 @pytest.fixture(scope="session")

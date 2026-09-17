@@ -64,7 +64,7 @@ async def test_concurrent_thread_first_touches_build_search_agent_once(monkeypat
         # All N threads arrive together, THEN hit the cache miss at once — the
         # lock must funnel them into a single build.
         barrier.wait(timeout=5)
-        return d._get_search_agent("profile_x")
+        return d._get_search_agent("profile_x", "acme:acme")
 
     # asyncio.to_thread shares the default executor, whose worker ceiling
     # (cpu_count + 4) is below _N on small CI hosts and starves the barrier.
@@ -76,7 +76,39 @@ async def test_concurrent_thread_first_touches_build_search_agent_once(monkeypat
 
     assert builds["n"] == 1
     assert all(r is results[0] for r in results)
-    assert d._search_agent_cache["profile_x"] is results[0]
+    assert d._search_agent_cache[("acme:acme", "profile_x")] is results[0]
+
+
+def test_each_tenant_gets_a_search_agent_built_from_its_own_profiles(monkeypatch):
+    """A profile name resolves against the requesting tenant's config, which
+    carries that tenant's own profiles, so one tenant's agent never serves
+    another's."""
+    import cogniverse_agents.search_agent as sa_mod
+
+    class _StubSearchAgent:
+        def __init__(self, **kwargs):
+            self.deps = kwargs["deps"]
+
+    monkeypatch.setattr(sa_mod, "SearchAgent", _StubSearchAgent)
+    monkeypatch.setattr(sa_mod, "SearchAgentDeps", lambda **k: SimpleNamespace(**k))
+
+    d = _make_dispatcher()
+    acme = d._get_search_agent("profile_x", "acme:acme")
+    beta = d._get_search_agent("profile_x", "beta:beta")
+
+    assert acme is not beta
+    assert d._get_search_agent("profile_x", "acme:acme") is acme
+    assert vars(acme.deps) == {
+        "profile": "profile_x",
+        "tenant_id": "acme:acme",
+        "backend_url": "http://vespa",
+        "backend_port": 8080,
+    }
+    assert vars(beta.deps)["tenant_id"] == "beta:beta"
+    assert set(d._search_agent_cache) == {
+        ("acme:acme", "profile_x"),
+        ("beta:beta", "profile_x"),
+    }
 
 
 @pytest.mark.asyncio

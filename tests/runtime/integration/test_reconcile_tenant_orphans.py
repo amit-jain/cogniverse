@@ -18,6 +18,7 @@ modules own, and a global sweep would drop them.
 
 from __future__ import annotations
 
+import copy
 import socket
 import uuid
 
@@ -242,12 +243,9 @@ async def test_failed_removal_leaves_schema_documents_and_registry_row_intact(
         port = unavailable.getsockname()[1]
 
         def deploy_to_unavailable_port(manager, package, **kwargs):
-            previous_port = manager.backend_port
-            manager.backend_port = port
-            try:
-                return real_deploy(manager, package, **kwargs)
-            finally:
-                manager.backend_port = previous_port
+            isolated_manager = copy.copy(manager)
+            isolated_manager.backend_port = port
+            return real_deploy(isolated_manager, package, **kwargs)
 
         with monkeypatch.context() as patch:
             patch.setattr(
@@ -257,7 +255,7 @@ async def test_failed_removal_leaves_schema_documents_and_registry_row_intact(
                 tm._remove_tenant_orphans([ghost], [_schema_name(ghost)])
         assert failure.value.request.method == "POST"
         assert failure.value.request.url == (
-            f"http://localhost:{port}/application/v2/tenant/default/prepareandactivate"
+            f"http://localhost:{port}/application/v2/tenant/default/session"
         )
 
     deployed = set(

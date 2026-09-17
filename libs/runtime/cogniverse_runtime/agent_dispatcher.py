@@ -623,7 +623,7 @@ class AgentDispatcher:
         # heavyweight SearchAgent init or a Vespa get_config read — are guarded
         # by threading.Locks. An asyncio Future guard (as the agent caches use)
         # would not serialize concurrent thread first-touches.
-        self._search_agent_cache: Dict[str, Any] = {}
+        self._search_agent_cache: Dict[Tuple[str, str], Any] = {}
         self._search_agent_cache_lock = threading.Lock()
         self._rail_chains_cache: Dict[str, Optional[tuple]] = {}
         self._rail_chains_cache_lock = threading.Lock()
@@ -2587,7 +2587,9 @@ class AgentDispatcher:
         # _get_search_agent builds SearchAgent on a cache miss — a synchronous
         # get_system_config Vespa read + query-encoder init in __init__; offload
         # the whole call so the first search per profile doesn't stall the loop.
-        search_agent = await asyncio.to_thread(self._get_search_agent, profile)
+        search_agent = await asyncio.to_thread(
+            self._get_search_agent, profile, tenant_id
+        )
         # Apply the dispatcher's per-request artefact overlay so the
         # canary/variant prompts shape the SearchAgent's DSPy call. Without
         # this, the overlay sits in context unread.
@@ -2980,20 +2982,22 @@ class AgentDispatcher:
             )
         return float(budget)
 
-    def _get_search_agent(self, profile: str):
-        """Return a per-profile cached SearchAgent instance. SearchAgent is
+    def _get_search_agent(self, profile: str, tenant_id: str):
+        """Return the SearchAgent cached for a tenant's profile. SearchAgent is
         heavyweight (query encoder, schema loader, backend) so we avoid
-        re-instantiating on every dispatch."""
+        re-instantiating on every dispatch. The profile is resolved from the
+        tenant's config, which carries the tenant's own profiles."""
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
-        agent = self._search_agent_cache.get(profile)
+        key = (tenant_id, profile)
+        agent = self._search_agent_cache.get(key)
         if agent is not None:
             return agent
         with self._search_agent_cache_lock:
             # Double-check: a concurrent thread may have built it while we
             # waited on the lock — otherwise N first-touches each run the full
             # SearchAgent build (encoder init + Vespa get_system_config read).
-            agent = self._search_agent_cache.get(profile)
+            agent = self._search_agent_cache.get(key)
             if agent is None:
                 # SearchAgentDeps.backend_url defaults to "http://localhost" if
                 # not set — that's the pod itself, never Vespa. Read the real
@@ -3003,13 +3007,14 @@ class AgentDispatcher:
                 agent = SearchAgent(
                     deps=SearchAgentDeps(
                         profile=profile,
+                        tenant_id=tenant_id,
                         backend_url=system_config.backend_url,
                         backend_port=system_config.backend_port,
                     ),
                     schema_loader=self._schema_loader,
                     config_manager=self._config_manager,
                 )
-                self._search_agent_cache[profile] = agent
+                self._search_agent_cache[key] = agent
             return agent
 
     async def _code_search(self, query: str, tenant_id: str) -> List[Dict[str, Any]]:

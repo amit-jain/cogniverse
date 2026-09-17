@@ -352,6 +352,13 @@ class SearchAgentDeps(AgentDeps):
     backend_port: int = Field(8080, description="Backend port")
     backend_config_port: Optional[int] = Field(None, description="Backend config port")
     profile: Optional[str] = Field(None, description="Active profile")
+    tenant_id: Optional[str] = Field(
+        None,
+        description=(
+            "Tenant whose backend profiles the agent resolves; the system "
+            "tenant when unset"
+        ),
+    )
     backend_type: str = Field("vespa", description="Backend type")
     model_name: Optional[str] = Field(None, description="Model name")
     auto_create_memory_schema: bool = Field(
@@ -797,13 +804,14 @@ class SearchAgent(
 
         super().__init__(deps=deps, config=a2a_config, dspy_module=self.search_module)
 
-        # Load system-level infrastructure config (profiles, models, backend URLs).
-        # Tenant-scoped operations (backend creation, schema routing) happen per-request.
+        # Profiles, models and backend URLs as the deps' tenant sees them: a
+        # tenant's own profiles merged over the system's.
         from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
         from cogniverse_foundation.config.utils import get_config
 
         self.search_config = get_config(
-            tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+            tenant_id=deps.tenant_id or SYSTEM_TENANT_ID,
+            config_manager=config_manager,
         )
 
         # Memory is initialized per-request via MemoryAwareMixin.initialize_memory()

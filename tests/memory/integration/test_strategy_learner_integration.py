@@ -328,7 +328,9 @@ class TestStrategyRoundTrip:
         assert set(lines[1:]) == _expected_formatted_lines()
 
     @pytest.mark.asyncio
-    async def test_inject_context_includes_strategies(self, memory_manager, trigger_df):
+    async def test_inject_context_includes_strategies(
+        self, memory_manager, trigger_df, shared_memory_vespa
+    ):
         """inject_context_into_prompt includes real strategies from Vespa."""
         learner = StrategyLearner(
             memory_manager=memory_manager,
@@ -340,6 +342,7 @@ class TestStrategyRoundTrip:
         )
 
         mixin = MemoryAwareMixin()
+        mixin.bind_config_manager(shared_memory_vespa["config_manager"])
         mixin.memory_manager = memory_manager
         mixin._memory_agent_name = "search"
         mixin._memory_tenant_id = "test_tenant"

@@ -107,7 +107,7 @@ def _dispatcher(hits):
         config_manager=config_manager,
         schema_loader=MagicMock(),
     )
-    dispatcher._get_search_agent = lambda profile: agent
+    dispatcher._get_search_agent = lambda profile, tenant_id: agent
     return dispatcher, agent
 
 

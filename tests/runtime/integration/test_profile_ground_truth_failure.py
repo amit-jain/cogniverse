@@ -14,7 +14,10 @@ from urllib.parse import unquote, urlencode
 import httpx
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    _BLOB_RING_SLOTS,
+    ArtifactManager,
+)
 from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     load_profile_selection_ground_truth_rows,
 )
@@ -168,13 +171,13 @@ async def test_cli_ground_truth_read_failure_is_terminal(
                 await run
 
         summary = json.loads(result.stdout)
-        # Both serving slots are read concurrently and the store names the slot
-        # dataset it was asked for, so the cause is one of the two — exactly,
-        # including the URL the proxy refused.
+        # Every serving slot is read concurrently; the error names the logical
+        # blob and keeps the URL of whichever slot's read failed first, so the
+        # cause is one of the ring's slots — exactly, including that URL.
         expected_causes = {
             (
-                f"dataset store at {proxy.url} could not answer for dataset "
-                f"{slot!r}: HTTPStatusError: Server error '503 Service Unavailable' "
+                f"dataset store at {proxy.url} could not answer for blob "
+                f"{dataset_name!r}: HTTPStatusError: Server error '503 Service Unavailable' "
                 f"for url '{proxy.url}/v1/datasets?{urlencode({'name': slot})}'\n"
                 "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
             )
@@ -182,7 +185,7 @@ async def test_cli_ground_truth_read_failure_is_terminal(
                 manager._blob_slot_name(
                     "config", "profile_selection_ground_truth", revision
                 )
-                for revision in (0, 1)
+                for revision in range(_BLOB_RING_SLOTS)
             )
         }
         assert {key: value for key, value in summary.items() if key != "cause"} == {

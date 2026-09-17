@@ -55,7 +55,7 @@ def test_remote_timeout_keeps_request_context_and_redacts_secret():
             headers={"Authorization": f"Bearer {token}"},
         )
         with pytest.raises(requests.ReadTimeout) as caught:
-            embedder.encode("Marie Curie discovered radium.", is_query=True)
+            embedder.encode("Marie Curie discovered radium.")
 
     assert requests_seen == [
         (
@@ -63,7 +63,7 @@ def test_remote_timeout_keeps_request_context_and_redacts_secret():
             f"Bearer {token}",
             {
                 "model": "lightonai/DenseOn",
-                "input": ["query: Marie Curie discovered radium."],
+                "input": ["document: Marie Curie discovered radium."],
             },
         )
     ]

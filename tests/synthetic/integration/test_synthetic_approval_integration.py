@@ -174,9 +174,10 @@ def telemetry_manager(phoenix_container):
         otlp_endpoint=phoenix_container["otlp_endpoint"],
         batch_config=BatchExportConfig(use_sync_export=True),
     )
+    TelemetryManager.reset()
     manager = TelemetryManager(config)
     yield manager
-    manager.shutdown()
+    TelemetryManager.reset()
 
 
 def _free_port() -> int:

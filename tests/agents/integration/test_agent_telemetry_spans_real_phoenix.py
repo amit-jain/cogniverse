@@ -927,7 +927,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             reasoning="Single search step",
             unavailable_agents=[],
         )
-        final_output = {"content": "found it", "confidence": 1.0}
+        final_output = {"status": "success", "content": "found it", "confidence": 1.0}
 
         async def _fake_iterative_retrieval_loop(
             *,
