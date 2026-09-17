@@ -95,6 +95,7 @@ COPY --chown=cogniverse:cogniverse libs/telemetry-phoenix ./libs/telemetry-phoen
 COPY --chown=cogniverse:cogniverse libs/runtime ./libs/runtime
 COPY --chown=cogniverse:cogniverse configs/schemas ./configs/schemas
 COPY --chown=cogniverse:cogniverse configs/config.json ./configs/config.json
+COPY --chown=cogniverse:cogniverse configs/agent_policies ./configs/agent_policies
 
 # Switch to non-root user
 USER cogniverse
