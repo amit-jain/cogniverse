@@ -961,6 +961,8 @@ request came through the gateway, otherwise the model-independent branch of
 that same classifier. Several matching profiles are searched together and
 merged by the SearchAgent's RRF ensemble.
 
+Each hit reaches the answer agent with `title` (the schema's title field; a code chunk's `file_path:chunk_name`), `content_type` (from its `video_id`, `audio_id`, `code_id`, `image_id` or `document_id`) and `description` / `text_content`: every text field it carries — `segment_description`, `audio_transcript`, `full_text`, `image_description`, `source_code` — joined by newlines in that order. The summary and the detailed report hand each hit to the LM as `- title (content_type, relevance|score: N.NN): content`.
+
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
 `profiles`, `degraded_profiles`, `degraded_query_rewrite`,
 `undeployed_profiles`, `result_count` — with one of these states:

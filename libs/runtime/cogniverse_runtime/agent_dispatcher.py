@@ -393,34 +393,69 @@ def typed_input_from_context(input_cls, *, query, tenant_id, context, **override
     return input_cls.model_validate(kwargs)
 
 
+# A hit's source identity field names its content type; the first key a
+# schema's metadata carries wins.
+_HIT_CONTENT_TYPES = (
+    ("video_id", "video"),
+    ("audio_id", "audio"),
+    ("code_id", "code"),
+    ("image_id", "image"),
+    ("document_id", "document"),
+)
+_HIT_TITLE_KEYS = ("video_title", "document_title", "audio_title", "image_title")
+# Every text field a shipped schema returns, in the order an answer reads them:
+# a video frame's description before its transcript.
+_HIT_CONTENT_KEYS = (
+    "segment_description",
+    "audio_transcript",
+    "full_text",
+    "image_description",
+    "source_code",
+)
+
+
+def _hit_title(metadata: Dict[str, Any]) -> Optional[str]:
+    for key in _HIT_TITLE_KEYS:
+        if metadata.get(key):
+            return metadata[key]
+    file_path = metadata.get("file_path")
+    if file_path:
+        chunk_name = metadata.get("chunk_name")
+        return f"{file_path}:{chunk_name}" if chunk_name else file_path
+    return None
+
+
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     """Lift a ``SearchResult``/gateway-shaped hit's ``metadata`` to the top level
     so the answer agents' text helpers see the retrieved content.
 
-    ``_format_public_result`` nests ``video_id``, ``video_title``,
-    ``audio_transcript`` etc. under ``metadata``, but the report/summary content
-    builders read ``title`` / ``description`` / ``video_id`` at the top level and
-    would otherwise render every source as "Unknown" with no transcript. Keeps
-    the nested ``metadata`` untouched (keyframe resolution reads it), aliases the
-    search field names to what the agents read, and never lets a top-level
-    identity/score field be shadowed by metadata.
+    ``_format_public_result`` nests a hit's schema fields under ``metadata``,
+    but the report/summary content builders read ``title``, ``content_type``
+    and ``description`` / ``text_content`` at the top level and would
+    otherwise render every source as "Unknown" with no content. The title is
+    the schema's own title field (a code chunk's ``file_path:chunk_name``),
+    the content type comes from the source identity field, and the content is
+    every text field the hit carries — a video frame's description and its
+    transcript, a document window's text, an audio transcript, a code chunk's
+    source — joined by newlines. Keeps the nested ``metadata`` untouched
+    (keyframe resolution reads it) and never lets a top-level field be
+    shadowed by metadata.
     """
     metadata = hit.get("metadata")
     if not isinstance(metadata, dict):
         return hit
     flat: Dict[str, Any] = {**metadata, **hit}
     if not flat.get("title"):
-        # Each content type names its title differently; document/image/audio
-        # hits carried document_title/full_text etc. that were never lifted, so
-        # document-profile summaries rendered every source as "Unknown".
-        for key in ("video_title", "document_title", "audio_title", "image_title"):
-            if metadata.get(key):
-                flat["title"] = metadata[key]
-                break
-    text = (
-        metadata.get("segment_description")
-        or metadata.get("audio_transcript")
-        or metadata.get("full_text")
+        title = _hit_title(metadata)
+        if title:
+            flat["title"] = title
+    content_type = next(
+        (kind for key, kind in _HIT_CONTENT_TYPES if metadata.get(key)), None
+    )
+    if content_type:
+        flat.setdefault("content_type", content_type)
+    text = "\n".join(
+        str(metadata[key]) for key in _HIT_CONTENT_KEYS if metadata.get(key)
     )
     if text:
         flat.setdefault("description", text)
