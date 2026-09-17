@@ -287,7 +287,6 @@ def _assert_deploy_times_out(deploy_fn) -> None:
     )
 
 
-
 def test_backend_deploy_post_times_out_instead_of_hanging(stalled_server, monkeypatch):
     from cogniverse_vespa import backend as backend_module
 
