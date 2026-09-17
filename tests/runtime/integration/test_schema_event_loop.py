@@ -224,9 +224,10 @@ async def test_cold_wiki_factory_shares_one_manager_across_concurrent_threads(
         assert len({id(result) for result in results}) == 1
         schema = f"wiki_pages_{env.tenant.replace(':', '_')}"
         assert str(results[0]) == (
-            f"Backend deployment failed for schema '{schema}': Backend failed to "
-            f"deploy schema '{schema}'. The durable definition is retained for "
-            "late activation."
+            f"Backend deployment failed for schema '{schema}': Vespa refused the "
+            "application package: Deployment failed with status 400: "
+            "{'error': 'injected storage refusal'}. The durable definition is "
+            "retained for late activation."
         )
         managers = [await asyncio.to_thread(env.factory, env.tenant)]
     else:
