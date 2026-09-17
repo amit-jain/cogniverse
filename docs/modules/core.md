@@ -665,7 +665,12 @@ load an empty registry.
 `deploy_schemas(tenant_id, base_schema_names, config=None, force=False)` writes
 all new schema intents, deploys one application package, waits once for backend
 convergence, and registers every schema. It returns full names in request order;
-already registered schemas require no activation unless `force=True`. Empty and
+already registered schemas require no activation unless `force=True`. A
+registered schema whose stored definition differs from the definition the
+schema loader supplies is redeployed with the loaded one in the same package
+and its registry row replaced; a change Vespa refuses raises
+`BackendDeploymentError` naming the schema and Vespa's reason, and the row
+keeps the definition that is live. Empty and
 duplicate name lists are rejected. Intents become complete only after every
 registration succeeds, so a partial registration leaves the whole new batch
 reserved for recovery. `deploy_schema()` delegates to this path with one name.
