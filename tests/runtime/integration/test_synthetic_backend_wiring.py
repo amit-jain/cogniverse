@@ -140,7 +140,9 @@ async def test_runtime_synthetic_config_is_isolated_across_concurrent_tenants():
 
 class TestLifespanWiresSyntheticBackend:
     @pytest.mark.asyncio
-    async def test_synthetic_service_configured_with_backend(self, monkeypatch):
+    async def test_synthetic_service_configured_with_backend(
+        self, monkeypatch, ensure_host_ollama
+    ):
         # Keep the boot light: skip the sandbox connect and the memory
         # lifecycle scheduler; neither is needed for the synthetic wiring.
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
@@ -197,6 +199,7 @@ class TestLifespanWiresSyntheticBackend:
                 "acme:science",
             )
             assert extraction["query"] == "Marie Curie discovered radium"
+            assert extraction["path_used"] == "dspy"
             assert [
                 {"text": entity["text"], "type": entity["type"]}
                 for entity in extraction["entities"]
