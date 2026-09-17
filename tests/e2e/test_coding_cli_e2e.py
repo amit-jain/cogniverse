@@ -7,6 +7,7 @@ the live k3d runtime at localhost:33000. Assertions verify real data flow:
 - REPL session state survives multi-turn round-trips
 """
 
+import inspect
 import json
 import subprocess
 import tempfile
@@ -24,10 +25,25 @@ from cogniverse_cli.streaming import (
 )
 
 from cogniverse_runtime.harness_turn import NoAnswerError
+from cogniverse_runtime.sandbox_pool import SandboxSessionPool
 from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
+
+SANDBOX_WAIT_READY_S = (
+    inspect.signature(SandboxSessionPool.__init__)
+    .parameters["wait_ready_timeout_s"]
+    .default
+)
+"""Budget each task's sandbox gets to become ready. Every task leases a fresh
+sandbox, and a cold start measures ~168 s on the gateway host
+(``SandboxSessionPool`` docstring), so the probe owes the whole budget."""
+
+SANDBOX_PROBE_EXEC_S = 60
+SANDBOX_PROBE_DEADLINE_S = SANDBOX_WAIT_READY_S + SANDBOX_PROBE_EXEC_S + 60
+"""The probe's lease wait and its exec, plus a minute for the pod's
+interpreter start, session creation and teardown."""
 
 
 def _assert_coding_output_shape(result):
@@ -123,7 +139,8 @@ def runtime_sandbox_ready() -> None:
         "async def probe():\n"
         "    async with mgr.task_session('coding_agent', 'e2e:coding') as s:\n"
         "        return await s.exec(\n"
-        "            ['python3', '-c', \"print('coding-sandbox-ready')\"], 60\n"
+        "            ['python3', '-c', \"print('coding-sandbox-ready')\"], "
+        f"{SANDBOX_PROBE_EXEC_S}\n"
         "        )\n"
         "out = asyncio.run(probe())\n"
         "print('__SANDBOX_PROBE__' + json.dumps(out))\n"
@@ -143,7 +160,7 @@ def runtime_sandbox_ready() -> None:
         "-c",
         probe_code,
     ]
-    probe = _run_prerequisite_command(probe_command, timeout=180)
+    probe = _run_prerequisite_command(probe_command, timeout=SANDBOX_PROBE_DEADLINE_S)
     assert probe.returncode == 0, (
         "runtime pod could not execute the OpenShell prerequisite probe; "
         f"command={' '.join(probe_command)!r}; returncode={probe.returncode}; "
