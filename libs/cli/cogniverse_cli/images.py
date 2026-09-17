@@ -101,6 +101,7 @@ IMAGE_INPUT_PATHS = {
         "libs/runtime",
         "configs/schemas",
         "configs/config.json",
+        "configs/agent_policies",
         ".dockerignore",
     ),
     "dashboard": (
