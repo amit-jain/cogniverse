@@ -816,7 +816,29 @@ class TestRequiredTranscription:
 
         documents = _chunk_documents(schema, result["video_id"])
         assert len(documents) == expected_documents
-        assert [d["audio_transcript"] for d in documents] == [""] * expected_documents
+        assert sorted(int(d["segment_id"]) for d in documents) == list(
+            range(expected_documents)
+        )
+        # The schema renders the transcript in every hit's summary, and Vespa
+        # leaves a string field holding the empty string out of the summary,
+        # so an empty transcript is a hit without the field. The chunks of the
+        # clip with audio above carry it.
+        transcript_fields = [
+            field
+            for field in json.loads(
+                (
+                    REPO_ROOT / "configs" / "schemas" / f"{CHUNK_SCHEMA}_schema.json"
+                ).read_text()
+            )["document"]["fields"]
+            if field["name"] == "audio_transcript"
+        ]
+        assert [
+            (field["type"], "summary" in field["indexing"])
+            for field in transcript_fields
+        ] == [("string", True)], transcript_fields
+        assert ["audio_transcript" in d for d in documents] == [
+            False
+        ] * expected_documents, documents
 
 
 def _ingestor_pod_names() -> list[str]:
