@@ -2328,41 +2328,53 @@ class CanaryActionResponse(BaseModel):
     state: Dict[str, Any]
 
 
-# Phoenix endpoints the admin canary actions build ArtifactManagers against.
-# Wired once at startup from the entrypoint (set_phoenix_endpoints) so this
-# router reads no environment at request time. The defaults match the historic
-# env fallbacks so a router constructed without wiring (unit tests) still works.
-_phoenix_endpoints = {
-    "http_endpoint": "http://localhost:6006",
-    "grpc_endpoint": "localhost:4317",
-}
+# Phoenix endpoints the admin artifact actions build ArtifactManagers against,
+# wired once at startup from the entrypoint (set_phoenix_endpoints) so this
+# router reads no environment at request time. Empty until wired; the pair is
+# replaced as one object so a reader never sees one endpoint from each wiring.
+_phoenix_endpoints: Dict[str, str] = {}
 
 
 def set_phoenix_endpoints(http_endpoint: str, grpc_endpoint: str) -> None:
-    """Wire the Phoenix endpoints used by admin canary actions.
+    """Wire the Phoenix endpoints used by the admin artifact actions.
 
-    Called at startup from the entrypoint (env belongs at the entrypoint, not
-    in a request handler): cluster-default Phoenix in production, docker-managed
-    Phoenix in integration tests.
+    Called at startup from the entrypoint with the deployment's
+    ``telemetry_url`` and ``telemetry_collector_endpoint``.
     """
-    _phoenix_endpoints["http_endpoint"] = http_endpoint
-    _phoenix_endpoints["grpc_endpoint"] = grpc_endpoint
+    missing = [
+        name
+        for name, value in (
+            ("http_endpoint", http_endpoint),
+            ("grpc_endpoint", grpc_endpoint),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            f"admin Phoenix wiring needs {' and '.join(missing)}; got "
+            f"http_endpoint={http_endpoint!r}, grpc_endpoint={grpc_endpoint!r}"
+        )
+    global _phoenix_endpoints
+    _phoenix_endpoints = {
+        "http_endpoint": http_endpoint,
+        "grpc_endpoint": grpc_endpoint,
+    }
 
 
 def _build_artifact_manager(tenant_id: str):
-    """Construct an ArtifactManager for an admin canary action, targeting the
+    """Construct an ArtifactManager for an admin artifact action, targeting the
     Phoenix endpoints wired at startup (see ``set_phoenix_endpoints``)."""
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
+    endpoints = _phoenix_endpoints
+    if not endpoints:
+        raise RuntimeError(
+            f"admin artifact store for tenant {tenant_id!r} has no Phoenix "
+            "endpoints: set_phoenix_endpoints was never called"
+        )
     provider = PhoenixProvider()
-    provider.initialize(
-        {
-            "tenant_id": tenant_id,
-            "http_endpoint": _phoenix_endpoints["http_endpoint"],
-            "grpc_endpoint": _phoenix_endpoints["grpc_endpoint"],
-        }
-    )
+    provider.initialize({"tenant_id": tenant_id, **endpoints})
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
 
 

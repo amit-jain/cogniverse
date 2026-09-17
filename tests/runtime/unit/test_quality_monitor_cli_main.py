@@ -74,6 +74,8 @@ TEMPLATE = "cogniverse-optimization-runner"
 
 @pytest.fixture
 def patched(monkeypatch):
+    monkeypatch.setenv("TELEMETRY_OTLP_ENDPOINT", "phoenix-env:4317")
+    monkeypatch.setenv("TELEMETRY_HTTP_ENDPOINT", "http://phoenix-env:6006")
     monkeypatch.setattr(qm, "_build_phoenix_provider", lambda **k: None)
     monkeypatch.setattr(qm, "_workflow_template_from_env", lambda: TEMPLATE)
     monkeypatch.setattr(
@@ -214,6 +216,7 @@ def test_main_uses_env_phoenix_url_for_monitor_and_provider(patched, monkeypatch
     assert seen == {
         "tenant_id": "acme:acme",
         "http_endpoint": "http://phoenix-env:6006",
+        "grpc_endpoint": "phoenix-env:4317",
     }
     assert _StubMonitor.instances[-1].kwargs["phoenix_http_endpoint"] == (
         "http://phoenix-env:6006"

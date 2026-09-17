@@ -63,8 +63,7 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
     monkeypatch: pytest.MonkeyPatch,
 ):
     captured = {}
-    saved = dict(admin._phoenix_endpoints)
-    original_set = admin.set_phoenix_endpoints
+    saved = admin._phoenix_endpoints
     original_get_system_config = ConfigManager.get_system_config
     config_manager = ConfigManager(store=InMemoryConfigStore())
 
@@ -111,4 +110,4 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
             == "wired-phoenix:4317"
         )
     finally:
-        original_set(saved["http_endpoint"], saved["grpc_endpoint"])
+        admin._phoenix_endpoints = saved
