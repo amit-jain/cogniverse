@@ -598,7 +598,8 @@ class OrchestrationSignature(dspy.Signature):
         )
     )
     parallel_steps: str = dspy.OutputField(
-        desc="Indices of steps that can run in parallel (e.g., '0,1|2,3' means 0&1 parallel, then 2&3 parallel)"
+        desc="Indices of steps that can run in parallel (e.g., '0,1|2,3' means 0&1 parallel, then 2&3 parallel)",
+        default="",
     )
     reasoning: str = dspy.OutputField(desc="Explanation of orchestration plan")
 
