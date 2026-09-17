@@ -998,12 +998,17 @@ reported as partial rather than as a complete one. The same per-leg outcome is
 on `SearchOutput.degraded_profiles`, and `SearchOutput.profiles` likewise names
 only the legs that ran. Every leg failing is an outage and raises.
 
-The three nothing-to-search states short-circuit: the envelope states that the
-tenant serves no content of that modality, has no servable profile, or has no
-deployed schema for the profiles it configures, and the answer model is not
-invoked, so an empty corpus never reads as a confident summary of nothing. A
-dependency outage is different in kind — the result is unknown rather than
-empty — and fails the turn.
+The three nothing-to-search states short-circuit when the request carries no
+attachments: the envelope states that the tenant serves no content of that
+modality, has no servable profile, or has no deployed schema for the profiles
+it configures, and the answer model is not invoked, so an empty corpus never
+reads as a confident summary of nothing. Streamed and non-streamed turns decide
+this in one place (`_nothing_to_search_reply`). A streamed turn builds no agent:
+`create_streaming_agent` raises `NothingToSearch` carrying the envelope, and
+`stream_agent_events` ends the stream on it as the `final` event, so `/v1`
+streams the same text the non-streamed turn returns and an A2A stream ends in
+its `input-required` terminal event. A dependency outage is different in kind —
+the result is unknown rather than empty — and fails the turn.
 
 The grounding search is bounded by `answer_grounding_search_timeout_seconds`
 (seconds, `configs/config.json` and the chart's copy). Exceeding it raises

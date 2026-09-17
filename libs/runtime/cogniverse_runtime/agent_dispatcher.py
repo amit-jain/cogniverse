@@ -473,6 +473,19 @@ class AnswerGroundingUnavailable(RuntimeError):
         self.profiles = profiles
 
 
+class NothingToSearch(Exception):
+    """An answer turn that ends before its agent is built.
+
+    Raised while a stream is being set up for a tenant with nothing to search,
+    so the stream ends on ``reply``, the same envelope the non-streamed
+    dispatch returns, without an LM call. Not a failure.
+    """
+
+    def __init__(self, reply: Dict[str, Any]):
+        super().__init__(reply["message"])
+        self.reply = reply
+
+
 # Wall-clock ceiling on an answer agent's grounding search, read from the
 # shipped config so a leg that never answers cannot hold the answer open.
 GROUNDING_SEARCH_TIMEOUT_KEY = "answer_grounding_search_timeout_seconds"
@@ -2293,6 +2306,11 @@ class AgentDispatcher:
             grounding = await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=20
             )
+            reply = self._nothing_to_search_reply(
+                self._nothing_to_search_report, tenant_id, grounding, context
+            )
+            if reply is not None:
+                raise NothingToSearch(reply)
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 DetailedReportAgent,
@@ -2319,6 +2337,11 @@ class AgentDispatcher:
             grounding = await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=10
             )
+            reply = self._nothing_to_search_reply(
+                self._nothing_to_search_summary, tenant_id, grounding, context
+            )
+            if reply is not None:
+                raise NothingToSearch(reply)
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 SummarizerAgent,
@@ -2536,7 +2559,6 @@ class AgentDispatcher:
         from cogniverse_agents.search_agent import (
             SearchInput,
         )
-        from cogniverse_foundation.config.utils import get_config
 
         # One LM round trip stands between the caller and its results, and it
         # is held to what a rewrite through the router measurably costs. The
@@ -2563,12 +2585,6 @@ class AgentDispatcher:
             name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
         ]
 
-        # get_config runs the ConfigUtils ensure-chain (a Vespa read on a cold
-        # or TTL-expired config) — offload it so it never stalls the API loop
-        # (mirrors _build_encoder_config).
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
-        )
         # The searched profile is the SearchAgent's own ``active_profile``
         # (deps.profile), so a requested profile has to reach _get_search_agent:
         # SearchInput.profiles alone changes only the reported name. Extra
@@ -2576,7 +2592,9 @@ class AgentDispatcher:
         profile = (
             requested_profiles[0]
             if requested_profiles
-            else config.get("active_video_profile")
+            else await asyncio.to_thread(
+                self._tenant_config_value, tenant_id, "active_video_profile"
+            )
         )
         if not profile:
             raise ValueError(
@@ -2816,12 +2834,9 @@ class AgentDispatcher:
                 tuple(candidates.undeployed),
             )
 
-        from cogniverse_foundation.config.utils import get_config
-
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        default_profile = await asyncio.to_thread(
+            self._tenant_config_value, tenant_id, "active_video_profile"
         )
-        default_profile = config.get("active_video_profile")
         if default_profile:
             return GroundingPlan(
                 modalities, (default_profile,), GROUNDING_TENANT_DEFAULT_PROFILE
@@ -2962,6 +2977,16 @@ class AgentDispatcher:
             undeployed_profiles=plan.undeployed_profiles,
         )
 
+    def _tenant_config_value(self, tenant_id: str, key: str) -> Any:
+        """One tenant config value. Blocking: ``get_config`` is lazy and the
+        read itself runs the ensure-chain of config-store reads, so callers
+        on the event loop offload this call, not just ``get_config``."""
+        from cogniverse_foundation.config.utils import get_config
+
+        return get_config(tenant_id=tenant_id, config_manager=self._config_manager).get(
+            key
+        )
+
     async def _grounding_search_budget_s(self, tenant_id: str) -> float:
         """Seconds an answer agent's grounding search may take.
 
@@ -2969,12 +2994,9 @@ class AgentDispatcher:
         it has no ceiling to enforce, which is a misconfiguration rather than a
         reason to search unbounded.
         """
-        from cogniverse_foundation.config.utils import get_config
-
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        budget = await asyncio.to_thread(
+            self._tenant_config_value, tenant_id, GROUNDING_SEARCH_TIMEOUT_KEY
         )
-        budget = config.get(GROUNDING_SEARCH_TIMEOUT_KEY)
         if budget is None:
             raise ValueError(
                 f"{GROUNDING_SEARCH_TIMEOUT_KEY!r} is not configured; answer "
@@ -3443,8 +3465,11 @@ class AgentDispatcher:
         grounding = await self._resolve_answer_search_results(
             query, tenant_id, context, top_k=10
         )
-        if grounding.nothing_to_search and not request_kwargs["attachments"]:
-            return self._nothing_to_search_summary(tenant_id, grounding)
+        reply = self._nothing_to_search_reply(
+            self._nothing_to_search_summary, tenant_id, grounding, context
+        )
+        if reply is not None:
+            return reply
 
         agent = await asyncio.to_thread(
             self._build_answer_agent,
@@ -3474,6 +3499,23 @@ class AgentDispatcher:
             "grounding": grounding.envelope(),
             "result": dataclasses.asdict(result),
         }
+
+    @staticmethod
+    def _nothing_to_search_reply(
+        envelope: Callable[[str, AnswerGrounding], Dict[str, Any]],
+        tenant_id: str,
+        grounding: AnswerGrounding,
+        context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """The canned answer envelope when the tenant has nothing to search.
+
+        None when the agent must answer: grounding found something to search,
+        or the request carries attachments the agent answers from. Streamed
+        and non-streamed answer turns both decide here.
+        """
+        if not grounding.nothing_to_search or (context or {}).get("attachments"):
+            return None
+        return envelope(tenant_id, grounding)
 
     @staticmethod
     def _nothing_to_search_summary(
@@ -3543,8 +3585,11 @@ class AgentDispatcher:
         grounding = await self._resolve_answer_search_results(
             query, tenant_id, context, top_k=20
         )
-        if grounding.nothing_to_search and not (context or {}).get("attachments"):
-            return self._nothing_to_search_report(tenant_id, grounding)
+        reply = self._nothing_to_search_reply(
+            self._nothing_to_search_report, tenant_id, grounding, context
+        )
+        if reply is not None:
+            return reply
 
         agent = await asyncio.to_thread(
             self._build_answer_agent,
