@@ -90,10 +90,17 @@ def evaluation_task(
     cache_key = (provider.http_endpoint, dataset_name)
     dataset_data = _DATASET_FRAMES.get(cache_key)
     if dataset_data is None:
+        import httpx
         from phoenix.client import Client as PhoenixSyncClient
 
         sync_client = PhoenixSyncClient(base_url=provider.http_endpoint)
-        phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
+        try:
+            phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
+        except httpx.HTTPError as exc:
+            raise ConnectionError(
+                f"Loading dataset '{dataset_name}' from Phoenix at "
+                f"{provider.http_endpoint} failed: {exc}"
+            ) from exc
         if phoenix_dataset is None:
             raise ValueError(f"Dataset '{dataset_name}' not found or empty")
         dataset_data = phoenix_dataset.to_dataframe()

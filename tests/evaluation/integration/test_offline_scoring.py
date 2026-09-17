@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -308,3 +309,204 @@ def test_live_provider_failure_after_first_poll_discards_partial_run(
     assert "status=error" in stdout
     assert "✓ Evaluation complete" not in stdout
     assert output.exists() is False
+
+
+def _run_installed_cli(tmp_path, shared_vespa, dataset, tenant, *, http_endpoint, grpc):
+    """Run the ``cogniverse-eval`` console script as a deployment runs it.
+
+    Nothing is bootstrapped in the child: its telemetry manager is built from
+    the config store, and its Phoenix comes only from the variables the chart
+    sets on the pod.
+    """
+    output = tmp_path / f"{tenant.replace(':', '-')}-installed.json"
+    config_path = output.with_suffix(".config.json")
+    config_path.write_text(json.dumps({"max_iterations": 3, "poll_interval": 0.1}))
+    env = dict(os.environ)
+    env.update(
+        INSPECT_EVAL_MODEL="mockllm/model",
+        INSPECT_LOG_DIR=str(output.with_suffix(".inspect")),
+        BACKEND_URL="http://localhost",
+        BACKEND_PORT=str(shared_vespa["http_port"]),
+        TELEMETRY_OTLP_ENDPOINT=grpc,
+        TELEMETRY_HTTP_ENDPOINT=http_endpoint,
+    )
+    completed = subprocess.run(
+        [
+            os.path.join(os.path.dirname(sys.executable), "cogniverse-eval"),
+            "evaluate",
+            "--mode",
+            "batch",
+            "--dataset",
+            dataset,
+            "--tenant-id",
+            tenant,
+            "--config",
+            str(config_path),
+            "--output",
+            str(output),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        timeout=180,
+    )
+    return completed.returncode, completed.stdout, output
+
+
+def _closed_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def test_installed_cli_evaluates_against_the_deployments_phoenix(
+    search_evaluator_provider, phoenix_container, shared_vespa, tmp_path
+):
+    tenant = f"prodfixoptimization:t{uuid.uuid4().hex}"
+    endpoint = phoenix_container["http_endpoint"]
+    alpha = _emit(tenant, "alpha", "video-a", "alpha")
+    _wait_for_ids(endpoint, tenant, {alpha})
+    dataset = _dataset(endpoint, [{"query": "alpha", "expected_videos": ["video-a"]}])
+
+    code, stdout, output = _run_installed_cli(
+        tmp_path,
+        shared_vespa,
+        dataset,
+        tenant,
+        http_endpoint=endpoint,
+        grpc=phoenix_container["grpc_endpoint"],
+    )
+
+    assert code == 0, stdout
+    rows = json.loads(output.read_text())["results"]
+    assert len(rows) == 1
+    _assert_sample(rows[0], "alpha", "video-a", alpha, 1.0, 1.0)
+    assert stdout.endswith("\n✓ Evaluation complete\n")
+
+
+def test_installed_cli_names_the_unreachable_phoenix_it_was_given(
+    search_evaluator_provider, phoenix_container, shared_vespa, tmp_path
+):
+    tenant = f"prodfixoptimization:t{uuid.uuid4().hex}"
+    dataset = f"offline-scoring-{uuid.uuid4().hex}"
+    dead_endpoint = f"http://127.0.0.1:{_closed_port()}"
+
+    code, stdout, output = _run_installed_cli(
+        tmp_path,
+        shared_vespa,
+        dataset,
+        tenant,
+        http_endpoint=dead_endpoint,
+        grpc=phoenix_container["grpc_endpoint"],
+    )
+
+    assert code == 1, stdout
+    assert output.exists() is False
+    assert "✓ Evaluation complete" not in stdout
+    assert stdout.endswith(
+        f"✗ Evaluation failed: Loading dataset '{dataset}' from Phoenix at "
+        f"{dead_endpoint} failed: [Errno 111] Connection refused\n"
+    )
+
+
+_CONCURRENT_RESOLUTION = """
+import asyncio, json, sys, threading
+from cogniverse_evaluation.providers import get_evaluation_provider
+from cogniverse_foundation.telemetry import manager as tm
+http_endpoint, grpc, order, *tenants = sys.argv[1:]
+
+def configure():
+    tm.configure_telemetry_endpoints(otlp_endpoint=grpc, http_endpoint=http_endpoint)
+
+if order == "configure_first":
+    configure()
+builders = threading.Barrier(5)
+managers, providers, lock = [], {}, threading.Lock()
+
+def build():
+    builders.wait(timeout=60)
+    manager = tm.get_telemetry_manager()
+    with lock:
+        managers.append(id(manager))
+
+def configure_while_building():
+    builders.wait(timeout=60)
+    if order == "configure_during_build":
+        configure()
+
+threads = [threading.Thread(target=build) for _ in range(4)]
+threads.append(threading.Thread(target=configure_while_building))
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=120)
+
+resolvers = threading.Barrier(len(tenants))
+
+def resolve(tenant):
+    resolvers.wait(timeout=60)
+    provider = get_evaluation_provider(tenant_id=tenant)
+    with lock:
+        providers[tenant] = provider
+
+threads = [threading.Thread(target=resolve, args=(t,)) for t in tenants]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=120)
+
+async def span_count(provider, tenant):
+    frame = await provider.telemetry.traces.get_spans(project=f"cogniverse-{tenant}")
+    return len(frame)
+
+print("REPORT" + json.dumps({
+    "managers": len(set(managers)),
+    "manager_endpoints": tm.get_telemetry_manager().provider_endpoints(),
+    "providers": {
+        tenant: [
+            provider.http_endpoint,
+            provider.telemetry._http_endpoint,
+            asyncio.run(span_count(provider, tenant)),
+        ]
+        for tenant, provider in sorted(providers.items())
+    },
+}))
+"""
+
+
+@pytest.mark.parametrize("order", ["configure_first", "configure_during_build"])
+def test_concurrent_resolution_uses_the_configured_phoenix(
+    search_evaluator_provider, phoenix_container, shared_vespa, order
+):
+    """The deployment's endpoints reach a manager whose cold build races the
+    configure call, and every tenant's evaluation provider resolved
+    concurrently on it reads that tenant's spans from that Phoenix."""
+    endpoint = phoenix_container["http_endpoint"]
+    grpc = phoenix_container["grpc_endpoint"]
+    tenants = [f"prodfixoptimization:c{uuid.uuid4().hex}" for _ in range(4)]
+    trace_ids = {
+        tenant: _emit(tenant, "alpha", "video-a", "alpha") for tenant in tenants
+    }
+    for tenant, trace_id in trace_ids.items():
+        _wait_for_ids(endpoint, tenant, {trace_id})
+    env = dict(os.environ)
+    env.update(
+        BACKEND_URL="http://localhost", BACKEND_PORT=str(shared_vespa["http_port"])
+    )
+    env.pop("TELEMETRY_OTLP_ENDPOINT", None)
+    completed = subprocess.run(
+        [sys.executable, "-c", _CONCURRENT_RESOLUTION, endpoint, grpc, order, *tenants],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        timeout=180,
+    )
+
+    assert completed.returncode == 0, completed.stdout
+    assert json.loads(completed.stdout.rsplit("REPORT", 1)[1]) == {
+        "managers": 1,
+        "manager_endpoints": {"grpc_endpoint": grpc, "http_endpoint": endpoint},
+        "providers": {tenant: [endpoint, endpoint, 1] for tenant in sorted(tenants)},
+    }, completed.stdout[-6000:]

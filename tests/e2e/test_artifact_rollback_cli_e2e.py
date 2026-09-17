@@ -92,13 +92,13 @@ def _invoke_rollback_cli(
 ) -> subprocess.CompletedProcess:
     """Invoke the rollback CLI as a subprocess (the operator's interface).
 
-    Sets PHOENIX_HTTP_ENDPOINT / PHOENIX_GRPC_ENDPOINT so the CLI's
+    Sets TELEMETRY_HTTP_ENDPOINT / TELEMETRY_OTLP_ENDPOINT so the CLI's
     ``_build_phoenix_provider_for_cli`` resolves to the same Phoenix
     instance the in-process ArtifactManager uses.
     """
     env = os.environ.copy()
-    env["PHOENIX_HTTP_ENDPOINT"] = PHOENIX_HTTP
-    env["PHOENIX_GRPC_ENDPOINT"] = PHOENIX_GRPC
+    env["TELEMETRY_HTTP_ENDPOINT"] = PHOENIX_HTTP
+    env["TELEMETRY_OTLP_ENDPOINT"] = PHOENIX_GRPC
     return subprocess.run(
         [
             "uv",

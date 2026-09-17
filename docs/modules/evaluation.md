@@ -2023,6 +2023,8 @@ returns both as a list.
 
 **Purpose:** `click`-based command group (`cogniverse-eval`) wrapping `evaluation_task` (experiment/batch/live modes), dataset creation, and trace listing.
 
+Every command reads the deployment's Phoenix from `TELEMETRY_HTTP_ENDPOINT` and `TELEMETRY_OTLP_ENDPOINT` (the chart sets both on the runtime pod) through `configure_telemetry_endpoints`. A dataset that cannot be loaded fails the run with `Loading dataset '<name>' from Phoenix at <endpoint> failed: <error>`.
+
 ```bash
 # Run an experiment-mode evaluation
 cogniverse-eval evaluate --mode experiment --dataset test_dataset \
