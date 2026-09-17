@@ -1185,11 +1185,14 @@ argo list -n cogniverse --selector workflow-type=optimization
 # QualityMonitor (cogniverse_evaluation) checks agent scores and submits its own
 # Argo Workflow (--mode triggered) automatically via quality_monitor_cli.
 # --llm-model is required (must match evaluators.llm_judge.model in config);
-# --runtime-url defaults to http://localhost:28000, --phoenix-url to
-# http://localhost:6006.
+# --runtime-url defaults to http://localhost:28000. TELEMETRY_OTLP_ENDPOINT and
+# TELEMETRY_HTTP_ENDPOINT (or --phoenix-url) must name Phoenix; the CLI exits 2
+# when either is missing.
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 uv run python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
   --runtime-url http://localhost:28000 \
+  --phoenix-url http://localhost:26006 \
   --llm-model google/gemma-4-e4b-it
 
 # --once forces a single distillation-only pass (bypasses the quality-drop

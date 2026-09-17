@@ -216,6 +216,8 @@ def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
             "acme",
             "--llm-model",
             "gemma",
+            "--phoenix-url",
+            "http://phoenix-test:6006",
             "--annotation-cycle",
         ],
     )
