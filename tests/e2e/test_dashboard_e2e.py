@@ -21,6 +21,7 @@ import httpx
 import pytest
 from playwright.sync_api import expect
 
+from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_PROFILE_SELECTION,
@@ -41,6 +42,7 @@ from tests.e2e.conftest import (
     _expected_sample_documents_fed,
     _sample_video_media_type,
     _search_sample_content,
+    _tenant_schema_name,
     active_sub_tab_panel,
     active_tab_panel,
     click_button,
@@ -55,7 +57,11 @@ from tests.e2e.conftest import (
     wait_for_script_idle,
     wait_for_streamlit,
 )
-from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
+from tests.e2e.test_api_e2e import (
+    PROFILE,
+    _deploy_profile_for_tenant,
+    _profile_schema_name,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
@@ -2689,8 +2695,11 @@ class TestConfigurationImport:
     def test_import_lands_under_the_selected_tenant(self, page, tmp_path):
         source = canonical_tenant_id(unique_id("prode2eclients"))
         destination = canonical_tenant_id(unique_id("prode2eclients"))
-        register_tenant_and_wait(source, created_by="e2e")
-        register_tenant_and_wait(destination, created_by="e2e")
+        base_schema = _profile_schema_name(PROFILE)
+        register_tenant_and_wait(source, created_by="e2e", base_schemas=[base_schema])
+        register_tenant_and_wait(
+            destination, created_by="e2e", base_schemas=[base_schema]
+        )
         decoy = canonical_tenant_id(unique_id("prode2eclients"))
 
         store = VespaConfigStore(
@@ -2729,14 +2738,66 @@ class TestConfigurationImport:
                 for entry in store.list_configs(tenant_id)
             }
 
-        assert _rows(source) == expected_rows
+        def _registration_rows(tenant_id: str) -> set:
+            """The schema registry's row for the schema registration deployed,
+            after pinning that it names exactly this tenant's schema."""
+            registrations = [
+                entry
+                for entry in store.list_configs(tenant_id)
+                if entry.scope == ConfigScope.SCHEMA
+            ]
+            assert [
+                (
+                    entry.service,
+                    entry.config_key,
+                    entry.config_value["tenant_id"],
+                    entry.config_value["base_schema_name"],
+                    entry.config_value["full_schema_name"],
+                )
+                for entry in registrations
+            ] == [
+                (
+                    SCHEMA_REGISTRY_SERVICE,
+                    f"schema_{base_schema}",
+                    tenant_id,
+                    base_schema,
+                    _tenant_schema_name(base_schema, tenant_id),
+                )
+            ], registrations
+            return {
+                (
+                    entry.scope.value,
+                    entry.service,
+                    entry.config_key,
+                    json.dumps(entry.config_value, sort_keys=True),
+                )
+                for entry in registrations
+            }
+
+        # Registration files the tenant's schema in the registry; the tenant's
+        # rows are that registration and exactly the written configurations.
+        source_registration = _registration_rows(source)
+        destination_registration = _registration_rows(destination)
+        assert _rows(source) == expected_rows | source_registration
+        assert _rows(destination) == destination_registration
         source_before = _rows(source)
 
         # The export the tab produces for the source tenant, with every
         # tenant id inside it replaced: the destination must win over the
         # file, so the file has to name someone else.
         exported = store.export_configs(tenant_id=source, include_history=False)
-        assert len(exported["configs"]) == len(written), exported
+        assert len(exported["configs"]) == len(written) + 1, exported
+        # The upload carries the written configurations. The source's schema
+        # registration names the source's own Vespa schema, so it is not
+        # material for another tenant's registry.
+        exported["configs"] = [
+            entry
+            for entry in exported["configs"]
+            if entry["scope"] != ConfigScope.SCHEMA.value
+        ]
+        assert sorted(entry["config_key"] for entry in exported["configs"]) == sorted(
+            written
+        ), exported
         exported["tenant_id"] = decoy
         for entry in exported["configs"]:
             entry["tenant_id"] = decoy
@@ -2762,7 +2823,7 @@ class TestConfigurationImport:
             .locator('[data-testid="stAlert"]:has-text("Exported")')
             .all()
         ]
-        assert exports == [f"✅ Exported {len(written)} configurations"], exports
+        assert exports == [f"✅ Exported {len(written) + 1} configurations"], exports
 
         set_tenant(page, destination)
         click_top_tab(page, "Configuration")
@@ -2796,7 +2857,7 @@ class TestConfigurationImport:
 
         # The rows landed under the selected tenant, the file's own tenant
         # gained none, and the source is untouched.
-        assert _rows(destination) == expected_rows
+        assert _rows(destination) == expected_rows | destination_registration
         assert _rows(decoy) == set()
         assert _rows(source) == source_before
 
