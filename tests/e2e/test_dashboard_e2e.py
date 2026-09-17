@@ -2561,8 +2561,14 @@ class TestIngestionUploadOutcome:
         wait_for_script_idle(page)
 
         panel = active_tab_panel(page)
+        # A chip is its label followed by a remove icon whose SVG <title> is
+        # "Delete"; the chip's value is the label alone.
         selected = [
-            (tag.text_content() or "").strip()
+            tag.evaluate(
+                "tag => { const chip = tag.cloneNode(true);"
+                " chip.querySelectorAll('svg').forEach(icon => icon.remove());"
+                " return chip.textContent.trim(); }"
+            )
             for tag in panel.locator(
                 '[data-testid="stMultiSelect"] span[data-baseweb="tag"]'
             ).all()
