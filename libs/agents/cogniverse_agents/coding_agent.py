@@ -419,6 +419,7 @@ class CodingAgent(
                     query=input.task,
                     context=code_context,
                     rlm_options=input.rlm,
+                    tenant_id=input.tenant_id,
                 )
                 rlm_synthesis = rlm_result.answer
                 rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(code_context))

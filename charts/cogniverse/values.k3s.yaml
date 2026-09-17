@@ -331,3 +331,6 @@ initJobs:
     enabled: true
   modelPulling:
     enabled: false  # Handled by E2E test fixtures
+
+tenantProvisioning:
+  enabled: true

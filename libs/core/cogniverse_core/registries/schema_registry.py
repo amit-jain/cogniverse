@@ -36,6 +36,16 @@ SCHEMA_REGISTRY_SERVICE = "schema_registry"
 DEPLOYED_SCHEMAS_TTL_S = 30.0
 
 
+def _same_definition(stored: str, shipped: str) -> bool:
+    """Whether a registered schema definition matches the shipped one."""
+    import json
+
+    try:
+        return json.loads(stored) == json.loads(shipped)
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class SchemaInfo:
     """Information about a deployed schema"""
@@ -522,6 +532,8 @@ class SchemaRegistry:
         """Journal every new schema, activate once, then register the batch.
 
         Returns full names in request order, including already registered names.
+        A registered schema whose stored definition differs from the one the
+        schema loader supplies is redeployed with the loaded definition.
         All intents stay pending until every registration succeeds. The backend
         owns package reconstruction and the single convergence wait.
         """
@@ -545,13 +557,6 @@ class SchemaRegistry:
         tenant_id = canonical_tenant_id(tenant_id)
         names = [f"{base}_{tenant_id.replace(':', '_')}" for base in base_schema_names]
 
-        def registered(base, name):
-            return (
-                not force
-                and self.schema_exists(tenant_id, base)
-                and self._schemas[(tenant_id, base)].full_schema_name == name
-            )
-
         def load_definition(base, name):
             try:
                 definition = self._schema_loader.load_schema(base)
@@ -565,8 +570,22 @@ class SchemaRegistry:
         definitions = {
             base: load_definition(base, name)
             for base, name in zip(base_schema_names, names)
-            if not registered(base, name)
         }
+
+        def registered(base, name):
+            if force or not self.schema_exists(tenant_id, base):
+                return False
+            info = self._schemas[(tenant_id, base)]
+            if info.full_schema_name != name:
+                return False
+            if _same_definition(info.schema_definition, definitions[base]):
+                return True
+            logger.info(
+                f"Registered schema '{name}' differs from the shipped "
+                f"'{base}' definition; redeploying it"
+            )
+            return False
+
         with SchemaRegistry._deploy_lock:
             existing_schemas = self._get_all_schemas()
             requested = [
@@ -588,8 +607,6 @@ class SchemaRegistry:
             registrations = []
             intents = {}
             for base, name in requested:
-                if base not in definitions:
-                    definitions[base] = load_definition(base, name)
                 for existing in existing_schemas:
                     if existing.full_schema_name == name and (
                         existing.tenant_id,

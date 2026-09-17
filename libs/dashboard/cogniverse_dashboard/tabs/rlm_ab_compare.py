@@ -171,6 +171,7 @@ def aggregate_ab_compare(spans_df: pd.DataFrame) -> ABCompareAggregate:
 async def load_ab_compare_data(
     *,
     phoenix_http_endpoint: str,
+    phoenix_grpc_endpoint: str,
     tenant_id: str,
     lookback_hours: float = 24.0,
 ) -> ABCompareAggregate:
@@ -189,9 +190,7 @@ async def load_ab_compare_data(
         {
             "tenant_id": tenant_id,
             "http_endpoint": phoenix_http_endpoint,
-            # gRPC endpoint isn't used for queries but the provider
-            # contract requires it.
-            "grpc_endpoint": "localhost:4317",
+            "grpc_endpoint": phoenix_grpc_endpoint,
         }
     )
 
@@ -216,12 +215,10 @@ async def load_ab_compare_data(
             limit=10000,
         )
     except Exception as exc:
-        logger.warning(
-            "ab-compare tile: span query failed for tenant=%s: %s",
-            tenant_id,
-            exc,
-        )
-        return ABCompareAggregate()
+        raise RuntimeError(
+            f"ab-compare spans for tenant {tenant_id!r} could not be read from "
+            f"Phoenix at {phoenix_http_endpoint}: {exc}"
+        ) from exc
 
     if spans_df.empty:
         return ABCompareAggregate()
@@ -249,9 +246,15 @@ def render_rlm_ab_compare_tab():
     tenant_id = st.session_state.get("current_tenant") or st.text_input(
         "Tenant id", value="default"
     )
-    phoenix_url = st.session_state.get("phoenix_url") or st.text_input(
-        "Phoenix HTTP URL", value="http://localhost:6006"
-    )
+    phoenix_url = st.session_state.get("phoenix_url")
+    collector_endpoint = st.session_state.get("telemetry_collector_endpoint")
+    if not phoenix_url or not collector_endpoint:
+        st.error(
+            "Phoenix is not configured for this dashboard: "
+            f"telemetry_url={phoenix_url!r}, "
+            f"telemetry_collector_endpoint={collector_endpoint!r}"
+        )
+        return
     lookback_hours = st.number_input(
         "Lookback (hours)", min_value=0.1, value=24.0, step=1.0
     )
@@ -260,13 +263,18 @@ def render_rlm_ab_compare_tab():
         import asyncio
 
         with st.spinner("Querying Phoenix…"):
-            agg = asyncio.run(
-                load_ab_compare_data(
-                    phoenix_http_endpoint=phoenix_url,
-                    tenant_id=tenant_id,
-                    lookback_hours=lookback_hours,
+            try:
+                agg = asyncio.run(
+                    load_ab_compare_data(
+                        phoenix_http_endpoint=phoenix_url,
+                        phoenix_grpc_endpoint=collector_endpoint,
+                        tenant_id=tenant_id,
+                        lookback_hours=lookback_hours,
+                    )
                 )
-            )
+            except RuntimeError as exc:
+                st.error(str(exc))
+                return
 
         if agg.rows == 0:
             st.info(

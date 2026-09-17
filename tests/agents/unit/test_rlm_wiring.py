@@ -6,6 +6,8 @@ Also verifies real runtime behaviour: field assignment, type annotation,
 and WikiManager merge-threshold logic.
 """
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -88,10 +90,9 @@ class TestDetailedReportInputRLMRuntime:
 
 
 class _MixinHost(RLMAwareMixin):
-    """Minimal RLMAwareMixin host with tenant + config_manager set."""
+    """Minimal RLMAwareMixin host with a config_manager bound."""
 
-    def __init__(self, tenant_id, config_manager):
-        self.tenant_id = tenant_id
+    def __init__(self, config_manager):
         self.bind_config_manager(config_manager)
 
 
@@ -104,9 +105,9 @@ class TestRLMAwareMixinRouting:
     def test_enabled_routes_cached_rlm_through_semantic_router(self, monkeypatch):
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
-        host = _MixinHost("acme:prod", MagicMock())
+        host = _MixinHost(MagicMock())
 
-        rlm = host.get_rlm(self._endpoint())
+        rlm = host.get_rlm(self._endpoint(), tenant_id="acme:prod")
 
         assert rlm.llm_config.api_base == _SR_URL
         assert rlm.model == "openai/auto"
@@ -123,9 +124,9 @@ class TestRLMAwareMixinRouting:
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
-        host = _MixinHost("acme:prod", MagicMock())
+        host = _MixinHost(MagicMock())
 
-        rlm = host.get_rlm(self._endpoint())
+        rlm = host.get_rlm(self._endpoint(), tenant_id="acme:prod")
 
         assert rlm.llm_config.api_base == _DIRECT
         assert rlm.llm_config.extra_headers is None
@@ -137,7 +138,7 @@ class TestRLMAwareMixinRouting:
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
 
         with pytest.raises(AgentConfigurationError) as excinfo:
-            _MixinHost("acme:prod", None)
+            _MixinHost(None)
 
         assert str(excinfo.value) == (
             "_MixinHost requires a config_manager; got None. Pass "
@@ -148,7 +149,7 @@ class TestRLMAwareMixinRouting:
     def test_cache_invalidates_on_tenant_change(self, monkeypatch):
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
-        host = _MixinHost("acme:prod", MagicMock())
+        host = _MixinHost(MagicMock())
 
         first = host.get_rlm(self._endpoint(), tenant_id="acme:prod")
         second = host.get_rlm(self._endpoint(), tenant_id="beta:prod")
@@ -161,12 +162,39 @@ class TestRLMAwareMixinRouting:
     def test_cache_reuses_same_instance_for_same_tenant(self, monkeypatch):
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
-        host = _MixinHost("acme:prod", MagicMock())
+        host = _MixinHost(MagicMock())
 
         first = host.get_rlm(self._endpoint(), tenant_id="acme:prod")
         second = host.get_rlm(self._endpoint(), tenant_id="acme:prod")
 
         assert first is second
+
+    def test_concurrent_tenants_on_one_host_each_get_their_own_instance(
+        self, monkeypatch
+    ):
+        """One shared agent serves every tenant: with routing disabled the
+        routed identity is the same for all of them, so only the tenant keeps
+        one request from being handed another tenant's instance."""
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
+        cfg = MagicMock()
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+        host = _MixinHost(MagicMock())
+        tenants = ["acme:prod", "beta:prod"] * 8
+        start = threading.Barrier(len(tenants))
+
+        def request(tenant_id):
+            start.wait(timeout=10)
+            return tenant_id, host.get_rlm(self._endpoint(), tenant_id=tenant_id)
+
+        with ThreadPoolExecutor(max_workers=len(tenants)) as pool:
+            served = list(pool.map(request, tenants))
+
+        assert [(tenant, rlm._tenant_id) for tenant, rlm in served] == [
+            (tenant, tenant) for tenant in tenants
+        ]
 
 
 class TestHostAgentsThreadConfigManagerToRLM:

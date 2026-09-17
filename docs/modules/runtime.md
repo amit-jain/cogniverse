@@ -729,7 +729,10 @@ the retrieved documents for that source in relevance order and
 `segments_in_window` with the number of retrieved hits for that source.
 `segment` returns every matching document and omits those fields. Video
 profiles default to `source`; non-video profiles default to `segment` unless
-their profile config says otherwise.
+their profile config says otherwise. A tenant's stored profile (for example
+one created through `POST /admin/profiles`) is merged over the shipped profile
+of the same name, so a key it does not set, such as `result_granularity`,
+keeps the shipped value; a failed read of the tenant's stored profile raises.
 
 **Search Strategies:**
 
@@ -2152,7 +2155,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
     --golden-interval 7200 --live-interval 14400 --live-sample-count 20
 ```
 
-`--tenant-id` and `--llm-model` are required; `--argo-url` defaults to `None`, which disables auto-submission of optimization workflows (the monitor still evaluates and logs, it just won't trigger retraining). `--once` runs a single forced optimization cycle and exits (bypassing the quality-threshold check), for Argo CronWorkflows doing scheduled distillation, instead of looping.
+`--tenant-id` and `--llm-model` are required. Phoenix is named by `TELEMETRY_OTLP_ENDPOINT` and by `TELEMETRY_HTTP_ENDPOINT` (or `--phoenix-url` when that variable is unset); the process exits 2 naming whichever is missing, after the telemetry configuration store is ready. `--argo-url` defaults to `None`, which disables auto-submission of optimization workflows (the monitor still evaluates and logs, it just won't trigger retraining). `--once` runs a single forced optimization cycle and exits (bypassing the quality-threshold check), for Argo CronWorkflows doing scheduled distillation, instead of looping.
 
 Startup blocks until its dependencies are ready instead of crash-looping on boot ordering: it retries the telemetry configuration store through `startup_wait.wait_for_startup_dependency` while it raises transport errors (`httpr.TransportError` / `requests.RequestException`) or `ConfigStoreUnavailableError`, and, for the monitor loop and `--once` (not the annotation modes), posts the first golden-dataset query to the runtime's `/search/` route until it returns HTTP 200 with a results list. The serving loop itself also retries forever if `monitor.run()` raises or returns unexpectedly, so a broken monitor stays observable in logs without taking the pod out of service. `--startup-timeout` and `--startup-poll-interval` act as grace-window logging for both waits; once that window elapses, each helper keeps retrying until the dependency is ready.
 

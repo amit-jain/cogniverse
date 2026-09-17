@@ -1056,9 +1056,14 @@ class VespaBackend(Backend):
                 # explicitly asked for it. The merge above + live Vespa discovery
                 # should make the override unnecessary; if something still slips
                 # through, failing loudly beats silently dropping a schema.
-                generation = self._deploy_package(
-                    app_package, allow_schema_removal=allow_schema_removal
-                )
+                try:
+                    generation = self._deploy_package(
+                        app_package, allow_schema_removal=allow_schema_removal
+                    )
+                except RuntimeError as refused:
+                    raise BackendDeploymentError(
+                        f"Vespa refused the application package: {refused}"
+                    ) from refused
 
             # The config server activates the package immediately; every
             # service picks the generation up on its own, and the content

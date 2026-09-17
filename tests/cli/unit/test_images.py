@@ -190,6 +190,12 @@ class TestPerImageDevVersion:
             {"dashboard", "runtime"},
         ),
         (
+            "configs/agent_policies",
+            "configs/agent_policies/input.yaml",
+            "egress: []\n",
+            {"runtime"},
+        ),
+        (
             ".dockerignore",
             ".dockerignore",
             "tests/\nscripts/run_*.py\n*.md\n# changed\n",
@@ -464,6 +470,38 @@ class TestImageInputDeclarations:
                 assert covered, (
                     f"{image} input set omits {source!r} copied by {dockerfile_path}"
                 )
+
+    def test_the_runtime_image_ships_the_sandbox_policy_directory(self) -> None:
+        """The runtime resolves agent policies relative to its working
+        directory, so the image must copy the directory to that same path or
+        every agent's egress policy is absent in the deployed runtime."""
+        from cogniverse_runtime.sandbox_manager import _DEFAULT_POLICY_DIR
+
+        dockerfile = self.REPO_ROOT / images_mod.IMAGE_DOCKERFILES["runtime"]
+        lines = [line.strip() for line in dockerfile.read_text().splitlines()]
+        final_stage = lines[
+            max(i for i, line in enumerate(lines) if line.upper().startswith("FROM ")) :
+        ]
+        workdirs = [
+            line.split()[1] for line in final_stage if line.startswith("WORKDIR ")
+        ]
+        assert workdirs == ["/app"]
+        policy_copies = [
+            shlex.split(line)[-2:]
+            for line in final_stage
+            if line.startswith("COPY ")
+            and str(_DEFAULT_POLICY_DIR) in shlex.split(line)[-2]
+        ]
+        assert policy_copies == [[str(_DEFAULT_POLICY_DIR), f"./{_DEFAULT_POLICY_DIR}"]]
+        assert sorted(
+            path.name for path in (self.REPO_ROOT / _DEFAULT_POLICY_DIR).glob("*.yaml")
+        ) == [
+            "coding_agent.yaml",
+            "orchestrator_agent.yaml",
+            "routing_agent.yaml",
+            "search_agent.yaml",
+            "summarizer_agent.yaml",
+        ]
 
 
 class TestDeploymentImageIdentity:

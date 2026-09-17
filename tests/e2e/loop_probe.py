@@ -14,6 +14,7 @@ number restated here.
 
 from __future__ import annotations
 
+import statistics
 import threading
 import time
 from dataclasses import dataclass
@@ -58,27 +59,48 @@ def readiness_timeout_s() -> float:
 
 @dataclass(frozen=True)
 class LoopProbeResult:
-    """Every liveness poll taken while the request under test was in flight."""
+    """Every liveness poll taken while the request under test was in flight.
 
-    samples: Tuple[Tuple[int, float], ...]
+    Each sample is ``(status, started_s, latency_s)``: the status answered,
+    when the poll started relative to the window's start, and how long the
+    request took.
+    """
+
+    samples: Tuple[Tuple[int, float, float], ...]
     window_s: float
 
     @property
     def status_codes(self) -> List[int]:
-        return [status for status, _latency in self.samples]
+        return [status for status, _started, _latency in self.samples]
 
     @property
     def max_latency_s(self) -> float:
-        return max(latency for _status, latency in self.samples)
+        return max(latency for _status, _started, latency in self.samples)
+
+    def median_poll_period_s(self) -> float:
+        """Median time from one poll's start to the next one's.
+
+        A steady probe's period is the interval plus the round trip plus the
+        scheduling of the probe thread, all measured rather than assumed. A
+        stall is one long period among steady ones, which the median ignores.
+        """
+        starts = [started for _status, started, _latency in self.samples]
+        periods = [later - earlier for earlier, later in zip(starts, starts[1:])]
+        if not periods:
+            raise AssertionError(
+                f"liveness answered {len(self.samples)} times in "
+                f"{self.window_s:.2f}s; a period needs at least two polls"
+            )
+        return statistics.median(periods)
 
     def expected_minimum_polls(self) -> int:
         """Polls a loop that never stalled owes for this window.
 
-        One poll per interval, less one for the partial interval the window
-        ends on and one for the request the probe itself was starting when
-        the window closed.
+        One poll per median period, less one for the partial period the
+        window ends on and one for the request the probe itself was starting
+        when the window closed.
         """
-        return max(1, int(self.window_s / POLL_INTERVAL_S) - 2)
+        return max(1, int(self.window_s / self.median_poll_period_s()) - 2)
 
 
 class LoopProbe:
@@ -86,7 +108,7 @@ class LoopProbe:
 
     def __init__(self, interval_s: float = POLL_INTERVAL_S) -> None:
         self._interval_s = interval_s
-        self._samples: List[Tuple[int, float]] = []
+        self._samples: List[Tuple[int, float, float]] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._started_at = 0.0
@@ -112,7 +134,9 @@ class LoopProbe:
                     # A refused or timed-out poll is the failure this probe
                     # exists to catch; record it as such rather than drop it.
                     status = 0
-                self._samples.append((status, time.monotonic() - started))
+                self._samples.append(
+                    (status, started - self._started_at, time.monotonic() - started)
+                )
                 self._stop.wait(self._interval_s)
 
     def stop(self) -> LoopProbeResult:
@@ -137,8 +161,8 @@ def assert_loop_served(result: LoopProbeResult) -> None:
     assert result.status_codes == [200] * len(result.samples), result.samples
     assert len(result.samples) >= result.expected_minimum_polls(), (
         f"liveness answered {len(result.samples)} times in {result.window_s:.2f}s "
-        f"at a {POLL_INTERVAL_S:g}s cadence; a loop that never stalled owes at "
-        f"least {result.expected_minimum_polls()}"
+        f"at a {result.median_poll_period_s() * 1000:.1f}ms median poll period; a "
+        f"loop that never stalled owes at least {result.expected_minimum_polls()}"
     )
     assert result.max_latency_s < budget_s, (
         f"slowest liveness poll took {result.max_latency_s:.2f}s, at or past the "

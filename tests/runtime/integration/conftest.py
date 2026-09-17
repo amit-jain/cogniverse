@@ -777,9 +777,9 @@ def admin_phoenix_endpoints(phoenix_container):
     promote and endorse routes load their quota / gating blobs through it."""
     from cogniverse_runtime.routers import admin
 
-    previous = dict(admin._phoenix_endpoints)
+    previous = admin._phoenix_endpoints
     admin.set_phoenix_endpoints(
         phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
     )
     yield phoenix_container
-    admin.set_phoenix_endpoints(previous["http_endpoint"], previous["grpc_endpoint"])
+    admin._phoenix_endpoints = previous

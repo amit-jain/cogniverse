@@ -1152,8 +1152,8 @@ export JAX_PLATFORM_NAME=cpu
 Enable debug logging:
 ```bash
 export LOG_LEVEL=DEBUG
-export PHOENIX_HTTP_ENDPOINT=http://localhost:6006
-export PHOENIX_GRPC_ENDPOINT=localhost:4317
+export TELEMETRY_HTTP_ENDPOINT=http://localhost:6006
+export TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
 uv run pytest tests/agents/ -v -s  # -s shows print statements
 ```

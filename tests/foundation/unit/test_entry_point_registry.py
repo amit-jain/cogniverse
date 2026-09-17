@@ -7,6 +7,7 @@ class object, exact cache key, exact error message — no
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
@@ -352,6 +353,61 @@ def test_discover_runs_only_once(monkeypatch):
     _StoreRegistry.discover()
 
     assert calls["count"] == 1
+
+
+_CONCURRENT_FIRST_DISCOVERY = """
+import json, threading
+import cogniverse_telemetry_phoenix
+from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+registry = get_telemetry_registry()
+start = threading.Barrier(8)
+outcomes, lock = [], threading.Lock()
+
+def first_get(index):
+    start.wait(timeout=30)
+    try:
+        provider = registry.get(
+            tenant_id=f"discovery:t{index}",
+            config={
+                "http_endpoint": "http://127.0.0.1:9",
+                "grpc_endpoint": "http://127.0.0.1:9",
+            },
+        )
+        outcome = f"{type(provider).__module__}.{type(provider).__name__}"
+    except Exception as exc:
+        outcome = f"{type(exc).__name__}: {exc}"
+    with lock:
+        outcomes.append(outcome)
+
+threads = [threading.Thread(target=first_get, args=(i,)) for i in range(8)]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=60)
+print("OUTCOMES" + json.dumps(outcomes))
+"""
+
+
+def test_concurrent_first_discovery_of_installed_plugins_is_single_flight():
+    """Threads racing the first lookup on the installed telemetry registry all
+    get the plugin. With the plugin module already imported, a second
+    concurrent pass over the entry points met the name the first pass had
+    just registered and raised a conflict between the class's module and the
+    entry point's package."""
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [sys.executable, "-c", _CONCURRENT_FIRST_DISCOVERY],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr[-3000:]
+    outcomes = json.loads(completed.stdout.rsplit("OUTCOMES", 1)[1])
+    assert outcomes == ["cogniverse_telemetry_phoenix.provider.PhoenixProvider"] * 8
 
 
 def test_discover_raises_on_same_name_from_two_packages(monkeypatch):

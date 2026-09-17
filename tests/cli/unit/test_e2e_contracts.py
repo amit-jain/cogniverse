@@ -863,3 +863,53 @@ def test_e2e_stack_fixture_acquires_the_run_lock_before_touching_the_cluster():
     acquire_at = source.index("run_lock.acquire(")
     assert acquire_at < source.index("_ensure_host_sandbox_gateway(")
     assert acquire_at < source.index("_e2e_cluster_state(")
+
+
+def _liveness_samples(count, *, stall_at=None, stall_s=0.0):
+    """Polls of a probe whose round trips cycle through 5-10 ms.
+
+    Each period is the round trip, the probe's interval and 4 ms of thread
+    scheduling, the overhead the shared cluster's probes showed.
+    """
+    from tests.e2e.loop_probe import POLL_INTERVAL_S
+
+    samples, started = [], 0.0
+    for index in range(count):
+        latency = stall_s if index == stall_at else 0.005 + (index % 6) * 0.001
+        samples.append((200, started, latency))
+        started += latency + POLL_INTERVAL_S + 0.004
+    return tuple(samples), started
+
+
+def test_loop_probe_floor_accepts_a_steady_probe_with_millisecond_round_trips():
+    from tests.e2e.loop_probe import (
+        POLL_INTERVAL_S,
+        LoopProbeResult,
+        assert_loop_served,
+    )
+
+    samples, window_s = _liveness_samples(400)
+    result = LoopProbeResult(samples=samples, window_s=window_s)
+
+    assert round(result.median_poll_period_s(), 6) == 0.111
+    assert result.expected_minimum_polls() == 399
+    # A floor of one poll per bare interval owes polls no steady probe takes.
+    assert int(window_s / POLL_INTERVAL_S) - 2 == 443
+    assert_loop_served(result)
+
+
+def test_loop_probe_floor_fails_a_probe_whose_loop_stalled_for_two_seconds():
+    from tests.e2e.loop_probe import LoopProbeResult, assert_loop_served
+
+    samples, window_s = _liveness_samples(400, stall_at=200, stall_s=2.0)
+    result = LoopProbeResult(samples=samples, window_s=window_s)
+
+    # The stall is one long poll; the median period does not move with it.
+    assert round(result.median_poll_period_s(), 6) == 0.111
+    assert result.max_latency_s == 2.0
+    with pytest.raises(AssertionError) as raised:
+        assert_loop_served(result)
+    assert str(raised.value).splitlines()[0] == (
+        "liveness answered 400 times in 46.59s at a 111.0ms median poll period; "
+        "a loop that never stalled owes at least 417"
+    )

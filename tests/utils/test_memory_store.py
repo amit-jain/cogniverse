@@ -115,3 +115,44 @@ def test_import_files_every_config_under_the_requested_tenant():
     assert [
         entry["tenant_id"] for entry in store.export_configs("source:tenant")["configs"]
     ] == ["source:tenant"]
+
+
+def test_schema_rows_are_neither_exported_nor_imported():
+    """Mirrors ``VespaConfigStore``: schema-scope rows record the source
+    tenant's deployments, so an export omits them and an import that carries
+    one is refused before anything is written."""
+    store = InMemoryConfigStore()
+    store.set_config(
+        "source:tenant", ConfigScope.AGENT, "search_agent", "settings", {"model": "m"}
+    )
+    registration = {"tenant_id": "source:tenant", "base_schema_name": "document_text"}
+    store.set_config(
+        "source:tenant",
+        ConfigScope.SCHEMA,
+        "schema_registry",
+        "schema_document_text",
+        registration,
+    )
+
+    exported = store.export_configs("source:tenant")
+    assert [
+        (entry["scope"], entry["service"], entry["config_key"])
+        for entry in exported["configs"]
+    ] == [("agent", "search_agent", "settings")]
+
+    exported["configs"].append(
+        {
+            "scope": "schema",
+            "service": "schema_registry",
+            "config_key": "schema_document_text",
+            "config_value": registration,
+        }
+    )
+    with pytest.raises(ValueError) as refused:
+        store.import_configs(tenant_id="target:tenant", configs=exported)
+    assert str(refused.value) == (
+        "Configuration import for tenant target:tenant refused: schema rows record "
+        "deployments made by the schema registry and are not importable: "
+        "schema_registry/schema_document_text"
+    )
+    assert store.export_configs("target:tenant")["configs"] == []

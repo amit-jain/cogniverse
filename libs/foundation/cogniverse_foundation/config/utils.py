@@ -32,7 +32,7 @@ _JSON_CONFIG_CACHE_LOCK = threading.Lock()
 _SYSTEM_AUTHORITATIVE_KEYS = frozenset({"vlm_endpoint"})
 
 
-def _merge_profile(system: dict, tenant: dict) -> dict:
+def merge_tenant_profile(system: dict, tenant: dict) -> dict:
     """Deep-merge a tenant profile over the system base. Non-empty tenant
     values win and nested dicts merge recursively, EXCEPT system-authoritative
     infra keys, which always take the system value so config.json stays the
@@ -42,7 +42,7 @@ def _merge_profile(system: dict, tenant: dict) -> dict:
         if key in _SYSTEM_AUTHORITATIVE_KEYS:
             continue
         if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _merge_profile(result[key], value)
+            result[key] = merge_tenant_profile(result[key], value)
         elif value or key not in result:
             result[key] = value
     return result
@@ -214,7 +214,7 @@ class ConfigUtils:
                     # Deep-merge tenant overrides into the system base: non-empty
                     # tenant values win, but infra endpoints stay system-owned so
                     # a config.json change reaches every tenant.
-                    merged = _merge_profile(
+                    merged = merge_tenant_profile(
                         merged_profiles[profile_name].to_dict(),
                         tenant_profile.to_dict(),
                     )

@@ -2302,6 +2302,7 @@ class SearchAgent(
                     query=query,
                     context=results_context,
                     rlm_options=input.rlm,
+                    tenant_id=input.tenant_id,
                 )
                 rlm_synthesis = rlm_result.answer
                 rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(results_context))

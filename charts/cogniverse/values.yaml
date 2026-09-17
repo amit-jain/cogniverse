@@ -1752,6 +1752,10 @@ serviceAccount:
 rbac:
   create: true
 
+# ServiceAccount and ClusterRole for workflows/tenant-provisioning.yaml
+tenantProvisioning:
+  enabled: false
+
 # Network policies
 networkPolicy:
   enabled: false

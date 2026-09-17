@@ -886,6 +886,9 @@ Get the global telemetry manager instance. On first call, loads config from Conf
 
 On first call this also applies a `TELEMETRY_OTLP_ENDPOINT` env var override (set by the Helm chart in k3d deployments) if present and different from the loaded config's `otlp_endpoint`, clearing cached tenant providers/tracers so the new endpoint takes effect.
 
+#### `configure_telemetry_endpoints(*, otlp_endpoint, http_endpoint) -> None` (module function)
+Records the Phoenix endpoints a deployment names for the process, for entrypoints that must not build the manager eagerly (`cogniverse-eval` passes `TELEMETRY_OTLP_ENDPOINT` / `TELEMETRY_HTTP_ENDPOINT`). They are applied to the singleton when it is built, or at once to one already built; `None` leaves the stored config's value. `otlp_endpoint` sets `config.otlp_endpoint`, `http_endpoint` sets `provider_config["http_endpoint"]`.
+
 **Example:**
 ```python
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -1145,6 +1148,7 @@ Get telemetry provider for querying spans/annotations/datasets.
 **Raises:** `ValueError` if no providers available or provider initialization fails
 
 **Endpoint Derivation:** `grpc_endpoint` and `http_endpoint` are derived from `config.otlp_endpoint` when not explicitly set in `config.provider_config` or via a registered project override — e.g. `otlp_endpoint="localhost:4317"` yields `grpc_endpoint="http://localhost:4317"` and `http_endpoint="http://localhost:6006"` (the `:4317` gRPC port is swapped for the `:6006` HTTP port). This lets providers like Phoenix initialize without requiring manual `provider_config` entries in the common case.
+`TelemetryManager.provider_endpoints()` returns that `{"grpc_endpoint", "http_endpoint"}` pair before any project override; `PhoenixEvaluationProvider.initialize()` builds on it when its config names no endpoints.
 
 **Example:**
 ```python

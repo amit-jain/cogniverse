@@ -324,6 +324,40 @@ def _cron_workflow_labels(name: str) -> dict:
     return json.loads(result.stdout)
 
 
+def _kubectl_json(*args: str) -> dict:
+    result = _kubectl_e2e(*args, "-o", "json")
+    _require_kubectl_success(result, _kubectl_e2e_command(*args, "-o", "json"))
+    return json.loads(result.stdout)
+
+
+def _argo_creator_label() -> str:
+    """The ``workflows.argoproj.io/creator`` value Argo stamps on a runtime job.
+
+    The runtime submits through the argo-server its ``WORKFLOW_API_URL``
+    names. In ``--auth-mode=server`` that server creates the object as its own
+    ServiceAccount, and Argo records the creating username with every ``:``
+    replaced by ``-``.
+    """
+    runtime = _kubectl_json("-n", "cogniverse", "get", "deployment/cogniverse-runtime")
+    (container,) = [
+        c
+        for c in runtime["spec"]["template"]["spec"]["containers"]
+        if c["name"] == "runtime"
+    ]
+    (api_url,) = [
+        e["value"] for e in container["env"] if e["name"] == "WORKFLOW_API_URL"
+    ]
+    service, namespace = re.match(
+        r"^https?://([a-z0-9-]+)\.([a-z0-9-]+)\.svc", api_url
+    ).groups()
+    server = _kubectl_json("-n", namespace, "get", f"deployment/{service}")
+    pod_spec = server["spec"]["template"]["spec"]
+    (server_container,) = pod_spec["containers"]
+    assert "--auth-mode=server" in server_container["args"], server_container["args"]
+    account = pod_spec.get("serviceAccountName") or "default"
+    return f"system:serviceaccount:{namespace}:{account}".replace(":", "-")
+
+
 @pytest.mark.e2e
 class TestTenantJobs:
     def test_full_lifecycle_with_post_actions_preserved(self, owned_tenant):
@@ -418,6 +452,7 @@ class TestTenantJobs:
                     "app": "cogniverse",
                     "tenant": label,
                     "job-id": job_id,
+                    "workflows.argoproj.io/creator": _argo_creator_label(),
                 }
                 listed = client.get(f"/admin/tenant/{tenant_id}/jobs")
                 assert listed.status_code == 200, listed.text

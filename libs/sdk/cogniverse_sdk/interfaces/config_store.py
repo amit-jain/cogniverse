@@ -357,7 +357,7 @@ class ConfigStore(ABC):
         include_history: bool = False,
     ) -> Dict[str, Any]:
         """
-        Export all configurations for a tenant
+        Export all configurations for a tenant, without schema-scope rows
 
         Args:
             tenant_id: Tenant identifier
@@ -376,6 +376,9 @@ class ConfigStore(ABC):
     ) -> int:
         """
         Import configurations for a tenant
+
+        A payload carrying a schema-scope row raises ``ValueError`` before
+        any write: those rows are written only by the schema registry.
 
         Args:
             tenant_id: Tenant identifier

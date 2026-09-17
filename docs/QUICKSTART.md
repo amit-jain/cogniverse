@@ -256,6 +256,7 @@ The quality monitor runs as its own Deployment, continuously evaluating all agen
 
 ```bash
 # Run directly
+TELEMETRY_OTLP_ENDPOINT=localhost:4317 \
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id quickstart \
   --runtime-url http://localhost:28000 \

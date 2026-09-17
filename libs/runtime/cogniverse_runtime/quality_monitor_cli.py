@@ -21,7 +21,6 @@ import time
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from urllib.parse import urlparse
 
 from cogniverse_foundation.config.bootstrap import OPTIMIZATION_WORKFLOW_TEMPLATE_ENV
 
@@ -706,49 +705,28 @@ def _cycle_failed(result: dict) -> bool:
     return bool(result.get("errored_agents"))
 
 
-def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
-    """Construct a PhoenixProvider for the QualityMonitor's XGBoost gate.
+def _build_phoenix_provider(tenant_id: str, http_endpoint: str, grpc_endpoint: str):
+    """Construct the PhoenixProvider the QualityMonitor's XGBoost gate reads.
 
-    The XGBoost training-decision block in
-    ``QualityMonitor._apply_training_decision_model`` is gated on
-    ``self._telemetry_provider is not None``; this helper provides it.
-    Constructs a provider from the HTTP endpoint and an env-var-overridable
-    gRPC endpoint, then initializes it. On failure it logs a warning and
-    returns ``None`` so the monitor degrades to naive verdicts rather
-    than crashing the sidecar.
+    ``QualityMonitor._apply_training_decision_model`` runs only when the
+    monitor holds a telemetry provider; this builds it on the deployment's
+    Phoenix endpoints.
     """
-    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT")
-    if not grpc_endpoint:
-        # Default: same host as http_endpoint, OTLP gRPC port 4317.
-        try:
-            parsed = urlparse(http_endpoint)
-            host = parsed.hostname or "localhost"
-            grpc_endpoint = f"{host}:4317"
-        except Exception:
-            grpc_endpoint = "localhost:4317"
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-    try:
-        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-
-        provider = PhoenixProvider()
-        provider.initialize(
-            {
-                "tenant_id": tenant_id,
-                "http_endpoint": http_endpoint,
-                "grpc_endpoint": grpc_endpoint,
-            }
-        )
-        logger.info(
-            f"PhoenixProvider initialized for QualityMonitor "
-            f"(tenant={tenant_id}, http={http_endpoint}, grpc={grpc_endpoint})"
-        )
-        return provider
-    except Exception as exc:
-        logger.warning(
-            f"Failed to build PhoenixProvider for QualityMonitor: {exc}. "
-            "XGBoost gate will be skipped — naive verdicts only."
-        )
-        return None
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": http_endpoint,
+            "grpc_endpoint": grpc_endpoint,
+        }
+    )
+    logger.info(
+        f"PhoenixProvider initialized for QualityMonitor "
+        f"(tenant={tenant_id}, http={http_endpoint}, grpc={grpc_endpoint})"
+    )
+    return provider
 
 
 async def _run_quality_monitor_iteration(
@@ -776,8 +754,11 @@ def main():
     )
     parser.add_argument(
         "--phoenix-url",
-        default="http://localhost:6006",
-        help="Phoenix HTTP endpoint for span queries and dataset storage",
+        default=None,
+        help=(
+            "Phoenix HTTP endpoint for span queries and dataset storage, used "
+            "when TELEMETRY_HTTP_ENDPOINT is unset"
+        ),
     )
     parser.add_argument(
         "--llm-base-url",
@@ -901,6 +882,20 @@ def main():
         poll_interval_seconds=args.startup_poll_interval,
         retry_forever=not one_shot,
     )
+    missing_endpoints = [
+        name
+        for name, value in (
+            ("TELEMETRY_OTLP_ENDPOINT", telemetry_otlp_endpoint),
+            ("TELEMETRY_HTTP_ENDPOINT or --phoenix-url", telemetry_http_endpoint),
+        )
+        if not value
+    ]
+    if missing_endpoints:
+        logger.error(
+            "%s must name the deployment's Phoenix for the quality monitor",
+            " and ".join(missing_endpoints),
+        )
+        sys.exit(2)
     telemetry_manager.config.provider_config["http_endpoint"] = telemetry_http_endpoint
     golden_queries = None
     if not one_shot and args.golden_dataset_path:
@@ -909,13 +904,10 @@ def main():
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
 
-    # Inject a PhoenixProvider so the XGBoost training-decision gating
-    # block in QualityMonitor.check_thresholds is reachable. The grpc
-    # endpoint defaults to port 4317 on the same host as the HTTP endpoint,
-    # matching the standard Phoenix deployment in the Helm chart.
     telemetry_provider = _build_phoenix_provider(
         tenant_id=args.tenant_id,
         http_endpoint=telemetry_http_endpoint,
+        grpc_endpoint=telemetry_otlp_endpoint,
     )
     if not one_shot:
         if golden_queries is not None:

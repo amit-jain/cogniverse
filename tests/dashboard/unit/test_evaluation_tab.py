@@ -17,14 +17,26 @@ def test_phoenix_base_url_uses_configured_url(monkeypatch):
     assert evaluation._phoenix_base_url() == "http://phoenix.acme:6006"
 
 
-def test_phoenix_base_url_falls_back_to_localhost_when_unset(monkeypatch):
+@pytest.mark.parametrize("session_state", [{}, {"phoenix_url": ""}])
+def test_phoenix_base_url_raises_when_unconfigured(monkeypatch, session_state):
+    monkeypatch.setattr(evaluation.st, "session_state", session_state)
+    with pytest.raises(evaluation.PhoenixUnavailableError) as excinfo:
+        evaluation._phoenix_base_url()
+    assert str(excinfo.value) == (
+        "Phoenix is not configured for this dashboard: the session has no "
+        "phoenix_url (SystemConfig.telemetry_url)"
+    )
+
+
+def test_an_unconfigured_session_renders_the_datasets_error(monkeypatch):
     monkeypatch.setattr(evaluation.st, "session_state", {})
-    assert evaluation._phoenix_base_url() == "http://localhost:6006"
-
-
-def test_phoenix_base_url_falls_back_when_value_empty(monkeypatch):
-    monkeypatch.setattr(evaluation.st, "session_state", {"phoenix_url": ""})
-    assert evaluation._phoenix_base_url() == "http://localhost:6006"
+    evaluation.get_phoenix_datasets.clear()
+    with pytest.raises(evaluation.PhoenixUnavailableError) as excinfo:
+        evaluation.get_phoenix_datasets()
+    assert str(excinfo.value) == (
+        "Phoenix is not configured for this dashboard: the session has no "
+        "phoenix_url (SystemConfig.telemetry_url)"
+    )
 
 
 class TestPhoenixFaultContract:
@@ -161,3 +173,24 @@ class TestPhoenixFaultContract:
         assert blocks, "expected requests call blocks"
         for block in blocks:
             assert "timeout" in block, f"unbounded Phoenix call: {block[:80]}"
+
+
+def test_the_tab_renders_an_unconfigured_phoenix_as_an_error():
+    from streamlit.testing.v1 import AppTest
+
+    def _script():
+        from cogniverse_dashboard.tabs.evaluation import (
+            get_phoenix_datasets,
+            render_evaluation_tab,
+        )
+
+        get_phoenix_datasets.clear()
+        render_evaluation_tab()
+
+    app = AppTest.from_function(_script, default_timeout=60).run()
+
+    assert [e.message for e in app.exception] == []
+    assert [e.value for e in app.error] == [
+        "Cannot load datasets: Phoenix is not configured for this dashboard: "
+        "the session has no phoenix_url (SystemConfig.telemetry_url)"
+    ]

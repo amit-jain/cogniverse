@@ -10,6 +10,7 @@ Features:
 """
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from cogniverse_agents.inference.rlm_inference import (
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
 
 logger = logging.getLogger(__name__)
+
+_RLM_CACHE_LOCK = threading.Lock()
 
 
 class RLMAwareMixin(ConfigManagerAware):
@@ -44,7 +47,8 @@ class RLMAwareMixin(ConfigManagerAware):
                     result = self.process_with_rlm(
                         query=input.query,
                         context=context,
-                        rlm_options=input.rlm
+                        rlm_options=input.rlm,
+                        tenant_id=input.tenant_id,
                     )
                     return self._build_output(result)
                 else:
@@ -60,59 +64,45 @@ class RLMAwareMixin(ConfigManagerAware):
         # Compare telemetry metrics in Phoenix dashboard
     """
 
-    _rlm_instance: Optional[RLMInference] = None
-
-    def _resolve_tenant_id_for_rlm(self, explicit: Optional[str]) -> str:
-        """Resolve the tenant_id to stamp on an RLM call.
-
-        Order of precedence:
-          1. An explicit ``tenant_id`` argument passed by the caller.
-          2. ``self.tenant_id`` set by the dispatcher on the agent instance.
-
-        Missing tenant is a plumbing bug and raises — silent substitution
-        would hide the misconfiguration.
-        """
-        tid = explicit or getattr(self, "tenant_id", None)
-        if not tid:
-            raise RuntimeError(
-                f"{type(self).__name__}: RLM inference requires a tenant_id, "
-                f"but neither the caller nor self.tenant_id provided one. "
-                f"The dispatcher must set self.tenant_id before the mixin is "
-                f"invoked; get_rlm callers should pass tenant_id=... when "
-                f"self.tenant_id isn't available."
+    @staticmethod
+    def _require_rlm_tenant(tenant_id: str) -> str:
+        if not tenant_id:
+            raise ValueError(
+                "RLM inference requires the request's tenant_id; a shared agent "
+                "instance serves every tenant, so the caller passes it per call."
             )
-        return tid
+        return tenant_id
 
     def get_rlm(
         self,
         llm_config: LLMEndpointConfig,
+        *,
+        tenant_id: str,
         max_iterations: int = 10,
         max_llm_calls: int = 30,
         timeout_seconds: int = 300,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
-        tenant_id: Optional[str] = None,
     ) -> RLMInference:
-        """Get or create RLM inference instance with specified config.
+        """Get or create an RLM inference instance for one request's tenant.
 
         Args:
             llm_config: LLM endpoint configuration
+            tenant_id: The request's tenant; routes the endpoint and scopes events
             max_iterations: Maximum REPL iteration loops
             max_llm_calls: Maximum LLM sub-calls
             timeout_seconds: Timeout for RLM processing
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events
-            tenant_id: Tenant identifier for events
 
         Returns:
             RLMInference instance (with InstrumentedRLM if event_queue provided)
         """
+        tenant_id = self._require_rlm_tenant(tenant_id)
         # Route the endpoint through the gateway for this tenant before
-        # building the LM (task ``rlm_inference``). With no tenant, or with
-        # routing disabled, the endpoint is returned unchanged — the
-        # direct-to-backend path.
-        routing_tenant = tenant_id or getattr(self, "tenant_id", "") or ""
-        routed = route_rlm_endpoint(llm_config, self.config_manager, routing_tenant)
+        # building the LM (task ``rlm_inference``). With routing disabled the
+        # endpoint is returned unchanged — the direct-to-backend path.
+        routed = route_rlm_endpoint(llm_config, self.config_manager, tenant_id)
 
         # Always create new instance when event_queue is provided
         # (event_queue/task_id may change per request)
@@ -124,32 +114,35 @@ class RLMAwareMixin(ConfigManagerAware):
                 timeout_seconds=timeout_seconds,
                 event_queue=event_queue,
                 task_id=task_id,
-                tenant_id=self._resolve_tenant_id_for_rlm(tenant_id),
+                tenant_id=tenant_id,
             )
 
-        # Create cached instance if the routed config or caps changed. The
-        # cache keys on the ROUTED identity (model + api_base + headers) so a
-        # tenant change — which rewrites api_base/headers — invalidates a
-        # stale routed LM instead of reusing another tenant's gateway target.
-        cached = self._rlm_instance
-        cached_cfg = cached.llm_config if cached is not None else None
-        if (
-            cached is None
-            or cached_cfg.model != routed.model
-            or cached_cfg.api_base != routed.api_base
-            or cached_cfg.extra_headers != routed.extra_headers
-            or cached.max_iterations != max_iterations
-            or cached.max_llm_calls != max_llm_calls
-            or cached.timeout_seconds != timeout_seconds
-        ):
-            self._rlm_instance = RLMInference(
-                llm_config=routed,
-                max_iterations=max_iterations,
-                max_llm_calls=max_llm_calls,
-                timeout_seconds=timeout_seconds,
-                tenant_id=routing_tenant or None,
-            )
-        return self._rlm_instance
+        # The last instance is reused while the tenant, routed identity and
+        # caps match. A concurrent request that swaps the slot in between
+        # never changes what this call returns.
+        key = (
+            tenant_id,
+            routed.model,
+            routed.api_base,
+            tuple(sorted((routed.extra_headers or {}).items())),
+            max_iterations,
+            max_llm_calls,
+            timeout_seconds,
+        )
+        with _RLM_CACHE_LOCK:
+            cached = self.__dict__.get("_rlm_cached")
+            if cached is not None and cached[0] == key:
+                return cached[1]
+        instance = RLMInference(
+            llm_config=routed,
+            max_iterations=max_iterations,
+            max_llm_calls=max_llm_calls,
+            timeout_seconds=timeout_seconds,
+            tenant_id=tenant_id,
+        )
+        with _RLM_CACHE_LOCK:
+            self.__dict__["_rlm_cached"] = (key, instance)
+        return instance
 
     def should_use_rlm_for_query(
         self,
@@ -177,9 +170,10 @@ class RLMAwareMixin(ConfigManagerAware):
         context: str,
         rlm_options: RLMOptions,
         system_prompt: Optional[str] = None,
+        *,
+        tenant_id: str,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
-        tenant_id: Optional[str] = None,
     ) -> RLMResult:
         """
         Process query using RLM with the specified options.
@@ -189,12 +183,9 @@ class RLMAwareMixin(ConfigManagerAware):
             context: Large context to process
             rlm_options: RLM configuration from query
             system_prompt: Optional system instructions
+            tenant_id: The request's tenant (required)
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events
-            tenant_id: Explicit tenant_id. Required if ``self.tenant_id``
-                wasn't stamped by the dispatcher (e.g. callers driving the
-                mixin directly from tests or tooling). When both are
-                provided, the explicit arg wins.
 
         Returns:
             RLMResult with answer and telemetry data
@@ -217,7 +208,7 @@ class RLMAwareMixin(ConfigManagerAware):
             timeout_seconds=rlm_options.timeout_seconds,
             event_queue=event_queue,
             task_id=task_id,
-            tenant_id=self._resolve_tenant_id_for_rlm(tenant_id),
+            tenant_id=tenant_id,
         )
 
         logger.info(
