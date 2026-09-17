@@ -473,6 +473,19 @@ class AnswerGroundingUnavailable(RuntimeError):
         self.profiles = profiles
 
 
+class NothingToSearch(Exception):
+    """An answer turn that ends before its agent is built.
+
+    Raised while a stream is being set up for a tenant with nothing to search,
+    so the stream ends on ``reply``, the same envelope the non-streamed
+    dispatch returns, without an LM call. Not a failure.
+    """
+
+    def __init__(self, reply: Dict[str, Any]):
+        super().__init__(reply["message"])
+        self.reply = reply
+
+
 # Wall-clock ceiling on an answer agent's grounding search, read from the
 # shipped config so a leg that never answers cannot hold the answer open.
 GROUNDING_SEARCH_TIMEOUT_KEY = "answer_grounding_search_timeout_seconds"
@@ -2293,6 +2306,11 @@ class AgentDispatcher:
             grounding = await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=20
             )
+            reply = self._nothing_to_search_reply(
+                self._nothing_to_search_report, tenant_id, grounding, context
+            )
+            if reply is not None:
+                raise NothingToSearch(reply)
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 DetailedReportAgent,
@@ -2319,6 +2337,11 @@ class AgentDispatcher:
             grounding = await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=10
             )
+            reply = self._nothing_to_search_reply(
+                self._nothing_to_search_summary, tenant_id, grounding, context
+            )
+            if reply is not None:
+                raise NothingToSearch(reply)
             agent = await asyncio.to_thread(
                 self._build_answer_agent,
                 SummarizerAgent,
@@ -3442,8 +3465,11 @@ class AgentDispatcher:
         grounding = await self._resolve_answer_search_results(
             query, tenant_id, context, top_k=10
         )
-        if grounding.nothing_to_search and not request_kwargs["attachments"]:
-            return self._nothing_to_search_summary(tenant_id, grounding)
+        reply = self._nothing_to_search_reply(
+            self._nothing_to_search_summary, tenant_id, grounding, context
+        )
+        if reply is not None:
+            return reply
 
         agent = await asyncio.to_thread(
             self._build_answer_agent,
@@ -3473,6 +3499,23 @@ class AgentDispatcher:
             "grounding": grounding.envelope(),
             "result": dataclasses.asdict(result),
         }
+
+    @staticmethod
+    def _nothing_to_search_reply(
+        envelope: Callable[[str, AnswerGrounding], Dict[str, Any]],
+        tenant_id: str,
+        grounding: AnswerGrounding,
+        context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """The canned answer envelope when the tenant has nothing to search.
+
+        None when the agent must answer: grounding found something to search,
+        or the request carries attachments the agent answers from. Streamed
+        and non-streamed answer turns both decide here.
+        """
+        if not grounding.nothing_to_search or (context or {}).get("attachments"):
+            return None
+        return envelope(tenant_id, grounding)
 
     @staticmethod
     def _nothing_to_search_summary(
@@ -3542,8 +3585,11 @@ class AgentDispatcher:
         grounding = await self._resolve_answer_search_results(
             query, tenant_id, context, top_k=20
         )
-        if grounding.nothing_to_search and not (context or {}).get("attachments"):
-            return self._nothing_to_search_report(tenant_id, grounding)
+        reply = self._nothing_to_search_reply(
+            self._nothing_to_search_report, tenant_id, grounding, context
+        )
+        if reply is not None:
+            return reply
 
         agent = await asyncio.to_thread(
             self._build_answer_agent,

@@ -7,6 +7,13 @@ that endpoint is a recording HTTP proxy in front of the provisioned model, so
 each assertion names the request that reached the LM. Fault cases point the
 same endpoint at a dead port or at an HTTP server that answers 413.
 
+Grounding is real: every tenant configures a text profile served by the PyLate
+encoder sidecar over a Vespa this module owns. The answering tenants' schema is
+deployed and empty, so their grounding search runs and retrieves nothing. One
+tenant never deployed its schema and has nothing to search: /v1 and A2A answer
+it with the canned reply, streamed or not, without an LM request. Another
+tenant's encoder is a dead port: its search fails and the turn fails with it.
+
 Comparability: the streamed turn runs first under a per-run marker, so the
 DSPy request cache cannot answer it and the model's tokens stream. The same
 request served non-streamed is then answered from that cache with the same
@@ -16,6 +23,7 @@ completion, and the proxy proves it: one upstream request across both turns.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import gc
 import json
@@ -32,23 +40,45 @@ from typing import Any, Dict, List
 import httpx
 import pytest
 import uvicorn
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCapabilities, AgentCard
 
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SystemConfig,
+)
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime import main as runtime_main
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+from cogniverse_runtime.agent_dispatcher import (
+    GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+    AgentDispatcher,
+    AnswerGroundingUnavailable,
+)
 from cogniverse_runtime.routers import openai_compat
+from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.hermetic_llm import MODEL
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.vespa_docker import VespaDockerManager
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SCHEMAS_DIR = REPO_ROOT / "configs" / "schemas"
 SHIPPED_CONFIG = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+# The profile every tenant here grounds on: a text profile served by the
+# PyLate encoder sidecar, so a grounding search really runs against Vespa.
+GROUNDING_PROFILE = "document_text_semantic"
+GROUNDING_PROFILE_DATA = SHIPPED_CONFIG["backend"]["profiles"][GROUNDING_PROFILE]
+GROUNDING_SCHEMA = GROUNDING_PROFILE_DATA["schema_name"]
+GROUNDING_EMBEDDING_SERVICE = GROUNDING_PROFILE_DATA["inference_services"]["embedding"]
 AGENT = "summarizer_agent"
 AGENT_CLASS = SummarizerAgent.__name__
 MODEL_NAME = next(
@@ -57,10 +87,30 @@ MODEL_NAME = next(
     if agent == AGENT
 )
 SUMMARY_CAP = SummarizerDeps.model_fields["max_summary_length"].default
+REPORT_AGENT = "detailed_report_agent"
 TENANT_A = "sselive:alpha"
 TENANT_B = "sselive:beta"
+# Configures the profile but never deployed its schema: nothing to search.
+TENANT_NOTHING = "sselive:nothing"
+# Deployed its schema, but its embedding service is a dead port: the grounding
+# search runs and fails.
+TENANT_FAILING = "sselive:failing"
 KEY_A = "sse-live-key-alpha"
 KEY_B = "sse-live-key-beta"
+KEY_NOTHING = "sse-live-key-nothing"
+KEY_FAILING = "sse-live-key-failing"
+UNREACHABLE_EMBEDDING_SERVICE = f"{GROUNDING_EMBEDDING_SERVICE}_unreachable"
+NOTHING_TO_SEARCH_REPLY = (
+    f"Tenant {TENANT_NOTHING} has no deployed search schema for its profiles "
+    f"({GROUNDING_PROFILE}), so there is nothing to search for this request."
+)
+GROUNDING_FAILURE_TYPE = AnswerGroundingUnavailable.__name__
+GROUNDING_FAILURE_MESSAGE = (
+    f"{AGENT} failed with {GROUNDING_FAILURE_TYPE}. See server logs for detail."
+)
+# The grounding search's query rewrite reaches the LM before the encoder
+# fails; the answer's streamed request never does.
+GROUNDING_FAILURE_LM_STREAM_FLAGS = [None]
 RUN = uuid.uuid4().hex[:12]
 
 # Budgets are measured (see the commit body): refusal plus one retry backoff
@@ -81,8 +131,8 @@ LM_STREAM_TASK_QUALNAME = "AsyncIOBackend.run_async_from_thread.<locals>.task_wr
 LM_413_ERROR_TYPE = "APIError"
 # litellm reports a refused connection as InternalServerError.
 LM_UNREACHABLE_ERROR_TYPE = "InternalServerError"
-# Nothing is retrieved for a tenant with no content, so the summarizer sends
-# the question as both its content and its query.
+# The grounding search over the tenant's empty schema retrieves nothing, so the
+# summarizer sends the question as both its content and its query.
 MARKER_COPIES_PER_REQUEST = 2
 
 # Forces a long answer (past the summary cap), a paragraph break and a quoted
@@ -122,7 +172,12 @@ class RecordingProxy:
                 body = json.loads(raw)
                 with proxy._lock:
                     proxy.requests.append(body)
-                headers = {"Content-Type": "application/json"}
+                # Relayed bytes are the upstream's raw body, so ask for it
+                # unencoded: the relayed headers carry no Content-Encoding.
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept-Encoding": "identity",
+                }
                 if self.headers.get("Authorization"):
                     headers["Authorization"] = self.headers["Authorization"]
                 path = (
@@ -222,22 +277,101 @@ def proxy(upstream_base):
 
 
 @pytest.fixture(scope="module")
-def dispatcher():
-    store = InMemoryConfigStore()
-    store.initialize()
-    config_manager = ConfigManager(store=store)
-    registry = AgentRegistry(tenant_id=TENANT_A, config_manager=config_manager)
-    shipped = SHIPPED_CONFIG["agents"][AGENT]
-    registry.register_agent(
-        AgentEndpoint(
-            name=AGENT,
-            url=shipped["url"],
-            capabilities=shipped["capabilities"],
-            streams_answer_tokens=shipped["streams_answer_tokens"],
+def stream_vespa():
+    """A Vespa this module owns: the config store and the tenants' schemas."""
+    from cogniverse_vespa.metadata_schemas import (
+        create_config_metadata_schema,
+        create_organization_metadata_schema,
+        create_tenant_metadata_schema,
+    )
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    from tests.conftest import _shared_vespa_application_package
+
+    manager = VespaDockerManager()
+    info = manager.start_container(f"live-lm-stream-{uuid.uuid4().hex}")
+    try:
+        manager.wait_for_config_ready(info)
+        package = _shared_vespa_application_package(
+            [
+                create_config_metadata_schema(),
+                create_organization_metadata_schema(),
+                create_tenant_metadata_schema(),
+            ]
+        )
+        VespaSchemaManager(
+            backend_endpoint="http://localhost", backend_port=info["config_port"]
+        )._deploy_package(lambda: package)
+        manager.wait_for_application_ready(info)
+        yield info
+    finally:
+        manager.stop_container(info)
+
+
+def _tenant_backend(config_manager: ConfigManager, tenant_id: str):
+    """The ingestion backend the worker builds for a tenant."""
+    from cogniverse_runtime.ingestion.processors.embedding_generator.backend_factory import (  # noqa: E501
+        BackendFactory,
+    )
+
+    return BackendFactory.create(
+        "vespa",
+        tenant_id,
+        {},
+        config_manager=config_manager,
+        schema_loader=FilesystemSchemaLoader(SCHEMAS_DIR),
+    )
+
+
+@pytest.fixture(scope="module")
+def dispatcher(stream_vespa, pylate_server):
+    """Each tenant configures the document profile; the answering tenants'
+    schema is deployed through the production path and holds no documents."""
+    config_manager = ConfigManager(
+        store=VespaConfigStore(
+            backend_url="http://localhost", backend_port=stream_vespa["http_port"]
         )
     )
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=stream_vespa["http_port"],
+            inference_service_urls={
+                GROUNDING_EMBEDDING_SERVICE: pylate_server,
+                UNREACHABLE_EMBEDDING_SERVICE: f"http://127.0.0.1:{_free_port()}",
+            },
+        )
+    )
+    unreachable = copy.deepcopy(GROUNDING_PROFILE_DATA)
+    unreachable["inference_services"]["embedding"] = UNREACHABLE_EMBEDDING_SERVICE
+    for tenant_id, profile_data, deployed in (
+        (TENANT_A, GROUNDING_PROFILE_DATA, True),
+        (TENANT_B, GROUNDING_PROFILE_DATA, True),
+        (TENANT_NOTHING, GROUNDING_PROFILE_DATA, False),
+        (TENANT_FAILING, unreachable, True),
+    ):
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(GROUNDING_PROFILE, profile_data),
+            tenant_id=tenant_id,
+        )
+        if deployed:
+            _tenant_backend(config_manager, tenant_id).schema_registry.deploy_schemas(
+                tenant_id, [GROUNDING_SCHEMA]
+            )
+    registry = AgentRegistry(tenant_id=TENANT_A, config_manager=config_manager)
+    for name in (AGENT, REPORT_AGENT):
+        shipped = SHIPPED_CONFIG["agents"][name]
+        registry.register_agent(
+            AgentEndpoint(
+                name=name,
+                url=shipped["url"],
+                capabilities=shipped["capabilities"],
+                streams_answer_tokens=shipped["streams_answer_tokens"],
+            )
+        )
     return AgentDispatcher(
-        agent_registry=registry, config_manager=config_manager, schema_loader=None
+        agent_registry=registry,
+        config_manager=config_manager,
+        schema_loader=FilesystemSchemaLoader(SCHEMAS_DIR),
     )
 
 
@@ -253,7 +387,14 @@ def app(dispatcher, tmp_path):
     config = get_config(tenant_id=TENANT_A, config_manager=dispatcher._config_manager)
     runtime_main.configure_ambient_dspy(create_dspy_lm(config.get_llm_config().primary))
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
-    openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
+    openai_compat.set_api_keys(
+        {
+            KEY_A: TENANT_A,
+            KEY_B: TENANT_B,
+            KEY_NOTHING: TENANT_NOTHING,
+            KEY_FAILING: TENANT_FAILING,
+        }
+    )
     openai_compat.set_model_map(dict(SHIPPED_CONFIG["harness"]["models"]))
     openai_compat.set_key_resolver(None)
     openai_compat.clear_continuations()
@@ -361,6 +502,262 @@ def _assert_framing(raw: str, *, usage_requested: bool) -> str:
         assert set(frame["choices"][0]["delta"]) == {"content"}
         assert frame["choices"][0]["finish_reason"] is None
     return "".join(frame["choices"][0]["delta"]["content"] for frame in middle)
+
+
+def _a2a_app(dispatcher):
+    """The A2A JSON-RPC app over the production executor."""
+    card = AgentCard(
+        name="Cogniverse",
+        description="Live LM stream module",
+        url="http://localhost/a2a/",
+        version="1",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=True),
+        skills=[],
+    )
+    return A2AStarletteApplication(
+        agent_card=card,
+        http_handler=DefaultRequestHandler(
+            agent_executor=CogniverseAgentExecutor(dispatcher),
+            task_store=InMemoryTaskStore(),
+        ),
+    ).build(rpc_url="/a2a/")
+
+
+@contextlib.asynccontextmanager
+async def _served(app):
+    """``app`` on a real uvicorn socket, served from this test's loop."""
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app, host="127.0.0.1", port=port, lifespan="off", log_level="warning"
+        )
+    )
+    serving = asyncio.create_task(server.serve())
+    try:
+        while not server.started:
+            await asyncio.sleep(0.01)
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        await serving
+
+
+def _point_every_lm_at(api_base: str, dispatcher, tmp_path: Path, monkeypatch):
+    """The configured primary and the ambient DSPy LM both behind ``api_base``,
+    so any LM call the turn makes is a request the proxy records."""
+    _point_primary_at(api_base, tmp_path, monkeypatch)
+    config = get_config(
+        tenant_id=TENANT_NOTHING, config_manager=dispatcher._config_manager
+    )
+    runtime_main.configure_ambient_dspy(create_dspy_lm(config.get_llm_config().primary))
+
+
+def _a2a_request(
+    agent_name: str, tenant_id: str, query: str, stream: bool
+) -> Dict[str, Any]:
+    marker = uuid.uuid4().hex[:8]
+    return {
+        "jsonrpc": "2.0",
+        "id": f"live-{marker}",
+        "method": "message/stream" if stream else "message/send",
+        "params": {
+            "message": {
+                "kind": "message",
+                "role": "user",
+                "message_id": f"m-{marker}",
+                "parts": [{"kind": "text", "text": query}],
+            },
+            "metadata": {
+                "agent_name": agent_name,
+                "query": query,
+                "tenant_id": tenant_id,
+                "stream": stream,
+            },
+        },
+    }
+
+
+def _a2a_events(raw: str) -> List[Dict[str, Any]]:
+    return [json.loads(line)["result"] for line in _data_lines(raw)]
+
+
+def _status_text(event: Dict[str, Any]) -> Dict[str, Any]:
+    return json.loads(event["status"]["message"]["parts"][0]["text"])
+
+
+class TestNothingToSearch:
+    """A tenant with nothing to search gets the canned reply on every transport,
+    streamed or not, and no LM request is made for it."""
+
+    async def test_v1_stream_and_plain_turn_return_the_canned_reply(
+        self, app, dispatcher, proxy, tmp_path, monkeypatch
+    ):
+        _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
+        proxy.clear()
+        prompt = HARD_PROMPT.format(marker=f"{RUN}-nothing-v1")
+
+        async with _served(app) as url:
+            async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
+                streamed = await http.post(
+                    "/v1/chat/completions",
+                    json=_body(
+                        prompt, stream=True, stream_options={"include_usage": True}
+                    ),
+                    headers=_auth(KEY_NOTHING),
+                )
+                plain = await http.post(
+                    "/v1/chat/completions",
+                    json=_body(prompt, stream=False),
+                    headers=_auth(KEY_NOTHING),
+                )
+
+        assert streamed.status_code == 200
+        assert streamed.headers["content-type"].startswith("text/event-stream")
+        assert (
+            _assert_framing(streamed.text, usage_requested=True)
+            == NOTHING_TO_SEARCH_REPLY
+        )
+        assert _deltas(streamed.text) == [NOTHING_TO_SEARCH_REPLY]
+        assert plain.status_code == 200
+        assert plain.json()["choices"][0]["message"]["content"] == (
+            NOTHING_TO_SEARCH_REPLY
+        )
+        assert proxy.recorded() == []
+
+    @pytest.mark.parametrize(
+        ("agent_name", "answer_field"),
+        [(AGENT, "summary"), (REPORT_AGENT, "executive_summary")],
+    )
+    async def test_a2a_stream_and_send_return_the_canned_reply(
+        self, dispatcher, proxy, tmp_path, monkeypatch, agent_name, answer_field
+    ):
+        _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
+        proxy.clear()
+        prompt = HARD_PROMPT.format(marker=f"{RUN}-nothing-a2a-{agent_name}")
+
+        async with _served(_a2a_app(dispatcher)) as url:
+            async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
+                streamed = await http.post(
+                    "/a2a/",
+                    json=_a2a_request(agent_name, TENANT_NOTHING, prompt, stream=True),
+                )
+                sent = await http.post(
+                    "/a2a/",
+                    json=_a2a_request(agent_name, TENANT_NOTHING, prompt, stream=False),
+                )
+
+        assert streamed.status_code == 200
+        events = _a2a_events(streamed.text)
+        assert [
+            (event["kind"], event["final"], event["status"]["state"])
+            for event in events
+        ] == [("status-update", True, "input-required")]
+        assert sent.status_code == 200
+        reply = _status_text(sent.json()["result"])
+        final = _status_text(events[0])
+        assert (sorted(final), final["type"]) == (["data", "type"], "final")
+        # The dispatch path stamps the delivered answer onto its envelope; the
+        # streamed envelope is otherwise the same object.
+        assert reply == {**final["data"], "answer": NOTHING_TO_SEARCH_REPLY}
+        assert {
+            key: reply[key] for key in ("status", "agent", "message", "grounding")
+        } == {
+            "status": "success",
+            "agent": agent_name,
+            "message": NOTHING_TO_SEARCH_REPLY,
+            "grounding": {
+                "state": GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+                "modalities": [],
+                "profiles": [],
+                "degraded_profiles": [],
+                "degraded_query_rewrite": None,
+                "undeployed_profiles": [GROUNDING_PROFILE],
+                "result_count": 0,
+            },
+        }
+        assert reply["result"][answer_field] == NOTHING_TO_SEARCH_REPLY
+        assert proxy.recorded() == []
+
+
+class TestFailedGroundingSearch:
+    """A grounding search that fails is not "nothing to search": the streamed
+    turn ends in the grounding error and the answer LM is never asked."""
+
+    async def test_v1_stream_ends_in_the_grounding_error(
+        self, app, dispatcher, proxy, tmp_path, monkeypatch
+    ):
+        _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
+        proxy.clear()
+        prompt = HARD_PROMPT.format(marker=f"{RUN}-failing-v1")
+
+        async with _served(app) as url:
+            async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
+                response = await http.post(
+                    "/v1/chat/completions",
+                    json=_body(prompt, stream=True),
+                    headers=_auth(KEY_FAILING),
+                )
+
+        assert response.status_code == 200
+        lines = _data_lines(response.text)
+        assert [json.loads(line) for line in lines[:-1]] == [
+            {
+                "id": json.loads(lines[0])["id"],
+                "object": "chat.completion.chunk",
+                "created": json.loads(lines[0])["created"],
+                "model": MODEL_NAME,
+                "choices": [
+                    {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
+                ],
+            },
+            {
+                "error": {
+                    "message": GROUNDING_FAILURE_MESSAGE,
+                    "type": "server_error",
+                    "code": "internal_error",
+                    "agent": AGENT,
+                    "error_type": GROUNDING_FAILURE_TYPE,
+                }
+            },
+        ]
+        assert lines[-1] == "[DONE]"
+        assert [request.get("stream") for request in proxy.recorded()] == (
+            GROUNDING_FAILURE_LM_STREAM_FLAGS
+        )
+
+    async def test_a2a_stream_fails_the_task_with_the_grounding_error(
+        self, dispatcher, proxy, tmp_path, monkeypatch
+    ):
+        _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
+        proxy.clear()
+        prompt = HARD_PROMPT.format(marker=f"{RUN}-failing-a2a")
+
+        async with _served(_a2a_app(dispatcher)) as url:
+            async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
+                response = await http.post(
+                    "/a2a/", json=_a2a_request(AGENT, TENANT_FAILING, prompt, True)
+                )
+
+        assert response.status_code == 200
+        events = _a2a_events(response.text)
+        assert [
+            (event["kind"], event["final"], event["status"]["state"])
+            for event in events
+        ] == [("status-update", True, "failed")]
+        assert _status_text(events[0]) == {
+            "type": "error",
+            "agent": AGENT,
+            "error_type": GROUNDING_FAILURE_TYPE,
+            "message": (
+                f"Agent '{AGENT}' streaming failed with {GROUNDING_FAILURE_TYPE}. "
+                "See runtime logs for detail."
+            ),
+        }
+        assert [request.get("stream") for request in proxy.recorded()] == (
+            GROUNDING_FAILURE_LM_STREAM_FLAGS
+        )
 
 
 class TestLiveTokenStream:

@@ -1964,6 +1964,90 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "result_count": 0,
         }
 
+    @pytest.mark.parametrize(
+        "agent_name,capabilities,answer",
+        [
+            ("summarizer_agent", ["summarization"], "_execute_summarization_task"),
+            (
+                "detailed_report_agent",
+                ["detailed_report", "text_generation"],
+                "_execute_detailed_report_task",
+            ),
+        ],
+    )
+    async def test_streamed_nothing_to_search_ends_on_the_non_streamed_envelope(
+        self, agent_name, capabilities, answer
+    ):
+        from cogniverse_runtime.a2a_executor import stream_agent_events
+
+        dispatcher = self._dispatcher(_document_profiles())
+        built: list = []
+        dispatcher._build_answer_agent = lambda *args: built.append(args)
+        entry = MagicMock()
+        entry.capabilities = capabilities
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+        query = "summarize the videos about robotics"
+        context = {"tenant_id": "acme:acme"}
+
+        streamed = [
+            event
+            async for event in stream_agent_events(
+                dispatcher, agent_name, query, "acme:acme", context
+            )
+        ]
+        dispatched = await getattr(dispatcher, answer)(query, "acme:acme", context)
+
+        expected = (
+            "Tenant acme:acme serves no video content, so there is nothing to "
+            "search for this request."
+        )
+        assert streamed == [{"type": "final", "data": dispatched}]
+        assert (dispatched["agent"], dispatched["message"]) == (agent_name, expected)
+        assert built == []
+
+    @pytest.mark.parametrize(
+        "agent_name,capabilities,input_name",
+        [
+            ("summarizer_agent", ["summarization"], "SummarizerInput"),
+            (
+                "detailed_report_agent",
+                ["detailed_report", "text_generation"],
+                "DetailedReportInput",
+            ),
+        ],
+    )
+    async def test_streamed_nothing_to_search_with_attachments_builds_the_agent(
+        self, agent_name, capabilities, input_name
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+        built: list = []
+        answer_agent = object()
+
+        def _record_build(agent_cls, deps_cls, name, tenant_id):
+            built.append((name, tenant_id))
+            return answer_agent
+
+        dispatcher._build_answer_agent = _record_build
+        entry = MagicMock()
+        entry.capabilities = capabilities
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+        attachments = ["s3://cogniverse-ingest/acme:acme/frame.png"]
+
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            agent_name,
+            "summarize the videos about robotics",
+            "acme:acme",
+            context={"attachments": attachments},
+        )
+
+        assert agent is answer_agent
+        assert (type(typed_input).__name__, typed_input.attachments) == (
+            input_name,
+            attachments,
+        )
+        assert typed_input.search_results == []
+        assert built == [(agent_name, "acme:acme")]
+
     async def test_search_outage_fails_the_summary_instead_of_answering(
         self, monkeypatch
     ):
