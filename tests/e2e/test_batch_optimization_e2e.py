@@ -4734,30 +4734,17 @@ class TestProfileGroundTruthContract:
         )
 
 
-# The query encoder POSTs to the profile's inference service. Redirecting every
-# service URL in a copy of the pod's own config to a closed port fails the
-# encode, and therefore the retrieval, without touching the config store (which
-# binds from BACKEND_URL, not from the file) or the artifact store.
+# The query encoder POSTs to the URL the process's system config names for the
+# profile's embedding service. The CLI serves the deployment's explicit
+# INFERENCE_SERVICE_URLS as that config, so pointing the candidate profiles'
+# embedding services at a closed port in that variable fails the encode, and
+# therefore the retrieval, for this one process without touching the persisted
+# discovery the running replicas read.
 UNREACHABLE_INFERENCE_URL = "http://127.0.0.1:59601"
-UNREACHABLE_ENCODER_CONFIG_PATH = "/tmp/cogniverse-e2e-unreachable-encoders.json"
 
 
-def _write_unreachable_encoder_config_in_pod(dest_path: str) -> list[str]:
-    """Write a copy of the pod's config whose inference services are closed.
-
-    Returns the service names that were redirected.
-    """
-    script = (
-        "import json, pathlib; "
-        "from cogniverse_foundation.config.utils import ConfigUtils; "
-        "src = ConfigUtils._discover_config_file(); "
-        "data = json.loads(pathlib.Path(src).read_text()); "
-        "services = sorted(data.get('inference_service_urls') or {}); "
-        "data['inference_service_urls'] = "
-        f"{{name: {UNREACHABLE_INFERENCE_URL!r} for name in services}}; "
-        f"pathlib.Path({dest_path!r}).write_text(json.dumps(data)); "
-        "print('__SERVICES__' + json.dumps(services))"
-    )
+def _pod_inference_service_urls() -> dict[str, str]:
+    """The ``INFERENCE_SERVICE_URLS`` the runtime container is deployed with."""
     result = subprocess.run(
         [
             "kubectl",
@@ -4770,26 +4757,44 @@ def _write_unreachable_encoder_config_in_pod(dest_path: str) -> list[str]:
             "-c",
             CONTAINER,
             "--",
-            "python3",
-            "-c",
-            script,
+            "printenv",
+            "INFERENCE_SERVICE_URLS",
         ],
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=60,
     )
     if result.returncode != 0:
         raise RuntimeError(
             _subprocess_failure_message(
-                "unreachable_encoder_config",
+                "inference_service_urls",
                 result,
-                operation=f"write {dest_path!r} with closed inference services",
+                operation="read the runtime container's INFERENCE_SERVICE_URLS",
             )
         )
-    line = next(
-        ln for ln in result.stdout.splitlines() if ln.startswith("__SERVICES__")
+    return json.loads(result.stdout)
+
+
+def _profile_embedding_services(profiles: list[str]) -> list[str]:
+    """The embedding services the shipped catalog routes ``profiles`` through."""
+    catalog = json.loads(
+        (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
+    )["backend"]["profiles"]
+    return sorted(
+        {catalog[profile]["inference_services"]["embedding"] for profile in profiles}
     )
-    return json.loads(line[len("__SERVICES__") :])
+
+
+def _unreachable_encoder_urls(
+    deployed: dict[str, str], services: list[str]
+) -> dict[str, str]:
+    """``deployed`` with exactly ``services`` pointed at a closed port."""
+    missing = sorted(set(services) - set(deployed))
+    assert missing == [], f"services {missing} are not deployed: {sorted(deployed)}"
+    return {
+        name: UNREACHABLE_INFERENCE_URL if name in services else url
+        for name, url in deployed.items()
+    }
 
 
 @pytest.mark.e2e
@@ -4810,14 +4815,32 @@ class TestProfileLabelRetrievalOutage:
         lineage_before = _blob_version_lineage_in_pod(
             "model", "profile_selection", tenant_id=seeded
         )
-        redirected = _write_unreachable_encoder_config_in_pod(
-            UNREACHABLE_ENCODER_CONFIG_PATH
+        candidates = _usable_profile_names_in_pod(seeded)
+        # The seeded tenant serves exactly the profiles its corpus was
+        # deployed under.
+        shipped = json.loads(
+            (
+                Path(__file__).resolve().parents[2] / "configs" / "config.json"
+            ).read_text()
         )
+        assert sorted(candidates) == sorted(
+            _profile_selection_video_profiles(shipped)
+        ), candidates
+        services = _profile_embedding_services(candidates)
+        deployed = _pod_inference_service_urls()
+        closed = _unreachable_encoder_urls(deployed, services)
+        redirected = sorted(
+            name for name, url in closed.items() if url != deployed[name]
+        )
+        # Exactly the encoders the candidate profiles query through; every
+        # other service keeps the deployment's endpoint.
+        assert redirected == services, (redirected, services, deployed)
+        assert services == ["vllm_colpali"], services
 
         run = _exec_optimization_cli_in_pod(
             "profile",
             seeded,
-            env_overrides={"COGNIVERSE_CONFIG": UNREACHABLE_ENCODER_CONFIG_PATH},
+            env_overrides={"INFERENCE_SERVICE_URLS": json.dumps(closed)},
         )
         assert run.returncode == 1, (
             f"redirected inference services {redirected}; stdout={run.stdout[-2000:]}"
