@@ -12,7 +12,9 @@ streaming ``/v1``, and A2A — is driven over its own socket or ASGI app.
 from __future__ import annotations
 
 import asyncio
+import base64
 import http.server
+import io
 import json
 import logging
 import threading
@@ -28,6 +30,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
+from PIL import Image
 
 from cogniverse_core.registries.agent_registry import AgentEndpoint, AgentRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -342,6 +345,14 @@ async def a2a_route(build_dispatcher):
             yield client
 
 
+SCHEDULE_HIT = {
+    "id": "grounded-source",
+    "title": "Observatory schedule",
+    "text_content": "The observatory has two telescopes. Observations start at sunset.",
+    "score": 0.9,
+}
+
+
 def task(case: str, tenant: str = TENANTS[0]) -> dict:
     return {
         "agent_name": "summarizer_agent",
@@ -349,17 +360,7 @@ def task(case: str, tenant: str = TENANTS[0]) -> dict:
         "context": {
             "tenant_id": tenant,
             "request_id": f"request-{case}",
-            "search_results": [
-                {
-                    "id": "grounded-source",
-                    "title": "Observatory schedule",
-                    "text_content": (
-                        "The observatory has two telescopes. "
-                        "Observations start at sunset."
-                    ),
-                    "score": 0.9,
-                }
-            ],
+            "search_results": [SCHEDULE_HIT],
         },
     }
 
@@ -497,6 +498,30 @@ def chat_request(model: str, case: str, *, stream: bool) -> dict:
     }
 
 
+def observatory_photo() -> str:
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (20, 30, 90)).save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+
+def attached_chat_request(model: str, case: str) -> dict:
+    """A streamed turn carrying an image the summarizer answers from, so a
+    tenant with nothing to search still generates."""
+    return {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": transport_query(case)},
+                    {"type": "image_url", "image_url": {"url": observatory_photo()}},
+                ],
+            }
+        ],
+        "stream": True,
+    }
+
+
 async def test_v1_nonstreaming_refuses_the_turn(compat_route, provider):
     async with compat_route(streams_answer_tokens=False) as client:
         response = await client.post(
@@ -559,7 +584,7 @@ async def test_v1_token_stream_ends_in_an_error_frame(compat_route, provider):
         response = await client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
-            json=chat_request(SUMMARY_MODEL, "blank", stream=True),
+            json=attached_chat_request(SUMMARY_MODEL, "blank"),
         )
     assert provider.cases == ["blank"]
     assert response.status_code == 200, response.text
@@ -627,7 +652,28 @@ async def test_a2a_turn_is_a_failed_task(a2a_route, provider):
     }
 
 
-async def test_a2a_stream_ends_in_a_failed_terminal_event(a2a_route, provider):
+@pytest.fixture
+def schedule_grounding(monkeypatch):
+    """Thread the schedule hit into the context the dispatcher's grounding
+    resolution reads, the way a routed turn carries its search results. A2A
+    request metadata has no field that reaches that context."""
+    resolve = AgentDispatcher._resolve_answer_search_results
+
+    async def threaded(self, query, tenant_id, context, top_k):
+        return await resolve(
+            self,
+            query,
+            tenant_id,
+            {**(context or {}), "search_results": [SCHEDULE_HIT]},
+            top_k,
+        )
+
+    monkeypatch.setattr(AgentDispatcher, "_resolve_answer_search_results", threaded)
+
+
+async def test_a2a_stream_ends_in_a_failed_terminal_event(
+    a2a_route, provider, schedule_grounding
+):
     response = await a2a_route.post(
         "/", json=a2a_request("summarizer_agent", "blank", stream=True)
     )
@@ -641,3 +687,77 @@ async def test_a2a_stream_ends_in_a_failed_terminal_event(a2a_route, provider):
     assert payload["agent"] == "summarizer_agent"
     assert payload["error_type"] == "LMOutputIncomplete"
     assert payload["message"] == STREAM_FAILURE
+
+
+NOTHING_TO_SEARCH = (
+    f"Tenant {TENANTS[0]} has no servable search profile, so there is nothing "
+    "to search for this request."
+)
+NO_SERVABLE_PROFILE = {
+    "state": "no_servable_profile",
+    "modalities": [],
+    "profiles": [],
+    "degraded_profiles": [],
+    "degraded_query_rewrite": None,
+    "undeployed_profiles": [],
+    "result_count": 0,
+}
+
+
+async def test_streams_for_a_tenant_with_nothing_to_search_end_in_the_canned_reply(
+    compat_route, a2a_route, provider
+):
+    async with compat_route(streams_answer_tokens=True) as client:
+        v1 = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json=chat_request(SUMMARY_MODEL, "valid", stream=True),
+        )
+    a2a = await a2a_route.post(
+        "/", json=a2a_request("summarizer_agent", "valid", stream=True)
+    )
+    assert provider.cases == []
+
+    assert v1.status_code == 200, v1.text
+    assert v1.text.endswith("data: [DONE]\n\n")
+    frames = sse_frames(v1.text)
+    assert [frame["choices"] for frame in frames] == [
+        [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        [{"index": 0, "delta": {"content": NOTHING_TO_SEARCH}, "finish_reason": None}],
+        [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    ]
+
+    assert a2a.status_code == 200, a2a.text
+    events = a2a_events(a2a.text)
+    terminal = events[-1]["result"]
+    assert terminal["final"] is True
+    assert terminal["status"]["state"] == "input-required"
+    assert json.loads(terminal["status"]["message"]["parts"][0]["text"]) == {
+        "type": "final",
+        "data": {
+            "status": "success",
+            "agent": "summarizer_agent",
+            "message": NOTHING_TO_SEARCH,
+            "grounding": NO_SERVABLE_PROFILE,
+            "result": {
+                "summary": NOTHING_TO_SEARCH,
+                "key_points": [],
+                "visual_insights": [],
+                "confidence_score": 0.0,
+                "thinking_phase": {
+                    "key_themes": [],
+                    "content_categories": [],
+                    "relevance_scores": {},
+                    "visual_elements": [],
+                    "reasoning": NOTHING_TO_SEARCH,
+                    "entity_insights": None,
+                    "relationship_patterns": None,
+                    "contextual_connections": None,
+                },
+                "metadata": {"grounding": NO_SERVABLE_PROFILE},
+                "relationship_summary": None,
+                "entity_analysis": None,
+                "enhancement_applied": False,
+            },
+        },
+    }
