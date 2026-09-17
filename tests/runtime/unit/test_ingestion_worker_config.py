@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.ingestion_worker import worker
-
-
-class _ConfigManager:
-    def __init__(self, urls: dict[str, str]) -> None:
-        self.system_config = SimpleNamespace(inference_service_urls=urls)
-
-    def get_system_config(self):
-        return self.system_config
+from tests.utils.memory_store import InMemoryConfigStore
 
 
 def _install_context_dependencies(monkeypatch, urls: dict[str, str]):
+    """A real ConfigManager whose store persists ``urls`` as discovery."""
     from cogniverse_core.schemas import filesystem_loader
     from cogniverse_foundation.config import utils
 
-    manager = _ConfigManager(urls)
+    store = InMemoryConfigStore()
+    ConfigManager(store=store).set_system_config(
+        SystemConfig(inference_service_urls=dict(urls))
+    )
+    manager = ConfigManager(store=store)
     schema_loader = object()
     graph_factory_calls = []
     monkeypatch.setattr(utils, "create_default_config_manager", lambda: manager)
@@ -81,14 +79,19 @@ def test_worker_installs_exact_inference_urls_before_building_graph_context(
         "denseon": "http://denseon:8000",
         "vllm_asr": "https://asr.modal.run",
     }
-    assert manager.system_config.inference_service_urls == {
+    assert manager.get_system_config().inference_service_urls == {
         "denseon": "http://denseon:8000",
         "vllm_asr": "https://asr.modal.run",
     }
     assert (
-        manager.system_config.inference_service_urls
+        manager.get_system_config().inference_service_urls
         is not config.inference_service_urls
     )
+    # The explicit endpoints are this process's; the persisted discovery
+    # other readers of the store see is unchanged.
+    assert ConfigManager(
+        store=manager.store
+    ).get_system_config().inference_service_urls == {"stale": "http://stale:8000"}
     assert graph_factory_calls == [(manager, schema_loader)]
 
 
@@ -116,7 +119,7 @@ def test_worker_preserves_persisted_inference_urls_when_environment_is_absent(
     assert actual_manager is manager
     assert actual_loader is schema_loader
     assert config.inference_service_urls is None
-    assert manager.system_config.inference_service_urls == {
+    assert manager.get_system_config().inference_service_urls == {
         "persisted": "http://persisted:8000"
     }
     assert graph_factory_calls == [(manager, schema_loader)]
