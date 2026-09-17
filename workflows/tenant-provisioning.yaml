@@ -81,7 +81,8 @@ spec:
           memory: "2Gi"
           cpu: "1"
 
-  # Create Kubernetes namespace for tenant
+  # Create Kubernetes namespace for tenant. A namespace name allows no
+  # underscores, so the tenant id's underscores become hyphens in it.
   - name: create-namespace
     resource:
       action: create
@@ -89,7 +90,7 @@ spec:
         apiVersion: v1
         kind: Namespace
         metadata:
-          name: cogniverse-{{workflow.parameters.tenant-id}}
+          name: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
           labels:
             tenant: "{{workflow.parameters.tenant-id}}"
             managed-by: cogniverse
@@ -165,7 +166,7 @@ spec:
         kind: ResourceQuota
         metadata:
           name: tenant-quota
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
         spec:
           hard:
             requests.cpu: "{{workflow.parameters.cpu-quota}}"
@@ -183,7 +184,7 @@ spec:
         kind: PersistentVolumeClaim
         metadata:
           name: tenant-data
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
           labels:
             tenant: "{{workflow.parameters.tenant-id}}"
         spec:
@@ -258,7 +259,7 @@ spec:
         apiVersion: v1
         kind: Namespace
         metadata:
-          name: cogniverse-{{workflow.parameters.tenant-id}}
+          name: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
 
   - name: verify-storage
     resource:
@@ -268,7 +269,7 @@ spec:
         kind: PersistentVolumeClaim
         metadata:
           name: tenant-data
-          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          namespace: cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}
 
   - name: verify-tenant
     container:

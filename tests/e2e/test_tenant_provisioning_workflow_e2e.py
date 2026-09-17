@@ -211,7 +211,9 @@ def provisioned_tenant():
         "submitting the tenant-provisioning workflow",
     )
     workflow_name = json.loads(created.stdout)["metadata"]["name"]
-    tenant_namespace = f"cogniverse-{tenant}"
+    # A namespace name allows no underscores; the workflow maps the tenant
+    # id's underscores to hyphens.
+    tenant_namespace = f"cogniverse-{tenant.replace('_', '-')}"
 
     try:
         deadline = time.monotonic() + PROVISIONING_TIMEOUT_S

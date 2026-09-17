@@ -316,3 +316,48 @@ def test_provisioning_sets_the_router_tier_before_verifying():
         "{{workflow.parameters.tenant-id}}",
     ]
     assert shape["tier_default"] == "default"
+
+
+TENANT_NAMESPACE = (
+    "cogniverse-{{=sprig.replace('_', '-', workflow.parameters['tenant-id'])}}"
+)
+
+
+@pytest.mark.unit
+def test_every_resource_step_names_the_tenant_namespace_without_underscores():
+    """A namespace name is an RFC 1123 label, which allows no underscores, while
+    the validate step admits them in the tenant id; each resource step maps
+    them to hyphens so the namespace it creates and reads back is one name."""
+    references = {}
+    for name, template in _templates().items():
+        if "resource" not in template:
+            continue
+        # The manifest is YAML only after Argo substitutes its parameters, so
+        # its metadata block is read line by line.
+        lines = template["resource"]["manifest"].splitlines()
+        start = lines.index("metadata:") + 1
+        end = next(
+            (i for i in range(start, len(lines)) if not lines[i].startswith(" ")),
+            len(lines),
+        )
+        references[name] = yaml.safe_load("\n".join(lines[start:end]))
+    assert references == {
+        "create-namespace": {
+            "name": TENANT_NAMESPACE,
+            "labels": {
+                "tenant": "{{workflow.parameters.tenant-id}}",
+                "managed-by": "cogniverse",
+            },
+        },
+        "setup-resource-quotas": {
+            "name": "tenant-quota",
+            "namespace": TENANT_NAMESPACE,
+        },
+        "create-storage": {
+            "name": "tenant-data",
+            "namespace": TENANT_NAMESPACE,
+            "labels": {"tenant": "{{workflow.parameters.tenant-id}}"},
+        },
+        "verify-namespace": {"name": TENANT_NAMESPACE},
+        "verify-storage": {"name": "tenant-data", "namespace": TENANT_NAMESPACE},
+    }
