@@ -2068,13 +2068,17 @@ class TestMonitoringDashboard:
 
         panel = active_tab_panel(page)
         metrics = _panel_metrics(panel)
+        # Four summary cards and the annotation section's count.
         assert sorted(metrics) == [
             "Avg Routing Latency",
             "Confidence Calibration",
             "Routing Accuracy",
+            "Total Annotations",
             "Total Decisions",
         ], sorted(metrics)
         assert metrics["Total Decisions"] == str(len(GATEWAY_VIDEO_QUERIES)), metrics
+        # The tenant was minted here and nothing annotated its spans.
+        assert metrics["Total Annotations"] == "0", metrics
 
         # The project the reader queried is the one the producers wrote to.
         # The caption sits inside a collapsed expander, so read the DOM text
