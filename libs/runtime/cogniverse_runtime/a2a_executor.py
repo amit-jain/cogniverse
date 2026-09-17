@@ -29,7 +29,7 @@ from cogniverse_agents._coercion import coerce_bool, coerce_int
 from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.telemetry.context import request_trace_context
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import AgentDispatcher, NothingToSearch
 from cogniverse_runtime.harness_turn import _raise_if_error
 
 logger = logging.getLogger(__name__)
@@ -51,9 +51,13 @@ async def stream_agent_events(
         query = await dispatcher._rewrite_query_with_history(
             query, conversation_history
         )
-    agent, typed_input = await dispatcher.create_streaming_agent(
-        agent_name, query, tenant_id, context=context
-    )
+    try:
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            agent_name, query, tenant_id, context=context
+        )
+    except NothingToSearch as answered:
+        yield {"type": "final", "data": answered.reply}
+        return
     validate_attachments = getattr(agent, "validate_attachments", None)
     if validate_attachments is not None:
         validate_attachments(typed_input)
