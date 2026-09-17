@@ -952,3 +952,75 @@ def test_loop_probe_fails_a_probe_that_stopped_polling_before_the_window_closed(
         "the liveness probe stopped polling before the window closed after "
         "3 polls in 40.00s"
     )
+
+
+_HUB_LOADERS = ("from_pretrained", "snapshot_download", "hf_hub_download")
+
+
+def _hub_loads_without_local_files_only(source: str) -> list[int]:
+    """Lines of Hub loader calls in ``source`` not pinned to the local cache."""
+    import ast
+
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name not in _HUB_LOADERS:
+            continue
+        pinned = any(
+            keyword.arg == "local_files_only"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+        if not pinned:
+            offenders.append(node.lineno)
+    return offenders
+
+
+def test_hub_load_detector_flags_a_load_that_may_reach_the_hub():
+    source = (
+        "from transformers import AutoTokenizer\n"
+        "from huggingface_hub import snapshot_download\n"
+        "AutoTokenizer.from_pretrained('m', local_files_only=True)\n"
+        "AutoTokenizer.from_pretrained('m', revision='r')\n"
+        "snapshot_download('m', local_files_only=False)\n"
+    )
+
+    assert _hub_loads_without_local_files_only(source) == [4, 5]
+
+
+def test_e2e_modules_load_hub_assets_from_the_local_cache_only():
+    e2e_root = Path(__file__).resolve().parents[2] / "e2e"
+    offenders = {
+        str(path.relative_to(e2e_root)): lines
+        for path in sorted(e2e_root.rglob("*.py"))
+        if (lines := _hub_loads_without_local_files_only(path.read_text()))
+    }
+
+    assert offenders == {}
+
+
+def test_the_served_tokenizer_loads_offline_from_the_e2e_cache(monkeypatch):
+    from tests.e2e.test_api_e2e import _served_document_tokens
+
+    # A closed Hub endpoint: a load that reached the network would fail.
+    monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
+
+    assert _served_document_tokens("Section 0. probe") == [12612, 470, 15, 10304]
+
+
+def test_a_tokenizer_missing_from_the_cache_fails_at_once(monkeypatch, tmp_path):
+    import time
+
+    from tests.e2e.test_api_e2e import _served_document_tokens
+
+    monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
+    started = time.monotonic()
+    with pytest.raises(OSError) as raised:
+        _served_document_tokens("probe", cache_dir=tmp_path)
+    elapsed = time.monotonic() - started
+
+    assert "couldn't find them in the cached files" in str(raised.value)
+    assert elapsed < 2.0, elapsed
