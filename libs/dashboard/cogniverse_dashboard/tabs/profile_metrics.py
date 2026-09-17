@@ -18,6 +18,7 @@ import streamlit as st
 
 from cogniverse_dashboard.telemetry_gate import run_render_span_query
 from cogniverse_dashboard.utils import tenant_project_name
+from cogniverse_dashboard.utils.traces import span_window_end
 from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -94,9 +95,7 @@ def render_profile_metrics_tab() -> None:
         st.error(f"Failed to initialise telemetry provider: {exc}")
         return
 
-    # Quantize the window end so reruns within the cache TTL share a key.
-    end = datetime.now(timezone.utc).replace(microsecond=0)
-    end = end.replace(second=(end.second // 30) * 30)
+    end = span_window_end(datetime.now(timezone.utc))
     start = end - timedelta(hours=int(lookback_hours))
 
     @st.cache_data(ttl=30, show_spinner="Querying Phoenix...")

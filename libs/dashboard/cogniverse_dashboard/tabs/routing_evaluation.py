@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
+from cogniverse_dashboard.utils.traces import span_window_end
 
 
 def _span_success(span_row) -> bool:
@@ -125,10 +126,7 @@ def render_routing_evaluation_tab():
 
     # Time range for query — Phoenix stores spans in UTC, mirror that here so
     # the window is correct on non-UTC hosts (the dashboard runs anywhere).
-    # The end is quantized to 30s so reruns within the cache TTL share a key
-    # instead of busting the cache with a fresh datetime.now() each time.
-    end_time = datetime.now(timezone.utc).replace(microsecond=0)
-    end_time = end_time.replace(second=(end_time.second // 30) * 30)
+    end_time = span_window_end(datetime.now(timezone.utc))
     start_time = end_time - timedelta(hours=lookback_hours)
 
     # Fetch routing spans ONCE for the window; summary/confidence/temporal all

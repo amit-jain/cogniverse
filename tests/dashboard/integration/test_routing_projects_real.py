@@ -7,13 +7,14 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
+import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -78,6 +79,33 @@ def _emit(manager, tenants, monkeypatch, *, concurrent=False):
 
 
 @pytest.fixture
+def render_clock(monkeypatch):
+    """The instant the tabs read as now; the real clock until a test sets it."""
+    clock = {}
+
+    class RenderClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock["now"] if "now" in clock else datetime.now(tz)
+
+    monkeypatch.setattr(routing_evaluation, "datetime", RenderClock)
+    monkeypatch.setattr(profile_metrics, "datetime", RenderClock)
+    return clock
+
+
+def _moment_after(latest_start: datetime) -> datetime:
+    """A render one second after the newest span started, never past the end
+    of that span's 30-second bucket, so the render and the span share the
+    bucket whatever the wall clock was."""
+    bucket_end = latest_start.replace(
+        second=(latest_start.second // 30) * 30, microsecond=0
+    ) + timedelta(seconds=30)
+    return min(
+        latest_start + timedelta(seconds=1), bucket_end - timedelta(microseconds=1)
+    )
+
+
+@pytest.fixture
 def tab_reads(monkeypatch):
     st.cache_data.clear()
     reads = []
@@ -92,14 +120,6 @@ def tab_reads(monkeypatch):
         return frame
 
     monkeypatch.setattr(PhoenixTraceStore, "get_spans", observe)
-
-    class WindowEnd(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime.now(tz) + timedelta(seconds=31)
-
-    monkeypatch.setattr(routing_evaluation, "datetime", WindowEnd)
-    monkeypatch.setattr(profile_metrics, "datetime", WindowEnd)
     yield reads
     st.cache_data.clear()
 
@@ -118,26 +138,33 @@ render_{tab}_tab()
     return app
 
 
-def _wait_for_ids(manager, captured):
+def _wait_for_ids(manager, captured) -> datetime:
+    """Wait until Phoenix holds exactly the captured spans; return the newest
+    one's start time."""
+
     async def query():
-        found = set()
+        found = {}
         for tenant, _name in captured:
             frame = await manager.get_provider(tenant_id=tenant).traces.get_spans(
                 project=manager.config.get_project_name(tenant)
             )
             if frame is not None and not frame.empty:
-                found.update(frame["context.span_id"])
+                found.update(zip(frame["context.span_id"], frame["start_time"]))
         return found
 
     expected = set(captured.values())
     deadline = time.monotonic() + 30
-    found = set()
+    found = {}
     while time.monotonic() < deadline:
         found = asyncio.run(query())
-        if found == expected:
+        if set(found) == expected:
             break
         time.sleep(0.2)
-    assert found == expected
+    assert set(found) == expected
+    newest = pd.Timestamp(max(found.values()))
+    if newest.tzinfo is None:
+        newest = newest.tz_localize(timezone.utc)
+    return newest.tz_convert(timezone.utc).to_pydatetime()
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
@@ -146,12 +173,15 @@ def test_tabs_read_only_selected_tenants_producer_spans(
     telemetry_manager_with_phoenix,
     monkeypatch,
     tab_reads,
+    render_clock,
     concurrent,
 ):
     manager = telemetry_manager_with_phoenix
     tenants = [f"metrics{uuid4().hex[:8]}:tenant" for _ in range(2)]
     captured = _emit(manager, tenants, monkeypatch, concurrent=concurrent)
-    _wait_for_ids(manager, captured)
+    # The page is opened the moment the decisions exist: the window has to
+    # hold spans that started within the current 30-second cache bucket.
+    render_clock["now"] = _moment_after(_wait_for_ids(manager, captured))
     for tenant in tenants:
         project = manager.config.get_project_name(tenant)
         routing_id = captured[(tenant, "cogniverse.routing")]

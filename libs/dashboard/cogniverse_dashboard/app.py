@@ -56,6 +56,7 @@ from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 from cogniverse_dashboard.utils.traces import (
     fetch_tenant_traces_safely,
     filter_traces_df,
+    span_window_end,
 )
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
@@ -451,10 +452,7 @@ with st.sidebar:
 
     # Phoenix stores span timestamps in UTC. Streamlit's date_input / time_input
     # return naive Python objects — attach tzinfo=UTC so the window matches.
-    # Quantized to 30s so the trace-fetch cache key repeats across reruns
-    # instead of being busted by a fresh now() on every widget interaction.
-    _now_utc = datetime.now(timezone.utc).replace(microsecond=0)
-    _now_utc = _now_utc.replace(second=(_now_utc.second // 30) * 30)
+    _now_utc = span_window_end(datetime.now(timezone.utc))
     if time_range == "Custom range":
         col1, col2 = st.columns(2)
         with col1:

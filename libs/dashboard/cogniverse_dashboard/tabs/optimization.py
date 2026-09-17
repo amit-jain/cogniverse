@@ -46,6 +46,7 @@ from cogniverse_dashboard.telemetry_gate import (
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_dashboard.utils.runtime_client import get_runtime_client
+from cogniverse_dashboard.utils.traces import span_window_end
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 # Columns of the Recent Optimization History table, in render order.
@@ -1785,10 +1786,7 @@ def _render_metrics_dashboard_tab():
             tenant_id=st.session_state["current_tenant"]
         )
 
-        # Calculate time range, quantized to 30s so cache keys repeat
-        # across reruns.
-        end_time = datetime.now(timezone.utc).replace(microsecond=0)
-        end_time = end_time.replace(second=(end_time.second // 30) * 30)
+        end_time = span_window_end(datetime.now(timezone.utc))
         start_time = end_time - timedelta(days=lookback_days)
 
         # Get spans from provider — cached; a miss pulls the full project

@@ -9,12 +9,26 @@ column) previously raised KeyError, and a query with regex metacharacters
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
 
 from cogniverse_dashboard.utils import tenant_project_name
+
+SPAN_WINDOW_BUCKET_SECONDS = 30
+
+
+def span_window_end(now: datetime) -> datetime:
+    """The end of a span query window that contains ``now``.
+
+    The end is the next ``SPAN_WINDOW_BUCKET_SECONDS`` boundary after ``now``,
+    so reruns within one bucket share a cache key and every span started up
+    to ``now`` falls inside the window.
+    """
+    bucket = SPAN_WINDOW_BUCKET_SECONDS
+    floor = now.replace(second=(now.second // bucket) * bucket, microsecond=0)
+    return floor + timedelta(seconds=bucket)
 
 
 def fetch_tenant_traces(
