@@ -248,7 +248,10 @@ runtime enforces each agent's `network_policies.egress` allow-list at the
 httpx transport layer. Agents whose dispatcher path stamps a policy obtain
 their httpx client via `SandboxManager.make_http_client(agent_type)` — the
 returned client wraps every outbound request in a `PolicyEnforcingTransport`
-that raises `EgressDeniedError` for non-allow-listed `(host, port)`.
+that raises `EgressDeniedError` for non-allow-listed `(host, port)`. A rule
+naming a service's `SystemConfig` default address (`localhost:8000` for the
+runtime, `localhost:8080` for Vespa) also admits the address the deployment
+configures for that service, passed as `endpoint_bindings`.
 
 This is defence-in-depth: kernel policy stops out-of-process bypass; the
 transport surfaces the violation in application logs with the offending

@@ -111,8 +111,12 @@ class QueryEnhancementSignature(dspy.Signature):
     expansion_terms: str = dspy.OutputField(
         desc="Comma-separated additional search terms"
     )
-    synonyms: str = dspy.OutputField(desc="Comma-separated synonyms for key terms")
-    context: str = dspy.OutputField(desc="Comma-separated contextual additions")
+    synonyms: str = dspy.OutputField(
+        desc="Comma-separated synonyms for key terms", default=""
+    )
+    context: str = dspy.OutputField(
+        desc="Comma-separated contextual additions", default=""
+    )
     confidence: str = dspy.OutputField(desc="Confidence score 0.0-1.0")
     reasoning: str = dspy.OutputField(desc="Explanation of query enhancements")
 

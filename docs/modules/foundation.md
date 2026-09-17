@@ -1038,7 +1038,10 @@ before the parent's strict field-key equality check. A required output the LM
 left unfilled — absent, `null`, or a blank string — raises
 **`LMOutputIncomplete`** (an `AdapterParseError` subclass) whose
 `missing_fields` names every such output and whose `parsed_result` carries the
-ones the LM did fill. An empty list or dict is a value and passes.
+ones the LM did fill. An empty list or dict is a value and passes. An output
+declared with a default (`dspy.OutputField(default="")`) is one whose blank
+answer is valid: a `null` or blank value takes the default, and only an absent
+field is incomplete.
 
 ```python
 from cogniverse_foundation.dspy.lenient_json_adapter import LenientJSONAdapter

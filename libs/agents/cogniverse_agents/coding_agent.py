@@ -236,7 +236,8 @@ class OutputEvaluationSignature(dspy.Signature):
         desc="True if execution output satisfies the task"
     )
     feedback: str = dspy.OutputField(
-        desc="Specific feedback for improving the code if not successful"
+        desc="Specific feedback for improving the code if not successful",
+        default="",
     )
 
 
