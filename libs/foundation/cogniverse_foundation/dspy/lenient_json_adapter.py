@@ -9,11 +9,13 @@ forms (`sub_question`) when the schema names the field plural
 
 This adapter applies a small set of canonical aliases before the strict
 field-key equality check in the parent parser. Unknown fields still get
-stripped; only known aliases are renamed. A required output the LM left
-unfilled — absent, `null`, or a blank string — is incomplete generation, and
-raises `LMOutputIncomplete` naming those fields. An empty collection is a
-value and passes. Everything else (tool calls, type casting, adapter fallback
-behaviour) is inherited from `JSONAdapter`.
+stripped; only known aliases are renamed. An output the LM left unfilled —
+absent, `null`, or a blank string — is incomplete generation, and raises
+`LMOutputIncomplete` naming those fields. An empty collection is a value and
+passes. A field declared with a default (`dspy.OutputField(default="")`) takes
+that default for a `null` or blank answer; it is still incomplete when absent.
+Everything else (tool calls, type casting, adapter fallback behaviour) is
+inherited from `JSONAdapter`.
 """
 
 from __future__ import annotations
@@ -122,9 +124,14 @@ class LenientJSONAdapter(JSONAdapter):
                             break
                 remapped[target] = value
 
-            produced = {
-                k: v for k, v in remapped.items() if k in expected and _is_filled(v)
-            }
+            produced: dict[str, Any] = {}
+            for name, value in remapped.items():
+                if name not in expected:
+                    continue
+                if _is_filled(value):
+                    produced[name] = value
+                elif not signature.output_fields[name].is_required():
+                    produced[name] = signature.output_fields[name].default
             missing = expected - produced.keys()
             if missing:
                 raise LMOutputIncomplete(
