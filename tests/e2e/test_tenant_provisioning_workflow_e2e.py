@@ -19,8 +19,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cogniverse_core.memory.provenance_store import PROVENANCE_BASE_SCHEMA
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime import provision_tenant
+from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     SAMPLE_VIDEO_PATH,
@@ -119,6 +121,22 @@ def _profile_schema_names(profiles: list[str]) -> list[str]:
     """Each profile's base schema name from the cluster's shipped catalog."""
     catalog = json.loads(CONFIG_PATH.read_text())["backend"]["profiles"]
     return [catalog[name]["schema_name"] for name in profiles]
+
+
+def _memory_step_schema_names(spec: dict) -> list[str]:
+    """Base schemas the workflow's memory step deploys for the tenant.
+
+    The step runs ``provision_tenant --step memory``, which initialises Mem0
+    with its memory schema and deploys the provenance schema beside it.
+    """
+    memory_steps = [
+        template["name"]
+        for template in spec["templates"]
+        if template.get("container", {}).get("args", [])[:2] == ["--step", "memory"]
+    ]
+    assert memory_steps == ["initialize-memory"], memory_steps
+    assert "initialize-memory" in _declared_steps(spec), _declared_steps(spec)
+    return [MEMORY_BASE_SCHEMA, PROVENANCE_BASE_SCHEMA]
 
 
 def _workflow_status(name: str) -> dict:
@@ -305,11 +323,16 @@ def test_the_schema_step_deploys_each_profiles_tenant_schema(provisioned_tenant)
 
     The schema step resolves each profile's ``schema_name`` through the
     tenant's merged catalog and deploys it into the live application package,
-    so the tenant gains exactly those schemas and keeps the ones it had.
+    and the memory step deploys the memory and provenance schemas, so the
+    tenant gains exactly those schemas and keeps the ones it had.
     """
     canonical = provisioned_tenant["canonical"]
     base_names = _profile_schema_names(provisioned_tenant["profiles"])
-    expected = {_tenant_schema_name(base, canonical) for base in base_names}
+    memory_names = _memory_step_schema_names(_workflow_template_spec())
+    assert memory_names == ["agent_memories", "provenance"]
+    expected = {
+        _tenant_schema_name(base, canonical) for base in base_names + memory_names
+    }
 
     deployed = _tenant_schema_names_in_vespa(canonical, _deployed_schema_names_strict())
     assert deployed == provisioned_tenant["schemas_before"] | expected, (
