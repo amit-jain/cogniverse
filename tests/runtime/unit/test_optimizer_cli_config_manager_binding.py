@@ -160,3 +160,71 @@ class TestBuiltAgentReadsTheBoundManager:
             TENANT_INSTRUCTIONS_LOADED,
         )
         assert singleton_probe.calls == 0
+
+
+def _persisted_discovery_factory(monkeypatch, urls: dict[str, str]) -> ConfigManager:
+    """Route the CLI's store construction to one in-memory store that holds
+    ``urls`` as persisted discovery; returns a manager over that store."""
+    from cogniverse_foundation.config import utils as config_utils
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    ConfigManager(store=store).set_system_config(
+        SystemConfig(llm_model="persisted-model", inference_service_urls=dict(urls))
+    )
+    monkeypatch.setattr(
+        config_utils,
+        "create_default_config_manager",
+        lambda: ConfigManager(store=store),
+    )
+    return ConfigManager(store=store)
+
+
+def test_the_cli_serves_the_deployments_explicit_inference_urls(monkeypatch):
+    from cogniverse_runtime.optimization_cli import _cli_config_manager
+
+    persisted = _persisted_discovery_factory(
+        monkeypatch, {"vllm_colpali": "http://persisted-colpali:8000"}
+    )
+    monkeypatch.setenv(
+        "INFERENCE_SERVICE_URLS",
+        '{"vllm_colpali":"http://127.0.0.1:59601","gliner":"http://gliner:8080"}',
+    )
+
+    served = _cli_config_manager().get_system_config()
+
+    assert (served.llm_model, served.inference_service_urls) == (
+        "persisted-model",
+        {"vllm_colpali": "http://127.0.0.1:59601", "gliner": "http://gliner:8080"},
+    )
+    assert persisted.get_system_config().inference_service_urls == {
+        "vllm_colpali": "http://persisted-colpali:8000"
+    }
+
+
+def test_the_cli_reads_persisted_discovery_without_explicit_urls(monkeypatch):
+    from cogniverse_runtime.optimization_cli import _cli_config_manager
+
+    _persisted_discovery_factory(
+        monkeypatch, {"vllm_colpali": "http://persisted-colpali:8000"}
+    )
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+
+    assert _cli_config_manager().get_system_config().inference_service_urls == {
+        "vllm_colpali": "http://persisted-colpali:8000"
+    }
+
+
+def test_the_cli_refuses_malformed_explicit_inference_urls(monkeypatch):
+    from cogniverse_runtime.optimization_cli import _cli_config_manager
+
+    _persisted_discovery_factory(
+        monkeypatch, {"vllm_colpali": "http://persisted-colpali:8000"}
+    )
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", '{"vllm_colpali":7}')
+
+    with pytest.raises(
+        ValueError,
+        match=r"^INFERENCE_SERVICE_URLS\['vllm_colpali'\] URL must be a string$",
+    ):
+        _cli_config_manager()

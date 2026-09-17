@@ -92,6 +92,25 @@ _MONTHLY_REPORT_MERGE_FAN_IN = 32
 _MONTHLY_REPORT_SPAN_QUERY_TIMEOUT = 120
 
 
+def _cli_config_manager():
+    """A ConfigManager whose inference endpoints are the deployment's.
+
+    ``INFERENCE_SERVICE_URLS``, when set, is served as the system config's
+    inference endpoints in this process, as the runtime API and ingestion
+    worker serve it; absent, the persisted discovery answers.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_runtime.inference_services import parse_inference_service_urls
+
+    manager = create_default_config_manager()
+    service_urls = parse_inference_service_urls(
+        os.environ.get("INFERENCE_SERVICE_URLS")
+    )
+    if service_urls is not None:
+        manager.pin_inference_service_urls(service_urls)
+    return manager
+
+
 def _teacher_boot_deadline_seconds() -> float:
     from cogniverse_foundation.inference_specs import get_inference_service_spec
 
@@ -1481,9 +1500,7 @@ async def run_triggered_optimization(
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     if config_manager is None:
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        config_manager = create_default_config_manager()
+        config_manager = _cli_config_manager()
 
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
@@ -2002,9 +2019,8 @@ def _population_floor_from_config(
     optimizer_type: str = "query_enhancement",
 ) -> tuple[int, int]:
     """The tenant's promotion floor: (min_samples, min_unique_queries)."""
-    from cogniverse_foundation.config.utils import create_default_config_manager
 
-    manager = config_manager or create_default_config_manager()
+    manager = config_manager or _cli_config_manager()
     routing = manager.get_routing_config(tenant_id=tenant_id)
     optimizer_floor = routing.optimizer_floors.get(optimizer_type)
     if optimizer_floor is not None:
@@ -2114,9 +2130,8 @@ def _training_selection_from_config(
     optimizer_type: str,
 ) -> TrainingSelectionKnobs:
     """The tenant's training-selection knobs for a given optimizer."""
-    from cogniverse_foundation.config.utils import create_default_config_manager
 
-    manager = config_manager or create_default_config_manager()
+    manager = config_manager or _cli_config_manager()
     routing = manager.get_routing_config(tenant_id=tenant_id)
     resolved: Dict[str, Any] = {}
 
@@ -2891,10 +2906,9 @@ def _vacuum_config_metadata(*, keep_versions: int) -> dict:
     to ``keep_versions`` per config_id and returns the count dropped
     so the workflow log proves the work happened.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    cm = create_default_config_manager()
+    cm = _cli_config_manager()
     store = cm.store
     if not isinstance(store, VespaConfigStore):
         return {
@@ -2982,7 +2996,6 @@ async def run_cleanup(
     from cogniverse_core.memory.pinning import PinService
     from cogniverse_core.memory.schema import build_default_registry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.admin import tenant_manager
     from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA, lazy_init_memory
 
@@ -3001,7 +3014,7 @@ async def run_cleanup(
     # initialized" and the workflow appears to Succeed while silently
     # processing nothing. Build a config_manager once and reuse for
     # every tenant in the sweep.
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     registry = build_default_registry()
     backend = tenant_manager.get_backend()
 
@@ -3683,11 +3696,10 @@ async def run_monthly_reports(
     import json
     from pathlib import Path
 
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
     from cogniverse_runtime.admin import tenant_manager
 
-    create_default_config_manager()  # warm config singletons
+    _cli_config_manager()  # warm config singletons
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
@@ -3888,7 +3900,6 @@ async def run_simba_optimization(
     artifact unchanged.
     """
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -3898,7 +3909,7 @@ async def run_simba_optimization(
         lookback_hours,
     )
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -4204,7 +4215,6 @@ async def run_workflow_optimization(
     then generates workflow templates and agent performance profiles
     and saves them as artifacts.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
 
     logger.info(
         "Starting workflow optimization for tenant=%s lookback=%dh",
@@ -4212,7 +4222,7 @@ async def run_workflow_optimization(
         lookback_hours,
     )
 
-    create_default_config_manager()
+    _cli_config_manager()
 
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
@@ -4271,13 +4281,12 @@ async def run_workflow_optimization(
     # would drop *every* demo, not just the stale ones.
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
 
     _cfg = get_config(
         tenant_id=SYSTEM_TENANT_ID,
-        config_manager=create_default_config_manager(),
+        config_manager=_cli_config_manager(),
     )
     _agents_section = (_cfg or {}).get("agents", {})
     _live_agents = {
@@ -4462,7 +4471,6 @@ async def run_gateway_thresholds_optimization(
     """
     import json as _json
 
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -4472,7 +4480,7 @@ async def run_gateway_thresholds_optimization(
         lookback_hours,
     )
 
-    create_default_config_manager()
+    _cli_config_manager()
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -4536,13 +4544,12 @@ async def run_online_routing_evaluation(
     from cogniverse_agents.routing.config import OnlineEvaluationConfig
     from cogniverse_evaluation.online_evaluator import OnlineEvaluator
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
     from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
     online_dict = (cfg.get_all().get("automation_rules") or {}).get(
         "online_evaluation"
@@ -4650,12 +4657,11 @@ async def run_online_evaluation(
     from cogniverse_evaluation.evaluators.agent_evaluators import get_agent_evaluator
     from cogniverse_evaluation.online_evaluator import OnlineEvaluator
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
     automation_rules = cfg.get_all().get("automation_rules") or {}
     online_cfg = OnlineEvaluationConfig(
@@ -4789,7 +4795,6 @@ async def run_profile_optimization(
     from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
     from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
@@ -4801,7 +4806,7 @@ async def run_profile_optimization(
         lookback_hours,
     )
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -5155,7 +5160,6 @@ async def run_entity_extraction_optimization(
     from (query) -> (entities) pairs, compiles the EntityExtractionModule's
     DSPy module, and saves the optimized module as an artifact.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.config import SPAN_NAME_ENTITY_EXTRACTION
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -5165,7 +5169,7 @@ async def run_entity_extraction_optimization(
         lookback_hours,
     )
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -5715,7 +5719,6 @@ async def run_synthetic_generation(
     """
     from cogniverse_core.common.tenant_utils import require_tenant_id
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -5745,7 +5748,7 @@ async def run_synthetic_generation(
         count,
     )
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
     from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
@@ -5993,11 +5996,10 @@ async def run_ab_compare(
 
     from cogniverse_agents.inference.ab_harness import RLMABRunner
     from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
         get_config,
     )
 
-    config_manager = create_default_config_manager()
+    config_manager = _cli_config_manager()
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_primary = cfg.get_llm_config().primary
 

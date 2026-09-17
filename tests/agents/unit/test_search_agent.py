@@ -2706,11 +2706,61 @@ class TestSearchAgentResolvesItsTenantsProfiles:
                 config_manager=config_manager,
             )
 
+        # The factory resolves the query model from the tenant's profile.
         [call] = create_encoder.call_args_list
-        assert call.args[:2] == ("acme_frames", "acme/frame-encoder")
+        assert call.args[:2] == ("acme_frames", None)
         assert call.kwargs["config"] is agent.search_config
         assert agent.search_config.tenant_id == "acme:acme"
         assert agent.active_profile == "acme_frames"
+
+    def test_an_acoustic_profile_queries_its_semantic_model(self):
+        """A ColBERT profile carrying a second, acoustic embedding is queried
+        through its semantic model; its embedding_model is the acoustic one."""
+        import json
+        from pathlib import Path
+
+        from cogniverse_core.query.encoders import QueryEncoderFactory
+        from cogniverse_foundation.config.unified_config import (
+            BackendProfileConfig,
+            SystemConfig,
+        )
+
+        shipped = json.loads(
+            (
+                Path(__file__).resolve().parents[3] / "configs" / "config.json"
+            ).read_text()
+        )["backend"]["profiles"]["audio_clap_semantic"]
+        config_manager = _memory_config_manager()
+        config_manager.set_system_config(
+            SystemConfig(
+                inference_service_urls={"colbert_pylate": "http://pylate.test:8000"}
+            )
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict("acme_audio", shipped),
+            tenant_id="acme:acme",
+        )
+        built = []
+        with patch.object(
+            QueryEncoderFactory,
+            "_create_encoder_instance",
+            side_effect=lambda model_name, profile, *_: (
+                built.append((model_name, profile)) or Mock()
+            ),
+        ):
+            QueryEncoderFactory._encoder_cache.clear()
+            SearchAgent(
+                deps=SearchAgentDeps(profile="acme_audio", tenant_id="acme:acme"),
+                schema_loader=mock_schema_loader,
+                config_manager=config_manager,
+            )
+            QueryEncoderFactory._encoder_cache.clear()
+
+        assert (shipped["embedding_model"], shipped["semantic_model"]) == (
+            "laion/clap-htsat-unfused",
+            "lightonai/LateOn",
+        )
+        assert built == [("lightonai/LateOn", "acme_audio")]
 
     def test_without_the_tenant_the_profile_is_unknown(self):
         config_manager = self._config_manager_with_tenant_profile()

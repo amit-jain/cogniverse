@@ -865,51 +865,162 @@ def test_e2e_stack_fixture_acquires_the_run_lock_before_touching_the_cluster():
     assert acquire_at < source.index("_e2e_cluster_state(")
 
 
-def _liveness_samples(count, *, stall_at=None, stall_s=0.0):
+def _liveness_samples(count, *, slow_at=None, slow_s=0.0, pause_at=None, pause_s=0.0):
     """Polls of a probe whose round trips cycle through 5-10 ms.
 
     Each period is the round trip, the probe's interval and 4 ms of thread
-    scheduling, the overhead the shared cluster's probes showed.
+    scheduling. ``slow_at`` is a poll the server held for ``slow_s``;
+    ``pause_at`` is a poll the probe itself started ``pause_s`` late.
     """
     from tests.e2e.loop_probe import POLL_INTERVAL_S
 
     samples, started = [], 0.0
     for index in range(count):
-        latency = stall_s if index == stall_at else 0.005 + (index % 6) * 0.001
+        if index == pause_at:
+            started += pause_s
+        latency = slow_s if index == slow_at else 0.005 + (index % 6) * 0.001
         samples.append((200, started, latency))
         started += latency + POLL_INTERVAL_S + 0.004
     return tuple(samples), started
 
 
-def test_loop_probe_floor_accepts_a_steady_probe_with_millisecond_round_trips():
+def test_loop_probe_bound_is_the_readiness_share_of_the_probe_interval():
+    import yaml
+
+    from tests.e2e.conftest import K3S_VALUES
     from tests.e2e.loop_probe import (
+        BASE_VALUES,
         POLL_INTERVAL_S,
-        LoopProbeResult,
-        assert_loop_served,
+        poll_latency_bound_s,
     )
 
-    samples, window_s = _liveness_samples(400)
-    result = LoopProbeResult(samples=samples, window_s=window_s)
+    base = yaml.safe_load(BASE_VALUES.read_text())["runtime"]["readinessProbe"]
+    overlay = yaml.safe_load(K3S_VALUES.read_text())["runtime"]["readinessProbe"]
+    rendered = {**base, **overlay}
 
-    assert round(result.median_poll_period_s(), 6) == 0.111
-    assert result.expected_minimum_polls() == 399
-    # A floor of one poll per bare interval owes polls no steady probe takes.
-    assert int(window_s / POLL_INTERVAL_S) - 2 == 443
+    assert (rendered["timeoutSeconds"], rendered["periodSeconds"]) == (45, 30)
+    assert poll_latency_bound_s() == pytest.approx(0.15)
+    assert poll_latency_bound_s() == pytest.approx(
+        rendered["timeoutSeconds"] * POLL_INTERVAL_S / rendered["periodSeconds"]
+    )
+
+
+def test_loop_probe_accepts_fast_polls_across_a_pause_of_the_probe_itself():
+    from tests.e2e.loop_probe import LoopProbeResult, assert_loop_served
+
+    # The shape the shared cluster produced: a steady probe, every poll
+    # answered in milliseconds, and the probe thread idle for part of it.
+    samples, window_s = _liveness_samples(46, pause_at=23, pause_s=0.6)
+    result = LoopProbeResult(
+        samples=samples, window_s=window_s, polled_until_stopped=True
+    )
+
+    assert len(samples) == 46
+    assert round(window_s, 2) == 5.73
+    assert samples[23][1] - samples[22][1] == pytest.approx(0.6 + 0.113)
+    assert result.polls_slower_than(0.15) == []
     assert_loop_served(result)
 
 
-def test_loop_probe_floor_fails_a_probe_whose_loop_stalled_for_two_seconds():
+def test_loop_probe_fails_a_poll_the_loop_held_for_two_seconds():
     from tests.e2e.loop_probe import LoopProbeResult, assert_loop_served
 
-    samples, window_s = _liveness_samples(400, stall_at=200, stall_s=2.0)
-    result = LoopProbeResult(samples=samples, window_s=window_s)
+    samples, window_s = _liveness_samples(400, slow_at=200, slow_s=2.0)
+    result = LoopProbeResult(
+        samples=samples, window_s=window_s, polled_until_stopped=True
+    )
 
-    # The stall is one long poll; the median period does not move with it.
-    assert round(result.median_poll_period_s(), 6) == 0.111
-    assert result.max_latency_s == 2.0
+    assert result.polls_slower_than(0.15) == [(pytest.approx(22.296), 2.0)]
     with pytest.raises(AssertionError) as raised:
         assert_loop_served(result)
     assert str(raised.value).splitlines()[0] == (
-        "liveness answered 400 times in 46.59s at a 111.0ms median poll period; "
-        "a loop that never stalled owes at least 417"
+        "liveness polls at or past 150ms, the chart's runtime.readinessProbe "
+        "timeoutSeconds/periodSeconds share of the probe's 0.1s interval: "
+        "started 22.30s took 2.00s"
     )
+
+
+def test_loop_probe_fails_a_probe_that_stopped_polling_before_the_window_closed():
+    from tests.e2e.loop_probe import LoopProbeResult, assert_loop_served
+
+    samples, window_s = _liveness_samples(3)
+    result = LoopProbeResult(samples=samples, window_s=40.0, polled_until_stopped=False)
+
+    with pytest.raises(AssertionError) as raised:
+        assert_loop_served(result)
+    assert str(raised.value).splitlines()[0] == (
+        "the liveness probe stopped polling before the window closed after "
+        "3 polls in 40.00s"
+    )
+
+
+_HUB_LOADERS = ("from_pretrained", "snapshot_download", "hf_hub_download")
+
+
+def _hub_loads_without_local_files_only(source: str) -> list[int]:
+    """Lines of Hub loader calls in ``source`` not pinned to the local cache."""
+    import ast
+
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name not in _HUB_LOADERS:
+            continue
+        pinned = any(
+            keyword.arg == "local_files_only"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+        if not pinned:
+            offenders.append(node.lineno)
+    return offenders
+
+
+def test_hub_load_detector_flags_a_load_that_may_reach_the_hub():
+    source = (
+        "from transformers import AutoTokenizer\n"
+        "from huggingface_hub import snapshot_download\n"
+        "AutoTokenizer.from_pretrained('m', local_files_only=True)\n"
+        "AutoTokenizer.from_pretrained('m', revision='r')\n"
+        "snapshot_download('m', local_files_only=False)\n"
+    )
+
+    assert _hub_loads_without_local_files_only(source) == [4, 5]
+
+
+def test_e2e_modules_load_hub_assets_from_the_local_cache_only():
+    e2e_root = Path(__file__).resolve().parents[2] / "e2e"
+    offenders = {
+        str(path.relative_to(e2e_root)): lines
+        for path in sorted(e2e_root.rglob("*.py"))
+        if (lines := _hub_loads_without_local_files_only(path.read_text()))
+    }
+
+    assert offenders == {}
+
+
+def test_the_served_tokenizer_loads_offline_from_the_e2e_cache(monkeypatch):
+    from tests.e2e.test_api_e2e import _served_document_tokens
+
+    # A closed Hub endpoint: a load that reached the network would fail.
+    monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
+
+    assert _served_document_tokens("Section 0. probe") == [12612, 470, 15, 10304]
+
+
+def test_a_tokenizer_missing_from_the_cache_fails_at_once(monkeypatch, tmp_path):
+    import time
+
+    from tests.e2e.test_api_e2e import _served_document_tokens
+
+    monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
+    started = time.monotonic()
+    with pytest.raises(OSError) as raised:
+        _served_document_tokens("probe", cache_dir=tmp_path)
+    elapsed = time.monotonic() - started
+
+    assert "couldn't find them in the cached files" in str(raised.value)
+    assert elapsed < 2.0, elapsed

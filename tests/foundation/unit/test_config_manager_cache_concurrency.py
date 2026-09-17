@@ -218,3 +218,73 @@ def test_scoped_store_failure_is_not_cached():
 
     assert manager.get_routing_config("acme").routing_mode == "direct"
     assert store.get_calls == 2
+
+
+def _seed_system_urls(store: _CoordinatedConfigStore, urls: dict) -> None:
+    store.set_config(
+        tenant_id="_system",
+        scope=ConfigScope.SYSTEM,
+        service="system",
+        config_key="system_config",
+        config_value=SystemConfig(
+            llm_model="persisted-model", inference_service_urls=urls
+        ).to_dict(),
+    )
+    store.set_completed.clear()
+
+
+def test_pinned_inference_urls_are_served_and_never_persisted():
+    store = _CoordinatedConfigStore()
+    _seed_system_urls(store, {"vllm_colpali": "http://persisted-colpali:8000"})
+    manager = ConfigManager(store=store)
+    explicit = {"vllm_colpali": "http://127.0.0.1:59601", "gliner": "http://g:8080"}
+
+    manager.pin_inference_service_urls(explicit)
+    explicit["gliner"] = "http://mutated-after-pin:1"
+    cold = manager.get_system_config()
+    cold.inference_service_urls["vllm_colpali"] = "http://mutated-by-reader:1"
+    warm = manager.get_system_config()
+
+    expected = {"vllm_colpali": "http://127.0.0.1:59601", "gliner": "http://g:8080"}
+    assert warm.inference_service_urls == expected
+    assert (warm.llm_model, store.get_calls) == ("persisted-model", 1)
+    assert ConfigManager(store=store).get_system_config().inference_service_urls == {
+        "vllm_colpali": "http://persisted-colpali:8000"
+    }
+
+
+def test_concurrent_cold_reads_of_a_pinned_manager_all_serve_the_pin():
+    store = _CoordinatedConfigStore()
+    _seed_system_urls(store, {"denseon": "http://persisted-denseon:8000"})
+    store.delay_s = 0.03
+    manager = ConfigManager(store=store)
+    manager.pin_inference_service_urls({"denseon": "http://explicit-denseon:8000"})
+    worker_count = 12
+    ready = threading.Barrier(worker_count)
+
+    def read_urls():
+        ready.wait()
+        return manager.get_system_config().inference_service_urls
+
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        served = list(pool.map(lambda _: read_urls(), range(worker_count)))
+
+    assert served == [{"denseon": "http://explicit-denseon:8000"}] * worker_count
+    assert store.get_calls == 1
+
+
+def test_a_pinned_manager_raises_when_the_store_cannot_answer():
+    store = _CoordinatedConfigStore()
+    _seed_system_urls(store, {"denseon": "http://persisted-denseon:8000"})
+    store.fail_next_get = True
+    manager = ConfigManager(store=store)
+    manager.pin_inference_service_urls({"denseon": "http://explicit-denseon:8000"})
+
+    with pytest.raises(ConnectionError, match="configuration store unavailable"):
+        manager.get_system_config()
+
+    recovered = manager.get_system_config()
+    assert (recovered.llm_model, recovered.inference_service_urls) == (
+        "persisted-model",
+        {"denseon": "http://explicit-denseon:8000"},
+    )

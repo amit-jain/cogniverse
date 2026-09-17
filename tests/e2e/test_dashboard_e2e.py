@@ -147,6 +147,27 @@ def _panel_metrics(panel) -> dict:
     return metrics
 
 
+def _alert_messages(alerts) -> list:
+    """Each alert as the message the page passed to it.
+
+    Streamlit lifts a leading emoji out of an alert's message into its own
+    icon element, so the alert's text is ``icon\n\nbody``; the message is the
+    icon followed by the body element's text.
+    """
+    messages = []
+    for alert in alerts.all():
+        body = (
+            alert.locator('[data-testid="stMarkdownContainer"]').first.inner_text()
+            or ""
+        ).strip()
+        icons = [
+            (icon.inner_text() or "").strip()
+            for icon in alert.locator('[data-testid="stAlertDynamicIcon"]').all()
+        ]
+        messages.append(" ".join([*icons, body]))
+    return messages
+
+
 # One tenant's corpus is the tracked video alone, so any video query it
 # answers can only return that content.
 TENANT_SWITCH_QUERY = "sports activity"
@@ -2068,13 +2089,17 @@ class TestMonitoringDashboard:
 
         panel = active_tab_panel(page)
         metrics = _panel_metrics(panel)
+        # Four summary cards and the annotation section's count.
         assert sorted(metrics) == [
             "Avg Routing Latency",
             "Confidence Calibration",
             "Routing Accuracy",
+            "Total Annotations",
             "Total Decisions",
         ], sorted(metrics)
         assert metrics["Total Decisions"] == str(len(GATEWAY_VIDEO_QUERIES)), metrics
+        # The tenant was minted here and nothing annotated its spans.
+        assert metrics["Total Annotations"] == "0", metrics
 
         # The project the reader queried is the one the producers wrote to.
         # The caption sits inside a collapsed expander, so read the DOM text
@@ -2623,10 +2648,7 @@ class TestIngestionUploadOutcome:
         wait_for_script_idle(page)
 
         panel = active_tab_panel(page)
-        alerts = [
-            (a.inner_text() or "").strip()
-            for a in panel.locator('[data-testid="stAlert"]').all()
-        ]
+        alerts = _alert_messages(panel.locator('[data-testid="stAlert"]'))
         assert first_run in alerts, alerts
         assert f"🎉 All {len(selected)} profiles ingested" in alerts, alerts
         assert [text for text in alerts if "Ingestion failed" in text] == [], alerts
@@ -2667,10 +2689,7 @@ class TestIngestionUploadOutcome:
             panel.locator('[data-testid="stAlert"]:has-text("Already ingested as")')
         ).to_have_count(1, timeout=INGESTION_TIMEOUT)
 
-        alerts = [
-            (a.inner_text() or "").strip()
-            for a in panel.locator('[data-testid="stAlert"]').all()
-        ]
+        alerts = _alert_messages(panel.locator('[data-testid="stAlert"]'))
         deduplicated = [text for text in alerts if "Already ingested as" in text]
         assert len(deduplicated) == 1, alerts
         assert f"🎉 All {len(selected)} profiles ingested" in alerts, alerts
@@ -2815,12 +2834,11 @@ class TestConfigurationImport:
         expect(export_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
         export_btn.first.click()
         wait_for_script_idle(page)
-        exports = [
-            (alert.inner_text() or "").strip()
-            for alert in active_tab_panel(page)
-            .locator('[data-testid="stAlert"]:has-text("Exported")')
-            .all()
-        ]
+        exports = _alert_messages(
+            active_tab_panel(page).locator(
+                '[data-testid="stAlert"]:has-text("Exported")'
+            )
+        )
         assert exports == [f"✅ Exported {len(written)} configurations"], exports
 
         set_tenant(page, destination)
@@ -2845,12 +2863,11 @@ class TestConfigurationImport:
         import_btn.first.click()
         wait_for_script_idle(page)
 
-        failures = [
-            (alert.inner_text() or "").strip()
-            for alert in active_tab_panel(page)
-            .locator('[data-testid="stAlert"]:has-text("Import failed")')
-            .all()
-        ]
+        failures = _alert_messages(
+            active_tab_panel(page).locator(
+                '[data-testid="stAlert"]:has-text("Import failed")'
+            )
+        )
         assert failures == [], failures
 
         # The rows landed under the selected tenant, the file's own tenant
@@ -2939,10 +2956,7 @@ class TestTenantSwitchScopesEverything:
         click_top_tab(page, "Interactive Search")
         _submit_search(page, TENANT_SWITCH_QUERY)
         panel = active_tab_panel(page)
-        alerts = [
-            (alert.inner_text() or "").strip()
-            for alert in panel.locator('[data-testid="stAlert"]').all()
-        ]
+        alerts = _alert_messages(panel.locator('[data-testid="stAlert"]'))
         assert "❌ Agent returned success but no search results" in alerts, alerts
         assert _rendered_result_ids(panel) == set()
         assert SAMPLE_VIDEO_CONTENT_ID not in (panel.inner_text() or "")

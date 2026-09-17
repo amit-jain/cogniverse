@@ -79,6 +79,7 @@ class Provider:
     def __init__(self):
         self.lock = threading.Lock()
         self.cases: list[str] = []
+        self.max_tokens: list[int | None] = []
         self.barrier: threading.Barrier | None = None
         self.failures: set[str] = set()
         provider = self
@@ -100,12 +101,14 @@ class Provider:
                         "empty",
                         "prose",
                         "blank",
+                        "budgeted",
                         "valid",
                     )
                     if f"case:{name}" in prompt
                 )
                 with provider.lock:
                     provider.cases.append(case)
+                    provider.max_tokens.append(body.get("max_tokens"))
                     barrier = provider.barrier
                     failing = case in provider.failures
                 if barrier is not None:
@@ -142,6 +145,10 @@ class Provider:
                     content = PROSE
                 elif case == "blank":
                     content = "{}"
+                elif case == "budgeted":
+                    # A real completion stops at the request's max_tokens; one
+                    # character stands for one token here.
+                    content = json.dumps(fields)[: body["max_tokens"]]
                 else:
                     content = json.dumps(fields)
                 self.respond(
@@ -156,7 +163,13 @@ class Provider:
                                 "index": 0,
                                 "message": {"role": "assistant", "content": content},
                                 "finish_reason": (
-                                    "length" if case == "truncated" else "stop"
+                                    "length"
+                                    if case == "truncated"
+                                    or (
+                                        case == "budgeted"
+                                        and content != json.dumps(fields)
+                                    )
+                                    else "stop"
                                 ),
                             }
                         ],
@@ -450,6 +463,106 @@ async def test_provider_failure_is_not_answered_with_fabricated_output(
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["result"]["summary"] == COMPLETE["summary"]
+
+
+def budgeted_task(tenant: str, budget: object) -> dict:
+    request = task("budgeted", tenant)
+    request["context"]["max_output_tokens"] = budget
+    return request
+
+
+async def test_a_request_budget_caps_the_completion_and_ends_the_turn(
+    summary_route, provider
+):
+    response = await summary_route.post(
+        "/agents/summarizer_agent/process", json=budgeted_task(TENANTS[0], 40)
+    )
+
+    assert provider.max_tokens == [40]
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "status": "error",
+        "agent": "summarizer_agent",
+        "error": (
+            "Agent 'summarizer_agent' generation for request 'request-budgeted' "
+            "produced no confidence_score, key_points, summary"
+        ),
+    }
+
+
+async def test_a_budget_never_raises_the_configured_completion(summary_route, provider):
+    unbudgeted = await summary_route.post(
+        "/agents/summarizer_agent/process", json=task("budgeted", TENANTS[0])
+    )
+    above = await summary_route.post(
+        "/agents/summarizer_agent/process", json=budgeted_task(TENANTS[1], 4096)
+    )
+
+    # The shipped-config fixture reserves 256 completion tokens.
+    assert provider.max_tokens == [256, 256]
+    assert [unbudgeted.status_code, above.status_code] == [200, 200]
+    assert [
+        unbudgeted.json()["result"]["summary"],
+        above.json()["result"]["summary"],
+    ] == [COMPLETE["summary"], COMPLETE["summary"]]
+
+
+async def test_a_budgeted_request_is_never_answered_from_an_unbudgeted_cache(
+    summary_route, provider
+):
+    """The response cache keys on the ``max_tokens`` sent, so a full answer
+    cached for the tenant cannot stand in for a capped request."""
+    full = await summary_route.post(
+        "/agents/summarizer_agent/process", json=task("budgeted", TENANTS[0])
+    )
+    capped = await summary_route.post(
+        "/agents/summarizer_agent/process", json=budgeted_task(TENANTS[0], 40)
+    )
+
+    assert provider.max_tokens == [256, 40]
+    assert full.json()["result"]["summary"] == COMPLETE["summary"], full.text
+    assert capped.json()["status"] == "error", capped.text
+
+
+async def test_concurrent_requests_keep_their_own_budget(summary_route, provider):
+    """A budget bound for one request never reaches another in flight."""
+    provider.barrier = threading.Barrier(2)
+    try:
+        capped, free = await asyncio.gather(
+            summary_route.post(
+                "/agents/summarizer_agent/process",
+                json=budgeted_task(TENANTS[0], 40),
+            ),
+            summary_route.post(
+                "/agents/summarizer_agent/process",
+                json=task("budgeted", TENANTS[1]),
+            ),
+        )
+    finally:
+        provider.barrier = None
+
+    assert sorted(provider.max_tokens) == [40, 256]
+    assert capped.json()["status"] == "error", capped.text
+    assert free.json()["result"]["summary"] == COMPLETE["summary"], free.text
+
+
+@pytest.mark.parametrize("budget", [0, -3, "40", True, 40.0, None])
+async def test_a_malformed_budget_is_refused_before_any_generation(
+    summary_route, provider, budget
+):
+    response = await summary_route.post(
+        "/agents/summarizer_agent/process", json=budgeted_task(TENANTS[0], budget)
+    )
+
+    assert provider.cases == []
+    assert (response.status_code, response.json()) == (
+        400,
+        {
+            "detail": (
+                f"context.max_output_tokens must be a positive integer, got {budget!r}"
+            )
+        },
+    )
 
 
 def transport_query(case: str) -> str:
