@@ -7,9 +7,11 @@ from typing import Any, Dict
 import httpx
 import pytest
 
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.sandbox_http import (
     EgressDeniedError,
     PolicyEnforcingTransport,
+    deployed_endpoint_bindings,
     make_policy_enforcing_client,
 )
 
@@ -28,6 +30,21 @@ SUMMARIZER_POLICY: Dict[str, Any] = {
         "egress": [{"host": "localhost", "port": 11434, "protocol": "tcp"}],
         "deny_all_other": True,
     }
+}
+
+ORCHESTRATOR_POLICY: Dict[str, Any] = {
+    "network_policies": {
+        "egress": [
+            {"host": "localhost", "port": 8000, "protocol": "tcp"},
+            {"host": "localhost", "port": 11434, "protocol": "tcp"},
+        ],
+        "deny_all_other": True,
+    }
+}
+
+DEPLOYED_BINDINGS = {
+    ("localhost", 8000): ("cogniverse-runtime", 8000),
+    ("localhost", 8080): ("cogniverse-vespa", 8080),
 }
 
 PERMISSIVE_POLICY: Dict[str, Any] = {
@@ -179,6 +196,111 @@ class TestPolicyShapes:
             assert resp.status_code == 200
             with pytest.raises(EgressDeniedError):
                 await client.get("http://localhost:9999/")
+
+
+@pytest.mark.asyncio
+class TestEndpointBindings:
+    async def test_bound_deployed_address_passes_through(self):
+        inner = _RecordingTransport()
+        transport = PolicyEnforcingTransport(
+            ORCHESTRATOR_POLICY, inner=inner, endpoint_bindings=DEPLOYED_BINDINGS
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            response = await client.post(
+                "http://cogniverse-runtime:8000/agents/search_agent/process"
+            )
+        assert response.status_code == 200
+        assert [str(r.url) for r in inner.requests] == [
+            "http://cogniverse-runtime:8000/agents/search_agent/process"
+        ]
+
+    async def test_rule_address_still_passes_beside_its_binding(self):
+        inner = _RecordingTransport()
+        transport = PolicyEnforcingTransport(
+            ORCHESTRATOR_POLICY, inner=inner, endpoint_bindings=DEPLOYED_BINDINGS
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            await client.post("http://localhost:8000/agents/search_agent/process")
+        assert [str(r.url) for r in inner.requests] == [
+            "http://localhost:8000/agents/search_agent/process"
+        ]
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://cogniverse-runtime:9000/agents/search_agent/process",
+            "http://cogniverse-vespa:8080/search/",
+            "http://cogniverse-runtime.evil.example:8000/",
+        ],
+        ids=["bound_host_other_port", "binding_of_an_unlisted_rule", "lookalike"],
+    )
+    async def test_address_outside_rules_and_their_bindings_is_denied(self, url):
+        inner = _RecordingTransport()
+        transport = PolicyEnforcingTransport(
+            ORCHESTRATOR_POLICY, inner=inner, endpoint_bindings=DEPLOYED_BINDINGS
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(EgressDeniedError) as excinfo:
+                await client.post(url)
+        assert inner.requests == []
+        assert (
+            "Allow-listed: [localhost:8000/tcp (bound to cogniverse-runtime:8000), "
+            "localhost:11434/tcp]" in str(excinfo.value)
+        )
+
+    async def test_without_bindings_the_deployed_address_is_denied(self):
+        inner = _RecordingTransport()
+        transport = PolicyEnforcingTransport(ORCHESTRATOR_POLICY, inner=inner)
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(EgressDeniedError) as excinfo:
+                await client.post("http://cogniverse-runtime:8000/")
+        assert inner.requests == []
+        assert (excinfo.value.host, excinfo.value.port) == ("cogniverse-runtime", 8000)
+
+    async def test_factory_forwards_bindings(self):
+        inner = _RecordingTransport()
+        client = make_policy_enforcing_client(
+            ORCHESTRATOR_POLICY,
+            inner_transport=inner,
+            endpoint_bindings=DEPLOYED_BINDINGS,
+        )
+        async with client:
+            await client.get("http://cogniverse-runtime:8000/health")
+        assert [str(r.url) for r in inner.requests] == [
+            "http://cogniverse-runtime:8000/health"
+        ]
+
+
+class TestDeployedEndpointBindings:
+    def test_defaults_bind_to_the_configured_service_addresses(self):
+        assert (
+            deployed_endpoint_bindings(
+                SystemConfig(
+                    agent_registry_url="http://cogniverse-runtime:8000",
+                    backend_url="http://cogniverse-vespa",
+                    backend_port=8080,
+                )
+            )
+            == DEPLOYED_BINDINGS
+        )
+
+    def test_scheme_default_port_applies_when_the_url_names_none(self):
+        assert deployed_endpoint_bindings(
+            SystemConfig(
+                agent_registry_url="https://runtime.example.com",
+                backend_url="http://vespa.example.com",
+                backend_port=19071,
+            )
+        ) == {
+            ("localhost", 8000): ("runtime.example.com", 443),
+            ("localhost", 8080): ("vespa.example.com", 19071),
+        }
+
+    def test_undeployed_config_binds_each_default_to_itself(self):
+        assert deployed_endpoint_bindings(SystemConfig()) == {
+            ("localhost", 8000): ("localhost", 8000),
+            ("localhost", 8080): ("localhost", 8080),
+        }
 
 
 @pytest.mark.asyncio

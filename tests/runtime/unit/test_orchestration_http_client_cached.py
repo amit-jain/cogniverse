@@ -20,6 +20,7 @@ import pytest
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent as RealOrchestratorAgent,
 )
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 # What a completed orchestration dumps: the dispatcher reads its terminal
@@ -47,9 +48,15 @@ def _dispatcher_with_spy_client():
     spy_client.aclose = AsyncMock()
     sandbox = MagicMock()
     sandbox.make_http_client = MagicMock(return_value=spy_client)
+    config_manager = MagicMock()
+    config_manager.get_system_config.return_value = SystemConfig(
+        agent_registry_url="http://cogniverse-runtime:8000",
+        backend_url="http://cogniverse-vespa",
+        backend_port=8080,
+    )
     dispatcher = AgentDispatcher(
         agent_registry=MagicMock(),
-        config_manager=MagicMock(),
+        config_manager=config_manager,
         schema_loader=None,
         sandbox_manager=sandbox,
     )
@@ -91,7 +98,13 @@ async def test_policy_client_built_once_and_reused_across_requests():
     assert first["status"] == "success"
     assert second["status"] == "success"
     # One pooled client per tenant, built on the cache-miss build and reused.
-    sandbox.make_http_client.assert_called_once_with("orchestrator_agent")
+    sandbox.make_http_client.assert_called_once_with(
+        "orchestrator_agent",
+        endpoint_bindings={
+            ("localhost", 8000): ("cogniverse-runtime", 8000),
+            ("localhost", 8080): ("cogniverse-vespa", 8080),
+        },
+    )
     # Reused across requests, never torn down per dispatch.
     spy_client.aclose.assert_not_awaited()
     cached = dispatcher._orchestrator_agents.get("acme:prod").agent

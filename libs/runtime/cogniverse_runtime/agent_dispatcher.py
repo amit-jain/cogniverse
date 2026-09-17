@@ -834,8 +834,14 @@ class AgentDispatcher:
         orch_http_client = None
         if self._sandbox_manager is not None:
             try:
+                from cogniverse_runtime.sandbox_http import deployed_endpoint_bindings
+
+                system_config = await asyncio.to_thread(
+                    self._config_manager.get_system_config
+                )
                 orch_http_client = self._sandbox_manager.make_http_client(
-                    "orchestrator_agent"
+                    "orchestrator_agent",
+                    endpoint_bindings=deployed_endpoint_bindings(system_config),
                 )
             except Exception as exc:
                 logger.debug(
