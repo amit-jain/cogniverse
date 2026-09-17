@@ -64,15 +64,22 @@ spec:
       args:
         - |
           set -e
+          export LC_ALL=C
           echo "Validating tenant configuration..."
 
-          # Check tenant ID format
-          if [[ ! "{{workflow.parameters.tenant-id}}" =~ ^[a-z0-9_]+$ ]]; then
-            echo "ERROR: Invalid tenant ID format (use lowercase alphanumeric and underscores)"
+          # The tenant id labels the tenant's resources and names the namespace
+          # cogniverse-<tenant-id> with underscores as hyphens, which must be
+          # an RFC 1123 label (at most 63 characters, alphanumeric at both
+          # ends). Hyphens are refused so that mapping is one-to-one.
+          if [[ ! "$TENANT_ID" =~ ^[a-z0-9]([a-z0-9_]{0,50}[a-z0-9])?$ ]]; then
+            echo "ERROR: Invalid tenant ID '$TENANT_ID': use 1 to 52 lowercase alphanumerics and underscores, starting and ending with an alphanumeric, so that cogniverse-<tenant-id> with underscores as hyphens is a valid namespace name"
             exit 1
           fi
 
           echo "Tenant validation passed"
+      env:
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
       resources:
         requests:
           memory: "1Gi"
