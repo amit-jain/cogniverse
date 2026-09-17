@@ -1996,6 +1996,59 @@ class TestAnswerEnvelopeCarriesGroundingState:
         assert _CaptureAgent.captured == {}
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGroundingConfigReadsLeaveTheLoop:
+    """``get_config`` is lazy: its config-store reads run when a value is read.
+
+    Each grounding read of a tenant config value has to run on a worker
+    thread, or every concurrent turn stalls behind a backend GET on the loop.
+    The fake records the thread each read ran on.
+    """
+
+    async def test_budget_default_profile_and_search_profile_reads_run_off_the_loop(
+        self, monkeypatch
+    ):
+        readers: list = []
+
+        def get(key, default=None):
+            readers.append((key, threading.get_ident()))
+            return _fake_config_get(_SHIPPED_ACTIVE_PROFILE)(key, default)
+
+        fake_config = MagicMock()
+        fake_config.get = get
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(profiles={}),
+            schema_loader=MagicMock(),
+        )
+        dispatcher._get_search_agent = lambda profile, tenant_id: _SearchAgentStub(
+            profile
+        )
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        loop_thread = threading.get_ident()
+
+        budget = await dispatcher._grounding_search_budget_s("acme:acme")
+        plan = await dispatcher._grounding_plan("robots", "acme:acme", {}, None)
+        await dispatcher._execute_search_task(
+            "robots", "acme:acme", top_k=5, query_rewrite_timeout_s=1.0
+        )
+
+        assert budget == _SHIPPED_GROUNDING_BUDGET_S
+        assert plan.profiles == (_SHIPPED_ACTIVE_PROFILE,)
+        assert [(key, ident == loop_thread) for key, ident in readers] == [
+            (GROUNDING_SEARCH_TIMEOUT_KEY, False),
+            ("active_video_profile", False),
+            ("active_video_profile", False),
+        ]
+
+
 class TestGroundingSearchBudgetFaultContract:
     """How the grounding budget's own config read fails.
 

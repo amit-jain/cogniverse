@@ -2536,7 +2536,6 @@ class AgentDispatcher:
         from cogniverse_agents.search_agent import (
             SearchInput,
         )
-        from cogniverse_foundation.config.utils import get_config
 
         # One LM round trip stands between the caller and its results, and it
         # is held to what a rewrite through the router measurably costs. The
@@ -2563,12 +2562,6 @@ class AgentDispatcher:
             name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
         ]
 
-        # get_config runs the ConfigUtils ensure-chain (a Vespa read on a cold
-        # or TTL-expired config) — offload it so it never stalls the API loop
-        # (mirrors _build_encoder_config).
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
-        )
         # The searched profile is the SearchAgent's own ``active_profile``
         # (deps.profile), so a requested profile has to reach _get_search_agent:
         # SearchInput.profiles alone changes only the reported name. Extra
@@ -2576,7 +2569,9 @@ class AgentDispatcher:
         profile = (
             requested_profiles[0]
             if requested_profiles
-            else config.get("active_video_profile")
+            else await asyncio.to_thread(
+                self._tenant_config_value, tenant_id, "active_video_profile"
+            )
         )
         if not profile:
             raise ValueError(
@@ -2816,12 +2811,9 @@ class AgentDispatcher:
                 tuple(candidates.undeployed),
             )
 
-        from cogniverse_foundation.config.utils import get_config
-
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        default_profile = await asyncio.to_thread(
+            self._tenant_config_value, tenant_id, "active_video_profile"
         )
-        default_profile = config.get("active_video_profile")
         if default_profile:
             return GroundingPlan(
                 modalities, (default_profile,), GROUNDING_TENANT_DEFAULT_PROFILE
@@ -2962,6 +2954,16 @@ class AgentDispatcher:
             undeployed_profiles=plan.undeployed_profiles,
         )
 
+    def _tenant_config_value(self, tenant_id: str, key: str) -> Any:
+        """One tenant config value. Blocking: ``get_config`` is lazy and the
+        read itself runs the ensure-chain of config-store reads, so callers
+        on the event loop offload this call, not just ``get_config``."""
+        from cogniverse_foundation.config.utils import get_config
+
+        return get_config(tenant_id=tenant_id, config_manager=self._config_manager).get(
+            key
+        )
+
     async def _grounding_search_budget_s(self, tenant_id: str) -> float:
         """Seconds an answer agent's grounding search may take.
 
@@ -2969,12 +2971,9 @@ class AgentDispatcher:
         it has no ceiling to enforce, which is a misconfiguration rather than a
         reason to search unbounded.
         """
-        from cogniverse_foundation.config.utils import get_config
-
-        config = await asyncio.to_thread(
-            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        budget = await asyncio.to_thread(
+            self._tenant_config_value, tenant_id, GROUNDING_SEARCH_TIMEOUT_KEY
         )
-        budget = config.get(GROUNDING_SEARCH_TIMEOUT_KEY)
         if budget is None:
             raise ValueError(
                 f"{GROUNDING_SEARCH_TIMEOUT_KEY!r} is not configured; answer "
