@@ -14,6 +14,7 @@ from cogniverse_foundation.config.lm_deadline import (
     current_lm_call_deadline,
     deadline_bound_openai_client,
 )
+from cogniverse_foundation.config.lm_output_budget import budgeted_call_kwargs
 from cogniverse_foundation.config.lm_response_cache import (
     TenantScopedLMCache,
     lm_response_cache,
@@ -155,6 +156,7 @@ class BodyBoundedLM(dspy.LM):
 
     def forward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)
+        kwargs = budgeted_call_kwargs(self.kwargs, kwargs)
         if self.cache_tenant_id is None:
             return self._upstream(assembled, **kwargs)
         deadline = current_lm_call_deadline()
@@ -173,6 +175,7 @@ class BodyBoundedLM(dspy.LM):
 
     async def aforward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)
+        kwargs = budgeted_call_kwargs(self.kwargs, kwargs)
         if self.cache_tenant_id is None:
             return await self._aupstream(assembled, **kwargs)
         deadline = current_lm_call_deadline()

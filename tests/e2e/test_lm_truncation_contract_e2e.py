@@ -2,14 +2,12 @@
 
 Pins that a completion which names no value for a required output field is a
 failed turn carrying the fields the LM never produced — not a success carrying
-a defaulted object. The input is sized from the shipped completion budget, so
-the generation runs out of room before it can fill the signature's outputs.
-
-Precondition: the cluster's primary LM runs with the ``max_tokens`` the shipped
-config declares. The test reads that budget from the config the chart rendered
-into the cluster rather than restating it, and sizes
-its own content from it, so the turn's failure is the test's choice and not the
-model's.
+a defaulted object. The request caps its own completion with
+``context.max_output_tokens`` at a budget no model can fill the summarizer's
+outputs in, so the generation stops before it names them whatever the model
+chooses to write. The cap is checked against the ``max_tokens`` the chart
+rendered into the cluster, so it is a per-request limit below the shipped
+budget and not the shipped budget itself.
 """
 
 from __future__ import annotations
@@ -38,14 +36,12 @@ RENDERED_CONFIG_ARGS = (
     "-o",
     "jsonpath={.data.config\\.json}",
 )
-# One recorded passage per multiple of the completion budget: a faithful
-# detailed summary of this many distinct passages cannot fit in the budget, so
-# the generation stops before it names every required output.
-PASSAGES_PER_BUDGET_TOKEN = 2
+# Completion tokens the request allows: fewer than the summarizer's reasoning,
+# summary, key points and confidence need even when each is a single word.
+REQUEST_OUTPUT_BUDGET = 8
 PASSAGE = (
     "The recorded segment describes a distinct sequence of events with its own "
-    "participants, location, timing and outcome, none of which appear in any "
-    "other segment of this collection. "
+    "participants, location, timing and outcome."
 )
 PROCESS_TIMEOUT_S = 600.0
 
@@ -91,15 +87,16 @@ class TestIncompleteGenerationEndsTheTurn:
     def test_a_generation_that_cannot_fit_the_budget_is_a_failed_turn(
         self, truncation_tenant
     ):
-        budget = _shipped_primary_max_tokens()
+        assert REQUEST_OUTPUT_BUDGET < _shipped_primary_max_tokens()
         request_id = "opt-truncation-turn"
         passages = [
             {
-                "document_id": f"passage-{index}",
-                "content": f"Passage {index}. {PASSAGE}",
+                "id": f"passage-{index}",
+                "title": f"Passage {index}",
+                "description": PASSAGE,
                 "score": 1.0,
             }
-            for index in range(budget * PASSAGES_PER_BUDGET_TOKEN)
+            for index in range(3)
         ]
 
         response = httpx.post(
@@ -113,6 +110,7 @@ class TestIncompleteGenerationEndsTheTurn:
                     "request_id": request_id,
                     "summary_type": "detailed",
                     "search_results": passages,
+                    "max_output_tokens": REQUEST_OUTPUT_BUDGET,
                 },
             },
             timeout=PROCESS_TIMEOUT_S,
