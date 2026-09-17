@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 import requests
 from requests.exceptions import HTTPError, RequestException
@@ -481,6 +481,24 @@ class VespaConfigStore(ImmutableConfigStore):
         Returns:
             ConfigEntry with new version number
         """
+        entry = self._append_version(
+            tenant_id, scope, service, config_key, config_value
+        )
+        self._prune_old_versions(
+            self._create_document_id(tenant_id, scope, service, config_key),
+            keep=self.keep_versions,
+        )
+        return entry
+
+    def _append_version(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        """Write the next version of a configuration without pruning."""
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
         candidate_version = (
             self._get_latest_version(tenant_id, scope, service, config_key) + 1
@@ -529,7 +547,6 @@ class VespaConfigStore(ImmutableConfigStore):
             logger.info(
                 f"Set config {entry.get_config_id()} v{candidate_version} in Vespa"
             )
-            self._prune_old_versions(config_id, keep=self.keep_versions)
             return entry
 
         raise RuntimeError(
@@ -996,6 +1013,10 @@ class VespaConfigStore(ImmutableConfigStore):
             ValueError: The payload carries schema-scope rows. Those are
                 written only by the schema registry once Vespa holds the
                 schema, so the whole payload is refused before any write.
+            RuntimeError: A row could not be written. The import is all or
+                nothing: every version it had already written is removed
+                before this is raised, and versions older than the ones it
+                wrote are pruned only once every row is written.
         """
         config_entries = configs.get("configs", [])
         schema_rows = [
@@ -1010,37 +1031,73 @@ class VespaConfigStore(ImmutableConfigStore):
                 "record deployments made by the schema registry and are not "
                 f"importable: {', '.join(schema_rows)}"
             )
-        imported_count = 0
-        failures: List[tuple[str, Exception]] = []
 
+        written: List[ConfigEntry] = []
         for index, config_data in enumerate(config_entries):
             try:
-                self.set_config(
-                    tenant_id=tenant_id,
-                    scope=ConfigScope(config_data["scope"]),
-                    service=config_data["service"],
-                    config_key=config_data["config_key"],
-                    config_value=config_data["config_value"],
+                written.append(
+                    self._append_version(
+                        tenant_id=tenant_id,
+                        scope=ConfigScope(config_data["scope"]),
+                        service=config_data["service"],
+                        config_key=config_data["config_key"],
+                        config_value=config_data["config_value"],
+                    )
                 )
-                imported_count += 1
-            except Exception as e:
-                logger.error(f"Failed to import config: {e}")
-                label = (
-                    str(config_data.get("config_key", f"index {index}"))
-                    if isinstance(config_data, dict)
-                    else f"index {index}"
+            except Exception as error:
+                self._abort_import(tenant_id, config_entries, index, written, error)
+
+        for config_id in dict.fromkeys(
+            self._create_document_id(
+                entry.tenant_id, entry.scope, entry.service, entry.config_key
+            )
+            for entry in written
+        ):
+            self._prune_old_versions(config_id, keep=self.keep_versions)
+
+        logger.info(f"Imported {len(written)} configs for tenant {tenant_id}")
+        return len(written)
+
+    def _abort_import(
+        self,
+        tenant_id: str,
+        config_entries: List[Any],
+        failed_index: int,
+        written: List[ConfigEntry],
+        error: Exception,
+    ) -> NoReturn:
+        """Remove every version an import wrote, then raise its failure."""
+        config_data = config_entries[failed_index]
+        label = (
+            f"{config_data.get('service')}/{config_data.get('config_key')}"
+            if isinstance(config_data, dict)
+            else f"index {failed_index}"
+        )
+        left: List[str] = []
+        for entry in reversed(written):
+            config_id = self._create_document_id(
+                entry.tenant_id, entry.scope, entry.service, entry.config_key
+            )
+            try:
+                self.vespa_app.delete_data(
+                    schema=self.schema_name,
+                    data_id=f"{self.schema_name}::{config_id}::{entry.version}",
                 )
-                failures.append((label, e))
-
-        logger.info(f"Imported {imported_count} configs for tenant {tenant_id}")
-        if failures:
-            details = "; ".join(f"{label}: {error}" for label, error in failures)
-            raise RuntimeError(
-                f"Failed to import {len(failures)} of {len(config_entries)} "
-                f"configurations for tenant {tenant_id}: {details}"
-            ) from failures[0][1]
-
-        return imported_count
+            except Exception as delete_error:
+                left.append(
+                    f"{entry.service}/{entry.config_key} v{entry.version}: "
+                    f"{delete_error}"
+                )
+        message = (
+            f"Configuration import for tenant {tenant_id} failed at row "
+            f"{failed_index + 1} of {len(config_entries)} ({label}): {error}; "
+            f"removed {len(written) - len(left)} of the {len(written)} versions "
+            "it had written"
+        )
+        if left:
+            message += f"; still stored: {'; '.join(left)}"
+        logger.error(message)
+        raise RuntimeError(message) from error
 
     def get_stats(self) -> Dict[str, Any]:
         """
