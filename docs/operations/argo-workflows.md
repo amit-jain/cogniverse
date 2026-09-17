@@ -301,6 +301,8 @@ The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisi
 11. `verify-tenant` — the same entry point with `--step verify --profiles <list>`.
 12. `notify-completion` — logs a completion summary (webhook call commented out).
 
+The workflow runs under the `cogniverse-tenant-provisioning` ServiceAccount. The chart creates it, with a ClusterRole granting `create`/`get` on `namespaces` and `persistentvolumeclaims` and `create` on `resourcequotas`, only when `tenantProvisioning.enabled` is `true` (default `false`; `values.k3s.yaml` enables it). Install the chart with the flag set before applying the template.
+
 Every container step runs `python -m cogniverse_runtime.provision_tenant` from the runtime image, which ships the installed packages and `configs/` but no `uv`, no `scripts/` and no `kubectl`. Every one of them carries `BACKEND_URL` / `BACKEND_PORT` (the Vespa data endpoint) and `VESPA_CONFIG_PORT` (the config server the schema deploy posts to), because each builds a `ConfigManager` over the tenant store — the telemetry step included. A step that fails prints one line naming the cause and exits 1.
 
 `--profiles` entries resolve through the tenant's merged backend catalog: the cluster profiles in `configs/config.json` with the tenant's stored overrides on top. A tenant that owns no backend rows yet provisions on the cluster catalog.
