@@ -7477,8 +7477,40 @@ class TestOptimizationRunListing:
 
         table = panel.locator('[data-testid="stDataFrame"]')
         expect(table).to_have_count(1, timeout=30_000)
-        table_text = table.inner_text()
-        for column in ("Workflow", "Mode", "Trigger", "Phase", "Started", "Finished"):
-            assert column in table_text, table_text
-        for run in runs:
-            assert run["workflow_name"] in table_text, table_text
+        # st.dataframe paints its cells on a canvas, so the page's text is
+        # empty; the grid's accessible table carries every rendered cell.
+        grid = table.locator('table[role="grid"]')
+        expect(grid).to_have_count(1, timeout=30_000)
+        assert grid.get_attribute("aria-rowcount") == str(len(runs) + 1), (
+            grid.get_attribute("aria-rowcount"),
+            runs,
+        )
+        header = grid.locator('thead [role="columnheader"]').all_text_contents()
+        assert header == [
+            "Workflow",
+            "Mode",
+            "Trigger",
+            "Phase",
+            "Started",
+            "Finished",
+        ], header
+        rows = [
+            row.locator('[role="gridcell"]').all_text_contents()
+            for row in grid.locator('tbody [role="row"]').all()
+        ]
+        assert [row[:3] + row[4:5] for row in rows] == [
+            [
+                run["workflow_name"],
+                run["mode"] or "—",
+                run["trigger"],
+                run["started_at"] or "—",
+            ]
+            for run in runs
+        ], rows
+        # A run can move on while the page renders; its phase and finish are
+        # the listing's on either side of the render.
+        for row, before, after in zip(rows, runs, runs_after, strict=True):
+            assert (row[3], row[5]) in {
+                (listed["phase"] or "Pending", listed["finished_at"] or "—")
+                for listed in (before, after)
+            }, (row, before, after)
