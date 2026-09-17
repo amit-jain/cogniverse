@@ -233,11 +233,11 @@ rlm = self.get_rlm(
 result = rlm.process(query="Summarize the main findings", context=large_context_string)
 ```
 
-`event_queue`/`task_id`/`tenant_id` are optional on `get_rlm()` /
-`RLMInference` / `InstrumentedRLM` — when omitted, RLM behaves like plain
-`dspy.RLM` with no event emission. When `event_queue` is provided, `tenant_id`
-becomes required (both raise `ValueError` otherwise, since RLM events must be
-tenant-scoped).
+`event_queue`/`task_id` are optional on `get_rlm()` / `RLMInference` /
+`InstrumentedRLM` — when omitted, RLM behaves like plain `dspy.RLM` with no
+event emission. `get_rlm()` always requires `tenant_id`; `RLMInference` and
+`InstrumentedRLM` require it when `event_queue` is provided (both raise
+`ValueError` otherwise, since RLM events must be tenant-scoped).
 
 ### SSE Streaming (HTTP Clients)
 

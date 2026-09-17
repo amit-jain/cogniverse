@@ -10,8 +10,10 @@ Vespa and pin what the research loop guarantees for the forwarded bound.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 
 import numpy as np
 import pytest
@@ -25,11 +27,13 @@ from cogniverse_agents.deep_research_agent import (
     DeepResearchInput,
     DeepResearchOutput,
 )
+from cogniverse_agents.inference.rlm_inference import RLMInference
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.registries.agent_registry import AgentEndpoint, AgentRegistry
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import agents
+from tests.agents.integration.test_rlm_deadlines import scripted_model
 from tests.runtime.integration.conftest import SCHEMAS_DIR, skip_if_no_lm
 from tests.utils.async_polling import wait_for_condition_sync
 from tests.utils.vespa_test_helpers import deploy_tenant_schema
@@ -47,6 +51,12 @@ LIVE_TENANT_ID = "deep_research:live"
 _SHIPPED_CONFIG = json.loads((SCHEMAS_DIR.parent / "config.json").read_text())
 LIVE_PROFILE = _SHIPPED_CONFIG["active_video_profile"]
 LIVE_VIDEO_ID = "outdoor_hiking_trail"
+SECOND_LIVE_TENANT_ID = "deep_research:second"
+
+# The RLM options floor the deadline at 10 s; the scripted model holds its
+# first completion past it, so the run stops at the deadline.
+RLM_TIMEOUT_SECONDS = 10
+RLM_MODEL_HOLD_SECONDS = 12.0
 
 
 @pytest.fixture(scope="module")
@@ -105,16 +115,15 @@ def recorded_live_inputs(monkeypatch):
     return captured
 
 
-@pytest.fixture(scope="module")
-def live_corpus(config_manager, vespa_instance, tomoro_search_url):
-    """One Tomoro-embedded outdoor frame indexed in the live tenant's schema."""
+def _index_live_frame(config_manager, vespa_instance, tomoro_search_url, tenant_id):
+    """Index one Tomoro-embedded outdoor frame in ``tenant_id``'s schema."""
     profile = BackendProfileConfig.from_dict(
         LIVE_PROFILE, _SHIPPED_CONFIG["backend"]["profiles"][LIVE_PROFILE]
     )
-    config_manager.add_backend_profile(profile, tenant_id=LIVE_TENANT_ID)
+    config_manager.add_backend_profile(profile, tenant_id=tenant_id)
     schema_name = deploy_tenant_schema(
         vespa_instance,
-        tenant_id=LIVE_TENANT_ID,
+        tenant_id=tenant_id,
         base_schema_name=profile.schema_name,
         config_manager=config_manager,
     )
@@ -178,9 +187,39 @@ def live_corpus(config_manager, vespa_instance, tomoro_search_url):
     wait_for_condition_sync(
         lambda: indexed_ids() == {LIVE_VIDEO_ID},
         timeout=60,
-        description=f"indexed frame for {LIVE_TENANT_ID}",
+        description=f"indexed frame for {tenant_id}",
     )
     return LIVE_VIDEO_ID
+
+
+@pytest.fixture(scope="module")
+def live_corpus(config_manager, vespa_instance, tomoro_search_url):
+    """One Tomoro-embedded outdoor frame indexed in the live tenant's schema."""
+    return _index_live_frame(
+        config_manager, vespa_instance, tomoro_search_url, LIVE_TENANT_ID
+    )
+
+
+@pytest.fixture(scope="module")
+def second_live_corpus(config_manager, vespa_instance, tomoro_search_url):
+    """The same frame indexed for a second tenant with its own schema."""
+    return _index_live_frame(
+        config_manager, vespa_instance, tomoro_search_url, SECOND_LIVE_TENANT_ID
+    )
+
+
+@pytest.fixture
+def rlm_runs(monkeypatch):
+    """Record the tenant each RLM run was built for, then run it for real."""
+    runs: list[tuple[str, str]] = []
+    original = RLMInference.process
+
+    def _record_then_run(self, query, context, **kwargs):
+        runs.append((query, self._tenant_id))
+        return original(self, query, context, **kwargs)
+
+    monkeypatch.setattr(RLMInference, "process", _record_then_run)
+    return runs
 
 
 def _evidence_video_ids(research: dict) -> list[list[str]]:
@@ -306,3 +345,140 @@ class TestMaxIterationsLive:
         assert _evidence_video_ids(research) == [[live_corpus]] * len(
             research["evidence"]
         )
+
+
+def _rlm_context(tenant_id: str, api_base: str) -> dict:
+    return {
+        "tenant_id": tenant_id,
+        "max_iterations": 1,
+        "rlm": {
+            "enabled": True,
+            "backend": "openai",
+            "model": "deadline-fixture",
+            "api_base": api_base,
+            "api_key": "local",
+            "max_iterations": 2,
+            "timeout_seconds": RLM_TIMEOUT_SECONDS,
+        },
+    }
+
+
+@skip_if_no_lm
+class TestRLMOptionsThroughTheDispatcher:
+    """RLM options on a dispatched deep research turn run the RLM for the
+    request's tenant: real dispatcher, real research loop over real Vespa and
+    the real LM, and a real ``dspy.RLM`` whose model is served on loopback."""
+
+    @pytest.mark.asyncio
+    async def test_an_expired_rlm_budget_is_reported_for_the_request_tenant(
+        self,
+        deep_research_dispatcher,
+        live_corpus,
+        dspy_lm_planning,
+        rlm_runs,
+    ):
+        query = "What visual patterns appear in outdoor activity videos?"
+        with scripted_model(RLM_MODEL_HOLD_SECONDS) as model:
+            result = await deep_research_dispatcher.dispatch(
+                agent_name="deep_research_agent",
+                query=query,
+                context=_rlm_context(LIVE_TENANT_ID, model["api_base"]),
+            )
+            rlm_model_calls = len(model["calls"])
+
+        assert result["status"] == "success", result
+        research = result["result"]
+        assert research["iterations_used"] == 1
+        assert _evidence_video_ids(research) == [[live_corpus]] * len(
+            research["sub_questions"]
+        )
+        assert rlm_runs == [(query, LIVE_TENANT_ID)]
+        # The chat adapter cannot parse the model's JSON reply and retries it
+        # through the JSON adapter; the deadline passes during those two held
+        # completions and stops the run at the next iteration boundary.
+        assert rlm_model_calls == 2
+        assert research["rlm_synthesis"] is None
+        assert research["rlm_telemetry"] == {
+            "rlm_enabled": False,
+            "rlm_attempted": True,
+            "rlm_error": f"RLM processing exceeded timeout of {RLM_TIMEOUT_SECONDS}s",
+        }
+
+    @pytest.mark.asyncio
+    async def test_concurrent_tenants_each_run_their_rlm_under_their_own_tenant(
+        self,
+        deep_research_dispatcher,
+        live_corpus,
+        second_live_corpus,
+        dspy_lm_planning,
+        rlm_runs,
+    ):
+        queries = {
+            LIVE_TENANT_ID: "What visual patterns appear in outdoor activity videos?",
+            SECOND_LIVE_TENANT_ID: "Which outdoor activities do the videos show?",
+        }
+        # Neither RLM's first completion is answered until both runs are in
+        # flight, so the two tenants' RLM runs overlap.
+        both_in_flight = threading.Barrier(2)
+        with scripted_model(RLM_MODEL_HOLD_SECONDS, arrivals=both_in_flight) as model:
+            results = await asyncio.gather(
+                *(
+                    deep_research_dispatcher.dispatch(
+                        agent_name="deep_research_agent",
+                        query=query,
+                        context=_rlm_context(tenant_id, model["api_base"]),
+                    )
+                    for tenant_id, query in queries.items()
+                )
+            )
+            rlm_model_calls = len(model["calls"])
+
+        assert both_in_flight.broken is False
+        # Two completions per run, as for a single tenant.
+        assert rlm_model_calls == 4
+        assert sorted(rlm_runs) == sorted(
+            (query, tenant_id) for tenant_id, query in queries.items()
+        )
+        for result in results:
+            assert result["status"] == "success", result
+            assert result["result"]["rlm_synthesis"] is None
+            assert result["result"]["rlm_telemetry"] == {
+                "rlm_enabled": False,
+                "rlm_attempted": True,
+                "rlm_error": (
+                    f"RLM processing exceeded timeout of {RLM_TIMEOUT_SECONDS}s"
+                ),
+            }
+
+    @pytest.mark.asyncio
+    async def test_a_refusing_rlm_model_is_reported_and_the_research_still_answers(
+        self,
+        deep_research_dispatcher,
+        live_corpus,
+        dspy_lm_planning,
+        rlm_runs,
+    ):
+        query = "What visual patterns appear in outdoor activity videos?"
+        with scripted_model(0.0, status=503) as model:
+            result = await deep_research_dispatcher.dispatch(
+                agent_name="deep_research_agent",
+                query=query,
+                context=_rlm_context(LIVE_TENANT_ID, model["api_base"]),
+            )
+            rlm_model_calls = len(model["calls"])
+
+        assert result["status"] == "success", result
+        research = result["result"]
+        assert rlm_runs == [(query, LIVE_TENANT_ID)]
+        # Chat adapter, then the JSON adapter's structured-output and
+        # json_object modes, each sent once more by the endpoint's one retry.
+        assert rlm_model_calls == 6
+        assert research["rlm_synthesis"] is None
+        assert research["rlm_telemetry"] == {
+            "rlm_enabled": False,
+            "rlm_attempted": True,
+            "rlm_error": (
+                "litellm.ServiceUnavailableError: ServiceUnavailableError: "
+                "OpenAIException - model backend refused the request"
+            ),
+        }

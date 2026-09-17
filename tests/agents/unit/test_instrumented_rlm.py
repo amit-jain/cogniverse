@@ -266,7 +266,7 @@ class TestRLMAwareMixinWithEventQueue:
         from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
         class TestAgent(RLMAwareMixin):
-            tenant_id = "test_tenant"
+            pass
 
         agent = TestAgent()
         agent.bind_config_manager(_memory_config_manager())
@@ -274,11 +274,12 @@ class TestRLMAwareMixinWithEventQueue:
         llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 
         # First call without event_queue
-        rlm1 = agent.get_rlm(llm_config=llm_config)
+        rlm1 = agent.get_rlm(llm_config=llm_config, tenant_id="test_tenant")
 
         # Second call with event_queue should create new instance
         rlm2 = agent.get_rlm(
             llm_config=llm_config,
+            tenant_id="test_tenant",
             event_queue=mock_queue,
             task_id="task_123",
         )
@@ -289,8 +290,8 @@ class TestRLMAwareMixinWithEventQueue:
         assert rlm2._task_id == "task_123"
         assert rlm2._tenant_id == "test_tenant"
 
-    def test_get_rlm_uses_agent_tenant_id(self):
-        """get_rlm uses agent's tenant_id if not specified."""
+    def test_get_rlm_never_takes_the_tenant_from_the_instance(self):
+        """A shared agent instance's attribute is not the request's tenant."""
         from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
         class TestAgent(RLMAwareMixin):
@@ -301,14 +302,18 @@ class TestRLMAwareMixinWithEventQueue:
         mock_queue = MagicMock()
         llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 
-        rlm = agent.get_rlm(
-            llm_config=llm_config,
-            event_queue=mock_queue,
-            task_id="task_123",
-            # tenant_id not specified
-        )
+        with pytest.raises(ValueError) as raised:
+            agent.get_rlm(
+                llm_config=llm_config,
+                tenant_id="",
+                event_queue=mock_queue,
+                task_id="task_123",
+            )
 
-        assert rlm._tenant_id == "agent_tenant"
+        assert str(raised.value) == (
+            "RLM inference requires the request's tenant_id; a shared agent "
+            "instance serves every tenant, so the caller passes it per call."
+        )
 
 
 class TestMarkFallback:

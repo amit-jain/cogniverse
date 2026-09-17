@@ -41,8 +41,18 @@ SUBCALL_CODE = (
 
 
 @contextmanager
-def scripted_model(hold_seconds: float, *, status: int = 200, code=LOOPING_CODE):
-    """Serve chat completions, holding each one for ``hold_seconds``."""
+def scripted_model(
+    hold_seconds: float,
+    *,
+    status: int = 200,
+    code=LOOPING_CODE,
+    arrivals: threading.Barrier | None = None,
+):
+    """Serve chat completions, holding each one for ``hold_seconds``.
+
+    With ``arrivals``, the first completions are answered only once every
+    party of the barrier has arrived.
+    """
     calls: list[dict] = []
     lock = threading.Lock()
 
@@ -56,6 +66,9 @@ def scripted_model(hold_seconds: float, *, status: int = 200, code=LOOPING_CODE)
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             with lock:
                 calls.append(body)
+                arrival = len(calls)
+            if arrivals is not None and arrival <= arrivals.parties:
+                arrivals.wait(timeout=300)
             time.sleep(hold_seconds)
             if status != 200:
                 payload = json.dumps(
