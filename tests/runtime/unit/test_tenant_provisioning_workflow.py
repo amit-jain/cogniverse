@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -361,3 +363,86 @@ def test_every_resource_step_names_the_tenant_namespace_without_underscores():
         "verify-namespace": {"name": TENANT_NAMESPACE},
         "verify-storage": {"name": "tenant-data", "namespace": TENANT_NAMESPACE},
     }
+
+
+# The API server's rule for a namespace name (an RFC 1123 label) and for a
+# label value, which the create steps also derive from the tenant id.
+RFC1123_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")
+
+TENANT_ID_CASES = {
+    "a": True,
+    "acme": True,
+    "acme_corp": True,
+    "_acme": False,
+    "prode2eclients_a0f7ef5f": True,
+    "a" * 52: True,
+    "a" * 53: False,
+    "": False,
+    "acme_": False,
+    "__system__": False,
+    "Acme": False,
+    "acme-corp": False,
+    "acme:prod": False,
+    "acmé": False,
+    'x" ]] || exit 0; [[ "': False,
+    "acme\nprod": False,
+}
+
+
+def _validate_tenant(tenant_id: str) -> subprocess.CompletedProcess:
+    """Run the validate step's script as Argo runs it: its parameters
+    substituted into the script and its environment, under bash."""
+    container = _templates()["validate-tenant"]["container"]
+
+    def substitute(text: str) -> str:
+        return text.replace("{{workflow.parameters.tenant-id}}", tenant_id)
+
+    env = {
+        entry["name"]: substitute(entry["value"]) for entry in container.get("env", [])
+    }
+    (script,) = container["args"]
+    return subprocess.run(
+        [*container["command"], substitute(script)],
+        env={"PATH": os.environ["PATH"], **env},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.unit
+def test_the_validate_step_admits_exactly_the_ids_that_name_a_valid_namespace():
+    outcomes = {
+        tenant_id: _validate_tenant(tenant_id).returncode == 0
+        for tenant_id in TENANT_ID_CASES
+    }
+    assert outcomes == TENANT_ID_CASES
+
+    admitted = [tenant_id for tenant_id, ok in outcomes.items() if ok]
+    namespaces = {
+        tenant_id: "cogniverse-" + tenant_id.replace("_", "-") for tenant_id in admitted
+    }
+    assert {
+        tenant_id: (
+            bool(RFC1123_LABEL.match(name)) and len(name) <= 63,
+            bool(LABEL_VALUE.match(tenant_id)) and len(tenant_id) <= 63,
+        )
+        for tenant_id, name in namespaces.items()
+    } == {tenant_id: (True, True) for tenant_id in admitted}
+    # Admitted ids carry no hyphen, so mapping underscores to hyphens is
+    # one-to-one: no two tenants share a namespace.
+    assert len(set(namespaces.values())) == len(admitted)
+
+
+@pytest.mark.unit
+def test_a_refused_tenant_id_names_the_rule_it_broke():
+    result = _validate_tenant("acme_")
+    assert result.returncode == 1
+    assert result.stdout == (
+        "Validating tenant configuration...\n"
+        "ERROR: Invalid tenant ID 'acme_': use 1 to 52 lowercase alphanumerics "
+        "and underscores, starting and ending with an alphanumeric, so that "
+        "cogniverse-<tenant-id> with underscores as hyphens is a valid "
+        "namespace name\n"
+    )
