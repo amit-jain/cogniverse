@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .exceptions import ContentProcessingError
+from .exceptions import ContentProcessingError, PipelineException
 from .processor_base import BaseStrategy
 from .strategies import DOCUMENT_EXTENSIONS
 
@@ -702,9 +702,21 @@ class ProcessingStrategySet:
                 or accumulated_results.get("chunks")
                 or {}
             )
-            result = await strategy.generate_descriptions(
-                frames_metadata, video_path, pipeline_context, {}
-            )
+            try:
+                result = await strategy.generate_descriptions(
+                    frames_metadata, video_path, pipeline_context, {}
+                )
+            except PipelineException:
+                raise
+            except Exception as exc:
+                raise ContentProcessingError(
+                    f"Description generation failed: {exc}",
+                    content_path=video_path,
+                    stage="description",
+                    profile=getattr(pipeline_context, "schema_name", None),
+                    original_error=str(exc),
+                    original_type=type(exc).__name__,
+                ) from exc
             if result:
                 await pipeline_context.set_cached_descriptions(video_path, result)
                 return {"descriptions": result}

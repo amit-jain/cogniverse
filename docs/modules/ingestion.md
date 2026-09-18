@@ -43,6 +43,7 @@ libs/runtime/cogniverse_runtime/ingestion/
     ├── audio_embedding_generator.py # Audio embedding generation
     ├── vlm_processor.py           # VLM description generation
     ├── vlm_descriptor.py          # VLM description core logic
+    ├── served_model.py            # Served model-id discovery for /v1 endpoints
     ├── single_vector_processor.py # Sliding window segment processing
     └── embedding_generator/
         ├── embedding_generator.py      # Base classes and interfaces
@@ -1603,6 +1604,7 @@ These plain classes back the processors above and are not auto-discovered by
 - `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
 - `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
 - `VLMDescriptor` (`vlm_descriptor.py`) — HTTP client for an OpenAI-compatible `/v1` vision chat endpoint; used by `VLMProcessor`.
+- `resolve_served_model_id(...)` (`served_model.py`) — returns the model id an OpenAI-compatible `/v1` endpoint serves, used by `VLMDescriptor` and `AudioProcessor`'s remote path. The remote services scale to zero, so discovery retries a cold endpoint until the service spec's `boot_deadline_seconds`, caches the answer per process per endpoint, and raises `ServedModelUnavailable` naming the endpoint when the budget runs out or the endpoint answers a status waiting cannot repair.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
 
@@ -2187,7 +2189,7 @@ for profile in profiles_gpu1:
 
 ### Key Test Files
 
-The `tests/ingestion/` suite has 49 files (28 unit, 20 integration, 1 shared
+The `tests/ingestion/` suite has 69 files (43 unit, 25 integration, 1 shared
 `integration/conftest.py`).
 
 #### Unit Tests (`tests/ingestion/unit/`):
@@ -2211,6 +2213,8 @@ The `tests/ingestion/` suite has 49 files (28 unit, 20 integration, 1 shared
 | `test_single_vector_processor_basic.py` | Basic `SingleVectorVideoProcessor` behavior |
 | `test_single_vector_process_adapter.py` | `SingleVectorVideoProcessor.process` forwards `transcript_data`/metadata |
 | `test_vlm_descriptor.py` | `VLMDescriptor` |
+| `test_cold_inference_endpoint_discovery.py` | Model-id discovery against a cold, failing or dead `/v1` endpoint |
+| `test_description_stage_named_on_failure.py` | A failed description stage names itself in `ContentProcessingError` |
 | `test_processor_base.py` / `test_processor_base_basic.py` | `BaseProcessor` contract |
 | `test_processor_manager.py` | `ProcessorManager` auto-discovery and initialization |
 | `test_strategy_factory_inference_services.py` | `StrategyFactory` profile-level `inference_services` injection |
