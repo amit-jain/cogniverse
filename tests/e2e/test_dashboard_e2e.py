@@ -21,6 +21,7 @@ import httpx
 import pytest
 from playwright.sync_api import expect
 
+from cogniverse_core.memory.provenance_store import PROVENANCE_BASE_SCHEMA
 from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import (
@@ -28,6 +29,7 @@ from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
+from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.conftest import (
@@ -2715,9 +2717,15 @@ class TestConfigurationImport:
         source = canonical_tenant_id(unique_id("prode2eclients"))
         destination = canonical_tenant_id(unique_id("prode2eclients"))
         base_schema = _profile_schema_name(PROFILE)
-        register_tenant_and_wait(source, created_by="e2e", base_schemas=[base_schema])
+        # The base schemas registration deploys, and so the schema registry
+        # rows it files: POST /admin/tenants deploys exactly these
+        # (admin/tenant_manager.py:641-651).
+        registered_schemas = [base_schema]
         register_tenant_and_wait(
-            destination, created_by="e2e", base_schemas=[base_schema]
+            source, created_by="e2e", base_schemas=registered_schemas
+        )
+        register_tenant_and_wait(
+            destination, created_by="e2e", base_schemas=registered_schemas
         )
         decoy = canonical_tenant_id(unique_id("prode2eclients"))
 
@@ -2746,60 +2754,81 @@ class TestConfigurationImport:
             for key, value in written.items()
         }
 
+        def _row(entry) -> tuple:
+            return (
+                entry.scope.value,
+                entry.service,
+                entry.config_key,
+                json.dumps(entry.config_value, sort_keys=True),
+            )
+
         def _rows(tenant_id: str) -> set:
+            return {_row(entry) for entry in store.list_configs(tenant_id)}
+
+        def _configuration_rows(tenant_id: str) -> set:
+            """The tenant's rows outside the schema registry — the ones the
+            Import/Export tab carries."""
             return {
-                (
-                    entry.scope.value,
-                    entry.service,
-                    entry.config_key,
-                    json.dumps(entry.config_value, sort_keys=True),
-                )
+                _row(entry)
                 for entry in store.list_configs(tenant_id)
+                if entry.scope != ConfigScope.SCHEMA
             }
 
-        def _registration_rows(tenant_id: str) -> set:
-            """The schema registry's row for the schema registration deployed,
-            after pinning that it names exactly this tenant's schema."""
-            registrations = [
+        def _schema_entries(tenant_id: str) -> list:
+            """The tenant's schema registry rows, each pinned to be that
+            tenant's own deployment.
+
+            ``register_schema`` files a row under the tenant its payload names
+            (registries/schema_registry.py:369-395), so a row here naming any
+            other tenant is one that crossed the tenant boundary. The bases
+            beyond the registration's are the memory pair the memory manager
+            deploys the first time the tenant is served
+            (core/memory/manager.py:454-470), which lands after registration.
+            """
+            entries = [
                 entry
                 for entry in store.list_configs(tenant_id)
                 if entry.scope == ConfigScope.SCHEMA
             ]
-            assert [
-                (
+            for entry in entries:
+                base = entry.config_value["base_schema_name"]
+                assert (
                     entry.service,
                     entry.config_key,
                     entry.config_value["tenant_id"],
-                    entry.config_value["base_schema_name"],
                     entry.config_value["full_schema_name"],
-                )
-                for entry in registrations
-            ] == [
-                (
+                ) == (
                     SCHEMA_REGISTRY_SERVICE,
-                    f"schema_{base_schema}",
+                    f"schema_{base}",
                     tenant_id,
-                    base_schema,
-                    _tenant_schema_name(base_schema, tenant_id),
-                )
-            ], registrations
-            return {
-                (
-                    entry.scope.value,
-                    entry.service,
-                    entry.config_key,
-                    json.dumps(entry.config_value, sort_keys=True),
-                )
-                for entry in registrations
-            }
+                    _tenant_schema_name(base, tenant_id),
+                ), entry
+            assert {entry.config_value["base_schema_name"] for entry in entries} - set(
+                registered_schemas
+            ) <= {
+                MEMORY_BASE_SCHEMA,
+                PROVENANCE_BASE_SCHEMA,
+            }, entries
+            return entries
 
-        # Registration files the tenant's schema in the registry; the tenant's
+        def _schema_rows(tenant_id: str) -> set:
+            return {_row(entry) for entry in _schema_entries(tenant_id)}
+
+        def _registration_rows(tenant_id: str) -> set:
+            """The rows registration created: one schema registry row per base
+            schema it deployed, in that order."""
+            entries = _schema_entries(tenant_id)
+            assert [
+                entry.config_value["base_schema_name"] for entry in entries
+            ] == registered_schemas, entries
+            return {_row(entry) for entry in entries}
+
+        # Registration files the tenant's schemas in the registry; the tenant's
         # rows are that registration and exactly the written configurations.
         source_registration = _registration_rows(source)
         destination_registration = _registration_rows(destination)
         assert _rows(source) == expected_rows | source_registration
         assert _rows(destination) == destination_registration
-        source_before = _rows(source)
 
         # The export the tab produces for the source tenant, with every
         # tenant id inside it replaced: the destination must win over the
@@ -2871,10 +2900,15 @@ class TestConfigurationImport:
         assert failures == [], failures
 
         # The rows landed under the selected tenant, the file's own tenant
-        # gained none, and the source is untouched.
-        assert _rows(destination) == expected_rows | destination_registration
+        # gained none, and the source is untouched. Serving either tenant
+        # deploys its memory schemas, so the schema registry rows are pinned
+        # by identity: every one names its own tenant and the registration's
+        # survive byte-for-byte, which no imported schema row could satisfy.
+        assert _configuration_rows(destination) == expected_rows
+        assert destination_registration <= _schema_rows(destination)
         assert _rows(decoy) == set()
-        assert _rows(source) == source_before
+        assert _configuration_rows(source) == expected_rows
+        assert source_registration <= _schema_rows(source)
 
 
 class TestTenantSwitchScopesEverything:
