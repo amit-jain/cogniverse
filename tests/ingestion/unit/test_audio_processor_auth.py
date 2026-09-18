@@ -50,6 +50,8 @@ def test_modal_endpoint_without_a_bearer_fails_naming_the_variable(monkeypatch):
 
 
 class _Response:
+    status_code = 200
+
     def __init__(self, body: dict):
         self._body = body
 

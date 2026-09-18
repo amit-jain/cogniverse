@@ -23,8 +23,13 @@ from typing import Any
 from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
 
 from ..processor_base import BaseProcessor
+from .served_model import resolve_served_model_id
 
 REMOTE_TRANSCRIBE_TIMEOUT_SECONDS = 600.0
+
+# The remote ASR endpoint is the Whisper deployment; its cold-start budget
+# bounds model-id discovery.
+_ASR_INFERENCE_SERVICE = "vllm_asr"
 
 
 class AudioProcessor(BaseProcessor):
@@ -292,14 +297,12 @@ class AudioProcessor(BaseProcessor):
         headers = self.auth_headers()
         audio_bytes = self._extract_audio_wav(video_path)
         files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
-        try:
-            models_resp = requests.get(
-                f"{self.endpoint.rstrip('/')}/v1/models", headers=headers, timeout=10
-            )
-            models_resp.raise_for_status()
-            served = (models_resp.json().get("data") or [{}])[0].get("id", self.model)
-        except Exception:
-            served = self.model
+        served = resolve_served_model_id(
+            f"{self.endpoint.rstrip('/')}/v1",
+            service_name=_ASR_INFERENCE_SERVICE,
+            headers=headers,
+            logger=self.logger,
+        )
         data: dict[str, Any] = {
             "model": served,
             "response_format": "verbose_json",
