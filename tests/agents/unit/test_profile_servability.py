@@ -178,9 +178,15 @@ class _RegistryReadDown:
     def __getattr__(self, name):
         return getattr(self._live, name)
 
-    def list_all_configs(self, *, scope=None, service=None):
+    def list_configs(self, *, tenant_id, scope=None, service=None):
         store = self._dead if service == SCHEMA_REGISTRY_SERVICE else self._live
-        return store.list_all_configs(scope=scope, service=service)
+        return store.list_configs(tenant_id=tenant_id, scope=scope, service=service)
+
+    def list_all_configs(self, *, scope=None, service=None, config_key_suffix=None):
+        store = self._dead if service == SCHEMA_REGISTRY_SERVICE else self._live
+        return store.list_all_configs(
+            scope=scope, service=service, config_key_suffix=config_key_suffix
+        )
 
 
 def test_registry_read_outage_raises_instead_of_reporting_nothing_deployed():

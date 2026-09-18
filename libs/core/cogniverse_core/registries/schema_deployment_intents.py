@@ -143,11 +143,18 @@ class SchemaDeploymentIntents:
             f"Cannot reserve deployment intent for {name!r}: concurrent writers"
         )
 
-    def records(self) -> list[dict[str, Any]]:
-        """Read one latest record per reserved full schema name."""
+    def records(self, config_key_suffix: str | None = None) -> list[dict[str, Any]]:
+        """Read one latest record per reserved full schema name.
+
+        ``config_key_suffix`` narrows the store read to the keys ending with
+        it; the records it returns are validated exactly as an unnarrowed read
+        validates the same rows.
+        """
         try:
             entries = self._store.list_all_configs(
-                scope=ConfigScope.SCHEMA, service=_SERVICE
+                scope=ConfigScope.SCHEMA,
+                service=_SERVICE,
+                config_key_suffix=config_key_suffix,
             )
             records = []
             for entry in entries:
@@ -169,6 +176,26 @@ class SchemaDeploymentIntents:
     def pending(self) -> list[dict[str, Any]]:
         """Return active intents; absent, complete and failed records are retired."""
         return [record for record in self.records() if record["state"] == "pending"]
+
+    def pending_for_tenant(self, tenant_id: str) -> list[dict[str, Any]]:
+        """This tenant's active intents, read without carrying the others.
+
+        Intents are keyed under the system tenant by the full schema name, and
+        :meth:`_validate` holds that name to ``{base}_{sanitised tenant}`` — so
+        every row this tenant owns, and no row of a tenant whose id is not a
+        suffix of it, ends with that tenant's suffix. The store narrows the
+        visit to those keys; which tenant a record belongs to is still decided
+        by the registration's own ``tenant_id``, so a suffix that another
+        tenant's id extends cannot be read as this tenant's.
+        """
+        tenant_id = canonical_tenant_id(tenant_id)
+        suffix = f"_{tenant_id.replace(':', '_')}"
+        return [
+            record
+            for record in self.records(config_key_suffix=suffix)
+            if record["state"] == "pending"
+            and record["registration"]["tenant_id"] == tenant_id
+        ]
 
     def reserved(self, live_names: set[str]) -> dict[str, dict[str, Any]]:
         """Full schema names an in-flight activation owns, with their exact registration.

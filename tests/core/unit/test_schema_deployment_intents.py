@@ -32,7 +32,7 @@ class Store:
             self.rows[key] = value, version + 1
             return SimpleNamespace(config_value=value, version=version + 1)
 
-    def list_all_configs(self, *, scope, service):
+    def list_all_configs(self, *, scope=None, service=None, config_key_suffix=None):
         with self.lock:
             return [
                 SimpleNamespace(
@@ -43,6 +43,7 @@ class Store:
                 )
                 for (t, s, k), (v, version) in self.rows.items()
                 if s == service
+                and (config_key_suffix is None or k.endswith(config_key_suffix))
             ]
 
 
