@@ -1,8 +1,11 @@
-"""get_config(version=N) must escape Document visit selections.
+"""get_config(version=N) must escape Document visit selections, and name the
+one key it reads.
 
 config_id derives from raw tenant_id/service/config_key (via
 _create_document_id). A quote in tenant_id, scope, or service must not break
-the Document v1 selection expression.
+the Document v1 selection expression. The visit also carries the config_key,
+so a point read does not visit and parse every other key stored under the same
+service — the deployment journal keeps every tenant's intents under one.
 """
 
 from __future__ import annotations
@@ -58,7 +61,8 @@ def test_versioned_config_selection_is_escaped(monkeypatch):
             "selection": (
                 'config_metadata.tenant_id == "acme:\\"quoted" and '
                 'config_metadata.scope == "schema" and '
-                'config_metadata.service == "svc\\"; bad"'
+                'config_metadata.service == "svc\\"; bad" and '
+                'config_metadata.config_key == "key"'
             ),
         },
         "timeout": 30,
