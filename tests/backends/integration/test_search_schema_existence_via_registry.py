@@ -32,7 +32,10 @@ from cogniverse_core.registries.backend_registry import (
     BackendBindingConflictError,
     BackendRegistry,
 )
-from cogniverse_core.registries.exceptions import RegistryStorageError
+from cogniverse_core.registries.exceptions import (
+    RegistryStorageError,
+    SchemaRegistryInitializationError,
+)
 from cogniverse_core.registries.schema_deployment_intents import (
     _SERVICE as INTENTS_SERVICE,
 )
@@ -1078,3 +1081,113 @@ class TestDeleteDuringAReadIsNotCached:
             SCHEMA_REGISTRY_SERVICE,
             INTENTS_SERVICE,
         ]
+
+
+# A shipped base schema no corpus tenant deploys, so every lookup for it is a
+# registry miss — the case a search path pays on every request.
+UNDEPLOYED_BASE_SCHEMA = "wiki_pages"
+
+
+class TestRegistryMissReadsOneRow:
+    """``VespaBackend.schema_exists`` answers a miss from the tenant's own row.
+
+    Rebuilding the whole registry re-reads and re-parses every tenant's schema
+    definition; a tenant that legitimately lacks a schema paid that on every
+    request, on a worker thread holding the GIL, so the serving loop stalled
+    for its duration.
+    """
+
+    def _ingestion_backend(self, env, config_manager):
+        registry = BackendRegistry.get_instance()
+        registry.clear_instances()
+        return registry.get_ingestion_backend(
+            name="vespa",
+            tenant_id=env["deployed"][0],
+            config=_backend_config(env["instance"]),
+            config_manager=config_manager,
+            schema_loader=env["schema_loader"],
+        )
+
+    def test_a_miss_reads_only_this_tenants_row(self, corpus, store_reads):
+        env = corpus
+        tenant = env["deployed"][0]
+        backend = self._ingestion_backend(env, env["config_manager"])
+        # The registry reads the whole store once when it is built; the read
+        # under test is the lookup, so count from here.
+        store_reads.clear()
+
+        answer = backend.schema_exists(UNDEPLOYED_BASE_SCHEMA, tenant_id=tenant)
+        BackendRegistry.get_instance().clear_instances()
+
+        assert answer is False
+        assert store_reads == Counter({("get_config", SCHEMA_REGISTRY_SERVICE): 1})
+
+    def test_a_peer_registration_is_visible_to_the_next_miss(self, corpus):
+        from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+        env = corpus
+        tenant = f"sxrpeer{uuid.uuid4().hex[:8]}"
+        backend = self._ingestion_backend(env, env["config_manager"])
+        before = backend.schema_exists(UNDEPLOYED_BASE_SCHEMA, tenant_id=tenant)
+
+        peer = SchemaRegistry(
+            config_manager=_config_manager(env["instance"]["http_port"]),
+            backend=backend,
+            schema_loader=env["schema_loader"],
+        )
+        full_name = (
+            f"{UNDEPLOYED_BASE_SCHEMA}_{canonical_tenant_id(tenant).replace(':', '_')}"
+        )
+        # The shipped definition under the tenant-scoped name, as deploy_schema
+        # writes it: every later deployment rebuilds the application package
+        # from the registry's rows and must still parse this one.
+        definition = env["schema_loader"].load_schema(UNDEPLOYED_BASE_SCHEMA)
+        definition["name"] = full_name
+        try:
+            peer.register_schema(
+                tenant_id=tenant,
+                base_schema_name=UNDEPLOYED_BASE_SCHEMA,
+                full_schema_name=full_name,
+                schema_definition=json.dumps(definition),
+                config={"profile": "peer"},
+            )
+            after = backend.schema_exists(UNDEPLOYED_BASE_SCHEMA, tenant_id=tenant)
+            served = backend.schema_registry.get_tenant_schemas(tenant)
+        finally:
+            peer.unregister_schema(tenant, UNDEPLOYED_BASE_SCHEMA)
+            BackendRegistry.get_instance().clear_instances()
+
+        assert (before, after) == (False, True)
+        assert [(info.base_schema_name, info.full_schema_name) for info in served] == [
+            (UNDEPLOYED_BASE_SCHEMA, full_name)
+        ]
+
+    def test_a_down_store_refuses_rather_than_answering_not_deployed(
+        self, corpus, monkeypatch
+    ):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        env = corpus
+        tenant = env["deployed"][0]
+        backend = self._ingestion_backend(env, env["config_manager"])
+        monkeypatch.setattr(
+            backend.schema_registry,
+            "_config_manager",
+            ConfigManager(
+                store=VespaConfigStore(
+                    backend_url="http://127.0.0.1", backend_port=DEAD_STORE_PORT
+                )
+            ),
+        )
+        try:
+            with pytest.raises(
+                SchemaRegistryInitializationError,
+                match=(
+                    f"Cannot tell whether {UNDEPLOYED_BASE_SCHEMA!r} is deployed "
+                    f"for tenant"
+                ),
+            ):
+                backend.schema_exists(UNDEPLOYED_BASE_SCHEMA, tenant_id=tenant)
+        finally:
+            BackendRegistry.get_instance().clear_instances()

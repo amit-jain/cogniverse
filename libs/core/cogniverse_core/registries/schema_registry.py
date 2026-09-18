@@ -824,9 +824,10 @@ class SchemaRegistry:
         """
         Check if schema already deployed for tenant.
 
-        A cache hit answers from memory; a miss re-reads persistent storage
-        first, so schemas registered by peer processes are visible.
-        Use this before deploying to avoid unnecessary redeployments.
+        A cache hit answers from memory; a miss reads this tenant's row for
+        the schema from persistent storage, so schemas registered by peer
+        processes are visible. Use this before deploying to avoid unnecessary
+        redeployments.
 
         Args:
             tenant_id: Tenant identifier
@@ -843,6 +844,7 @@ class SchemaRegistry:
                 registry.register_schema(...)
         """
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         tenant_id = canonical_tenant_id(tenant_id)
         key = (tenant_id, base_schema_name)
@@ -850,11 +852,40 @@ class SchemaRegistry:
             return True
         # A miss is not authoritative: a peer process (another runtime
         # replica, a host-side manager) may have deployed and registered the
-        # schema since this registry last read storage. Re-read, then answer.
-        # A storage outage during the re-read raises (strict mode) — an
-        # outage must never read as "not deployed".
-        self._load_schemas_from_storage()
-        return key in self._schemas
+        # schema since this registry last read storage. Read that one row
+        # rather than rebuilding the registry: the rebuild visits and parses
+        # every tenant's schema definition, and a tenant that legitimately
+        # lacks a schema pays it on every request. A storage outage raises
+        # (strict mode) — an outage must never read as "not deployed".
+        try:
+            stored = self._config_manager.store.get_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service=SCHEMA_REGISTRY_SERVICE,
+                config_key=f"schema_{base_schema_name}",
+            )
+        except Exception as exc:
+            message = (
+                f"Cannot tell whether {base_schema_name!r} is deployed for tenant "
+                f"{tenant_id!r}: failed to read schema storage: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger.error(message)
+            raise SchemaRegistryInitializationError(message) from exc
+        if stored is None:
+            return False
+        row = stored.config_value
+        if row.get("deleted", False):
+            return False
+        self._schemas[key] = SchemaInfo(
+            tenant_id=row["tenant_id"],
+            base_schema_name=row["base_schema_name"],
+            full_schema_name=row["full_schema_name"],
+            schema_definition=row["schema_definition"],
+            config=row.get("config", {}),
+            deployment_time=row["deployment_time"],
+        )
+        return True
 
     def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
         """

@@ -450,19 +450,48 @@ class TestSchemaRegistryTracking:
         )
 
     def test_schema_exists_miss_reload_outage_raises(self, schema_registry):
-        """A storage outage during the miss re-read is not 'schema missing'."""
-        schema_registry._config_manager.store.list_all_configs.side_effect = (
-            ConnectionError("config store unreachable")
+        """A storage outage during the miss read is not 'schema missing'."""
+        schema_registry._config_manager.store.get_config.side_effect = ConnectionError(
+            "config store unreachable"
         )
         with pytest.raises(SchemaRegistryInitializationError, match="unreachable"):
             schema_registry.schema_exists("acme", "never_deployed")
 
+    def test_schema_exists_miss_reads_only_this_tenants_row(
+        self, schema_registry, mock_config_manager
+    ):
+        """The miss reads the tenant's row for the schema, not every row.
+
+        The whole-store read parses every tenant's schema definition, so a
+        tenant that legitimately lacks a schema paid it on every request and
+        held the GIL for its duration.
+        """
+        schema_registry.deploy_schema("acme", "document_text")
+        schema_registry.deploy_schema("other", "document_text")
+        store = mock_config_manager.store
+        store.list_all_configs.reset_mock()
+        store.get_config.reset_mock()
+
+        assert schema_registry.schema_exists("acme", "document_visual") is False
+
+        store.list_all_configs.assert_not_called()
+        assert [call.kwargs for call in store.get_config.call_args_list] == [
+            {
+                "tenant_id": "acme:acme",
+                "scope": ConfigScope.SCHEMA,
+                "service": "schema_registry",
+                "config_key": "schema_document_visual",
+            }
+        ]
+
     def test_schema_exists_hit_does_not_touch_storage(self, schema_registry):
         schema_registry.deploy_schema("acme", "test_schema")
         schema_registry._config_manager.store.list_all_configs.reset_mock()
+        schema_registry._config_manager.store.get_config.reset_mock()
 
         assert schema_registry.schema_exists("acme", "test_schema") is True
         schema_registry._config_manager.store.list_all_configs.assert_not_called()
+        schema_registry._config_manager.store.get_config.assert_not_called()
 
     def test_register_schema_adds_to_tracking(self, schema_registry):
         """Test register_schema adds schema to in-memory tracking"""
