@@ -326,5 +326,18 @@ def mock_base_processor():
     return MockProcessor
 
 
+@pytest.fixture(autouse=True)
+def _forget_discovered_model_ids():
+    """Served model ids are cached per process and keyed by endpoint URL, so a
+    reused stub URL would otherwise let one test answer another test's probe."""
+    from cogniverse_runtime.ingestion.processors.served_model import (
+        reset_served_model_cache,
+    )
+
+    reset_served_model_cache()
+    yield
+    reset_served_model_cache()
+
+
 # Pytest markers for ingestion tests
 pytestmark = [pytest.mark.ingestion]

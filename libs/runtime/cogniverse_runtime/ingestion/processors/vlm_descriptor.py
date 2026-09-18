@@ -20,6 +20,11 @@ import requests
 
 from cogniverse_foundation.config.inference_auth import inference_headers
 
+from .served_model import (
+    DISCOVERY_RETRY_INTERVAL_SECONDS,
+    resolve_served_model_id,
+)
+
 _VLM_DESCRIBE_PROMPT = (
     "Describe this video frame in detail: the objects, people, actions, "
     "scene setting, and any visible text. Be concise and factual."
@@ -29,6 +34,10 @@ _VLM_DESCRIBE_PROMPT = (
 # re-serializes the ENTIRE growing descriptions dict, so a per-batch flush
 # was quadratic write amplification over a long video.
 _PROGRESS_FLUSH_EVERY = 10
+
+# The VLM endpoint is the LLM student deployment; its cold-start budget bounds
+# model-id discovery.
+_VLM_INFERENCE_SERVICE = "vllm_llm_student"
 
 
 class VLMDescriptor:
@@ -40,6 +49,8 @@ class VLMDescriptor:
         batch_size: int = 500,
         timeout: int = 10800,
         vlm_concurrency: int = 8,
+        model_discovery_deadline_seconds: float | None = None,
+        model_discovery_retry_interval_seconds: float = DISCOVERY_RETRY_INTERVAL_SECONDS,
     ):
         if "/v1" not in vlm_endpoint:
             raise ValueError(
@@ -55,6 +66,10 @@ class VLMDescriptor:
         # lever: raise it on a GPU that can serve a bigger batch, keep it low
         # on a small one.
         self.vlm_concurrency = max(1, vlm_concurrency)
+        self.model_discovery_deadline_seconds = model_discovery_deadline_seconds
+        self.model_discovery_retry_interval_seconds = (
+            model_discovery_retry_interval_seconds
+        )
         self._openai_model: str | None = None
 
         self.logger = logging.getLogger("VLMDescriptor")
@@ -144,17 +159,22 @@ class VLMDescriptor:
         return inference_headers(root)
 
     def _resolve_openai_model(self) -> str:
-        """Discover the served model id from the vLLM ``/v1/models`` list."""
+        """Discover the served model id from the vLLM ``/v1/models`` list.
+
+        The endpoint scales to zero, so discovery waits out a cold start rather
+        than failing the job on one short read timeout, and the answer is
+        shared across every job in this process.
+        """
         if self._openai_model:
             return self._openai_model
-        resp = requests.get(
-            f"{self._openai_base()}/models", timeout=10, headers=self.auth_headers()
+        self._openai_model = resolve_served_model_id(
+            self._openai_base(),
+            service_name=_VLM_INFERENCE_SERVICE,
+            headers=self.auth_headers(),
+            logger=self.logger,
+            deadline_seconds=self.model_discovery_deadline_seconds,
+            retry_interval_seconds=self.model_discovery_retry_interval_seconds,
         )
-        resp.raise_for_status()
-        data = resp.json().get("data") or []
-        if not data:
-            raise RuntimeError(f"VLM endpoint {self._openai_base()} served no models")
-        self._openai_model = data[0]["id"]
         return self._openai_model
 
     def _describe_one_openai(
