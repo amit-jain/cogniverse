@@ -101,6 +101,11 @@ def _vespa_proxy(upstream, *, barrier=None, fail_key=None):
         def do_PUT(self):
             self._forward()
 
+        def do_DELETE(self):
+            # The rollback a failed import runs deletes the versions it wrote;
+            # without this the proxy answers 501 and the rollback cannot run.
+            self._forward()
+
         def _forward(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             if self.command in {"POST", "PUT"} and "/document/v1/" in self.path:
@@ -262,15 +267,19 @@ def test_import_write_failure_is_visible_without_success(shared_vespa):
         app = _upload_app(port, target, payload)
         assert len(app.error) == 1
         assert app.error[0].value.startswith(
-            f"Import failed: Failed to import 1 of 2 configurations for tenant {target}: second:"
+            f"Import failed: Configuration import for tenant {target} failed at "
+            f"row 2 of 2 (search_agent/second): "
         )
+        assert app.error[0].value.endswith(
+            "; removed 1 of the 1 versions it had written"
+        ), app.error[0].value
         assert [s.value for s in app.success] == []
         assert state.writes == [(target, "first"), (target, "second")]
         assert state.failures == 1
     store = _store(shared_vespa["http_port"])
-    assert store.get_config(
-        target, ConfigScope.AGENT, "search_agent", "first"
-    ).config_value == {"value": 1}
+    # The import is all or nothing: the row written before the failure is
+    # removed, so the tenant holds neither.
+    assert store.get_config(target, ConfigScope.AGENT, "search_agent", "first") is None
     assert store.get_config(target, ConfigScope.AGENT, "search_agent", "second") is None
 
 
