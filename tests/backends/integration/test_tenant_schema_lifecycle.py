@@ -61,6 +61,7 @@ _THIS_MODULES_TENANTS = frozenset(
         "bulk_noop",
         "del_orphan",
         "del_round_trip",
+        "ensure_noop",
         "deploy_orphan_a",
         "deploy_orphan_b",
         "guard_empty",
@@ -904,3 +905,81 @@ class TestSchemaExistenceContract:
         )
         with pytest.raises(ValueError, match="schema_registry required"):
             backend.schema_exists("agent_memories", tenant_id="acme:acme")
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestEnsuringADeployedSchemaCarriesNoOtherTenantsRows:
+    """``deploy_schema`` on an already-deployed schema runs on a request.
+
+    Memory init ensures a tenant's ``agent_memories`` and ``provenance``
+    schemas on the request that first touches that tenant, so "already
+    deployed" is the common case and it must not carry the cluster's whole
+    schema history back: that read grows with every tenant ever deployed and
+    parsing it on a worker thread starves the serving loop.
+    """
+
+    ENSURE_TENANT = "ensure_noop"
+
+    def _reads(self, store, monkeypatch):
+        from collections import Counter
+
+        reads: Counter = Counter()
+        for method in ("get_config", "list_configs", "list_all_configs"):
+            original = getattr(store, method)
+
+            def counting(*args, _method=method, _original=original, **kwargs):
+                reads[(_method, kwargs.get("service"))] += 1
+                return _original(*args, **kwargs)
+
+            monkeypatch.setattr(store, method, counting)
+        return reads
+
+    def test_ensuring_an_existing_schema_reads_only_its_own_row(
+        self, get_backend, temp_config_manager, monkeypatch
+    ):
+        from collections import Counter
+
+        from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
+
+        backend = get_backend(self.ENSURE_TENANT)
+        registry = backend.schema_registry
+        base = _SHIPPED_ACTIVE_VIDEO_PROFILE
+        deployed = registry.deploy_schema(self.ENSURE_TENANT, base)
+
+        reads = self._reads(temp_config_manager.store, monkeypatch)
+        ensured = registry.deploy_schema(self.ENSURE_TENANT, base)
+
+        assert ensured == deployed
+        # The tenant's own row decides it: one point read, and none of the
+        # whole-store reads a deploy with work to do makes.
+        assert reads == Counter({("get_config", SCHEMA_REGISTRY_SERVICE): 1})
+
+    def test_deploying_a_new_schema_still_reads_every_schema(
+        self, get_backend, temp_config_manager, monkeypatch
+    ):
+        """The whole-schema view is the deployment package's other half, so a
+        deploy that has something to do still reads it — three times over the
+        registry rows (the package this call builds, the backend's own rebuild
+        of it, and the reconcile after activation) and twice over the journal.
+        """
+        from cogniverse_core.registries.schema_deployment_intents import (
+            _SERVICE as INTENTS_SERVICE,
+        )
+        from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
+
+        backend = get_backend(self.ENSURE_TENANT)
+        registry = backend.schema_registry
+        base = "agent_memories"
+        assert registry.schema_exists(self.ENSURE_TENANT, base) is False
+
+        reads = self._reads(temp_config_manager.store, monkeypatch)
+        full_name = registry.deploy_schema(self.ENSURE_TENANT, base)
+
+        assert full_name == backend.get_tenant_schema_name(self.ENSURE_TENANT, base)
+        assert {
+            key: count for key, count in reads.items() if key[0] == "list_all_configs"
+        } == {
+            ("list_all_configs", SCHEMA_REGISTRY_SERVICE): 3,
+            ("list_all_configs", INTENTS_SERVICE): 2,
+        }
