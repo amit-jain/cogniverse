@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from cogniverse_core.memory.federation import org_trunk_tenant_id
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
@@ -80,6 +80,7 @@ def _build_manager(
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    affirm_memory_profile(cm)
     mm = Mem0MemoryManager(tenant_id=tenant_id)
     mm.initialize(
         backend_host="http://localhost",

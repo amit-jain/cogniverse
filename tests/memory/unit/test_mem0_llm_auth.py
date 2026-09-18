@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from tests.utils.memory_store import InMemoryConfigStore
@@ -38,6 +38,8 @@ def _initialize(manager: Mem0MemoryManager, llm_base_url: str, **kwargs) -> None
     registry.get_ingestion_backend.return_value = backend
     store = InMemoryConfigStore()
     store.initialize()
+    config_manager = ConfigManager(store=store)
+    affirm_memory_profile(config_manager)
     with (
         patch(
             "cogniverse_core.registries.backend_registry.get_backend_registry",
@@ -53,7 +55,7 @@ def _initialize(manager: Mem0MemoryManager, llm_base_url: str, **kwargs) -> None
             embedding_model="lightonai/DenseOn",
             llm_base_url=llm_base_url,
             embedder_base_url="http://denseon:8000",
-            config_manager=ConfigManager(store=store),
+            config_manager=config_manager,
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
             **kwargs,
         )

@@ -282,8 +282,17 @@ class VespaConfigStore(ImmutableConfigStore):
         service: Optional[str] = None,
         config_key: Optional[str] = None,
         config_key_suffix: Optional[str] = None,
+        latest_only: bool = False,
         skip_malformed: bool = False,
     ) -> List[tuple[str, ConfigEntry]]:
+        """Visit the rows the selection names, newest-first per config_id.
+
+        ``latest_only`` returns one entry per config_id — the highest version —
+        and decodes only that one. A config's superseded versions are kept
+        (``keep_versions``) and are large for documents like the system backend
+        config, so a caller that wants the current value must not pay to decode
+        the history it is about to discard.
+        """
         path = (
             f"{self.vespa_app.url}/document/v1/"
             f"{self.schema_name}/{self.schema_name}/docid/"
@@ -317,6 +326,7 @@ class VespaConfigStore(ImmutableConfigStore):
             params["selection"] = " and ".join(selection_parts)
 
         entries: List[tuple[str, ConfigEntry]] = []
+        newest: Dict[str, Dict[str, Any]] = {}
         continuation: Optional[str] = None
         pages = 0
         while True:
@@ -342,6 +352,13 @@ class VespaConfigStore(ImmutableConfigStore):
                 fields = document["fields"]
                 try:
                     config_id = fields["config_id"]
+                    if latest_only:
+                        known = newest.get(config_id)
+                        if known is None or int(fields["version"]) > int(
+                            known["version"]
+                        ):
+                            newest[config_id] = fields
+                        continue
                     entry = self._entry_from_fields(fields)
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                     if not skip_malformed:
@@ -355,6 +372,23 @@ class VespaConfigStore(ImmutableConfigStore):
                 entries.append((config_id, entry))
             continuation = payload.get("continuation")
             if not continuation:
+                if latest_only:
+                    for config_id, fields in newest.items():
+                        try:
+                            entries.append((config_id, self._entry_from_fields(fields)))
+                        except (
+                            KeyError,
+                            TypeError,
+                            ValueError,
+                            json.JSONDecodeError,
+                        ) as exc:
+                            if not skip_malformed:
+                                raise
+                            logger.warning(
+                                "Skipping malformed config_metadata doc %s: %s",
+                                config_id,
+                                exc,
+                            )
                 return entries
 
     def get_immutable_config(
@@ -776,6 +810,7 @@ class VespaConfigStore(ImmutableConfigStore):
                     scope=scope,
                     service=service,
                     config_key=config_key,
+                    latest_only=version is None,
                 )
                 if visited_id == config_id
                 and (version is None or entry.version == int(version))

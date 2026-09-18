@@ -12,6 +12,30 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def affirm_memory_profile(config_manager):
+    """Register the memory profile as the runtime's startup does.
+
+    Memory init reads this profile and refuses to write one, so a manager
+    initialised against a store nothing affirmed has no profile to resolve.
+    """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.memory.manager import (
+        MEMORY_BASE_SCHEMA,
+        MEMORY_EMBEDDING_DIMS,
+        build_memory_profile,
+    )
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            MEMORY_BASE_SCHEMA,
+            build_memory_profile(MEMORY_BASE_SCHEMA, MEMORY_EMBEDDING_DIMS),
+        ),
+        tenant_id=SYSTEM_TENANT_ID,
+        service="backend",
+    )
+
+
 class TestMem0MemoryManager:
     """Test Mem0MemoryManager"""
 
@@ -94,6 +118,7 @@ class TestMem0MemoryManager:
         store = InMemoryConfigStore()
         store.initialize()
         config_manager = ConfigManager(store=store)
+        affirm_memory_profile(config_manager)
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Initialize
@@ -157,6 +182,7 @@ class TestMem0MemoryManager:
         store = InMemoryConfigStore()
         store.initialize()
         config_manager = ConfigManager(store=store)
+        affirm_memory_profile(config_manager)
 
         manager.initialize(
             backend_host="localhost",
@@ -653,7 +679,9 @@ class TestInitializeIdempotent:
         def _make_config_manager():
             store = InMemoryConfigStore()
             store.initialize()
-            return ConfigManager(store=store)
+            manager = ConfigManager(store=store)
+            affirm_memory_profile(manager)
+            return manager
 
         mock_memory_class.from_config.return_value = MagicMock()
         mock_backend = MagicMock()
@@ -898,3 +926,50 @@ class TestSearchMemoryFaultContract:
         assert (
             manager.search_memory(query="q", tenant_id="tenant1", agent_name="a") == []
         )
+
+
+def test_memory_init_refuses_to_register_the_profile_itself():
+    """Memory init reads its backend profile; it does not write one.
+
+    It used to register the profile into the system tenant's backend config
+    when the profile looked missing — and it always looked missing, because it
+    read ``profiles`` at the top level of the config where only
+    ``backend.profiles`` exists. Every new tenant's first request then
+    read-merged-wrote-pruned that document on the serving path.
+    """
+    from cogniverse_core.memory.manager import (
+        MEMORY_BASE_SCHEMA,
+        MemoryProfileMissingError,
+    )
+
+    manager = Mem0MemoryManager(tenant_id="profile:missing")
+    config_manager = MagicMock()
+    unregistered = MagicMock()
+    unregistered.get.side_effect = lambda key, default=None: (
+        {"profiles": {}} if key == "backend" else default
+    )
+
+    with patch(
+        "cogniverse_foundation.config.utils.get_config", return_value=unregistered
+    ):
+        with pytest.raises(MemoryProfileMissingError, match=MEMORY_BASE_SCHEMA):
+            manager._build_and_store_memory(
+                backend_host="http://localhost",
+                backend_port=8080,
+                llm_model="m",
+                embedding_model="lightonai/DenseOn",
+                llm_base_url="http://lm",
+                embedder_base_url="http://denseon",
+                config_manager=config_manager,
+                schema_loader=MagicMock(),
+                llm_api_key="k",
+                backend_config_port=19071,
+                base_schema_name=MEMORY_BASE_SCHEMA,
+                auto_create_schema=False,
+                embedding_dims=768,
+                knowledge_registry=None,
+                fingerprint=(),
+                storage_tenant_id="profile:missing",
+            )
+
+    assert config_manager.add_backend_profile.call_args_list == []
