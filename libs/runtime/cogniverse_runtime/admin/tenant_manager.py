@@ -44,6 +44,10 @@ from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
     parse_tenant_id,
 )
+from cogniverse_core.memory.manager import (
+    MEMORY_BASE_SCHEMA,
+    PROVENANCE_BASE_SCHEMA,
+)
 from cogniverse_core.registries.exceptions import RegistryStorageError
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
@@ -215,6 +219,22 @@ def validate_tenant_name(tenant_name: str) -> None:
         raise ValueError(
             f"Invalid tenant_name '{tenant_name}': only alphanumeric and underscore allowed"
         )
+
+
+TENANT_BASE_SCHEMAS: tuple[str, ...] = (
+    "video_colpali_smol500_mv_frame",
+    MEMORY_BASE_SCHEMA,
+    PROVENANCE_BASE_SCHEMA,
+)
+"""Schemas every tenant gets at registration.
+
+The memory-aware agents ensure ``agent_memories`` and ``provenance`` on the
+first request that touches a tenant. Deploying them here means that ensure
+finds them and answers from the tenant's own row, instead of the request
+building and activating a Vespa application package and reading every
+tenant's registry rows and the whole deployment journal to do it — work that
+holds the GIL and stops the replica answering anything while it runs.
+"""
 
 
 _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS = 5
@@ -643,9 +663,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 org_created = True
 
             # Deploy schemas for tenant via Backend.
-            base_schemas = request.base_schemas or [
-                "video_colpali_smol500_mv_frame",
-            ]
+            base_schemas = request.base_schemas or list(TENANT_BASE_SCHEMAS)
 
             deployed_schemas: list[str] = []
             try:
