@@ -7,6 +7,7 @@ the Document v1 selection expression.
 
 from __future__ import annotations
 
+import pytest
 import requests
 
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -62,3 +63,61 @@ def test_versioned_config_selection_is_escaped(monkeypatch):
         },
         "timeout": 30,
     }
+
+
+def test_config_key_suffix_narrows_the_selection(monkeypatch):
+    """The suffix reaches the store as a glob on config_key, quoted like the
+    rest of the selection, so the visit carries only the matching rows."""
+    store = object.__new__(VespaConfigStore)
+    store.schema_name = "config_metadata"
+    captured = {}
+
+    class _App:
+        url = "http://localhost:8080"
+
+    store.vespa_app = _App()
+
+    def capture_get(url, *, params, timeout):
+        captured["params"] = dict(params)
+        return _EmptyVisitResponse()
+
+    monkeypatch.setattr(requests, "get", capture_get)
+    result = store.list_all_configs(
+        scope=ConfigScope.SCHEMA,
+        service="schema_deployment_intents",
+        config_key_suffix='_acme"corp',
+    )
+
+    assert result == []
+    assert captured["params"] == {
+        "wantedDocumentCount": 1000,
+        "selection": (
+            'config_metadata.scope == "schema" and '
+            'config_metadata.service == "schema_deployment_intents" and '
+            'config_metadata.config_key = "*_acme\\"corp"'
+        ),
+    }
+
+
+def test_a_wildcard_suffix_is_refused(monkeypatch):
+    """A selection glob has no escape, so a suffix carrying one would widen the
+    match to other owners' rows instead of narrowing it."""
+    store = object.__new__(VespaConfigStore)
+    store.schema_name = "config_metadata"
+
+    class _App:
+        url = "http://localhost:8080"
+
+    store.vespa_app = _App()
+
+    def refuse_get(*_args, **_kwargs):
+        raise AssertionError("the store must not be read for a wildcard suffix")
+
+    monkeypatch.setattr(requests, "get", refuse_get)
+    for suffix in ("_acme*", "_acme?"):
+        with pytest.raises(ValueError, match="carries a glob wildcard"):
+            store.list_all_configs(
+                scope=ConfigScope.SCHEMA,
+                service="schema_deployment_intents",
+                config_key_suffix=suffix,
+            )
