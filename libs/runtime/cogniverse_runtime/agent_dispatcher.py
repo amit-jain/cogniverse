@@ -3737,7 +3737,7 @@ class AgentDispatcher:
         # Tenant schemas deploy on first ingest, so a tenant that never
         # ingested images has no image_colpali_mv schema. That is a no-content
         # answer; a registry lookup failure raises and is not read as one.
-        backend = get_backend()
+        backend = await asyncio.to_thread(get_backend)
         if not await asyncio.to_thread(
             backend.schema_exists, "image_colpali_mv", tenant_id
         ):
@@ -3749,7 +3749,7 @@ class AgentDispatcher:
                 "results": [],
             }
 
-        vespa_endpoint = self._get_vespa_endpoint(tenant_id)
+        vespa_endpoint = await asyncio.to_thread(self._get_vespa_endpoint, tenant_id)
         deps = ImageSearchDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
@@ -3794,7 +3794,7 @@ class AgentDispatcher:
         # Tenant schemas deploy on first ingest, so a tenant that never
         # ingested audio has no audio_content schema. That is a no-content
         # answer; a registry lookup failure raises and is not read as one.
-        backend = get_backend()
+        backend = await asyncio.to_thread(get_backend)
         if not await asyncio.to_thread(
             backend.schema_exists, "audio_content", tenant_id
         ):
@@ -3806,10 +3806,12 @@ class AgentDispatcher:
                 "results": [],
             }
 
-        vespa_endpoint = self._get_vespa_endpoint(tenant_id)
-        sys_cfg = self._config_manager.get_system_config()
-        backend_config = get_config(
-            tenant_id=tenant_id, config_manager=self._config_manager
+        vespa_endpoint = await asyncio.to_thread(self._get_vespa_endpoint, tenant_id)
+        sys_cfg = await asyncio.to_thread(self._config_manager.get_system_config)
+        backend_config = (
+            await asyncio.to_thread(
+                get_config, tenant_id=tenant_id, config_manager=self._config_manager
+            )
         ).get("backend", {})
         deps = AudioAnalysisDeps(
             backend_type=sys_cfg.search_backend,
@@ -3853,13 +3855,13 @@ class AgentDispatcher:
         # only text documents has no document_visual schema. Querying it
         # makes Vespa reject the whole search; a registry lookup failure
         # raises and is not read as an undeployed schema.
-        backend = get_backend()
+        backend = await asyncio.to_thread(get_backend)
         deployed_document_schemas = []
         for base_schema in ("document_text", "document_visual"):
             if await asyncio.to_thread(backend.schema_exists, base_schema, tenant_id):
                 deployed_document_schemas.append(base_schema)
 
-        vespa_endpoint = self._get_vespa_endpoint(tenant_id)
+        vespa_endpoint = await asyncio.to_thread(self._get_vespa_endpoint, tenant_id)
         deps = DocumentAgentDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,

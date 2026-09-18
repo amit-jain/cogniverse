@@ -684,3 +684,102 @@ async def test_tenant_list_jobs_offloaded(monkeypatch):
 
     ticks = await _ticks_during(lambda: tenant.list_jobs("acme:acme"))
     assert ticks >= 10, f"only {ticks} ticks — list_configs ran on the loop"
+
+
+def _media_backend(monkeypatch):
+    """Patch ``get_backend`` with a cold metadata-backend resolve: the
+    ConfigUtils ensure-chain plus the registry's schema load, both synchronous
+    Vespa reads. The tenant has no media schema, so the dispatch answers from
+    the resolved backend and stops."""
+    import cogniverse_runtime.admin.tenant_manager as tenant_manager
+
+    backend = MagicMock()
+    backend.schema_exists.return_value = False
+
+    def _slow_get_backend():
+        time.sleep(0.3)
+        return backend
+
+    monkeypatch.setattr(tenant_manager, "get_backend", _slow_get_backend)
+    return backend
+
+
+@pytest.mark.asyncio
+async def test_image_search_backend_resolution_offloaded(monkeypatch):
+    """``_execute_image_search_task`` resolves the metadata backend off the
+    loop; inline, the config-store read froze the replica for its duration."""
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+    backend = _media_backend(monkeypatch)
+    d = object.__new__(AgentDispatcher)
+    result = {}
+
+    async def _run():
+        result.update(await d._execute_image_search_task("q", "acme:acme", 5))
+
+    ticks = await _ticks_during(_run)
+    assert ticks >= 10, f"only {ticks} ticks — get_backend ran on the event loop"
+    assert backend.schema_exists.call_args.args == ("image_colpali_mv", "acme:acme")
+    assert result == {
+        "status": "success",
+        "agent": "image_search_agent",
+        "message": "No image content indexed for tenant 'acme:acme'",
+        "results_count": 0,
+        "results": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_audio_search_backend_resolution_offloaded(monkeypatch):
+    """``_execute_audio_search_task`` resolves the metadata backend off the
+    loop; inline, the config-store read froze the replica for its duration."""
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+    backend = _media_backend(monkeypatch)
+    d = object.__new__(AgentDispatcher)
+    result = {}
+
+    async def _run():
+        result.update(await d._execute_audio_search_task("q", "acme:acme", 5))
+
+    ticks = await _ticks_during(_run)
+    assert ticks >= 10, f"only {ticks} ticks — get_backend ran on the event loop"
+    assert backend.schema_exists.call_args.args == ("audio_content", "acme:acme")
+    assert result == {
+        "status": "success",
+        "agent": "audio_analysis_agent",
+        "message": "No audio content indexed for tenant 'acme:acme'",
+        "results_count": 0,
+        "results": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_modality_agents_config_offloaded(monkeypatch):
+    """The orchestrator reads the tenant's agents config off the loop before
+    fanning out to the detected modalities' retrieval agents."""
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent
+
+    def _slow_get_config(**kwargs):
+        time.sleep(0.3)  # cold ConfigUtils ensure-chain read
+        cfg = MagicMock()
+        cfg.get.return_value = {}
+        return cfg
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config", _slow_get_config
+    )
+    agent = object.__new__(OrchestratorAgent)
+    agent._config_manager = MagicMock()
+    evidence = []
+
+    async def _run():
+        evidence.extend(
+            await agent._collect_detected_modality_evidence(
+                query="q", tenant_id="acme:acme", detected_modalities=[]
+            )
+        )
+
+    ticks = await _ticks_during(_run)
+    assert ticks >= 10, f"only {ticks} ticks — the agents-config read ran on the loop"
+    assert evidence == []
