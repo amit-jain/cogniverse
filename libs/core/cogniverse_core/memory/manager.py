@@ -33,6 +33,12 @@ from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 logger = logging.getLogger(__name__)
 
 
+MEMORY_BASE_SCHEMA = "agent_memories"
+PROVENANCE_BASE_SCHEMA = "provenance"
+"""The schemas a memory-aware agent needs for a tenant. Tenant registration
+deploys them (``TENANT_BASE_SCHEMAS``) so no serving request ever has to."""
+
+
 def build_memory_profile(base_schema_name: str, embedding_dims: int) -> Dict[str, Any]:
     """Backend profile registered for the agent-memory schema.
 
@@ -233,7 +239,7 @@ class Mem0MemoryManager:
         schema_loader,
         llm_api_key: Optional[str] = None,
         backend_config_port: Optional[int] = None,
-        base_schema_name: str = "agent_memories",
+        base_schema_name: str = MEMORY_BASE_SCHEMA,
         auto_create_schema: bool = True,
         embedding_dims: int = 768,
         knowledge_registry: Optional[object] = None,
@@ -461,7 +467,7 @@ class Mem0MemoryManager:
             # a deploy failure here breaks every audit / citation
             # path so it must surface, not be swallowed.
             backend.schema_registry.deploy_schema(
-                tenant_id=storage_tenant_id, base_schema_name="provenance"
+                tenant_id=storage_tenant_id, base_schema_name=PROVENANCE_BASE_SCHEMA
             )
             logger.info(
                 "Ensured tenant provenance schema exists: provenance_%s",

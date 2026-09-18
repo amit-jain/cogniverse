@@ -1294,3 +1294,61 @@ st.session_state.media = get_instance().media_file_mgr._storage
         media = app.session_state.media.get_file(download.proto.url.rsplit("/", 1)[-1])
         assert media.mimetype == "application/json"
         assert _export_coordinates(json.loads(media.content)) == _expected_history()
+
+
+@pytest.mark.integration
+class TestAPointReadParsesOnlyItsOwnKey:
+    """``get_config`` names the key it wants in the visit's selection.
+
+    The deployment journal keeps every tenant's intents under one
+    (tenant, scope, service), so a point read that visits the whole triple
+    parses every other owner's row — pure-Python JSON decoding that holds the
+    GIL, on a request that deploys a schema. The serving loop then answers
+    nothing for its duration.
+    """
+
+    def test_reading_one_key_parses_no_other_keys_rows(
+        self, vespa_config_store, monkeypatch
+    ):
+        store = vespa_config_store
+        service = f"pointread_{uuid.uuid4().hex[:8]}"
+        tenant = "pointread:tenant"
+        keys = [f"key_{index}" for index in range(5)]
+        for key in keys:
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SCHEMA,
+                service=service,
+                config_key=key,
+                config_value={"key": key},
+            )
+        # A second version of the key under test, so the read still has to
+        # choose the latest among that key's own rows.
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service=service,
+            config_key=keys[2],
+            config_value={"key": keys[2], "revision": 2},
+        )
+
+        parsed = []
+        original = VespaConfigStore._entry_from_fields
+
+        def counting(fields):
+            entry = original(fields)
+            parsed.append((entry.config_key, entry.version))
+            return entry
+
+        monkeypatch.setattr(
+            VespaConfigStore, "_entry_from_fields", staticmethod(counting)
+        )
+        found = store.get_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service=service,
+            config_key=keys[2],
+        )
+
+        assert found.config_value == {"key": keys[2], "revision": 2}
+        assert sorted(parsed) == [(keys[2], 1), (keys[2], 2)]

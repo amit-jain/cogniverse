@@ -112,11 +112,11 @@ async def test_create_tenant_retries_transport_timeout_without_rollback(monkeypa
         created_at=1234567,
         created_by="admin",
         status="active",
-        schemas_deployed=["video_colpali_smol500_mv_frame"],
+        schemas_deployed=list(tenant_manager_mod.TENANT_BASE_SCHEMAS),
     )
     assert backend.schema_registry.calls == [
-        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
-        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
+        ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
+        ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
     ]
     assert backend.schema_manager.calls == []
     assert backend.create_metadata_calls == [
@@ -142,7 +142,7 @@ async def test_create_tenant_retries_transport_timeout_without_rollback(monkeypa
                 "created_at": 1234567,
                 "created_by": "admin",
                 "status": "active",
-                "schemas_deployed": ["video_colpali_smol500_mv_frame"],
+                "schemas_deployed": list(tenant_manager_mod.TENANT_BASE_SCHEMAS),
             },
         ),
     ]
@@ -218,7 +218,7 @@ async def test_create_tenant_rolls_back_schema_and_org_after_metadata_failure(
     assert exc.value.status_code == 500
     assert exc.value.detail == "Failed to create tenant acme:prod in backend"
     assert backend.schema_registry.calls == [
-        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
+        ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
     ]
     assert backend.schema_manager.calls == ["acme:prod"]
     assert backend.create_metadata_calls == [
@@ -244,7 +244,7 @@ async def test_create_tenant_rolls_back_schema_and_org_after_metadata_failure(
                 "created_at": 1234567,
                 "created_by": "admin",
                 "status": "active",
-                "schemas_deployed": ["video_colpali_smol500_mv_frame"],
+                "schemas_deployed": list(tenant_manager_mod.TENANT_BASE_SCHEMAS),
             },
         ),
     ]
@@ -284,3 +284,35 @@ async def test_create_tenant_logs_when_schema_manager_missing_during_rollback(
         "Cannot roll back tenant schemas for acme:prod: backend.schema_manager "
         "is unavailable after deploying 2 schema(s)"
     ]
+
+
+@pytest.mark.asyncio
+async def test_registration_deploys_every_schema_memory_init_would_ensure(monkeypatch):
+    """A serving request must never deploy a schema.
+
+    Memory init ensures the tenant's memory and provenance schemas on the first
+    request that touches it. Deploying a Vespa application package there reads
+    every tenant's registry rows and the whole deployment journal on a worker
+    thread, and the GIL that parsing holds stops the replica answering anything
+    while it runs. Registration deploys them instead, so that ensure is a
+    lookup.
+    """
+    from cogniverse_core.memory.manager import (
+        MEMORY_BASE_SCHEMA,
+        PROVENANCE_BASE_SCHEMA,
+    )
+    from cogniverse_runtime.admin import tenant_manager as tenant_manager_mod
+
+    backend = _RecordingBackend(deploy_outcomes=[None], create_outcomes=[True, True])
+    tenant_manager = _prepare_create_tenant(monkeypatch, backend)
+
+    tenant = await tenant_manager.create_tenant(
+        tenant_manager_mod.CreateTenantRequest(
+            tenant_id="acme:prod", created_by="admin"
+        )
+    )
+
+    assert backend.schema_registry.calls == [
+        ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
+    ]
+    assert set(tenant.schemas_deployed) >= {MEMORY_BASE_SCHEMA, PROVENANCE_BASE_SCHEMA}

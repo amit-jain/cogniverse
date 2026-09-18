@@ -280,6 +280,7 @@ class VespaConfigStore(ImmutableConfigStore):
         tenant_id: Optional[str] = None,
         scope: Optional[ConfigScope] = None,
         service: Optional[str] = None,
+        config_key: Optional[str] = None,
         config_key_suffix: Optional[str] = None,
         skip_malformed: bool = False,
     ) -> List[tuple[str, ConfigEntry]]:
@@ -299,6 +300,10 @@ class VespaConfigStore(ImmutableConfigStore):
         if service is not None:
             selection_parts.append(
                 f"{self.schema_name}.service == {yql_quote(service)}"
+            )
+        if config_key is not None:
+            selection_parts.append(
+                f"{self.schema_name}.config_key == {yql_quote(config_key)}"
             )
         if config_key_suffix is not None:
             # Document selection's glob match; the visit then carries only the
@@ -770,6 +775,7 @@ class VespaConfigStore(ImmutableConfigStore):
                     tenant_id=tenant_id,
                     scope=scope,
                     service=service,
+                    config_key=config_key,
                 )
                 if visited_id == config_id
                 and (version is None or entry.version == int(version))
@@ -810,6 +816,7 @@ class VespaConfigStore(ImmutableConfigStore):
                     tenant_id=tenant_id,
                     scope=scope,
                     service=service,
+                    config_key=config_key,
                 )
                 if visited_id == config_id
             ]
