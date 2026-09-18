@@ -35,7 +35,7 @@ from cogniverse_core.memory.contradiction import (
     CONFLICT_AGENT_NAME,
     CONFLICT_RECORD_KIND,
 )
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.memory.schema import build_default_registry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
@@ -66,6 +66,7 @@ def manager_with_registry(shared_memory_vespa, shared_denseon):
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    affirm_memory_profile(cm)
     mm = Mem0MemoryManager(tenant_id=TENANT)
     mm.initialize(
         backend_host="http://localhost",

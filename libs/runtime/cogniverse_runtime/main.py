@@ -42,6 +42,7 @@ from cogniverse_core.common.models.semantic_embedder import (
     configure_semantic_embedder_defaults,
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.memory.manager import affirm_memory_profile
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import (
     BackendRegistry,
@@ -290,14 +291,21 @@ def _probe_phoenix_reachability() -> None:
         logger.warning(msg)
 
 
-def reaffirm_wiki_profile(config_manager, config: dict) -> None:
-    """Re-affirm config.json's ``wiki_semantic`` profile into cached backends.
+def reaffirm_system_profiles(config_manager, config: dict) -> None:
+    """Affirm the system profiles no ingestion profile deploy registers.
+
+    Wiki pages are fed by WikiManager and agent memories by Mem0, so nothing
+    else adds theirs. Affirming them once here — not on the request that first
+    needs one — is what keeps a serving request from rewriting the system
+    tenant's backend config, which every new tenant then rewrote again.
 
     The add fans through the profile-change listener into every cached search
-    backend. The profile is READ from the loaded config dict (the same source
-    the search backend resolves profiles from) — a hardcoded copy here
-    drifted from config.json silently. Raises when the profile is missing:
-    wiki search cannot resolve without it.
+    backend. ``wiki_semantic`` is READ from the loaded config dict (the same
+    source the search backend resolves profiles from) — a hardcoded copy here
+    drifted from config.json silently — and raises when missing, because wiki
+    search cannot resolve without it. The memory profile is not a shipped
+    ingestion profile: ``build_memory_profile`` owns its shape, the same
+    definition the memory manager reads back.
     """
     from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
@@ -313,6 +321,7 @@ def reaffirm_wiki_profile(config_manager, config: dict) -> None:
         tenant_id=SYSTEM_TENANT_ID,
         service="backend",
     )
+    affirm_memory_profile(config_manager)
 
 
 def resolve_harness_api_keys(
@@ -1089,7 +1098,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # registration itself is cluster-wide (all tenants see the same
         # profile shape), so it lives under SYSTEM_TENANT_ID.
         try:
-            reaffirm_wiki_profile(config_manager, config)
+            reaffirm_system_profiles(config_manager, config)
             logger.info("Wiki backend profile registered")
         except Exception as exc:
             logger.warning("Wiki profile register failed: %s", exc)

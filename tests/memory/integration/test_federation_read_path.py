@@ -27,7 +27,7 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.federation import org_trunk_tenant_id
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.memory.schema import build_default_registry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
@@ -68,6 +68,7 @@ def _build_manager(
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    affirm_memory_profile(cm)
     mm = Mem0MemoryManager(tenant_id=tenant_id)
     mm.initialize(
         backend_host="http://localhost",
