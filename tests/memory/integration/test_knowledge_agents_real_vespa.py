@@ -45,7 +45,7 @@ from cogniverse_agents.knowledge_summarization_agent import (
     KnowledgeSummarizationDeps,
     KnowledgeSummarizationInput,
 )
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
@@ -94,6 +94,7 @@ def real_mm(shared_memory_vespa, shared_denseon):
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    affirm_memory_profile(cm)
     mm = Mem0MemoryManager(tenant_id=TENANT)
     mm.initialize(
         backend_host="http://localhost",

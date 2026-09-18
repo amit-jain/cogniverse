@@ -35,8 +35,18 @@ logger = logging.getLogger(__name__)
 
 MEMORY_BASE_SCHEMA = "agent_memories"
 PROVENANCE_BASE_SCHEMA = "provenance"
+MEMORY_EMBEDDING_DIMS = 768
 """The schemas a memory-aware agent needs for a tenant. Tenant registration
 deploys them (``TENANT_BASE_SCHEMAS``) so no serving request ever has to."""
+
+
+class MemoryProfileMissingError(RuntimeError):
+    """The deployment ships no backend profile for the agent-memory schema.
+
+    A configuration fault, raised rather than repaired: writing the profile
+    from a request rewrites the system tenant's backend config on the serving
+    path, and leaves the deployment's own config still missing it.
+    """
 
 
 def build_memory_profile(base_schema_name: str, embedding_dims: int) -> Dict[str, Any]:
@@ -56,6 +66,30 @@ def build_memory_profile(base_schema_name: str, embedding_dims: int) -> Dict[str
         "embedding_type": "dense",
         "schema_config": {"embedding_dims": embedding_dims},
     }
+
+
+def affirm_memory_profile(
+    config_manager,
+    *,
+    base_schema_name: str = MEMORY_BASE_SCHEMA,
+    embedding_dims: int = MEMORY_EMBEDDING_DIMS,
+) -> None:
+    """Register the agent-memory backend profile under the system tenant.
+
+    Startup's job — the runtime calls this once, and anything that drives
+    memory init against its own config store calls it in place of a start.
+    A request never does: that is what rewrote the system tenant's backend
+    config on the serving path.
+    """
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            base_schema_name, build_memory_profile(base_schema_name, embedding_dims)
+        ),
+        tenant_id=SYSTEM_TENANT_ID,
+        service="backend",
+    )
 
 
 # Max number of distinct tenants whose Mem0 instances are kept warm in
@@ -241,7 +275,7 @@ class Mem0MemoryManager:
         backend_config_port: Optional[int] = None,
         base_schema_name: str = MEMORY_BASE_SCHEMA,
         auto_create_schema: bool = True,
-        embedding_dims: int = 768,
+        embedding_dims: int = MEMORY_EMBEDDING_DIMS,
         knowledge_registry: Optional[object] = None,
     ) -> None:
         """
@@ -361,54 +395,18 @@ class Mem0MemoryManager:
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
 
-        # Get backend instance with full config including profiles
-        # Add agent_memories profile since it may not be in config
-        profiles_raw = config.get("profiles", {})
-
-        # Ensure profiles is a dict (handle list format or other edge cases)
-        if isinstance(profiles_raw, dict):
-            profiles = profiles_raw
-        elif isinstance(profiles_raw, list):
-            profiles = {
-                p.get("name", f"profile_{i}"): p
-                for i, p in enumerate(profiles_raw)
-                if isinstance(p, dict)
-            }
-        else:
-            profiles = {}
-
+        # The memory profile the backend resolves. Profiles live under
+        # ``backend.profiles``; the shipped config carries this one and the
+        # runtime affirms it at startup, so a request only reads it. A request
+        # that registered it instead rewrote the system tenant's backend
+        # config, and every new tenant rewrote it again.
+        profiles = dict((config.get("backend") or {}).get("profiles") or {})
         if base_schema_name not in profiles:
-            memory_profile = build_memory_profile(base_schema_name, embedding_dims)
-            profiles[base_schema_name] = memory_profile
-
-            # Persist the profile through ConfigManager so the shared search
-            # backend picks it up via the profile_change_listener wired in
-            # main.py. Without this step the profile was only known to the
-            # tenant-specific ingestion backend — writes landed in Vespa but
-            # reads returned "profile not found" from the shared search cache.
-            try:
-                from cogniverse_foundation.config.unified_config import (
-                    BackendProfileConfig,
-                )
-
-                profile_config = BackendProfileConfig.from_dict(
-                    base_schema_name, memory_profile
-                )
-                config_manager.add_backend_profile(
-                    profile_config,
-                    tenant_id=SYSTEM_TENANT_ID,
-                    service="backend",
-                )
-            except Exception as exc:
-                # Idempotent re-adds surface as store-level warnings but
-                # shouldn't fail Mem0 init. The in-process dict we just
-                # built is still used below for the ingestion backend.
-                logger.debug(
-                    "ConfigManager.add_backend_profile for '%s' raised "
-                    "(may be a harmless re-register): %s",
-                    base_schema_name,
-                    exc,
-                )
+            raise MemoryProfileMissingError(
+                f"backend profile {base_schema_name!r} is not registered; the "
+                f"runtime affirms it at startup and a request must not write "
+                f"it into the system tenant's config"
+            )
 
         config_backend = config.get("backend", {})
         # Strip url/port from config.json's backend section — the explicit
