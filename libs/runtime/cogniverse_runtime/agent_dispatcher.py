@@ -55,6 +55,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Port a URL with a scheme and no explicit port connects to.
+_SCHEME_PORTS = {"http": 80, "https": 443}
+
 
 def _store_failure_status(exc: BaseException) -> str:
     """``store_unavailable`` for a store that could not answer, else ``error``."""
@@ -1104,9 +1107,14 @@ class AgentDispatcher:
             if not url:
                 return
             try:
-                parsed = urlparse(url if "://" in url else f"http://{url}")
+                if "://" in url:
+                    parsed = urlparse(url)
+                    fallback_port = _SCHEME_PORTS.get(parsed.scheme, default_port)
+                else:
+                    parsed = urlparse(f"http://{url}")
+                    fallback_port = default_port
                 host = parsed.hostname or "localhost"
-                port = int(parsed.port or default_port)
+                port = int(parsed.port or fallback_port)
             except (ValueError, TypeError) as exc:
                 logger.warning(
                     "Egress pre-flight skips %s: %r does not parse as an address (%s)",

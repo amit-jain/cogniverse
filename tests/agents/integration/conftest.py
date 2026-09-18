@@ -758,6 +758,12 @@ def _test_owned_telemetry():
 # cleanup) took 159s on this host; the budget covers a cold image pull too.
 OPENSHELL_GATEWAY_START_TIMEOUT_S = 300
 
+# A registry transfer can stall mid-layer without failing. A timed-out pull
+# keeps its downloaded content, so the next attempt resumes.
+SANDBOX_IMAGE_PULL_ATTEMPT_TIMEOUT_S = 240
+SANDBOX_IMAGE_PULL_ATTEMPTS = 4
+SANDBOX_IMAGE_IMPORT_TIMEOUT_S = 600
+
 
 from tests.utils.host_limits import (
     inotify_cap,
@@ -820,6 +826,11 @@ class OpenShellTestGateway:
             finally:
                 k3s_log.stop()
             if result.returncode == 0:
+                try:
+                    self._provision_sandbox_image()
+                except BaseException:
+                    self.destroy()
+                    raise
                 return
             if "Corrupted cluster state" not in result.stderr:
                 break
@@ -829,6 +840,127 @@ class OpenShellTestGateway:
             f"exited {result.returncode}\n--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}\n"
             f"--- {self.container} error lines ---\n{k3s_log.error_lines()}",
+            pytrace=False,
+        )
+
+    def _provision_sandbox_image(self) -> None:
+        """Load the gateway's sandbox image into its K3s from the host's Docker.
+
+        A fresh gateway otherwise pulls the image from the registry when the
+        first sandbox is created, inside that sandbox's readiness budget. The
+        host copy is refreshed with resumable, bounded attempts and survives
+        the gateway, so a stalled transfer is retried instead of timing out
+        the sandbox.
+        """
+        image = self._gateway_sandbox_image()
+        self._pull_to_host(image)
+        host = _docker(
+            "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image
+        )
+        assert host.returncode == 0, host.stderr
+        platform_name = host.stdout.strip()
+        manifest = _docker(
+            "image",
+            "inspect",
+            "--platform",
+            platform_name,
+            "--format",
+            "{{.Id}}",
+            image,
+        )
+        assert manifest.returncode == 0, manifest.stderr
+        manifest_digest = manifest.stdout.strip()
+        save = subprocess.Popen(
+            ["docker", "save", "--platform", platform_name, image],
+            stdout=subprocess.PIPE,
+        )
+        try:
+            imported = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    self.container,
+                    "ctr",
+                    "-n",
+                    "k8s.io",
+                    "images",
+                    "import",
+                    "--platform",
+                    platform_name,
+                    "-",
+                ],
+                stdin=save.stdout,
+                capture_output=True,
+                text=True,
+                timeout=SANDBOX_IMAGE_IMPORT_TIMEOUT_S,
+                check=False,
+            )
+        finally:
+            save.stdout.close()
+            save_rc = save.wait(timeout=60)
+        assert (save_rc, imported.returncode) == (0, 0), (
+            f"loading {image} into {self.container}: docker save exited "
+            f"{save_rc}, ctr import exited {imported.returncode}\n"
+            f"{imported.stdout}\n{imported.stderr}"
+        )
+        loaded = _docker(
+            "exec",
+            self.container,
+            "ctr",
+            "-n",
+            "k8s.io",
+            "images",
+            "ls",
+            f"name=={image}",
+        )
+        assert loaded.returncode == 0, loaded.stderr
+        rows = [line.split() for line in loaded.stdout.splitlines()[1:]]
+        assert [(row[0], row[2]) for row in rows] == [(image, manifest_digest)], (
+            loaded.stdout
+        )
+
+    def _gateway_sandbox_image(self) -> str:
+        result = _docker(
+            "exec",
+            self.container,
+            "kubectl",
+            "-n",
+            "openshell",
+            "get",
+            "statefulset",
+            "openshell",
+            "-o",
+            "jsonpath={.spec.template.spec.containers[0]"
+            ".env[?(@.name=='OPENSHELL_SANDBOX_IMAGE')].value}",
+        )
+        assert result.returncode == 0, result.stderr
+        image = result.stdout.strip()
+        assert image, f"{self.container} sets no OPENSHELL_SANDBOX_IMAGE"
+        return image
+
+    def _pull_to_host(self, image: str) -> None:
+        attempts = []
+        for _ in range(SANDBOX_IMAGE_PULL_ATTEMPTS):
+            try:
+                pulled = subprocess.run(
+                    ["docker", "pull", image],
+                    capture_output=True,
+                    text=True,
+                    timeout=SANDBOX_IMAGE_PULL_ATTEMPT_TIMEOUT_S,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                attempts.append(
+                    f"timed out after {SANDBOX_IMAGE_PULL_ATTEMPT_TIMEOUT_S}s"
+                )
+                continue
+            if pulled.returncode == 0:
+                return
+            attempts.append(f"exited {pulled.returncode}: {pulled.stderr.strip()}")
+        pytest.fail(
+            f"docker pull {image} failed {len(attempts)} times:\n"
+            + "\n".join(attempts),
             pytrace=False,
         )
 
