@@ -245,6 +245,7 @@ class InMemoryConfigStore(ImmutableConfigStore):
         self,
         scope: Optional[ConfigScope] = None,
         service: Optional[str] = None,
+        config_key_suffix: Optional[str] = None,
     ) -> List[ConfigEntry]:
         """List all configurations across all tenants."""
         results = []
@@ -262,6 +263,12 @@ class InMemoryConfigStore(ImmutableConfigStore):
 
             # Filter by service
             if service is not None and entry.service != service:
+                continue
+
+            # Filter by config_key suffix, as the store's selection does
+            if config_key_suffix is not None and not entry.config_key.endswith(
+                config_key_suffix
+            ):
                 continue
 
             results.append(entry)

@@ -39,6 +39,9 @@ from cogniverse_core.registries.exceptions import (
 from cogniverse_core.registries.schema_deployment_intents import (
     _SERVICE as INTENTS_SERVICE,
 )
+from cogniverse_core.registries.schema_deployment_intents import (
+    SchemaDeploymentIntents,
+)
 from cogniverse_core.registries.schema_registry import (
     DEPLOYED_SCHEMAS_TTL_S,
     SCHEMA_REGISTRY_SERVICE,
@@ -60,7 +63,7 @@ REFUSED_SEARCHES = 10
 # One lookup: the registry rows and the deployment journal.
 ONE_LOOKUP = Counter(
     {
-        ("list_all_configs", SCHEMA_REGISTRY_SERVICE): 1,
+        ("list_configs", SCHEMA_REGISTRY_SERVICE): 1,
         ("list_all_configs", INTENTS_SERVICE): 1,
     }
 )
@@ -299,6 +302,44 @@ def store_reads(corpus, monkeypatch):
     return reads
 
 
+@pytest.fixture
+def store_rows(corpus, monkeypatch):
+    """Every ConfigEntry the corpus config store hands back, by (method, service)."""
+    store = corpus["config_manager"].store
+    rows: dict = {}
+    lock = threading.Lock()
+    for method in ("get_config", "list_configs", "list_all_configs"):
+        original = getattr(store, method)
+
+        def capturing(*args, _method=method, _original=original, **kwargs):
+            result = _original(*args, **kwargs)
+            returned = result if isinstance(result, list) else [result]
+            with lock:
+                rows.setdefault((_method, kwargs.get("service")), []).extend(
+                    entry for entry in returned if entry is not None
+                )
+            return result
+
+        monkeypatch.setattr(store, method, capturing)
+    return rows
+
+
+def _row_owners(rows):
+    """The tenant each carried row belongs to.
+
+    A registry row names its tenant directly; a deployment-intent row is stored
+    under the system tenant and names its owner inside the registration.
+    """
+    owners = set()
+    for (_method, service), entries in rows.items():
+        for entry in entries:
+            if service == SCHEMA_REGISTRY_SERVICE:
+                owners.add(entry.config_value["tenant_id"])
+            elif service == INTENTS_SERVICE:
+                owners.add(entry.config_value["registration"]["tenant_id"])
+    return owners
+
+
 def _counted_manager(env):
     """A ConfigManager over the corpus store with nothing cached yet, holding
     tenant scoped configs as long as a deployed-schema entry lives."""
@@ -497,7 +538,7 @@ class TestConcurrentTenantsGetTheirOwnAnswer:
         assert {
             key: count
             for key, count in reads_during_searches.items()
-            if key[0] == "list_all_configs"
+            if key in ONE_LOOKUP
         } == {key: len(lookups_during_searches) for key in ONE_LOOKUP}
         assert entries == {
             canonical[tenant]: frozenset({BASE_SCHEMA}) for tenant in env["deployed"]
@@ -999,7 +1040,7 @@ class TestReaderFaultContract:
                 f"store paused for tenant rows under {ConfigScope.SCHEMA.value}"
             )
 
-        monkeypatch.setattr(store, "list_all_configs", store_down)
+        monkeypatch.setattr(store, "list_configs", store_down)
         within_ttl = reader(tenant, BASE_SCHEMA)
         reads_within_ttl = list(failed_reads)
         with pytest.raises(RegistryStorageError) as absent_name:
@@ -1043,20 +1084,25 @@ class TestDeleteDuringAReadIsNotCached:
         )
         reader = DeployedSchemaNames(env["config_manager"], 3600)
         store = env["config_manager"].store
-        original = store.list_all_configs
         rows_read = threading.Event()
         unregistered = threading.Event()
         calls: list = []
 
-        def list_all_configs(*args, **kwargs):
-            result = original(*args, **kwargs)
-            calls.append(kwargs.get("service"))
-            if len(calls) == 1:
-                rows_read.set()
-                assert unregistered.wait(timeout=60)
-            return result
+        def recording(original):
+            def wrapper(*args, **kwargs):
+                result = original(*args, **kwargs)
+                calls.append(kwargs.get("service"))
+                if len(calls) == 1:
+                    rows_read.set()
+                    assert unregistered.wait(timeout=60)
+                return result
 
-        monkeypatch.setattr(store, "list_all_configs", list_all_configs)
+            return wrapper
+
+        # The lookup reads the tenant's registry rows and then the deployment
+        # journal; both are wrapped so the gate holds the first of the pair.
+        for method in ("list_configs", "list_all_configs"):
+            monkeypatch.setattr(store, method, recording(getattr(store, method)))
         in_flight: dict = {}
         reading = threading.Thread(
             target=lambda: in_flight.setdefault("answer", reader(tenant, BASE_SCHEMA))
@@ -1191,3 +1237,85 @@ class TestRegistryMissReadsOneRow:
                 backend.schema_exists(UNDEPLOYED_BASE_SCHEMA, tenant_id=tenant)
         finally:
             BackendRegistry.get_instance().clear_instances()
+
+
+class TestALookupCarriesOnlyThisTenantsRows:
+    """The deployed-name lookup reads this tenant's rows and no other's.
+
+    It runs on the serving path — every memory read and every search asks it,
+    and its per-tenant entry expires every ``DEPLOYED_SCHEMAS_TTL_S`` — so a
+    read that carries every tenant's registry rows and the whole deployment
+    journal back to filter them in Python makes each request pay for the
+    cluster's entire schema history, on a worker thread whose parsing starves
+    the serving loop.
+    """
+
+    def _pending_intent_for(self, env, tenant, base):
+        """A pending intent another tenant owns, retired when the test ends."""
+        intents = SchemaDeploymentIntents(env["config_manager"].store)
+        full_name = f"{base}_{canonical_tenant_id(tenant).replace(':', '_')}"
+        definition = env["schema_loader"].load_schema(base)
+        definition["name"] = full_name
+        record = intents.prepare(
+            {
+                "tenant_id": canonical_tenant_id(tenant),
+                "base_schema_name": base,
+                "full_schema_name": full_name,
+                "schema_definition": json.dumps(definition),
+                "config": {},
+                "deployment_time": "2026-01-01T00:00:00+00:00",
+            },
+            grace_s=600.0,
+        )
+        return intents, record
+
+    def test_a_lookup_reads_no_other_tenants_rows(self, corpus, store_rows):
+        env = corpus
+        tenant = canonical_tenant_id(env["deployed"][0])
+        neighbour = env["deployed"][1]
+        intents, record = self._pending_intent_for(
+            env, neighbour, UNDEPLOYED_BASE_SCHEMA
+        )
+        try:
+            reader = DeployedSchemaNames(_counted_manager(env))
+            deployed = reader(tenant, BASE_SCHEMA)
+            # The neighbour's in-flight activation is the neighbour's alone.
+            absent = reader(tenant, UNDEPLOYED_BASE_SCHEMA)
+        finally:
+            intents.retire(record)
+
+        assert (deployed, absent) == (True, False)
+        assert _row_owners(store_rows) == {tenant}
+
+    def test_a_lookup_sees_this_tenants_own_pending_intent(self, corpus, store_rows):
+        env = corpus
+        tenant = canonical_tenant_id(env["deployed"][0])
+        intents, record = self._pending_intent_for(env, tenant, UNDEPLOYED_BASE_SCHEMA)
+        try:
+            reader = DeployedSchemaNames(_counted_manager(env))
+            in_flight = reader(tenant, UNDEPLOYED_BASE_SCHEMA)
+        finally:
+            intents.retire(record)
+
+        assert in_flight is True
+        assert _row_owners(store_rows) == {tenant}
+
+    def test_a_down_store_refuses_rather_than_answering_no_schemas(
+        self, corpus, monkeypatch
+    ):
+        env = corpus
+        tenant = canonical_tenant_id(env["deployed"][0])
+        store = env["config_manager"].store
+        refused: list = []
+
+        def store_down(*_args, **kwargs):
+            refused.append(kwargs.get("service"))
+            raise ConfigStoreUnavailableError("journal paused")
+
+        monkeypatch.setattr(store, "list_all_configs", store_down)
+        reader = DeployedSchemaNames(_counted_manager(env))
+        with pytest.raises(RegistryStorageError) as outage:
+            reader(tenant, BASE_SCHEMA)
+
+        assert refused == [INTENTS_SERVICE]
+        assert str(outage.value) == ("Cannot read deployment intents: journal paused")

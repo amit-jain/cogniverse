@@ -128,7 +128,7 @@ def test_registry_read_outage_raises_and_never_reads_as_nothing_deployed():
     def _fail(**kwargs):
         raise outage
 
-    config_manager.store.list_all_configs = _fail
+    config_manager.store.list_configs = _fail
 
     with pytest.raises(RegistryStorageError) as failure:
         tenant_deployed_schema_names(config_manager, TENANT)
@@ -145,10 +145,10 @@ def test_intent_read_outage_raises_rather_than_dropping_in_flight_names():
     register_deployed_schema(config_manager, TENANT, "document_text")
     rows = config_manager.store.list_all_configs
 
-    def _fail_intents(*, scope, service):
+    def _fail_intents(*, scope=None, service=None, config_key_suffix=None):
         if service == "schema_deployment_intents":
             raise ConnectionError("config store unreachable")
-        return rows(scope=scope, service=service)
+        return rows(scope=scope, service=service, config_key_suffix=config_key_suffix)
 
     config_manager.store.list_all_configs = _fail_intents
 
@@ -189,16 +189,25 @@ def test_concurrent_readers_each_see_the_full_registered_set():
 
 
 def _count_reads(config_manager) -> Counter:
+    """Count both store reads the lookup makes: the tenant's registry rows and
+    the deployment journal."""
     reads: Counter = Counter()
     lock = threading.Lock()
-    original = config_manager.store.list_all_configs
 
-    def _counting(*, scope, service):
-        with lock:
-            reads[service] += 1
-        return original(scope=scope, service=service)
+    def _counting(original):
+        def wrapper(**kwargs):
+            with lock:
+                reads[kwargs["service"]] += 1
+            return original(**kwargs)
 
-    config_manager.store.list_all_configs = _counting
+        return wrapper
+
+    for method in ("list_configs", "list_all_configs"):
+        setattr(
+            config_manager.store,
+            method,
+            _counting(getattr(config_manager.store, method)),
+        )
     return reads
 
 
@@ -319,19 +328,28 @@ def test_another_process_deletion_is_seen_after_the_ttl_and_registration_at_once
 def test_an_undeployed_schema_reads_on_every_call_and_concurrent_calls_share_it():
     config_manager = _config_manager()
     register_deployed_schema(config_manager, TENANT, "document_text")
-    rows = config_manager.store.list_all_configs
     calls: list[str] = []
     entered = threading.Event()
     release = threading.Event()
 
-    def _parked_first_read(*, scope, service):
-        calls.append(service)
-        if len(calls) == 1:
-            entered.set()
-            release.wait(timeout=30)
-        return rows(scope=scope, service=service)
+    def _parked_first_read(original):
+        def wrapper(**kwargs):
+            calls.append(kwargs["service"])
+            if len(calls) == 1:
+                entered.set()
+                release.wait(timeout=30)
+            return original(**kwargs)
 
-    config_manager.store.list_all_configs = _parked_first_read
+        return wrapper
+
+    # The lookup reads the tenant's registry rows and then the journal; the
+    # first of the pair is the one this parks.
+    for method in ("list_configs", "list_all_configs"):
+        setattr(
+            config_manager.store,
+            method,
+            _parked_first_read(getattr(config_manager.store, method)),
+        )
     reader = DeployedSchemaNames(config_manager, ttl_s=3600)
     callers = 8
     barrier = threading.Barrier(callers, timeout=30)
@@ -378,18 +396,18 @@ def test_ttl_must_be_positive():
 def test_concurrent_misses_share_one_failed_read_and_cache_nothing():
     config_manager = _config_manager()
     register_deployed_schema(config_manager, TENANT, "document_text")
-    rows = config_manager.store.list_all_configs
+    rows = config_manager.store.list_configs
     calls: list[str] = []
     entered = threading.Event()
     release = threading.Event()
 
-    def _slow_outage(*, scope, service):
-        calls.append(service)
+    def _slow_outage(**kwargs):
+        calls.append(kwargs["service"])
         entered.set()
         release.wait(timeout=30)
         raise ConnectionError("config store unreachable")
 
-    config_manager.store.list_all_configs = _slow_outage
+    config_manager.store.list_configs = _slow_outage
     reader = DeployedSchemaNames(config_manager, ttl_s=3600)
     callers = 8
     barrier = threading.Barrier(callers, timeout=30)
@@ -414,7 +432,7 @@ def test_concurrent_misses_share_one_failed_read_and_cache_nothing():
     release.set()
     for thread in threads:
         thread.join(timeout=30)
-    config_manager.store.list_all_configs = rows
+    config_manager.store.list_configs = rows
     recovered = reader(TENANT, "document_text")
 
     message = (
