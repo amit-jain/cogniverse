@@ -23,7 +23,7 @@ import pytest
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import _SCHEME_PORTS, AgentDispatcher
 
 pytestmark = [
     pytest.mark.integration,
@@ -441,6 +441,12 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
             .primary.api_base
         )
         resolved = urlparse(api_base if "://" in api_base else f"http://{api_base}")
+        # An api_base that carries a scheme but no port connects on that
+        # scheme's port; only a schemeless address falls back to the local
+        # LM port.
+        scheme_port = (
+            _SCHEME_PORTS.get(resolved.scheme, 11434) if "://" in api_base else 11434
+        )
 
         endpoints = dispatcher._system_endpoints(TENANT)
         # The unparseable backend address drops out; the LM endpoint the
@@ -448,7 +454,7 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
         assert set(endpoints) == {"llm"}
         assert endpoints["llm"] == {
             "host": resolved.hostname,
-            "port": resolved.port or 11434,
+            "port": resolved.port or scheme_port,
             "protocol": "tcp",
         }
 
