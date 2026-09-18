@@ -8,7 +8,7 @@ import requests
 
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID, MEMORY_TENANT_ID
@@ -232,6 +232,9 @@ def shared_memory_vespa(shared_vespa):
     BackendRegistry._backend_instances.clear()
 
     config_manager = make_config_manager(shared_vespa)
+    # The runtime affirms the memory profile at startup; nothing starts one
+    # here, so the fixture does it. A memory init never registers its own.
+    affirm_memory_profile(config_manager)
     deployed = deploy_memory_schemas(shared_vespa, config_manager=config_manager)
 
     BackendRegistry._backend_instances.clear()

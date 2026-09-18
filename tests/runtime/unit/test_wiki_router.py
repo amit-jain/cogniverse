@@ -394,12 +394,20 @@ class TestWikiFactoryRetiresAFailedBuildAtomically:
 
 @pytest.mark.unit
 class TestWikiProfileReaffirmation:
-    """Startup re-affirms the wiki_semantic profile by READING the loaded
+    """Startup re-affirms the shipped system profiles by READING the loaded
     config — the previous hardcoded copy in main.py drifted from config.json
-    silently, and nothing pinned their identity."""
+    silently, and nothing pinned their identity. Nothing else registers them:
+    wiki pages are fed by WikiManager and agent memories by Mem0, so a request
+    that found one missing used to write it into the system tenant's config."""
 
-    def test_reaffirm_reads_and_readds_the_loaded_profile(self):
-        from cogniverse_runtime.main import reaffirm_wiki_profile
+    def test_reaffirm_readds_the_loaded_wiki_and_the_memory_profile(self):
+        from cogniverse_core.memory.manager import (
+            MEMORY_BASE_SCHEMA,
+            MEMORY_EMBEDDING_DIMS,
+            build_memory_profile,
+        )
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.main import reaffirm_system_profiles
 
         cm = MagicMock()
         config = {
@@ -416,47 +424,69 @@ class TestWikiProfileReaffirmation:
             }
         }
 
-        reaffirm_wiki_profile(cm, config)
+        reaffirm_system_profiles(cm, config)
 
-        add_args = cm.add_backend_profile.call_args
-        profile = add_args.args[0]
-        assert profile.schema_name == "wiki_pages"
-        assert add_args.kwargs["tenant_id"] == "__system__"
-        assert add_args.kwargs["service"] == "backend"
+        assert [
+            (
+                call.args[0].profile_name,
+                call.args[0].schema_name,
+                call.kwargs["tenant_id"],
+                call.kwargs["service"],
+            )
+            for call in cm.add_backend_profile.call_args_list
+        ] == [
+            ("wiki_semantic", "wiki_pages", "__system__", "backend"),
+            (MEMORY_BASE_SCHEMA, MEMORY_BASE_SCHEMA, "__system__", "backend"),
+        ]
+        # The memory profile is the one build_memory_profile defines, so the
+        # manager reads back exactly what startup registered.
+        memory_call = cm.add_backend_profile.call_args_list[1].args[0]
+        assert (
+            memory_call.to_dict()
+            == BackendProfileConfig.from_dict(
+                MEMORY_BASE_SCHEMA,
+                build_memory_profile(MEMORY_BASE_SCHEMA, MEMORY_EMBEDDING_DIMS),
+            ).to_dict()
+        )
 
     def test_reaffirm_raises_when_profile_missing(self):
-        from cogniverse_runtime.main import reaffirm_wiki_profile
+        from cogniverse_runtime.main import reaffirm_system_profiles
 
+        cm = MagicMock()
         with pytest.raises(RuntimeError, match="wiki_semantic profile missing"):
-            reaffirm_wiki_profile(MagicMock(), {"backend": {"profiles": {}}})
+            reaffirm_system_profiles(cm, {"backend": {"profiles": {}}})
+        assert cm.add_backend_profile.call_args_list == []
 
     def test_wiki_semantic_profile_consistent_across_config_and_chart(self):
         """configs/config.json and the Helm chart's config.json must carry the
-        identical wiki_semantic profile — the deployed runtime reads the chart
-        copy, local runs read configs/, and a divergence puts search in a
-        different embedding space per environment."""
+        identical shipped system profiles — the deployed runtime reads the
+        chart copy, local runs read configs/, and a divergence puts search in a
+        different embedding space per environment. A profile shipped in only
+        one of them also leaves the other's startup affirmation raising."""
         import json
         from pathlib import Path
 
         repo = Path(__file__).resolve().parents[3]
-        dev = json.loads((repo / "configs/config.json").read_text())
-        dev_profile = dev["backend"]["profiles"]["wiki_semantic"]
-
-        assert dev_profile["type"] == "wiki"
-        assert dev_profile["schema_name"] == "wiki_pages"
-        assert dev_profile["schema_config"]["embedding_dims"] == 768
-
+        dev = json.loads((repo / "configs/config.json").read_text())["backend"][
+            "profiles"
+        ]
         chart_text = (repo / "charts/cogniverse/files/config.json").read_text()
-        start = chart_text.index('"wiki_semantic"')
-        brace = chart_text.index("{", start)
-        depth, end = 0, brace
-        for i, ch in enumerate(chart_text[brace:], brace):
-            depth += ch == "{"
-            depth -= ch == "}"
-            if depth == 0:
-                end = i + 1
-                break
-        chart_profile = json.loads(chart_text[brace:end])
-        assert chart_profile == dev_profile, (
+
+        def chart_profile(name):
+            brace = chart_text.index("{", chart_text.index(f'"{name}"'))
+            depth, end = 0, brace
+            for i, ch in enumerate(chart_text[brace:], brace):
+                depth += ch == "{"
+                depth -= ch == "}"
+                if depth == 0:
+                    end = i + 1
+                    break
+            return json.loads(chart_text[brace:end])
+
+        assert dev["wiki_semantic"] == chart_profile("wiki_semantic"), (
             "chart wiki_semantic profile drifted from configs/config.json"
+        )
+        assert (dev["wiki_semantic"]["type"], dev["wiki_semantic"]["schema_name"]) == (
+            "wiki",
+            "wiki_pages",
         )

@@ -1351,4 +1351,57 @@ class TestAPointReadParsesOnlyItsOwnKey:
         )
 
         assert found.config_value == {"key": keys[2], "revision": 2}
-        assert sorted(parsed) == [(keys[2], 1), (keys[2], 2)]
+        # Only this key, and only the version the read returns.
+        assert parsed == [(keys[2], 2)]
+
+    def test_reading_the_latest_decodes_no_superseded_version(
+        self, vespa_config_store, monkeypatch
+    ):
+        """A config keeps ``keep_versions`` of itself. The system backend config
+        is large and is read on serving paths, so returning its current value
+        must not decode the history that read is about to discard."""
+        store = vespa_config_store
+        service = f"latestonly_{uuid.uuid4().hex[:8]}"
+        tenant = "latestonly:tenant"
+        key = "the_key"
+        for revision in range(1, 4):
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SCHEMA,
+                service=service,
+                config_key=key,
+                config_value={"revision": revision},
+            )
+
+        decoded = []
+        original = VespaConfigStore._entry_from_fields
+
+        def counting(fields):
+            entry = original(fields)
+            decoded.append(entry.version)
+            return entry
+
+        monkeypatch.setattr(
+            VespaConfigStore, "_entry_from_fields", staticmethod(counting)
+        )
+        latest = store.get_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service=service,
+            config_key=key,
+        )
+        decoded_for_latest = list(decoded)
+        decoded.clear()
+        pinned = store.get_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service=service,
+            config_key=key,
+            version=1,
+        )
+
+        assert latest.config_value == {"revision": 3}
+        assert decoded_for_latest == [3]
+        # A pinned version still reads the whole history to find it.
+        assert pinned.config_value == {"revision": 1}
+        assert sorted(decoded) == [1, 2, 3]

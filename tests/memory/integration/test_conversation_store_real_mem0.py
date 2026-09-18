@@ -15,7 +15,7 @@ import pytest
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.conversation import ConversationStore
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
@@ -39,6 +39,7 @@ def _build_manager(*, shared_memory_vespa, shared_denseon) -> Mem0MemoryManager:
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    affirm_memory_profile(cm)
     mm = Mem0MemoryManager(tenant_id=SYSTEM_TENANT_ID)
     mm.initialize(
         backend_host="http://localhost",

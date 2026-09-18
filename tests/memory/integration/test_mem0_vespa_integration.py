@@ -5,6 +5,7 @@ These tests verify the complete memory system works with real Vespa instance.
 Uses shared session-scoped Vespa container from conftest.py.
 """
 
+import json
 import uuid
 
 import pytest
@@ -61,6 +62,15 @@ def memory_manager(shared_memory_vespa, shared_denseon):
         )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+    # What the runtime's startup does: affirm the profiles nothing else
+    # registers. Memory init reads the memory profile from here — it must not
+    # write one, which would rewrite the system tenant's config per request.
+    from cogniverse_runtime.main import reaffirm_system_profiles
+
+    reaffirm_system_profiles(
+        config_manager, json.loads((Path("configs") / "config.json").read_text())
+    )
 
     # Initialize with shared Vespa backend (LLM via the configured provider, embeddings via denseon).
     # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
@@ -518,24 +528,25 @@ class TestMem0ProfileRegistrationIntegration:
     def test_mem0_add_then_search_returns_the_memory_via_shared_backend(
         self, shared_memory_vespa, shared_denseon
     ):
-        """Real round-trip: on a fresh tenant (no agent_memories profile
-        in the cached search backend), Mem0.initialize must register the
-        profile via ConfigManager so the shared search backend learns
-        about it; then add_memory + search_memory must return the
-        memory with matching content.
+        """Real round-trip: a cached search backend that came up without the
+        profile learns it from the startup affirmation, and a fresh tenant's
+        add_memory + search_memory then return the memory with matching
+        content.
 
-        This is the bug that surfaced as the retry storm: before the
-        fix, Mem0's write path worked (writes landed in Vespa) but
-        search went through the shared VespaSearchBackend whose
-        profiles dict was a startup snapshot with no agent_memories
-        entry — every search raised 'profile not found' and retried.
+        This is the bug that surfaced as the retry storm: Mem0's write path
+        worked (writes landed in Vespa) but search went through the shared
+        VespaSearchBackend whose profiles dict was a startup snapshot with no
+        agent_memories entry — every search raised 'profile not found' and
+        retried.
         """
+        import json
         from pathlib import Path
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_runtime.main import reaffirm_system_profiles
         from cogniverse_vespa.config.config_store import VespaConfigStore
 
         Mem0MemoryManager._instances.clear()
@@ -580,6 +591,13 @@ class TestMem0ProfileRegistrationIntegration:
         assert "agent_memories" not in search_backend.profiles, (
             "Cold cached backend must NOT already know agent_memories — "
             "otherwise we're not proving dynamic registration worked."
+        )
+
+        # What the runtime's startup does, once. Mem0 reads the profile from
+        # here; registering it from a request rewrote the system tenant's
+        # backend config on the serving path, for every new tenant.
+        reaffirm_system_profiles(
+            config_manager, json.loads((Path("configs") / "config.json").read_text())
         )
 
         tenant_id = MEM0_ROUNDTRIP_TENANT_ID
@@ -710,3 +728,93 @@ class TestGetAllMemoriesServerSideFilter:
         )
 
         memory_manager.clear_agent_memory("test_tenant", agent)
+
+
+@pytest.mark.integration
+def test_first_init_for_a_tenant_writes_nothing_to_the_system_config(
+    shared_memory_vespa, shared_denseon
+):
+    """Memory init resolves its profile from the shipped config and writes none.
+
+    It used to register the profile itself, under the system tenant, because it
+    looked for ``profiles`` at the top level of the config where only
+    ``backend.profiles`` exists — so the check was always true and the first
+    request for every new tenant read-merged-wrote-pruned the whole system
+    backend config on the serving path.
+    """
+    import json
+    from pathlib import Path
+
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.memory.manager import MEMORY_BASE_SCHEMA, Mem0MemoryManager
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_runtime.main import reaffirm_system_profiles
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    Mem0MemoryManager._instances.clear()
+    BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
+
+    store = VespaConfigStore(
+        backend_url="http://localhost", backend_port=shared_memory_vespa["http_port"]
+    )
+    config_manager = ConfigManager(store=store)
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=shared_memory_vespa["http_port"],
+            inference_service_urls={"denseon": shared_denseon},
+        )
+    )
+    # Startup affirms the profile once; the init must then find it, not write it.
+    reaffirm_system_profiles(
+        config_manager,
+        json.loads((Path("configs") / "config.json").read_text()),
+    )
+    registered = get_config(
+        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+    ).get("backend", {})["profiles"][MEMORY_BASE_SCHEMA]
+
+    writes: list[tuple[str, str, str]] = []
+    for method in ("set_config", "compare_and_set_config"):
+        original = getattr(store, method)
+
+        def recording(*args, _original=original, **kwargs):
+            writes.append(
+                (kwargs["tenant_id"], kwargs["scope"].value, kwargs["service"])
+            )
+            return _original(*args, **kwargs)
+
+        setattr(store, method, recording)
+
+    tenant_id = f"memprofile{uuid.uuid4().hex[:8]}"
+    manager = Mem0MemoryManager(tenant_id=tenant_id)
+    manager.initialize(
+        backend_host="http://localhost",
+        backend_port=shared_memory_vespa["http_port"],
+        backend_config_port=shared_memory_vespa["config_port"],
+        base_schema_name=MEMORY_BASE_SCHEMA,
+        llm_model=get_llm_model(),
+        embedding_model="lightonai/DenseOn",
+        llm_base_url=get_llm_base_url(),
+        embedder_base_url=shared_denseon,
+        auto_create_schema=True,
+        config_manager=config_manager,
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+    )
+
+    assert registered["schema_name"] == MEMORY_BASE_SCHEMA
+    # The tenant's own schema deploy writes the system-scoped deployment lease
+    # and journal; the backend config is the one this init must only read.
+    assert [
+        write for write in writes if write[:2] == (SYSTEM_TENANT_ID, "backend")
+    ] == []
+    assert {write[2] for write in writes if write[0] == SYSTEM_TENANT_ID} == {
+        "schema_deploy_lease",
+        "schema_deployment_intents",
+    }
+    Mem0MemoryManager._instances.pop(tenant_id, None)
