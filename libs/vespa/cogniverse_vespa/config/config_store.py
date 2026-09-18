@@ -92,6 +92,23 @@ def _config_store_visit_backoff_seconds(attempt: int) -> float:
     return min(delay, _CONFIG_STORE_READ_MAX_BACKOFF_SECONDS)
 
 
+def _literal_glob_suffix(suffix: str) -> str:
+    """``suffix`` as a document-selection glob literal.
+
+    Selection globs have no escape, so a suffix carrying ``*`` or ``?`` would
+    widen the match instead of narrowing it and could carry another tenant's
+    rows. Such a suffix is refused rather than silently matched.
+    """
+    if not suffix:
+        raise ValueError("config_key_suffix must be non-empty")
+    if "*" in suffix or "?" in suffix:
+        raise ValueError(
+            f"config_key_suffix {suffix!r} carries a glob wildcard; selection "
+            "globs cannot escape one"
+        )
+    return suffix
+
+
 def _config_store_read_json(
     path: str, *, params: Dict[str, Any], timeout: int, operation: str = "visit"
 ) -> Optional[Dict[str, Any]]:
@@ -263,6 +280,7 @@ class VespaConfigStore(ImmutableConfigStore):
         tenant_id: Optional[str] = None,
         scope: Optional[ConfigScope] = None,
         service: Optional[str] = None,
+        config_key_suffix: Optional[str] = None,
         skip_malformed: bool = False,
     ) -> List[tuple[str, ConfigEntry]]:
         path = (
@@ -281,6 +299,13 @@ class VespaConfigStore(ImmutableConfigStore):
         if service is not None:
             selection_parts.append(
                 f"{self.schema_name}.service == {yql_quote(service)}"
+            )
+        if config_key_suffix is not None:
+            # Document selection's glob match; the visit then carries only the
+            # matching documents instead of every service row.
+            selection_parts.append(
+                f"{self.schema_name}.config_key = "
+                f"{yql_quote(f'*{_literal_glob_suffix(config_key_suffix)}')}"
             )
         params: Dict[str, Any] = {"wantedDocumentCount": 1000}
         if selection_parts:
@@ -837,6 +862,7 @@ class VespaConfigStore(ImmutableConfigStore):
         self,
         scope: Optional[ConfigScope] = None,
         service: Optional[str] = None,
+        config_key_suffix: Optional[str] = None,
     ) -> List[ConfigEntry]:
         """
         List all configurations across all tenants.
@@ -846,6 +872,10 @@ class VespaConfigStore(ImmutableConfigStore):
         Args:
             scope: Filter by scope (None = all scopes)
             service: Filter by service (None = all services)
+            config_key_suffix: Keep only rows whose config_key ends with it
+                (None = every key). Narrows the visit itself, so a caller that
+                wants one owner's rows out of a service does not carry every
+                other owner's back.
 
         Returns:
             List of latest version ConfigEntry objects from all tenants
@@ -859,6 +889,7 @@ class VespaConfigStore(ImmutableConfigStore):
             for config_id, entry in self._visit_config_entries(
                 scope=scope,
                 service=service,
+                config_key_suffix=config_key_suffix,
                 skip_malformed=True,
             ):
                 if (

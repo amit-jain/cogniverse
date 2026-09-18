@@ -315,6 +315,7 @@ class ConfigStore(ABC):
         self,
         scope: Optional[ConfigScope] = None,
         service: Optional[str] = None,
+        config_key_suffix: Optional[str] = None,
     ) -> List[ConfigEntry]:
         """
         List all configurations across all tenants
@@ -322,6 +323,9 @@ class ConfigStore(ABC):
         Args:
             scope: Filter by scope (None = all scopes)
             service: Filter by service (None = all services)
+            config_key_suffix: Keep only rows whose config_key ends with it
+                (None = every key). The store applies it, so a caller after
+                one owner's rows within a service never carries the rest back.
 
         Returns:
             List of latest version ConfigEntry objects from all tenants

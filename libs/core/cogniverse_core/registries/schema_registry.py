@@ -63,17 +63,21 @@ def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[st
 
     A registry row records a completed deployment; a pending deployment intent
     is a full schema name whose activation this tenant owns right now, seconds
-    before its row lands. A storage read failure raises rather than answering
-    with a smaller set: one outage would otherwise report every one of the
-    tenant's schemas as undeployed.
+    before its row lands. Both reads are narrowed to this tenant at the store:
+    this runs on the serving path, and carrying every tenant's rows back to
+    filter them here is work the request pays for other tenants. A storage read
+    failure raises rather than answering with a smaller set: one outage would
+    otherwise report every one of the tenant's schemas as undeployed.
     """
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     tenant_id = canonical_tenant_id(tenant_id)
     store = config_manager.store
     try:
-        rows = store.list_all_configs(
-            scope=ConfigScope.SCHEMA, service=SCHEMA_REGISTRY_SERVICE
+        rows = store.list_configs(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SCHEMA,
+            service=SCHEMA_REGISTRY_SERVICE,
         )
     except Exception as exc:
         raise RegistryStorageError(
@@ -89,8 +93,7 @@ def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[st
     }
     names.update(
         record["registration"]["base_schema_name"]
-        for record in SchemaDeploymentIntents(store).pending()
-        if record["registration"]["tenant_id"] == tenant_id
+        for record in SchemaDeploymentIntents(store).pending_for_tenant(tenant_id)
     )
     return frozenset(names)
 
