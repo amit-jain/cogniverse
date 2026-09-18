@@ -575,29 +575,51 @@ class SchemaRegistry:
             for base, name in zip(base_schema_names, names)
         }
 
-        def registered(base, name):
-            if force or not self.schema_exists(tenant_id, base):
-                return False
-            info = self._schemas[(tenant_id, base)]
-            if info.full_schema_name != name:
-                return False
-            if _same_definition(info.schema_definition, definitions[base]):
+        def needs_deploy(base, name, info):
+            if info is None or info.full_schema_name != name:
                 return True
+            if _same_definition(info.schema_definition, definitions[base]):
+                return False
             logger.info(
                 f"Registered schema '{name}' differs from the shipped "
                 f"'{base}' definition; redeploying it"
             )
-            return False
+            return True
 
         with SchemaRegistry._deploy_lock:
-            existing_schemas = self._get_all_schemas()
+            # The stored row per schema, not this registry's memory of it: a
+            # peer may have redeployed under a definition this process last saw
+            # an older version of, and a deploy decided from the stale copy
+            # activates a package the store already holds.
             requested = [
                 (base, name)
                 for base, name in zip(base_schema_names, names)
-                if not registered(base, name)
+                if needs_deploy(
+                    base, name, None if force else self._stored_schema(tenant_id, base)
+                )
             ]
             if not requested:
                 return names
+            # Every tenant's schema, read only once there is something to
+            # deploy: it is the deployment package's other half. Ensuring an
+            # already-deployed schema — memory init does it per tenant on a
+            # serving request — never reaches this.
+            existing_schemas = self._get_all_schemas()
+            # A peer deletion or redefinition landing between the decision
+            # above and this refresh must not leave the package without a
+            # schema this call was asked to ensure.
+            refreshed = {
+                (info.tenant_id, info.base_schema_name): info
+                for info in existing_schemas
+            }
+            requested = [
+                (base, name)
+                for base, name in zip(base_schema_names, names)
+                if (base, name) in requested
+                or needs_deploy(
+                    base, name, None if force else refreshed.get((tenant_id, base))
+                )
+            ]
             previous_schemas = [
                 {
                     "name": info.full_schema_name,
@@ -847,19 +869,30 @@ class SchemaRegistry:
                 registry.register_schema(...)
         """
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         tenant_id = canonical_tenant_id(tenant_id)
-        key = (tenant_id, base_schema_name)
-        if key in self._schemas:
+        if (tenant_id, base_schema_name) in self._schemas:
             return True
         # A miss is not authoritative: a peer process (another runtime
         # replica, a host-side manager) may have deployed and registered the
-        # schema since this registry last read storage. Read that one row
-        # rather than rebuilding the registry: the rebuild visits and parses
-        # every tenant's schema definition, and a tenant that legitimately
-        # lacks a schema pays it on every request. A storage outage raises
-        # (strict mode) — an outage must never read as "not deployed".
+        # schema since this registry last read storage.
+        return self._stored_schema(tenant_id, base_schema_name) is not None
+
+    def _stored_schema(
+        self, tenant_id: str, base_schema_name: str
+    ) -> Optional[SchemaInfo]:
+        """This tenant's stored row for the schema, or None when it has none.
+
+        Reads that one row rather than rebuilding the registry: the rebuild
+        visits and parses every tenant's schema definition, and callers on the
+        serving path ask this per request. The row read replaces whatever this
+        registry held, so a definition a peer changed is seen here. A storage
+        outage raises (strict mode) — an outage must never read as "not
+        deployed".
+        """
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        tenant_id = canonical_tenant_id(tenant_id)
         try:
             stored = self._config_manager.store.get_config(
                 tenant_id=tenant_id,
@@ -875,12 +908,12 @@ class SchemaRegistry:
             )
             logger.error(message)
             raise SchemaRegistryInitializationError(message) from exc
-        if stored is None:
-            return False
+        key = (tenant_id, base_schema_name)
+        if stored is None or stored.config_value.get("deleted", False):
+            self._schemas.pop(key, None)
+            return None
         row = stored.config_value
-        if row.get("deleted", False):
-            return False
-        self._schemas[key] = SchemaInfo(
+        info = SchemaInfo(
             tenant_id=row["tenant_id"],
             base_schema_name=row["base_schema_name"],
             full_schema_name=row["full_schema_name"],
@@ -888,7 +921,8 @@ class SchemaRegistry:
             config=row.get("config", {}),
             deployment_time=row["deployment_time"],
         )
-        return True
+        self._schemas[key] = info
+        return info
 
     def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
         """
