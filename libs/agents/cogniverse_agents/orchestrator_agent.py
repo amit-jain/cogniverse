@@ -2093,8 +2093,10 @@ class OrchestratorAgent(
         modality_evidence: List[Dict[str, Any]] = []
         from cogniverse_foundation.config.utils import get_config
 
-        agents_config = get_config(
-            tenant_id=tenant_id, config_manager=self._config_manager
+        agents_config = (
+            await asyncio.to_thread(
+                get_config, tenant_id=tenant_id, config_manager=self._config_manager
+            )
         ).get("agents", {})
         for modality in self._normalize_detected_modalities(detected_modalities):
             endpoint = self._resolve_detected_modality_endpoint(
