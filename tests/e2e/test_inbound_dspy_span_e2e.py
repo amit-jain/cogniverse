@@ -12,8 +12,8 @@ Requires the runtime pod to be running with:
 * DSPy re-instrumented with the tenant-routing tracer provider
   Phoenix tracer (done in main.py's lifespan)
 
-The runtime emits DSPy LM spans to the tenant's project ``cogniverse-
-instrumentation`` with ``input.value`` (the full prompt) and
+The runtime emits DSPy LM spans to the tenant's project
+``cogniverse-<tenant>`` with ``input.value`` (the full prompt) and
 ``output.value`` (the completion). Tests query the project, filter
 to spans whose ``input.value`` contains the unique per-test query,
 and assert the constraint text appears in the with-constraint run
@@ -32,10 +32,16 @@ import dspy
 import httpx
 import pytest
 
+from cogniverse_foundation.config.routed_lm import RoutedLM
+
 RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:33006")
 _TENANT = "flywheel_org:production"
 _CONSTRAINT_TEXT = "focus on safety equipment and protective gear"
+# OpenInference names an LM span ``type(lm).__name__ + ".__call__"``, and the
+# LM a served agent runs under is the ``RoutedLM`` that
+# ``semantic_router.routed_lm_context_for`` builds.
+LM_SPAN_NAME = f"{RoutedLM.__name__}.__call__"
 # Keep the outer deadline above the 90s Phoenix fetch timeout so one slow
 # attempt can still finish before we give up.
 _PHOENIX_QUERY_TIMEOUT_S = 120.0
@@ -74,7 +80,7 @@ class _SpanLookupDiagnostics:
             return message
         if self.stage == "lm_query_error":
             message = (
-                f"Phoenix error while querying LM.__call__ spans for trace_ids="
+                f"Phoenix error while querying {LM_SPAN_NAME} spans for trace_ids="
                 f"{list(self.trace_ids)!r} and anchor {text!r}: "
                 f"{self._describe_error()}"
             )
@@ -86,7 +92,7 @@ class _SpanLookupDiagnostics:
             return message
         if self.stage == "lm_anchor_missing":
             message = (
-                f"LM.__call__ spans for trace_ids={list(self.trace_ids)!r} "
+                f"{LM_SPAN_NAME} spans for trace_ids={list(self.trace_ids)!r} "
                 f"and anchor {text!r} had lm_child_count={self.lm_child_count} "
                 f"and matching_lm_count={self.matching_lm_count}"
             )
@@ -197,7 +203,6 @@ def _query_dspy_lm_spans_with_text(
 
     px = Client(base_url=PHOENIX_BASE)
     chain_span_name = f"{dspy.ChainOfThought.__name__}.forward"
-    lm_span_name = f"{dspy.LM.__name__}.__call__"
     query = SpanQuery().where(f"name == '{chain_span_name}'")
     # The tenant project accumulates spans across every run on the
     # cluster; keep the time window so the reformulator lookup stays on
@@ -246,7 +251,7 @@ def _query_dspy_lm_spans_with_text(
             lm_spans = px.spans.get_spans_dataframe(
                 project_identifier=f"cogniverse-{_TENANT}",
                 start_time=window_start,
-                query=SpanQuery().where(f"name == '{lm_span_name}'"),
+                query=SpanQuery().where(f"name == '{LM_SPAN_NAME}'"),
                 timeout=90,
             )
         except Exception as exc:  # noqa: BLE001
