@@ -984,6 +984,13 @@ profiles and the reason, and the transport reports the failure (a 5xx on `/v1`
 and `/agents/{name}/process`, a `failed` A2A task). An answer written from the
 query alone is not returned as a successful answer.
 
+A detailed report also fails when its answer-model call fails. Direct dispatch
+raises the model-client exception, and the gateway leaves that exception
+unchanged. The A2A executor emits one terminal `failed` status whose text part
+is an error object naming `detailed_report_agent` and the leaf exception type.
+Only unreadable optional attachments may degrade a successful text-grounded
+report; their reasons remain in the report metadata.
+
 `undeployed_profiles` names the profiles this request would have searched had
 their schema been deployed for this tenant. They are reported rather than
 searched: a search against an undeployed schema reads an application that does
@@ -1328,6 +1335,13 @@ The raising exception's own text stays in the log: it is written by whatever
 failed and carries the backend URL it was talking to. Request-shape errors
 (400, 404) keep the three OpenAI keys and their own text, which describes the
 caller's request.
+
+A raised detailed-report model failure takes the 500 branch with
+`error.code="internal_error"`; it is not the 502 `upstream_no_answer` branch,
+which is reserved for a returned envelope from which no answer can be
+extracted. In a live-token response, the same report failure is one SSE error
+frame with `code="internal_error"`, followed by `[DONE]`, and no answer or stop
+chunk.
 
 A streamed turn carries `usage` only when the request sends
 `stream_options: {"include_usage": true}`: one last chunk before `[DONE]`
