@@ -1,5 +1,6 @@
 """Unit tests for QualityMonitor — dual evaluation + threshold + trigger packaging."""
 
+import asyncio
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1997,6 +1998,224 @@ class TestXGBoostVisibility:
 
 
 class TestRunLoop:
+    @pytest.mark.asyncio
+    async def test_missing_golden_keeps_live_cadence_and_rechecks_when_due(
+        self, monitor
+    ):
+        """An absent optional blob skips only its scheduled branch.
+
+        Three loop turns happen at t=100, t=130, and t=160 with both
+        intervals set to 60 seconds. Golden and live work therefore happen
+        exactly at t=100 and t=160, while the middle turn does neither.
+        """
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
+        )
+
+        monitor.golden_eval_interval = 60
+        monitor.live_eval_interval = 60
+        first_live = LiveEvalResult(
+            timestamp=datetime(2024, 1, 1),
+            tenant_id=CANON,
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.75,
+                    baseline_score=0.8,
+                    degradation_pct=0.0625,
+                    sample_count=4,
+                )
+            },
+        )
+        second_live = LiveEvalResult(
+            timestamp=datetime(2024, 1, 1, 0, 1),
+            tenant_id=CANON,
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.8,
+                    baseline_score=0.8,
+                    degradation_pct=0.0,
+                    sample_count=5,
+                )
+            },
+        )
+        uploaded_golden = GoldenEvalResult(
+            timestamp=datetime(2024, 1, 1, 0, 1),
+            tenant_id=CANON,
+            mean_mrr=1.0,
+            mean_ndcg=1.0,
+            mean_precision_at_5=0.2,
+            query_count=1,
+        )
+        evidence = []
+
+        def record_thresholds(golden, live):
+            evidence.append((golden, live))
+            return {}
+
+        monitor.check_thresholds = record_thresholds
+
+        class _StopLoop(Exception):
+            pass
+
+        sleep_count = 0
+
+        async def bounded_sleep(_delay):
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count == 3:
+                raise _StopLoop
+
+        loop_clock = MagicMock()
+        loop_clock.time.side_effect = [100.0, 130.0, 160.0]
+        with (
+            patch.object(
+                monitor,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                side_effect=[
+                    GoldenSetGroundTruthMissingError(
+                        "golden_set_ground_truth is not configured"
+                    ),
+                    uploaded_golden,
+                ],
+            ) as golden_eval,
+            patch.object(
+                monitor,
+                "evaluate_live_traffic",
+                new_callable=AsyncMock,
+                side_effect=[first_live, second_live],
+            ) as live_eval,
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.get_event_loop",
+                return_value=loop_clock,
+            ),
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.sleep",
+                side_effect=bounded_sleep,
+            ),
+        ):
+            caught = None
+            try:
+                await monitor.run()
+            except Exception as exc:
+                caught = exc
+
+        assert type(caught) is _StopLoop
+        assert golden_eval.await_count == 2
+        assert live_eval.await_count == 2
+        assert evidence == [
+            (None, first_live),
+            (uploaded_golden, second_live),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_tenants_keep_independent_golden_state(self, monitor):
+        """One tenant's missing blob cannot suppress another tenant's data."""
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
+        )
+
+        present = QualityMonitor(
+            tenant_id="second:tenant",
+            runtime_url=monitor.runtime_url,
+            phoenix_http_endpoint=monitor.phoenix_http_endpoint,
+            llm_base_url=monitor.llm_base_url,
+            llm_model=monitor.llm_model,
+            golden_dataset_path="",
+        )
+        missing_live = LiveEvalResult(datetime(2024, 1, 1), CANON)
+        present_live = LiveEvalResult(datetime(2024, 1, 1), "second:tenant")
+        present_golden = GoldenEvalResult(
+            timestamp=datetime(2024, 1, 1),
+            tenant_id="second:tenant",
+            mean_mrr=0.5,
+            mean_ndcg=0.6,
+            mean_precision_at_5=0.1,
+            query_count=2,
+        )
+        observed = {monitor.tenant_id: [], present.tenant_id: []}
+        monitor.check_thresholds = lambda golden, live: (
+            observed[monitor.tenant_id].append((golden, live)) or {}
+        )
+        present.check_thresholds = lambda golden, live: (
+            observed[present.tenant_id].append((golden, live)) or {}
+        )
+
+        class _StopLoop(Exception):
+            pass
+
+        async def stop_after_iteration(_delay):
+            raise _StopLoop
+
+        with (
+            patch.object(
+                monitor,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                side_effect=GoldenSetGroundTruthMissingError("missing"),
+            ),
+            patch.object(
+                monitor,
+                "evaluate_live_traffic",
+                new_callable=AsyncMock,
+                return_value=missing_live,
+            ),
+            patch.object(
+                present,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                return_value=present_golden,
+            ),
+            patch.object(
+                present,
+                "evaluate_live_traffic",
+                new_callable=AsyncMock,
+                return_value=present_live,
+            ),
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.sleep",
+                side_effect=stop_after_iteration,
+            ),
+        ):
+            results = await asyncio.gather(
+                monitor.run(), present.run(), return_exceptions=True
+            )
+
+        assert [type(result) for result in results] == [_StopLoop, _StopLoop]
+        assert observed == {
+            monitor.tenant_id: [(None, missing_live)],
+            present.tenant_id: [(present_golden, present_live)],
+        }
+
+    @pytest.mark.asyncio
+    async def test_golden_store_outage_still_terminates_iteration(self, monitor):
+        """Only the typed absence is optional; a backend outage propagates."""
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthStoreUnavailableError,
+        )
+
+        outage = GoldenSetGroundTruthStoreUnavailableError(
+            "golden_set_ground_truth store unavailable"
+        )
+        with (
+            patch.object(
+                monitor,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                side_effect=outage,
+            ),
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as live_eval,
+        ):
+            with pytest.raises(GoldenSetGroundTruthStoreUnavailableError) as caught:
+                await monitor.run()
+
+        assert caught.value is outage
+        assert live_eval.await_count == 0
+
     @pytest.mark.asyncio
     async def test_one_iteration_dispatches_eval_threshold_submit(self, monitor):
         """One run() iteration: both evals due, a degraded verdict is built

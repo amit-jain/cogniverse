@@ -1759,6 +1759,9 @@ blob loader reports `{"status": "skipped", "reason": "golden_set_missing"}`
 only when the tenant blob is absent, and raises with `{"status": "failed"}` on
 store outages and on corrupt payloads; the golden baseline
 write raises on failure (a silently lost write would freeze the baseline);
+the continuous loop treats only the typed missing-blob result as optional,
+continues live evaluation on its independent cadence, and tries the golden
+branch again at its next scheduled interval so a later upload is visible;
 `_store_trigger_dataset` returns the stored dataset name (or `None` when there
 were no example records) and `submit_optimization(trigger, trigger_dataset)`
 references exactly that name, so a workflow is never submitted pointing at a

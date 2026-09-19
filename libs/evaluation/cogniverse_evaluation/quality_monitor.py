@@ -469,71 +469,85 @@ class QualityMonitor:
 
         while True:
             now = asyncio.get_event_loop().time()
+            last_golden, last_live = await self._run_scheduled_iteration(
+                now=now,
+                last_golden=last_golden,
+                last_live=last_live,
+            )
+            await asyncio.sleep(60)
 
-            golden_result = None
-            live_result = None
+    async def _run_scheduled_iteration(
+        self, *, now: float, last_golden: float, last_live: float
+    ) -> tuple[float, float]:
+        """Run work due at ``now`` and return the updated attempt times."""
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
+        )
 
-            if now - last_golden >= self.golden_eval_interval:
+        golden_result = None
+        live_result = None
+
+        if now - last_golden >= self.golden_eval_interval:
+            try:
                 golden_result = await self.evaluate_golden_set()
-                last_golden = now
                 logger.info(
                     f"Golden eval: MRR={golden_result.mean_mrr:.3f}, "
                     f"nDCG={golden_result.mean_ndcg:.3f}, "
                     f"P@5={golden_result.mean_precision_at_5:.3f}"
                 )
+            except GoldenSetGroundTruthMissingError as exc:
+                logger.info("Golden eval skipped: %s", exc)
+            last_golden = now
 
-            if now - last_live >= self.live_eval_interval:
+        if now - last_live >= self.live_eval_interval:
+            try:
+                live_result = await self.evaluate_live_traffic()
+                last_live = now
+                for agent, result in live_result.agent_results.items():
+                    logger.info(
+                        f"Live eval {agent.value}: score={result.score:.3f}, "
+                        f"samples={result.sample_count}"
+                    )
+            except Exception as e:
+                logger.error(f"Live eval failed: {e}")
+
+        if golden_result or live_result:
+            verdicts = self.check_thresholds(golden_result, live_result)
+            agents_to_optimize = [
+                agent for agent, verdict in verdicts.items() if verdict != Verdict.SKIP
+            ]
+
+            if agents_to_optimize:
                 try:
-                    live_result = await self.evaluate_live_traffic()
-                    last_live = now
-                    for agent, result in live_result.agent_results.items():
-                        logger.info(
-                            f"Live eval {agent.value}: score={result.score:.3f}, "
-                            f"samples={result.sample_count}"
+                    trigger = self._build_trigger(
+                        agents_to_optimize, golden_result, live_result
+                    )
+                    dataset_name = await self._store_trigger_dataset(trigger)
+
+                    if dataset_name is None:
+                        logger.error(
+                            f"Optimization needed for {agents_to_optimize} "
+                            f"but no trigger examples were collected; "
+                            f"skipping submission this cycle"
+                        )
+                    elif not self.argo_api_url:
+                        logger.warning(
+                            f"Optimization needed for {agents_to_optimize} "
+                            f"but no Argo API URL configured"
+                        )
+                    elif not await self.submit_optimization(
+                        trigger, trigger_dataset=dataset_name
+                    ):
+                        logger.error(
+                            f"Optimization needed for {agents_to_optimize} "
+                            f"but Argo submission failed; retrying next cycle"
                         )
                 except Exception as e:
-                    logger.error(f"Live eval failed: {e}")
+                    logger.error(
+                        f"Optimization trigger cycle failed: {e}; retrying next cycle"
+                    )
 
-            if golden_result or live_result:
-                verdicts = self.check_thresholds(golden_result, live_result)
-                agents_to_optimize = [
-                    agent
-                    for agent, verdict in verdicts.items()
-                    if verdict != Verdict.SKIP
-                ]
-
-                if agents_to_optimize:
-                    try:
-                        trigger = self._build_trigger(
-                            agents_to_optimize, golden_result, live_result
-                        )
-                        dataset_name = await self._store_trigger_dataset(trigger)
-
-                        if dataset_name is None:
-                            logger.error(
-                                f"Optimization needed for {agents_to_optimize} "
-                                f"but no trigger examples were collected; "
-                                f"skipping submission this cycle"
-                            )
-                        elif not self.argo_api_url:
-                            logger.warning(
-                                f"Optimization needed for {agents_to_optimize} "
-                                f"but no Argo API URL configured"
-                            )
-                        elif not await self.submit_optimization(
-                            trigger, trigger_dataset=dataset_name
-                        ):
-                            logger.error(
-                                f"Optimization needed for {agents_to_optimize} "
-                                f"but Argo submission failed; retrying next cycle"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Optimization trigger cycle failed: {e}; "
-                            f"retrying next cycle"
-                        )
-
-            await asyncio.sleep(60)
+        return last_golden, last_live
 
     async def evaluate_golden_set(self) -> GoldenEvalResult:
         """Run golden queries against /search, score with IR metrics."""
