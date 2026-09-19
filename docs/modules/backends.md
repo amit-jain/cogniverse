@@ -307,7 +307,10 @@ config = BackendConfig(
     profiles={
         "video_colpali_smol500_mv_frame": profile1,
         "video_xclip_sv_chunk_6s": profile2
-    }
+    },
+    default_profiles={
+        "video": {"profile": "video_colpali_smol500_mv_frame"}
+    },
 )
 
 # Get specific profile
@@ -343,10 +346,11 @@ flowchart TB
 **Merge Rules** (from `config/utils.py:_ensure_backend_config()`):
 
 1. **Profiles**: Dict merge - tenant profiles override system profiles with same name
-2. **Backend Type**: Tenant value OR system value (tenant takes precedence)
-3. **URL**: Tenant value if not default, otherwise system value
-4. **Port**: Tenant value if not default, otherwise system value
-5. **Metadata**: Dict merge - tenant metadata extends system metadata
+2. **Default Profiles**: Modality merge - tenant selections override stored-system and shipped selections
+3. **Backend Type**: Tenant value OR system value (tenant takes precedence)
+4. **URL**: Tenant value if not default, otherwise system value
+5. **Port**: Tenant value if not default, otherwise system value
+6. **Metadata**: Dict merge - tenant metadata extends system metadata
 
 ```python
 # System config.json
@@ -368,12 +372,16 @@ tenant_config = BackendConfig(
     port=8080,
     profiles={
         "acme_custom_profile": {...}
-    }
+    },
+    default_profiles={
+        "video": {"profile": "acme_custom_profile"}
+    },
 )
 
 # Merged result for tenant "acme"
 # → url: http://vespa.acme.com (tenant override)
 # → profiles: {video_colpali, video_xclip, acme_custom_profile} (merged)
+# → default_profiles.video.profile: acme_custom_profile (tenant override)
 ```
 
 #### Partial Profile Updates

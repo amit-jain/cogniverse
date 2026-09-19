@@ -814,6 +814,7 @@ class BackendConfig:
     url: str = "http://localhost"
     port: int = 8080
     profiles: Dict[str, BackendProfileConfig] = field(default_factory=dict)
+    default_profiles: Dict[str, Dict[str, str]] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -831,6 +832,7 @@ class BackendConfig:
             "profiles": {
                 name: profile.to_dict() for name, profile in self.profiles.items()
             },
+            "default_profiles": self.default_profiles,
             "metadata": self.metadata,
         }
 
@@ -854,6 +856,7 @@ class BackendConfig:
             url=data.get("url", "http://localhost"),
             port=data.get("port", 8080),
             profiles=profiles,
+            default_profiles=data.get("default_profiles", {}),
             metadata=data.get("metadata", {}),
         )
 
