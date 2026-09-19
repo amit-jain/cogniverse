@@ -389,10 +389,14 @@ def memory_manager(
     ``get_llm_base_url()`` and Mem0 would be built against whatever endpoint
     the unactivated config names.
     """
-    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 
     Mem0MemoryManager._instances.clear()
     BackendRegistry._backend_instances.clear()
+
+    # The runtime affirms the memory profile at startup; no runtime starts
+    # here, so the fixture does it. A memory init never registers its own.
+    affirm_memory_profile(config_manager)
 
     # Refresh SystemConfig with the denseon URL so AgentDispatcher's
     # memory auto-init (which reads ``system_config.inference_service_urls

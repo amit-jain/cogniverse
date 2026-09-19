@@ -173,13 +173,27 @@ class ConfigUtils:
                 logger.debug(f"Loaded system config from {config_path}")
         self._json_config = copy.deepcopy(cached)
 
+    def _system_tenant_profiles(self):
+        """Backend profiles stored under the system tenant.
+
+        Empty for the system tenant itself, whose own config is already the
+        tenant side of the merge — reading it twice would cost a second store
+        read on every request that resolves a profile.
+        """
+        from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+
+        if self.tenant_id == SYSTEM_TENANT_ID:
+            return {}
+        return dict(self._config_manager.get_backend_config(SYSTEM_TENANT_ID).profiles)
+
     def _ensure_backend_config(self):
         """
         Lazy load and merge backend config.
 
         Merges:
         1. System base config from config.json (backend section)
-        2. Tenant-specific overrides from ConfigManager
+        2. Profiles stored under the system tenant (affirmed at startup)
+        3. Tenant-specific overrides from ConfigManager
 
         Result is a merged BackendConfig with system profiles + tenant overrides.
         """
@@ -192,6 +206,9 @@ class ConfigUtils:
 
         # Get tenant-specific overrides from ConfigManager
         tenant_backend_config = self._config_manager.get_backend_config(self.tenant_id)
+
+        # Tenant views inherit startup profiles absent from the shipped catalog.
+        stored_system_profiles = self._system_tenant_profiles()
 
         # Merge system base with tenant overrides
         if system_backend_data:
@@ -207,6 +224,8 @@ class ConfigUtils:
             merged_profiles = dict(
                 system_backend_config.profiles
             )  # Start with system profiles
+            for profile_name, stored_profile in stored_system_profiles.items():
+                merged_profiles.setdefault(profile_name, stored_profile)
 
             # Merge tenant-specific overrides into system profiles (not replace)
             for profile_name, tenant_profile in tenant_backend_config.profiles.items():
@@ -248,7 +267,20 @@ class ConfigUtils:
                 },
             )
         else:
-            # No system config, just use tenant config
+            # No config.json backend section: the system tenant's stored
+            # profiles are the only cluster base there is.
+            for profile_name, stored_profile in stored_system_profiles.items():
+                tenant_profile = tenant_backend_config.profiles.get(profile_name)
+                tenant_backend_config.profiles[profile_name] = (
+                    stored_profile
+                    if tenant_profile is None
+                    else BackendProfileConfig.from_dict(
+                        profile_name,
+                        merge_tenant_profile(
+                            stored_profile.to_dict(), tenant_profile.to_dict()
+                        ),
+                    )
+                )
             self._backend_config = tenant_backend_config
 
         logger.debug(
