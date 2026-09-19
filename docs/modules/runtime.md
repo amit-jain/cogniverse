@@ -334,7 +334,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
-6. Connect and validate the shared Redis A2A task store, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task, and refuses admission when the capacity is entirely active.
+6. Connect and validate the shared Redis A2A task store, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task, and refuses admission when the capacity is entirely active. Per-task renewable leases serialize continuations before their snapshot read; generations fence late writes. Active cancellation is delivered to the owner and acknowledged through Redis, and active resubscriptions consume the owner's bounded Redis event relay.
 7. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
 8. Deploy metadata schemas via a system backend; apply deployment env-var overrides to `SystemConfig`
 9. Probe Phoenix reachability and validate inference services against configured profiles

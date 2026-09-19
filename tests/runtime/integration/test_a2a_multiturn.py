@@ -6,15 +6,508 @@ Full stack: real A2A app -> real CogniverseAgentExecutor -> real AgentDispatcher
 history accumulation via InMemoryTaskStore (the production a2a-sdk store).
 """
 
+import asyncio
 import json
 import logging
+import multiprocessing
+import os
+import platform
+import signal
+import socket
+import subprocess
+import sys
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
+import httpx
 import pytest
+import redis as sync_redis
+import redis.asyncio as aioredis
+import uvicorn
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.events import EventQueue
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+    Message,
+    Part,
+    Role,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
 
+from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
+from cogniverse_runtime.a2a_task_store import RedisTaskStore
 from tests.runtime.integration.conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
+
+
+class _ProcessExecutor(AgentExecutor):
+    def __init__(self, redis_url: str, key_prefix: str) -> None:
+        self._redis_url = redis_url
+        self._process_key = f"{key_prefix}:test-process"
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        query = context.get_user_input()
+        task_id = context.task_id or ""
+        context_id = context.context_id or ""
+        if query == "long-process":
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+            )
+            redis = aioredis.from_url(self._redis_url, decode_responses=True)
+            await redis.hset(
+                self._process_key,
+                mapping={"pid": str(process.pid), "returncode": "running"},
+            )
+            await event_queue.enqueue_event(
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    final=False,
+                    status=TaskStatus(state=TaskState.working),
+                )
+            )
+            try:
+                await process.wait()
+            except asyncio.CancelledError:
+                process.terminate()
+                returncode = await process.wait()
+                await redis.hset(self._process_key, "returncode", str(returncode))
+                raise
+            finally:
+                await redis.aclose()
+            return
+
+        if query.startswith("delay-"):
+            await asyncio.sleep(0.4)
+        history_ids = [
+            message.message_id
+            for message in (
+                context.current_task.history if context.current_task else []
+            )
+        ]
+        response = Message(
+            message_id=f"agent-{query}",
+            context_id=context_id,
+            task_id=task_id,
+            role=Role.agent,
+            parts=[
+                Part(
+                    root=TextPart(
+                        text=json.dumps(
+                            {"query": query, "history_message_ids": history_ids}
+                        )
+                    )
+                )
+            ],
+        )
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                final=True,
+                status=TaskStatus(
+                    state=TaskState.input_required,
+                    message=response,
+                ),
+            )
+        )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=context.task_id or "",
+                context_id=context.context_id or "",
+                final=True,
+                status=TaskStatus(state=TaskState.canceled),
+            )
+        )
+
+
+def _serve_shared_a2a(
+    port: int, redis_url: str, key_prefix: str, replica_id: str
+) -> None:
+    async def _serve() -> None:
+        store = await RedisTaskStore.from_url(
+            redis_url,
+            max_tasks=100,
+            key_prefix=key_prefix,
+            enforce_leases=True,
+        )
+        handler = RedisRequestHandler(
+            agent_executor=_ProcessExecutor(redis_url, key_prefix),
+            task_store=store,
+            replica_id=replica_id,
+            lease_seconds=0.6,
+            cancel_timeout_seconds=3,
+        )
+        card = AgentCard(
+            name="Cogniverse Runtime",
+            description="shared task process test",
+            url=f"http://127.0.0.1:{port}/",
+            version="1.0.0",
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(streaming=True),
+            skills=[
+                AgentSkill(
+                    id="search_agent",
+                    name="search_agent",
+                    description="deterministic process test",
+                    tags=["search"],
+                )
+            ],
+        )
+        app = A2AStarletteApplication(agent_card=card, http_handler=handler).build()
+        await handler.start()
+        try:
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host="127.0.0.1",
+                    port=port,
+                    log_level="error",
+                )
+            )
+            await server.serve()
+        finally:
+            await handler.close()
+            await store.close()
+
+    asyncio.run(_serve())
+
+
+def _free_process_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _wait_process_port(port: int) -> None:
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        with socket.socket() as sock:
+            if sock.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.05)
+    raise RuntimeError(f"A2A process on port {port} did not start")
+
+
+@pytest.fixture(scope="module")
+def shared_a2a_redis_url():
+    override = os.environ.get("COGNIVERSE_TEST_REDIS_URL")
+    if override:
+        yield override
+        return
+
+    port = _free_process_port()
+    container_name = f"redis-a2a-process-{os.getpid()}"
+    machine = platform.machine().lower()
+    docker_platform = (
+        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    )
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "--platform",
+            docker_platform,
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start Redis: {result.stderr}")
+    redis_url = f"redis://127.0.0.1:{port}/0"
+    redis = sync_redis.Redis.from_url(redis_url, decode_responses=True)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            if redis.ping() is True:
+                break
+        except sync_redis.RedisError:
+            time.sleep(0.25)
+    else:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        pytest.fail("Redis did not become ready within 30 seconds")
+    try:
+        yield redis_url
+    finally:
+        redis.close()
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+@pytest.fixture
+def a2a_process_cluster(shared_a2a_redis_url):
+    key_prefix = f"test:a2a-process:{uuid.uuid4().hex}"
+    ports = (_free_process_port(), _free_process_port())
+    context = multiprocessing.get_context("spawn")
+    processes = [
+        context.Process(
+            target=_serve_shared_a2a,
+            args=(port, shared_a2a_redis_url, key_prefix, f"replica-{index}"),
+        )
+        for index, port in enumerate(ports)
+    ]
+    for process in processes:
+        process.start()
+    try:
+        for port in ports:
+            _wait_process_port(port)
+        yield ports, processes, shared_a2a_redis_url, key_prefix
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
+
+def _process_rpc(port: int, method: str, params: dict, rpc_id: str) -> dict:
+    with httpx.Client(timeout=10) as client:
+        response = client.post(
+            f"http://127.0.0.1:{port}/",
+            json={"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params},
+        )
+    assert response.status_code == 200
+    return response.json()
+
+
+def _process_send(
+    port: int,
+    *,
+    text: str,
+    message_id: str,
+    context_id: str,
+    task_id: str | None = None,
+    blocking: bool = True,
+) -> dict:
+    message = {
+        "role": "user",
+        "messageId": message_id,
+        "contextId": context_id,
+        "parts": [{"kind": "text", "text": text}],
+    }
+    if task_id:
+        message["taskId"] = task_id
+    return _process_rpc(
+        port,
+        "message/send",
+        {
+            "message": message,
+            "configuration": {
+                "acceptedOutputModes": ["text"],
+                "blocking": blocking,
+            },
+            "metadata": {
+                "agent_name": "search_agent",
+                "tenant_id": "test:shared-a2a",
+            },
+        },
+        message_id,
+    )
+
+
+def _process_resubscribe(port: int, task_id: str) -> tuple[int, list[dict]]:
+    with httpx.Client(timeout=10) as client:
+        with client.stream(
+            "POST",
+            f"http://127.0.0.1:{port}/",
+            json={
+                "jsonrpc": "2.0",
+                "id": "peer-resubscribe",
+                "method": "tasks/resubscribe",
+                "params": {"id": task_id},
+            },
+        ) as response:
+            events = [
+                json.loads(line.removeprefix("data: "))
+                for line in response.iter_lines()
+                if line.startswith("data: ")
+            ]
+            return response.status_code, events
+
+
+@pytest.mark.integration
+class TestA2ASharedProcessIdentity:
+    def test_peer_reads_and_continues_after_owner_restart(self, a2a_process_cluster):
+        ports, processes, _, _ = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        first = _process_send(
+            ports[0],
+            text="first-turn",
+            message_id="user-first",
+            context_id=context_id,
+        )
+        created = first["result"]
+        task_id = created["id"]
+
+        peer = _process_rpc(
+            ports[1], "tasks/get", {"id": task_id}, "peer-get-before-restart"
+        )
+        assert peer["result"] == created
+
+        processes[0].terminate()
+        processes[0].join(timeout=10)
+        assert processes[0].exitcode == -signal.SIGTERM
+
+        continued = _process_send(
+            ports[1],
+            text="second-turn",
+            message_id="user-second",
+            context_id=context_id,
+            task_id=task_id,
+        )["result"]
+
+        assert continued["id"] == task_id
+        assert continued["contextId"] == context_id
+        assert [message["messageId"] for message in continued["history"]] == [
+            "user-first",
+            "agent-first-turn",
+            "user-second",
+        ]
+
+    def test_simultaneous_continuations_have_one_acknowledged_winner(
+        self, a2a_process_cluster
+    ):
+        ports, _, _, _ = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        first = _process_send(
+            ports[0],
+            text="seed-turn",
+            message_id="user-seed",
+            context_id=context_id,
+        )
+        task_id = first["result"]["id"]
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    _process_send,
+                    port,
+                    text=f"delay-{index}",
+                    message_id=f"user-race-{index}",
+                    context_id=context_id,
+                    task_id=task_id,
+                )
+                for index, port in enumerate(ports)
+            ]
+            responses = [future.result(timeout=10) for future in futures]
+
+        winners = [response for response in responses if "result" in response]
+        conflicts = [response for response in responses if "error" in response]
+        assert len(winners) == 1
+        assert len(conflicts) == 1
+        assert conflicts[0]["error"]["message"].startswith(
+            f"Task {task_id} is active on replica-"
+        )
+
+        winner_message = winners[0]["result"]["history"][-1]["messageId"]
+        stored = _process_rpc(ports[0], "tasks/get", {"id": task_id}, "get-after-race")[
+            "result"
+        ]
+        assert [message["messageId"] for message in stored["history"]] == [
+            "user-seed",
+            "agent-seed-turn",
+            winner_message,
+        ]
+
+    def test_peer_cancel_stops_owner_subprocess_and_fences_late_writes(
+        self, a2a_process_cluster
+    ):
+        ports, _, redis_url, key_prefix = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        started = _process_send(
+            ports[0],
+            text="long-process",
+            message_id="user-long",
+            context_id=context_id,
+            blocking=False,
+        )["result"]
+        task_id = started["id"]
+        assert started["status"]["state"] == "working"
+
+        redis = sync_redis.Redis.from_url(redis_url, decode_responses=True)
+        process_key = f"{key_prefix}:test-process"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            process_state = redis.hgetall(process_key)
+            if process_state.get("pid"):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("Long-running subprocess PID was not published")
+
+        canceled = _process_rpc(
+            ports[1], "tasks/cancel", {"id": task_id}, "peer-cancel"
+        )["result"]
+        assert canceled["status"]["state"] == "canceled"
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            returncode = redis.hget(process_key, "returncode")
+            if returncode == "-15":
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail(f"Subprocess did not report SIGTERM: {returncode}")
+        pid = int(process_state["pid"])
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+        owner_task = _process_rpc(
+            ports[0], "tasks/get", {"id": task_id}, "owner-get-canceled"
+        )["result"]
+        peer_task = _process_rpc(
+            ports[1], "tasks/get", {"id": task_id}, "peer-get-canceled"
+        )["result"]
+        redis.close()
+        assert owner_task == peer_task
+        assert peer_task["status"]["state"] == "canceled"
+
+    def test_peer_resubscribe_receives_owner_terminal_event(self, a2a_process_cluster):
+        ports, _, _, _ = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        started = _process_send(
+            ports[0],
+            text="long-process",
+            message_id="user-stream",
+            context_id=context_id,
+            blocking=False,
+        )["result"]
+        task_id = started["id"]
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stream = pool.submit(_process_resubscribe, ports[1], task_id)
+            time.sleep(0.2)
+            canceled = _process_rpc(
+                ports[1], "tasks/cancel", {"id": task_id}, "cancel-stream"
+            )["result"]
+            status_code, events = stream.result(timeout=10)
+
+        assert canceled["status"]["state"] == "canceled"
+        assert status_code == 200
+        assert [event["result"]["status"]["state"] for event in events] == ["canceled"]
 
 
 def _send_message(
