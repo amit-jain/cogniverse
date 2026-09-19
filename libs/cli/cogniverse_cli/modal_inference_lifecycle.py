@@ -90,7 +90,9 @@ def _lookup_function(app_name: str, object_name: str):
 def _stop_app(app_name: str) -> None:
     from modal.cli.app import stop
 
-    stop(app_name)
+    # The Typer-decorated function's Python default is an OptionInfo object,
+    # not the ``None`` value the CLI parser normally supplies.
+    stop(app_name, env=None)
 
 
 def _lifecycle_operation(method):

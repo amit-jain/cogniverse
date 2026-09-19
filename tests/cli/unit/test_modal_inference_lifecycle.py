@@ -859,6 +859,21 @@ def test_undeploy_requires_byte_exact_service_confirmation():
     assert stop_calls == ["cogniverse-vllm-colpali"]
 
 
+def test_modal_stop_adapter_passes_a_real_environment_value(monkeypatch):
+    from cogniverse_cli import modal_inference_lifecycle as lifecycle_module
+
+    calls = []
+
+    def stop(app_identifier, *, env):
+        calls.append((app_identifier, env))
+
+    monkeypatch.setattr("modal.cli.app.stop", stop)
+
+    lifecycle_module._stop_app("cogniverse-vllm-llm-student")
+
+    assert calls == [("cogniverse-vllm-llm-student", None)]
+
+
 class _ClosingLifecycle:
     def __init__(self, *, warm_error: str | None = None) -> None:
         self.calls: list[str] = []
