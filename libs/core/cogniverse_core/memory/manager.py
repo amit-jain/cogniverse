@@ -233,6 +233,11 @@ class Mem0MemoryManager:
             # it (the manager is shared across every agent for the tenant and
             # initialize runs per dispatch on worker threads).
             instance._init_lock = threading.Lock()
+            # Primary memory mutations and provenance repair share one
+            # linearization point. Repair holds this through primary snapshot,
+            # indexed upsert, and verification, so a manager write cannot make
+            # the verified snapshot obsolete before repair returns.
+            instance._provenance_write_lock = threading.RLock()
             logger.info(
                 "Created new Mem0MemoryManager instance for tenant: %s",
                 tenant_id,
@@ -636,6 +641,24 @@ class Mem0MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
         infer: bool = True,
     ) -> Optional[str]:
+        """Add a memory while serializing its primary and provenance writes."""
+        with self._provenance_write_lock:
+            return self._add_memory(
+                content=content,
+                tenant_id=tenant_id,
+                agent_name=agent_name,
+                metadata=metadata,
+                infer=infer,
+            )
+
+    def _add_memory(
+        self,
+        content: str,
+        tenant_id: str,
+        agent_name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
+    ) -> Optional[str]:
         """
         Add content to agent's memory.
 
@@ -818,7 +841,7 @@ class Mem0MemoryManager:
 
         try:
             return Provenance.from_metadata_payload(prov_payload)
-        except (KeyError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             from cogniverse_core.memory.provenance_store import ProvenanceWriteError
 
             raise ProvenanceWriteError(
@@ -830,6 +853,11 @@ class Mem0MemoryManager:
 
     def repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
         """Reattach a primary memory's canonical provenance idempotently."""
+        with self._provenance_write_lock:
+            return self._repair_provenance(memory_id, max_attempts=max_attempts)
+
+    def _repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
+        """Repair while excluding supported primary mutations for the tenant."""
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
         if max_attempts < 1:
@@ -1692,6 +1720,24 @@ class Mem0MemoryManager:
         return max(0, now_epoch - created_epoch)
 
     def update_memory(
+        self,
+        memory_id: str,
+        content: str,
+        tenant_id: str,
+        agent_name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Update a primary while excluding provenance verification."""
+        with self._provenance_write_lock:
+            return self._update_memory(
+                memory_id=memory_id,
+                content=content,
+                tenant_id=tenant_id,
+                agent_name=agent_name,
+                metadata=metadata,
+            )
+
+    def _update_memory(
         self,
         memory_id: str,
         content: str,
