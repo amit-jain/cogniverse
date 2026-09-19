@@ -8,12 +8,14 @@ Uses fixture-owned Vespa and Phoenix with a separate tenant per evaluation.
 ColPali model generates real embeddings for test documents.
 """
 
+import asyncio
 import json
 import logging
 import socket
 import time
 import uuid
 from datetime import datetime
+from unittest.mock import patch
 
 import httpx
 import numpy as np
@@ -28,6 +30,7 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
     GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
     GoldenSetGroundTruthStoreUnavailableError,
 )
+from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_evaluation.quality_monitor import (
@@ -40,8 +43,10 @@ from cogniverse_evaluation.quality_monitor import (
     Verdict,
 )
 from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
     DatasetStoreUnavailableError,
 )
+from cogniverse_runtime.quality_monitor_cli import run_annotation_cycle
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -589,6 +594,258 @@ async def phoenix_monitor(phoenix_container, real_telemetry, qm_tenant):
 @pytest.mark.integration
 class TestQualityMonitorTenantOwnership:
     @pytest.mark.asyncio
+    async def test_optional_golden_absence_preserves_live_and_annotation_work(
+        self,
+        real_telemetry,
+        phoenix_container,
+        config_manager,
+        schema_loader,
+        seeded_vespa,
+        qm_tenant,
+    ):
+        """One monitor sees a later upload without losing its live siblings.
+
+        Phoenix and Vespa are real fixture-owned services. The runtime and
+        deterministic OAI judge are served over a real socket so the test
+        exercises the production HTTP clients as well as the monitor cadence.
+        """
+        import uvicorn
+
+        from cogniverse_agents.routing.config import AutomationRulesConfig
+        from cogniverse_foundation.telemetry.span_contract import record_span_io
+        from cogniverse_runtime.admin import tenant_manager
+        from cogniverse_runtime.routers import agents as agents_router
+        from cogniverse_runtime.routers import search
+
+        provider = real_telemetry.get_provider(tenant_id=qm_tenant)
+        manager = ArtifactManager(telemetry_provider=provider, tenant_id=qm_tenant)
+        assert (
+            await manager.load_blob(
+                GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+                GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+            )
+            is None
+        )
+
+        with real_telemetry.span(
+            name="cogniverse.routing", tenant_id=qm_tenant
+        ) as span:
+            record_span_io(
+                span,
+                input_value="play something relaxing",
+                output={"chosen_agent": "search_agent", "confidence": 0.2},
+                operation="routing",
+            )
+            routing_span_id = format(span.get_span_context().span_id, "016x")
+        real_telemetry.force_flush(timeout_millis=10000)
+
+        judge_requests = []
+        search_requests = []
+        app = FastAPI()
+        app.include_router(search.router, prefix="/search")
+        app.include_router(agents_router.router, prefix="/agents")
+        app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+            config_manager
+        )
+        app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+            schema_loader
+        )
+
+        @app.middleware("http")
+        async def record_search(request, call_next):
+            if request.url.path == "/search/":
+                search_requests.append(await request.json())
+            return await call_next(request)
+
+        @app.post("/v1/chat/completions")
+        async def deterministic_judge(body: dict):
+            judge_requests.append(body)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Score: 8/10\nThe route matches the request."
+                        }
+                    }
+                ]
+            }
+
+        server_socket = socket.socket()
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind(("127.0.0.1", 0))
+        server_socket.listen(128)
+        port = server_socket.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host="127.0.0.1",
+                port=port,
+                log_level="error",
+                lifespan="off",
+            )
+        )
+        server_task = asyncio.create_task(server.serve(sockets=[server_socket]))
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert server.started is True
+
+        runtime_url = f"http://127.0.0.1:{port}"
+        monitor = QualityMonitor(
+            tenant_id=qm_tenant,
+            runtime_url=runtime_url,
+            phoenix_http_endpoint=phoenix_container["http_endpoint"],
+            llm_base_url=runtime_url,
+            llm_model="deterministic-judge",
+            golden_dataset_path="",
+            golden_eval_interval_seconds=60,
+            live_eval_interval_seconds=3600,
+            telemetry_provider=provider,
+        )
+        tenant_manager.set_backend(seeded_vespa)
+
+        try:
+            spans = await _wait_for_span(
+                monitor._make_span_evaluator(), "cogniverse.routing"
+            )
+            assert spans["span_id"].tolist() == [routing_span_id]
+
+            monitor_identity = id(monitor)
+            last_golden, last_live = await monitor._run_scheduled_iteration(
+                now=100.0,
+                last_golden=float("-inf"),
+                last_live=float("-inf"),
+            )
+            assert (last_golden, last_live) == (100.0, 100.0)
+            assert id(monitor) == monitor_identity
+            assert search_requests == []
+            assert [request["model"] for request in judge_requests] == [
+                "deterministic-judge"
+            ]
+
+            live_names = await _dataset_names(monitor, "quality-live")
+            assert len(live_names) == 1
+            live_frame = await monitor._get_dataset_store().get_dataset(live_names[0])
+            assert live_frame.to_dict("records") == [
+                {
+                    "input": {"agent": "routing"},
+                    "output": {
+                        "score": "0.8",
+                        "baseline_score": "",
+                        "degradation_pct": "0.0",
+                        "sample_count": "1",
+                    },
+                    "metadata": {},
+                }
+            ]
+
+            with patch.object(agents_router, "_annotation_queue", AnnotationQueue()):
+                annotation = await run_annotation_cycle(
+                    tenant_id=qm_tenant,
+                    runtime_url=runtime_url,
+                    agent_types=["routing"],
+                    automation_rules=AutomationRulesConfig(),
+                )
+                queued = agents_router.get_annotation_queue().get(routing_span_id)
+                assert annotation == {
+                    "identified": 1,
+                    "already_annotated": 0,
+                    "enqueued": 1,
+                }
+                assert queued.to_dict() == {
+                    "span_id": routing_span_id,
+                    "timestamp": queued.timestamp.isoformat(),
+                    "query": "play something relaxing",
+                    "chosen_agent": "search_agent",
+                    "routing_confidence": 0.2,
+                    "outcome": "ambiguous",
+                    "priority": "high",
+                    "reason": "Very low confidence (0.20)",
+                    "context": {
+                        "routing_context": {},
+                        "outcome_details": "no_parent_span",
+                        "span_status": None,
+                        "latency_ms": 0,
+                    },
+                    "status": "pending",
+                    "assigned_to": None,
+                    "assigned_at": None,
+                    "sla_deadline": None,
+                    "completed_at": None,
+                    "label": None,
+                    "agent_type": "routing",
+                    "tenant_id": qm_tenant,
+                }
+
+            unchanged = await monitor._run_scheduled_iteration(
+                now=130.0,
+                last_golden=last_golden,
+                last_live=last_live,
+            )
+            assert unchanged == (100.0, 100.0)
+            assert search_requests == []
+            assert len(judge_requests) == 1
+
+            uploaded_rows = [GOLDEN_QUERIES[0]]
+            await _seed_golden_rows(provider, qm_tenant, uploaded_rows)
+            last_golden, last_live = await monitor._run_scheduled_iteration(
+                now=160.0,
+                last_golden=last_golden,
+                last_live=last_live,
+            )
+            assert (last_golden, last_live) == (160.0, 100.0)
+            assert id(monitor) == monitor_identity
+            assert await monitor._load_golden_queries_async() == uploaded_rows
+            assert search_requests == [
+                {
+                    "query": "a solid red square",
+                    "profile": SEARCH_PROFILE,
+                    "top_k": 10,
+                    "tenant_id": qm_tenant,
+                }
+            ]
+            assert await monitor._read_baseline_metric("mean_mrr") == 1.0
+
+            missing_tenant = f"qm:{uuid.uuid4().hex}"
+            missing_monitor = QualityMonitor(
+                tenant_id=missing_tenant,
+                runtime_url=runtime_url,
+                phoenix_http_endpoint=phoenix_container["http_endpoint"],
+                llm_base_url=runtime_url,
+                llm_model="deterministic-judge",
+                golden_dataset_path="",
+                telemetry_provider=real_telemetry.get_provider(
+                    tenant_id=missing_tenant
+                ),
+            )
+            try:
+                concurrent = await asyncio.gather(
+                    monitor._run_scheduled_iteration(
+                        now=220.0,
+                        last_golden=last_golden,
+                        last_live=last_live,
+                    ),
+                    missing_monitor._run_scheduled_iteration(
+                        now=220.0,
+                        last_golden=float("-inf"),
+                        last_live=220.0,
+                    ),
+                )
+                assert concurrent == [(220.0, 100.0), (220.0, 220.0)]
+                assert len(search_requests) == 2
+                with pytest.raises(DatasetNotFoundError):
+                    await missing_monitor._get_dataset_store().get_dataset(
+                        f"quality-baseline-{missing_tenant}"
+                    )
+            finally:
+                await missing_monitor.close()
+        finally:
+            tenant_manager.set_backend(None)
+            await monitor.close()
+            server.should_exit = True
+            await asyncio.wait_for(server_task, timeout=10)
+
+    @pytest.mark.asyncio
     async def test_concurrent_monitors_load_only_their_tenant_rows(
         self, phoenix_monitor, real_telemetry
     ):
@@ -679,6 +936,17 @@ class TestQualityMonitorTenantOwnership:
                 telemetry_provider=provider,
             )
             try:
+                with pytest.raises(
+                    GoldenSetGroundTruthStoreUnavailableError
+                ) as scheduled_error:
+                    await monitor._run_scheduled_iteration(
+                        now=1.0,
+                        last_golden=float("-inf"),
+                        last_live=1.0,
+                    )
+                assert scheduled_error.value.to_result()["reason"] == (
+                    "golden_set_store_unavailable"
+                )
                 with pytest.raises(GoldenSetGroundTruthStoreUnavailableError) as caught:
                     await monitor.force_optimization_cycle()
                 store_error = caught.value.__cause__

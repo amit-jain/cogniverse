@@ -176,3 +176,84 @@ async def test_monitor_iteration_launches_and_cancels_annotation_task(monkeypatc
     # cancel() ran in the finally itself, before asyncio.run's teardown-cancel.
     assert close_saw_cancel_requested["v"] is True
     assert monitor.closed is True  # monitor.close() ran in the finally
+
+
+@pytest.mark.asyncio
+async def test_missing_golden_keeps_annotation_sibling_until_shutdown(monkeypatch):
+    """Expected golden absence cannot reconstruct the monitor process.
+
+    The annotation sibling remains alive while the same monitor reaches live
+    evaluation. External cancellation then owns both task and client cleanup.
+    """
+    from datetime import datetime
+
+    from cogniverse_agents.optimizer.golden_set_ground_truth import (
+        GoldenSetGroundTruthMissingError,
+    )
+    from cogniverse_evaluation.quality_monitor import LiveEvalResult, QualityMonitor
+
+    annotation_started = asyncio.Event()
+    annotation_cancelled = asyncio.Event()
+    live_ran = asyncio.Event()
+
+    async def annotation_loop(_tenant_id, _runtime_url):
+        annotation_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            annotation_cancelled.set()
+            raise
+
+    class _Client:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    monitor = QualityMonitor(
+        tenant_id="acme:monitor",
+        runtime_url="http://runtime",
+        phoenix_http_endpoint="http://phoenix",
+        llm_base_url="http://llm",
+        llm_model="judge",
+        golden_dataset_path="",
+    )
+    client = _Client()
+    monitor._http_client = client
+
+    async def missing_golden():
+        await annotation_started.wait()
+        raise GoldenSetGroundTruthMissingError("golden set is not configured")
+
+    async def exact_live():
+        result = LiveEvalResult(
+            timestamp=datetime(2024, 1, 1), tenant_id="acme:monitor"
+        )
+        live_ran.set()
+        return result
+
+    monitor.evaluate_golden_set = missing_golden
+    monitor.evaluate_live_traffic = exact_live
+    monitor.check_thresholds = lambda golden, live: {}
+    monkeypatch.setattr(qm, "_annotation_loop", annotation_loop)
+
+    iteration = asyncio.create_task(
+        qm._run_quality_monitor_iteration(monitor, "acme:monitor", "http://runtime")
+    )
+    live_wait = asyncio.create_task(live_ran.wait())
+    done, _ = await asyncio.wait(
+        {iteration, live_wait}, timeout=2, return_when=asyncio.FIRST_COMPLETED
+    )
+
+    assert live_wait in done
+    assert iteration.done() is False
+    assert annotation_cancelled.is_set() is False
+    assert client.closed is False
+
+    live_wait.cancel()
+    iteration.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await iteration
+
+    assert annotation_cancelled.is_set() is True
+    assert client.closed is True
