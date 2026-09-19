@@ -49,8 +49,8 @@ def backend_scope_visit(method: str, path: str, _body: bytes) -> bool:
     ``ConfigUtils.get('backend_type')`` resolves the backend scope for the
     ``system`` tenant the metadata backend is registered under, which
     ``VespaConfigStore`` serves with one ``document/v1`` visit whose
-    ``selection`` names that tenant, that scope and the ``backend``
-    service. No other read in a dispatch carries it.
+    ``selection`` names that tenant, that scope, the ``backend`` service
+    and the ``backend_config`` key. No other read in a dispatch carries it.
     """
     parsed = urlparse(path)
     if method != "GET":
@@ -60,7 +60,8 @@ def backend_scope_visit(method: str, path: str, _body: bytes) -> bool:
     expected = (
         f"{SCHEMA}.tenant_id == {yql_quote(canonical_tenant_id('system'))} and "
         f"{SCHEMA}.scope == {yql_quote(ConfigScope.BACKEND.value)} and "
-        f"{SCHEMA}.service == {yql_quote('backend')}"
+        f"{SCHEMA}.service == {yql_quote('backend')} and "
+        f"{SCHEMA}.config_key == {yql_quote('backend_config')}"
     )
     return parse_qs(parsed.query).get("selection") == [expected]
 

@@ -183,6 +183,11 @@ flowchart TB
   across concurrent callers and returns an isolated copy to each instance.
   Invalid JSON and file-access failures propagate with the file path instead
   of being treated as an empty configuration.
+- Tenant backend profiles inherit the shipped catalog and system-tenant stored
+  profiles absent from that catalog. Non-empty tenant fields override the base;
+  nested fields merge and the `vlm_endpoint` field remains system-owned. This
+  merge also applies when no JSON backend section exists. Store read failures
+  propagate, and callers receive isolated profile values.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python

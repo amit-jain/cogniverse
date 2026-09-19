@@ -205,8 +205,11 @@ def test_schema_deployment_sends_every_profiles_schema_as_one_package():
 @pytest.mark.unit
 def test_profiles_resolve_from_the_shipped_catalog_when_the_tenant_has_no_rows():
     """A tenant registered a minute ago owns no backend rows, so provisioning
-    resolves its profiles from the cluster catalog in ``config.json`` merged
-    with whatever the tenant has overridden."""
+    resolves its profiles from the cluster catalog — ``config.json`` plus the
+    profiles the runtime affirmed under the system tenant — merged with
+    whatever the tenant has overridden. Both catalog reads are made: the
+    system tenant's row is where the agent-memory profile lives, and a tenant
+    that cannot see it cannot search its own memories."""
     from cogniverse_runtime import provision_tenant
 
     profile_names = ["audio_clap_semantic", "video_colpali_smol500_mv_frame"]
@@ -217,7 +220,7 @@ def test_profiles_resolve_from_the_shipped_catalog_when_the_tenant_has_no_rows()
             manager, "acme:prod", profile_names
         )
     assert resolved == [_shipped_schema_name(name) for name in profile_names]
-    assert manager.reads == ["acme:prod"]
+    assert manager.reads == ["acme:prod", "__system__"]
 
 
 @pytest.mark.unit
