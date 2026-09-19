@@ -4404,7 +4404,7 @@ print(out.answer, out.persisted_memory_id, out.used_rlm)
 | `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()` outside the event-loop thread; rendered in the prompt with the supplied `label`. A read failure propagates so a partial synthesis is never persisted as complete. |
 | `documents` supplied as inline `content` | Rendered directly; cited as an external ref using the `label`. |
 | `rlm.enabled=True` or auto-detect over threshold | Synthesis runs through `RLMInference`; `used_rlm=True`. |
-| `persist=True` | Output written as a `synthesis_fact` memory with full provenance. |
+| `persist=True` | Output is returned only after the `synthesis_fact` primary and indexed provenance both persist. A provenance write or compensation failure propagates as a non-success request; it never becomes `persisted_memory_id=None`. |
 | `persist=False` | Read-only / audit run; nothing written. |
 
 Capability strings: `multi_document_synthesis`, `citation_preservation`.
@@ -4475,9 +4475,11 @@ for source in out.primary_sources:
 ```
 
 The agent does **not** call the LLM and does **not** write to memory; it
-is deterministic and cheap. Defaults: `max_depth=10`, `max_nodes=100`,
-`port=8019`. Capability strings: `citation_tracing`, `provenance_walk`,
-`audit`.
+is deterministic and cheap. It rejects a primary/index provenance mismatch
+instead of rendering the memory as a provenance-free leaf; operators use
+`Mem0MemoryManager.repair_provenance()` explicitly before retrying the read.
+Defaults: `max_depth=10`, `max_nodes=100`, `port=8019`. Capability strings:
+`citation_tracing`, `provenance_walk`, `audit`.
 
 `RLMResult.metadata` always carries `trajectory_length` and a bounded
 `trajectory_summary` (first 8 entries) regardless of the opt-in, so Phoenix

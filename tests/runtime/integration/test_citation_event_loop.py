@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -62,6 +63,12 @@ def citation_env(schema_env, monkeypatch):  # noqa: F811
             [CitationRef.memory("leaf")],
         ),
     ):
+        provenance = make_provenance(
+            written_by="agent:citation_source",
+            derivation_kind=kind,
+            confidence=1.0,
+            derived_from=refs,
+        )
         result = env.backend.ingest_documents(
             [
                 Document(
@@ -71,6 +78,12 @@ def citation_env(schema_env, monkeypatch):  # noqa: F811
                         "user_id": env.tenant,
                         "agent_id": "citation_source",
                         "memory": content,
+                        "metadata_": json.dumps(
+                            {
+                                "kind": "entity_fact",
+                                "provenance": provenance.to_metadata_payload(),
+                            }
+                        ),
                     },
                 )
             ],
@@ -79,12 +92,7 @@ def citation_env(schema_env, monkeypatch):  # noqa: F811
         assert result["success_count"] == 1
         mm.provenance_store.attach(
             memory_id,
-            make_provenance(
-                written_by="agent:citation_source",
-                derivation_kind=kind,
-                confidence=1.0,
-                derived_from=refs,
-            ),
+            provenance,
         )
     deadline = time.monotonic() + 30
     while set(mm.provenance_store.fetch(["root", "leaf"])) != {"root", "leaf"}:
