@@ -150,6 +150,121 @@ class TestForObjectStore:
         assert cfg.s3.endpoint_url is None
 
 
+class TestSharedS3Filesystem:
+    def test_prewarm_builds_one_client_used_by_concurrent_locators(
+        self, tmp_path, monkeypatch
+    ):
+        from concurrent.futures import ThreadPoolExecutor
+
+        import fsspec
+
+        from cogniverse_core.common.media import locator as locator_module
+
+        prewarm = getattr(locator_module, "prewarm_s3_filesystem", None)
+        assert callable(prewarm), "the runtime needs an S3 prewarm seam"
+
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "shared-access")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "shared-secret")
+        factory_calls = []
+
+        class Filesystem:
+            def __init__(self):
+                self.connect_calls = 0
+                self.info_calls = []
+
+            def connect(self):
+                self.connect_calls += 1
+
+            def _strip_protocol(self, uri):
+                return uri.removeprefix("s3://")
+
+            def info(self, path):
+                self.info_calls.append(path)
+                return {"size": 17, "ETag": "shared-etag"}
+
+        filesystem = Filesystem()
+
+        def build_filesystem(protocol, **kwargs):
+            factory_calls.append((protocol, kwargs))
+            return filesystem
+
+        monkeypatch.setattr(fsspec, "filesystem", build_filesystem)
+        config = MediaConfig.for_object_store("http://minio.internal:9000")
+        prewarm(config)
+        locators = [
+            MediaLocator(f"tenant:{index}", config, cache_root=tmp_path / str(index))
+            for index in range(4)
+        ]
+        uris = [f"s3://media/keyframes/{index}.jpg" for index in range(4)]
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            stats = list(
+                pool.map(
+                    lambda item: item[0]._stat_remote(item[1]),
+                    zip(locators, uris),
+                )
+            )
+
+        assert [(stat.size, stat.etag) for stat in stats] == [(17, "shared-etag")] * 4
+        assert factory_calls == [
+            (
+                "s3",
+                {
+                    "client_kwargs": {
+                        "endpoint_url": "http://minio.internal:9000",
+                        "region_name": "us-east-1",
+                    },
+                    "config_kwargs": {
+                        "connect_timeout": 5,
+                        "read_timeout": 15,
+                        "retries": {"max_attempts": 2, "mode": "standard"},
+                    },
+                },
+            )
+        ]
+        assert filesystem.connect_calls == 1
+        assert sorted(filesystem.info_calls) == [
+            "media/keyframes/0.jpg",
+            "media/keyframes/1.jpg",
+            "media/keyframes/2.jpg",
+            "media/keyframes/3.jpg",
+        ]
+
+    def test_failed_prewarm_is_not_cached(self, monkeypatch):
+        import fsspec
+
+        from cogniverse_core.common.media import locator as locator_module
+
+        prewarm = getattr(locator_module, "prewarm_s3_filesystem", None)
+        assert callable(prewarm), "the runtime needs an S3 prewarm seam"
+
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "retry-access")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "retry-secret")
+        created = []
+
+        class Filesystem:
+            def __init__(self, attempt):
+                self.attempt = attempt
+
+            def connect(self):
+                if self.attempt == 1:
+                    raise RuntimeError("client construction failed")
+
+        def build_filesystem(*_args, **_kwargs):
+            filesystem = Filesystem(len(created) + 1)
+            created.append(filesystem)
+            return filesystem
+
+        monkeypatch.setattr(fsspec, "filesystem", build_filesystem)
+        config = MediaConfig.for_object_store("http://retry-minio.internal:9000")
+
+        with pytest.raises(RuntimeError, match="client construction failed"):
+            prewarm(config)
+        prewarm(config)
+
+        assert [filesystem.attempt for filesystem in created] == [1, 2]
+
+
 class TestStat:
     def test_stat_local(self, locator, tmp_path):
         f = tmp_path / "v.mp4"
