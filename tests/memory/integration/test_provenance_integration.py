@@ -20,6 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from cogniverse_agents.multi_document_synthesis_agent import (
     MultiDocSynthesisDeps,
@@ -44,6 +46,7 @@ from cogniverse_core.memory.schema import (
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_runtime.routers import knowledge as knowledge_router
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.http_fault_proxy import HTTPFaultProxy
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
@@ -966,3 +969,81 @@ def test_repair_preserves_unrelated_memory_and_distinct_tenant(memory_env):
         manager.memory.delete(memory_id)
         assert manager.memory.get(memory_id) is None
     Mem0MemoryManager._instances.pop(other_tenant, None)
+
+
+def test_mounted_synthesis_and_citation_routes_reject_torn_provenance(
+    memory_env, monkeypatch
+):
+    """Mounted routes return non-success for write and read inconsistency."""
+    mm = memory_env.manager
+    monkeypatch.setattr(knowledge_router, "_build_factory", lambda _tenant_id: mm)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_runtime_config_manager",
+        lambda: memory_env.config_manager,
+    )
+    monkeypatch.setattr(
+        knowledge_router, "_bind_graph", lambda _agent, _tenant_id: None
+    )
+    monkeypatch.setattr(
+        MultiDocumentSynthesisAgent,
+        "_synthesise_without_rlm",
+        lambda _self, _query, _documents: "A deterministic mounted synthesis.",
+    )
+    app = FastAPI()
+    app.include_router(knowledge_router.router, prefix="/admin")
+    app.dependency_overrides[knowledge_router._get_config_manager] = lambda: (
+        memory_env.config_manager
+    )
+
+    memory_env.proxy.arm(
+        lambda method, path, _body: (
+            method in {"POST", "PUT"} and "/document/v1/content/provenance_" in path
+        ),
+        failure=True,
+    )
+    memory_env.proxy.release.set()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        synthesis = client.post(
+            f"/admin/tenants/{TENANT}/knowledge/synthesis/multi_doc",
+            json={
+                "query": "What is the mounted-route result?",
+                "documents": [
+                    {
+                        "content": "Mounted route source content.",
+                        "label": "https://source.test/mounted-route",
+                    }
+                ],
+            },
+        )
+        assert synthesis.status_code == 500
+        assert synthesis.text == "Internal Server Error"
+        remaining = mm.memory.get_all(
+            user_id=mm._storage_tenant_id,
+            agent_id="multi_document_synthesis_agent",
+        )
+        assert remaining == {"results": []}
+
+        partial_provenance = make_provenance(
+            written_by="agent:mounted-partial",
+            derivation_kind=DerivationKind.SYNTHESIS,
+            confidence=0.77,
+            derived_from=[CitationRef.external("https://source.test/mounted-partial")],
+        )
+        raw = mm.memory.add(
+            "A mounted citation read must reject this partial primary.",
+            user_id=mm._storage_tenant_id,
+            agent_id=AGENT,
+            metadata=attach_to_metadata({"kind": "entity_fact"}, partial_provenance),
+            infer=False,
+        )
+        partial_id = raw["results"][0]["id"]
+        citation = client.post(
+            f"/admin/tenants/{TENANT}/knowledge/citations/trace",
+            json={"memory_id": partial_id},
+        )
+        assert citation.status_code == 500
+        assert citation.text == "Internal Server Error"
+
+    mm.memory.delete(partial_id)
+    assert mm.memory.get(partial_id) is None

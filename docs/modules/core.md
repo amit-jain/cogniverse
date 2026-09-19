@@ -1246,16 +1246,37 @@ for node in graph.nodes:
     print(node.depth, node.memory_id, node.content_excerpt)
 for src in graph.primary_sources:
     print("source:", src.ref_kind, src.ref_id)
+
+# Explicit repair reads the primary's canonical metadata and upserts the
+# stable prov-<tenant>-<memory> row. It raises on a concurrent primary change.
+row_id = memory_manager.repair_provenance(memory_id)
 ```
 
 **Storage**: provenance is attached in-band in `metadata["provenance"]` on
 the memory record and indexed as one row per memory in the per-tenant
 `provenance` Vespa schema (`ProvenanceStore`). Walker traversal batches
 each BFS level into one indexed query; cycle and depth limits
-(`max_depth`, `max_nodes`) protect against runaway chains. A failed
-provenance query raises — a memory with no indexed record is a terminal
-leaf, so a swallowed failure would truncate the graph and read as
-success.
+(`max_depth`, `max_nodes`) protect against runaway chains.
+
+The primary and indexed records form one verified persistence contract.
+`ProvenanceStore.attach()` requires an exact one-document feed result and
+raises `ProvenanceWriteError` for rejected or unresolved writes. A newly
+created Mem0 `ADD` is removed when its indexed write fails. An existing
+`UPDATE` is retained and the error identifies its memory id for explicit
+repair; it is never deleted as compensation.
+
+`ProvenanceWalker` compares the in-band declaration with the indexed row
+before returning a graph. Missing, malformed, mismatched, or orphaned indexed
+state raises `ProvenanceConsistencyError`; a storage outage raises rather than
+becoming absence. A memory reference is a normal terminal leaf only when both
+the primary and indexed row are absent, or when a present primary legitimately
+declares no provenance. Citation reads never repair state as a side effect.
+
+`Mem0MemoryManager.repair_provenance()` is the explicit idempotent repair path.
+It serializes with manager writes, reattaches the primary's canonical
+provenance under the stable row id, and verifies the primary revision and
+indexed row before success. Concurrent external changes are retried up to the
+requested bound and then raise `ProvenanceRepairConflictError`.
 
 Contradiction detection and trust ranking both read this provenance graph
 to score conflicting claims.
