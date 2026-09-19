@@ -42,6 +42,7 @@ class BodyBoundedLM(dspy.LM):
         *,
         cache_tenant_id: str | None = None,
         response_cache: TenantScopedLMCache | None = None,
+        response_cache_enabled: bool = True,
         **kwargs: Any,
     ) -> None:
         if cache_tenant_id:
@@ -63,6 +64,7 @@ class BodyBoundedLM(dspy.LM):
             if response_cache is not None or self.cache_tenant_id is None
             else lm_response_cache()
         )
+        self.response_cache_enabled = response_cache_enabled
 
     def for_tenant(self, tenant_id: str) -> "BodyBoundedLM":
         """This LM, answering for ``tenant_id``.
@@ -75,7 +77,11 @@ class BodyBoundedLM(dspy.LM):
         canonical = canonical_tenant_id(tenant_id)
         if self.cache_tenant_id == canonical:
             return self
-        bound = self.copy(cache_tenant_id=canonical, cache=False)
+        bound = self.copy(
+            cache_tenant_id=canonical,
+            cache=False,
+            response_cache_enabled=self.response_cache_enabled,
+        )
         if bound.response_cache is None:
             bound.response_cache = lm_response_cache()
         return bound
@@ -156,8 +162,9 @@ class BodyBoundedLM(dspy.LM):
 
     def forward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)
+        use_response_cache = kwargs.pop("cache", self.response_cache_enabled)
         kwargs = budgeted_call_kwargs(self.kwargs, kwargs)
-        if self.cache_tenant_id is None:
+        if self.cache_tenant_id is None or not use_response_cache:
             return self._upstream(assembled, **kwargs)
         deadline = current_lm_call_deadline()
         try:
@@ -175,8 +182,9 @@ class BodyBoundedLM(dspy.LM):
 
     async def aforward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)
+        use_response_cache = kwargs.pop("cache", self.response_cache_enabled)
         kwargs = budgeted_call_kwargs(self.kwargs, kwargs)
-        if self.cache_tenant_id is None:
+        if self.cache_tenant_id is None or not use_response_cache:
             return await self._aupstream(assembled, **kwargs)
         deadline = current_lm_call_deadline()
         try:
