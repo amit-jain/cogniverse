@@ -462,6 +462,7 @@ class TestRLMInference:
 
         assert rlm._create_lm() is created
         assert created.cache is False
+        assert created.response_cache_enabled is False
 
 
 class TestSearchInputWithRLM:

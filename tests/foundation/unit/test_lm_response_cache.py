@@ -124,6 +124,15 @@ def build_lm(cache, tenant_id: str | None) -> BodyBoundedLM:
 
 
 class TestTenantIsolationWithoutRoutingHeaders:
+    def test_explicit_cache_false_reaches_upstream_each_time(self, cache, monkeypatch):
+        upstream = Upstream(["fresh one", "fresh two"]).install(monkeypatch)
+        model = build_lm(cache, "acme:prod")
+
+        assert model.forward(messages=MESSAGES, cache=False).text == "fresh one"
+        assert model.forward(messages=MESSAGES, cache=False).text == "fresh two"
+        assert len(upstream) == 2
+        assert cache.entry_count() == 0
+
     def test_two_tenants_asking_the_same_thing_each_keep_their_own_answer(
         self, cache, monkeypatch
     ):

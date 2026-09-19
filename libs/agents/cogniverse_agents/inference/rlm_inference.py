@@ -256,6 +256,7 @@ class RLMInference:
         """Create DSPy LM via centralized factory."""
         lm = create_dspy_lm(self.llm_config)
         lm.cache = self.cache
+        lm.response_cache_enabled = self.cache
         return lm
 
     def _get_rlm(self):
