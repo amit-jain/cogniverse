@@ -440,6 +440,10 @@ class TestDetailedReportAgent:
         assert good.metadata["report_degraded"] is False
         assert good.metadata["report_degraded_reason"] == ""
         assert good.executive_summary == "grounded"
+        assert good.recommendations == [
+            "Consider incorporating visual content for richer analysis",
+            "Expand result set to identify more meaningful patterns",
+        ]
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
