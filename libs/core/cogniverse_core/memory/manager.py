@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -453,6 +454,7 @@ class Mem0MemoryManager:
             )
 
         self._resolve_backend = _resolve_backend
+        self._provenance_lease_store = config_manager.store
         backend = _resolve_backend()
 
         # Get tenant-specific schema name
@@ -642,7 +644,7 @@ class Mem0MemoryManager:
         infer: bool = True,
     ) -> Optional[str]:
         """Add a memory while serializing its primary and provenance writes."""
-        with self._provenance_write_lock:
+        with self._provenance_write_ownership():
             return self._add_memory(
                 content=content,
                 tenant_id=tenant_id,
@@ -853,7 +855,7 @@ class Mem0MemoryManager:
 
     def repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
         """Reattach a primary memory's canonical provenance idempotently."""
-        with self._provenance_write_lock:
+        with self._provenance_write_ownership():
             return self._repair_provenance(memory_id, max_attempts=max_attempts)
 
     def _repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
@@ -918,6 +920,30 @@ class Mem0MemoryManager:
     def _repair_snapshot(memory: Dict[str, Any]) -> str:
         """Canonical primary revision/content snapshot for repair checks."""
         return json.dumps(memory, sort_keys=True, separators=(",", ":"), default=str)
+
+    @contextmanager
+    def _provenance_write_ownership(self):
+        """Hold local and store-backed ownership for primary/index writes."""
+        with self._provenance_write_lock:
+            store = getattr(self, "_provenance_lease_store", None)
+            if store is None:
+                yield
+                return
+            from cogniverse_core.registries.schema_deploy_lease import (
+                SchemaDeployLease,
+            )
+
+            lease = SchemaDeployLease(
+                store,
+                service="provenance_write_lease",
+                config_key=self._storage_tenant_id,
+                purpose=f"provenance writes for {self._storage_tenant_id}",
+            )
+            lease.acquire()
+            try:
+                yield
+            finally:
+                lease.release()
 
     def _detect_and_persist_contradictions(
         self,
@@ -1728,7 +1754,7 @@ class Mem0MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Update a primary while excluding provenance verification."""
-        with self._provenance_write_lock:
+        with self._provenance_write_ownership():
             return self._update_memory(
                 memory_id=memory_id,
                 content=content,

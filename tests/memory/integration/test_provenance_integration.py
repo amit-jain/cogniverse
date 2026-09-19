@@ -631,6 +631,147 @@ def test_repair_serializes_with_manager_primary_update(memory_env, monkeypatch):
     assert mm.memory.get(memory_id) is None
 
 
+def test_repair_serializes_with_second_manager_for_same_storage_tenant(
+    memory_env, monkeypatch
+):
+    """Canonical tenant peers share repair/write ownership across instances."""
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:cross-instance",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.82,
+        derived_from=[CitationRef.external("https://source.test/cross-instance")],
+    )
+    memory_id = mm.add_memory(
+        content="Primary before a cross-instance repair.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+        infer=False,
+    )
+    canonical_tenant = mm._storage_tenant_id
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+    peer = Mem0MemoryManager(canonical_tenant)
+    peer.initialize(
+        backend_host="http://127.0.0.1",
+        backend_port=memory_env.proxy.port,
+        backend_config_port=memory_env.proxy.port,
+        base_schema_name="agent_memories",
+        llm_model=get_llm_model(),
+        embedding_model="lightonai/DenseOn",
+        llm_base_url=get_llm_base_url(),
+        embedder_base_url=memory_env.denseon,
+        auto_create_schema=False,
+        config_manager=memory_env.config_manager,
+        schema_loader=memory_env.schema_loader,
+    )
+    old_embedder = peer.memory.embedding_model
+    peer.memory.embedding_model = _StaticEmbedder()
+    entered = threading.Event()
+    release = threading.Event()
+    real_attach = mm.provenance_store.attach
+
+    def blocked_attach(target_memory_id, target_provenance):
+        row_id = real_attach(target_memory_id, target_provenance)
+        entered.set()
+        assert release.wait(10) is True
+        return row_id
+
+    monkeypatch.setattr(mm.provenance_store, "attach", blocked_attach)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair_future = pool.submit(mm.repair_provenance, memory_id)
+            assert entered.wait(10) is True
+            update_future = pool.submit(
+                peer.update_memory,
+                memory_id,
+                "Primary after the cross-instance repair.",
+                canonical_tenant,
+                AGENT,
+            )
+            threading.Event().wait(0.5)
+            assert update_future.done() is False
+            release.set()
+            assert repair_future.result(timeout=20) == (
+                f"prov-{canonical_tenant}-{memory_id}"
+            )
+            assert update_future.result(timeout=20) is True
+    finally:
+        release.set()
+        peer.memory.embedding_model = old_embedder
+
+    assert peer.memory.get(memory_id)["memory"] == (
+        "Primary after the cross-instance repair."
+    )
+    peer.memory.delete(memory_id)
+    assert peer.memory.get(memory_id) is None
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+
+
+def test_raw_mutation_after_repair_final_read_is_detected_by_reader(
+    memory_env, monkeypatch
+):
+    """Repair linearizes before a raw mutation whose digest later mismatches."""
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:final-window",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.86,
+        derived_from=[CitationRef.external("https://source.test/final-window")],
+    )
+    memory_id = mm.add_memory(
+        content="Primary before the repair final-read window.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+        infer=False,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    real_get = mm.provenance_store.get
+    old_embedder = mm.memory.embedding_model
+    mm.memory.embedding_model = _StaticEmbedder()
+
+    def blocked_index_verification(target_memory_id):
+        record = real_get(target_memory_id)
+        entered.set()
+        assert release.wait(10) is True
+        return record
+
+    monkeypatch.setattr(mm.provenance_store, "get", blocked_index_verification)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair_future = pool.submit(mm.repair_provenance, memory_id)
+            assert entered.wait(10) is True
+            mm.memory.update(
+                memory_id,
+                data="Primary mutated after repair's final primary read.",
+                metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+            )
+            release.set()
+            assert repair_future.result(timeout=20) == (
+                f"prov-{mm._storage_tenant_id}-{memory_id}"
+            )
+    finally:
+        release.set()
+        mm.memory.embedding_model = old_embedder
+
+    assert mm.memory.get(memory_id)["memory"] == (
+        "Primary mutated after repair's final primary read."
+    )
+    with pytest.raises(
+        ProvenanceConsistencyError, match="primary digest does not match indexed"
+    ):
+        ProvenanceWalker(mm).walk(memory_id, tenant_id=TENANT)
+
+    monkeypatch.setattr(mm.provenance_store, "get", real_get)
+    assert mm.repair_provenance(memory_id) == (
+        f"prov-{mm._storage_tenant_id}-{memory_id}"
+    )
+    mm.memory.delete(memory_id)
+    assert mm.memory.get(memory_id) is None
+
+
 def test_repair_reports_bounded_conflict_for_external_primary_changes(
     memory_env, monkeypatch
 ):

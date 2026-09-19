@@ -79,8 +79,16 @@ class SchemaDeployLease:
         *,
         lease_seconds: Optional[float] = None,
         wait_seconds: Optional[float] = None,
+        tenant_id: str = SYSTEM_TENANT_ID,
+        service: str = _SERVICE,
+        config_key: str = _KEY,
+        purpose: str = "Vespa deployment",
     ) -> None:
         self._store = store
+        self._tenant_id = tenant_id
+        self._service = service
+        self._config_key = config_key
+        self._purpose = purpose
         self._lease_seconds = (
             DEFAULT_LEASE_SECONDS if lease_seconds is None else lease_seconds
         )
@@ -92,10 +100,10 @@ class SchemaDeployLease:
 
     def _read(self) -> tuple[Optional[dict[str, Any]], int]:
         entry = self._store.get_config(
-            tenant_id=SYSTEM_TENANT_ID,
+            tenant_id=self._tenant_id,
             scope=ConfigScope.SCHEMA,
-            service=_SERVICE,
-            config_key=_KEY,
+            service=self._service,
+            config_key=self._config_key,
         )
         if entry is None:
             return None, 0
@@ -103,10 +111,10 @@ class SchemaDeployLease:
 
     def _claim(self, expected_version: int, holder: Optional[str]) -> bool:
         entry = self._store.compare_and_set_config(
-            tenant_id=SYSTEM_TENANT_ID,
+            tenant_id=self._tenant_id,
             scope=ConfigScope.SCHEMA,
-            service=_SERVICE,
-            config_key=_KEY,
+            service=self._service,
+            config_key=self._config_key,
             config_value={"holder": holder, "lease_seconds": self._lease_seconds},
             expected_version=expected_version,
         )
@@ -142,13 +150,18 @@ class SchemaDeployLease:
                     _released_holders.discard(current)
                     _released_holders.discard(self.holder)
                 self._held_since = time.monotonic()
-                logger.info("Vespa deployment lease acquired by %s", self.holder)
+                logger.info("%s lease acquired by %s", self._purpose, self.holder)
                 return self
             if time.monotonic() >= deadline:
+                if self._purpose == "Vespa deployment":
+                    raise TimeoutError(
+                        f"Vespa deployment lease still held by {current!r} after "
+                        f"{self._wait_seconds}s; refusing to replace the application "
+                        f"package concurrently with another deployer"
+                    )
                 raise TimeoutError(
-                    f"Vespa deployment lease still held by {current!r} after "
-                    f"{self._wait_seconds}s; refusing to replace the application "
-                    f"package concurrently with another deployer"
+                    f"{self._purpose} lease still held by {current!r} after "
+                    f"{self._wait_seconds}s; refusing concurrent ownership"
                 )
             time.sleep(_POLL_SECONDS)
 
@@ -158,11 +171,11 @@ class SchemaDeployLease:
             self._held_since is None
             or time.monotonic() - self._held_since >= self._lease_seconds
         ):
-            raise DeploymentLeaseLost("Vespa deployment lease expired or was replaced")
+            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
         record, version = self._read()
         current = None if record is None else record.get("holder")
         if current != self.holder or not self._claim(version, self.holder):
-            raise DeploymentLeaseLost("Vespa deployment lease expired or was replaced")
+            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
         self._held_since = time.monotonic()
 
     def release(self) -> None:
@@ -180,8 +193,9 @@ class SchemaDeployLease:
                 cleared = self._claim(version, None)
         except Exception as exc:
             logger.warning(
-                "Vespa deployment lease held by %s could not be released "
+                "%s lease held by %s could not be released "
                 "(%s: %s); peers take it over after %.0fs",
+                self._purpose,
                 self.holder,
                 type(exc).__name__,
                 exc,
