@@ -319,6 +319,18 @@ def fake_telemetry_manager(empty_provider):
     return FakeTelemetryManager(empty_provider)
 
 
+@pytest.fixture
+def cli_config_manager(monkeypatch):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    service_urls = {"gliner": "http://gliner.test:8010"}
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", json.dumps(service_urls))
+    manager = ConfigManager(store=InMemoryConfigStore())
+    yield manager
+    assert manager.get_system_config().inference_service_urls == service_urls
+
+
 @contextmanager
 def _patch_telemetry(fake_mgr):
     """Patch get_telemetry_manager at BOTH lookup sites: the source module
@@ -6896,7 +6908,7 @@ class TestEntityExtractionOptimization:
 
     @pytest.mark.asyncio
     async def test_entity_extraction_uses_truth_and_approved_rows_not_served_spans(
-        self, monkeypatch, tmp_path
+        self, monkeypatch, tmp_path, cli_config_manager
     ):
         from dspy.utils.dummies import DummyLM
 
@@ -7059,7 +7071,7 @@ class TestEntityExtractionOptimization:
             p2,
             patch(
                 "cogniverse_foundation.config.utils.create_default_config_manager",
-                return_value=SimpleNamespace(),
+                return_value=cli_config_manager,
             ),
             patch(
                 "cogniverse_foundation.config.utils.get_config",
@@ -9199,6 +9211,7 @@ class TestSyntheticGeneration:
     async def test_routing_generation_receives_production_entity_extractor(
         self,
         fake_telemetry_manager,
+        cli_config_manager,
     ):
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
         from cogniverse_synthetic.schemas import SyntheticDataResponse
@@ -9208,7 +9221,7 @@ class TestSyntheticGeneration:
             get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
             get=lambda key, default=None: sections.get(key, default),
         )
-        config_manager = object()
+        config_manager = cli_config_manager
         backend = object()
         build_calls = []
         extraction_calls = []
@@ -9323,6 +9336,7 @@ class TestSyntheticGeneration:
     async def test_entity_agent_failure_does_not_block_independent_optimizer(
         self,
         fake_telemetry_manager,
+        cli_config_manager,
     ):
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
         from cogniverse_synthetic.schemas import SyntheticDataResponse
@@ -9332,7 +9346,7 @@ class TestSyntheticGeneration:
             get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
             get=lambda key, default=None: sections.get(key, default),
         )
-        config_manager = object()
+        config_manager = cli_config_manager
         backend = object()
         generated = []
 
@@ -9456,6 +9470,7 @@ class TestSyntheticGeneration:
     async def test_generated_examples_enter_the_human_approval_queue(
         self,
         fake_telemetry_manager,
+        cli_config_manager,
         optimizer_type,
         expected_agent_type,
         schema_name,
@@ -9466,6 +9481,7 @@ class TestSyntheticGeneration:
         from cogniverse_foundation.config.unified_config import (
             BackendConfig,
             SyntheticGeneratorConfig,
+            SystemConfig,
         )
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
         from cogniverse_synthetic.schemas import SyntheticDataResponse
@@ -9475,12 +9491,13 @@ class TestSyntheticGeneration:
             get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
             get=lambda key, default=None: sections.get(key, default),
         )
-        system_config = SimpleNamespace(
+        system_config = SystemConfig(
             telemetry_url="http://phoenix.test:6006",
             telemetry_collector_endpoint="phoenix.test:4317",
             redis_url="redis://redis.test:6379/0",
         )
-        config_manager = SimpleNamespace(get_system_config=lambda: system_config)
+        config_manager = cli_config_manager
+        config_manager.set_system_config(system_config)
         saved_batches = []
         storage_inits = []
         service_inits = []
