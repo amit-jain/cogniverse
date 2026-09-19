@@ -571,7 +571,7 @@ namespace["_make_writer"] = instrument
             },
         )
         async with asyncio.timeout(15):
-            while not blocked.exists():
+            while not blocked.exists() or blocked.read_text() != "blocked":
                 await asyncio.sleep(0.005)
         assert blocked.read_text() == "blocked"
         process.stdin.close()

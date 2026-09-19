@@ -33,7 +33,7 @@ class _ExplodingDescriptionStrategy(BaseStrategy):
 
 
 class _Context:
-    schema_name = "video_colpali"
+    schema_name = "video_colpali_smol500_mv_frame"
     logger = logging.getLogger("test")
     config = SimpleNamespace(generate_descriptions=True)
 
@@ -62,7 +62,7 @@ async def test_description_failure_is_reported_at_the_description_stage():
     failure = raised.value
     assert failure.context["stage"] == "description"
     assert failure.context["content_path"] == "/videos/9f3c.mp4"
-    assert failure.context["profile"] == "video_colpali"
+    assert failure.context["profile"] == "video_colpali_smol500_mv_frame"
     assert failure.context["original_type"] == "RuntimeError"
     assert failure.__cause__ is error
     assert str(failure).startswith(

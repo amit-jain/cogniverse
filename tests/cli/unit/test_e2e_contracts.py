@@ -1002,13 +1002,34 @@ def test_e2e_modules_load_hub_assets_from_the_local_cache_only():
     assert offenders == {}
 
 
-def test_the_served_tokenizer_loads_offline_from_the_e2e_cache(monkeypatch):
-    from tests.e2e.test_api_e2e import _served_document_tokens
+def test_the_served_tokenizer_uses_the_pinned_e2e_cache(monkeypatch):
+    from transformers import AutoTokenizer
 
-    # A closed Hub endpoint: a load that reached the network would fail.
-    monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
+    from cogniverse_foundation.inference_specs import get_inference_service_spec
+    from tests.e2e.test_api_e2e import E2E_HF_HUB_CACHE, _served_document_tokens
+
+    loaded = {}
+
+    class _Tokenizer:
+        def __call__(self, text, *, add_special_tokens):
+            assert (text, add_special_tokens) == ("Section 0. probe", False)
+            return {"input_ids": [12612, 470, 15, 10304]}
+
+    def load(model_id, **kwargs):
+        loaded["model_id"] = model_id
+        loaded.update(kwargs)
+        return _Tokenizer()
+
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", load)
 
     assert _served_document_tokens("Section 0. probe") == [12612, 470, 15, 10304]
+    spec = get_inference_service_spec("colbert_pylate")
+    assert loaded == {
+        "model_id": spec.model_id,
+        "revision": spec.model_revision,
+        "cache_dir": str(E2E_HF_HUB_CACHE),
+        "local_files_only": True,
+    }
 
 
 def test_a_tokenizer_missing_from_the_cache_fails_at_once(monkeypatch, tmp_path):
