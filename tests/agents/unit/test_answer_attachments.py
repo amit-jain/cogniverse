@@ -341,7 +341,10 @@ async def test_zero_hit_text_does_not_hide_real_lm_connection_failure(build_agen
 
 
 async def test_report_lm_failure_propagates_after_attachment_shedding(build_agent):
-    from cogniverse_agents.detailed_report_agent import ReportGenerationModule
+    from cogniverse_agents.detailed_report_agent import (
+        _REPORT_CALL_STATE,
+        ReportGenerationModule,
+    )
 
     agent, _ = build_agent("report")
     agent.report_module = ReportGenerationModule()
@@ -359,6 +362,12 @@ async def test_report_lm_failure_propagates_after_attachment_shedding(build_agen
         "litellm.InternalServerError: InternalServerError: OpenAIException - "
         "Connection error."
     )
+    assert _REPORT_CALL_STATE.get() == {
+        "keyframes_attached": 0,
+        "keyframes_shed": 0,
+        "report_degraded": True,
+        "report_degraded_reason": FAILURE,
+    }
 
 
 @pytest.mark.parametrize("kind", ["summary", "report", "research"])

@@ -17,6 +17,7 @@ import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -239,13 +240,16 @@ def report_runtime(provider, monkeypatch):
         FAILING_TENANT: _RecordingConversationStore(),
         HEALTHY_TENANT: _RecordingConversationStore(),
     }
+    modes = {
+        FAILING_TENANT: "report-503",
+        HEALTHY_TENANT: "report-ok",
+    }
 
     async def grounded(*_args, **_kwargs):
         return AnswerGrounding(hits=[HIT], state="retrieved")
 
     def build_agent(_cls, _deps_cls, _name, tenant_id):
-        mode = "report-ok" if tenant_id == HEALTHY_TENANT else "report-503"
-        return _agent(manager, provider.url, mode)
+        return _agent(manager, provider.url, modes[tenant_id])
 
     dispatcher._resolve_answer_search_results = grounded
     dispatcher._build_answer_agent = build_agent
@@ -253,7 +257,7 @@ def report_runtime(provider, monkeypatch):
     dispatcher.consult_egress_policy = lambda *_args, **_kwargs: None
     dispatcher._verify_egress = lambda *_args, **_kwargs: None
     dispatcher._conversation_store_factory = conversations.__getitem__
-    return dispatcher, conversations
+    return dispatcher, conversations, modes
 
 
 @pytest.mark.parametrize(
@@ -287,10 +291,20 @@ async def test_direct_report_process_propagates_answer_model_failures(
 
 
 @pytest.mark.asyncio
-async def test_actual_dispatcher_propagates_503_without_saving_a_successful_turn(
-    report_runtime,
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("report-503", "ServiceUnavailableError"),
+        ("report-reset", "InternalServerError"),
+        ("report-timeout", "Timeout"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_actual_dispatcher_propagates_model_failure_without_saving_success(
+    report_runtime, mode, error_type
 ):
-    dispatcher, conversations = report_runtime
+    dispatcher, conversations, modes = report_runtime
+    modes[FAILING_TENANT] = mode
 
     with pytest.raises(Exception) as raised:
         await dispatcher.dispatch(
@@ -305,7 +319,7 @@ async def test_actual_dispatcher_propagates_503_without_saving_a_successful_turn
         )
     await dispatcher.drain_conversation_saves()
 
-    assert type(raised.value).__name__ == "ServiceUnavailableError"
+    assert type(raised.value).__name__ == error_type
     assert conversations[FAILING_TENANT].turns == []
 
 
@@ -334,7 +348,7 @@ def _serving(app):
 
 @pytest.fixture
 def compat_url(report_runtime):
-    dispatcher, _ = report_runtime
+    dispatcher, _, _ = report_runtime
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys(
         {FAILING_KEY: FAILING_TENANT, HEALTHY_KEY: HEALTHY_TENANT}
@@ -352,7 +366,7 @@ def compat_url(report_runtime):
 
 @pytest.fixture
 def a2a_url(report_runtime):
-    dispatcher, _ = report_runtime
+    dispatcher, _, _ = report_runtime
     card = AgentCard(
         name="Cogniverse",
         description="Report failure fixture",
@@ -412,8 +426,20 @@ def _a2a_request(*, stream: bool) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("report-503", "ServiceUnavailableError"),
+        ("report-reset", "InternalServerError"),
+        ("report-timeout", "Timeout"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_openai_nonstream_uses_the_existing_internal_error_contract(compat_url):
+async def test_openai_nonstream_uses_the_existing_internal_error_contract(
+    compat_url, report_runtime, mode, error_type
+):
+    _, _, modes = report_runtime
+    modes[FAILING_TENANT] = mode
     async with httpx.AsyncClient(base_url=compat_url, timeout=60.0) as client:
         response = await client.post(
             "/v1/chat/completions",
@@ -424,13 +450,12 @@ async def test_openai_nonstream_uses_the_existing_internal_error_contract(compat
     assert response.status_code == 500
     assert response.json()["error"] == {
         "message": (
-            "detailed_report_agent failed with ServiceUnavailableError. "
-            "See server logs for detail."
+            f"detailed_report_agent failed with {error_type}. See server logs for detail."
         ),
         "type": "server_error",
         "code": "internal_error",
         "agent": "detailed_report_agent",
-        "error_type": "ServiceUnavailableError",
+        "error_type": error_type,
     }
 
 
@@ -475,25 +500,128 @@ async def test_openai_stream_ends_with_one_existing_error_frame(compat_url):
     assert response.text.rstrip().endswith("data: [DONE]")
 
 
+def test_openai_socket_disconnect_cancels_blocked_report_without_late_success(
+    compat_url, report_runtime, provider
+):
+    _, conversations, modes = report_runtime
+    modes[FAILING_TENANT] = "report-block"
+
+    with pytest.raises(httpx.ReadTimeout):
+        httpx.post(
+            f"{compat_url}/v1/chat/completions",
+            json=_chat_body(stream=False),
+            headers={"Authorization": f"Bearer {FAILING_KEY}"},
+            timeout=0.5,
+        )
+    assert provider.entered.wait(timeout=5) is True
+
+    deadline = time.monotonic() + 3
+    while openai_compat.in_flight_count() != 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert openai_compat.in_flight_count() == 0
+
+    provider.release.set()
+    time.sleep(0.5)
+    assert openai_compat.in_flight_count() == 0
+    assert conversations[FAILING_TENANT].turns == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("report-503", "ServiceUnavailableError"),
+        ("report-reset", "InternalServerError"),
+        ("report-timeout", "Timeout"),
+    ],
+)
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.asyncio
-async def test_a2a_terminal_task_is_failed_for_a_report_model_outage(a2a_url, stream):
+async def test_a2a_terminal_task_is_failed_for_a_report_model_outage(
+    a2a_url, report_runtime, stream, mode, error_type
+):
+    _, _, modes = report_runtime
+    modes[FAILING_TENANT] = mode
     async with httpx.AsyncClient(base_url=a2a_url, timeout=60.0) as client:
         response = await client.post("/a2a/", json=_a2a_request(stream=stream))
 
     assert response.status_code == 200
-    events = (
-        [frame["result"] for frame in _sse_frames(response.text)]
+    envelope = (
+        [frame for frame in _sse_frames(response.text) if frame["result"].get("final")][
+            0
+        ]
         if stream
-        else [response.json()["result"]]
+        else response.json()
     )
-    terminals = [event for event in events if event.get("final", not stream)]
-    assert len(terminals) == 1
-    assert terminals[0]["status"]["state"] == "failed"
-    payload = json.loads(terminals[0]["status"]["message"]["parts"][0]["text"])
-    assert payload["type"] == "error"
-    assert payload["agent"] == "detailed_report_agent"
-    assert payload["error_type"] == "ServiceUnavailableError"
+    terminal = envelope["result"]
+    task_id = terminal["taskId"] if stream else terminal["id"]
+    context_id = terminal["contextId"]
+    status_message_id = terminal["status"]["message"]["messageId"]
+    assert str(UUID(task_id)) == task_id
+    assert str(UUID(context_id)) == context_id
+    assert str(UUID(status_message_id)) == status_message_id
+    if stream:
+        status_note = " (LM HTTP 408)" if mode == "report-timeout" else ""
+        error_message = (
+            f"DetailedReportAgent streaming failed with {error_type}{status_note}. "
+            "See server logs for detail."
+        )
+    else:
+        error_message = (
+            f"Agent 'detailed_report_agent' failed with {error_type}. "
+            "See runtime logs for detail."
+        )
+    error_payload = {
+        "type": "error",
+        "agent": "detailed_report_agent",
+        "error_type": error_type,
+    }
+    if stream and mode == "report-timeout":
+        error_payload["status"] = 408
+    error_payload["message"] = error_message
+    error_text = json.dumps(error_payload)
+    status = {
+        "message": {
+            "kind": "message",
+            "messageId": status_message_id,
+            "parts": [{"kind": "text", "text": error_text}],
+            "role": "agent",
+        },
+        "state": "failed",
+    }
+    if stream:
+        expected = {
+            "id": f"report-failure-{stream}",
+            "jsonrpc": "2.0",
+            "result": {
+                "contextId": context_id,
+                "final": True,
+                "kind": "status-update",
+                "status": status,
+                "taskId": task_id,
+            },
+        }
+    else:
+        expected = {
+            "id": f"report-failure-{stream}",
+            "jsonrpc": "2.0",
+            "result": {
+                "contextId": context_id,
+                "history": [
+                    {
+                        "contextId": context_id,
+                        "kind": "message",
+                        "messageId": f"report-message-{stream}",
+                        "parts": [{"kind": "text", "text": QUERY}],
+                        "role": "user",
+                        "taskId": task_id,
+                    }
+                ],
+                "id": task_id,
+                "kind": "task",
+                "status": status,
+            },
+        }
+    assert envelope == expected
     assert "controlled report LM unavailable" not in response.text
 
 
@@ -501,7 +629,7 @@ async def test_a2a_terminal_task_is_failed_for_a_report_model_outage(a2a_url, st
 async def test_concurrent_tenants_keep_failure_and_success_metadata_independent(
     report_runtime,
 ):
-    dispatcher, conversations = report_runtime
+    dispatcher, conversations, _ = report_runtime
 
     failed, succeeded = await asyncio.gather(
         dispatcher.dispatch(
@@ -576,7 +704,7 @@ async def test_parse_failure_keeps_the_existing_dispatcher_error_envelope(provid
 async def test_gateway_does_not_stamp_success_after_the_report_child_fails(
     report_runtime,
 ):
-    dispatcher, _ = report_runtime
+    dispatcher, _, _ = report_runtime
 
     class Gateway:
         async def _process_impl(self, _input):
@@ -601,6 +729,139 @@ async def test_gateway_does_not_stamp_success_after_the_report_child_fails(
         )
 
     assert type(raised.value).__name__ == "ServiceUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_report_failure_is_an_unsuccessful_orchestrator_child(
+    report_runtime, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from cogniverse_agents.orchestrator_agent import (
+        AccumulatedEvidence,
+        AgentStep,
+        OrchestrationPlan,
+        OrchestratorAgent,
+        OrchestratorDeps,
+        OrchestratorInput,
+    )
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_runtime.routers import agents as agents_router
+
+    dispatcher, conversations, modes = report_runtime
+    modes[FAILING_TENANT] = "report-503"
+    registry = AgentRegistry(
+        tenant_id=FAILING_TENANT, config_manager=dispatcher._config_manager
+    )
+    registry.register_agent(
+        AgentEndpoint(
+            name="detailed_report_agent",
+            url="http://report-runtime",
+            process_endpoint="/agents/detailed_report_agent/process",
+            capabilities=["detailed_report"],
+        )
+    )
+    remembered: list[tuple[str, str]] = []
+    scored_outcomes: list[dict[str, Any]] = []
+
+    class PreparedOrchestrator(OrchestratorAgent):
+        async def _create_plan(self, query, conversation_context, gateway_context):
+            return OrchestrationPlan(
+                query=query,
+                reasoning="report required",
+                steps=[
+                    AgentStep(
+                        agent_name="detailed_report_agent",
+                        input_data={"query": query},
+                        reasoning="write report",
+                    )
+                ],
+            )
+
+        async def _iterative_retrieval_loop(self, query, plan, **kwargs):
+            executed = await self._execute_plan(
+                plan,
+                tenant_id=kwargs["tenant_id"],
+                workflow_id=kwargs["workflow_id"],
+                execution_order_sink=kwargs["execution_order_sink"],
+                agent_observations_sink=kwargs["agent_observations_sink"],
+            )
+            kwargs["agent_results_sink"].update(executed)
+            return AccumulatedEvidence(iterations_executed=1, exit_reason="max_iter")
+
+        def _ensure_memory_for_tenant(self, tenant_id):
+            return None
+
+        def get_relevant_context(self, query):
+            return ""
+
+        def remember_success(self, query, summary):
+            remembered.append((query, summary))
+
+        async def _semantic_router_lm_context(self, tenant_id):
+            return nullcontext()
+
+        async def _emit_orchestration_span(self, **outcome):
+            scored_outcomes.append(outcome)
+
+    monkeypatch.setattr(agents_router, "_ensure_dispatcher", lambda: dispatcher)
+    child_app = FastAPI()
+    child_app.include_router(agents_router.router, prefix="/agents")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=child_app),
+        base_url="http://report-runtime",
+    ) as child_client:
+        orchestrator = PreparedOrchestrator(
+            deps=OrchestratorDeps(),
+            registry=registry,
+            config_manager=dispatcher._config_manager,
+            http_client=child_client,
+        )
+        orchestrator.telemetry_manager = TelemetryManager(
+            TelemetryConfig(enabled=False)
+        )
+        orchestrator.workflow_intelligence = None
+        result = await orchestrator.process(
+            OrchestratorInput(query=QUERY, tenant_id=FAILING_TENANT)
+        )
+
+    child_error = (
+        "HTTPStatusError: Server error '500 Internal Server Error' for url "
+        "'http://report-runtime/agents/detailed_report_agent/process'\n"
+        "For more information check: "
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    )
+    assert result.final_output["status"] == "failed"
+    assert result.final_output["aggregated_content"] == ""
+    assert result.agent_results == {
+        "detailed_report_agent": {"status": "error", "message": child_error}
+    }
+    assert remembered == []
+    assert scored_outcomes == [
+        {
+            "tenant_id": FAILING_TENANT,
+            "workflow_id": result.workflow_id,
+            "query": QUERY,
+            "agent_sequence": ["detailed_report_agent"],
+            "execution_time": scored_outcomes[0]["execution_time"],
+            "success": False,
+            "tasks_completed": 0,
+            "pattern": "sequential",
+            "execution_order": ["detailed_report_agent"],
+            "error_summary": f"detailed_report_agent: {child_error}",
+            "agent_observations": [
+                {
+                    "agent_name": "detailed_report_agent",
+                    "execution_time": scored_outcomes[0]["agent_observations"][0][
+                        "execution_time"
+                    ],
+                    "success": False,
+                }
+            ],
+        }
+    ]
+    assert conversations[FAILING_TENANT].turns == []
 
 
 @pytest.mark.asyncio
