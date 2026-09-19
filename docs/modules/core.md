@@ -361,7 +361,7 @@ rlm.should_use_rlm(context_size=80_000)  # -> True
 | `context_threshold` | `50_000` | Character threshold for `auto_detect` |
 | `max_iterations` | `3` (1-10) | Max REPL iterations |
 | `max_llm_calls` | `30` (1-100) | Max LLM sub-calls |
-| `timeout_seconds` | `300` (10-1800) | RLM processing timeout |
+| `timeout_seconds` | `300` (1-1800) | RLM processing timeout |
 | `backend` | `"openai"` | litellm backend id (openai, anthropic, litellm) |
 | `model` / `api_base` / `api_key` | `None` | Overrides; `None` falls back to the agent's model / provider defaults |
 | `include_trajectory` | `False` | Attach a bounded REPL trajectory to the result for auditing |

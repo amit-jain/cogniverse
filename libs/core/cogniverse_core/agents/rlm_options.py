@@ -70,9 +70,9 @@ class RLMOptions(BaseModel):
     )
     timeout_seconds: int = Field(
         default=300,
-        ge=10,
+        ge=1,
         le=1800,
-        description="Timeout for RLM processing (10-1800 seconds)",
+        description="Timeout for RLM processing (1-1800 seconds)",
     )
     cache: bool = Field(
         default=True,

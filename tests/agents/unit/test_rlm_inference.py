@@ -89,6 +89,14 @@ class TestRLMOptions:
         with pytest.raises(ValueError):
             RLMOptions(max_iterations=11)
 
+    def test_timeout_bounds(self):
+        assert RLMOptions(timeout_seconds=1).timeout_seconds == 1
+        assert RLMOptions(timeout_seconds=1800).timeout_seconds == 1800
+        with pytest.raises(ValueError):
+            RLMOptions(timeout_seconds=0)
+        with pytest.raises(ValueError):
+            RLMOptions(timeout_seconds=1801)
+
     def test_enabled_overrides_auto_detect(self):
         """Explicit enabled=True should work even with auto_detect=False."""
         opts = RLMOptions(enabled=True, auto_detect=False)
