@@ -430,12 +430,17 @@ def test_http_transport_control(upstream, cache):
     assert cache.entry_count() == 0
 
 
-def test_cache_flags_do_not_change_request_identity(upstream, cache):
+def test_cache_flags_control_reuse_without_entering_the_provider_request(
+    upstream, cache
+):
     model = lm(upstream, cache)
     assert text(model.forward(messages=MESSAGES)) == "answer-1"
     assert text(model.forward(messages=MESSAGES, cache=True)) == "answer-1"
-    assert text(model.forward(messages=MESSAGES, cache=False)) == "answer-1"
-    assert upstream.count == 1
+    assert text(model.forward(messages=MESSAGES, cache=False)) == "answer-2"
+    assert text(model.forward(messages=MESSAGES)) == "answer-1"
+    assert upstream.count == 2
+    assert upstream.requests[0][1] == upstream.requests[1][1]
+    assert "cache" not in upstream.requests[1][1]
 
 
 def test_unbound_lm_does_not_use_dspy_cache(upstream, cache):
