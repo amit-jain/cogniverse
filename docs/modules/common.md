@@ -995,6 +995,12 @@ raised as `OSError` — matching s3fs's own translation of HTTP-status failures
 on `OSError` (answer-time keyframe resolution) treat an unreachable store like
 any other IO failure instead of crashing.
 
+The runtime connects one process-shared s3fs client during startup, after it
+maps the MinIO credentials onto the AWS environment names. Concurrent
+keyframe workers reuse that connected client instead of loading botocore's
+service models under the GIL on the first serving request. A failed startup
+connection is not cached, so a later startup attempt constructs it again.
+
 ### Configuration
 
 The locator reads its config from the `media` section of the application

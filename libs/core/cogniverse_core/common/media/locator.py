@@ -16,8 +16,10 @@ returns one.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Iterator, Optional
@@ -49,6 +51,62 @@ S3_MAX_ATTEMPTS = 2
 # On expiry the caller gets OSError immediately; the orphaned fetch thread
 # unwinds on the (bounded) socket timeouts above.
 NETWORK_FETCH_DEADLINE_S = 60
+
+# fsspec includes the caller thread in its filesystem-instance cache key. The
+# answer path fetches keyframes from several worker threads, so relying on that
+# cache constructs one s3fs/aiobotocore client per worker. Client construction
+# loads and parses botocore's service models under the GIL. Keep one connected
+# client per effective S3 configuration for the process instead; runtime startup
+# warms its deployment configuration before the server accepts requests.
+_S3_FILESYSTEMS: dict[tuple[Any, ...], Any] = {}
+_S3_FILESYSTEMS_LOCK = threading.Lock()
+
+
+def _s3_filesystem_kwargs(config: MediaConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    client_kwargs: dict[str, Any] = {}
+    if config.s3.endpoint_url:
+        client_kwargs["endpoint_url"] = config.s3.endpoint_url
+    if config.s3.region:
+        client_kwargs["region_name"] = config.s3.region
+    if client_kwargs:
+        kwargs["client_kwargs"] = client_kwargs
+    if config.s3.anon:
+        kwargs["anon"] = True
+    kwargs["config_kwargs"] = {
+        "connect_timeout": S3_CONNECT_TIMEOUT_S,
+        "read_timeout": S3_READ_TIMEOUT_S,
+        "retries": {"max_attempts": S3_MAX_ATTEMPTS, "mode": "standard"},
+    }
+    return kwargs
+
+
+def _s3_filesystem_key(config: MediaConfig) -> tuple[Any, ...]:
+    return (
+        config.s3,
+        os.environ.get("AWS_ACCESS_KEY_ID"),
+        os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        os.environ.get("AWS_SESSION_TOKEN"),
+    )
+
+
+def _shared_s3_filesystem(config: MediaConfig):
+    import fsspec
+
+    key = _s3_filesystem_key(config)
+    with _S3_FILESYSTEMS_LOCK:
+        filesystem = _S3_FILESYSTEMS.get(key)
+        if filesystem is not None:
+            return filesystem
+        filesystem = fsspec.filesystem("s3", **_s3_filesystem_kwargs(config))
+        filesystem.connect()
+        _S3_FILESYSTEMS[key] = filesystem
+        return filesystem
+
+
+def prewarm_s3_filesystem(config: MediaConfig) -> None:
+    """Build the shared S3 client before request serving begins."""
+    _shared_s3_filesystem(config)
 
 
 def _is_connection_failure(exc: BaseException) -> bool:
@@ -227,7 +285,11 @@ class MediaLocator:
 
         fs_kwargs = self._fs_kwargs_for(uri)
         try:
-            fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
+            if self._scheme(uri) == "s3":
+                fs = _shared_s3_filesystem(self.config)
+                path = fs._strip_protocol(uri)
+            else:
+                fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
             try:
                 fs.get_file(path, str(dest))
                 return
@@ -245,23 +307,7 @@ class MediaLocator:
     def _fs_kwargs_for(self, uri: str) -> dict[str, Any]:
         scheme = self._scheme(uri)
         if scheme == "s3":
-            kwargs: dict[str, Any] = {}
-            s3 = self.config.s3
-            client_kwargs: dict[str, Any] = {}
-            if s3.endpoint_url:
-                client_kwargs["endpoint_url"] = s3.endpoint_url
-            if s3.region:
-                client_kwargs["region_name"] = s3.region
-            if client_kwargs:
-                kwargs["client_kwargs"] = client_kwargs
-            if s3.anon:
-                kwargs["anon"] = True
-            kwargs["config_kwargs"] = {
-                "connect_timeout": S3_CONNECT_TIMEOUT_S,
-                "read_timeout": S3_READ_TIMEOUT_S,
-                "retries": {"max_attempts": S3_MAX_ATTEMPTS, "mode": "standard"},
-            }
-            return kwargs
+            return _s3_filesystem_kwargs(self.config)
         if scheme in ("http", "https"):
             # fsspec's HTTPFileSystem forwards client_kwargs to aiohttp's
             # ClientSession; without a timeout a fetch from a slow host hangs
@@ -280,7 +326,11 @@ class MediaLocator:
 
         try:
             fs_kwargs = self._fs_kwargs_for(uri)
-            fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
+            if self._scheme(uri) == "s3":
+                fs = _shared_s3_filesystem(self.config)
+                path = fs._strip_protocol(uri)
+            else:
+                fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
             info = fs.info(path)
         except Exception as exc:
             logger.debug("stat failed for %s: %s", uri, exc)
@@ -355,7 +405,11 @@ class MediaLocator:
             import fsspec
 
             fs_kwargs = self._fs_kwargs_for(prefix_uri)
-            fs, path = fsspec.core.url_to_fs(prefix_uri, **fs_kwargs)
+            if scheme == "s3":
+                fs = _shared_s3_filesystem(self.config)
+                path = fs._strip_protocol(prefix_uri)
+            else:
+                fs, path = fsspec.core.url_to_fs(prefix_uri, **fs_kwargs)
             for entry in fs.find(path):
                 if any(entry.endswith(ext) for ext in exts):
                     yield f"{scheme}://{entry}"

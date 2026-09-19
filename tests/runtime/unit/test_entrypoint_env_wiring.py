@@ -451,6 +451,14 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
         "cogniverse_foundation.registry.entry_point_registry.configure_tenant_cache_capacity",
         lambda *_: None,
     )
+    prewarm_calls = []
+    prewarm = getattr(runtime_main, "_prewarm_s3_filesystem", None)
+    assert callable(prewarm), "runtime startup must prewarm the shared S3 client"
+    monkeypatch.setattr(
+        runtime_main,
+        "_prewarm_s3_filesystem",
+        lambda config: prewarm_calls.append(config.s3.endpoint_url),
+    )
 
     runtime_main._configure_library_module_defaults(
         config_manager=object(),
@@ -474,6 +482,7 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
     )
     assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
     assert os.environ["AWS_SECRET_ACCESS_KEY"] == "minio-secret"
+    assert prewarm_calls == ["http://minio.internal:9000"]
 
 
 @pytest.mark.asyncio
