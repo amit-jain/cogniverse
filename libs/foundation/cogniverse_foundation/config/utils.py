@@ -173,18 +173,17 @@ class ConfigUtils:
                 logger.debug(f"Loaded system config from {config_path}")
         self._json_config = copy.deepcopy(cached)
 
-    def _system_tenant_profiles(self):
-        """Backend profiles stored under the system tenant.
+    def _system_tenant_backend(self) -> BackendConfig:
+        """Backend configuration stored under the system tenant.
 
-        Empty for the system tenant itself, whose own config is already the
-        tenant side of the merge — reading it twice would cost a second store
-        read on every request that resolves a profile.
+        Empty for the system tenant itself, whose own config is already the tenant
+        side of the merge.
         """
         from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
         if self.tenant_id == SYSTEM_TENANT_ID:
-            return {}
-        return dict(self._config_manager.get_backend_config(SYSTEM_TENANT_ID).profiles)
+            return BackendConfig(tenant_id=SYSTEM_TENANT_ID)
+        return self._config_manager.get_backend_config(SYSTEM_TENANT_ID)
 
     def _ensure_backend_config(self):
         """
@@ -207,8 +206,10 @@ class ConfigUtils:
         # Get tenant-specific overrides from ConfigManager
         tenant_backend_config = self._config_manager.get_backend_config(self.tenant_id)
 
-        # Tenant views inherit startup profiles absent from the shipped catalog.
-        stored_system_profiles = self._system_tenant_profiles()
+        # Tenant views inherit startup profiles and selections absent from the
+        # shipped catalog.
+        stored_system_backend = self._system_tenant_backend()
+        stored_system_profiles = dict(stored_system_backend.profiles)
 
         # Merge system base with tenant overrides
         if system_backend_data:
@@ -261,6 +262,11 @@ class ConfigUtils:
                     else system_backend_config.port
                 ),
                 profiles=merged_profiles,
+                default_profiles={
+                    **system_backend_config.default_profiles,
+                    **stored_system_backend.default_profiles,
+                    **tenant_backend_config.default_profiles,
+                },
                 metadata={
                     **system_backend_config.metadata,
                     **tenant_backend_config.metadata,
@@ -281,6 +287,10 @@ class ConfigUtils:
                         ),
                     )
                 )
+            tenant_backend_config.default_profiles = {
+                **stored_system_backend.default_profiles,
+                **tenant_backend_config.default_profiles,
+            }
             self._backend_config = tenant_backend_config
 
         logger.debug(

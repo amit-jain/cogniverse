@@ -18,17 +18,142 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
     LLMConfig,
     LLMEndpointConfig,
     SystemConfig,
 )
 from cogniverse_foundation.config.utils import ConfigUtils
+from tests.utils.memory_store import InMemoryConfigStore
 
 
 def _utils(system_config: SystemConfig) -> ConfigUtils:
     cu = ConfigUtils("acme:acme", config_manager=MagicMock())
     cu._system_config = system_config  # pin lazy system config (no backend)
     return cu
+
+
+class TestBackendDefaultProfiles:
+    @staticmethod
+    def _profile(name: str) -> dict:
+        return {
+            "type": "video",
+            "schema_name": name,
+            "strategies": {"segmentation": {"class": "Frames"}},
+        }
+
+    def test_backend_config_serializes_default_profiles_exactly(self):
+        config = BackendConfig(
+            tenant_id="acme:video",
+            default_profiles={
+                "video": {"profile": "video_acme", "strategy": "hybrid"},
+                "image": {"profile": "image_shared"},
+            },
+        )
+
+        encoded = config.to_dict()
+        decoded = BackendConfig.from_dict(encoded)
+
+        assert encoded["default_profiles"] == {
+            "video": {"profile": "video_acme", "strategy": "hybrid"},
+            "image": {"profile": "image_shared"},
+        }
+        assert decoded.default_profiles == encoded["default_profiles"]
+
+    def test_two_tenant_defaults_round_trip_and_override_system_selection(
+        self, tmp_path, monkeypatch
+    ):
+        from cogniverse_foundation.config import utils as utils_mod
+        from cogniverse_foundation.config.manager import ConfigManager
+
+        profiles = {
+            name: self._profile(name)
+            for name in ("video_system", "video_alpha", "video_beta")
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "backend": {
+                        "type": "vespa",
+                        "url": "http://localhost",
+                        "port": 8080,
+                        "profiles": profiles,
+                        "default_profiles": {
+                            "video": {"profile": "video_system"},
+                            "image": {"profile": "image_shared"},
+                        },
+                    }
+                }
+            )
+        )
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_file))
+        utils_mod._JSON_CONFIG_CACHE.clear()
+        store = InMemoryConfigStore()
+        writer = ConfigManager(store=store)
+        writer.set_backend_config(
+            BackendConfig(
+                tenant_id="alpha:alpha",
+                default_profiles={"video": {"profile": "video_alpha"}},
+            )
+        )
+        writer.set_backend_config(
+            BackendConfig(
+                tenant_id="beta:beta",
+                default_profiles={"video": {"profile": "video_beta"}},
+            )
+        )
+
+        reader = ConfigManager(store=store)
+        alpha_stored = reader.get_backend_config("alpha:alpha")
+        beta_stored = reader.get_backend_config("beta:beta")
+        alpha_merged = ConfigUtils("alpha:alpha", reader).get("backend")
+        beta_merged = ConfigUtils("beta:beta", reader).get("backend")
+
+        assert alpha_stored.default_profiles == {"video": {"profile": "video_alpha"}}
+        assert beta_stored.default_profiles == {"video": {"profile": "video_beta"}}
+        assert alpha_merged["default_profiles"] == {
+            "video": {"profile": "video_alpha"},
+            "image": {"profile": "image_shared"},
+        }
+        assert beta_merged["default_profiles"] == {
+            "video": {"profile": "video_beta"},
+            "image": {"profile": "image_shared"},
+        }
+
+    def test_concurrent_tenant_default_round_trips_do_not_bleed(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+
+        store = InMemoryConfigStore()
+        manager = ConfigManager(store=store)
+        ready = threading.Barrier(2)
+
+        def write_and_read(tenant: str, profile: str) -> tuple[str, dict]:
+            ready.wait(timeout=5)
+            manager.set_backend_config(
+                BackendConfig(
+                    tenant_id=tenant,
+                    default_profiles={"video": {"profile": profile}},
+                )
+            )
+            read_back = manager.get_backend_config(tenant)
+            return tenant, read_back.default_profiles
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = dict(
+                pool.map(
+                    lambda item: write_and_read(*item),
+                    (
+                        ("alpha:alpha", "video_alpha"),
+                        ("beta:beta", "video_beta"),
+                    ),
+                )
+            )
+
+        assert results == {
+            "alpha:alpha": {"video": {"profile": "video_alpha"}},
+            "beta:beta": {"video": {"profile": "video_beta"}},
+        }
 
 
 def test_llm_fields_resolve_from_primary():
