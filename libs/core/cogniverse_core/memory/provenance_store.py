@@ -36,6 +36,34 @@ logger = logging.getLogger(__name__)
 PROVENANCE_BASE_SCHEMA = "provenance"
 
 
+class ProvenanceWriteError(RuntimeError):
+    """The indexed provenance write did not complete exactly once."""
+
+    def __init__(
+        self,
+        *,
+        memory_id: Optional[str],
+        row_id: Optional[str],
+        result: Optional[Dict[str, Any]] = None,
+        cause: Optional[BaseException] = None,
+    ) -> None:
+        self.memory_id = memory_id
+        self.row_id = row_id
+        self.result = result
+        self.cause = cause
+        self.compensation_error: Optional[BaseException] = None
+        details = f"result={result!r}" if result is not None else f"cause={cause!r}"
+        super().__init__(
+            f"provenance write failed for memory_id={memory_id!r}, "
+            f"row_id={row_id!r}: {details}"
+        )
+
+    def record_compensation_error(self, error: BaseException) -> None:
+        """Retain a failed primary-write compensation on this error."""
+        self.compensation_error = error
+        self.args = (f"{self.args[0]}; primary compensation failed: {error!r}",)
+
+
 @dataclass(frozen=True)
 class ProvenanceRecord:
     """One indexed provenance row.
@@ -173,8 +201,27 @@ class ProvenanceStore:
                 "trace_id": record.trace_id or "",
             },
         )
-        with leased_backend(self._resolve_backend) as backend:
-            backend.ingest_documents([doc], schema_name=self._base_schema)
+        try:
+            with leased_backend(self._resolve_backend) as backend:
+                result = backend.ingest_documents([doc], schema_name=self._base_schema)
+        except Exception as exc:
+            raise ProvenanceWriteError(
+                memory_id=memory_id,
+                row_id=row_id,
+                cause=exc,
+            ) from exc
+        expected = {
+            "success_count": 1,
+            "failed_count": 0,
+            "failed_documents": [],
+            "total_documents": 1,
+        }
+        if result != expected:
+            raise ProvenanceWriteError(
+                memory_id=memory_id,
+                row_id=row_id,
+                result=result,
+            )
         return row_id
 
     def fetch(self, memory_ids: List[str]) -> Dict[str, ProvenanceRecord]:

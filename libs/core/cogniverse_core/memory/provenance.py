@@ -33,6 +33,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ProvenanceConsistencyError(RuntimeError):
+    """Primary and indexed provenance disagree for a stored memory."""
+
+    def __init__(self, memory_id: str, detail: str) -> None:
+        self.memory_id = memory_id
+        self.detail = detail
+        super().__init__(f"provenance consistency failure for {memory_id!r}: {detail}")
+
+
+class ProvenanceReadError(RuntimeError):
+    """The primary memory could not be verified during a citation read."""
+
+    def __init__(self, memory_id: str, cause: BaseException) -> None:
+        self.memory_id = memory_id
+        self.cause = cause
+        super().__init__(f"primary memory read failed for {memory_id!r}: {cause}")
+
+
+class ProvenanceRepairConflictError(ProvenanceConsistencyError):
+    """The primary changed during every bounded repair attempt."""
+
+
 class DerivationKind(str, Enum):
     """How the memory came into existence.
 
@@ -284,12 +306,20 @@ class ProvenanceWalker:
             memory = self._fetch_memory(memory_id)
             if memory is None:
                 content_excerpt = ""
+                declared_provenance = None
             else:
                 content = memory.get("memory") or memory.get("content") or ""
                 content_excerpt = str(content)[:200]
+                declared_provenance = extract_from_memory(memory)
 
             rec = records_by_id.get(memory_id)
             prov = rec.to_provenance() if rec is not None else None
+            self._verify_indexed_provenance(
+                memory_id,
+                memory,
+                declared_provenance,
+                rec,
+            )
 
             nodes.append(
                 CitationNode(
@@ -312,8 +342,7 @@ class ProvenanceWalker:
         try:
             mem_obj = self._mm.memory.get(memory_id)  # type: ignore[union-attr]
         except Exception as exc:
-            logger.warning("ProvenanceWalker: get(%s) failed: %r", memory_id, exc)
-            return None
+            raise ProvenanceReadError(memory_id, exc) from exc
         if mem_obj is None:
             return None
         if isinstance(mem_obj, dict):
@@ -321,3 +350,42 @@ class ProvenanceWalker:
         if isinstance(mem_obj, list) and mem_obj:
             return mem_obj[0] if isinstance(mem_obj[0], dict) else None
         return None
+
+    @staticmethod
+    def _verify_indexed_provenance(
+        memory_id: str,
+        memory: Optional[Dict[str, Any]],
+        declared: Optional[Provenance],
+        indexed_record: Any,
+    ) -> None:
+        if memory is None:
+            return
+        metadata = memory.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (ValueError, TypeError):
+                metadata = {}
+        declares_provenance = isinstance(metadata, dict) and "provenance" in metadata
+        if declares_provenance and declared is None:
+            raise ProvenanceConsistencyError(
+                memory_id, "primary provenance payload is malformed"
+            )
+        if declared is not None and indexed_record is None:
+            raise ProvenanceConsistencyError(memory_id, "indexed provenance is missing")
+        if indexed_record is not None and declared is None:
+            raise ProvenanceConsistencyError(memory_id, "primary provenance is missing")
+        if declared is None:
+            return
+
+        from cogniverse_core.memory.provenance_store import ProvenanceRecord
+
+        declared_record = ProvenanceRecord.from_provenance(
+            memory_id,
+            indexed_record.tenant_id,
+            declared,
+        )
+        if declared_record != indexed_record:
+            raise ProvenanceConsistencyError(
+                memory_id, "indexed provenance does not match primary provenance"
+            )

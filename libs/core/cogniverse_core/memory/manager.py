@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
+    from cogniverse_core.memory.provenance import Provenance
     from cogniverse_core.memory.schema import KnowledgeRegistry
 
 # Disable Mem0's telemetry BEFORE importing mem0
@@ -673,6 +674,8 @@ class Mem0MemoryManager:
         # enforcement.
         metadata = self._enforce_schema_on_write(metadata or {})
 
+        indexed_provenance = self._provenance_for_index(metadata)
+
         result = self.memory.add(
             content,
             user_id=storage_tenant_id,
@@ -682,21 +685,8 @@ class Mem0MemoryManager:
         )
         logger.info(f"Mem0.add() returned: {result}")
 
-        memory_id: Optional[str] = None
-        if isinstance(result, dict):
-            if result.get("id"):
-                memory_id = str(result["id"])
-            else:
-                entries = result.get("results") or []
-                for entry in entries:
-                    if isinstance(entry, dict) and entry.get("id"):
-                        memory_id = str(entry["id"])
-                        break
-        elif isinstance(result, list):
-            for entry in result:
-                if isinstance(entry, dict) and entry.get("id"):
-                    memory_id = str(entry["id"])
-                    break
+        entries = self._memory_write_entries(result)
+        memory_id = str(entries[0]["id"]) if entries else None
 
         if not memory_id:
             # Empty results from Mem0 are legitimate — either the LLM
@@ -719,7 +709,44 @@ class Mem0MemoryManager:
         # reads from this store exclusively — a failure here means
         # this memory is unreachable from any chain walk, so raise
         # rather than silently dropping a citation edge.
-        self._attach_indexed_provenance(memory_id, metadata)
+        if indexed_provenance is not None:
+            event = entries[0].get("event")
+            if len(entries) != 1 or event not in {"ADD", "UPDATE"}:
+                from cogniverse_core.memory.provenance_store import (
+                    ProvenanceWriteError,
+                )
+
+                raise ProvenanceWriteError(
+                    memory_id=memory_id,
+                    row_id=None,
+                    result={"mem0_results": entries},
+                )
+            try:
+                self.provenance_store.attach(memory_id, indexed_provenance)
+            except Exception as exc:
+                from cogniverse_core.memory.provenance_store import (
+                    ProvenanceWriteError,
+                )
+
+                error = (
+                    exc
+                    if isinstance(exc, ProvenanceWriteError)
+                    else ProvenanceWriteError(
+                        memory_id=memory_id,
+                        row_id=None,
+                        cause=exc,
+                    )
+                )
+                if event == "ADD":
+                    try:
+                        self.memory.delete(memory_id)
+                        if self.memory.get(memory_id) is not None:
+                            raise RuntimeError(
+                                f"memory {memory_id!r} remained after delete"
+                            )
+                    except Exception as compensation_error:
+                        error.record_compensation_error(compensation_error)
+                raise error
 
         # detect contradictions on the write. The detector runs on every
         # knowledge write, persisting a ``conflict_set`` memory when the
@@ -746,30 +773,123 @@ class Mem0MemoryManager:
 
         return memory_id
 
-    def _attach_indexed_provenance(
-        self, memory_id: str, metadata: Optional[Dict[str, Any]]
-    ) -> None:
-        """Persist the in-band provenance to the indexed Vespa store."""
-        if not isinstance(metadata, dict):
-            return
+    @staticmethod
+    def _memory_write_entries(result: Any) -> List[Dict[str, Any]]:
+        """Return Mem0 write events that name an affected memory."""
+        if isinstance(result, dict):
+            if result.get("id"):
+                return [result]
+            raw_entries = result.get("results") or []
+        elif isinstance(result, list):
+            raw_entries = result
+        else:
+            return []
+        return [
+            entry
+            for entry in raw_entries
+            if isinstance(entry, dict) and entry.get("id")
+        ]
+
+    def _provenance_for_index(
+        self, metadata: Optional[Dict[str, Any]]
+    ) -> Optional["Provenance"]:
+        """Validate requested indexed provenance before the primary write."""
+        if not isinstance(metadata, dict) or "provenance" not in metadata:
+            return None
         prov_payload = metadata.get("provenance")
         if not isinstance(prov_payload, dict):
-            return
+            from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+            raise ProvenanceWriteError(
+                memory_id=None,
+                row_id=None,
+                result={"invalid_provenance": prov_payload},
+            )
         store = self.provenance_store
         if store is None:
-            return
+            from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+            raise ProvenanceWriteError(
+                memory_id=None,
+                row_id=None,
+                result={"provenance_store": "unavailable"},
+            )
         from cogniverse_core.memory.provenance import Provenance
 
         try:
-            provenance = Provenance.from_metadata_payload(prov_payload)
+            return Provenance.from_metadata_payload(prov_payload)
         except (KeyError, ValueError) as exc:
-            logger.debug(
-                "Skipping provenance attach for %s — malformed payload: %s",
+            from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+            raise ProvenanceWriteError(
+                memory_id=None,
+                row_id=None,
+                result={"invalid_provenance": prov_payload},
+                cause=exc,
+            ) from exc
+
+    def repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
+        """Reattach a primary memory's canonical provenance idempotently."""
+        if not self.memory:
+            raise RuntimeError("Mem0MemoryManager not initialized")
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be >= 1")
+
+        from cogniverse_core.memory.provenance import (
+            ProvenanceConsistencyError,
+            ProvenanceReadError,
+            ProvenanceRepairConflictError,
+        )
+        from cogniverse_core.memory.provenance_store import ProvenanceRecord
+
+        for _attempt in range(max_attempts):
+            try:
+                before = self.memory.get(memory_id)
+            except Exception as exc:
+                raise ProvenanceReadError(memory_id, exc) from exc
+            if not isinstance(before, dict):
+                raise ProvenanceConsistencyError(memory_id, "primary memory is missing")
+            metadata = self._read_metadata(before)
+            provenance = self._provenance_for_index(metadata)
+            if provenance is None:
+                raise ProvenanceConsistencyError(
+                    memory_id, "primary provenance is missing"
+                )
+            snapshot = self._repair_snapshot(before)
+            row_id = self.provenance_store.attach(memory_id, provenance)
+
+            try:
+                after = self.memory.get(memory_id)
+            except Exception as exc:
+                raise ProvenanceReadError(memory_id, exc) from exc
+            if not isinstance(after, dict):
+                raise ProvenanceConsistencyError(
+                    memory_id, "primary memory disappeared during repair"
+                )
+            if self._repair_snapshot(after) != snapshot:
+                continue
+
+            indexed = self.provenance_store.get(memory_id)
+            expected = ProvenanceRecord.from_provenance(
                 memory_id,
-                exc,
+                self._storage_tenant_id,
+                provenance,
             )
-            return
-        store.attach(memory_id, provenance)
+            if indexed != expected:
+                raise ProvenanceConsistencyError(
+                    memory_id, "indexed provenance did not verify after repair"
+                )
+            return row_id
+
+        raise ProvenanceRepairConflictError(
+            memory_id,
+            f"primary changed during {max_attempts} repair attempts",
+        )
+
+    @staticmethod
+    def _repair_snapshot(memory: Dict[str, Any]) -> str:
+        """Canonical primary revision/content snapshot for repair checks."""
+        return json.dumps(memory, sort_keys=True, separators=(",", ":"), default=str)
 
     def _detect_and_persist_contradictions(
         self,

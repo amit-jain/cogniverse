@@ -458,16 +458,10 @@ class MultiDocumentSynthesisAgent(
             derived_from=citation_refs,
         )
         metadata = attach_to_metadata({"kind": _SYNTHESIS_MEMORY_KIND}, provenance)
-        try:
-            return self.memory_manager.add_memory(
-                content=answer,
-                tenant_id=tenant_id,
-                agent_name="multi_document_synthesis_agent",
-                metadata=metadata,
-                infer=False,
-            )
-        except Exception as exc:
-            logger.warning(
-                "MultiDocSynth: persist failed for tenant=%s: %s", tenant_id, exc
-            )
-            return None
+        return self.memory_manager.add_memory(
+            content=answer,
+            tenant_id=tenant_id,
+            agent_name="multi_document_synthesis_agent",
+            metadata=metadata,
+            infer=False,
+        )
