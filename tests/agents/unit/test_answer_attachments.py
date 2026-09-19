@@ -340,7 +340,7 @@ async def test_zero_hit_text_does_not_hide_real_lm_connection_failure(build_agen
     )
 
 
-async def test_report_attachment_and_real_lm_failure_reasons_accumulate(build_agent):
+async def test_report_lm_failure_propagates_after_attachment_shedding(build_agent):
     from cogniverse_agents.detailed_report_agent import ReportGenerationModule
 
     agent, _ = build_agent("report")
@@ -352,15 +352,12 @@ async def test_report_attachment_and_real_lm_failure_reasons_accumulate(build_ag
         request_timeout=0.5,
         num_retries=0,
     )
-    result = await answer(agent, "report", [DEAD_IMAGE])
-    assert result.executive_summary == (
-        "Analysis of 0 results for 'The Eiffel Tower was completed in 1889. "
-        "Summarize this text.' with average relevance of 0.00."
-    )
-    assert result.metadata["report_degraded"] is True
-    assert result.metadata["report_degraded_reason"] == (
-        FAILURE + "; InternalServerError: litellm.InternalServerError: "
-        "InternalServerError: OpenAIException - Connection error."
+    with pytest.raises(Exception) as raised:
+        await answer(agent, "report", [DEAD_IMAGE])
+    assert type(raised.value).__name__ == "InternalServerError"
+    assert str(raised.value) == (
+        "litellm.InternalServerError: InternalServerError: OpenAIException - "
+        "Connection error."
     )
 
 

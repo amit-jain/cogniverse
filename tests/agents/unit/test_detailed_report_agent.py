@@ -313,11 +313,7 @@ class TestDetailedReportAgent:
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_report_degraded_flag_set_when_answer_lm_fails(self, mock_vlm_class):
-        """When the answer LM call fails (e.g. an attached-keyframe payload
-        overflow) the agent degrades to a templated stub so the request still
-        returns — but must FLAG it in metadata, or a broken report is
-        indistinguishable from a real one (the stub even echoes the query)."""
+    async def test_answer_lm_failure_propagates(self, mock_vlm_class):
         mock_vlm_class.return_value = Mock()
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
             agent = DetailedReportAgent(
@@ -333,15 +329,10 @@ class TestDetailedReportAgent:
             report_type="comprehensive",
             include_visual_analysis=False,
         )
-        result = await agent._generate_report(request)
+        with pytest.raises(RuntimeError) as raised:
+            await agent._generate_report(request)
 
-        assert result.metadata["report_degraded"] is True
-        assert result.metadata["report_degraded_reason"] == (
-            "RuntimeError: Payload Too Large"
-        )
-        # The summary is the templated fallback, not a grounded report.
-        assert result.executive_summary.startswith("Analysis of 1 results")
-        assert "test query" in result.executive_summary
+        assert str(raised.value) == "Payload Too Large"
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
@@ -408,13 +399,11 @@ class TestDetailedReportAgent:
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    async def test_degraded_flag_does_not_bleed_between_concurrent_requests(
+    async def test_failed_report_does_not_bleed_into_a_concurrent_success(
         self, mock_vlm_class
     ):
-        """The standalone A2A app serves ONE module-level agent: two
-        concurrent requests, one degrading and one succeeding, must each
-        read their own flags. Instance attributes let the failing request's
-        flag overwrite the healthy sibling's metadata."""
+        """The standalone A2A app serves one module-level agent, so a failed
+        request and a successful sibling must keep independent outcomes."""
         from types import SimpleNamespace
 
         mock_vlm_class.return_value = Mock()
@@ -443,10 +432,13 @@ class TestDetailedReportAgent:
         bad, good = await asyncio.gather(
             agent._generate_report(_req("bad query")),
             agent._generate_report(_req("good query")),
+            return_exceptions=True,
         )
 
-        assert bad.metadata["report_degraded"] is True
+        assert type(bad) is RuntimeError
+        assert str(bad) == "boom"
         assert good.metadata["report_degraded"] is False
+        assert good.metadata["report_degraded_reason"] == ""
         assert good.executive_summary == "grounded"
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")

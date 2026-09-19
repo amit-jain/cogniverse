@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from dspy.utils.exceptions import AdapterParseError
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import Field
 
@@ -437,9 +436,8 @@ class DetailedReportAgent(
                         "keyframes_attached": (_REPORT_CALL_STATE.get() or {}).get(
                             "keyframes_attached", 0
                         ),
-                        # True when the answer LM call failed and the executive
-                        # summary is the templated fallback, not a grounded
-                        # report — callers must be able to tell the two apart.
+                        # Attachment preparation can shed an unreadable image
+                        # while the text-grounded report still succeeds.
                         "report_degraded": (_REPORT_CALL_STATE.get() or {}).get(
                             "report_degraded", False
                         ),
@@ -856,40 +854,16 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             "report_degraded_reason": "; ".join(attachment_failures),
         }
         _REPORT_CALL_STATE.set(call_state)
-        try:
-            dspy_result = await self.call_dspy(
-                self.report_module,
-                output_field="executive_summary",
-                content=content_text,
-                query=request.query,
-                report_type=request.report_type,
-                keyframes=keyframe_images,
-            )
-            executive_summary = dspy_result.executive_summary
-            raw_recommendations = getattr(dspy_result, "recommendations", "")
-        except AdapterParseError:
-            # The LM produced no report. A templated stub in its place is a
-            # fabricated answer, not a degraded one — end the turn instead.
-            raise
-        except Exception as e:
-            # The answer LM call failed (e.g. a payload/context overflow from
-            # the attached keyframes). Degrade to a templated stub so the
-            # request still returns — but FLAG it in the metadata below, so a
-            # fallback is never indistinguishable from a real grounded report.
-            logger.error(f"DSPy summary generation failed: {e}")
-            call_state["report_degraded"] = True
-            call_state["report_degraded_reason"] = "; ".join(
-                [*attachment_failures, f"{type(e).__name__}: {e}"]
-            )
-            return (
-                f"Analysis of {len(request.search_results)} results for "
-                f"'{request.query}' with average relevance of "
-                f"{thinking_phase.content_analysis['avg_relevance']:.2f}.",
-                [],
-            )
-        # Recommendation parsing runs OUTSIDE the degrade guard: a bug in our
-        # own post-processing must surface, not masquerade as a degraded
-        # report.
+        dspy_result = await self.call_dspy(
+            self.report_module,
+            output_field="executive_summary",
+            content=content_text,
+            query=request.query,
+            report_type=request.report_type,
+            keyframes=keyframe_images,
+        )
+        executive_summary = dspy_result.executive_summary
+        raw_recommendations = getattr(dspy_result, "recommendations", "")
         return executive_summary, self._parse_llm_list(raw_recommendations)
 
     def _generate_detailed_findings(
