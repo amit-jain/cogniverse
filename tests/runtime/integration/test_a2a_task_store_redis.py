@@ -28,6 +28,8 @@ from a2a.types import (
 
 from cogniverse_runtime.a2a_task_store import (
     A2ATaskCapacityError,
+    A2ATaskConflictError,
+    A2ATaskOwnershipLostError,
     A2ATaskStoreError,
     RedisTaskStore,
 )
@@ -245,3 +247,123 @@ async def test_redis_outage_is_an_explicit_store_error():
             await store.save(_task("outage-task"))
     finally:
         await client.aclose()
+
+
+async def test_same_task_conflicts_while_distinct_tasks_acquire(redis_client):
+    store = RedisTaskStore(
+        redis_client,
+        max_tasks=10,
+        key_prefix="test:a2a",
+        enforce_leases=True,
+    )
+    lease_a = await store.acquire_execution(
+        "task-shared", replica_id="replica-a", lease_seconds=2
+    )
+
+    with pytest.raises(
+        A2ATaskConflictError,
+        match="task task-shared is owned by replica-a; retry after",
+    ):
+        await store.acquire_execution(
+            "task-shared", replica_id="replica-b", lease_seconds=2
+        )
+
+    lease_b, lease_c = await asyncio.gather(
+        store.acquire_execution(
+            "task-distinct-b", replica_id="replica-b", lease_seconds=2
+        ),
+        store.acquire_execution(
+            "task-distinct-c", replica_id="replica-c", lease_seconds=2
+        ),
+    )
+    assert (lease_a.generation, lease_b.generation, lease_c.generation) == (1, 1, 1)
+    await asyncio.gather(
+        store.release_execution(lease_a),
+        store.release_execution(lease_b),
+        store.release_execution(lease_c),
+    )
+
+
+async def test_lease_renewal_prevents_takeover(redis_client):
+    store = RedisTaskStore(
+        redis_client,
+        max_tasks=10,
+        key_prefix="test:a2a",
+        enforce_leases=True,
+    )
+    lease = await store.acquire_execution(
+        "task-renew", replica_id="replica-a", lease_seconds=0.2
+    )
+    await asyncio.sleep(0.12)
+    await store.renew_execution(lease, lease_seconds=0.3)
+    await asyncio.sleep(0.12)
+
+    with pytest.raises(A2ATaskConflictError, match="owned by replica-a"):
+        await store.acquire_execution(
+            "task-renew", replica_id="replica-b", lease_seconds=0.2
+        )
+
+    await store.release_execution(lease)
+
+
+async def test_cancel_generation_fences_late_owner_save(redis_client):
+    seed = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    store = RedisTaskStore(
+        redis_client,
+        max_tasks=10,
+        key_prefix="test:a2a",
+        enforce_leases=True,
+    )
+    await seed.save(_task("task-cancel", TaskState.working))
+    executing = await store.acquire_execution(
+        "task-cancel", replica_id="replica-a", lease_seconds=2
+    )
+    canceling = await store.begin_cancel(
+        "task-cancel", replica_id="replica-a", lease_seconds=2
+    )
+
+    with store.bind_execution(executing):
+        with pytest.raises(
+            A2ATaskOwnershipLostError,
+            match="save task task-cancel with stale ownership generation 1",
+        ):
+            await store.save(_task("task-cancel", TaskState.input_required))
+
+    canceled = _task("task-cancel", TaskState.canceled)
+    with store.bind_execution(canceling):
+        await store.save(canceled)
+    await store.release_execution(canceling)
+
+    actual = await store.get("task-cancel")
+    assert actual.model_dump(mode="json") == canceled.model_dump(mode="json")
+
+
+async def test_expired_owner_is_marked_interrupted_without_reexecution(redis_client):
+    seed = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    store = RedisTaskStore(
+        redis_client,
+        max_tasks=10,
+        key_prefix="test:a2a",
+        enforce_leases=True,
+    )
+    await seed.save(_task("task-orphan", TaskState.working))
+    await store.acquire_execution(
+        "task-orphan", replica_id="replica-lost", lease_seconds=0.1
+    )
+    await asyncio.sleep(0.15)
+
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match="task task-orphan lost owner replica-lost during active execution",
+    ):
+        await store.acquire_execution(
+            "task-orphan", replica_id="replica-next", lease_seconds=1
+        )
+
+    interrupted = await store.mark_owner_lost("task-orphan")
+    actual = await store.get("task-orphan")
+    assert interrupted is True
+    assert actual.status.state == TaskState.failed
+    assert actual.status.message.parts[0].root.text == (
+        "Execution interrupted because its owning runtime stopped before completion."
+    )
