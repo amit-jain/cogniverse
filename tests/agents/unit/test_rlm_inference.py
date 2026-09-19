@@ -53,6 +53,7 @@ class TestRLMOptions:
         assert opts.auto_detect is False
         assert opts.context_threshold == 50_000
         assert opts.max_iterations == 3
+        assert opts.cache is True
         assert opts.backend == "openai"
         assert opts.model is None
 
@@ -64,12 +65,14 @@ class TestRLMOptions:
             backend="anthropic",
             model="claude-3-opus",
             context_threshold=100_000,
+            cache=False,
         )
         assert opts.enabled is True
         assert opts.max_iterations == 5
         assert opts.backend == "anthropic"
         assert opts.model == "claude-3-opus"
         assert opts.context_threshold == 100_000
+        assert opts.cache is False
 
     def test_max_iterations_bounds(self):
         """max_iterations should be bounded between 1 and 10."""
@@ -445,6 +448,21 @@ class TestRLMInference:
 
         assert rlm.model == "openai/test-model"
 
+    def test_cache_disabled_reaches_the_dspy_lm(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.inference import rlm_inference
+
+        created = SimpleNamespace(cache=True)
+        monkeypatch.setattr(rlm_inference, "create_dspy_lm", lambda _config: created)
+
+        rlm = rlm_inference.RLMInference(
+            llm_config=LLMEndpointConfig(model="openai/test-model"), cache=False
+        )
+
+        assert rlm._create_lm() is created
+        assert created.cache is False
+
 
 class TestSearchInputWithRLM:
     """Test SearchInput integration with RLM options."""
@@ -497,12 +515,14 @@ class TestBuildRlmFromOptions:
             max_iterations=7,
             max_llm_calls=3,
             timeout_seconds=42,
+            cache=False,
         )
         rlm = build_rlm_from_options(None, opts)
         assert rlm.model == "openai/gpt-4o-mini"
         assert rlm.max_iterations == 7
         assert rlm.max_llm_calls == 3
         assert rlm.timeout_seconds == 42
+        assert rlm.cache is False
 
     def test_default_model_when_options_model_unset(self):
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options

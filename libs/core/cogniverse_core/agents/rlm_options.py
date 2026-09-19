@@ -74,6 +74,13 @@ class RLMOptions(BaseModel):
         le=1800,
         description="Timeout for RLM processing (10-1800 seconds)",
     )
+    cache: bool = Field(
+        default=True,
+        description=(
+            "Reuse identical DSPy LM responses. Set false for a fresh RLM run "
+            "whose latency, deadline, or telemetry must reflect live inference."
+        ),
+    )
     backend: str = Field(
         default="openai", description="LLM backend for RLM (openai, anthropic, litellm)"
     )

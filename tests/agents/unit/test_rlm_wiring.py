@@ -169,6 +169,18 @@ class TestRLMAwareMixinRouting:
 
         assert first is second
 
+    def test_cache_mode_change_builds_a_distinct_instance(self, monkeypatch):
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
+        _patch_enabled_get_config(monkeypatch)
+        host = _MixinHost(MagicMock())
+
+        cached = host.get_rlm(self._endpoint(), tenant_id="acme:prod", cache=True)
+        uncached = host.get_rlm(self._endpoint(), tenant_id="acme:prod", cache=False)
+
+        assert cached is not uncached
+        assert cached.cache is True
+        assert uncached.cache is False
+
     def test_concurrent_tenants_on_one_host_each_get_their_own_instance(
         self, monkeypatch
     ):

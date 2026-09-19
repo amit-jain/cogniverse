@@ -259,6 +259,7 @@ class TestRLMOptionsDoNotFreezeTheReplica:
                         "rlm": {
                             "enabled": True,
                             "timeout_seconds": RLM_TIMEOUT_SECONDS,
+                            "cache": False,
                         },
                     },
                     timeout=900.0,

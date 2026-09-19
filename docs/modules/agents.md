@@ -3782,6 +3782,7 @@ rlm_opts = RLMOptions(
     max_iterations=3,          # Maximum REPL iterations (1-10)
     max_llm_calls=30,          # Maximum LLM sub-calls (1-100)
     timeout_seconds=300,       # Timeout for RLM processing (10-1800s)
+    cache=True,                # False forces fresh inference for live timing
     backend="openai",          # LLM backend (openai, anthropic, litellm)
     model="gpt-4o",            # Model override
 )
