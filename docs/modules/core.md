@@ -1273,10 +1273,19 @@ the primary and indexed row are absent, or when a present primary legitimately
 declares no provenance. Citation reads never repair state as a side effect.
 
 `Mem0MemoryManager.repair_provenance()` is the explicit idempotent repair path.
-It serializes with manager writes, reattaches the primary's canonical
-provenance under the stable row id, and verifies the primary revision and
-indexed row before success. Concurrent external changes are retried up to the
-requested bound and then raise `ProvenanceRepairConflictError`.
+Supported manager writes and repair take a per-canonical-tenant lease backed by
+the configuration store's conditional writes, so separate processes and
+manager instances share one ownership boundary. Repair reattaches the primary's
+canonical provenance under the stable row id and verifies the primary and index
+before releasing that lease. Its success linearizes at the verified primary
+read while lease ownership excludes supported writers.
+
+Each indexed row also stores a SHA-256 digest of the primary content and
+canonical provenance. A raw writer outside the manager/lease contract may
+mutate after repair's linearization point; the next citation read detects the
+digest mismatch and raises rather than serving the row as consistent.
+Concurrent external changes inside repair are retried up to the requested bound
+and then raise `ProvenanceRepairConflictError`.
 
 Contradiction detection and trust ranking both read this provenance graph
 to score conflicting claims.

@@ -163,6 +163,7 @@ class _StubProvenanceStore:
         from cogniverse_core.memory.provenance import (
             DerivationKind,
             Provenance,
+            primary_provenance_digest,
         )
         from cogniverse_core.memory.provenance_store import ProvenanceRecord
 
@@ -186,7 +187,12 @@ class _StubProvenanceStore:
             confidence=prov_meta.get("confidence", 0.5),
             trace_id=prov_meta.get("trace_id"),
         )
-        return ProvenanceRecord.from_provenance(mid, "t1", provenance)
+        return ProvenanceRecord.from_provenance(
+            mid,
+            "t1",
+            provenance,
+            primary_digest=primary_provenance_digest(row, provenance),
+        )
 
     def get(self, memory_id: str):
         return self._record(memory_id)

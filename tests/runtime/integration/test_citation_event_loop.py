@@ -17,6 +17,7 @@ from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
     make_provenance,
+    primary_provenance_digest,
 )
 from cogniverse_core.memory.provenance_store import ProvenanceStore
 from cogniverse_runtime.routers import knowledge, tenant
@@ -90,9 +91,11 @@ def citation_env(schema_env, monkeypatch):  # noqa: F811
             schema_name="agent_memories",
         )
         assert result["success_count"] == 1
+        primary = mm.memory.get(memory_id)
         mm.provenance_store.attach(
             memory_id,
             provenance,
+            primary_digest=primary_provenance_digest(primary, provenance),
         )
     deadline = time.monotonic() + 30
     while set(mm.provenance_store.fetch(["root", "leaf"])) != {"root", "leaf"}:

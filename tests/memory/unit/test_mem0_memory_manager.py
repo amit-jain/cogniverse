@@ -589,6 +589,11 @@ class TestMem0MemoryManager:
         """Test updating memory"""
         # Setup
         mock_memory = MagicMock()
+        mock_memory.get.return_value = {
+            "id": "mem_123",
+            "memory": "Original content",
+            "metadata": {},
+        }
         manager.memory = mock_memory
 
         # Update
@@ -600,7 +605,11 @@ class TestMem0MemoryManager:
         )
 
         assert success is True
-        mock_memory.update.assert_called_once()
+        mock_memory.update.assert_called_once_with(
+            "mem_123",
+            data="Updated content",
+            metadata={},
+        )
 
     @patch("cogniverse_core.memory.manager.Memory")
     def test_health_check(self, mock_memory_class, manager):
