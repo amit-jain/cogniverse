@@ -46,7 +46,6 @@ from cogniverse_foundation.telemetry.providers.base import (
     DatasetNotFoundError,
     DatasetStoreUnavailableError,
 )
-from cogniverse_runtime.quality_monitor_cli import run_annotation_cycle
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -602,6 +601,7 @@ class TestQualityMonitorTenantOwnership:
         schema_loader,
         seeded_vespa,
         qm_tenant,
+        caplog,
     ):
         """One monitor sees a later upload without losing its live siblings.
 
@@ -611,8 +611,8 @@ class TestQualityMonitorTenantOwnership:
         """
         import uvicorn
 
-        from cogniverse_agents.routing.config import AutomationRulesConfig
         from cogniverse_foundation.telemetry.span_contract import record_span_io
+        from cogniverse_runtime import quality_monitor_cli
         from cogniverse_runtime.admin import tenant_manager
         from cogniverse_runtime.routers import agents as agents_router
         from cogniverse_runtime.routers import search
@@ -698,11 +698,12 @@ class TestQualityMonitorTenantOwnership:
             llm_base_url=runtime_url,
             llm_model="deterministic-judge",
             golden_dataset_path="",
-            golden_eval_interval_seconds=60,
+            golden_eval_interval_seconds=0,
             live_eval_interval_seconds=3600,
             telemetry_provider=provider,
         )
         tenant_manager.set_backend(seeded_vespa)
+        lifecycle_task = None
 
         try:
             spans = await _wait_for_span(
@@ -711,47 +712,87 @@ class TestQualityMonitorTenantOwnership:
             assert spans["span_id"].tolist() == [routing_span_id]
 
             monitor_identity = id(monitor)
-            last_golden, last_live = await monitor._run_scheduled_iteration(
-                now=100.0,
-                last_golden=float("-inf"),
-                last_live=float("-inf"),
-            )
-            assert (last_golden, last_live) == (100.0, 100.0)
-            assert id(monitor) == monitor_identity
-            assert search_requests == []
-            assert [request["model"] for request in judge_requests] == [
-                "deterministic-judge"
-            ]
+            real_sleep = asyncio.sleep
+            loop_sleeps = asyncio.Queue()
 
-            live_names = await _dataset_names(monitor, "quality-live")
-            assert len(live_names) == 1
-            live_frame = await monitor._get_dataset_store().get_dataset(live_names[0])
-            assert live_frame.to_dict("records") == [
-                {
-                    "input": {"agent": "routing"},
-                    "output": {
-                        "score": "0.8",
-                        "baseline_score": "",
-                        "degradation_pct": "0.0",
-                        "sample_count": "1",
-                    },
-                    "metadata": {},
-                }
-            ]
+            async def controlled_sleep(delay):
+                if delay != 60:
+                    await real_sleep(delay)
+                    return
+                release = asyncio.Event()
+                await loop_sleeps.put(release)
+                await release.wait()
 
-            with patch.object(agents_router, "_annotation_queue", AnnotationQueue()):
-                annotation = await run_annotation_cycle(
-                    tenant_id=qm_tenant,
-                    runtime_url=runtime_url,
-                    agent_types=["routing"],
-                    automation_rules=AutomationRulesConfig(),
+            with (
+                patch.object(agents_router, "_annotation_queue", AnnotationQueue()),
+                patch(
+                    "cogniverse_evaluation.quality_monitor.asyncio.sleep",
+                    side_effect=controlled_sleep,
+                ),
+                caplog.at_level(logging.INFO),
+            ):
+                lifecycle_task = asyncio.create_task(
+                    quality_monitor_cli._run_quality_monitor_iteration(
+                        monitor, qm_tenant, runtime_url
+                    )
                 )
+
+                async def next_monitor_release():
+                    sleep_wait = asyncio.create_task(loop_sleeps.get())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {lifecycle_task, sleep_wait},
+                            timeout=120,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        assert lifecycle_task not in done, (
+                            "quality monitor wrapper ended before its next turn: "
+                            f"{lifecycle_task.exception()!r}"
+                        )
+                        assert sleep_wait in done
+                        return sleep_wait.result()
+                    finally:
+                        if not sleep_wait.done():
+                            sleep_wait.cancel()
+                            try:
+                                await sleep_wait
+                            except asyncio.CancelledError:
+                                pass
+
+                first_release = await next_monitor_release()
+
+                deadline = time.monotonic() + 30
                 queued = agents_router.get_annotation_queue().get(routing_span_id)
-                assert annotation == {
-                    "identified": 1,
-                    "already_annotated": 0,
-                    "enqueued": 1,
-                }
+                while queued is None and time.monotonic() < deadline:
+                    await real_sleep(0.1)
+                    queued = agents_router.get_annotation_queue().get(routing_span_id)
+
+                assert lifecycle_task.done() is False
+                assert id(monitor) == monitor_identity
+                assert monitor._http_client is None
+                assert search_requests == []
+                assert [request["model"] for request in judge_requests] == [
+                    "deterministic-judge"
+                ]
+
+                live_names = await _dataset_names(monitor, "quality-live")
+                assert len(live_names) == 1
+                live_frame = await monitor._get_dataset_store().get_dataset(
+                    live_names[0]
+                )
+                assert live_frame.to_dict("records") == [
+                    {
+                        "input": {"agent": "routing"},
+                        "output": {
+                            "score": "0.8",
+                            "baseline_score": "",
+                            "degradation_pct": "0.0",
+                            "sample_count": "1",
+                        },
+                        "metadata": {},
+                    }
+                ]
+                queued = agents_router.get_annotation_queue().get(routing_span_id)
                 assert queued.to_dict() == {
                     "span_id": routing_span_id,
                     "timestamp": queued.timestamp.isoformat(),
@@ -777,36 +818,88 @@ class TestQualityMonitorTenantOwnership:
                     "tenant_id": qm_tenant,
                 }
 
-            unchanged = await monitor._run_scheduled_iteration(
-                now=130.0,
-                last_golden=last_golden,
-                last_live=last_live,
-            )
-            assert unchanged == (100.0, 100.0)
-            assert search_requests == []
-            assert len(judge_requests) == 1
+                lifecycle_messages = [
+                    record.getMessage()
+                    for record in caplog.records
+                    if record.name
+                    in {
+                        "cogniverse_evaluation.quality_monitor",
+                        "cogniverse_runtime.quality_monitor_cli",
+                    }
+                ]
+                assert (
+                    sum(
+                        message.startswith("Golden eval skipped:")
+                        for message in lifecycle_messages
+                    )
+                    == 1
+                )
+                assert (
+                    sum(
+                        message.startswith("Quality monitor starting for tenant=")
+                        for message in lifecycle_messages
+                    )
+                    == 1
+                )
+                assert not any(
+                    "Quality monitor loop crashed" in message
+                    for message in lifecycle_messages
+                )
+                assert (
+                    lifecycle_messages.count(
+                        "Annotation cycle complete: "
+                        "{'identified': 1, 'already_annotated': 0, 'enqueued': 1}"
+                    )
+                    == 1
+                )
 
-            uploaded_rows = [GOLDEN_QUERIES[0]]
-            await _seed_golden_rows(provider, qm_tenant, uploaded_rows)
-            last_golden, last_live = await monitor._run_scheduled_iteration(
-                now=160.0,
-                last_golden=last_golden,
-                last_live=last_live,
-            )
-            assert (last_golden, last_live) == (160.0, 100.0)
-            assert id(monitor) == monitor_identity
-            assert await monitor._load_golden_queries_async() == uploaded_rows
-            assert search_requests == [
-                {
-                    "query": "a solid red square",
-                    "profile": SEARCH_PROFILE,
-                    "top_k": 10,
-                    "tenant_id": qm_tenant,
-                }
-            ]
-            assert await monitor._read_baseline_metric("mean_mrr") == 1.0
+                await real_sleep(0.1)
+                assert lifecycle_task.done() is False
+                assert search_requests == []
+                assert len(judge_requests) == 1
+
+                uploaded_rows = [GOLDEN_QUERIES[0]]
+                await _seed_golden_rows(provider, qm_tenant, uploaded_rows)
+                first_release.set()
+                await next_monitor_release()
+
+                assert lifecycle_task.done() is False
+                assert id(monitor) == monitor_identity
+                assert await monitor._load_golden_queries_async() == uploaded_rows
+                assert monitor._http_client.is_closed is False
+                assert search_requests == [
+                    {
+                        "query": "a solid red square",
+                        "profile": SEARCH_PROFILE,
+                        "top_k": 10,
+                        "tenant_id": qm_tenant,
+                    }
+                ]
+                assert await monitor._read_baseline_metric("mean_mrr") == 1.0
+                assert (
+                    sum(
+                        record.getMessage().startswith("Golden eval:")
+                        for record in caplog.records
+                        if record.name == "cogniverse_evaluation.quality_monitor"
+                    )
+                    == 1
+                )
+
+                lifecycle_task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await lifecycle_task
+                assert monitor._http_client.is_closed is True
 
             missing_tenant = f"qm:{uuid.uuid4().hex}"
+            present_monitor = QualityMonitor(
+                tenant_id=qm_tenant,
+                runtime_url=runtime_url,
+                phoenix_http_endpoint=phoenix_container["http_endpoint"],
+                llm_base_url=runtime_url,
+                llm_model="deterministic-judge",
+                golden_dataset_path="",
+                telemetry_provider=provider,
+            )
             missing_monitor = QualityMonitor(
                 tenant_id=missing_tenant,
                 runtime_url=runtime_url,
@@ -820,10 +913,10 @@ class TestQualityMonitorTenantOwnership:
             )
             try:
                 concurrent = await asyncio.gather(
-                    monitor._run_scheduled_iteration(
+                    present_monitor._run_scheduled_iteration(
                         now=220.0,
-                        last_golden=last_golden,
-                        last_live=last_live,
+                        last_golden=float("-inf"),
+                        last_live=220.0,
                     ),
                     missing_monitor._run_scheduled_iteration(
                         now=220.0,
@@ -831,15 +924,22 @@ class TestQualityMonitorTenantOwnership:
                         last_live=220.0,
                     ),
                 )
-                assert concurrent == [(220.0, 100.0), (220.0, 220.0)]
+                assert concurrent == [(220.0, 220.0), (220.0, 220.0)]
                 assert len(search_requests) == 2
                 with pytest.raises(DatasetNotFoundError):
                     await missing_monitor._get_dataset_store().get_dataset(
                         f"quality-baseline-{missing_tenant}"
                     )
             finally:
+                await present_monitor.close()
                 await missing_monitor.close()
         finally:
+            if lifecycle_task is not None and not lifecycle_task.done():
+                lifecycle_task.cancel()
+                try:
+                    await lifecycle_task
+                except asyncio.CancelledError:
+                    pass
             tenant_manager.set_backend(None)
             await monitor.close()
             server.should_exit = True
