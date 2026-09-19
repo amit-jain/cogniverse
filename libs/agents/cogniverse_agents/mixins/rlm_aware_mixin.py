@@ -81,6 +81,7 @@ class RLMAwareMixin(ConfigManagerAware):
         max_iterations: int = 10,
         max_llm_calls: int = 30,
         timeout_seconds: int = 300,
+        cache: bool = True,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
     ) -> RLMInference:
@@ -92,6 +93,7 @@ class RLMAwareMixin(ConfigManagerAware):
             max_iterations: Maximum REPL iteration loops
             max_llm_calls: Maximum LLM sub-calls
             timeout_seconds: Timeout for RLM processing
+            cache: Whether identical DSPy LM responses may be reused
             event_queue: Optional EventQueue for real-time progress events
             task_id: Task identifier for events
 
@@ -112,6 +114,7 @@ class RLMAwareMixin(ConfigManagerAware):
                 max_iterations=max_iterations,
                 max_llm_calls=max_llm_calls,
                 timeout_seconds=timeout_seconds,
+                cache=cache,
                 event_queue=event_queue,
                 task_id=task_id,
                 tenant_id=tenant_id,
@@ -128,6 +131,7 @@ class RLMAwareMixin(ConfigManagerAware):
             max_iterations,
             max_llm_calls,
             timeout_seconds,
+            cache,
         )
         with _RLM_CACHE_LOCK:
             cached = self.__dict__.get("_rlm_cached")
@@ -138,6 +142,7 @@ class RLMAwareMixin(ConfigManagerAware):
             max_iterations=max_iterations,
             max_llm_calls=max_llm_calls,
             timeout_seconds=timeout_seconds,
+            cache=cache,
             tenant_id=tenant_id,
         )
         with _RLM_CACHE_LOCK:
@@ -206,6 +211,7 @@ class RLMAwareMixin(ConfigManagerAware):
             max_iterations=rlm_options.max_iterations,
             max_llm_calls=rlm_options.max_llm_calls,
             timeout_seconds=rlm_options.timeout_seconds,
+            cache=rlm_options.cache,
             event_queue=event_queue,
             task_id=task_id,
             tenant_id=tenant_id,

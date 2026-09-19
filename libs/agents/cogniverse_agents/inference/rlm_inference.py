@@ -213,6 +213,7 @@ class RLMInference:
         max_iterations: int = 10,
         max_llm_calls: int = 30,
         timeout_seconds: Optional[int] = 300,
+        cache: bool = True,
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -240,6 +241,7 @@ class RLMInference:
         self.max_iterations = max_iterations
         self.max_llm_calls = max_llm_calls
         self.timeout_seconds = timeout_seconds
+        self.cache = cache
         self._event_queue = event_queue
         self._task_id = task_id
         if event_queue is not None and not tenant_id:
@@ -252,7 +254,9 @@ class RLMInference:
 
     def _create_lm(self):
         """Create DSPy LM via centralized factory."""
-        return create_dspy_lm(self.llm_config)
+        lm = create_dspy_lm(self.llm_config)
+        lm.cache = self.cache
+        return lm
 
     def _get_rlm(self):
         """Get or create DSPy RLM instance.
@@ -507,5 +511,6 @@ def build_rlm_from_options(
         max_iterations=rlm_options.max_iterations,
         max_llm_calls=rlm_options.max_llm_calls,
         timeout_seconds=rlm_options.timeout_seconds,
+        cache=rlm_options.cache,
         tenant_id=tenant_id or None,
     )
