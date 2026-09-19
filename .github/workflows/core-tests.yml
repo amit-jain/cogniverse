@@ -104,7 +104,15 @@ jobs:
 
     - name: Prefetch DenseOn tokenizer
       run: |
-        uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('lightonai/DenseOn', allow_patterns=['config.json', 'tokenizer.json', 'tokenizer_config.json', 'special_tokens_map.json', 'vocab*', 'merges.txt', '*.model'])"
+        for attempt in 1 2 3; do
+          if uv run --no-sync python -c "from huggingface_hub import snapshot_download; snapshot_download('lightonai/DenseOn', revision='cb9947ebccb33862d24e3c7ca2edb25e51acd887', allow_patterns=['config.json', 'tokenizer.json', 'tokenizer_config.json', 'special_tokens_map.json', 'vocab*', 'merges.txt', '*.model'])"; then
+            exit 0
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            exit 1
+          fi
+          sleep $((attempt * 15))
+        done
 
     - name: Resolve assertion-guard base
       id: guard_base
