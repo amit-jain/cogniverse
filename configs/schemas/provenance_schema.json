@@ -56,6 +56,11 @@
         "name": "trace_id",
         "type": "string",
         "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "primary_digest",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
       }
     ]
   },

@@ -747,7 +747,22 @@ class Mem0MemoryManager:
                     result={"mem0_results": entries},
                 )
             try:
-                self.provenance_store.attach(memory_id, indexed_provenance)
+                primary = self.memory.get(memory_id)
+                if not isinstance(primary, dict):
+                    raise RuntimeError(
+                        f"primary memory {memory_id!r} is unreadable after write"
+                    )
+                from cogniverse_core.memory.provenance import (
+                    primary_provenance_digest,
+                )
+
+                self.provenance_store.attach(
+                    memory_id,
+                    indexed_provenance,
+                    primary_digest=primary_provenance_digest(
+                        primary, indexed_provenance
+                    ),
+                )
             except Exception as exc:
                 from cogniverse_core.memory.provenance_store import (
                     ProvenanceWriteError,
@@ -869,6 +884,7 @@ class Mem0MemoryManager:
             ProvenanceConsistencyError,
             ProvenanceReadError,
             ProvenanceRepairConflictError,
+            primary_provenance_digest,
         )
         from cogniverse_core.memory.provenance_store import ProvenanceRecord
 
@@ -886,7 +902,12 @@ class Mem0MemoryManager:
                     memory_id, "primary provenance is missing"
                 )
             snapshot = self._repair_snapshot(before)
-            row_id = self.provenance_store.attach(memory_id, provenance)
+            primary_digest = primary_provenance_digest(before, provenance)
+            row_id = self.provenance_store.attach(
+                memory_id,
+                provenance,
+                primary_digest=primary_digest,
+            )
 
             try:
                 after = self.memory.get(memory_id)
@@ -904,6 +925,7 @@ class Mem0MemoryManager:
                 memory_id,
                 self._storage_tenant_id,
                 provenance,
+                primary_digest=primary_digest,
             )
             if indexed != expected:
                 raise ProvenanceConsistencyError(
@@ -1788,12 +1810,36 @@ class Mem0MemoryManager:
             return False
 
         try:
+            before = self.memory.get(memory_id)
+            if not isinstance(before, dict):
+                return False
+            effective_metadata = (
+                metadata if metadata is not None else self._read_metadata(before)
+            )
             # Mem0's update() only accepts memory_id and data (content)
             # It does NOT accept user_id or agent_id
             self.memory.update(
                 memory_id,
                 data=content,
+                metadata=effective_metadata,
             )
+
+            provenance = self._provenance_for_index(effective_metadata)
+            if provenance is not None:
+                primary = self.memory.get(memory_id)
+                if not isinstance(primary, dict):
+                    raise RuntimeError(
+                        f"primary memory {memory_id!r} is unreadable after update"
+                    )
+                from cogniverse_core.memory.provenance import (
+                    primary_provenance_digest,
+                )
+
+                self.provenance_store.attach(
+                    memory_id,
+                    provenance,
+                    primary_digest=primary_provenance_digest(primary, provenance),
+                )
 
             logger.info(f"Updated memory {memory_id} for {tenant_id}/{agent_name}")
             return True

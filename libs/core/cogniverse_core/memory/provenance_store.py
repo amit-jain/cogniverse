@@ -83,6 +83,7 @@ class ProvenanceRecord:
     confidence: float
     derived_from_memory_ids: List[str]
     derived_from_other: List[Dict[str, Any]]
+    primary_digest: str
     trace_id: Optional[str] = None
 
     @classmethod
@@ -91,6 +92,7 @@ class ProvenanceRecord:
         memory_id: str,
         tenant_id: str,
         provenance: Provenance,
+        primary_digest: str = "",
     ) -> "ProvenanceRecord":
         from datetime import datetime
 
@@ -115,6 +117,7 @@ class ProvenanceRecord:
             confidence=provenance.confidence,
             derived_from_memory_ids=[r.ref_id for r in memory_refs],
             derived_from_other=[r.to_dict() for r in other_refs],
+            primary_digest=primary_digest,
             trace_id=provenance.trace_id,
         )
 
@@ -172,7 +175,13 @@ class ProvenanceStore:
             return get_name(self._tenant_id, self._base_schema)
         return f"{self._base_schema}_{self._tenant_id}"
 
-    def attach(self, memory_id: str, provenance: Provenance) -> str:
+    def attach(
+        self,
+        memory_id: str,
+        provenance: Provenance,
+        *,
+        primary_digest: str = "",
+    ) -> str:
         """Persist a provenance record for ``memory_id``. Returns the row id.
 
         Idempotent on (memory_id, tenant_id): subsequent writes for the
@@ -180,7 +189,10 @@ class ProvenanceStore:
         on the document id).
         """
         record = ProvenanceRecord.from_provenance(
-            memory_id, self._tenant_id, provenance
+            memory_id,
+            self._tenant_id,
+            provenance,
+            primary_digest=primary_digest,
         )
         row_id = self._row_id(memory_id)
         from cogniverse_sdk.document import Document
@@ -198,6 +210,7 @@ class ProvenanceStore:
                 "confidence": record.confidence,
                 "derived_from_ids": record.derived_from_memory_ids,
                 "derived_from_other": json.dumps(record.derived_from_other),
+                "primary_digest": record.primary_digest,
                 "trace_id": record.trace_id or "",
             },
         )
@@ -408,6 +421,7 @@ class ProvenanceStore:
             confidence=float(row.get("confidence") or 0.0),
             derived_from_memory_ids=[str(x) for x in derived_ids],
             derived_from_other=[d for d in derived_other if isinstance(d, dict)],
+            primary_digest=str(row.get("primary_digest") or ""),
             trace_id=row.get("trace_id") or None,
         )
 
