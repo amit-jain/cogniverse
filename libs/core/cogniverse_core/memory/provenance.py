@@ -192,7 +192,7 @@ def extract_from_memory(memory: Dict[str, Any]) -> Optional[Provenance]:
         return None
     try:
         return Provenance.from_metadata_payload(payload)
-    except (KeyError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.debug("Malformed provenance on memory %s: %s", memory.get("id"), exc)
         return None
 
@@ -358,6 +358,10 @@ class ProvenanceWalker:
         declared: Optional[Provenance],
         indexed_record: Any,
     ) -> None:
+        if memory is None and indexed_record is not None:
+            raise ProvenanceConsistencyError(
+                memory_id, "primary memory is missing while indexed provenance exists"
+            )
         if memory is None:
             return
         metadata = memory.get("metadata") or {}
