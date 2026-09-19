@@ -67,8 +67,12 @@ def _load_denseon_tokenizer():
         from huggingface_hub import snapshot_download
         from transformers import AutoTokenizer
 
+        from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+        spec = get_inference_service_spec("denseon")
         snapshot_path = snapshot_download(
-            _DENSEON_MODEL_NAME,
+            spec.model_id,
+            revision=spec.model_revision,
             local_files_only=True,
         )
         tokenizer = AutoTokenizer.from_pretrained(snapshot_path, local_files_only=True)

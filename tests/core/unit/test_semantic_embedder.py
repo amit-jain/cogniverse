@@ -94,7 +94,14 @@ def _denseon_tokenizer():
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
-    snapshot = snapshot_download("lightonai/DenseOn", local_files_only=True)
+    from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+    spec = get_inference_service_spec("denseon")
+    snapshot = snapshot_download(
+        spec.model_id,
+        revision=spec.model_revision,
+        local_files_only=True,
+    )
     return AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
 
 
