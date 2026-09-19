@@ -40,6 +40,7 @@ import tempfile
 import time
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -558,6 +559,8 @@ async def real_stack(
     config_blob = json.loads(src_config_path.read_text())
     config_blob["backend"]["port"] = vespa_backend["http_port"]
     config_blob["backend"]["url"] = "http://localhost"
+    config_blob["active_video_profile"] = PROFILE
+    config_blob["backend"]["default_profiles"]["video"]["profile"] = PROFILE
     # The worker resolves llm_config.primary from this config for KG
     # entity/claim extraction; the repo blob's api_base names an endpoint
     # this stack does not own. ensure_llm probes the configured endpoints
@@ -664,27 +667,29 @@ async def worker_task(real_stack):
     config = WorkerConfig()
     config.claim_block_ms = 200
     redis = await get_redis(os.environ["REDIS_URL"])
+    claimed_jobs = []
+
+    async def _recording_processor(job):
+        claimed_jobs.append(job)
+        return await _default_processor(
+            job,
+            service_urls=config.inference_service_urls,
+            mark_graph_pending=partial(_mark_graph_pending, redis),
+            graph_deadline_s=config.graph_deadline_s,
+            media_config=_media_config_from_defaults(
+                {"minio_endpoint": os.environ["MINIO_ENDPOINT"]}
+            ),
+        )
+
     task = asyncio.create_task(
         _claim_loop(
             redis,
             config,
             stop,
-            processor=partial(
-                _default_processor,
-                service_urls=config.inference_service_urls,
-                mark_graph_pending=partial(_mark_graph_pending, redis),
-                graph_deadline_s=config.graph_deadline_s,
-                # The worker entrypoint builds this from its resolved env;
-                # the in-process loop must wire it the same way or the media
-                # locator downloads s3:// URIs against the default AWS
-                # endpoint instead of this stack's MinIO.
-                media_config=_media_config_from_defaults(
-                    {"minio_endpoint": os.environ["MINIO_ENDPOINT"]}
-                ),
-            ),
+            processor=_recording_processor,
         )
     )
-    yield task
+    yield {"task": task, "claimed_jobs": claimed_jobs}
     stop.set()
     try:
         await asyncio.wait_for(task, timeout=5)
@@ -845,6 +850,28 @@ def _vespa_source_urls(http_port: int, base_schema_name: str, tenant_id: str) ->
     }
 
 
+def _vespa_document_ids(
+    http_port: int, base_schema_name: str, tenant_id: str
+) -> set[str]:
+    """Return the exact application document ids persisted for an upload."""
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    canonical_suffix = canonical_tenant_id(tenant_id).replace(":", "_")
+    schema_name = f"{base_schema_name}_{canonical_suffix}"
+    yql = f"select doc_id from {schema_name} where true"
+    response = requests.get(
+        f"http://localhost:{http_port}/search/",
+        params={"yql": yql, "hits": 100},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return {
+        fields["doc_id"]
+        for child in response.json().get("root", {}).get("children", []) or []
+        if (fields := child.get("fields") or {}).get("doc_id")
+    }
+
+
 def _vespa_video_titles(
     http_port: int, base_schema_name: str, tenant_id: str, wait_seconds: int = 60
 ) -> set[str]:
@@ -917,6 +944,136 @@ def _vespa_graph_documents(
     return nodes, edges
 
 
+@pytest.mark.integration
+@pytest.mark.requires_docker
+@pytest.mark.asyncio
+async def test_omitted_profile_crosses_real_minio_redis_and_worker(
+    redis_container, minio_container, monkeypatch
+):
+    """The tenant-selected profile reaches storage and the claimed job unchanged."""
+    import boto3
+    from botocore.client import Config
+
+    from cogniverse_runtime.ingestion_worker import queue
+    from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
+    from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
+    from cogniverse_runtime.routers import ingestion as ingestion_router
+
+    selected_profile = "tenant_video_boundary"
+    canonical_tenant = "boundary:upload"
+    video_bytes = b"owned-real-minio-redis-worker-boundary"
+    monkeypatch.setenv("REDIS_URL", redis_container)
+    monkeypatch.setenv("MINIO_ENDPOINT", minio_container["endpoint"])
+    monkeypatch.setenv("MINIO_ACCESS_KEY", minio_container["access_key"])
+    monkeypatch.setenv("MINIO_SECRET_KEY", minio_container["secret_key"])
+    monkeypatch.setenv("MINIO_DEFAULT_BUCKET", minio_container["bucket"])
+
+    config = SimpleNamespace(
+        get=lambda key, default=None: (
+            {
+                "profiles": {
+                    selected_profile: {
+                        "type": "video",
+                        "strategies": {"segmentation": {"class": "Chunks"}},
+                    }
+                },
+                "default_profiles": {"video": {"profile": selected_profile}},
+            }
+            if key == "backend"
+            else selected_profile
+            if key == "active_video_profile"
+            else default
+        )
+    )
+    manager = SimpleNamespace(
+        get_system_config=lambda: SimpleNamespace(
+            search_backend="vespa",
+            redis_url=redis_container,
+            minio_endpoint=minio_container["endpoint"],
+        )
+    )
+
+    async def _tenant_exists(tenant_id: str) -> None:
+        assert tenant_id == canonical_tenant
+
+    monkeypatch.setattr(ingestion_router, "assert_tenant_exists", _tenant_exists)
+    monkeypatch.setattr(ingestion_router, "get_config", lambda **_kwargs: config)
+
+    application = FastAPI()
+    application.include_router(ingestion_router.router, prefix="/ingestion")
+    application.dependency_overrides[ingestion_router.get_config_manager_dependency] = (
+        lambda: manager
+    )
+
+    await close_redis()
+    redis = await get_redis(redis_container)
+    await redis.flushdb()
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=minio_container["endpoint"],
+        aws_access_key_id=minio_container["access_key"],
+        aws_secret_access_key=minio_container["secret_key"],
+        config=Config(signature_version="s3v4"),
+        region_name="us-east-1",
+    )
+    claimed_jobs = []
+    job_claimed = asyncio.Event()
+    finish_job = asyncio.Event()
+
+    async def _processor(job):
+        claimed_jobs.append(job)
+        job_claimed.set()
+        await finish_job.wait()
+        return {
+            "video_id": "boundary-video",
+            "documents_fed": 0,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+        }
+
+    stop = asyncio.Event()
+    worker_config = WorkerConfig()
+    worker_config.claim_block_ms = 100
+    worker = asyncio.create_task(
+        _claim_loop(redis, worker_config, stop, processor=_processor)
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
+            request = asyncio.create_task(
+                client.post(
+                    "/ingestion/upload",
+                    params={"wait": "true", "wait_timeout": 60},
+                    files={"file": ("boundary.mp4", video_bytes, "video/mp4")},
+                    data={"tenant_id": canonical_tenant},
+                )
+            )
+            await asyncio.wait_for(job_claimed.wait(), timeout=10)
+            entries = await redis.xrange(queue.QUEUE_STREAM, min="-", max="+")
+            assert len(entries) == 1
+            assert entries[0][1]["profile"] == selected_profile
+            assert entries[0][1]["tenant_id"] == canonical_tenant
+            finish_job.set()
+            response = await request
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["state"] == "complete"
+        assert body["video_id"] == "boundary-video"
+        assert [job.profile for job in claimed_jobs] == [selected_profile]
+        assert await redis.xlen(queue.QUEUE_STREAM) == 0
+
+        key = body["source_url"].split(f"{minio_container['bucket']}/", 1)[1]
+        stored = s3.get_object(Bucket=minio_container["bucket"], Key=key)["Body"].read()
+        assert stored == video_bytes
+    finally:
+        stop.set()
+        await asyncio.wait_for(worker, timeout=5)
+        await close_redis()
+
+
 # This class stands up its own Vespa, Redis, and MinIO containers. ColQwen
 # comes from the collection-owned exact inference resolver.
 @pytest.mark.integration
@@ -938,11 +1095,7 @@ class TestUploadRealStack:
         content_digest = hashlib.sha256(video_bytes).hexdigest()
 
         files = {"file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")}
-        data = {
-            "profile": PROFILE,
-            "backend": "vespa",
-            "tenant_id": TENANT_ID,
-        }
+        data = {"backend": "vespa", "tenant_id": TENANT_ID}
         resp = await http_client.post(
             "/ingestion/upload",
             params={"wait": "true", "wait_timeout": 600},
@@ -1027,12 +1180,31 @@ class TestUploadRealStack:
         assert key == f"{canonical_tenant}/{content_digest}.mp4"
         head = real_stack["s3"].head_object(Bucket=bucket, Key=key)
         assert head["ContentLength"] == len(video_bytes)
+        stored_bytes = (
+            real_stack["s3"].get_object(Bucket=bucket, Key=key)["Body"].read()
+        )
+        assert stored_bytes == video_bytes
+
+        from cogniverse_runtime.ingestion_worker.queue import QUEUE_STREAM
+
+        queue_entries = await real_stack["redis"].xrange(QUEUE_STREAM, min="-", max="+")
+        queued_fields = [
+            fields
+            for _message_id, fields in queue_entries
+            if fields["ingest_id"] == ingest_id
+        ]
+        assert len(queued_fields) == 1
+        assert queued_fields[0]["profile"] == PROFILE
+        assert [job.profile for job in worker_task["claimed_jobs"]] == [PROFILE]
 
         # 3. Vespa has documents for this tenant under the profile schema.
         vespa_doc_count = _vespa_visit_count(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
         )
         assert vespa_doc_count == EXPECTED_CHUNKS
+        assert _vespa_document_ids(
+            real_stack["vespa_http_port"], PROFILE, TENANT_ID
+        ) == {f"{content_digest}_seg_{index}" for index in range(EXPECTED_CHUNKS)}
 
         indexed_titles = _vespa_video_titles(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
