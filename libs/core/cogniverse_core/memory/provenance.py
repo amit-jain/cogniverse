@@ -20,6 +20,7 @@ indexed store; without it, ``walk()`` raises.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -195,6 +196,21 @@ def extract_from_memory(memory: Dict[str, Any]) -> Optional[Provenance]:
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("Malformed provenance on memory %s: %s", memory.get("id"), exc)
         return None
+
+
+def primary_provenance_digest(
+    memory: Dict[str, Any], provenance: Optional[Provenance] = None
+) -> str:
+    """Digest the primary content and canonical in-band provenance."""
+    declared = provenance if provenance is not None else extract_from_memory(memory)
+    payload = {
+        "content": str(memory.get("memory") or memory.get("content") or ""),
+        "provenance": (
+            declared.to_metadata_payload() if declared is not None else None
+        ),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def make_provenance(
@@ -388,8 +404,14 @@ class ProvenanceWalker:
             memory_id,
             indexed_record.tenant_id,
             declared,
+            primary_digest=indexed_record.primary_digest,
         )
         if declared_record != indexed_record:
             raise ProvenanceConsistencyError(
                 memory_id, "indexed provenance does not match primary provenance"
+            )
+        actual_digest = primary_provenance_digest(memory, declared)
+        if indexed_record.primary_digest != actual_digest:
+            raise ProvenanceConsistencyError(
+                memory_id, "primary digest does not match indexed provenance"
             )

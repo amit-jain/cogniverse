@@ -595,8 +595,8 @@ def test_repair_serializes_with_manager_primary_update(memory_env, monkeypatch):
     old_embedder = mm.memory.embedding_model
     mm.memory.embedding_model = _StaticEmbedder()
 
-    def blocked_attach(target_memory_id, target_provenance):
-        row_id = real_attach(target_memory_id, target_provenance)
+    def blocked_attach(target_memory_id, target_provenance, **kwargs):
+        row_id = real_attach(target_memory_id, target_provenance, **kwargs)
         entered.set()
         assert release.wait(10) is True
         return row_id
@@ -671,8 +671,8 @@ def test_repair_serializes_with_second_manager_for_same_storage_tenant(
     release = threading.Event()
     real_attach = mm.provenance_store.attach
 
-    def blocked_attach(target_memory_id, target_provenance):
-        row_id = real_attach(target_memory_id, target_provenance)
+    def blocked_attach(target_memory_id, target_provenance, **kwargs):
+        row_id = real_attach(target_memory_id, target_provenance, **kwargs)
         entered.set()
         assert release.wait(10) is True
         return row_id
@@ -795,9 +795,9 @@ def test_repair_reports_bounded_conflict_for_external_primary_changes(
     real_attach = mm.provenance_store.attach
     mutations = 0
 
-    def attach_then_change_primary(target_memory_id, target_provenance):
+    def attach_then_change_primary(target_memory_id, target_provenance, **kwargs):
         nonlocal mutations
-        row_id = real_attach(target_memory_id, target_provenance)
+        row_id = real_attach(target_memory_id, target_provenance, **kwargs)
         mutations += 1
         changed = make_provenance(
             written_by=f"agent:conflict-{mutations}",
@@ -935,7 +935,7 @@ def test_concurrent_repair_upserts_one_stable_row(memory_env, monkeypatch):
     attach_lock = threading.Lock()
     real_attach = mm.provenance_store.attach
 
-    def synchronized_attach(target_memory_id, target_provenance):
+    def synchronized_attach(target_memory_id, target_provenance, **kwargs):
         nonlocal attach_calls, active_attaches, max_active_attaches
         with attach_lock:
             attach_calls += 1
@@ -943,7 +943,7 @@ def test_concurrent_repair_upserts_one_stable_row(memory_env, monkeypatch):
             max_active_attaches = max(max_active_attaches, active_attaches)
         try:
             threading.Event().wait(0.1)
-            return real_attach(target_memory_id, target_provenance)
+            return real_attach(target_memory_id, target_provenance, **kwargs)
         finally:
             with attach_lock:
                 active_attaches -= 1
