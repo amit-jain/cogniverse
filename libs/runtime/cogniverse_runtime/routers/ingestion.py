@@ -31,6 +31,7 @@ from cogniverse_agents.graph.graph_schema import (
 from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,68 @@ async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+class _InvalidUploadProfile(ValueError):
+    pass
+
+
+class _UploadProfileConfigurationError(RuntimeError):
+    pass
+
+
+def _resolve_upload_profile(
+    tenant_id: str,
+    requested_profile: Optional[str],
+    config_manager: ConfigManager,
+) -> str:
+    """Resolve and validate one upload profile from the tenant config view."""
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    backend = config.get("backend", {})
+    if not isinstance(backend, dict):
+        raise _UploadProfileConfigurationError(
+            f"tenant {tenant_id!r} has no usable backend configuration"
+        )
+    profiles = backend.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise _UploadProfileConfigurationError(
+            f"tenant {tenant_id!r} has no usable backend profile catalog"
+        )
+
+    explicit = requested_profile is not None
+    if explicit:
+        profile_name = requested_profile
+    else:
+        defaults = backend.get("default_profiles", {})
+        video_default = defaults.get("video", {}) if isinstance(defaults, dict) else {}
+        profile_name = (
+            video_default.get("profile") if isinstance(video_default, dict) else None
+        ) or config.get("active_video_profile")
+        if not isinstance(profile_name, str) or not profile_name.strip():
+            raise _UploadProfileConfigurationError(
+                f"tenant {tenant_id!r} has no configured default video profile"
+            )
+
+    profile_config = profiles.get(profile_name)
+    usable = (
+        isinstance(profile_name, str)
+        and bool(profile_name.strip())
+        and isinstance(profile_config, dict)
+        and profile_config.get("type") == "video"
+        and isinstance(profile_config.get("strategies"), dict)
+        and bool(profile_config["strategies"])
+    )
+    if not usable:
+        if explicit:
+            raise _InvalidUploadProfile(
+                "profile must name a configured video profile with usable strategies"
+            )
+        raise _UploadProfileConfigurationError(
+            f"tenant {tenant_id!r} default video profile {profile_name!r} "
+            "is missing or has no usable strategies"
+        )
+
+    return profile_name
 
 
 class IngestionRequest(BaseModel):
@@ -233,7 +296,7 @@ async def get_ingestion_status(job_id: str) -> IngestionStatus:
 @router.post("/upload")
 async def upload_video(
     file: UploadFile = File(...),
-    profile: str = Form("default"),
+    profile: Optional[str] = Form(None),
     backend: str = Form("vespa"),
     tenant_id: Optional[str] = Form(None),
     org_id: Optional[str] = Form(None),
@@ -275,14 +338,6 @@ async def upload_video(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if not profile or not profile.strip():
-        # Validate BEFORE the multipart body is copied into the object store,
-        # so an empty profile is rejected up front as a 400 instead of failing
-        # deep in idempotency hashing (a 500) after the whole upload transferred.
-        raise HTTPException(
-            status_code=400, detail="profile must be a non-empty string"
-        )
-
     # Reject ingestion for tenants that haven't been registered. Without
     # this guard the worker auto-deploys per-tenant schemas on first
     # upload, which produces "schema-only tenants" — schema in Vespa,
@@ -292,7 +347,18 @@ async def upload_video(
     # local dev clusters and for any pre-auth code path.
     await assert_tenant_exists(upload_tenant_id)
 
-    sys_cfg = config_manager.get_system_config()
+    try:
+        sys_cfg = await asyncio.to_thread(config_manager.get_system_config)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "upload profile configuration unavailable for tenant "
+                    f"{upload_tenant_id!r}: {exc}"
+                )
+            },
+        ) from exc
 
     # The queue worker ingests to the deployment's single configured backend
     # (bootstrap.backend_type). Honor the request's ``backend`` by rejecting one
@@ -329,6 +395,28 @@ async def upload_video(
                 "missing_env": missing,
             },
         )
+
+    try:
+        resolved_profile = await asyncio.to_thread(
+            _resolve_upload_profile,
+            upload_tenant_id,
+            profile,
+            config_manager,
+        )
+    except _InvalidUploadProfile as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _UploadProfileConfigurationError as exc:
+        raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "upload profile configuration unavailable for tenant "
+                    f"{upload_tenant_id!r}: {exc}"
+                )
+            },
+        ) from exc
 
     from botocore.exceptions import BotoCoreError, ClientError
     from redis.exceptions import RedisError
@@ -370,7 +458,7 @@ async def upload_video(
         result = await enqueue_ingestion(
             redis,
             source_url=source_url,
-            profile=profile,
+            profile=resolved_profile,
             tenant_id=upload_tenant_id,
             force=force,
             wait=wait,

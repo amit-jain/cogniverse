@@ -14,9 +14,12 @@ defaults (the footgun the audit flagged) — the last test pins that contract.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -32,6 +35,17 @@ from cogniverse_runtime.routers import ingestion as ingestion_router
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _SOURCE_URL = "s3://bucket/acme/v.mp4"
+_TENANT_DEFAULT_PROFILE = "tenant_video_chunked"
+_EXPLICIT_PROFILE = "explicit_video_frames"
+
+
+def _profile_config() -> dict:
+    return {
+        "type": "video",
+        "strategies": {
+            "segmentation": {"class": "ChunkSegmentationStrategy", "params": {}},
+        },
+    }
 
 
 @pytest.fixture
@@ -60,15 +74,6 @@ def upload_client(monkeypatch):
         return None
 
     monkeypatch.setattr(ingestion_router, "assert_tenant_exists", _tenant_ok)
-    monkeypatch.setattr(
-        minio_client, "upload_bytes", lambda *a, **k: _SOURCE_URL, raising=True
-    )
-
-    async def _get_redis(url):
-        return MagicMock()
-
-    monkeypatch.setattr(redis_client_mod, "get_redis", _get_redis, raising=True)
-
     captured: dict = {}
     state = {
         "result": EnqueueResult(
@@ -77,15 +82,68 @@ def upload_client(monkeypatch):
             state="queued",
             existing=False,
             final_event=None,
-        )
+        ),
+        "enqueued": [],
+        "profile_barrier": None,
+        "profile_threads": [],
+        "tenant_defaults": {"acme:acme": _TENANT_DEFAULT_PROFILE},
+        "uploads": [],
     }
+
+    def _upload(content, **kwargs):
+        state["uploads"].append((content, kwargs))
+        return _SOURCE_URL
+
+    monkeypatch.setattr(minio_client, "upload_bytes", _upload, raising=True)
+
+    async def _get_redis(url):
+        return MagicMock()
+
+    monkeypatch.setattr(redis_client_mod, "get_redis", _get_redis, raising=True)
+
+    class _Config:
+        def __init__(self, tenant_id: str):
+            self.tenant_id = tenant_id
+
+        def get(self, key, default=None):
+            if key == "backend":
+                return {
+                    "profiles": {
+                        _TENANT_DEFAULT_PROFILE: _profile_config(),
+                        _EXPLICIT_PROFILE: _profile_config(),
+                    },
+                    "default_profiles": {
+                        "video": {
+                            "profile": state["tenant_defaults"].get(
+                                self.tenant_id, _TENANT_DEFAULT_PROFILE
+                            )
+                        }
+                    },
+                }
+            if key == "active_video_profile":
+                return state["tenant_defaults"].get(
+                    self.tenant_id, _TENANT_DEFAULT_PROFILE
+                )
+            return default
+
+    def _get_config(*, tenant_id, config_manager):
+        del config_manager
+        state["profile_threads"].append(threading.get_ident())
+        barrier = state["profile_barrier"]
+        if barrier is not None:
+            barrier.wait(timeout=5)
+        return _Config(tenant_id)
+
+    monkeypatch.setattr(ingestion_router, "get_config", _get_config, raising=False)
 
     async def _enqueue(redis, **kwargs):
         captured.update(kwargs)
+        state["enqueued"].append(dict(kwargs))
         return state["result"]
 
     monkeypatch.setattr(submit_api, "enqueue_ingestion", _enqueue, raising=True)
 
+    state["application"] = app
     with TestClient(app) as client:
         yield client, captured, state
 
@@ -117,6 +175,16 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert captured["wait"] is False
     assert captured["force"] is False
     assert captured["wait_timeout"] == 300
+    assert captured["profile"] == _TENANT_DEFAULT_PROFILE
+
+
+def test_explicit_valid_profile_overrides_tenant_default(upload_client):
+    client, captured, _ = upload_client
+
+    resp = _post(client, data={"profile": _EXPLICIT_PROFILE})
+
+    assert resp.status_code == 200, resp.text
+    assert captured["profile"] == _EXPLICIT_PROFILE
 
 
 def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
@@ -321,26 +389,86 @@ def test_redis_outage_during_enqueue_returns_503(upload_client, monkeypatch):
     assert "queue" in resp.json()["detail"]["message"]
 
 
-def test_empty_profile_rejected_before_any_upload(upload_client, monkeypatch):
-    """An empty profile used to fail only at idempotency hashing — AFTER the
-    whole multipart body had been copied into the object store — and as a
-    500. It must be a 400 before a single byte is transferred."""
-    client, captured, _state = upload_client
+@pytest.mark.parametrize("profile", ["   ", "missing-video-profile"])
+def test_invalid_explicit_profile_rejected_before_side_effects(upload_client, profile):
+    """An invalid explicit profile is rejected before bytes or jobs are written."""
+    client, captured, state = upload_client
 
-    uploads: list = []
-    monkeypatch.setattr(
-        minio_client,
-        "upload_bytes",
-        lambda *a, **k: uploads.append(a) or _SOURCE_URL,
-        raising=True,
+    resp = _post(client, data={"profile": profile})
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == (
+        "profile must name a configured video profile with usable strategies"
     )
-
-    resp = _post(client, data={"profile": "   "})
-
-    assert resp.status_code == 400, resp.text
-    assert "profile" in resp.json()["detail"]
-    assert uploads == []
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
     assert captured == {}
+
+
+def test_config_store_outage_precedes_object_and_queue_writes(
+    upload_client, monkeypatch
+):
+    client, captured, state = upload_client
+
+    def _config_down(*, tenant_id, config_manager):
+        del tenant_id, config_manager
+        raise ConnectionError("configuration store refused the read")
+
+    monkeypatch.setattr(ingestion_router, "get_config", _config_down, raising=False)
+
+    resp = _post(client)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": {
+            "message": (
+                "upload profile configuration unavailable for tenant "
+                "'acme:acme': configuration store refused the read"
+            )
+        }
+    }
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tenants_resolve_independent_defaults(upload_client):
+    _client, _captured, state = upload_client
+    state["tenant_defaults"] = {
+        "alpha:alpha": "tenant_video_chunked",
+        "beta:beta": "explicit_video_frames",
+    }
+    state["profile_barrier"] = threading.Barrier(2)
+    body = b"identical-video-bytes"
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=state["application"]),
+        base_url="http://test",
+    ) as client:
+        responses = await asyncio.gather(
+            client.post(
+                "/ingestion/upload",
+                files={"file": ("same.mp4", body, "video/mp4")},
+                data={"tenant_id": "alpha"},
+            ),
+            client.post(
+                "/ingestion/upload",
+                files={"file": ("same.mp4", body, "video/mp4")},
+                data={"tenant_id": "beta"},
+            ),
+        )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert {(entry["tenant_id"], entry["profile"]) for entry in state["enqueued"]} == {
+        ("alpha:alpha", "tenant_video_chunked"),
+        ("beta:beta", "explicit_video_frames"),
+    }
+    assert {(kwargs["tenant_id"], content) for content, kwargs in state["uploads"]} == {
+        ("alpha:alpha", body),
+        ("beta:beta", body),
+    }
+    assert len(set(state["profile_threads"])) == 2
 
 
 def test_org_id_combined_with_simple_tenant(upload_client):
