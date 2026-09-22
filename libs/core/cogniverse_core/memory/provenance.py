@@ -410,6 +410,15 @@ class ProvenanceWalker:
             raise ProvenanceConsistencyError(
                 memory_id, "indexed provenance does not match primary provenance"
             )
+        if not indexed_record.primary_digest:
+            # A row indexed before the digest field existed reads back as "".
+            # `primary_provenance_digest` always returns 64 hex characters, so
+            # an empty digest is a legacy row and never a real mismatch;
+            # reporting torn provenance for it would make every pre-upgrade
+            # memory unreadable. Every other consistency check above still
+            # applies, and the next attach or `repair_provenance` upgrades the
+            # row in place under its stable id.
+            return
         actual_digest = primary_provenance_digest(memory, declared)
         if indexed_record.primary_digest != actual_digest:
             raise ProvenanceConsistencyError(

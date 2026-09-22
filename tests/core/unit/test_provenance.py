@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import Any, Dict
 from unittest.mock import MagicMock
@@ -522,3 +523,97 @@ class TestProvenanceStoreFaultContract:
             "provenance_t1",
             "provenance_t1",
         ]
+
+
+@pytest.mark.unit
+class TestLegacyIndexedRows:
+    """Rows indexed before the digest field exists stay readable.
+
+    ``_row_to_record`` reads a missing ``primary_digest`` back as ``""``,
+    which can never equal a SHA-256, so every citation walk over a memory
+    indexed before this field shipped reported torn provenance for data that
+    is in fact intact. ``primary_provenance_digest`` always returns 64 hex
+    characters, so ``""`` means "legacy row" and nothing else.
+    """
+
+    @staticmethod
+    def _legacy_store(memories):
+        class _LegacyDigestStore(_StubProvenanceStore):
+            def _record(self, mid: str):
+                record = super()._record(mid)
+                if record is None:
+                    return None
+                return dataclasses.replace(record, primary_digest="")
+
+        return _LegacyDigestStore(memories)
+
+    def test_a_legacy_row_without_a_digest_still_walks(self):
+        memories = {
+            "m_root": _seed(
+                "m_root",
+                "synthesis at root",
+                [CitationRef.external("https://source/legacy")],
+            ),
+        }
+        mm = FakeManager(memories)
+        mm.provenance_store = self._legacy_store(memories)
+
+        graph = ProvenanceWalker(mm).walk("m_root", tenant_id="t1")
+
+        assert [n.memory_id for n in graph.nodes] == ["m_root"]
+        assert [(r.ref_kind, r.ref_id) for r in graph.primary_sources] == [
+            ("url", "https://source/legacy"),
+            ("memory", "m_root"),
+        ]
+
+    def test_a_legacy_row_still_fails_every_other_consistency_check(self):
+        """Only the digest comparison is skipped; a genuine mismatch between
+        the primary's declared provenance and the indexed row still raises."""
+        from cogniverse_core.memory.provenance import ProvenanceConsistencyError
+
+        memories = {
+            "m_root": _seed(
+                "m_root",
+                "synthesis at root",
+                [CitationRef.external("https://source/legacy")],
+            ),
+        }
+        mm = FakeManager(memories)
+        store = self._legacy_store(memories)
+        disagreeing = store._record
+        store._record = lambda mid: dataclasses.replace(
+            disagreeing(mid), confidence=0.123
+        )
+        mm.provenance_store = store
+
+        with pytest.raises(
+            ProvenanceConsistencyError,
+            match="indexed provenance does not match primary provenance",
+        ):
+            ProvenanceWalker(mm).walk("m_root", tenant_id="t1")
+
+    def test_a_present_digest_that_disagrees_still_raises(self):
+        from cogniverse_core.memory.provenance import ProvenanceConsistencyError
+
+        memories = {
+            "m_root": _seed(
+                "m_root",
+                "synthesis at root",
+                [CitationRef.external("https://source/current")],
+            ),
+        }
+        mm = FakeManager(memories)
+        original = mm.provenance_store._record
+
+        def tampered(mid: str):
+            record = original(mid)
+            if record is None:
+                return None
+            return dataclasses.replace(record, primary_digest="0" * 64)
+
+        mm.provenance_store._record = tampered
+
+        with pytest.raises(
+            ProvenanceConsistencyError, match="primary digest does not match"
+        ):
+            ProvenanceWalker(mm).walk("m_root", tenant_id="t1")
