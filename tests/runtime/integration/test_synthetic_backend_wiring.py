@@ -141,12 +141,13 @@ async def test_runtime_synthetic_config_is_isolated_across_concurrent_tenants():
 class TestLifespanWiresSyntheticBackend:
     @pytest.mark.asyncio
     async def test_synthetic_service_configured_with_backend(
-        self, monkeypatch, ensure_host_ollama
+        self, monkeypatch, ensure_host_ollama, workflow_state_redis_url
     ):
         # Keep the boot light: skip the sandbox connect and the memory
         # lifecycle scheduler; neither is needed for the synthetic wiring.
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
         monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
+        monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
 
         from cogniverse_synthetic import api as synthetic_api
         from cogniverse_vespa.backend import VespaBackend
@@ -236,7 +237,7 @@ class TestLifespanWiresSyntheticBackend:
 
     @pytest.mark.asyncio
     async def test_boot_completes_when_another_task_owns_dspy_ambient(
-        self, monkeypatch, _dspy_ambient_state
+        self, monkeypatch, _dspy_ambient_state, workflow_state_redis_url
     ):
         """The lifespan must boot when dspy's ambient slot is already claimed.
 
@@ -253,6 +254,7 @@ class TestLifespanWiresSyntheticBackend:
 
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
         monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
+        monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
 
         import cogniverse_runtime.main as runtime_main
         from cogniverse_synthetic import api as synthetic_api

@@ -334,13 +334,13 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
-6. Connect and validate the shared Redis A2A task store, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task, and refuses admission when the capacity is entirely active. Per-task renewable leases serialize continuations before their snapshot read; generations fence late writes. Active cancellation is delivered to the owner and acknowledged through Redis, and active resubscriptions consume the owner's bounded Redis event relay.
-7. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
-8. Deploy metadata schemas via a system backend; apply deployment env-var overrides to `SystemConfig`
-9. Probe Phoenix reachability and validate inference services against configured profiles
-10. Wire tenant manager and the wiki/graph manager factories
-11. Configure DSPy LM and the synthetic data service
-12. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
+6. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
+7. Deploy metadata schemas via a system backend; apply deployment env-var overrides to `SystemConfig`
+8. Probe Phoenix reachability and validate inference services against configured profiles
+9. Wire tenant manager and the wiki/graph manager factories
+10. Configure DSPy LM and the synthetic data service
+11. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
+12. Connect and validate the shared Redis A2A task store at the now-resolved `SystemConfig.redis_url`, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the loaded agents. Startup fails rather than falling back to process-local task storage. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task, and refuses admission when the capacity is entirely active. Per-task renewable leases serialize continuations before their snapshot read; generations fence late writes. Active cancellation is delivered to the owner and acknowledged through Redis, and active resubscriptions consume the owner's bounded Redis event relay. Shutdown drains served executions for up to `A2A_DRAIN_TIMEOUT_SECONDS` and then closes the Redis client it owns; an execution cancelled at that deadline keeps its lease, so a peer reports the task interrupted instead of re-running it.
 
 Synthetic startup requires non-empty top-level `backend`, `synthetic`, and
 `agents` objects from the active tenant configuration. A single strict parser
@@ -397,10 +397,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agents.set_agent_dependencies(config_manager, schema_loader)
     agents.set_sandbox_manager(sandbox_manager)
 
-    # 6. Mount the A2A protocol server
-    app.mount("/a2a", a2a_server.build())
-
-    # 7. Load from config — agents are validated and registered as endpoints
+    # 6. Load from config — agents are validated and registered as endpoints
     config_loader = get_config_loader()
     config_loader.load_backends()
     config_loader.load_agents(agent_registry=agent_registry)
@@ -1527,6 +1524,9 @@ export COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED="false"      # "true"/"1"/"yes"
 
 # A2A task store
 export A2A_MAX_TASKS="10000"                                # Shared Redis task-history cap
+export A2A_TASK_LEASE_SECONDS="30"                          # Active execution lease and renewal basis
+export A2A_CANCEL_TIMEOUT_SECONDS="10"                      # Owner cancellation acknowledgement deadline
+export A2A_DRAIN_TIMEOUT_SECONDS="30"                       # Shutdown drain budget for served executions
 
 # Debug router (routers/debug.py — dark unless set)
 export COGNIVERSE_DEBUG_MEM="0"

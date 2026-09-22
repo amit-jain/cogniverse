@@ -52,9 +52,11 @@ class TestLifespanWiresRotator:
 
     @pytest.mark.asyncio
     async def test_lifespan_starts_and_attaches_rotator(
-        self, gateway_dir: Path, monkeypatch
+        self, gateway_dir: Path, monkeypatch, workflow_state_redis_url
     ):
         """End-to-end: lifespan startup wires + lifespan shutdown stops the rotator."""
+        # The lifespan refuses to serve A2A without a reachable task store.
+        monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
         # Use OPTIONAL so the lifespan doesn't refuse-to-start when the gateway
         # is unreachable; we don't need a real gateway for the wiring assertion.
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "optional")
@@ -88,7 +90,10 @@ class TestLifespanWiresRotator:
         assert rotator._task is None
 
     @pytest.mark.asyncio
-    async def test_disabled_rotator_via_env(self, gateway_dir: Path, monkeypatch):
+    async def test_disabled_rotator_via_env(
+        self, gateway_dir: Path, monkeypatch, workflow_state_redis_url
+    ):
+        monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
         """COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED=1 → no rotator started."""
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "optional")
         monkeypatch.setenv("COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED", "1")
@@ -108,7 +113,10 @@ class TestLifespanWiresRotator:
             assert getattr(app.state, "cert_rotator", None) is None
 
     @pytest.mark.asyncio
-    async def test_disabled_when_sandbox_disabled(self, gateway_dir: Path, monkeypatch):
+    async def test_disabled_when_sandbox_disabled(
+        self, gateway_dir: Path, monkeypatch, workflow_state_redis_url
+    ):
+        monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
         """sandbox.policy=disabled → cert rotator not started either."""
         monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
         monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
