@@ -31,7 +31,7 @@ from cogniverse_agents.graph.graph_schema import (
 from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config, resolve_default_profile
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -103,12 +103,10 @@ def _resolve_upload_profile(
     if explicit:
         profile_name = requested_profile
     else:
-        defaults = backend.get("default_profiles", {})
-        video_default = defaults.get("video", {}) if isinstance(defaults, dict) else {}
-        profile_name = (
-            video_default.get("profile") if isinstance(video_default, dict) else None
-        ) or config.get("active_video_profile")
-        if not isinstance(profile_name, str) or not profile_name.strip():
+        # The one resolver search and the dispatcher also call, so a tenant
+        # that named no profile ingests into the corpus it queries.
+        profile_name = resolve_default_profile(config)
+        if profile_name is None:
             raise _UploadProfileConfigurationError(
                 f"tenant {tenant_id!r} has no configured default video profile"
             )

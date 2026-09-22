@@ -2647,14 +2647,12 @@ class AgentDispatcher:
         profile = (
             requested_profiles[0]
             if requested_profiles
-            else await asyncio.to_thread(
-                self._tenant_config_value, tenant_id, "active_video_profile"
-            )
+            else await asyncio.to_thread(self._tenant_default_video_profile, tenant_id)
         )
         if not profile:
             raise ValueError(
                 f"No search profile for tenant {tenant_id!r}: the request named "
-                "none and no active_video_profile is configured."
+                "none and no tenant default video profile is configured."
             )
 
         # _get_search_agent builds SearchAgent on a cache miss — a synchronous
@@ -2890,7 +2888,7 @@ class AgentDispatcher:
             )
 
         default_profile = await asyncio.to_thread(
-            self._tenant_config_value, tenant_id, "active_video_profile"
+            self._tenant_default_video_profile, tenant_id
         )
         if default_profile:
             return GroundingPlan(
@@ -3030,6 +3028,24 @@ class AgentDispatcher:
             degraded_profiles=degraded,
             degraded_query_rewrite=rewrite_degraded,
             undeployed_profiles=plan.undeployed_profiles,
+        )
+
+    def _tenant_default_video_profile(self, tenant_id: str) -> Optional[str]:
+        """The tenant's default video profile, through the shared resolver.
+
+        Upload, search and this dispatcher must land on the same name: a
+        tenant that set ``backend.default_profiles.video.profile`` while
+        ``active_video_profile`` still named another profile ingested into
+        one corpus and queried another. Blocking, for the same reason
+        ``_tenant_config_value`` is.
+        """
+        from cogniverse_foundation.config.utils import (
+            get_config,
+            resolve_default_profile,
+        )
+
+        return resolve_default_profile(
+            get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         )
 
     def _tenant_config_value(self, tenant_id: str, key: str) -> Any:

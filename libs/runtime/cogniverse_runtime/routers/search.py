@@ -16,7 +16,7 @@ from cogniverse_core.common.tenant_utils import (
     require_tenant_id,
 )
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config, resolve_default_profile
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -99,9 +99,11 @@ def _resolve_service_and_profile(
     config reads — synchronous Vespa/file I/O) and the profile lookup, so
     callers offload it via ``asyncio.to_thread`` to keep the loop free.
 
-    Profile resolution: request wins, else ``active_video_profile``, else the
-    first registered backend profile. No silent "default" string fallback —
-    the string "default" isn't a valid profile.
+    Profile resolution: request wins, else the tenant's default profile via
+    the shared ``resolve_default_profile`` (``backend.default_profiles.video.
+    profile`` then ``active_video_profile``), else the first registered
+    backend profile. No silent "default" string fallback — the string
+    "default" isn't a valid profile.
     """
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     search_service = SearchService(
@@ -109,7 +111,10 @@ def _resolve_service_and_profile(
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
-    profile = requested_profile or config.get("active_video_profile")
+    # The one resolver upload and the dispatcher also call: a tenant that set
+    # backend.default_profiles.video.profile while active_video_profile still
+    # named another profile ingested into one corpus and queried another.
+    profile = requested_profile or resolve_default_profile(config)
     if not profile:
         profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
         if profiles_dict:
