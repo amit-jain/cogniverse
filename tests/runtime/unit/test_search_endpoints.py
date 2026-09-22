@@ -196,6 +196,44 @@ class TestListStrategies:
             resp = search_client.get("/search/strategies?tenant_id=acme:acme")
         assert resp.status_code == 400
 
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_search_resolves_the_same_default_profile_upload_ingests_into(
+        self, mock_service_cls, search_client
+    ):
+        """Upload reads ``backend.default_profiles.video.profile`` first.
+
+        Search reading only ``active_video_profile`` meant a tenant that set
+        the first while the second still named another profile ingested into
+        one corpus and queried another — and an empty result from an
+        un-ingested profile is indistinguishable from a corpus with no match.
+        """
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        tenant_config = {
+            "backend": {
+                "default_profiles": {"video": {"profile": "video_ingested"}},
+                "profiles": {
+                    "video_ingested": {"type": "video", "strategies": {"a": {}}},
+                    "video_stale": {"type": "video", "strategies": {"a": {}}},
+                },
+            },
+            "active_video_profile": "video_stale",
+        }
+        mock_instance = MagicMock()
+        mock_instance.get_available_strategies.return_value = ["default"]
+        mock_service_cls.return_value = mock_instance
+
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value=tenant_config,
+        ):
+            resp = search_client.get("/search/strategies?tenant_id=acme:acme")
+
+        assert resp.status_code == 200
+        assert resp.json()["profile"] == "video_ingested"
+        # The name upload's own resolution produces for the same tenant view.
+        assert resolve_default_profile(tenant_config) == "video_ingested"
+
 
 # ── GET /search/profiles ────────────────────────────────────────────────
 
