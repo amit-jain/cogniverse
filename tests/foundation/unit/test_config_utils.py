@@ -376,3 +376,64 @@ class TestJsonConfigCache:
 
         assert config._json_config is None
         assert utils_mod._JSON_CONFIG_CACHE == {}
+
+
+class TestResolveDefaultProfile:
+    """One key order for every surface that picks a tenant's default profile.
+
+    Upload read ``backend.default_profiles.video.profile`` first; search and
+    the dispatcher read only ``active_video_profile``. A tenant that set the
+    first while the second still named another profile ingested into one
+    corpus and queried another, and an empty result from an un-ingested
+    profile is indistinguishable from a corpus with no match.
+    """
+
+    def test_default_profiles_wins_over_a_disagreeing_active_profile(self):
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        config = {
+            "backend": {"default_profiles": {"video": {"profile": "video_alpha"}}},
+            "active_video_profile": "video_beta",
+        }
+        assert resolve_default_profile(config) == "video_alpha"
+
+    def test_active_profile_is_the_fallback(self):
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        config = {"backend": {"profiles": {}}, "active_video_profile": "video_beta"}
+        assert resolve_default_profile(config) == "video_beta"
+
+    def test_no_selection_resolves_to_none(self):
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        assert resolve_default_profile({"backend": {}}) is None
+        assert (
+            resolve_default_profile(
+                {"backend": {"default_profiles": {"video": {"profile": "  "}}}}
+            )
+            is None
+        )
+
+    def test_unusable_shapes_do_not_raise(self):
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        assert resolve_default_profile({"backend": "not-a-mapping"}) is None
+        assert (
+            resolve_default_profile(
+                {"backend": {"default_profiles": "not-a-mapping"}},
+            )
+            is None
+        )
+        assert (
+            resolve_default_profile({"backend": {"default_profiles": {"video": 7}}})
+            is None
+        )
+
+    def test_modality_selects_both_keys(self):
+        from cogniverse_foundation.config.utils import resolve_default_profile
+
+        config = {
+            "backend": {"default_profiles": {"video": {"profile": "video_alpha"}}},
+            "active_image_profile": "image_beta",
+        }
+        assert resolve_default_profile(config, "image") == "image_beta"
