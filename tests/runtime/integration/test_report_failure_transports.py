@@ -11,10 +11,12 @@ from __future__ import annotations
 import asyncio
 import http.server
 import json
+import os
 import socket
+import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -22,10 +24,6 @@ from uuid import UUID
 import httpx
 import pytest
 import uvicorn
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard
 from fastapi import FastAPI
 
 from cogniverse_agents.detailed_report_agent import (
@@ -36,8 +34,9 @@ from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+from cogniverse_runtime.a2a_task_store import RedisTaskStore
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, AnswerGrounding
+from cogniverse_runtime.main import _build_shared_a2a_protocol
 from cogniverse_runtime.routers import openai_compat
 from tests.utils.memory_store import InMemoryConfigStore
 
@@ -324,11 +323,11 @@ async def test_actual_dispatcher_propagates_model_failure_without_saving_success
 
 
 @contextmanager
-def _serving(app):
+def _serving(app, lifespan: str = "off"):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan=lifespan))
     thread = threading.Thread(
         target=server.run, kwargs={"sockets": [listener]}, daemon=True
     )
@@ -364,27 +363,102 @@ def compat_url(report_runtime):
     openai_compat.set_model_map({})
 
 
-@pytest.fixture
-def a2a_url(report_runtime):
-    dispatcher, _, _ = report_runtime
-    card = AgentCard(
-        name="Cogniverse",
-        description="Report failure fixture",
-        url="http://localhost/a2a/",
-        version="1",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[],
+_REDIS_CONTAINER = "redis-report-failure-transports"
+
+
+@pytest.fixture(scope="module")
+def redis_url():
+    """Owned Redis for the handler that actually serves ``/a2a``."""
+    override = os.environ.get("COGNIVERSE_TEST_REDIS_URL")
+    if override:
+        yield override
+        return
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()
+    subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+    started = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            _REDIS_CONTAINER,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
     )
-    app = A2AStarletteApplication(
-        agent_card=card,
-        http_handler=DefaultRequestHandler(
-            agent_executor=CogniverseAgentExecutor(dispatcher),
-            task_store=InMemoryTaskStore(),
-        ),
-    ).build(rpc_url="/a2a/")
-    with _serving(app) as url:
+    if started.returncode != 0:
+        pytest.fail(f"Failed to start Redis: {started.stderr}")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        ping = subprocess.run(
+            ["docker", "exec", _REDIS_CONTAINER, "redis-cli", "ping"],
+            capture_output=True,
+            text=True,
+        )
+        if ping.stdout.strip() == "PONG":
+            break
+        time.sleep(0.25)
+    else:
+        subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+        pytest.fail("Redis did not become ready within 30s")
+    try:
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+
+
+@pytest.fixture
+def a2a_url(report_runtime, redis_url):
+    """``/a2a`` served by the handler production serves it with.
+
+    The stock ``DefaultRequestHandler`` + ``InMemoryTaskStore`` this used to
+    build is not what serves ``/a2a`` any more: ``RedisRequestHandler`` wraps
+    the same execution in lease acquire/renew/release and mirrors every event
+    through a Redis relay. Asserting the failure envelope against the stock
+    handler proved it for a handler production does not use.
+    """
+    dispatcher, _, _ = report_runtime
+
+    class _Registry:
+        def list_agents(self):
+            return ["detailed_report_agent"]
+
+        def get_agent(self, name):
+            if name != "detailed_report_agent":
+                return None
+            return SimpleNamespace(capabilities=["report"])
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        # Built inside the serving loop: the store's Redis client and the
+        # handler's cancel listener are both bound to the loop that runs them.
+        built = await _build_shared_a2a_protocol(
+            agent_registry=_Registry(),
+            dispatcher=dispatcher,
+            redis_url=redis_url,
+            replica_id="report-failure-replica",
+            max_tasks=64,
+            lease_seconds=30,
+            cancel_timeout_seconds=10,
+            drain_timeout_seconds=10,
+        )
+        app.mount("/a2a", built.app)
+        try:
+            yield
+        finally:
+            await built.close()
+
+    app = FastAPI(lifespan=_lifespan)
+    with _serving(app, lifespan="on") as url:
         yield url
 
 
@@ -524,6 +598,48 @@ def test_openai_socket_disconnect_cancels_blocked_report_without_late_success(
     time.sleep(0.5)
     assert openai_compat.in_flight_count() == 0
     assert conversations[FAILING_TENANT].turns == []
+
+
+@pytest.mark.asyncio
+async def test_a2a_failure_envelope_is_readable_by_a_peer_through_redis(
+    a2a_url, report_runtime, redis_url
+):
+    """The failed task a peer replica would read is the one served.
+
+    ``/a2a`` is served by ``RedisRequestHandler`` over the shared store, so
+    the envelope has to survive in Redis, not only in the responding
+    process's memory — which is what the previous ``InMemoryTaskStore``
+    fixture could never show.
+    """
+    from a2a.types import TaskState
+
+    _, _, modes = report_runtime
+    modes[FAILING_TENANT] = "report-503"
+    async with httpx.AsyncClient(base_url=a2a_url, timeout=60.0) as client:
+        response = await client.post("/a2a/", json=_a2a_request(stream=False))
+
+    assert response.status_code == 200
+    terminal = response.json()["result"]
+    served_text = terminal["status"]["message"]["parts"][0]["text"]
+
+    peer = await RedisTaskStore.from_url(redis_url, max_tasks=64)
+    try:
+        stored = await peer.get(terminal["id"])
+    finally:
+        await peer.close()
+
+    assert stored is not None
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == served_text
+    assert json.loads(served_text) == {
+        "type": "error",
+        "agent": "detailed_report_agent",
+        "error_type": "ServiceUnavailableError",
+        "message": (
+            "Agent 'detailed_report_agent' failed with ServiceUnavailableError. "
+            "See runtime logs for detail."
+        ),
+    }
 
 
 @pytest.mark.parametrize(
