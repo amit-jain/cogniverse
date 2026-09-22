@@ -1345,6 +1345,17 @@ Each indexed row also stores a SHA-256 digest of the primary content and
 canonical provenance. A raw writer outside the manager/lease contract may
 mutate after repair's linearization point; the next citation read detects the
 digest mismatch and raises rather than serving the row as consistent.
+
+**Upgrading from before the digest field.** Rows indexed before this field
+existed read back with an empty `primary_digest`, which can never equal a
+SHA-256. Those rows are treated as legacy: the digest comparison is skipped and
+every other consistency check still applies, so a pre-upgrade memory stays
+readable instead of reporting torn provenance for data that is intact. No
+migration or bulk sweep is required — the next `attach` or an explicit
+`repair_provenance()` writes a real digest under the row's stable id, after
+which the row is checked like any other. `primary_provenance_digest` always
+returns 64 hex characters, so an empty digest is unambiguously a legacy row and
+never a real mismatch.
 Concurrent external changes inside repair are retried up to the requested bound
 and then raise `ProvenanceRepairConflictError`.
 
