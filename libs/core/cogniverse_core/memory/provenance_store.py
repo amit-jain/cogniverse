@@ -290,10 +290,23 @@ class ProvenanceStore:
         return self.fetch([memory_id]).get(memory_id)
 
     def delete(self, memory_id: str) -> bool:
-        """Delete the stable indexed row; genuine absence is idempotent."""
+        """Delete the stable indexed row; genuine absence is idempotent.
+
+        When the tenant's provenance schema has never been deployed there
+        can be no indexed row for it, so this returns idempotently instead
+        of deleting from it — deleting from an undeployed schema is what
+        forces a full application-package redeploy from the request path
+        (``_get_or_create_ingestion_client`` deploys on a cache miss). A
+        schema-registry lookup failure is surfaced rather than treated as
+        "no schema": only a clean False short-circuits the delete.
+        """
         row_id = self._row_id(memory_id)
         try:
             with leased_backend(self._resolve_backend) as backend:
+                if not backend.schema_exists(
+                    self._base_schema, tenant_id=self._tenant_id
+                ):
+                    return True
                 deleted = backend.delete_document(
                     row_id,
                     schema_name=self._base_schema,

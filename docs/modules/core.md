@@ -1334,6 +1334,18 @@ indexed row together; a row left behind would be an orphan that every later
 citation read rejects. A failure at either boundary raises instead of
 reporting the memory fully deleted.
 
+`ProvenanceStore.delete` does not deploy a schema in order to delete from it.
+When the tenant's provenance schema has never been deployed, there can be no
+indexed row for it, so `delete` returns idempotently instead of reaching
+`delete_document` — deleting from an undeployed schema is what forces a full
+application-package redeploy from the request path, and a namespace clear
+that fans out one delete per memory turns that into a redeploy race between
+tenants. A schema-registry lookup failure still raises rather than being read
+as "no schema": only a clean, successful "not deployed" answer short-circuits
+the delete. The known cost is that a tenant whose provenance schema exists
+but is briefly unreadable at the moment of the check also skips its indexed
+row, leaving an orphan for that memory rather than deleting it.
+
 `update_memory` returns `False` for an update that did not happen. Once the
 primary has been rewritten it can no longer say that truthfully, so a
 `ProvenanceWriteError` or `DeploymentLeaseLost` raised after that point

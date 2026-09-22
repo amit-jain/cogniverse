@@ -525,6 +525,93 @@ class TestProvenanceStoreFaultContract:
         ]
 
 
+class _SchemaAwareDeleteBackend(_TenantScopedQueryBackend):
+    """Backend stub distinguishing "schema not live" from a delete call.
+
+    ``delete_document`` blows up if invoked while ``schema_live`` is
+    False, so a test using this stub fails loudly if ``delete()`` still
+    tries to delete (which would force a schema deploy in production)
+    instead of returning idempotently.
+    """
+
+    def __init__(
+        self, *, schema_live: bool, exists_raises: BaseException | None = None
+    ) -> None:
+        self.schema_live = schema_live
+        self.exists_raises = exists_raises
+        self.schema_exists_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
+
+    def schema_exists(self, schema_name, tenant_id=None):
+        self.schema_exists_calls.append(
+            {"schema_name": schema_name, "tenant_id": tenant_id}
+        )
+        if self.exists_raises is not None:
+            raise self.exists_raises
+        return self.schema_live
+
+    def delete_document(self, document_id, schema_name=None):
+        self.delete_calls.append(
+            {"document_id": document_id, "schema_name": schema_name}
+        )
+        if not self.schema_live:
+            raise AssertionError("delete_document called without a live tenant schema")
+        return True
+
+
+class TestProvenanceStoreDeleteDoesNotForceDeploy:
+    """A tenant clear must not redeploy the provenance schema to delete from it.
+
+    When the tenant's provenance schema was never deployed there can be
+    no indexed row for it, so ``delete`` returns idempotently instead of
+    reaching ``delete_document`` (which would trigger an
+    application-package deploy on a cache miss in the real backend).
+    """
+
+    def test_delete_is_idempotent_when_tenant_schema_never_deployed(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _SchemaAwareDeleteBackend(schema_live=False)
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        assert store.delete("m1") is True
+
+        assert backend.delete_calls == []
+        assert backend.schema_exists_calls == [
+            {"schema_name": "provenance", "tenant_id": "t1"}
+        ]
+
+    def test_delete_still_removes_the_row_when_schema_is_live(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _SchemaAwareDeleteBackend(schema_live=True)
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        assert store.delete("m1") is True
+
+        assert backend.delete_calls == [
+            {"document_id": store._row_id("m1"), "schema_name": "provenance"}
+        ]
+
+    def test_delete_propagates_a_schema_lookup_failure(self):
+        """A briefly-unreadable registry must not be read as "no schema"."""
+        from cogniverse_core.memory.provenance_store import (
+            ProvenanceStore,
+            ProvenanceWriteError,
+        )
+
+        backend = _SchemaAwareDeleteBackend(
+            schema_live=False, exists_raises=RuntimeError("registry outage")
+        )
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        with pytest.raises(ProvenanceWriteError) as excinfo:
+            store.delete("m1")
+
+        assert backend.delete_calls == []
+        assert isinstance(excinfo.value.cause, RuntimeError)
+
+
 @pytest.mark.unit
 class TestLegacyIndexedRows:
     """Rows indexed before the digest field exists stay readable.
