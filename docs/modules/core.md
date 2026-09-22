@@ -1294,6 +1294,29 @@ canonical provenance under the stable row id and verifies the primary and index
 before releasing that lease. Its success linearizes at the verified primary
 read while lease ownership excludes supported writers.
 
+The lease covers only operations that have a primary *and* an indexed row to
+keep consistent. `add_memory` and `update_memory` resolve the requested
+provenance from the caller's metadata before taking anything, and skip the
+store lease when there is none — so a conversation turn and an agent remember,
+which carry no provenance, never take a cluster-wide per-tenant mutex and never
+hold one across mem0's extraction pass. `update_memory` called without metadata
+keeps whatever the stored primary declares, so it takes the lease. Deletion,
+repair and archiving always take it. The sweeps (`clear_agent_memory`,
+`cleanup_with_schema`, `drop_session`) acquire **per row**: one lease for a
+whole retention pass excluded every other writer for the tenant until the last
+of a 205-row clear was gone.
+
+Its sizing is a memory write's, not a package activation's:
+`PROVENANCE_LEASE_SECONDS` (60 s) covers a primary write, its read-back and the
+indexed feed with margin for an extraction pass, and `PROVENANCE_WAIT_SECONDS`
+(75 s) is deliberately **longer** than the hold. That inequality is the
+recoverability contract: a holder on another node leaves no liveness proof this
+node can read, so waiting is the only way to outlast a record it stopped
+renewing, and a wait shorter than the hold makes a leaked record permanently
+unrecoverable. A holder that died on this host, or one naming this very process
+with no live holder object behind it, is taken over at once by the lease's own
+liveness probe without waiting at all.
+
 A lease has a finite hold time, so holding one across a whole operation is not
 exclusivity by itself: a boundary call that stalls past expiry lets a peer take
 over while the original holder is still inside. Ownership is therefore
@@ -1310,6 +1333,13 @@ retention cleanup and session drop all remove the primary and its stable
 indexed row together; a row left behind would be an orphan that every later
 citation read rejects. A failure at either boundary raises instead of
 reporting the memory fully deleted.
+
+`update_memory` returns `False` for an update that did not happen. Once the
+primary has been rewritten it can no longer say that truthfully, so a
+`ProvenanceWriteError` or `DeploymentLeaseLost` raised after that point
+propagates with its memory id instead of collapsing into `False`: the content
+is changed and the index disagrees with it, which the caller has to see to
+retry or repair.
 
 Each indexed row also stores a SHA-256 digest of the primary content and
 canonical provenance. A raw writer outside the manager/lease contract may

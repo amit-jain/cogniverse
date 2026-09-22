@@ -38,6 +38,17 @@ logger = logging.getLogger(__name__)
 MEMORY_BASE_SCHEMA = "agent_memories"
 PROVENANCE_BASE_SCHEMA = "provenance"
 MEMORY_EMBEDDING_DIMS = 768
+
+# Hold time for the provenance write lease. A memory write is not a Vespa
+# application-package activation, so this is not the deploy lease's 600 s: it
+# covers one primary write, its read-back and the indexed provenance feed,
+# with enough margin for a mem0 extraction pass on a slow model.
+PROVENANCE_LEASE_SECONDS = 60.0
+# How long a writer waits for a peer. Deliberately longer than the hold: a
+# holder on another node leaves no liveness proof this node can read, so the
+# wait itself is the only way to outlast a record it stopped renewing. A wait
+# shorter than the hold makes a leaked record permanently unrecoverable.
+PROVENANCE_WAIT_SECONDS = 75.0
 """The schemas a memory-aware agent needs for a tenant. Tenant registration
 deploys them (``TENANT_BASE_SCHEMAS``) so no serving request ever has to."""
 
@@ -651,13 +662,23 @@ class Mem0MemoryManager:
         infer: bool = True,
     ) -> Optional[str]:
         """Add a memory while serializing its primary and provenance writes."""
-        with self._provenance_write_ownership():
+        # A pure function of the caller's metadata, so whether this write has
+        # a primary/index pair to keep consistent is known before the
+        # cluster-wide lease is taken. Conversation turns and agent remembers
+        # carry no provenance; for them the lease is pure cost, and taking it
+        # would serialize every replica's writes for the tenant behind one
+        # mutex held across mem0's extraction pass.
+        indexed_provenance = self._provenance_for_index(metadata)
+        with self._provenance_write_ownership(
+            store_lease=indexed_provenance is not None
+        ):
             return self._add_memory(
                 content=content,
                 tenant_id=tenant_id,
                 agent_name=agent_name,
                 metadata=metadata,
                 infer=infer,
+                indexed_provenance=indexed_provenance,
             )
 
     def _add_memory(
@@ -667,6 +688,7 @@ class Mem0MemoryManager:
         agent_name: str,
         metadata: Optional[Dict[str, Any]] = None,
         infer: bool = True,
+        indexed_provenance: Optional["Provenance"] = None,
     ) -> Optional[str]:
         """
         Add content to agent's memory.
@@ -705,8 +727,6 @@ class Mem0MemoryManager:
         # When no registry is wired, the write proceeds without
         # enforcement.
         metadata = self._enforce_schema_on_write(metadata or {})
-
-        indexed_provenance = self._provenance_for_index(metadata)
 
         self._check_provenance_ownership()
         result = self.memory.add(
@@ -955,7 +975,7 @@ class Mem0MemoryManager:
         return json.dumps(memory, sort_keys=True, separators=(",", ":"), default=str)
 
     @contextmanager
-    def _provenance_write_ownership(self):
+    def _provenance_write_ownership(self, *, store_lease: bool = True):
         """Hold local and store-backed ownership for primary/index writes.
 
         The lease has a finite hold time, so acquiring it once and releasing
@@ -965,10 +985,16 @@ class Mem0MemoryManager:
         before every primary/index mutation and again before the body's
         result is returned; a holder that lost the lease raises
         ``DeploymentLeaseLost`` instead of mutating or reporting success.
+
+        ``store_lease=False`` keeps the in-process ordering but skips the
+        cluster-wide record. The store lease is what keeps a primary and its
+        indexed provenance row consistent across replicas, so an operation
+        with no index row to coordinate must not pay for it — nor hold a
+        per-tenant mutex across the whole cluster while it runs.
         """
         with self._provenance_write_lock:
             store = getattr(self, "_provenance_lease_store", None)
-            if store is None:
+            if store is None or not store_lease:
                 yield
                 return
             from cogniverse_core.registries.schema_deploy_lease import (
@@ -977,6 +1003,8 @@ class Mem0MemoryManager:
 
             lease = SchemaDeployLease(
                 store,
+                lease_seconds=PROVENANCE_LEASE_SECONDS,
+                wait_seconds=PROVENANCE_WAIT_SECONDS,
                 service="provenance_write_lease",
                 config_key=self._storage_tenant_id,
                 purpose=f"provenance writes for {self._storage_tenant_id}",
@@ -1431,9 +1459,8 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
     ) -> bool:
-        """Clear an agent namespace under tenant provenance ownership."""
-        with self._provenance_write_ownership():
-            return self._clear_agent_memory(tenant_id, agent_name)
+        """Clear an agent namespace, taking ownership per row it deletes."""
+        return self._clear_agent_memory(tenant_id, agent_name)
 
     def _clear_agent_memory(
         self,
@@ -1469,7 +1496,10 @@ class Mem0MemoryManager:
                 memory_id = str(memory)
 
             if memory_id:
-                self._delete_memory(memory_id, tenant_id, agent_name)
+                # Per row: one lease for the whole sweep excludes every other
+                # writer for the tenant until the last row is gone, and a 205-
+                # row clear is not an operation any peer should wait out.
+                self.delete_memory(memory_id, tenant_id, agent_name)
 
         logger.info(f"Cleared all memory for {tenant_id}/{agent_name}")
         return True
@@ -1479,9 +1509,8 @@ class Mem0MemoryManager:
         registry: "KnowledgeRegistry",
         pinned_memory_ids: Optional[set] = None,
     ) -> Dict[str, int]:
-        """Apply retention while holding tenant provenance ownership."""
-        with self._provenance_write_ownership():
-            return self._cleanup_with_schema(registry, pinned_memory_ids)
+        """Apply retention, taking ownership per row it archives or deletes."""
+        return self._cleanup_with_schema(registry, pinned_memory_ids)
 
     def _cleanup_with_schema(
         self,
@@ -1576,11 +1605,14 @@ class Mem0MemoryManager:
                     should_delete = True
                 elif age_seconds > cutoff and not meta.get("archived"):
                     # Soft-delete: flip archived flag, do not remove.
-                    self._archive_memory(
-                        memory_id,
-                        meta,
-                        existing_data=memory.get("memory") or memory.get("text") or "",
-                    )
+                    with self._provenance_write_ownership():
+                        self._archive_memory(
+                            memory_id,
+                            meta,
+                            existing_data=(
+                                memory.get("memory") or memory.get("text") or ""
+                            ),
+                        )
                     deleted_by_kind[f"{kind}:archived"] = (
                         deleted_by_kind.get(f"{kind}:archived", 0) + 1
                     )
@@ -1601,7 +1633,7 @@ class Mem0MemoryManager:
                     continue
 
             if should_delete:
-                if self._delete_memory(memory_id, self.tenant_id, "_retention"):
+                if self.delete_memory(memory_id, self.tenant_id, "_retention"):
                     deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
                     logger.debug(
                         "Schema-driven delete: kind=%s memory_id=%s policy=%s",
@@ -1623,9 +1655,8 @@ class Mem0MemoryManager:
         session_id: str,
         registry: "KnowledgeRegistry",
     ) -> Dict[str, int]:
-        """Drop session rows under tenant provenance ownership."""
-        with self._provenance_write_ownership():
-            return self._drop_session(session_id, registry)
+        """Drop session rows, taking ownership per row it deletes."""
+        return self._drop_session(session_id, registry)
 
     def _drop_session(
         self,
@@ -1709,7 +1740,7 @@ class Mem0MemoryManager:
             if schema.retention is not Retention.EPHEMERAL_SESSION:
                 continue
 
-            if self._delete_memory(memory_id, self.tenant_id, "_session"):
+            if self.delete_memory(memory_id, self.tenant_id, "_session"):
                 deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
 
         if deleted_by_kind:
@@ -1856,7 +1887,14 @@ class Mem0MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Update a primary while excluding provenance verification."""
-        with self._provenance_write_ownership():
+        # ``metadata=None`` keeps whatever the stored primary declares, which
+        # may be provenance this update has to keep the index agreeing with,
+        # so it takes the lease. An explicit provenance-free metadata payload
+        # has no index row to coordinate and does not.
+        with self._provenance_write_ownership(
+            store_lease=metadata is None
+            or self._provenance_for_index(metadata) is not None
+        ):
             return self._update_memory(
                 memory_id=memory_id,
                 content=content,
@@ -1888,6 +1926,9 @@ class Mem0MemoryManager:
         """
         if not self.memory:
             return False
+
+        from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
 
         try:
             before = self.memory.get(memory_id)
@@ -1926,6 +1967,18 @@ class Mem0MemoryManager:
             logger.info(f"Updated memory {memory_id} for {tenant_id}/{agent_name}")
             return True
 
+        except (ProvenanceWriteError, DeploymentLeaseLost):
+            # The primary has already been rewritten by the time attach can
+            # fail. Reporting ``False`` says nothing happened while the index
+            # disagrees with the stored content — a torn state reported as a
+            # clean no-op, with no memory id to retry or repair from.
+            logger.error(
+                "Provenance write failed after memory %s was updated for %s/%s",
+                memory_id,
+                tenant_id,
+                agent_name,
+            )
+            raise
         except Exception as e:
             logger.error(f"Failed to update memory: {e}")
             return False

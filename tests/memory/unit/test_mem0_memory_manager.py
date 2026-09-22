@@ -991,3 +991,248 @@ def test_memory_init_refuses_to_register_the_profile_itself():
             )
 
     assert config_manager.add_backend_profile.call_args_list == []
+
+
+class TestProvenanceWriteLeaseScope:
+    """The provenance write lease costs a cluster-wide per-tenant mutex.
+
+    It exists to keep a primary and its indexed provenance row consistent, so
+    it belongs only on operations that have both. Sized for a memory write,
+    not for a Vespa application-package activation, and recoverable: a record
+    left behind by a holder that died must not outlive it.
+    """
+
+    @staticmethod
+    def _manager(tenant_id: str):
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        Mem0MemoryManager._instances.pop(tenant_id, None)
+        manager = Mem0MemoryManager(tenant_id=tenant_id)
+        manager._initialized = True
+        manager.tenant_id = tenant_id
+        manager.config = None
+        manager._knowledge_registry = None
+        manager.memory = MagicMock()
+        manager._provenance_store = MagicMock()
+        manager._provenance_lease_store = InMemoryConfigStore()
+        return manager
+
+    @staticmethod
+    def _lease_record(manager):
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        return manager._provenance_lease_store.get_config(
+            tenant_id="__system__",
+            scope=ConfigScope.SCHEMA,
+            service="provenance_write_lease",
+            config_key=manager._storage_tenant_id,
+        )
+
+    @staticmethod
+    def _provenance_metadata():
+        from cogniverse_core.memory.provenance import (
+            CitationRef,
+            DerivationKind,
+            attach_to_metadata,
+            make_provenance,
+        )
+
+        return attach_to_metadata(
+            {"kind": "entity_fact"},
+            make_provenance(
+                written_by="agent:lease-scope",
+                derivation_kind=DerivationKind.SYNTHESIS,
+                confidence=0.5,
+                derived_from=[CitationRef.external("https://source.test/scope")],
+            ),
+        )
+
+    def test_a_provenance_free_add_takes_no_store_lease(self):
+        """Conversation turns and agent remembers carry no provenance, so the
+        lease can only cost them a cluster round trip and a global mutex."""
+        manager = self._manager("lease_scope_tenant")
+        manager.memory.add.return_value = {"results": [{"id": "m1", "event": "ADD"}]}
+
+        assert (
+            manager.add_memory(
+                content="a conversation turn",
+                tenant_id="lease_scope_tenant",
+                agent_name="conversation",
+                metadata={"type": "conversation"},
+                infer=False,
+            )
+            == "m1"
+        )
+        assert self._lease_record(manager) is None
+
+    def test_a_provenance_free_update_takes_no_store_lease(self):
+        manager = self._manager("lease_scope_update_tenant")
+        manager.memory.get.return_value = {"id": "m1", "memory": "before"}
+
+        assert (
+            manager.update_memory(
+                memory_id="m1",
+                content="after",
+                tenant_id="lease_scope_update_tenant",
+                agent_name="agent",
+                metadata={"kind": "note"},
+            )
+            is True
+        )
+        assert self._lease_record(manager) is None
+
+    def test_a_provenance_bearing_add_holds_a_memory_sized_lease(self):
+        """The hold covers a memory write with margin; the wait exceeds the
+        hold, so a stalled holder can always be waited out within one wait."""
+        from cogniverse_core.memory import manager as manager_module
+
+        assert (
+            manager_module.PROVENANCE_WAIT_SECONDS
+            > manager_module.PROVENANCE_LEASE_SECONDS
+        )
+        assert manager_module.PROVENANCE_LEASE_SECONDS < 600.0
+
+        manager = self._manager("lease_hold_tenant")
+        manager.memory.add.return_value = {"results": [{"id": "m2", "event": "ADD"}]}
+        manager.memory.get.return_value = {"id": "m2", "memory": "content"}
+        held = {}
+
+        def record_hold(*args, **kwargs):
+            held["record"] = self._lease_record(manager).config_value
+            return "prov-row"
+
+        manager._provenance_store.attach.side_effect = record_hold
+
+        assert (
+            manager.add_memory(
+                content="content",
+                tenant_id="lease_hold_tenant",
+                agent_name="agent",
+                metadata=self._provenance_metadata(),
+                infer=False,
+            )
+            == "m2"
+        )
+        assert held["record"]["lease_seconds"] == (
+            manager_module.PROVENANCE_LEASE_SECONDS
+        )
+        assert self._lease_record(manager).config_value["holder"] is None
+
+    def test_a_provenance_write_recovers_a_lease_abandoned_by_a_dead_holder(self):
+        """The lease must not be a one-way door: a record left behind by a
+        holder that died has to be recoverable by the next writer."""
+        import os
+        import socket
+        import uuid
+
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        manager = self._manager("lease_recover_tenant")
+        abandoned = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+        manager._provenance_lease_store.compare_and_set_config(
+            tenant_id="__system__",
+            scope=ConfigScope.SCHEMA,
+            service="provenance_write_lease",
+            config_key=manager._storage_tenant_id,
+            config_value={"holder": abandoned, "lease_seconds": 600.0},
+            expected_version=0,
+        )
+        manager.memory.add.return_value = {"results": [{"id": "m3", "event": "ADD"}]}
+        manager.memory.get.return_value = {"id": "m3", "memory": "content"}
+        manager._provenance_store.attach.return_value = "prov-row"
+
+        assert (
+            manager.add_memory(
+                content="content",
+                tenant_id="lease_recover_tenant",
+                agent_name="agent",
+                metadata=self._provenance_metadata(),
+                infer=False,
+            )
+            == "m3"
+        )
+        assert self._lease_record(manager).config_value["holder"] is None
+
+    def test_a_stalled_foreign_holder_is_waited_out_within_one_wait(self, monkeypatch):
+        """No liveness proof exists for another node's holder, so the wait
+        itself has to outlast the hold. Scaled down, same inequality."""
+        import uuid
+
+        from cogniverse_core.memory import manager as manager_module
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        monkeypatch.setattr(manager_module, "PROVENANCE_LEASE_SECONDS", 0.4)
+        monkeypatch.setattr(manager_module, "PROVENANCE_WAIT_SECONDS", 5.0)
+
+        manager = self._manager("lease_foreign_tenant")
+        foreign = f"another-host:4242:{uuid.uuid4().hex}"
+        manager._provenance_lease_store.compare_and_set_config(
+            tenant_id="__system__",
+            scope=ConfigScope.SCHEMA,
+            service="provenance_write_lease",
+            config_key=manager._storage_tenant_id,
+            config_value={"holder": foreign, "lease_seconds": 0.4},
+            expected_version=0,
+        )
+        manager.memory.add.return_value = {"results": [{"id": "m4", "event": "ADD"}]}
+        manager.memory.get.return_value = {"id": "m4", "memory": "content"}
+        manager._provenance_store.attach.return_value = "prov-row"
+
+        assert (
+            manager.add_memory(
+                content="content",
+                tenant_id="lease_foreign_tenant",
+                agent_name="agent",
+                metadata=self._provenance_metadata(),
+                infer=False,
+            )
+            == "m4"
+        )
+
+    def test_a_clear_sweep_acquires_per_row_instead_of_once_for_the_sweep(self):
+        """One lease for a whole retention sweep excludes every other writer
+        for the sweep's duration; per row it excludes them per row."""
+        manager = self._manager("lease_sweep_tenant")
+        manager.tenant_partition_schema_exists = lambda *args, **kwargs: True
+        manager.memory.get_all.return_value = {
+            "results": [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]
+        }
+        holders = []
+
+        def record_holder(memory_id):
+            holders.append(self._lease_record(manager).config_value["holder"])
+
+        manager.memory.delete.side_effect = record_holder
+
+        assert (
+            manager.clear_agent_memory(
+                tenant_id="lease_sweep_tenant", agent_name="agent"
+            )
+            is True
+        )
+        assert len(holders) == 3
+        assert len(set(holders)) == 3
+        assert None not in holders
+        assert self._lease_record(manager).config_value["holder"] is None
+
+    def test_update_surfaces_a_provenance_write_failure_it_cannot_undo(self):
+        """The primary is already rewritten when attach fails; reporting
+        False says nothing happened, and the index now disagrees with it."""
+        from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+        manager = self._manager("lease_update_fail_tenant")
+        manager.memory.get.return_value = {"id": "m5", "memory": "after"}
+        manager._provenance_store.attach.side_effect = ProvenanceWriteError(
+            memory_id="m5", row_id="prov-row"
+        )
+
+        with pytest.raises(ProvenanceWriteError) as caught:
+            manager.update_memory(
+                memory_id="m5",
+                content="after",
+                tenant_id="lease_update_fail_tenant",
+                agent_name="agent",
+                metadata=self._provenance_metadata(),
+            )
+        assert caught.value.memory_id == "m5"
+        manager.memory.update.assert_called_once()
