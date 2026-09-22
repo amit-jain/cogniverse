@@ -536,6 +536,46 @@ def get_config(tenant_id: str, config_manager: ConfigManager) -> ConfigUtils:
     return ConfigUtils(tenant_id, config_manager=config_manager)
 
 
+def resolve_default_profile(config: Any, modality: str = "video") -> Optional[str]:
+    """The tenant's default profile for one modality, in one key order.
+
+    Every surface that picks a profile for a tenant that named none must pick
+    the same one. Upload resolved ``backend.default_profiles.<modality>.
+    profile`` and then ``active_<modality>_profile``; search and the
+    dispatcher resolved only the second. A tenant that set the first while
+    the second still named another profile ingested into one corpus and
+    queried another — and an empty result from an un-ingested profile is
+    indistinguishable from a corpus with no match.
+
+    ``default_profiles`` wins because it is the newer, richer mechanism (it
+    also carries the strategy) and is what the synthetic-backend validation
+    and the Vespa backend already read.
+
+    Args:
+        config: anything with dict-like ``get`` — a ``ConfigUtils`` or a
+            plain tenant config mapping.
+        modality: ``video``, ``image``, ... — selects both the
+            ``default_profiles`` entry and the ``active_<modality>_profile``
+            key.
+
+    Returns:
+        The profile name, or ``None`` when the tenant configured neither.
+    """
+    backend = config.get("backend", {})
+    if isinstance(backend, dict):
+        defaults = backend.get("default_profiles") or {}
+        if isinstance(defaults, dict):
+            selection = defaults.get(modality) or {}
+            if isinstance(selection, dict):
+                name = selection.get("profile")
+                if isinstance(name, str) and name.strip():
+                    return name
+    active = config.get(f"active_{modality}_profile")
+    if isinstance(active, str) and active.strip():
+        return active
+    return None
+
+
 def get_config_value(
     key: str,
     default: Any = None,
