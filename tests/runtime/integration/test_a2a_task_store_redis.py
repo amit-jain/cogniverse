@@ -664,3 +664,132 @@ async def test_served_store_outage_is_a_dependency_error_not_task_not_found():
     assert error["message"] == (
         "shared A2A task store unavailable: get task outage-task"
     )
+
+
+def _cancel_handler(store: RedisTaskStore, replica_id: str) -> RedisRequestHandler:
+    class UnusedExecutor(AgentExecutor):
+        async def execute(self, context, event_queue) -> None:
+            raise AssertionError("no execution is expected")
+
+        async def cancel(self, context, event_queue) -> None:
+            raise AssertionError("no cancellation is expected")
+
+    return RedisRequestHandler(
+        agent_executor=UnusedExecutor(),
+        task_store=store,
+        replica_id=replica_id,
+    )
+
+
+async def test_cancel_uses_redis_time_not_the_replica_wall_clock(redis_client):
+    """A pod whose clock runs ahead of Redis must not declare live owners dead.
+
+    Every other liveness check reads ``redis.time()``. Comparing a
+    Redis-derived ``expires_at_ms`` against the replica's own ``time.time()``
+    made a skewed replica report "owner expired; task is interrupted" — which
+    is false, because the interrupt script re-checks against Redis and
+    declines, so the task keeps running and the cancel just fails.
+    """
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await store.save(_task("task-skew", TaskState.working))
+    lease = await store.acquire_execution(
+        "task-skew", replica_id="replica-owner", lease_seconds=30
+    )
+    # A replica a day ahead of Redis: the wall-clock comparison this path used
+    # to make would have called this live owner expired.
+    assert lease.expires_at_ms <= int((time.time() + 86_400) * 1000)
+
+    handler = _cancel_handler(store, "replica-owner")
+    consulted = []
+    real_has_live_owner = store.has_live_owner
+
+    async def spy_has_live_owner(task_id: str):
+        consulted.append(task_id)
+        return await real_has_live_owner(task_id)
+
+    store.has_live_owner = spy_has_live_owner
+    owned = []
+
+    async def record_cancel(task_id: str):
+        owned.append(task_id)
+        return _task(task_id, TaskState.canceled)
+
+    handler._cancel_owned = record_cancel
+
+    result = await handler.on_cancel_task(TaskIdParams(id="task-skew"))
+
+    assert consulted == ["task-skew"]
+    assert owned == ["task-skew"]
+    assert result.status.state == TaskState.canceled
+    assert (await store.get("task-skew")).status.state == TaskState.working
+
+
+async def test_cancel_honors_a_declined_interruption_instead_of_raising(redis_client):
+    """``mark_owner_lost`` declining means the task was NOT interrupted.
+
+    An idle task carrying a stale lease record is not active, so the interrupt
+    script refuses it. Raising "owner expired; task is interrupted" there
+    reports an interruption that did not happen and refuses the cancel.
+    """
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await store.save(_task("task-idle-stale", TaskState.working))
+    await store.acquire_execution(
+        "task-idle-stale", replica_id="replica-gone", lease_seconds=0.05
+    )
+    await asyncio.sleep(0.1)
+    await store.save(_task("task-idle-stale", TaskState.input_required))
+    assert await store.get_execution_lease("task-idle-stale") is not None
+    assert await store.has_live_owner("task-idle-stale") is False
+    assert await store.mark_owner_lost("task-idle-stale") is False
+
+    handler = _cancel_handler(store, "replica-self")
+    owned = []
+
+    async def record_cancel(task_id: str):
+        owned.append(task_id)
+        return _task(task_id, TaskState.canceled)
+
+    handler._cancel_owned = record_cancel
+
+    result = await handler.on_cancel_task(TaskIdParams(id="task-idle-stale"))
+
+    assert owned == ["task-idle-stale"]
+    assert result.status.state == TaskState.canceled
+    assert (await store.get("task-idle-stale")).status.state != TaskState.failed
+
+
+async def test_idle_cancel_losing_the_race_is_a_conflict_not_an_internal_error(
+    redis_client,
+):
+    """A lost cancel race is a conflict the client can act on.
+
+    ``message/send`` already answers a lost ownership race with an explicit
+    conflict; the idle cancel path let ``A2ATaskOwnershipLostError`` escape
+    untranslated, so the same race read as a generic internal error on the
+    most commonly cancelled path.
+    """
+    from a2a.types import TaskIdParams
+    from a2a.utils.errors import ServerError
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await store.save(_task("task-race", TaskState.input_required))
+    handler = _cancel_handler(store, "replica-self")
+
+    async def lost_race(*args, **kwargs):
+        raise A2ATaskOwnershipLostError(
+            "cancel task task-race is owned by another replica "
+            "(replica-winner), not replica-self"
+        )
+
+    store.begin_cancel = lost_race
+
+    with pytest.raises(ServerError) as caught:
+        await handler.on_cancel_task(TaskIdParams(id="task-race"))
+
+    assert caught.value.error.message == (
+        "Task task-race is active on another replica; retry"
+    )

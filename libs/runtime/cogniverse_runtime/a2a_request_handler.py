@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import cast
 
 from a2a.server.agent_execution import RequestContext
@@ -327,19 +326,40 @@ class RedisRequestHandler(DefaultRequestHandler):
                 )
             )
         lease = await self.task_store.get_execution_lease(params.id)
-        if lease is not None and lease.expires_at_ms <= int(time.time() * 1000):
-            await self.task_store.mark_owner_lost(params.id)
-            raise ServerError(
-                error=TaskNotCancelableError(
-                    message=f"Task {params.id} owner expired; task is interrupted"
+        # Expiry is judged against Redis' own clock, never this replica's:
+        # ``expires_at_ms`` is computed from ``redis.call('TIME')``, so a pod
+        # running ahead would otherwise declare every live owner expired.
+        if lease is not None and not await self.task_store.has_live_owner(params.id):
+            if await self.task_store.mark_owner_lost(params.id):
+                raise ServerError(
+                    error=TaskNotCancelableError(
+                        message=f"Task {params.id} owner expired; task is interrupted"
+                    )
                 )
-            )
+            # The interrupt was declined, so nothing was interrupted: the task
+            # is not active and the lease is a record left behind by an owner
+            # that is not executing it. Routing a cancel there waits out a
+            # replica that will never acknowledge, so treat it as the idle
+            # task it is. If Redis does still see a live owner, begin_cancel
+            # refuses and the conflict below is what the client gets.
+            lease = None
         # No lease means nothing is executing — an idle task paused in
         # input_required, which is what a completed turn leaves behind and the
         # commonest thing a client cancels. The stock handler cancels any
         # non-terminal task, so cancel it here rather than refusing.
         if lease is None or lease.replica_id == self._replica_id:
-            return await self._cancel_owned(params.id)
+            try:
+                return await self._cancel_owned(params.id)
+            except A2ATaskOwnershipLostError as exc:
+                # Same conflict ``message/send`` reports for a lost race, so
+                # the client sees a retryable conflict, not an internal error.
+                raise ServerError(
+                    error=InvalidParamsError(
+                        message=(
+                            f"Task {params.id} is active on another replica; retry"
+                        )
+                    )
+                ) from exc
         return await self.task_store.request_cancel(
             owner_replica_id=lease.replica_id,
             task_id=params.id,
