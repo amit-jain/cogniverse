@@ -28,6 +28,8 @@ from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ResponseError
 
+_UNAVAILABLE = "shared A2A task store unavailable"
+
 
 class A2ATaskStoreError(RuntimeError):
     """Raised when the shared A2A task store cannot complete an operation."""
@@ -324,9 +326,7 @@ class RedisTaskStore(TaskStore):
             await client.ping()
         except RedisError as exc:
             await client.aclose()
-            raise A2ATaskStoreError(
-                f"connect to shared A2A task store at {redis_url}"
-            ) from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {redis_url}") from exc
         return cls(
             client,
             max_tasks=max_tasks,
@@ -355,7 +355,7 @@ class RedisTaskStore(TaskStore):
                 bound_lease.generation if bound_lease else 0,
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"save task {task.id}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: save task {task.id}") from exc
         result_code = int(result[0])
         if result_code == -1:
             generation = bound_lease.generation if bound_lease else 0
@@ -383,7 +383,7 @@ class RedisTaskStore(TaskStore):
                 task_id,
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"get task {task_id}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: get task {task_id}") from exc
         if payload is None:
             return None
         try:
@@ -406,7 +406,7 @@ class RedisTaskStore(TaskStore):
                 task_id,
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"delete task {task_id}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: delete task {task_id}") from exc
 
     async def close(self) -> None:
         """Close the Redis client when this store created it."""
@@ -440,7 +440,7 @@ class RedisTaskStore(TaskStore):
                 ttl_ms,
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"acquire task {task_id}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: acquire task {task_id}") from exc
         outcome = self._text(result[0])
         owner = self._text(result[1])
         if outcome == "conflict":
@@ -475,7 +475,9 @@ class RedisTaskStore(TaskStore):
                 self._ttl_ms(lease_seconds),
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"renew task {lease.task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: renew task {lease.task_id}"
+            ) from exc
         if int(expires_at) == 0:
             raise A2ATaskOwnershipLostError(
                 f"renew task {lease.task_id} with stale ownership generation "
@@ -501,7 +503,9 @@ class RedisTaskStore(TaskStore):
                 lease.generation,
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"release task {lease.task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: release task {lease.task_id}"
+            ) from exc
         return int(released) == 1
 
     async def begin_cancel(
@@ -525,7 +529,9 @@ class RedisTaskStore(TaskStore):
                 self._ttl_ms(lease_seconds),
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"begin cancel task {task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: begin cancel task {task_id}"
+            ) from exc
         outcome = self._text(result[0])
         if outcome != "acquired":
             raise A2ATaskOwnershipLostError(
@@ -544,7 +550,9 @@ class RedisTaskStore(TaskStore):
         try:
             payload = await self._redis.hget(self._leases_key, task_id)
         except RedisError as exc:
-            raise A2ATaskStoreError(f"get task {task_id} owner") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: get task {task_id} owner"
+            ) from exc
         if payload is None:
             return None
         try:
@@ -552,6 +560,18 @@ class RedisTaskStore(TaskStore):
             return TaskLease(task_id=task_id, **data)
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise A2ATaskStoreError(f"decode task {task_id} owner") from exc
+
+    async def has_live_owner(self, task_id: str) -> bool:
+        """Report whether some replica still holds an unexpired lease."""
+        lease = await self.get_execution_lease(task_id)
+        if lease is None:
+            return False
+        try:
+            seconds, microseconds = await self._redis.time()
+        except RedisError as exc:
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: read server time") from exc
+        now_ms = int(seconds) * 1000 + int(microseconds) // 1000
+        return lease.expires_at_ms > now_ms
 
     async def mark_owner_lost(self, task_id: str) -> bool:
         """Atomically persist interruption if an active task's owner expired."""
@@ -579,7 +599,9 @@ class RedisTaskStore(TaskStore):
                 interrupted.model_dump_json(by_alias=True),
             )
         except RedisError as exc:
-            raise A2ATaskStoreError(f"mark task {task_id} owner lost") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: mark task {task_id} owner lost"
+            ) from exc
         return int(result) == 1
 
     @contextmanager
@@ -643,7 +665,9 @@ class RedisTaskStore(TaskStore):
                 f"decode cancel acknowledgement for task {task_id}"
             ) from exc
         except RedisError as exc:
-            raise A2ATaskStoreError(f"route cancel for task {task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: route cancel for task {task_id}"
+            ) from exc
         finally:
             try:
                 await self._redis.delete(reply_key)
@@ -661,7 +685,7 @@ class RedisTaskStore(TaskStore):
             )
         except RedisError as exc:
             raise A2ATaskStoreError(
-                f"listen for cancels on replica {replica_id}"
+                f"{_UNAVAILABLE}: listen for cancels on replica {replica_id}"
             ) from exc
         if response is None:
             return None
@@ -697,21 +721,28 @@ class RedisTaskStore(TaskStore):
             await pipeline.execute()
         except RedisError as exc:
             raise A2ATaskStoreError(
-                f"acknowledge cancel for task {command.task_id}"
+                f"{_UNAVAILABLE}: acknowledge cancel for task {command.task_id}"
             ) from exc
 
     async def publish_event(self, task_id: str, event: Event) -> None:
         """Append an active task event for cross-replica resubscription."""
         stream_key = f"{self._key_prefix}:events:{task_id}"
         try:
-            await self._redis.xadd(
+            pipeline = self._redis.pipeline(transaction=True)
+            pipeline.xadd(
                 stream_key,
                 {"payload": _EVENT_ADAPTER.dump_json(event).decode()},
                 maxlen=1000,
                 approximate=True,
             )
+            # A later turn reuses the stream key the previous turn's close
+            # left an expiry on; drop it so this relay cannot vanish mid-turn.
+            pipeline.persist(stream_key)
+            await pipeline.execute()
         except RedisError as exc:
-            raise A2ATaskStoreError(f"publish event for task {task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: publish event for task {task_id}"
+            ) from exc
 
     async def close_event_stream(self, task_id: str) -> None:
         """Close an active event relay while retaining a short drain window."""
@@ -722,10 +753,17 @@ class RedisTaskStore(TaskStore):
             pipeline.expire(stream_key, 60)
             await pipeline.execute()
         except RedisError as exc:
-            raise A2ATaskStoreError(f"close event stream for task {task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: close event stream for task {task_id}"
+            ) from exc
 
     async def subscribe_events(self, task_id: str) -> AsyncIterator[Event]:
-        """Yield future owner events from the shared relay until it closes."""
+        """Yield future owner events from the shared relay until it closes.
+
+        A relay whose owner dies is never closed, so a quiet read also checks
+        that the owning lease is still held; losing it ends the subscription
+        instead of holding the caller's stream open forever.
+        """
         stream_key = f"{self._key_prefix}:events:{task_id}"
         try:
             try:
@@ -739,6 +777,8 @@ class RedisTaskStore(TaskStore):
                 batches = await self._redis.xread(
                     {stream_key: cursor}, count=100, block=1000
                 )
+                if not batches and not await self.has_live_owner(task_id):
+                    return
                 for _, records in batches:
                     for event_id, fields in records:
                         cursor = self._text(event_id)
@@ -753,7 +793,9 @@ class RedisTaskStore(TaskStore):
         except (ValidationError, ValueError, TypeError) as exc:
             raise A2ATaskStoreError(f"decode event for task {task_id}") from exc
         except RedisError as exc:
-            raise A2ATaskStoreError(f"subscribe to task {task_id}") from exc
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: subscribe to task {task_id}"
+            ) from exc
 
     @staticmethod
     def _ttl_ms(lease_seconds: float) -> int:

@@ -254,20 +254,26 @@ def shared_a2a_redis_url():
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
 
+def _start_replica(
+    port: int, redis_url: str, key_prefix: str, replica_id: str
+) -> multiprocessing.process.BaseProcess:
+    """Serve one runtime A2A replica in its own OS process."""
+    process = multiprocessing.get_context("spawn").Process(
+        target=_serve_shared_a2a,
+        args=(port, redis_url, key_prefix, replica_id),
+    )
+    process.start()
+    return process
+
+
 @pytest.fixture
 def a2a_process_cluster(shared_a2a_redis_url):
     key_prefix = f"test:a2a-process:{uuid.uuid4().hex}"
     ports = (_free_process_port(), _free_process_port())
-    context = multiprocessing.get_context("spawn")
     processes = [
-        context.Process(
-            target=_serve_shared_a2a,
-            args=(port, shared_a2a_redis_url, key_prefix, f"replica-{index}"),
-        )
+        _start_replica(port, shared_a2a_redis_url, key_prefix, f"replica-{index}")
         for index, port in enumerate(ports)
     ]
-    for process in processes:
-        process.start()
     try:
         for port in ports:
             _wait_process_port(port)
@@ -328,6 +334,17 @@ def _process_send(
     )
 
 
+def _wait_subprocess_pid(redis, process_key: str) -> int:
+    """Wait for the owned executor to publish its subprocess PID."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        pid = redis.hget(process_key, "pid")
+        if pid:
+            return int(pid)
+        time.sleep(0.05)
+    pytest.fail("Long-running subprocess PID was not published")
+
+
 def _process_resubscribe(port: int, task_id: str) -> tuple[int, list[dict]]:
     with httpx.Client(timeout=10) as client:
         with client.stream(
@@ -350,26 +367,63 @@ def _process_resubscribe(port: int, task_id: str) -> tuple[int, list[dict]]:
 
 @pytest.mark.integration
 class TestA2ASharedProcessIdentity:
-    def test_peer_reads_and_continues_after_owner_restart(self, a2a_process_cluster):
-        ports, processes, _, _ = a2a_process_cluster
+    def test_peer_returns_the_created_task_and_continues_its_turn(
+        self, a2a_process_cluster
+    ):
+        ports, _, _, _ = a2a_process_cluster
         context_id = f"context-{uuid.uuid4().hex}"
-        first = _process_send(
+        created = _process_send(
             ports[0],
             text="first-turn",
             message_id="user-first",
             context_id=context_id,
-        )
-        created = first["result"]
+        )["result"]
         task_id = created["id"]
 
-        peer = _process_rpc(
-            ports[1], "tasks/get", {"id": task_id}, "peer-get-before-restart"
-        )
+        peer = _process_rpc(ports[1], "tasks/get", {"id": task_id}, "peer-get")
         assert peer["result"] == created
+
+        continued = _process_send(
+            ports[1],
+            text="second-turn",
+            message_id="user-second",
+            context_id=context_id,
+            task_id=task_id,
+        )["result"]
+
+        assert continued["id"] == task_id
+        assert continued["contextId"] == context_id
+        assert [message["messageId"] for message in continued["history"]] == [
+            "user-first",
+            "agent-first-turn",
+            "user-second",
+        ]
+
+    def test_peer_and_restarted_owner_read_and_continue_the_same_task(
+        self, a2a_process_cluster
+    ):
+        ports, processes, redis_url, key_prefix = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        created = _process_send(
+            ports[0],
+            text="first-turn",
+            message_id="user-first",
+            context_id=context_id,
+        )["result"]
+        task_id = created["id"]
 
         processes[0].terminate()
         processes[0].join(timeout=10)
         assert processes[0].exitcode == -signal.SIGTERM
+        processes[0] = _start_replica(ports[0], redis_url, key_prefix, "replica-0")
+        _wait_process_port(ports[0])
+
+        peer = _process_rpc(ports[1], "tasks/get", {"id": task_id}, "peer-get")
+        restarted = _process_rpc(
+            ports[0], "tasks/get", {"id": task_id}, "restarted-owner-get"
+        )
+        assert peer["result"] == created
+        assert restarted["result"] == created
 
         continued = _process_send(
             ports[1],
@@ -449,14 +503,7 @@ class TestA2ASharedProcessIdentity:
 
         redis = sync_redis.Redis.from_url(redis_url, decode_responses=True)
         process_key = f"{key_prefix}:test-process"
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            process_state = redis.hgetall(process_key)
-            if process_state.get("pid"):
-                break
-            time.sleep(0.05)
-        else:
-            pytest.fail("Long-running subprocess PID was not published")
+        pid = _wait_subprocess_pid(redis, process_key)
 
         canceled = _process_rpc(
             ports[1], "tasks/cancel", {"id": task_id}, "peer-cancel"
@@ -471,7 +518,6 @@ class TestA2ASharedProcessIdentity:
             time.sleep(0.05)
         else:
             pytest.fail(f"Subprocess did not report SIGTERM: {returncode}")
-        pid = int(process_state["pid"])
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
 
@@ -484,6 +530,56 @@ class TestA2ASharedProcessIdentity:
         redis.close()
         assert owner_task == peer_task
         assert peer_task["status"]["state"] == "canceled"
+
+    def test_owner_loss_interrupts_the_task_without_re_executing_it(
+        self, a2a_process_cluster
+    ):
+        ports, processes, redis_url, key_prefix = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        started = _process_send(
+            ports[0],
+            text="long-process",
+            message_id="user-orphan",
+            context_id=context_id,
+            blocking=False,
+        )["result"]
+        task_id = started["id"]
+        redis = sync_redis.Redis.from_url(redis_url, decode_responses=True)
+        process_key = f"{key_prefix}:test-process"
+        pid = _wait_subprocess_pid(redis, process_key)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stream = pool.submit(_process_resubscribe, ports[1], task_id)
+            time.sleep(0.2)
+            processes[0].kill()
+            processes[0].join(timeout=10)
+            # The relay is never closed by a killed owner, so the peer's
+            # stream has to end on the expired lease instead of hanging.
+            status_code, events = stream.result(timeout=10)
+        assert (status_code, events) == (200, [])
+
+        rejected = _process_send(
+            ports[1],
+            text="second-turn",
+            message_id="user-after-orphan",
+            context_id=context_id,
+            task_id=task_id,
+        )["error"]
+        interrupted = _process_rpc(
+            ports[1], "tasks/get", {"id": task_id}, "peer-get-interrupted"
+        )["result"]
+        surviving = redis.hgetall(process_key)
+        redis.close()
+        os.kill(pid, signal.SIGKILL)
+
+        assert rejected["message"] == (
+            f"Task {task_id} was interrupted after its owner stopped; "
+            "inspect the failed task before retrying"
+        )
+        assert interrupted["status"]["state"] == "failed"
+        # A re-execution would have published a second subprocess over this
+        # one; the interrupted tool call is reported, never silently replayed.
+        assert surviving == {"pid": str(pid), "returncode": "running"}
 
     def test_peer_resubscribe_receives_owner_terminal_event(self, a2a_process_cluster):
         ports, _, _, _ = a2a_process_cluster
