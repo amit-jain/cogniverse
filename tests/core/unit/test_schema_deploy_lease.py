@@ -286,3 +286,50 @@ def test_a_live_holder_in_the_same_process_is_not_taken_over():
         _lease(store, wait_seconds=0.3).acquire()
     assert holder.renew() is None
     assert _lease_record(store).config_value["holder"] == holder.holder
+
+
+def test_ensure_owned_fences_a_holder_whose_hold_time_has_passed():
+    """A stalled holder must stop, not resume against a lease a peer can take.
+
+    Expiry is judged on the holder's own monotonic clock, so it fences
+    itself even while the record still names it — exactly the window in
+    which a waiter is entitled to take over.
+    """
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=0.2, wait_seconds=0)
+    holder.acquire()
+    holder.ensure_owned()
+
+    time.sleep(0.25)
+    with pytest.raises(DeploymentLeaseLost):
+        holder.ensure_owned()
+
+
+def test_ensure_owned_renews_an_ageing_lease_without_a_store_write_when_fresh():
+    """Renewal happens once the lease ages, not before every mutation."""
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=1.0, wait_seconds=0)
+    holder.acquire()
+    writes_after_acquire = 0
+
+    real_compare_and_set = store.compare_and_set_config
+
+    def counting_compare_and_set(*args, **kwargs):
+        nonlocal writes_after_acquire
+        writes_after_acquire += 1
+        return real_compare_and_set(*args, **kwargs)
+
+    store.compare_and_set_config = counting_compare_and_set
+
+    holder.ensure_owned()
+    assert writes_after_acquire == 0
+
+    time.sleep(0.6)
+    holder.ensure_owned()
+    assert writes_after_acquire == 1
+
+    # The renewal moved the hold window, so the holder outlives its
+    # original hold time instead of expiring inside a long operation.
+    time.sleep(0.6)
+    holder.ensure_owned()
+    assert writes_after_acquire == 2

@@ -43,6 +43,7 @@ from cogniverse_core.memory.schema import (
     KnowledgeSchema,
     SchemaViolationError,
 )
+from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
@@ -770,6 +771,176 @@ def test_raw_mutation_after_repair_final_read_is_detected_by_reader(
     )
     mm.memory.delete(memory_id)
     assert mm.memory.get(memory_id) is None
+
+
+def _peer_manager(memory_env, canonical_tenant):
+    """A second manager instance for the same storage tenant.
+
+    Distinct instances share no in-process lock, so anything they
+    serialize against each other is serialized by the store-backed
+    provenance lease alone.
+    """
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+    peer = Mem0MemoryManager(canonical_tenant)
+    peer.initialize(
+        backend_host="http://127.0.0.1",
+        backend_port=memory_env.proxy.port,
+        backend_config_port=memory_env.proxy.port,
+        base_schema_name="agent_memories",
+        llm_model=get_llm_model(),
+        embedding_model="lightonai/DenseOn",
+        llm_base_url=get_llm_base_url(),
+        embedder_base_url=memory_env.denseon,
+        auto_create_schema=False,
+        config_manager=memory_env.config_manager,
+        schema_loader=memory_env.schema_loader,
+    )
+    peer.memory.embedding_model = _StaticEmbedder()
+    return peer
+
+
+def test_stalled_holder_is_fenced_after_a_peer_takes_the_expired_lease(
+    memory_env, monkeypatch
+):
+    """A write that outlives its lease must not mutate or report success.
+
+    The lease expires after a fixed hold time and a peer is entitled to
+    take it over. Repair stalls inside its first primary read for longer
+    than that hold time; the peer takes the lease and rewrites the
+    primary. The stalled holder must be fenced before its indexed write
+    rather than resuming against a primary it no longer owns.
+    """
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:stale-holder",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.87,
+        derived_from=[CitationRef.external("https://source.test/stale-holder")],
+    )
+    memory_id = mm.add_memory(
+        content="Primary before the stale holder loses its lease.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+        infer=False,
+    )
+    canonical_tenant = mm._storage_tenant_id
+    peer = _peer_manager(memory_env, canonical_tenant)
+
+    import cogniverse_core.registries.schema_deploy_lease as lease_module
+
+    monkeypatch.setattr(lease_module, "DEFAULT_LEASE_SECONDS", 5.0)
+    monkeypatch.setattr(lease_module, "DEFAULT_WAIT_SECONDS", 30.0)
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_primary_get = mm.memory.get
+    real_attach = mm.provenance_store.attach
+    primary_reads = 0
+    stale_attach_calls = 0
+
+    def stalled_primary_get(target_memory_id):
+        nonlocal primary_reads
+        primary_reads += 1
+        if primary_reads == 1:
+            entered.set()
+            assert release.wait(30) is True
+        return real_primary_get(target_memory_id)
+
+    def counted_attach(target_memory_id, target_provenance, **kwargs):
+        nonlocal stale_attach_calls
+        stale_attach_calls += 1
+        return real_attach(target_memory_id, target_provenance, **kwargs)
+
+    monkeypatch.setattr(mm.memory, "get", stalled_primary_get)
+    monkeypatch.setattr(mm.provenance_store, "attach", counted_attach)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            stale_repair = pool.submit(mm.repair_provenance, memory_id)
+            assert entered.wait(30) is True
+            takeover = pool.submit(
+                peer.update_memory,
+                memory_id,
+                "Primary written by the owner that took the lease over.",
+                canonical_tenant,
+                AGENT,
+            )
+            assert takeover.result(timeout=60) is True
+            release.set()
+            with pytest.raises(DeploymentLeaseLost):
+                stale_repair.result(timeout=60)
+    finally:
+        release.set()
+
+    assert stale_attach_calls == 0
+    assert peer.memory.get(memory_id)["memory"] == (
+        "Primary written by the owner that took the lease over."
+    )
+    assert peer.delete_memory(memory_id, canonical_tenant, AGENT) is True
+    assert peer.memory.get(memory_id) is None
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+
+
+def test_supported_delete_cannot_cross_repairs_verification_window(
+    memory_env, monkeypatch
+):
+    """A supported delete linearizes outside repair's verified window.
+
+    Repair reads the primary a final time, verifies the indexed row and
+    returns. A delete landing inside that window would make repair report
+    success for a primary that is already gone. The delete runs on a
+    second manager instance, so only the store-backed lease can hold it
+    back. It then removes the primary and the indexed row together.
+    """
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:delete-race",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.89,
+        derived_from=[CitationRef.external("https://source.test/delete-race")],
+    )
+    memory_id = mm.add_memory(
+        content="Primary deleted after repair verified it.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+        infer=False,
+    )
+    canonical_tenant = mm._storage_tenant_id
+    peer = _peer_manager(memory_env, canonical_tenant)
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_index_get = mm.provenance_store.get
+
+    def stalled_index_verification(target_memory_id):
+        record = real_index_get(target_memory_id)
+        entered.set()
+        assert release.wait(30) is True
+        return record
+
+    monkeypatch.setattr(mm.provenance_store, "get", stalled_index_verification)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair_future = pool.submit(mm.repair_provenance, memory_id)
+            assert entered.wait(30) is True
+            delete_future = pool.submit(
+                peer.delete_memory, memory_id, canonical_tenant, AGENT
+            )
+            threading.Event().wait(0.5)
+            assert delete_future.done() is False
+            assert mm.memory.get(memory_id) is not None
+            release.set()
+            assert repair_future.result(timeout=60) == (
+                f"prov-{canonical_tenant}-{memory_id}"
+            )
+            assert delete_future.result(timeout=60) is True
+    finally:
+        release.set()
+
+    assert peer.memory.get(memory_id) is None
+    assert peer.provenance_store.fetch([memory_id]) == {}
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
 
 
 def test_repair_reports_bounded_conflict_for_external_primary_changes(

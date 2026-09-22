@@ -165,6 +165,24 @@ class SchemaDeployLease:
                 )
             time.sleep(_POLL_SECONDS)
 
+    def ensure_owned(self, renew_after: float = 0.5) -> None:
+        """Fence the holder before a mutation, renewing an ageing lease.
+
+        A holder that has watched its own monotonic clock pass the hold
+        time since its last claim has lost the lease — a peer is entitled
+        to it — so it must not mutate or report success. Below that, the
+        lease is renewed once it is past ``renew_after`` of its hold time,
+        which keeps an operation whose boundary calls outlast the hold time
+        alive without a store round trip before every fast mutation.
+        """
+        if self._held_since is None:
+            raise DeploymentLeaseLost(f"{self._purpose} lease is not held")
+        elapsed = time.monotonic() - self._held_since
+        if elapsed >= self._lease_seconds:
+            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
+        if elapsed >= self._lease_seconds * renew_after:
+            self.renew()
+
     def renew(self) -> None:
         """Extend the lease, or raise if this holder no longer owns it."""
         if (
