@@ -1280,6 +1280,23 @@ canonical provenance under the stable row id and verifies the primary and index
 before releasing that lease. Its success linearizes at the verified primary
 read while lease ownership excludes supported writers.
 
+A lease has a finite hold time, so holding one across a whole operation is not
+exclusivity by itself: a boundary call that stalls past expiry lets a peer take
+over while the original holder is still inside. Ownership is therefore
+revalidated before every primary/index mutation and again before a successful
+return, and renewed once the lease has aged past half its hold time so a long
+operation stays owned. A holder whose own monotonic clock has passed the hold
+time is fenced with `DeploymentLeaseLost`: it neither writes nor acknowledges
+success after a peer becomes entitled to the lease.
+
+Supported hard deletion enters the same ownership scope, so a delete cannot
+land inside repair's verification window and leave it reporting success for a
+primary that is already gone. `delete_memory`, namespace clearing, schema
+retention cleanup and session drop all remove the primary and its stable
+indexed row together; a row left behind would be an orphan that every later
+citation read rejects. A failure at either boundary raises instead of
+reporting the memory fully deleted.
+
 Each indexed row also stores a SHA-256 digest of the primary content and
 canonical provenance. A raw writer outside the manager/lease contract may
 mutate after repair's linearization point; the next citation read detects the

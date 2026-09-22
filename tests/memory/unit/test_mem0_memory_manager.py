@@ -275,6 +275,9 @@ class TestMem0MemoryManager:
         manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
         backend = MagicMock()
         backend.schema_exists.return_value = True
+        # IngestionBackend.delete_document is declared to return a bool; a
+        # bare MagicMock return would let a broken delete read as success.
+        backend.delete_document.return_value = True
         manager._resolve_backend = lambda: backend
         return backend
 
@@ -460,7 +463,7 @@ class TestMem0MemoryManager:
         """Test deleting memory"""
         # Setup
         mock_memory = MagicMock()
-        manager.memory = mock_memory
+        backend = self._bind_deployed_partition(manager, mock_memory)
 
         # Delete
         success = manager.delete_memory(
@@ -472,6 +475,12 @@ class TestMem0MemoryManager:
         assert success is True
         # Implementation only passes memory_id (tenant_id and agent_name not used)
         mock_memory.delete.assert_called_once_with("mem_123")
+        # The indexed provenance row goes with the primary: a row left behind
+        # is an orphan that every later citation read rejects.
+        backend.delete_document.assert_called_once_with(
+            f"prov-{canonical_tenant_id('test_tenant')}-mem_123",
+            schema_name="provenance",
+        )
 
     @patch("cogniverse_core.memory.manager.Memory")
     def test_clear_agent_memory(self, mock_memory_class, manager):

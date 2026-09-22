@@ -239,6 +239,13 @@ class Mem0MemoryManager:
             # indexed upsert, and verification, so a manager write cannot make
             # the verified snapshot obsolete before repair returns.
             instance._provenance_write_lock = threading.RLock()
+            # The lease held by the provenance ownership scope this thread is
+            # inside, if any. Mutations and successful returns are fenced
+            # against it, so a holder that lost ownership stops.
+            instance._active_provenance_lease = None
+            # Built lazily by the provenance_store property once the manager
+            # has a backend resolver; delete paths read it before that.
+            instance._provenance_store = None
             logger.info(
                 "Created new Mem0MemoryManager instance for tenant: %s",
                 tenant_id,
@@ -701,6 +708,7 @@ class Mem0MemoryManager:
 
         indexed_provenance = self._provenance_for_index(metadata)
 
+        self._check_provenance_ownership()
         result = self.memory.add(
             content,
             user_id=storage_tenant_id,
@@ -756,6 +764,7 @@ class Mem0MemoryManager:
                     primary_provenance_digest,
                 )
 
+                self._check_provenance_ownership()
                 self.provenance_store.attach(
                     memory_id,
                     indexed_provenance,
@@ -779,6 +788,7 @@ class Mem0MemoryManager:
                 )
                 if event == "ADD":
                     try:
+                        self._check_provenance_ownership()
                         self.memory.delete(memory_id)
                         if self.memory.get(memory_id) is not None:
                             raise RuntimeError(
@@ -903,6 +913,7 @@ class Mem0MemoryManager:
                 )
             snapshot = self._repair_snapshot(before)
             primary_digest = primary_provenance_digest(before, provenance)
+            self._check_provenance_ownership()
             row_id = self.provenance_store.attach(
                 memory_id,
                 provenance,
@@ -945,7 +956,16 @@ class Mem0MemoryManager:
 
     @contextmanager
     def _provenance_write_ownership(self):
-        """Hold local and store-backed ownership for primary/index writes."""
+        """Hold local and store-backed ownership for primary/index writes.
+
+        The lease has a finite hold time, so acquiring it once and releasing
+        it at the end is not exclusivity: a boundary call that stalls past
+        expiry lets a peer take over while this holder is still inside the
+        body. Ownership is therefore re-checked (and renewed once ageing)
+        before every primary/index mutation and again before the body's
+        result is returned; a holder that lost the lease raises
+        ``DeploymentLeaseLost`` instead of mutating or reporting success.
+        """
         with self._provenance_write_lock:
             store = getattr(self, "_provenance_lease_store", None)
             if store is None:
@@ -962,10 +982,20 @@ class Mem0MemoryManager:
                 purpose=f"provenance writes for {self._storage_tenant_id}",
             )
             lease.acquire()
+            previous_lease = self._active_provenance_lease
+            self._active_provenance_lease = lease
             try:
                 yield
+                lease.ensure_owned()
             finally:
+                self._active_provenance_lease = previous_lease
                 lease.release()
+
+    def _check_provenance_ownership(self) -> None:
+        """Fence the caller against a lease it no longer owns."""
+        lease = self._active_provenance_lease
+        if lease is not None:
+            lease.ensure_owned()
 
     def _detect_and_persist_contradictions(
         self,
@@ -1085,6 +1115,7 @@ class Mem0MemoryManager:
 
         for conflict in new_conflicts:
             try:
+                self._check_provenance_ownership()
                 self.memory.add(
                     conflict.to_memory_content(),
                     user_id=storage_tenant_id,
@@ -1349,8 +1380,22 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
     ) -> bool:
+        """Delete primary and indexed provenance under tenant ownership."""
+        with self._provenance_write_ownership():
+            return self._delete_memory(memory_id, tenant_id, agent_name)
+
+    def _delete_memory(
+        self,
+        memory_id: str,
+        tenant_id: str,
+        agent_name: str,
+    ) -> bool:
         """
-        Delete a specific memory.
+        Delete a specific memory and its indexed provenance row.
+
+        The indexed row is removed for a missing primary too: a row whose
+        primary is gone is an orphan, and every citation read that reaches
+        it raises rather than rendering a graph.
 
         Args:
             memory_id: Memory ID to delete
@@ -1364,16 +1409,33 @@ class Mem0MemoryManager:
         if not self.memory:
             return False
 
+        self._check_provenance_ownership()
         try:
             self.memory.delete(memory_id)
+            deleted = True
         except ValueError:
             # mem0 raises ValueError for a genuinely missing id.
-            return False
+            deleted = False
 
-        logger.info(f"Deleted memory {memory_id}")
-        return True
+        store = self.provenance_store
+        if store is not None:
+            self._check_provenance_ownership()
+            store.delete(memory_id)
+
+        if deleted:
+            logger.info(f"Deleted memory {memory_id}")
+        return deleted
 
     def clear_agent_memory(
+        self,
+        tenant_id: str,
+        agent_name: str,
+    ) -> bool:
+        """Clear an agent namespace under tenant provenance ownership."""
+        with self._provenance_write_ownership():
+            return self._clear_agent_memory(tenant_id, agent_name)
+
+    def _clear_agent_memory(
         self,
         tenant_id: str,
         agent_name: str,
@@ -1407,12 +1469,21 @@ class Mem0MemoryManager:
                 memory_id = str(memory)
 
             if memory_id:
-                self.delete_memory(memory_id, tenant_id, agent_name)
+                self._delete_memory(memory_id, tenant_id, agent_name)
 
         logger.info(f"Cleared all memory for {tenant_id}/{agent_name}")
         return True
 
     def cleanup_with_schema(
+        self,
+        registry: "KnowledgeRegistry",
+        pinned_memory_ids: Optional[set] = None,
+    ) -> Dict[str, int]:
+        """Apply retention while holding tenant provenance ownership."""
+        with self._provenance_write_ownership():
+            return self._cleanup_with_schema(registry, pinned_memory_ids)
+
+    def _cleanup_with_schema(
         self,
         registry: "KnowledgeRegistry",
         pinned_memory_ids: Optional[set] = None,
@@ -1530,14 +1601,14 @@ class Mem0MemoryManager:
                     continue
 
             if should_delete:
-                self.memory.delete(memory_id)
-                deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
-                logger.debug(
-                    "Schema-driven delete: kind=%s memory_id=%s policy=%s",
-                    kind,
-                    memory_id,
-                    schema.retention.value,
-                )
+                if self._delete_memory(memory_id, self.tenant_id, "_retention"):
+                    deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
+                    logger.debug(
+                        "Schema-driven delete: kind=%s memory_id=%s policy=%s",
+                        kind,
+                        memory_id,
+                        schema.retention.value,
+                    )
 
         if deleted_by_kind:
             logger.info(
@@ -1548,6 +1619,15 @@ class Mem0MemoryManager:
         return deleted_by_kind
 
     def drop_session(
+        self,
+        session_id: str,
+        registry: "KnowledgeRegistry",
+    ) -> Dict[str, int]:
+        """Drop session rows under tenant provenance ownership."""
+        with self._provenance_write_ownership():
+            return self._drop_session(session_id, registry)
+
+    def _drop_session(
         self,
         session_id: str,
         registry: "KnowledgeRegistry",
@@ -1629,8 +1709,8 @@ class Mem0MemoryManager:
             if schema.retention is not Retention.EPHEMERAL_SESSION:
                 continue
 
-            self.memory.delete(memory_id)
-            deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
+            if self._delete_memory(memory_id, self.tenant_id, "_session"):
+                deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
 
         if deleted_by_kind:
             logger.info(
@@ -1818,6 +1898,7 @@ class Mem0MemoryManager:
             )
             # Mem0's update() only accepts memory_id and data (content)
             # It does NOT accept user_id or agent_id
+            self._check_provenance_ownership()
             self.memory.update(
                 memory_id,
                 data=content,
@@ -1835,6 +1916,7 @@ class Mem0MemoryManager:
                     primary_provenance_digest,
                 )
 
+                self._check_provenance_ownership()
                 self.provenance_store.attach(
                     memory_id,
                     provenance,

@@ -289,6 +289,29 @@ class ProvenanceStore:
         """Single-id convenience wrapper around :meth:`fetch`."""
         return self.fetch([memory_id]).get(memory_id)
 
+    def delete(self, memory_id: str) -> bool:
+        """Delete the stable indexed row; genuine absence is idempotent."""
+        row_id = self._row_id(memory_id)
+        try:
+            with leased_backend(self._resolve_backend) as backend:
+                deleted = backend.delete_document(
+                    row_id,
+                    schema_name=self._base_schema,
+                )
+        except Exception as exc:
+            raise ProvenanceWriteError(
+                memory_id=memory_id,
+                row_id=row_id,
+                cause=exc,
+            ) from exc
+        if deleted is not True:
+            raise ProvenanceWriteError(
+                memory_id=memory_id,
+                row_id=row_id,
+                result={"deleted": deleted},
+            )
+        return True
+
     def walk(
         self,
         root_memory_id: str,
