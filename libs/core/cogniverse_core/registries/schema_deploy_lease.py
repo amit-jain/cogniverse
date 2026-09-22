@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 import uuid
+import weakref
 from typing import Any, Optional
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -38,6 +39,58 @@ _stalled_records: dict[str, tuple[int, float]] = {}
 # Holders this process has released without the store confirming the record
 # was cleared. Nothing in this process activates under them any more.
 _released_holders: set[str] = set()
+# Holders this process currently owns, weakly. A holder whose owning object
+# was dropped without a release — the thread that took it died, the frame
+# holding it was unwound by an abandoned coroutine — disappears from here on
+# collection, which is the one observation that distinguishes "still working"
+# from "gone" for a record naming this very process.
+_live_holders: dict[str, "weakref.ReferenceType[SchemaDeployLease]"] = {}
+
+
+def _register_live(lease: "SchemaDeployLease") -> None:
+    with _process_state:
+        _live_holders[lease.holder] = weakref.ref(lease)
+
+
+def _forget_live(holder: str) -> None:
+    with _process_state:
+        _live_holders.pop(holder, None)
+
+
+def _holder_is_gone(holder: str) -> bool:
+    """Report whether the holder's process provably no longer runs it.
+
+    Holders are ``host:pid:uuid``. A record this node can prove is abandoned
+    must not block deploys for its hold time: a waiter whose wait is shorter
+    than that hold can never wait it out, so without this probe one leaked
+    record poisons every later deploy in reach of it. The probe only ever
+    says "gone" when it is certain:
+
+    * another host — this node cannot see that host's processes, so never;
+    * this very process — gone exactly when no live holder object owns it;
+    * another process on this host — gone when its pid is not running. A pid
+      that is running (including one recycled by an unrelated process) reads
+      as live, which only delays takeover to the stall watch below.
+    """
+    try:
+        host, pid_text, _ = holder.split(":", 2)
+        pid = int(pid_text)
+    except (AttributeError, ValueError):
+        return False
+    if host != socket.gethostname():
+        return False
+    if pid == os.getpid():
+        with _process_state:
+            reference = _live_holders.get(holder)
+        return reference is None or reference() is None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        # Running but not signallable by this user, or an unreadable pid.
+        return False
+    return False
 
 
 def _stalled_for(holder: str, version: int) -> float:
@@ -71,6 +124,16 @@ class SchemaDeployLease:
     waits as that takes, and a holder treats its own lease as lost once its
     own monotonic clock passes that hold time since its last successful
     claim. Clock skew between nodes therefore cannot break mutual exclusion.
+
+    A record is also taken over at once when this node can prove its holder
+    is gone — the holder's own process released it without the store
+    confirming, its pid is not running on this host, or it names this very
+    process and no live holder object owns it. That proof is what makes a
+    leaked record recoverable by a waiter whose ``wait_seconds`` is shorter
+    than the hold time; where no such proof exists (a holder on another
+    node, or one still alive but stuck) the stall watch above remains the
+    only takeover path, so size ``wait_seconds`` above ``lease_seconds``
+    wherever a waiter must be able to wait a stalled peer out on its own.
     """
 
     def __init__(
@@ -141,14 +204,17 @@ class SchemaDeployLease:
             else:
                 with _process_state:
                     released_here = current in _released_holders
-                claimable = released_here or _stalled_for(
-                    current, version
-                ) >= self._hold_seconds(record)
+                claimable = (
+                    released_here
+                    or _holder_is_gone(current)
+                    or _stalled_for(current, version) >= self._hold_seconds(record)
+                )
             if claimable and self._claim(version, self.holder):
                 with _process_state:
                     _stalled_records.pop(current, None)
                     _released_holders.discard(current)
                     _released_holders.discard(self.holder)
+                _register_live(self)
                 self._held_since = time.monotonic()
                 logger.info("%s lease acquired by %s", self._purpose, self.holder)
                 return self
@@ -221,6 +287,7 @@ class SchemaDeployLease:
             )
         finally:
             self._held_since = None
+            _forget_live(self.holder)
             if not cleared:
                 with _process_state:
                     _released_holders.add(self.holder)

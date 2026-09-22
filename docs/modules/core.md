@@ -705,7 +705,21 @@ another holder owns it; a store failure inside `renew()` propagates as the
 store's error. `release()` hands the lease back and logs, rather than raises,
 when the store is unreachable: the package is already activated by then. A
 record the store did not confirm cleared is taken over at once by the process
-that released it, and by peers once they have watched it stand still. A backend
+that released it, and by peers once they have watched it stand still.
+
+A record is also taken over at once when this node can *prove* its holder is
+gone. Holders are `host:pid:uuid`; the probe answers "gone" only for a holder
+on this host whose pid is no longer running, or one naming this very process
+that no live holder object owns any more — the state a thread that died, or a
+coroutine abandoned mid-deploy, leaves behind and the record itself cannot
+express. It never guesses about another node. Without that proof a leaked
+record is unrecoverable in practice, because `DEFAULT_WAIT_SECONDS` (120 s) is
+shorter than `DEFAULT_LEASE_SECONDS` (600 s): every waiter gives up before the
+stall watch matures, and only the accumulated observation of five consecutive
+failed acquires in one process ever reaches the hold time. Where a lease is
+sized so a waiter must be able to wait a stalled *remote* holder out on its
+own, give it `wait_seconds` greater than `lease_seconds` — as the provenance
+write lease does. A backend
 deploy (`deploy_schemas`), the runtime's startup metadata deploy, schema
 deletion and the orphan reconciler's redeploy all hold it while they enumerate
 the live schemas, build their package and post it, so no package is built from
