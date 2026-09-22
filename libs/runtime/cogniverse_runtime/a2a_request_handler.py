@@ -19,6 +19,7 @@ from a2a.types import (
     Task,
     TaskIdParams,
     TaskNotCancelableError,
+    TaskNotFoundError,
     TaskState,
 )
 from a2a.utils.errors import ServerError
@@ -88,6 +89,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         replica_id: str,
         lease_seconds: float = 30,
         cancel_timeout_seconds: float = 10,
+        drain_timeout_seconds: float = 30,
         **kwargs,
     ) -> None:
         if not replica_id.strip():
@@ -98,16 +100,20 @@ class RedisRequestHandler(DefaultRequestHandler):
             raise ValueError(
                 f"cancel_timeout_seconds must be > 0, got {cancel_timeout_seconds}"
             )
+        if drain_timeout_seconds <= 0:
+            raise ValueError(
+                f"drain_timeout_seconds must be > 0, got {drain_timeout_seconds}"
+            )
         kwargs.setdefault("queue_manager", RedisRelayQueueManager(task_store))
         super().__init__(task_store=task_store, **kwargs)
         self.task_store = task_store
         self._replica_id = replica_id
         self._lease_seconds = lease_seconds
         self._cancel_timeout_seconds = cancel_timeout_seconds
+        self._drain_timeout_seconds = drain_timeout_seconds
         self._producer_leases: dict[asyncio.Task, TaskLease] = {}
         self._renewal_tasks: dict[asyncio.Task, asyncio.Task] = {}
         self._control_task: asyncio.Task | None = None
-        self._closing = False
 
     async def start(self) -> None:
         """Start the owner-addressed cancellation listener."""
@@ -119,11 +125,29 @@ class RedisRequestHandler(DefaultRequestHandler):
         )
 
     async def close(self) -> None:
-        """Stop control intake after all served producers have drained."""
-        self._closing = True
+        """Stop control intake once served producers have drained or expired.
+
+        A producer that outlives ``drain_timeout_seconds`` is cancelled rather
+        than held onto, so shutdown stays bounded; its lease is left to expire
+        so a peer reports the task interrupted instead of re-running it.
+        """
         producers = list(self._running_agents.values())
         if producers:
-            await asyncio.gather(*producers, return_exceptions=True)
+            _, pending = await asyncio.wait(
+                producers, timeout=self._drain_timeout_seconds
+            )
+            for producer_task in pending:
+                producer_task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        # The SDK finishes a served turn in background tasks that still close
+        # relay streams and release leases through Redis. The caller closes the
+        # client next, so land them first; a second pass catches the ones a
+        # cleanup task spawned while the first pass was running.
+        for _ in range(2):
+            if not self._background_tasks:
+                break
+            await asyncio.gather(*list(self._background_tasks), return_exceptions=True)
         if self._control_task is not None:
             self._control_task.cancel()
             await asyncio.gather(self._control_task, return_exceptions=True)
@@ -163,7 +187,7 @@ class RedisRequestHandler(DefaultRequestHandler):
                 task = task_manager.update_with_message(params.message, task)
             elif params.message.task_id:
                 raise ServerError(
-                    error=InvalidParamsError(
+                    error=TaskNotFoundError(
                         message=(
                             f"Task {params.message.task_id} was specified but "
                             "does not exist"
@@ -281,7 +305,10 @@ class RedisRequestHandler(DefaultRequestHandler):
             if renewal is not None:
                 renewal.cancel()
                 await asyncio.gather(renewal, return_exceptions=True)
-            if lease is not None and not self._closing:
+            # A cancelled producer keeps its lease: the task is still recorded
+            # active, and letting the lease expire is what makes a peer report
+            # it interrupted instead of silently re-executing its side effects.
+            if lease is not None and not producer_task.cancelled():
                 await self.task_store.release_execution(lease)
 
     async def on_cancel_task(
@@ -290,7 +317,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         """Cancel locally or route to the active task's owning replica."""
         task = await self.task_store.get(params.id, context)
         if task is None:
-            raise ServerError(error=InvalidParamsError(message="Task not found"))
+            raise ServerError(error=TaskNotFoundError())
         if task.status.state in _TERMINAL_STATES:
             raise ServerError(
                 error=TaskNotCancelableError(
@@ -327,7 +354,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         """Relay an active owner's future events to any replica."""
         task = await self.task_store.get(params.id, context)
         if task is None:
-            raise ServerError(error=InvalidParamsError(message="Task not found"))
+            raise ServerError(error=TaskNotFoundError())
         if task.status.state in _TERMINAL_STATES:
             raise ServerError(
                 error=InvalidParamsError(
@@ -337,6 +364,10 @@ class RedisRequestHandler(DefaultRequestHandler):
                     )
                 )
             )
+        # The SDK requires a live queue here; the shared relay's equivalent is
+        # a live owner, without which there is nothing left to stream.
+        if not await self.task_store.has_live_owner(params.id):
+            raise ServerError(error=TaskNotFoundError())
         async for event in self.task_store.subscribe_events(params.id):
             yield event
 
@@ -351,7 +382,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         try:
             task = await self.task_store.get(task_id, cancel_context)
             if task is None:
-                raise ServerError(error=InvalidParamsError(message="Task not found"))
+                raise ServerError(error=TaskNotFoundError())
             queue = RedisRelayEventQueue(task_id, self.task_store)
             await self.agent_executor.cancel(
                 RequestContext(
