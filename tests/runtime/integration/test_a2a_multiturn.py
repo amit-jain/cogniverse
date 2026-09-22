@@ -531,6 +531,35 @@ class TestA2ASharedProcessIdentity:
         assert owner_task == peer_task
         assert peer_task["status"]["state"] == "canceled"
 
+    def test_peer_cancels_an_idle_task_that_no_replica_owns(self, a2a_process_cluster):
+        """The commonest cancellable state has no owner at all.
+
+        A completed turn leaves the task paused in input_required, which is
+        not an active state, so its execution lease is already released. The
+        stock handler cancels any non-terminal task and this one must too,
+        from either replica.
+        """
+        ports, _, _, _ = a2a_process_cluster
+        context_id = f"context-{uuid.uuid4().hex}"
+        created = _process_send(
+            ports[0],
+            text="idle-turn",
+            message_id="user-idle",
+            context_id=context_id,
+        )["result"]
+        task_id = created["id"]
+        assert created["status"]["state"] == "input-required"
+
+        canceled = _process_rpc(
+            ports[1], "tasks/cancel", {"id": task_id}, "peer-cancel-idle"
+        )["result"]
+        owner_view = _process_rpc(
+            ports[0], "tasks/get", {"id": task_id}, "owner-get-idle-cancel"
+        )["result"]
+
+        assert canceled["status"]["state"] == "canceled"
+        assert owner_view == canceled
+
     def test_owner_loss_interrupts_the_task_without_re_executing_it(
         self, a2a_process_cluster
     ):

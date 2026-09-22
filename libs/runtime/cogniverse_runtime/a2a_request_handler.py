@@ -327,20 +327,18 @@ class RedisRequestHandler(DefaultRequestHandler):
                 )
             )
         lease = await self.task_store.get_execution_lease(params.id)
-        if lease is None:
-            raise ServerError(
-                error=TaskNotCancelableError(
-                    message=f"Task {params.id} has no active owner"
-                )
-            )
-        if lease.expires_at_ms <= int(time.time() * 1000):
+        if lease is not None and lease.expires_at_ms <= int(time.time() * 1000):
             await self.task_store.mark_owner_lost(params.id)
             raise ServerError(
                 error=TaskNotCancelableError(
                     message=f"Task {params.id} owner expired; task is interrupted"
                 )
             )
-        if lease.replica_id == self._replica_id:
+        # No lease means nothing is executing — an idle task paused in
+        # input_required, which is what a completed turn leaves behind and the
+        # commonest thing a client cancels. The stock handler cancels any
+        # non-terminal task, so cancel it here rather than refusing.
+        if lease is None or lease.replica_id == self._replica_id:
             return await self._cancel_owned(params.id)
         return await self.task_store.request_cancel(
             owner_replica_id=lease.replica_id,
