@@ -8,9 +8,14 @@ tests/backends/integration/test_schema_deployment_serialization.py.
 
 from __future__ import annotations
 
+import gc
 import logging
+import socket
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -333,3 +338,60 @@ def test_ensure_owned_renews_an_ageing_lease_without_a_store_write_when_fresh():
     time.sleep(0.6)
     holder.ensure_owned()
     assert writes_after_acquire == 2
+
+
+def test_an_abandoned_holder_in_this_process_is_taken_over_at_once():
+    """A holder whose owner is gone without a release must not outlast it.
+
+    The record cannot express "the thread that took this died"; the holding
+    process can, because it knows which of its own holders are still live.
+    Without this the record blocks every later deploy for its whole hold
+    time, which no waiter waiting less than that can ever wait out.
+    """
+    store = InMemoryConfigStore()
+    abandoned = _lease(store, wait_seconds=0)
+    abandoned.acquire()
+    abandoned_holder = abandoned.holder
+    assert _lease_record(store).config_value["holder"] == abandoned_holder
+
+    del abandoned
+    gc.collect()
+
+    successor = _lease(store, wait_seconds=0)
+    assert successor.acquire() is successor
+    assert _lease_record(store).config_value["holder"] == successor.holder
+
+
+def test_a_holder_whose_process_was_killed_is_taken_over_at_once():
+    """A live holder on this host is refused; the same holder, killed, is not."""
+    store = InMemoryConfigStore()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    dead = _lease(store, wait_seconds=0)
+    dead.holder = f"{socket.gethostname()}:{child.pid}:{uuid.uuid4().hex}"
+    dead.acquire()
+
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0).acquire()
+
+    child.kill()
+    assert child.wait(timeout=10) is not None
+
+    successor = _lease(store, wait_seconds=0)
+    assert successor.acquire() is successor
+    assert _lease_record(store).config_value["holder"] == successor.holder
+
+
+def test_a_holder_on_another_host_is_not_taken_over_by_a_pid_probe():
+    """This node cannot observe another node's processes, so the pid in a
+    foreign holder is meaningless here; only the stall watch may take it."""
+    store = InMemoryConfigStore()
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait(timeout=10)
+
+    foreign = _lease(store, wait_seconds=0)
+    foreign.holder = f"not-{socket.gethostname()}:{child.pid}:{uuid.uuid4().hex}"
+    foreign.acquire()
+
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0).acquire()
+    assert _lease_record(store).config_value["holder"] == foreign.holder
