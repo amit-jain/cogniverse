@@ -48,7 +48,9 @@ def _shipped_backend_section() -> dict:
     return json.loads((root / "configs/config.json").read_text())["backend"]
 
 
-async def _memory_search_schemas(monkeypatch, http_port: int) -> set[str]:
+async def _memory_search_schemas(
+    monkeypatch, http_port: int, redis_url: str
+) -> set[str]:
     """Run the real lifespan, then search this tenant's cached backend.
 
     The backend is created the way a search or ingestion request creates it,
@@ -56,6 +58,7 @@ async def _memory_search_schemas(monkeypatch, http_port: int) -> set[str]:
     memory profile, and why the memory search must resolve one through the
     config manager.
     """
+    monkeypatch.setenv("REDIS_URL", redis_url)
     monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
     monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
     import dspy
@@ -102,7 +105,7 @@ async def _memory_search_schemas(monkeypatch, http_port: int) -> set[str]:
 
 @pytest.mark.asyncio
 async def test_memory_search_resolves_the_profile_a_store_already_holds(
-    monkeypatch, vespa_instance
+    monkeypatch, vespa_instance, workflow_state_redis_url
 ):
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_core.memory.manager import MEMORY_BASE_SCHEMA, affirm_memory_profile
@@ -122,14 +125,14 @@ async def test_memory_search_resolves_the_profile_a_store_already_holds(
         in config_manager.get_backend_config(SYSTEM_TENANT_ID).profiles
     )
 
-    assert await _memory_search_schemas(monkeypatch, vespa_instance["http_port"]) == {
-        MEMORY_SCHEMA
-    }
+    assert await _memory_search_schemas(
+        monkeypatch, vespa_instance["http_port"], workflow_state_redis_url
+    ) == {MEMORY_SCHEMA}
 
 
 @pytest.mark.asyncio
 async def test_memory_search_resolves_the_profile_on_a_store_without_it(
-    monkeypatch, vespa_instance
+    monkeypatch, vespa_instance, workflow_state_redis_url
 ):
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_core.memory.manager import MEMORY_BASE_SCHEMA
@@ -149,9 +152,9 @@ async def test_memory_search_resolves_the_profile_on_a_store_without_it(
         not in config_manager.get_backend_config(SYSTEM_TENANT_ID).profiles
     )
 
-    assert await _memory_search_schemas(monkeypatch, vespa_instance["http_port"]) == {
-        MEMORY_SCHEMA
-    }
+    assert await _memory_search_schemas(
+        monkeypatch, vespa_instance["http_port"], workflow_state_redis_url
+    ) == {MEMORY_SCHEMA}
 
 
 @pytest.mark.parametrize("shipped", [False, True], ids=["stored-only", "shipped"])

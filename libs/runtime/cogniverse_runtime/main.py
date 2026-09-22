@@ -31,7 +31,9 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Mapping
 
 from fastapi import FastAPI, Request
@@ -87,6 +89,108 @@ from cogniverse_synthetic.api import router as synthetic_router
 logger = logging.getLogger(__name__)
 
 _RUNTIME_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+@dataclass
+class _SharedA2AProtocol:
+    app: Any
+    handler: Any
+    task_store: Any
+    skill_ids: tuple[str, ...]
+
+    async def close(self) -> None:
+        """Drain the request handler before closing its owned Redis client."""
+        try:
+            await self.handler.close()
+        finally:
+            await self.task_store.close()
+
+
+async def _build_shared_a2a_protocol(
+    *,
+    agent_registry: Any,
+    dispatcher: Any,
+    redis_url: str,
+    replica_id: str,
+    max_tasks: int,
+    lease_seconds: float,
+    cancel_timeout_seconds: float,
+    drain_timeout_seconds: float,
+) -> _SharedA2AProtocol:
+    """Validate Redis and construct the replica-safe A2A protocol app."""
+    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+
+    from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+    from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
+    from cogniverse_runtime.a2a_task_store import RedisTaskStore
+
+    task_store = await RedisTaskStore.from_url(
+        redis_url,
+        max_tasks=max_tasks,
+        enforce_leases=True,
+    )
+    handler: RedisRequestHandler | None = None
+    try:
+        skill_ids = tuple(
+            name
+            for name in agent_registry.list_agents()
+            if agent_registry.get_agent(name) is not None
+        )
+        skills = [
+            AgentSkill(
+                id=name,
+                name=name,
+                description=(
+                    f"Agent: {name} "
+                    f"({', '.join(agent_registry.get_agent(name).capabilities)})"
+                ),
+                tags=list(agent_registry.get_agent(name).capabilities),
+            )
+            for name in skill_ids
+        ]
+        card = AgentCard(
+            name="Cogniverse Runtime",
+            description="Multi-agent AI platform for content intelligence",
+            url="http://localhost:8000/a2a",
+            version="1.0.0",
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(streaming=True),
+            skills=skills
+            or [
+                AgentSkill(
+                    id="default",
+                    name="default",
+                    description="Default agent skill",
+                    tags=["general"],
+                )
+            ],
+        )
+        handler = RedisRequestHandler(
+            agent_executor=CogniverseAgentExecutor(dispatcher=dispatcher),
+            task_store=task_store,
+            replica_id=replica_id,
+            lease_seconds=lease_seconds,
+            cancel_timeout_seconds=cancel_timeout_seconds,
+            drain_timeout_seconds=drain_timeout_seconds,
+        )
+        await handler.start()
+        protocol_app = A2AStarletteApplication(
+            agent_card=card,
+            http_handler=handler,
+        ).build()
+        return _SharedA2AProtocol(
+            app=protocol_app,
+            handler=handler,
+            task_store=task_store,
+            skill_ids=skill_ids,
+        )
+    except BaseException:
+        if handler is not None:
+            await handler.close()
+        await task_store.close()
+        raise
 
 
 def _configure_runtime_logging() -> None:
@@ -834,69 +938,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config_loader = get_config_loader()
     config_loader.load_backends()
     config_loader.load_agents(agent_registry=agent_registry)
+    dispatcher = agents.get_dispatcher()
 
     logger.info(
         f"Loaded {len(backend_registry.list_backends())} backends, "
         f"{len(agent_registry.list_agents())} agents"
     )
-
-    # 5b. Mount A2A protocol server (JSON-RPC 2.0). Built AFTER load_agents so
-    # the card advertises the real agents (search_agent, ...) instead of the
-    # 'default' fallback the empty registry produced when this ran first.
-    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-    from a2a.server.request_handlers import DefaultRequestHandler
-    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-
-    from cogniverse_runtime.a2a_executor import (
-        BoundedInMemoryTaskStore,
-        CogniverseAgentExecutor,
-    )
-
-    dispatcher = agents.get_dispatcher()
-    executor = CogniverseAgentExecutor(dispatcher=dispatcher)
-
-    skills = [
-        AgentSkill(
-            id=name,
-            name=name,
-            description=f"Agent: {name} ({', '.join(agent_registry.get_agent(name).capabilities)})",
-            tags=list(agent_registry.get_agent(name).capabilities),
-        )
-        for name in agent_registry.list_agents()
-        if agent_registry.get_agent(name) is not None
-    ]
-
-    agent_card = AgentCard(
-        name="Cogniverse Runtime",
-        description="Multi-agent AI platform for content intelligence",
-        url="http://localhost:8000/a2a",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=skills
-        or [
-            AgentSkill(
-                id="default",
-                name="default",
-                description="Default agent skill",
-                tags=["general"],
-            )
-        ],
-    )
-
-    a2a_handler = DefaultRequestHandler(
-        agent_executor=executor,
-        task_store=BoundedInMemoryTaskStore(
-            max_tasks=int(os.environ.get("A2A_MAX_TASKS", "10000"))
-        ),
-    )
-    a2a_server = A2AStarletteApplication(
-        agent_card=agent_card,
-        http_handler=a2a_handler,
-    )
-    app.mount("/a2a", a2a_server.build())
-    logger.info(f"A2A server mounted at /a2a with {len(skills)} skills")
 
     # 7. Create system backend and deploy metadata schemas
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
@@ -1400,6 +1447,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
+    redis_url = system_config.redis_url.strip()
+    if not redis_url:
+        raise RuntimeError("SystemConfig.redis_url is required for A2A task storage")
+    replica_id = (
+        f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    )
+    a2a_protocol = await _build_shared_a2a_protocol(
+        agent_registry=agent_registry,
+        dispatcher=dispatcher,
+        redis_url=redis_url,
+        replica_id=replica_id,
+        max_tasks=int(os.environ.get("A2A_MAX_TASKS", "10000")),
+        lease_seconds=float(os.environ.get("A2A_TASK_LEASE_SECONDS", "30")),
+        cancel_timeout_seconds=float(
+            os.environ.get("A2A_CANCEL_TIMEOUT_SECONDS", "10")
+        ),
+        drain_timeout_seconds=float(os.environ.get("A2A_DRAIN_TIMEOUT_SECONDS", "30")),
+    )
+    app.mount("/a2a", a2a_protocol.app)
+    app.state.a2a_protocol = a2a_protocol
+    logger.info(
+        "A2A server mounted at /a2a with %d skills on replica %s",
+        len(a2a_protocol.skill_ids),
+        replica_id,
+    )
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
@@ -1415,6 +1488,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Conversation turns persist off the reply path; land the in-flight ones
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
+    await a2a_protocol.close()
     try:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):

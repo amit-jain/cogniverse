@@ -16,8 +16,11 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_a2a_card_advertises_loaded_agents(monkeypatch):
+async def test_a2a_card_advertises_loaded_agents(
+    monkeypatch, workflow_state_redis_url
+):
     # Keep the lifespan light: no sandbox connect, no memory lifecycle scan.
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
     monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
     # dspy.configure is once-per-task; stub so a re-run in the module is safe.

@@ -26,8 +26,10 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def lifespan_env(monkeypatch):
+def lifespan_env(monkeypatch, workflow_state_redis_url):
     """Quiet noisy startup paths so the lifespan boots cleanly under pytest."""
+    # The lifespan refuses to serve A2A without a reachable shared task store.
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "optional")
     monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
     monkeypatch.setenv("COGNIVERSE_SANDBOX_PROBE_INTERVAL", "1")

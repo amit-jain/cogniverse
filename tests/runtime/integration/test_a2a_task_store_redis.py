@@ -9,10 +9,18 @@ import socket
 import subprocess
 import time
 import uuid
+from types import SimpleNamespace
 
+import httpx
 import pytest
 import redis.asyncio as aioredis
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.events import EventQueue
 from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
     Artifact,
     DataPart,
     FilePart,
@@ -23,9 +31,11 @@ from a2a.types import (
     Task,
     TaskState,
     TaskStatus,
+    TaskStatusUpdateEvent,
     TextPart,
 )
 
+from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
 from cogniverse_runtime.a2a_task_store import (
     A2ATaskCapacityError,
     A2ATaskConflictError,
@@ -33,6 +43,7 @@ from cogniverse_runtime.a2a_task_store import (
     A2ATaskStoreError,
     RedisTaskStore,
 )
+from cogniverse_runtime.main import _build_shared_a2a_protocol
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -241,9 +252,15 @@ async def test_redis_outage_is_an_explicit_store_error():
     )
     store = RedisTaskStore(client, max_tasks=2, key_prefix=f"test:{uuid.uuid4().hex}")
     try:
-        with pytest.raises(A2ATaskStoreError, match="get task outage-task"):
+        with pytest.raises(
+            A2ATaskStoreError,
+            match="shared A2A task store unavailable: get task outage-task",
+        ):
             await store.get("outage-task")
-        with pytest.raises(A2ATaskStoreError, match="save task outage-task"):
+        with pytest.raises(
+            A2ATaskStoreError,
+            match="shared A2A task store unavailable: save task outage-task",
+        ):
             await store.save(_task("outage-task"))
     finally:
         await client.aclose()
@@ -366,4 +383,205 @@ async def test_expired_owner_is_marked_interrupted_without_reexecution(redis_cli
     assert actual.status.state == TaskState.failed
     assert actual.status.message.parts[0].root.text == (
         "Execution interrupted because its owning runtime stopped before completion."
+    )
+
+
+async def test_runtime_protocol_factory_owns_shared_store_and_handler(redis_url):
+    agent = SimpleNamespace(capabilities=["search", "video_search"])
+
+    class Registry:
+        def list_agents(self):
+            return ["search_agent"]
+
+        def get_agent(self, name):
+            return agent if name == "search_agent" else None
+
+    protocol = await _build_shared_a2a_protocol(
+        agent_registry=Registry(),
+        dispatcher=SimpleNamespace(),
+        redis_url=redis_url,
+        replica_id="factory-replica",
+        max_tasks=7,
+        lease_seconds=1,
+        cancel_timeout_seconds=2,
+        drain_timeout_seconds=1,
+    )
+    try:
+        assert protocol.skill_ids == ("search_agent",)
+        assert protocol.handler.task_store is protocol.task_store
+        assert [route.path for route in protocol.app.routes] == [
+            "/",
+            "/.well-known/agent-card.json",
+            "/.well-known/agent.json",
+        ]
+    finally:
+        await protocol.close()
+
+
+async def test_runtime_protocol_factory_validates_redis_before_registry_access():
+    class Registry:
+        def list_agents(self):
+            raise AssertionError("registry accessed before Redis validation")
+
+    closed_port = _free_port()
+    with pytest.raises(
+        A2ATaskStoreError, match="shared A2A task store unavailable: connect to"
+    ):
+        await _build_shared_a2a_protocol(
+            agent_registry=Registry(),
+            dispatcher=SimpleNamespace(),
+            redis_url=f"redis://127.0.0.1:{closed_port}/0",
+            replica_id="factory-replica",
+            max_tasks=7,
+            lease_seconds=1,
+            cancel_timeout_seconds=2,
+            drain_timeout_seconds=1,
+        )
+
+
+async def test_runtime_protocol_close_cancels_and_drains_active_execution(redis_url):
+    canceled = asyncio.Event()
+
+    class BlockingExecutor(AgentExecutor):
+        async def execute(
+            self, context: RequestContext, event_queue: EventQueue
+        ) -> None:
+            await event_queue.enqueue_event(
+                TaskStatusUpdateEvent(
+                    task_id=context.task_id,
+                    context_id=context.context_id,
+                    final=False,
+                    status=TaskStatus(state=TaskState.working),
+                )
+            )
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                canceled.set()
+                raise
+
+        async def cancel(
+            self, context: RequestContext, event_queue: EventQueue
+        ) -> None:
+            raise AssertionError("shutdown must cancel the active producer task")
+
+    class Registry:
+        def list_agents(self):
+            return []
+
+        def get_agent(self, name):
+            return None
+
+    protocol = await _build_shared_a2a_protocol(
+        agent_registry=Registry(),
+        dispatcher=SimpleNamespace(),
+        redis_url=redis_url,
+        replica_id="shutdown-replica",
+        max_tasks=7,
+        lease_seconds=0.2,
+        cancel_timeout_seconds=1,
+        drain_timeout_seconds=0.2,
+    )
+    protocol.handler.agent_executor = BlockingExecutor()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=protocol.app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": "shutdown-start",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": "shutdown-message",
+                        "contextId": "shutdown-context",
+                        "parts": [{"kind": "text", "text": "block"}],
+                    },
+                    "configuration": {
+                        "acceptedOutputModes": ["text"],
+                        "blocking": False,
+                    },
+                    "metadata": {
+                        "agent_name": "search_agent",
+                        "tenant_id": "test:shutdown",
+                    },
+                },
+            },
+        )
+    assert response.json()["result"]["status"]["state"] == "working"
+
+    await asyncio.wait_for(protocol.close(), timeout=1)
+
+    assert canceled.is_set() is True
+
+
+async def test_served_store_outage_is_a_dependency_error_not_task_not_found():
+    """A caller must be able to tell a broken store from a missing task.
+
+    ``tasks/get`` is the method a peer uses to find a task another replica
+    created, so a Redis outage answered as ``-32001 Task not found`` would
+    read exactly like the cross-replica bug this store exists to fix.
+    """
+
+    class UnusedExecutor(AgentExecutor):
+        async def execute(self, context, event_queue) -> None:
+            raise AssertionError("no execution is expected on a broken store")
+
+        async def cancel(self, context, event_queue) -> None:
+            raise AssertionError("no cancellation is expected on a broken store")
+
+    closed_port = _free_port()
+    client = aioredis.from_url(
+        f"redis://127.0.0.1:{closed_port}/0",
+        decode_responses=True,
+        socket_connect_timeout=0.2,
+        socket_timeout=0.2,
+    )
+    store = RedisTaskStore(client, max_tasks=2, key_prefix=f"test:{uuid.uuid4().hex}")
+    handler = RedisRequestHandler(
+        agent_executor=UnusedExecutor(),
+        task_store=store,
+        replica_id="outage-replica",
+    )
+    card = AgentCard(
+        name="Cogniverse Runtime",
+        description="store outage test",
+        url="http://127.0.0.1:1/",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=True),
+        skills=[
+            AgentSkill(
+                id="search_agent",
+                name="search_agent",
+                description="store outage test",
+                tags=["search"],
+            )
+        ],
+    )
+    app = A2AStarletteApplication(agent_card=card, http_handler=handler).build()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as http_client:
+            response = await http_client.post(
+                "/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "outage-get",
+                    "method": "tasks/get",
+                    "params": {"id": "outage-task"},
+                },
+            )
+    finally:
+        await client.aclose()
+
+    error = response.json()["error"]
+    assert error["code"] == -32603, error
+    assert error["message"] == (
+        "shared A2A task store unavailable: get task outage-task"
     )
