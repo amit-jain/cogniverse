@@ -827,10 +827,14 @@ def test_stalled_holder_is_fenced_after_a_peer_takes_the_expired_lease(
     canonical_tenant = mm._storage_tenant_id
     peer = _peer_manager(memory_env, canonical_tenant)
 
-    import cogniverse_core.registries.schema_deploy_lease as lease_module
+    # The provenance write lease carries its own sizing rather than the
+    # deploy lease's defaults. Scaled down here, preserving the contract the
+    # real values keep: the wait outlasts the hold, so a stalled holder is
+    # always waitable-out within one wait.
+    from cogniverse_core.memory import manager as manager_module
 
-    monkeypatch.setattr(lease_module, "DEFAULT_LEASE_SECONDS", 5.0)
-    monkeypatch.setattr(lease_module, "DEFAULT_WAIT_SECONDS", 30.0)
+    monkeypatch.setattr(manager_module, "PROVENANCE_LEASE_SECONDS", 5.0)
+    monkeypatch.setattr(manager_module, "PROVENANCE_WAIT_SECONDS", 30.0)
 
     entered = threading.Event()
     release = threading.Event()
