@@ -37,11 +37,15 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 _SOURCE_URL = "s3://bucket/acme/v.mp4"
 _TENANT_DEFAULT_PROFILE = "tenant_video_chunked"
 _EXPLICIT_PROFILE = "explicit_video_frames"
+_EXPLICIT_DOCUMENT_PROFILE = "explicit_document_pages"
+_EXPLICIT_AUDIO_PROFILE = "explicit_audio_segments"
+_EXPLICIT_IMAGE_PROFILE = "explicit_image_frames"
+_STRATEGYLESS_DOCUMENT_PROFILE = "explicit_document_no_strategies"
 
 
-def _profile_config() -> dict:
+def _profile_config(profile_type: str = "video") -> dict:
     return {
-        "type": "video",
+        "type": profile_type,
         "strategies": {
             "segmentation": {"class": "ChunkSegmentationStrategy", "params": {}},
         },
@@ -111,6 +115,13 @@ def upload_client(monkeypatch):
                     "profiles": {
                         _TENANT_DEFAULT_PROFILE: _profile_config(),
                         _EXPLICIT_PROFILE: _profile_config(),
+                        _EXPLICIT_DOCUMENT_PROFILE: _profile_config("document"),
+                        _EXPLICIT_AUDIO_PROFILE: _profile_config("audio"),
+                        _EXPLICIT_IMAGE_PROFILE: _profile_config("image"),
+                        _STRATEGYLESS_DOCUMENT_PROFILE: {
+                            "type": "document",
+                            "strategies": {},
+                        },
                     },
                     "default_profiles": {
                         "video": {
@@ -178,13 +189,28 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert captured["profile"] == _TENANT_DEFAULT_PROFILE
 
 
-def test_explicit_valid_profile_overrides_tenant_default(upload_client):
+@pytest.mark.parametrize(
+    "profile",
+    [
+        _EXPLICIT_PROFILE,
+        _EXPLICIT_DOCUMENT_PROFILE,
+        _EXPLICIT_AUDIO_PROFILE,
+        _EXPLICIT_IMAGE_PROFILE,
+    ],
+)
+def test_explicit_valid_profile_overrides_tenant_default(upload_client, profile):
+    """An explicitly named profile wins over the tenant default — in any
+    modality. The caller picked the profile deliberately, so document, audio
+    and image profiles are as valid a choice as video; only the *default*
+    branch is video-specific, because resolve_default_profile returns the
+    tenant's default video profile. A video-only assertion here is what let a
+    cross-modality 422 regression reach the e2e gate."""
     client, captured, _ = upload_client
 
-    resp = _post(client, data={"profile": _EXPLICIT_PROFILE})
+    resp = _post(client, data={"profile": profile})
 
     assert resp.status_code == 200, resp.text
-    assert captured["profile"] == _EXPLICIT_PROFILE
+    assert captured["profile"] == profile
 
 
 def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
@@ -389,16 +415,22 @@ def test_redis_outage_during_enqueue_returns_503(upload_client, monkeypatch):
     assert "queue" in resp.json()["detail"]["message"]
 
 
-@pytest.mark.parametrize("profile", ["   ", "missing-video-profile"])
+@pytest.mark.parametrize(
+    "profile",
+    ["   ", "missing-video-profile", _STRATEGYLESS_DOCUMENT_PROFILE],
+)
 def test_invalid_explicit_profile_rejected_before_side_effects(upload_client, profile):
-    """An invalid explicit profile is rejected before bytes or jobs are written."""
+    """An invalid explicit profile is rejected before bytes or jobs are written.
+
+    Invalid means blank, absent from the catalog, or configured with no usable
+    strategies — in any modality. It does not mean "not video"."""
     client, captured, state = upload_client
 
     resp = _post(client, data={"profile": profile})
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"] == (
-        "profile must name a configured video profile with usable strategies"
+        "profile must name a configured profile with usable strategies"
     )
     assert state["uploads"] == []
     assert state["enqueued"] == []

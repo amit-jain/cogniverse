@@ -1213,7 +1213,7 @@ async def test_profile_failures_leave_real_minio_and_redis_unchanged(
 
     assert invalid.status_code == 422
     assert invalid.json() == {
-        "detail": "profile must name a configured video profile with usable strategies"
+        "detail": "profile must name a configured profile with usable strategies"
     }
     assert object_inventory() == objects_before
     assert await redis.xrange(queue.QUEUE_STREAM, min="-", max="+") == queue_before

@@ -116,15 +116,19 @@ def _resolve_upload_profile(
         isinstance(profile_name, str)
         and bool(profile_name.strip())
         and isinstance(profile_config, dict)
-        and profile_config.get("type") == "video"
         and isinstance(profile_config.get("strategies"), dict)
         and bool(profile_config["strategies"])
     )
-    if not usable:
-        if explicit:
+    if explicit:
+        # The caller named this profile, so the modality is their choice: a
+        # document, audio or image profile is as valid a target as a video one.
+        if not usable:
             raise _InvalidUploadProfile(
-                "profile must name a configured video profile with usable strategies"
+                "profile must name a configured profile with usable strategies"
             )
+    elif not (usable and profile_config.get("type") == "video"):
+        # resolve_default_profile returns the tenant's default *video* profile,
+        # so requiring video content here is what the selection means.
         raise _UploadProfileConfigurationError(
             f"tenant {tenant_id!r} default video profile {profile_name!r} "
             "is missing or has no usable strategies"
