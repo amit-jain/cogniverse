@@ -229,6 +229,18 @@ pip install cogniverse-agents
 - `spacy==3.8.14`
 - `langextract==1.2.1`
 
+**spaCy pipeline (installed separately):** relationship analysis loads
+`en_core_web_sm`, which is not a package dependency. Without it,
+`SpaCyDependencyAnalyzer` raises `SpaCyModelUnavailableError`. Install the
+pinned wheel before enabling the feature:
+
+```bash
+pip install "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85"
+```
+
+In the workspace and the runtime/dashboard images it comes from the root
+`runtime-models` dependency group.
+
 **External (Tracking):**
 - `mlflow==3.11.1`
 
