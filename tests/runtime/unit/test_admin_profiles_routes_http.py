@@ -14,6 +14,7 @@ to the store, including the canonical tenant id used for the config lookup.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -23,9 +24,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -599,3 +603,115 @@ async def test_create_profile_adds_profile_without_deploy(env):
     # deploy_schema false -> the Vespa deploy primitive was never invoked.
     assert env.backend.deploy_calls == []
     assert env.validator.calls["validate_profile"]["is_update"] is False
+
+
+class _BackendReadRecordingStore(InMemoryConfigStore):
+    """In-memory store recording the tenant of every backend-config read."""
+
+    def __init__(self):
+        super().__init__()
+        self.backend_reads: list[str] = []
+
+    def get_config(self, tenant_id, scope, service, config_key, version=None):
+        if config_key == "backend_config":
+            self.backend_reads.append(tenant_id)
+        return super().get_config(tenant_id, scope, service, config_key, version)
+
+
+@pytest.fixture
+def merged(env, tmp_path, monkeypatch):
+    """``env`` with a real ConfigManager over an in-memory store and a shipped
+    catalog holding ``shipped_video`` and a ``video_prism`` of its own."""
+    catalog = {
+        "shipped_video": _profile(
+            "shipped_video", "shipped_video_mv", "colpali-v1.2"
+        ).to_dict(),
+        "video_prism": _profile(
+            "video_prism", "catalog_prism_mv", "xclip-lvt"
+        ).to_dict(),
+    }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"backend": {"profiles": catalog}}))
+    monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+    store = _BackendReadRecordingStore()
+    cm = ConfigManager(store=store)
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: cm
+    return SimpleNamespace(env=env, cm=cm, store=store)
+
+
+async def _deploy(app, profile_name: str, tenant_id: str):
+    return await _post(
+        app,
+        f"/admin/profiles/{profile_name}/deploy",
+        json={"tenant_id": tenant_id, "force": False},
+    )
+
+
+@pytest.mark.asyncio
+async def test_deploy_resolves_a_profile_the_tenant_inherits_from_the_catalog(
+    merged,
+):
+    resp = await _deploy(merged.env.app, "shipped_video", "acme")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["schema_name"] == "shipped_video_mv"
+    assert merged.env.backend.deploy_calls == [
+        {"tenant_id": "acme", "base_schema_name": "shipped_video_mv", "force": False}
+    ]
+    assert set(merged.store.backend_reads) == {"acme:acme", SYSTEM_TENANT_ID}
+
+
+@pytest.mark.asyncio
+async def test_deploy_of_a_profile_in_neither_source_is_404_without_a_deploy(
+    merged,
+):
+    resp = await _deploy(merged.env.app, "no_such_profile", "acme")
+
+    assert resp.status_code == 404
+    assert resp.json() == {
+        "detail": "Profile 'no_such_profile' not found for tenant 'acme'"
+    }
+    assert merged.env.backend.deploy_calls == []
+    assert merged.env.registry.calls == []
+    assert set(merged.store.backend_reads) == {"acme:acme", SYSTEM_TENANT_ID}
+
+
+@pytest.mark.asyncio
+async def test_deploy_prefers_the_tenant_stored_profile_over_the_catalogs(merged):
+    merged.cm.add_backend_profile(
+        _profile("video_prism", "tenant_prism_mv", "xclip-lvt"), tenant_id="acme"
+    )
+    merged.store.backend_reads.clear()
+
+    resp = await _deploy(merged.env.app, "video_prism", "acme")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["schema_name"] == "tenant_prism_mv"
+    assert merged.env.backend.deploy_calls == [
+        {"tenant_id": "acme", "base_schema_name": "tenant_prism_mv", "force": False}
+    ]
+    assert merged.store.backend_reads == ["acme:acme"]
+
+
+@pytest.mark.asyncio
+async def test_deploy_never_resolves_a_profile_another_tenant_stored(merged):
+    merged.cm.add_backend_profile(
+        _profile("beta_only", "beta_only_mv", "xclip-lvt"), tenant_id="beta"
+    )
+    merged.store.backend_reads.clear()
+
+    refused = await _deploy(merged.env.app, "beta_only", "acme")
+
+    assert refused.status_code == 404
+    assert refused.json() == {
+        "detail": "Profile 'beta_only' not found for tenant 'acme'"
+    }
+    assert merged.env.backend.deploy_calls == []
+    assert set(merged.store.backend_reads) == {"acme:acme", SYSTEM_TENANT_ID}
+
+    owned = await _deploy(merged.env.app, "beta_only", "beta")
+
+    assert owned.status_code == 200, owned.text
+    assert merged.env.backend.deploy_calls == [
+        {"tenant_id": "beta", "base_schema_name": "beta_only_mv", "force": False}
+    ]
