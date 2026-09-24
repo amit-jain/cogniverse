@@ -29,6 +29,12 @@ from redis.exceptions import RedisError, ResponseError
 _UNAVAILABLE = "shared A2A task store unavailable"
 # How long a closed or orphaned event relay stays readable for late consumers.
 _EVENT_STREAM_DRAIN_SECONDS = 60
+# Approximate number of events one task's relay stream retains.
+_RELAY_MAXLEN = 1000
+# How long an uncollected cancel acknowledgement stays in Redis.
+_CANCEL_REPLY_TTL_SECONDS = 30
+# Floor on the expiry of a replica's cancel command list.
+_CANCEL_CONTROL_MIN_TTL_SECONDS = 30
 
 
 class A2ATaskStoreError(RuntimeError):
@@ -89,34 +95,70 @@ local active = ARGV[3]
 local max_tasks = tonumber(ARGV[4])
 local enforce_lease = ARGV[5]
 local generation = tonumber(ARGV[6])
+local events_prefix = ARGV[7]
+local state = ARGV[8]
+local terminal = ARGV[9]
 -- Fence on the generation, not on the lease still being present: the SDK can
 -- persist an execution's last event after its lease was released, and that
 -- write is legitimate until some other owner takes the next generation.
+-- Every issued generation is recorded, so a missing record means the task
+-- was evicted or deleted and the writer is a straggler that must not
+-- re-create it.
 if enforce_lease == '1' then
-    local current = tonumber(redis.call('HGET', generations_key, task_id) or '0')
-    if generation < 1 or generation < current then
+    local current = tonumber(redis.call('HGET', generations_key, task_id))
+    if generation < 1 or not current or generation < current then
+        -- A superseded owner repeating the terminal state a newer owner
+        -- already stored cannot change anything: acknowledge, do not write.
+        if generation >= 1 and current and terminal == '1' then
+            local stored = redis.call('HGET', tasks_key, task_id)
+            if stored and cjson.decode(stored).status.state == state then
+                return {2, ''}
+            end
+        end
         return {-1, ''}
     end
 end
 local existed = redis.call('HEXISTS', tasks_key, task_id)
 local evicted = ''
+local now = redis.call('TIME')
+local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 
 if existed == 0 and redis.call('HLEN', tasks_key) >= max_tasks then
-    local victims = redis.call('ZRANGE', inactive_key, 0, 0)
-    if #victims == 0 then
-        return {0, ''}
+    -- The least recently used inactive task nobody holds a live lease on:
+    -- a continuation owns its task before it saves the next state, while
+    -- the record still reads inactive.
+    local offset = 0
+    while evicted == '' do
+        local candidates = redis.call('ZRANGE', inactive_key, offset, offset + 15)
+        if #candidates == 0 then
+            return {0, ''}
+        end
+        for _, candidate in ipairs(candidates) do
+            local raw_lease = redis.call('HGET', leases_key, candidate)
+            if not raw_lease
+                or tonumber(cjson.decode(raw_lease).expires_at_ms) <= now_ms then
+                evicted = candidate
+                break
+            end
+        end
+        offset = offset + #candidates
     end
-    evicted = victims[1]
     redis.call('HDEL', tasks_key, evicted)
     redis.call('ZREM', inactive_key, evicted)
     redis.call('SREM', active_key, evicted)
     redis.call('HDEL', leases_key, evicted)
     redis.call('HDEL', generations_key, evicted)
+    redis.call('DEL', events_prefix .. evicted)
 end
 
-local now = redis.call('TIME')
 local score = tonumber(now[1]) * 1000000 + tonumber(now[2])
 redis.call('HSET', tasks_key, task_id, payload)
+if existed == 0 then
+    -- Ownership of a task that did not exist yet lapses with its lease;
+    -- once the task exists its bookkeeping lives exactly as long as it does.
+    redis.call('HPERSIST', generations_key, 'FIELDS', 1, task_id)
+    redis.call('HPERSIST', leases_key, 'FIELDS', 1, task_id)
+end
 if active == '1' then
     redis.call('SADD', active_key, task_id)
     redis.call('ZREM', inactive_key, task_id)
@@ -151,6 +193,8 @@ _ACQUIRE_SCRIPT = """
 local leases_key = KEYS[1]
 local generations_key = KEYS[2]
 local active_key = KEYS[3]
+local tasks_key = KEYS[4]
+local sequence_key = KEYS[5]
 local task_id = ARGV[1]
 local replica_id = ARGV[2]
 local request_id = ARGV[3]
@@ -177,7 +221,8 @@ if raw_lease then
         }
     end
 end
-local generation = redis.call('HINCRBY', generations_key, task_id, 1)
+local generation = redis.call('INCR', sequence_key)
+redis.call('HSET', generations_key, task_id, generation)
 local expires_at_ms = now_ms + ttl_ms
 redis.call('HSET', leases_key, task_id, cjson.encode({
     replica_id = replica_id,
@@ -185,6 +230,10 @@ redis.call('HSET', leases_key, task_id, cjson.encode({
     generation = generation,
     expires_at_ms = expires_at_ms
 }))
+if redis.call('HEXISTS', tasks_key, task_id) == 0 then
+    redis.call('HPEXPIRE', generations_key, ttl_ms, 'FIELDS', 1, task_id)
+    redis.call('HPEXPIRE', leases_key, ttl_ms, 'FIELDS', 1, task_id)
+end
 return {
     'acquired',
     replica_id,
@@ -208,6 +257,10 @@ if lease.request_id ~= ARGV[2]
 end
 lease.expires_at_ms = now_ms + tonumber(ARGV[4])
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(lease))
+if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 0 then
+    redis.call('HPEXPIRE', KEYS[1], tonumber(ARGV[4]), 'FIELDS', 1, ARGV[1])
+    redis.call('HPEXPIRE', KEYS[3], tonumber(ARGV[4]), 'FIELDS', 1, ARGV[1])
+end
 return tostring(lease.expires_at_ms)
 """
 
@@ -237,7 +290,8 @@ if raw_lease then
         return {'lost', lease.replica_id, tostring(lease.generation), '0'}
     end
 end
-local generation = redis.call('HINCRBY', KEYS[2], ARGV[1], 1)
+local generation = redis.call('INCR', KEYS[4])
+redis.call('HSET', KEYS[2], ARGV[1], generation)
 local expires_at_ms = now_ms + tonumber(ARGV[4])
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({
     replica_id = ARGV[2],
@@ -245,32 +299,33 @@ redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({
     generation = generation,
     expires_at_ms = expires_at_ms
 }))
+if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 0 then
+    redis.call('HPEXPIRE', KEYS[2], tonumber(ARGV[4]), 'FIELDS', 1, ARGV[1])
+    redis.call('HPEXPIRE', KEYS[1], tonumber(ARGV[4]), 'FIELDS', 1, ARGV[1])
+end
 return {'acquired', ARGV[2], tostring(generation), tostring(expires_at_ms)}
 """
 
 _INTERRUPT_SCRIPT = """
 local raw_lease = redis.call('HGET', KEYS[4], ARGV[1])
-if not raw_lease then
-    return 0
-end
-local lease = cjson.decode(raw_lease)
 local now = redis.call('TIME')
 local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
-if tonumber(lease.expires_at_ms) > now_ms then
+if raw_lease and tonumber(cjson.decode(raw_lease).expires_at_ms) > now_ms then
     return -1
 end
-if redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 0 then
+-- No live owner remains to close this relay, whether or not the task is
+-- still active (an owner can die after its terminal save), so it gets the
+-- same drain window a close gives it.
+redis.call('EXPIRE', KEYS[6], tonumber(ARGV[3]))
+if not raw_lease or redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 0 then
     return 0
 end
 local score = tonumber(now[1]) * 1000000 + tonumber(now[2])
-redis.call('HINCRBY', KEYS[5], ARGV[1], 1)
+redis.call('HSET', KEYS[5], ARGV[1], redis.call('INCR', KEYS[7]))
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('SREM', KEYS[3], ARGV[1])
 redis.call('ZADD', KEYS[2], score, ARGV[1])
 redis.call('HDEL', KEYS[4], ARGV[1])
--- A relay whose owner died is never closed, so it would otherwise outlive the
--- interruption with no expiry; give it the same drain window a close does.
-redis.call('EXPIRE', KEYS[6], tonumber(ARGV[3]))
 return 1
 """
 
@@ -279,6 +334,14 @@ _ACTIVE_STATES = frozenset(
         TaskState.submitted,
         TaskState.working,
         TaskState.auth_required,
+    }
+)
+_TERMINAL_STATES = frozenset(
+    {
+        TaskState.completed,
+        TaskState.canceled,
+        TaskState.failed,
+        TaskState.rejected,
     }
 )
 
@@ -293,7 +356,7 @@ class RedisTaskStore(TaskStore):
         max_tasks: int = 10000,
         key_prefix: str = "cogniverse:a2a",
         owns_client: bool = False,
-        enforce_leases: bool = False,
+        enforce_leases: bool = True,
     ) -> None:
         if max_tasks < 1:
             raise ValueError(f"max_tasks must be >= 1, got {max_tasks}")
@@ -309,6 +372,7 @@ class RedisTaskStore(TaskStore):
         self._active_key = f"{self._key_prefix}:active"
         self._leases_key = f"{self._key_prefix}:leases"
         self._generations_key = f"{self._key_prefix}:generations"
+        self._generation_sequence_key = f"{self._key_prefix}:generation-seq"
 
     @classmethod
     async def from_url(
@@ -317,7 +381,7 @@ class RedisTaskStore(TaskStore):
         *,
         max_tasks: int = 10000,
         key_prefix: str = "cogniverse:a2a",
-        enforce_leases: bool = False,
+        enforce_leases: bool = True,
     ) -> RedisTaskStore:
         """Connect to Redis and validate it before serving A2A requests."""
         if not redis_url.strip():
@@ -354,10 +418,15 @@ class RedisTaskStore(TaskStore):
                 self._max_tasks,
                 "1" if self._enforce_leases else "0",
                 bound_lease.generation if bound_lease else 0,
+                self._event_stream_key(""),
+                task.status.state.value,
+                "1" if task.status.state in _TERMINAL_STATES else "0",
             )
         except RedisError as exc:
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: save task {task.id}") from exc
         result_code = int(result[0])
+        if result_code == 2:
+            return
         if result_code == -1:
             generation = bound_lease.generation if bound_lease else 0
             raise A2ATaskOwnershipLostError(
@@ -434,10 +503,12 @@ class RedisTaskStore(TaskStore):
         try:
             result: list[Any] = await self._redis.eval(
                 _ACQUIRE_SCRIPT,
-                3,
+                5,
                 self._leases_key,
                 self._generations_key,
                 self._active_key,
+                self._tasks_key,
+                self._generation_sequence_key,
                 task_id,
                 replica_id,
                 request_id,
@@ -471,8 +542,10 @@ class RedisTaskStore(TaskStore):
         try:
             expires_at = await self._redis.eval(
                 _RENEW_SCRIPT,
-                1,
+                3,
                 self._leases_key,
+                self._tasks_key,
+                self._generations_key,
                 lease.task_id,
                 lease.request_id,
                 lease.generation,
@@ -529,9 +602,11 @@ class RedisTaskStore(TaskStore):
         try:
             result: list[Any] = await self._redis.eval(
                 _BEGIN_CANCEL_SCRIPT,
-                2,
+                4,
                 self._leases_key,
                 self._generations_key,
+                self._tasks_key,
+                self._generation_sequence_key,
                 task_id,
                 replica_id,
                 request_id,
@@ -599,13 +674,14 @@ class RedisTaskStore(TaskStore):
         try:
             result = await self._redis.eval(
                 _INTERRUPT_SCRIPT,
-                6,
+                7,
                 self._tasks_key,
                 self._inactive_key,
                 self._active_key,
                 self._leases_key,
                 self._generations_key,
                 self._event_stream_key(task_id),
+                self._generation_sequence_key,
                 task_id,
                 interrupted.model_dump_json(by_alias=True),
                 _EVENT_STREAM_DRAIN_SECONDS,
@@ -640,7 +716,10 @@ class RedisTaskStore(TaskStore):
         try:
             pipeline = self._redis.pipeline(transaction=True)
             pipeline.lpush(control_key, command)
-            pipeline.expire(control_key, max(30, math.ceil(timeout_seconds * 2)))
+            pipeline.expire(
+                control_key,
+                max(_CANCEL_CONTROL_MIN_TTL_SECONDS, math.ceil(timeout_seconds * 2)),
+            )
             await pipeline.execute()
             async with asyncio.timeout(timeout_seconds + 1):
                 response = await self._redis.brpop(
@@ -720,7 +799,7 @@ class RedisTaskStore(TaskStore):
         try:
             pipeline = self._redis.pipeline(transaction=True)
             pipeline.lpush(command.reply_key, payload)
-            pipeline.expire(command.reply_key, 30)
+            pipeline.expire(command.reply_key, _CANCEL_REPLY_TTL_SECONDS)
             await pipeline.execute()
         except RedisError as exc:
             raise A2ATaskStoreError(
@@ -738,7 +817,7 @@ class RedisTaskStore(TaskStore):
             pipeline.xadd(
                 stream_key,
                 {"payload": _EVENT_ADAPTER.dump_json(event).decode()},
-                maxlen=1000,
+                maxlen=_RELAY_MAXLEN,
                 approximate=True,
             )
             # A later turn reuses the stream key the previous turn's close

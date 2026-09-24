@@ -14,6 +14,7 @@ from a2a.server.tasks import ResultAggregator, TaskManager
 from a2a.types import (
     InternalError,
     InvalidParamsError,
+    Message,
     MessageSendParams,
     Task,
     TaskIdParams,
@@ -24,6 +25,7 @@ from a2a.types import (
 from a2a.utils.errors import ServerError
 
 from cogniverse_runtime.a2a_task_store import (
+    A2ACancelTimeoutError,
     A2ATaskConflictError,
     A2ATaskOwnershipLostError,
     A2ATaskStoreError,
@@ -113,6 +115,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         self._producer_leases: dict[asyncio.Task, TaskLease] = {}
         self._renewal_tasks: dict[asyncio.Task, asyncio.Task] = {}
         self._control_task: asyncio.Task | None = None
+        self._abandoned_cancels: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Start the owner-addressed cancellation listener."""
@@ -151,6 +154,10 @@ class RedisRequestHandler(DefaultRequestHandler):
             self._control_task.cancel()
             await asyncio.gather(self._control_task, return_exceptions=True)
             self._control_task = None
+        if self._abandoned_cancels:
+            await asyncio.wait(
+                set(self._abandoned_cancels), timeout=self._drain_timeout_seconds
+            )
 
     async def _setup_message_execution(
         self,
@@ -349,7 +356,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         # non-terminal task, so cancel it here rather than refusing.
         if lease is None or lease.replica_id == self._replica_id:
             try:
-                return await self._cancel_owned(params.id)
+                result = await self._cancel_owned(params.id)
             except A2ATaskOwnershipLostError as exc:
                 # Same conflict ``message/send`` reports for a lost race, so
                 # the client sees a retryable conflict, not an internal error.
@@ -360,11 +367,22 @@ class RedisRequestHandler(DefaultRequestHandler):
                         )
                     )
                 ) from exc
-        return await self.task_store.request_cancel(
-            owner_replica_id=lease.replica_id,
-            task_id=params.id,
-            timeout_seconds=self._cancel_timeout_seconds,
-        )
+        else:
+            result = await self.task_store.request_cancel(
+                owner_replica_id=lease.replica_id,
+                task_id=params.id,
+                timeout_seconds=self._cancel_timeout_seconds,
+            )
+        if result.status.state != TaskState.canceled:
+            raise ServerError(
+                error=TaskNotCancelableError(
+                    message=(
+                        "Task cannot be canceled - current state: "
+                        f"{result.status.state}"
+                    )
+                )
+            )
+        return result
 
     async def on_resubscribe_to_task(
         self, params: TaskIdParams, context: ServerCallContext | None = None
@@ -401,7 +419,19 @@ class RedisRequestHandler(DefaultRequestHandler):
             task = await self.task_store.get(task_id, cancel_context)
             if task is None:
                 raise ServerError(error=TaskNotFoundError())
-            queue = RedisRelayEventQueue(task_id, self.task_store)
+            # The cancel's events are persisted under the new generation
+            # first and only then handed to the live queue, so this replica's
+            # own stream and blocking consumers observe them and find them
+            # already stored. With no live queue, a relay queue publishes them
+            # to peers' resubscriptions instead.
+            live_queue = await self._queue_manager.get(task.id)
+            if live_queue is not None and live_queue.is_closed():
+                live_queue = None
+            queue = (
+                EventQueue()
+                if live_queue is not None
+                else RedisRelayEventQueue(task.id, self.task_store)
+            )
             await self.agent_executor.cancel(
                 RequestContext(
                     None,
@@ -420,9 +450,19 @@ class RedisRequestHandler(DefaultRequestHandler):
                 initial_message=None,
                 context=cancel_context,
             )
-            result = await ResultAggregator(task_manager).consume_all(
-                EventConsumer(queue)
-            )
+            events = []
+            result: Task | Message | None = None
+            async for event in EventConsumer(queue).consume_all():
+                events.append(event)
+                if isinstance(event, Message):
+                    result = event
+                    break
+                await task_manager.process(event)
+            else:
+                result = await task_manager.get_task()
+            if live_queue is not None:
+                for event in events:
+                    await live_queue.enqueue_event(event)
             if not isinstance(result, Task):
                 raise ServerError(
                     error=InternalError(message="Cancel returned no task")
@@ -431,6 +471,38 @@ class RedisRequestHandler(DefaultRequestHandler):
         finally:
             await self.task_store.release_execution(cancel_lease)
 
+    async def _cancel_within_deadline(self, task_id: str) -> Task:
+        """Run one routed cancel, abandoning it at the cancel deadline.
+
+        The listener serves every cross-replica cancel for this replica in
+        turn, so an executor cancel that never returns must not hold it.
+        """
+        cancel = asyncio.create_task(
+            self._cancel_owned(task_id), name=f"a2a-owner-cancel:{task_id}"
+        )
+        try:
+            done, _ = await asyncio.wait({cancel}, timeout=self._cancel_timeout_seconds)
+        except asyncio.CancelledError:
+            cancel.cancel()
+            raise
+        if not done:
+            cancel.cancel()
+            self._abandoned_cancels.add(cancel)
+            cancel.add_done_callback(self._forget_abandoned_cancel)
+            raise A2ACancelTimeoutError(
+                f"cancel of task {task_id} did not finish within "
+                f"{self._cancel_timeout_seconds:g}s"
+            )
+        return cancel.result()
+
+    def _forget_abandoned_cancel(self, cancel: asyncio.Task) -> None:
+        self._abandoned_cancels.discard(cancel)
+        if not cancel.cancelled() and cancel.exception() is not None:
+            logger.error(
+                "Abandoned A2A owner cancellation failed",
+                exc_info=cancel.exception(),
+            )
+
     async def _listen_for_cancels(self) -> None:
         while True:
             command: CancelCommand | None = None
@@ -438,7 +510,7 @@ class RedisRequestHandler(DefaultRequestHandler):
                 command = await self.task_store.next_cancel(replica_id=self._replica_id)
                 if command is None:
                     continue
-                task = await self._cancel_owned(command.task_id)
+                task = await self._cancel_within_deadline(command.task_id)
                 await self.task_store.acknowledge_cancel(command, task=task)
             except asyncio.CancelledError:
                 raise
