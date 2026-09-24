@@ -61,6 +61,29 @@ def _make_noop_telemetry_manager():
     return manager
 
 
+# A catalog with profiles but no selected default, as a CPU composition
+# renders it.
+_CATALOG_WITHOUT_A_DEFAULT = {
+    "backend": {
+        "default_profiles": {},
+        "profiles": {
+            "video_colpali_smol500_mv_frame": {
+                "type": "video",
+                "strategies": {"segmentation": {}},
+            },
+            "document_text_semantic": {
+                "type": "document",
+                "strategies": {"embedding": {}},
+            },
+        },
+    },
+}
+_NO_DEFAULT_DETAIL = (
+    "No profile specified on the request and tenant 'acme:acme' has no "
+    "configured default video profile."
+)
+
+
 @contextmanager
 def _search_app_context(config_manager: ConfigManager | None = None):
     test_app = FastAPI()
@@ -195,6 +218,26 @@ class TestListStrategies:
         ):
             resp = search_client.get("/search/strategies?tenant_id=acme:acme")
         assert resp.status_code == 400
+
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_a_catalog_without_a_selected_default_is_refused_not_guessed(
+        self, mock_service_cls, search_client
+    ):
+        """A CPU composition selects no video profile while its catalog still
+        lists visual profiles nothing serves; picking the first one activated
+        exactly such a profile."""
+        mock_instance = MagicMock()
+        mock_service_cls.return_value = mock_instance
+
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value=_CATALOG_WITHOUT_A_DEFAULT,
+        ):
+            resp = search_client.get("/search/strategies?tenant_id=acme:acme")
+
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": _NO_DEFAULT_DETAIL}
+        mock_instance.get_available_strategies.assert_not_called()
 
     @patch("cogniverse_runtime.routers.search.SearchService")
     def test_search_resolves_the_same_default_profile_upload_ingests_into(
@@ -512,6 +555,25 @@ class TestSearchEndpoint:
             )
         assert resp.status_code == 400
         assert "profile" in resp.json()["detail"].lower()
+
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_search_without_a_selected_default_is_refused_not_guessed(
+        self, mock_service_cls, search_client
+    ):
+        mock_instance = MagicMock()
+        mock_service_cls.return_value = mock_instance
+
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value=_CATALOG_WITHOUT_A_DEFAULT,
+        ):
+            resp = search_client.post(
+                "/search", json={"query": "cats", "tenant_id": "acme:acme"}
+            )
+
+        assert resp.status_code == 400
+        assert resp.json() == {"detail": _NO_DEFAULT_DETAIL}
+        mock_instance.search.assert_not_called()
 
     def test_search_rejects_out_of_bounds_top_k(self, search_client):
         """top_k must be bounded: a negative value reached Vespa as hits<0
