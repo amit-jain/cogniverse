@@ -629,3 +629,90 @@ class TestTombstonesAreFencedAgainstATakeover:
             "Re-run the delete to tombstone them."
         ]
         successors[0].release()
+
+
+class _OwnedOnceLease:
+    """Owned for the first tombstone check, then taken over."""
+
+    def __init__(self):
+        self.checks = 0
+
+    def acquire(self):
+        return self
+
+    def ensure_owned(self):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        self.checks += 1
+        if self.checks > 1:
+            raise DeploymentLeaseLost("Vespa deployment lease expired or was replaced")
+
+    def release(self):
+        return None
+
+
+class _FirstTombstoneFails(_BulkRegistry):
+    def unregister_schema(self, tid: str, base: str) -> None:
+        if not self.unregistered and not getattr(self, "failed", None):
+            self.failed = (tid, base)
+            raise ConnectionError("registry write refused")
+        self.unregistered.append((tid, base))
+
+
+class TestTombstoneRefusalNamesEarlierFailures:
+    """A fence refusal after an earlier tombstone in the same loop failed must
+    name that schema too, and keep its error."""
+
+    @staticmethod
+    def _manager(registry):
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._schema_registry = registry
+        mgr._logger = logging.getLogger("test_tombstone_refusal_note")
+        mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid}_{tid}"
+        mgr._redeploy_dropping = lambda _targets: []
+        lease = _OwnedOnceLease()
+        registry.deployment_lease = lambda **kwargs: lease
+        return mgr
+
+    def test_delete_tenant_schemas_note_includes_an_earlier_failure(self):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        registry = _FirstTombstoneFails(
+            ["video_acme_acme", "wiki_acme_acme", *METADATA_SCHEMAS],
+            tenant_bases={"acme": ["video", "wiki"]},
+        )
+        mgr = self._manager(registry)
+
+        with pytest.raises(DeploymentLeaseLost) as caught:
+            mgr.delete_tenant_schemas("acme")
+
+        assert registry.unregistered == []
+        assert caught.value.__notes__ == [
+            "Removed from Vespa but still registered: "
+            "['video_acme_acme', 'wiki_acme_acme']. "
+            "Re-run the delete to tombstone them.",
+            "Earlier tombstone failures: video_acme_acme: "
+            "ConnectionError('registry write refused')",
+        ]
+
+    def test_bulk_delete_note_includes_an_earlier_failure(self):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        registry = _FirstTombstoneFails(
+            ["video_acme_acme", "wiki_globex_globex", *METADATA_SCHEMAS],
+            tenant_bases={"acme": ["video"], "globex": ["wiki"]},
+        )
+        mgr = self._manager(registry)
+
+        with pytest.raises(DeploymentLeaseLost) as caught:
+            mgr.delete_tenant_schemas_bulk(["acme", "globex"])
+
+        assert registry.unregistered == []
+        assert caught.value.__notes__ == [
+            "Removed from Vespa but still registered: "
+            "['video_acme_acme', 'wiki_globex_globex']. "
+            "Re-run the delete to tombstone them.",
+            "Earlier tombstone failures: video_acme_acme: "
+            "ConnectionError('registry write refused')",
+        ]
