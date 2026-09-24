@@ -324,9 +324,8 @@ config:
       name: "Default Tenant"
 
 initJobs:
-  # One-shot bootstrap: deploys the base Vespa application package + schemas
-  # so runtime's startup probe of ``:8080/document/v1/config_metadata`` can
-  # succeed. Without this after a ZK wipe, :8080 never binds.
+  # Post-install hook: deploys config.defaultProfiles.video's schema for each
+  # config.tenants entry once the runtime is healthy.
   schemaDeployment:
     enabled: true
   modelPulling:

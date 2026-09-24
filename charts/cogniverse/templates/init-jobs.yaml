@@ -1,4 +1,7 @@
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- if hasKey .Values.initJobs.schemaDeployment "profiles" -}}
+{{- fail "initJobs.schemaDeployment.profiles is removed: the schema-deployment job deploys config.defaultProfiles.video" -}}
+{{- end -}}
 {{- if .Values.initJobs.schemaDeployment.enabled -}}
 ---
 # Schema Deployment Job
