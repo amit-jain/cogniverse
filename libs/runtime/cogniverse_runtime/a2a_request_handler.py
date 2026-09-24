@@ -48,6 +48,14 @@ _TERMINAL_STATES = {
 }
 
 
+def _retryable_conflict(exc: Exception) -> ServerError:
+    """The retryable conflict a client gets for a cancel that could not run."""
+    message = str(exc)
+    if not message.endswith("; retry"):
+        message = f"{message}; retry"
+    return ServerError(error=InvalidParamsError(message=message))
+
+
 class RedisRelayEventQueue(EventQueue):
     """Local SDK queue that mirrors owner events into Redis."""
 
@@ -518,16 +526,26 @@ class RedisRequestHandler(DefaultRequestHandler):
         # commonest thing a client cancels. The stock handler cancels any
         # non-terminal task, so cancel it here rather than refusing.
         if lease is None or lease.replica_id == self._replica_id:
+            run: asyncio.Task | None = None
             try:
-                result = await asyncio.shield(self._coalesced_cancel(params.id))
-            except A2ACancelTimeoutError as exc:
-                # A retryable conflict, as the routed path answers, not the
-                # JSON-RPC internal error an unmapped exception becomes.
-                raise ServerError(
-                    error=InvalidParamsError(message=f"{exc}; retry")
-                ) from exc
-            except A2ACancelCapacityError as exc:
-                raise ServerError(error=InvalidParamsError(message=str(exc))) from exc
+                run = self._coalesced_cancel(params.id)
+                result = await asyncio.shield(run)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if (
+                    run is not None
+                    and run.cancelled()
+                    and not (current and current.cancelling())
+                ):
+                    raise ServerError(
+                        error=InvalidParamsError(
+                            message=(
+                                f"replica {self._replica_id} shut down before the "
+                                f"cancel of task {params.id} finished; retry"
+                            )
+                        )
+                    ) from None
+                raise
             except A2ATaskOwnershipLostError as exc:
                 # Same conflict ``message/send`` reports for a lost race, so
                 # the client sees a retryable conflict, not an internal error.
@@ -538,12 +556,19 @@ class RedisRequestHandler(DefaultRequestHandler):
                         )
                     )
                 ) from exc
+            except A2ATaskStoreError as exc:
+                # A retryable conflict, as the routed path answers, not the
+                # JSON-RPC internal error an unmapped exception becomes.
+                raise _retryable_conflict(exc) from exc
         else:
-            result = await self.task_store.request_cancel(
-                owner_replica_id=lease.replica_id,
-                task_id=params.id,
-                timeout_seconds=self._cancel_timeout_seconds,
-            )
+            try:
+                result = await self.task_store.request_cancel(
+                    owner_replica_id=lease.replica_id,
+                    task_id=params.id,
+                    timeout_seconds=self._cancel_timeout_seconds,
+                )
+            except A2ATaskStoreError as exc:
+                raise _retryable_conflict(exc) from exc
         if result.status.state != TaskState.canceled:
             raise ServerError(
                 error=TaskNotCancelableError(
@@ -714,15 +739,20 @@ class RedisRequestHandler(DefaultRequestHandler):
             done, _ = await asyncio.wait({cancel}, timeout=deadline)
         except asyncio.CancelledError:
             cancel.cancel()
+            self._abandon_cancel(cancel)
             raise
         if not done:
             cancel.cancel()
-            self._abandoned_cancels.add(cancel)
-            cancel.add_done_callback(self._forget_abandoned_cancel)
+            self._abandon_cancel(cancel)
             raise A2ACancelTimeoutError(
                 f"cancel of task {task_id} did not finish within {deadline:g}s"
             )
         return cancel.result()
+
+    def _abandon_cancel(self, cancel: asyncio.Task) -> None:
+        """Track a cancelled cancel run until it ends, so close() waits for it."""
+        self._abandoned_cancels.add(cancel)
+        cancel.add_done_callback(self._forget_abandoned_cancel)
 
     def _forget_abandoned_cancel(self, cancel: asyncio.Task) -> None:
         self._abandoned_cancels.discard(cancel)
