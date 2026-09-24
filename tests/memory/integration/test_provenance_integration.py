@@ -584,6 +584,12 @@ def test_malformed_provenance_uses_typed_write_and_read_errors(
         ProvenanceConsistencyError, match="primary provenance payload is malformed"
     ):
         ProvenanceWalker(mm).walk(memory_id, tenant_id=TENANT)
+    with pytest.raises(
+        ProvenanceConsistencyError, match="primary provenance payload is malformed"
+    ) as repair_error:
+        mm.repair_provenance(memory_id)
+    assert repair_error.value.memory_id == memory_id
+    assert mm.provenance_store.fetch([memory_id]) == {}
     mm.memory.delete(memory_id)
     assert mm.memory.get(memory_id) is None
 
@@ -790,6 +796,87 @@ def test_repair_serializes_with_second_manager_for_same_storage_tenant(
     assert peer.memory.get(memory_id)["memory"] == (
         "Primary after the cross-instance repair."
     )
+    peer.memory.delete(memory_id)
+    assert peer.memory.get(memory_id) is None
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+
+
+def test_provenance_dropping_update_serializes_with_a_peer_repair(
+    memory_env, monkeypatch
+):
+    """Explicit provenance-free metadata on a provenance-bearing primary still
+    rewrites what the indexed row must agree with, so it waits for repair."""
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:dropping-update",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.79,
+        derived_from=[CitationRef.external("https://source.test/dropping-update")],
+    )
+    memory_id = mm.add_memory(
+        content="Primary before a provenance-dropping update.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+        infer=False,
+    )
+    canonical_tenant = mm._storage_tenant_id
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+    peer = Mem0MemoryManager(canonical_tenant)
+    peer.initialize(
+        backend_host="http://127.0.0.1",
+        backend_port=memory_env.proxy.port,
+        backend_config_port=memory_env.proxy.port,
+        base_schema_name="agent_memories",
+        llm_model=get_llm_model(),
+        embedding_model="lightonai/DenseOn",
+        llm_base_url=get_llm_base_url(),
+        embedder_base_url=memory_env.denseon,
+        auto_create_schema=False,
+        config_manager=memory_env.config_manager,
+        schema_loader=memory_env.schema_loader,
+    )
+    old_embedder = peer.memory.embedding_model
+    peer.memory.embedding_model = _StaticEmbedder()
+    entered = threading.Event()
+    release = threading.Event()
+    real_attach = mm.provenance_store.attach
+
+    def blocked_attach(target_memory_id, target_provenance, **kwargs):
+        row_id = real_attach(target_memory_id, target_provenance, **kwargs)
+        entered.set()
+        assert release.wait(10) is True
+        return row_id
+
+    monkeypatch.setattr(mm.provenance_store, "attach", blocked_attach)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repair_future = pool.submit(mm.repair_provenance, memory_id)
+            assert entered.wait(10) is True
+            update_future = pool.submit(
+                peer.update_memory,
+                memory_id,
+                "Primary after a provenance-dropping update.",
+                canonical_tenant,
+                AGENT,
+                {"kind": "note"},
+            )
+            threading.Event().wait(0.5)
+            assert update_future.done() is False
+            release.set()
+            assert repair_future.result(timeout=20) == (
+                f"prov-{canonical_tenant}-{memory_id}"
+            )
+            assert update_future.result(timeout=20) is True
+    finally:
+        release.set()
+        peer.memory.embedding_model = old_embedder
+
+    updated = peer.memory.get(memory_id)
+    assert updated["memory"] == "Primary after a provenance-dropping update."
+    assert updated["metadata"]["kind"] == "note"
+    assert "provenance" not in updated["metadata"]
+    assert peer.provenance_store.delete(memory_id) is True
     peer.memory.delete(memory_id)
     assert peer.memory.get(memory_id) is None
     Mem0MemoryManager._instances.pop(canonical_tenant, None)

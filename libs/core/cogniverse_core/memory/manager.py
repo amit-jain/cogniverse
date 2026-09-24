@@ -662,6 +662,18 @@ class Mem0MemoryManager:
         infer: bool = True,
     ) -> Optional[str]:
         """Add a memory while serializing its primary and provenance writes."""
+        if not self.memory:
+            raise RuntimeError("Mem0MemoryManager not initialized")
+
+        # schema enforcement. When a registry is wired, every write
+        # is checked against the schema for the metadata.kind:
+        #   * provenance_required=True → reject if no provenance attached
+        #   * default_trust set → compute initial trust from provenance and
+        #     attach to metadata so retrieval-time ranking has it.
+        # When no registry is wired, the write proceeds without
+        # enforcement.
+        metadata = self._enforce_schema_on_write(metadata or {})
+
         # A pure function of the caller's metadata, so whether this write has
         # a primary/index pair to keep consistent is known before the
         # cluster-wide lease is taken. Conversation turns and agent remembers
@@ -709,24 +721,11 @@ class Mem0MemoryManager:
             require storage to succeed should check for ``None`` and
             either retry with ``infer=False`` or treat as a no-op.
 
-        Raises:
-            RuntimeError: If the backend is not initialised.
         """
-        if not self.memory:
-            raise RuntimeError("Mem0MemoryManager not initialized")
         # Partition by the canonicalized per-call tenant - the same
         # derivation the read paths use, so a write is visible to the read
         # that names the same tenant.
         storage_tenant_id = canonical_tenant_id(tenant_id)
-
-        # schema enforcement. When a registry is wired, every write
-        # is checked against the schema for the metadata.kind:
-        #   * provenance_required=True → reject if no provenance attached
-        #   * default_trust set → compute initial trust from provenance and
-        #     attach to metadata so retrieval-time ranking has it.
-        # When no registry is wired, the write proceeds without
-        # enforcement.
-        metadata = self._enforce_schema_on_write(metadata or {})
 
         self._check_provenance_ownership()
         result = self.memory.add(
@@ -918,7 +917,10 @@ class Mem0MemoryManager:
             ProvenanceRepairConflictError,
             primary_provenance_digest,
         )
-        from cogniverse_core.memory.provenance_store import ProvenanceRecord
+        from cogniverse_core.memory.provenance_store import (
+            ProvenanceRecord,
+            ProvenanceWriteError,
+        )
 
         for _attempt in range(max_attempts):
             try:
@@ -928,7 +930,16 @@ class Mem0MemoryManager:
             if not isinstance(before, dict):
                 raise ProvenanceConsistencyError(memory_id, "primary memory is missing")
             metadata = self._read_metadata(before)
-            provenance = self._provenance_for_index(metadata)
+            try:
+                provenance = self._provenance_for_index(metadata)
+            except ProvenanceWriteError as exc:
+                if not isinstance(exc.result, dict) or (
+                    "invalid_provenance" not in exc.result
+                ):
+                    raise
+                raise ProvenanceConsistencyError(
+                    memory_id, "primary provenance payload is malformed"
+                ) from exc
             if provenance is None:
                 raise ProvenanceConsistencyError(
                     memory_id, "primary provenance is missing"
@@ -1891,11 +1902,14 @@ class Mem0MemoryManager:
         """Update a primary while excluding provenance verification."""
         # ``metadata=None`` keeps whatever the stored primary declares, which
         # may be provenance this update has to keep the index agreeing with,
-        # so it takes the lease. An explicit provenance-free metadata payload
-        # has no index row to coordinate and does not.
+        # so it takes the lease. Explicit metadata takes it when either it or
+        # the stored primary declares provenance: dropping a primary's
+        # provenance changes what its indexed row has to agree with too. Only
+        # an update with no index row on either side skips it.
         with self._provenance_write_ownership(
             store_lease=metadata is None
             or self._provenance_for_index(metadata) is not None
+            or self._stored_primary_declares_provenance(memory_id)
         ):
             return self._update_memory(
                 memory_id=memory_id,
@@ -1904,6 +1918,18 @@ class Mem0MemoryManager:
                 agent_name=agent_name,
                 metadata=metadata,
             )
+
+    def _stored_primary_declares_provenance(self, memory_id: str) -> bool:
+        """Whether the stored primary carries provenance; unknown reads as yes."""
+        if not self.memory:
+            return False
+        try:
+            before = self.memory.get(memory_id)
+        except Exception:
+            return True
+        if not isinstance(before, dict):
+            return False
+        return "provenance" in self._read_metadata(before)
 
     def _update_memory(
         self,
