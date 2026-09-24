@@ -135,6 +135,7 @@ _PROJECT_ROOT_HELPERS = {
     "get_values_file": "charts/cogniverse",
     "get_device_values_file": "charts/cogniverse",
     "get_llm_serving_values_file": "charts/cogniverse",
+    "compose_values_files": "charts/cogniverse",
 }
 
 
@@ -764,7 +765,14 @@ def test_project_root_helpers_resolve_only_under_their_subtrees(tmp_path) -> Non
     resolved = {
         name: getattr(config, name)(*arguments.get(name, ()), project_root=tmp_path)
         for name in _PROJECT_ROOT_HELPERS
+        if name != "compose_values_files"
     }
+    composed = config.compose_values_files(
+        use_k3d=True,
+        backend="cuda",
+        serving=config.LLM_SERVING_MODAL,
+        project_root=tmp_path,
+    )
 
     assert {
         name: path.relative_to(tmp_path).as_posix() for name, path in resolved.items()
@@ -779,6 +787,16 @@ def test_project_root_helpers_resolve_only_under_their_subtrees(tmp_path) -> Non
     for name, path in resolved.items():
         assert _under(
             path.relative_to(tmp_path).as_posix(), _PROJECT_ROOT_HELPERS[name]
+        )
+    assert [path.relative_to(tmp_path).as_posix() for path in composed] == [
+        "charts/cogniverse/values.k3s.yaml",
+        "charts/cogniverse/values.cuda.yaml",
+        "charts/cogniverse/values.modal-llm.yaml",
+    ]
+    for path in composed:
+        assert _under(
+            path.relative_to(tmp_path).as_posix(),
+            _PROJECT_ROOT_HELPERS["compose_values_files"],
         )
 
 
