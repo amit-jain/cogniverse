@@ -1324,7 +1324,10 @@ hold sized for a memory write. `update_memory` always takes the lease:
 whether the stored primary declares provenance can change between any unleased
 read of it and the write. An update that leaves the primary without provenance
 also deletes its indexed row. Deletion,
-repair and archiving always take it. The sweeps (`clear_agent_memory`,
+repair, archiving and admin restore always take it; restore reads the primary
+inside the lease, so it cannot revert a leased update or archive with a stale
+copy. The search path's `last_accessed` bump rewrites a hit from the search's
+own snapshot outside the lease, so it skips provenance-bearing hits. The sweeps (`clear_agent_memory`,
 `cleanup_with_schema`, `drop_session`) acquire **per row**: one lease for a
 whole retention pass excluded every other writer for the tenant until the last
 of a 205-row clear was gone.

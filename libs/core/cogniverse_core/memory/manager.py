@@ -1328,6 +1328,11 @@ class Mem0MemoryManager:
             try:
                 metadata = hit.get("metadata") or {}
                 metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                # A provenance-bearing primary is rewritten only under the
+                # write lease; restamping it from this snapshot could revert
+                # a leased update and leave its indexed digest disagreeing.
+                if "provenance" in metadata:
+                    continue
                 previous = metadata.get("last_accessed")
                 if isinstance(previous, str):
                     try:
@@ -1876,10 +1881,16 @@ class Mem0MemoryManager:
 
         Returns True when the flag was cleared; False when the memory
         wasn't found or wasn't archived. Callers (the admin endpoint)
-        translate False into a 404/409 as appropriate.
+        translate False into a 404/409 as appropriate. Reads and rewrites
+        the primary inside the write lease, so it cannot revert a leased
+        update or archive with a stale copy.
         """
         if not self.memory:
             return False
+        with self._provenance_write_ownership():
+            return self._restore_archived_memory(memory_id)
+
+    def _restore_archived_memory(self, memory_id: str) -> bool:
         try:
             blob = self.memory.get_all(user_id=self._storage_tenant_id)
         except Exception as exc:
@@ -1896,6 +1907,7 @@ class Mem0MemoryManager:
         meta.pop("archived", None)
         meta.pop("archived_at", None)
         existing_data = target.get("memory") or target.get("text") or ""
+        self._check_provenance_ownership()
         try:
             self._flip_metadata_no_reembed(memory_id, existing_data, meta)
         except Exception as exc:
