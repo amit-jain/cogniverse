@@ -1676,20 +1676,20 @@ granularity omits both fields.
 Source granularity sends one Vespa query that groups the matches by the
 schema's `document_mapping.id` field, which must be an attribute. It returns the
 best `top_k` sources ordered by their best segment's score, equal scores
-ordered by source id. With the candidate budget
-`max(top_k, min(top_k * source_collapse_oversample, 256))`
-(`source_collapse_oversample` is a profile key, default 4), each source carries
-at most `budget // top_k` (at least one) of its best segments in
-`matched_segments`, highest score first, equal scores by document id. Rank
-profiles without `nearestNeighbor` group every match. A `nearestNeighbor` rank
-profile uses the budget as `targetHits`, so only that many segments reach
-grouping. When fewer than `top_k` sources come back and the match count
-reached the budget, the returned `SearchResultBatch` has
-`source_search_incomplete=True`: sources beyond the budget may exist. `False`
-does not make the search exhaustive: approximate `nearestNeighbor` retrieval
-can still miss segments. `total_count` is the number of matched segments. A
-response with errors, degraded coverage or missing grouping raises
-`VespaError`.
+ordered by source id, including at the `top_k` cut-off. Each source carries its
+`source_collapse_oversample` (a profile key, default 4) best segments in
+`matched_segments`, highest score first, equal scores by document id; which of
+several segments tied at that window edge are kept is unspecified.
+`segments_in_window` is the source's number of matched segments. Rank profiles
+without `nearestNeighbor` group every match. A `nearestNeighbor` rank profile
+uses the candidate budget `max(top_k, min(top_k * source_collapse_oversample,
+256))` as `targetHits`, so only that many segments reach grouping. When fewer
+than `top_k` sources come back and the match count reached the budget, the
+returned `SearchResultBatch` has `source_search_incomplete=True`: sources beyond
+the budget may exist. `False` does not make the search exhaustive: approximate
+`nearestNeighbor` retrieval can still miss segments. `total_count` is the
+number of matched segments. A response with errors, degraded coverage or
+missing grouping raises `VespaError`.
 
 `export_embeddings()` defaults to the backend's configured schema; an explicit
 `schema` argument overrides it for that call. It walks Vespa's Document v1

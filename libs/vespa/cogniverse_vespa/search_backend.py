@@ -162,8 +162,8 @@ def _schema_temporal_field_names(
     return tuple(temporal_fields)
 
 
-def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
-    """Derive the fetch window for source-level collapse."""
+def _source_collapse_oversample(profile_config: Mapping[str, Any]) -> int:
+    """The profile's source oversample: candidates and window rows per source."""
     oversample = profile_config.get(
         _SOURCE_COLLAPSE_OVERSAMPLE_KEY, _SOURCE_COLLAPSE_OVERSAMPLE_DEFAULT
     )
@@ -171,6 +171,12 @@ def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) 
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be an integer")
     if oversample < 1:
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be >= 1")
+    return oversample
+
+
+def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
+    """Derive the fetch window for source-level collapse."""
+    oversample = _source_collapse_oversample(profile_config)
     # The ceiling bounds the OVERSAMPLING, never the request itself: collapsing
     # to top_k distinct sources is impossible from fewer than top_k documents,
     # so a ceiling below top_k would silently truncate a legal request.
@@ -180,16 +186,17 @@ def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) 
     )
 
 
-def _source_grouping(field_name: str, top_k: int, fetch_limit: int) -> str:
+def _source_grouping(field_name: str, top_k: int, window: int) -> str:
     """Grouping clause keeping the best ``top_k`` sources by best segment.
 
-    Each source keeps at most ``fetch_limit // top_k`` segments, so one query
-    returns no more segments than the candidate budget.
+    Equal best scores order by source id, so the ``top_k`` cut-off is
+    deterministic. Each source reports its matched-segment count and keeps
+    its ``window`` best segments.
     """
-    window = max(1, fetch_limit // top_k)
     return (
-        f"all(group({field_name}) max({top_k}) order(-max(relevance())) "
-        f"each(max({window}) each(output(summary()))))"
+        f"all(group({field_name}) max({top_k}) "
+        f"order(-max(relevance()), max({field_name})) "
+        f"each(output(count()) max({window}) each(output(summary()))))"
     )
 
 
@@ -219,8 +226,13 @@ def _collapse_results_by_source(
     total_count: Optional[int],
     temporal_field_names: tuple[str, ...] = (),
     source_search_incomplete: bool = False,
+    segment_counts: Optional[Mapping[str, int]] = None,
 ) -> SearchResultBatch:
-    """Keep the best hit per source identity in relevance order."""
+    """Keep the best hit per source identity in relevance order.
+
+    ``segment_counts`` maps a source to its matched-segment count; without it
+    ``segments_in_window`` counts the source's hits in ``results``.
+    """
     grouped_results: Dict[str, List[SearchResult]] = {}
     ordered_source_keys: List[str] = []
 
@@ -244,7 +256,11 @@ def _collapse_results_by_source(
                     _source_segment_row(result, temporal_field_names)
                     for result in source_results
                 ],
-                segments_in_window=len(source_results),
+                segments_in_window=(
+                    len(source_results)
+                    if segment_counts is None
+                    else segment_counts[source_key]
+                ),
             )
         )
 
@@ -1564,20 +1580,21 @@ class VespaSearchBackend(SearchBackend):
             if result_granularity == "source":
                 # Vespa groups every match by source; nearestNeighbor still
                 # caps the matches at targetHits == fetch_limit.
+                window = _source_collapse_oversample(profile_config)
                 grouped_query_params = dict(query_params, hits=0)
                 grouped_query_params["yql"] = (
                     f"{query_params['yql']} | "
-                    f"{_source_grouping(source_identity_field, top_k, fetch_limit)}"
+                    f"{_source_grouping(source_identity_field, top_k, window)}"
                 )
+                grouped_query_params["grouping.globalMaxGroups"] = top_k * (1 + window)
                 response = _execute_query(grouped_query_params)
-                window_results, total_count = self._process_grouped_results(
-                    response,
-                    correlation_id,
-                    content_type,
-                    source_identity_field=source_identity_field,
-                )
-                source_count = len(
-                    {_result_source_key(result) for result in window_results}
+                window_results, total_count, segment_counts = (
+                    self._process_grouped_results(
+                        response,
+                        correlation_id,
+                        content_type,
+                        source_identity_field=source_identity_field,
+                    )
                 )
                 results = _collapse_results_by_source(
                     window_results,
@@ -1587,9 +1604,10 @@ class VespaSearchBackend(SearchBackend):
                     temporal_field_names=source_temporal_field_names,
                     source_search_incomplete=bool(
                         rank_config.get("use_nearestneighbor")
-                        and source_count < top_k
+                        and len(segment_counts) < top_k
                         and total_count >= fetch_limit
                     ),
+                    segment_counts=segment_counts,
                 )
             else:
                 response = _execute_query(query_params)
@@ -2017,8 +2035,9 @@ class VespaSearchBackend(SearchBackend):
         content_type: str,
         *,
         source_identity_field: str,
-    ) -> tuple[List[SearchResult], int]:
-        """Flatten a source-grouped response into segments and its totalCount.
+    ) -> tuple[List[SearchResult], int, Dict[str, int]]:
+        """Flatten a source-grouped response into segments, its totalCount and
+        each source's matched-segment count.
 
         Sources come in best-segment order and each source's segments in score
         order; equal scores order by source id and document id.
@@ -2057,6 +2076,7 @@ class VespaSearchBackend(SearchBackend):
             )
 
         sources: List[List[SearchResult]] = []
+        segment_counts: Dict[str, int] = {}
         for group in groups:
             if not isinstance(group, Mapping):
                 raise VespaError(f"[{correlation_id}] Vespa source group is malformed")
@@ -2074,11 +2094,22 @@ class VespaSearchBackend(SearchBackend):
                 for hit in hits
             ]
             segments.sort(key=lambda result: (-result.score, result.document.id))
+            count = (group.get("fields") or {}).get("count()")
+            if type(count) is not int or count < len(segments):
+                raise VespaError(
+                    f"[{correlation_id}] Vespa source group {group.get('id')!r} "
+                    f"reports segment count {count!r} for {len(segments)} hits"
+                )
+            segment_counts[_result_source_key(segments[0])] = count
             sources.append(segments)
         sources.sort(
             key=lambda segments: (-segments[0].score, _result_source_key(segments[0]))
         )
-        return [segment for segments in sources for segment in segments], total_count
+        return (
+            [segment for segments in sources for segment in segments],
+            total_count,
+            segment_counts,
+        )
 
     def _hit_to_result(
         self,
