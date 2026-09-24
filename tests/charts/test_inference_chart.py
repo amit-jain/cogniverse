@@ -1053,22 +1053,61 @@ def test_a_selected_vlm_profile_without_a_student_endpoint_is_refused():
     ), stderr
 
 
-def test_a_primary_llm_api_base_naming_the_undeployed_student_is_refused():
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://cogniverse-vllm-llm-student:8000/v1",
+        "http://cogniverse-vllm-llm-student:8000/v1/",
+        "http://cogniverse-vllm-llm-student.default:8000/v1",
+        "http://cogniverse-vllm-llm-student.default.svc:8000/v1",
+        "http://cogniverse-vllm-llm-student.default.svc.cluster.local:8000/v1",
+        "http://cogniverse-vllm-llm-student.default.svc.cluster.local.:8000/v1/",
+        "HTTP://Cogniverse-VLLM-LLM-Student:8000/v1",
+    ],
+    ids=["short", "trailing-slash", "ns", "svc", "fqdn", "fqdn-root-dot", "case"],
+)
+def test_a_primary_llm_api_base_naming_the_undeployed_student_is_refused(
+    api_base: str,
+):
     """An apiBase is not an endpoint by being set: one naming the in-cluster
-    student Service backs nothing while that service is disabled."""
+    student Service, in any spelling the cluster resolves, backs nothing
+    while that service is disabled."""
     stderr = _composition_failure(
         ("values.rocm.yaml",),
         "inference.vllm_llm_student.enabled=false",
-        "runtime.primaryLLM.apiBase=http://cogniverse-vllm-llm-student:8000/v1",
+        f"runtime.primaryLLM.apiBase={api_base}",
     )
 
     assert stderr == (
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
-        "with VLMDescriptionStrategy at http://cogniverse-vllm-llm-student:8000/v1, "
+        f"with VLMDescriptionStrategy at {api_base}, "
         "the in-cluster vllm_llm_student Service: set "
         "inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase "
         "at a served endpoint"
     ), stderr
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://cogniverse-vllm-llm-student.example.com:8000/v1",
+        "http://cogniverse-vllm-llm-student.other.svc.cluster.local:8000/v1",
+        "http://cogniverse-vllm-llm-student:8001/v1",
+    ],
+    ids=["external-host", "other-namespace", "other-port"],
+)
+def test_an_api_base_naming_another_endpoint_renders_without_the_student(
+    api_base: str,
+):
+    config = _chart_config(
+        _render(
+            "inference.vllm_llm_student.enabled=false",
+            f"runtime.primaryLLM.apiBase={api_base}",
+            values="values.rocm.yaml",
+        )
+    )
+
+    assert _video_description_endpoint(config, _SELECTED_VIDEO_PROFILE) == api_base
 
 
 def _schema_deployment_calls(docs: list[dict]) -> list[tuple[str, str]]:

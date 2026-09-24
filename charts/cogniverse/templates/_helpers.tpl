@@ -151,6 +151,35 @@ directly rather than delegating to primaryLLMEndpoint, which falls back here.
 {{- end -}}
 
 {{/*
+host:port/path an in-cluster URL resolves to, so every spelling of one
+Service compares equal: case, a trailing slash, the scheme's default port,
+and the release namespace's .<ns>, .<ns>.svc and .<ns>.svc.cluster.local
+suffixes (with or without the root dot) are normalised away.
+Call with (dict "url" $url "root" $).
+*/}}
+{{- define "cogniverse.clusterEndpointKey" -}}
+{{- $url := .url | lower | trimSuffix "/" -}}
+{{- $https := hasPrefix "https://" $url -}}
+{{- $rest := $url | trimPrefix "https://" | trimPrefix "http://" -}}
+{{- $parts := splitn "/" 2 $rest -}}
+{{- $hostPort := splitList ":" $parts._0 -}}
+{{- $host := index $hostPort 0 | trimSuffix "." -}}
+{{- $port := ternary "443" "80" $https -}}
+{{- if gt (len $hostPort) 1 -}}
+{{- $port = index $hostPort 1 -}}
+{{- end -}}
+{{- $namespace := .root.Release.Namespace | lower -}}
+{{- range list ".svc.cluster.local" ".svc" -}}
+{{- $suffix := printf ".%s%s" $namespace . -}}
+{{- if hasSuffix $suffix $host -}}
+{{- $host = trimSuffix $suffix $host -}}
+{{- end -}}
+{{- end -}}
+{{- $host = trimSuffix (printf ".%s" $namespace) $host -}}
+{{- printf "%s:%s/%s" $host $port ($parts._1 | default "" | trimSuffix "/") -}}
+{{- end -}}
+
+{{/*
 vLLM teacher LLM endpoint: the DSPy compile-time teacher and the backend
 the semantic router serves pro-reasoning from. Resolves to the teacher
 entry in ``cogniverse.inferenceServiceUrls`` when that service is rendered
@@ -550,8 +579,9 @@ point at Modal.
 Fails the render when config.defaultProfiles.video selects a profile this
 composition cannot serve. Reads the profile from the rendered config.json:
 every inference_services key it binds needs an enabled service or an
-externalUrl, and a description vlm_endpoint on the in-cluster student
-Service needs inference.vllm_llm_student enabled.
+externalUrl, and a description vlm_endpoint naming the in-cluster student
+Service, in any spelling (cogniverse.clusterEndpointKey), needs
+inference.vllm_llm_student enabled.
 */}}
 {{- define "cogniverse.validateDefaultVideoProfile" -}}
 {{- $name := .Values.config.defaultProfiles.video -}}
@@ -571,7 +601,9 @@ Service needs inference.vllm_llm_student enabled.
 {{- end -}}
 {{- end -}}
 {{- $vlmEndpoint := dig "strategies" "description" "params" "vlm_endpoint" "" $profile -}}
-{{- if and (eq $vlmEndpoint (include "cogniverse.llmStudentServiceUrl" .)) (not .Values.inference.vllm_llm_student.enabled) -}}
+{{- $vlmKey := include "cogniverse.clusterEndpointKey" (dict "url" $vlmEndpoint "root" .) -}}
+{{- $studentKey := include "cogniverse.clusterEndpointKey" (dict "url" (include "cogniverse.llmStudentServiceUrl" .) "root" .) -}}
+{{- if and $vlmEndpoint (eq $vlmKey $studentKey) (not .Values.inference.vllm_llm_student.enabled) -}}
 {{- fail (printf "config.defaultProfiles.video=%s describes frames with VLMDescriptionStrategy at %s, the in-cluster vllm_llm_student Service: set inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase at a served endpoint" $name $vlmEndpoint) -}}
 {{- end -}}
 {{- end -}}
