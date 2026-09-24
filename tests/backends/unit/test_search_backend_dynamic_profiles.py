@@ -865,10 +865,10 @@ def test_video_search_naming_no_profile_uses_the_active_video_profile(monkeypatc
     backend = _profile_resolution_backend(
         TWO_VIDEO_PROFILES, config_manager=MagicMock()
     )
-    monkeypatch.setattr(backend, "_load_tenant_profiles", lambda _tenant: ({}, {}))
 
     backend.search(_video_query())
 
+    # One tenant config read serves the profile merge and the default.
     assert read == ["acme"]
     assert _queried_schemas(backend) == ["video_colpali_smol500_mv_frame_acme_acme"]
 
