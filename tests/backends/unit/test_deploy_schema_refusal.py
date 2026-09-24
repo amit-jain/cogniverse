@@ -169,3 +169,73 @@ def test_intent_recovery_writes_nothing_after_the_lease_is_taken_over(
     assert recovered == []
     backend_with_orphan._deploy_package.assert_not_called()
     successors[0].release()
+
+
+def test_a_lease_lost_before_activation_is_reported_as_retryable(monkeypatch):
+    """A deployer taken over after building its package must not post it, and
+    the lost lease is reported as a retryable takeover, not a Vespa refusal."""
+    import json
+    from pathlib import Path
+
+    import requests
+
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries.schema_deploy_lease import (
+        DeploymentLeaseLost,
+        SchemaDeployLease,
+    )
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 0.6)
+    store = InMemoryConfigStore()
+    registry = MagicMock()
+    registry._get_all_schemas.return_value = []
+    registry.reconcile_deployment_intents.return_value = []
+    registry.reserved_schemas.return_value = {}
+    registry.deployment_lease = lambda **kwargs: SchemaDeployLease(
+        store, lease_seconds=0.3, **kwargs
+    )
+    backend = VespaBackend.__new__(VespaBackend)
+    backend.schema_registry = registry
+    manager = VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=19071,
+        schema_registry=registry,
+    )
+    manager.list_deployed_document_types = MagicMock(return_value=[])
+    backend.schema_manager = manager
+    backend._url = "http://localhost"
+    backend._config_port = 19071
+    backend._wait_for_schema_convergence = MagicMock()
+    successors = []
+
+    def taken_over_while_building():
+        successor = SchemaDeployLease(store, wait_seconds=5)
+        assert successor.acquire() is successor
+        successors.append(successor)
+        return SimpleNamespace(application_name="cogniverse")
+
+    backend._config_manager_instance = MagicMock()
+    backend._config_manager_instance.get_system_config.side_effect = (
+        taken_over_while_building
+    )
+    posts = []
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: posts.append(args))
+    definition = json.loads(Path("configs/schemas/provenance_schema.json").read_text())
+    definition["name"] = "provenance_acme_acme"
+
+    with pytest.raises(BackendDeploymentError) as failure:
+        backend.deploy_schemas(
+            [{"name": "provenance_acme_acme", "definition": definition}]
+        )
+
+    assert str(failure.value) == (
+        "Deployment lease was taken over before activation; nothing was "
+        "activated or registered. Retry the deploy: Vespa deployment lease "
+        "expired or was replaced"
+    )
+    assert isinstance(failure.value.__cause__, DeploymentLeaseLost)
+    assert posts == []
+    assert len(successors) == 1
+    backend._wait_for_schema_convergence.assert_not_called()
+    successors[0].release()
