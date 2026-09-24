@@ -21,7 +21,7 @@ on:
           - testpypi
           - pypi
       dry_run:
-        description: 'Dry run (preview only)'
+        description: 'Dry run (preview only; run from a v* tag ref, a branch build carries a local version and fails verification)'
         required: false
         default: false
         type: boolean
@@ -117,6 +117,13 @@ jobs:
           pip install uv
           uv --version
 
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -164,7 +171,7 @@ jobs:
 
     # Only run for prerelease tags or manual workflow dispatch with testpypi target
     if: |
-      (github.event_name == 'push' && contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc')) ||
+      (github.event_name == 'push' && (contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc'))) ||
       (github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi')
 
     steps:
@@ -283,33 +290,26 @@ jobs:
 
       - name: Generate release notes
         id: release_notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          installs=$(python3 -c 'import json, os
+          for package in json.load(open("BUILD_MANIFEST.json"))["packages"]:
+              print("pip install " + package["name"] + "==" + os.environ["VERSION"])')
           cat > release_notes.md <<EOF
-          # Cogniverse SDK v${{ steps.version.outputs.version }}
+          # Cogniverse SDK v${VERSION}
 
           ## Installation
 
           \`\`\`bash
-          pip install cogniverse-core==${{ steps.version.outputs.version }}
-          pip install cogniverse-agents==${{ steps.version.outputs.version }}
-          pip install cogniverse-vespa==${{ steps.version.outputs.version }}
-          pip install cogniverse-runtime==${{ steps.version.outputs.version }}
-          pip install cogniverse-dashboard==${{ steps.version.outputs.version }}
+          ${installs}
           \`\`\`
 
           Or install all packages:
 
           \`\`\`bash
-          pip install cogniverse-runtime==${{ steps.version.outputs.version }}
+          pip install cogniverse-runtime==${VERSION}
           \`\`\`
-
-          ## Packages
-
-          - \`cogniverse-core\`: Core configuration and utilities
-          - \`cogniverse-agents\`: Multi-agent orchestration and routing
-          - \`cogniverse-vespa\`: Vespa vector database backend
-          - \`cogniverse-runtime\`: FastAPI runtime server
-          - \`cogniverse-dashboard\`: Streamlit dashboard UI
 
           ## Links
 
