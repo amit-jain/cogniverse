@@ -675,13 +675,13 @@ class VespaSchemaManager:
                     app_zip = app_package.to_zip().getvalue()
                     if lease is not None:
                         # Refuse before uploading anything once the lease has
-                        # moved; the same renewal runs again as the fence
-                        # immediately before the activate.
-                        lease.renew()
+                        # moved; the same check runs again as the fence before
+                        # the prepare and the activate.
+                        lease.ensure_owned()
                     response = self._post_package(
                         tenant_url,
                         app_zip,
-                        fence=None if lease is None else lease.renew,
+                        fence=None if lease is None else lease.ensure_owned,
                     )
                     if response.status_code == 200:
                         break

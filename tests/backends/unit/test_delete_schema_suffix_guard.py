@@ -52,7 +52,7 @@ class _NoContentionLease:
     def acquire(self):
         return self
 
-    def renew(self):
+    def ensure_owned(self):
         return None
 
     def release(self):

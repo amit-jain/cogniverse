@@ -1115,7 +1115,7 @@ class VespaBackend(Backend):
                 app_package,
                 allow_field_type_change,
                 allow_schema_removal,
-                fence=None if lease is None else lease.renew,
+                fence=None if lease is None else lease.ensure_owned,
             )
 
     def _activate_application_package(

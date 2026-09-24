@@ -259,18 +259,18 @@ def test_schema_manager_retry_rebuilds_and_resends_the_complete_package():
 
 
 class _LosingLease:
-    """Owned for ``owned_renewals`` renewals, then lost."""
+    """Owned for ``owned_checks`` ownership checks, then lost."""
 
-    def __init__(self, owned_renewals):
-        self.owned_renewals = owned_renewals
-        self.renewals = 0
+    def __init__(self, owned_checks):
+        self.owned_checks = owned_checks
+        self.checks = 0
 
     def acquire(self):
         return self
 
-    def renew(self):
-        self.renewals += 1
-        if self.renewals > self.owned_renewals:
+    def ensure_owned(self):
+        self.checks += 1
+        if self.checks > self.owned_checks:
             raise RuntimeError("Vespa deployment lease expired or was replaced")
 
     def release(self):
@@ -281,7 +281,7 @@ def test_a_lease_lost_between_prepare_and_activate_never_activates():
     """A holder stalled past its lease must not activate the package it
     prepared. The fence runs immediately before the config server activates,
     so the session is created and prepared and then abandoned."""
-    lease = _LosingLease(owned_renewals=2)
+    lease = _LosingLease(owned_checks=2)
 
     with _ConfigServer([200]) as server:
         manager = _make_schema_manager(server.port)
@@ -291,7 +291,7 @@ def test_a_lease_lost_between_prepare_and_activate_never_activates():
         with pytest.raises(RuntimeError, match="lease expired or was replaced"):
             manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
 
-    assert lease.renewals == 3
+    assert lease.checks == 3
     assert server.paths == [SESSION_PATH, f"{SESSION_PATH}/4242/prepared"]
     assert server.activations == 0
     assert [_entries(body) for body in server.bodies] == [EXPECTED_PACKAGE_ENTRIES]
@@ -300,7 +300,7 @@ def test_a_lease_lost_between_prepare_and_activate_never_activates():
 def test_a_lease_lost_after_the_session_is_created_never_prepares():
     """Ownership is re-checked before every mutating step: a lease lost once
     the session exists abandons it before the config server prepares it."""
-    lease = _LosingLease(owned_renewals=1)
+    lease = _LosingLease(owned_checks=1)
 
     with _ConfigServer([200]) as server:
         manager = _make_schema_manager(server.port)
@@ -310,7 +310,7 @@ def test_a_lease_lost_after_the_session_is_created_never_prepares():
         with pytest.raises(RuntimeError, match="lease expired or was replaced"):
             manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
 
-    assert lease.renewals == 2
+    assert lease.checks == 2
     assert server.paths == [SESSION_PATH]
     assert server.activations == 0
 
@@ -318,7 +318,7 @@ def test_a_lease_lost_after_the_session_is_created_never_prepares():
 def test_a_backend_deploy_whose_lease_is_lost_never_retries_the_activation():
     """The single-request prepare-and-activate is fenced before every attempt,
     so a conflict retry never posts once the lease is gone."""
-    lease = _LosingLease(owned_renewals=1)
+    lease = _LosingLease(owned_checks=1)
 
     with _ConfigServer([409, 200]) as server:
         backend = _make_backend(server.port)
@@ -328,6 +328,62 @@ def test_a_backend_deploy_whose_lease_is_lost_never_retries_the_activation():
         with pytest.raises(RuntimeError, match="lease expired or was replaced"):
             backend._deploy_package(ApplicationPackage(name="conflictprobe"))
 
-    assert lease.renewals == 2
+    assert lease.checks == 2
     assert server.paths == [DEPLOY_PATH]
     assert server.activations == 1
+
+
+def test_deploy_fences_check_a_heartbeating_lease_without_store_writes():
+    """With the heartbeat renewing, each fence is a local ownership check: the
+    deploy path itself writes the lease record only to take and release it."""
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    class _CountingStore(InMemoryConfigStore):
+        def __init__(self):
+            super().__init__()
+            self.deploy_thread_writes = 0
+
+        def compare_and_set_config(self, *args, **kwargs):
+            if not threading.current_thread().name.startswith(
+                "deploy-lease-heartbeat:"
+            ):
+                self.deploy_thread_writes += 1
+            return super().compare_and_set_config(*args, **kwargs)
+
+    store = _CountingStore()
+    with _ConfigServer([200]) as server:
+        manager = _make_schema_manager(server.port)
+        manager._schema_registry = SimpleNamespace(
+            deployment_lease=lambda **kwargs: SchemaDeployLease(store, **kwargs)
+        )
+        manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
+
+    assert server.paths == [
+        SESSION_PATH,
+        f"{SESSION_PATH}/4242/prepared",
+        f"{SESSION_PATH}/4242/active",
+    ]
+    assert store.deploy_thread_writes == 2
+
+
+def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch):
+    """The heartbeat's cap must outlast a deploy that exhausts every retry
+    with every request running to its timeout."""
+    from cogniverse_core.registries.schema_deploy_lease import MAX_TOTAL_HOLD_SECONDS
+    from cogniverse_vespa import vespa_schema_manager
+
+    backoffs: list[float] = []
+    monkeypatch.setattr(vespa_schema_manager.time, "sleep", backoffs.append)
+    with _ConfigServer([409]) as server:
+        manager = _make_schema_manager(server.port)
+        with pytest.raises(RuntimeError, match="409"):
+            manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
+
+    requests_made = len(server.paths)
+    assert requests_made == 15
+    longest = requests_made * sum(vespa_schema_manager.DEPLOY_REQUEST_TIMEOUT_S) + sum(
+        backoffs
+    )
+    assert longest == 4657.5
+    assert MAX_TOTAL_HOLD_SECONDS >= longest
