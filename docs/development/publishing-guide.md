@@ -532,13 +532,18 @@ TEST_PYPI_TOKEN="your-test-token" ./scripts/publish_packages.sh --test
 - **Index verification**: after every upload succeeds, the script reads the
   index's simple page for each package and requires every manifest file to be
   served with the manifest's sha256 (waiting up to `VERIFY_TIMEOUT` seconds,
-  default 300). A same-named file with other bytes — a skipped duplicate that is
-  not this build — fails the publication.
+  default 300; a 5xx answer or failed request is retried within that time, any
+  other non-404 error fails at once). A same-named file with other bytes — a
+  skipped duplicate that is not this build — fails the publication.
+- **Target only**: the upload goes to PyPI, or TestPyPI with `--test`. If
+  `TWINE_REPOSITORY_URL` or `TWINE_REPOSITORY` is set, the script exits 1
+  before doing anything.
 - **Confirmation**: without `--yes` the script asks; any answer but `yes`, or no
   input, exits 1 with nothing uploaded.
 - **`--dry-run`** runs the manifest checks and `twine check`, lists the uploads,
-  and neither uploads nor contacts the index. Its exit 0 is not evidence of
-  publication.
+  and neither uploads nor queries the index for the release packages (uv may
+  still download `twine==7.0.0` from PyPI when it is not cached). Its exit 0 is
+  not evidence of publication.
 
 ### Test Installation
 
