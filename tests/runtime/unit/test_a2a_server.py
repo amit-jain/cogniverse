@@ -698,6 +698,9 @@ class TestTerminalEventFinalFlag:
         assert evt.context_id == "ctx-9"
         assert evt.final is True
         assert evt.status.state == TaskState.canceled
+        assert [part.root.text for part in evt.status.message.parts] == [
+            "Task canceled."
+        ]
 
     async def test_streaming_marks_only_terminal_event_final(self, mock_dispatcher):
         agent = _FakeStreamAgent(
