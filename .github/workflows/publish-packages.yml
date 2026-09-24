@@ -129,7 +129,7 @@ jobs:
           wheel_list=$(python -c 'import json; m = json.load(open("dist/BUILD_MANIFEST.json")); print("\n".join("dist/" + p["wheel"]["filename"] for p in m["packages"]))')
           mapfile -t wheels <<< "$wheel_list"
           uv venv "$RUNNER_TEMP/release-venv" --python 3.12
-          uv pip install --python "$RUNNER_TEMP/release-venv/bin/python" "${wheels[@]}"
+          uv pip install --prerelease=allow --python "$RUNNER_TEMP/release-venv/bin/python" "${wheels[@]}"
 
       - name: Verify package imports
         working-directory: ${{ runner.temp }}
