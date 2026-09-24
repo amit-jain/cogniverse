@@ -274,3 +274,62 @@ def test_a_peer_registration_after_activation_is_reported_as_one():
         "document"
     ] == {"fields": ["v3"]}
     assert packages == [[name]]
+
+
+def test_a_failed_peer_revision_read_keeps_the_conflict_as_the_error():
+    """The conflict handler reads the peer's row to name its revision; when
+    that read fails the conflict is still what the caller gets, naming the
+    revision unknown and chaining the store error. The registration's own
+    read that confirms the conflict succeeds; the handler's read after it
+    fails."""
+    from cogniverse_core.registries.exceptions import (
+        RegistryConflictError,
+        SchemaRevisionConflictError,
+    )
+
+    registry, store, packages, (tenant, base, name) = _registry_with_peer(
+        lambda peer, tenant, base, _name: peer.unregister_schema(tenant, base)
+    )
+    read = store.get_config
+    write = store.compare_and_set_config
+    conflicted = []
+    reads_after_conflict = []
+    store_error = ConnectionError("config store unreachable")
+
+    def record_conflicts(*args, **kwargs):
+        saved = write(*args, **kwargs)
+        if saved is None:
+            conflicted.append(kwargs["config_key"])
+        return saved
+
+    def failing_read_after_conflict(*args, **kwargs):
+        if conflicted:
+            reads_after_conflict.append(kwargs["config_key"])
+            if len(reads_after_conflict) > 1:
+                raise store_error
+        return read(*args, **kwargs)
+
+    store.compare_and_set_config = record_conflicts
+    store.get_config = failing_read_after_conflict
+
+    with pytest.raises(SchemaRevisionConflictError) as caught:
+        registry.deploy_schema(tenant, base)
+
+    assert conflicted == [f"schema_{base}"]
+    assert reads_after_conflict == [f"schema_{base}", f"schema_{base}"]
+    assert (caught.value.schema_name, caught.value.peer_revision) == (
+        name,
+        "unknown",
+    )
+    assert caught.value.activated is True
+    assert caught.value.retryable is False
+    assert caught.value.__cause__ is store_error
+    assert isinstance(store_error.__context__, RegistryConflictError)
+    assert str(caught.value) == (
+        f"Schema {name!r} was changed by another process after this deploy read "
+        f"its registry row; the peer's revision, which could not be read, was "
+        f"not overwritten."
+    )
+    store.get_config = read
+    assert _row(store, tenant, base).config_value["deleted"] is True
+    assert packages == [[name]]
