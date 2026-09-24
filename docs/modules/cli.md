@@ -268,7 +268,7 @@ cogniverse sandbox status   # show gateway install/running/cluster-sync state
 
 ## Configuration
 
-`resolve_project_root()` (in `config.py`) walks up from the current directory looking for a `pyproject.toml` containing `[tool.uv.workspace]` to find the monorepo root. When the CLI is installed as a wheel (no such root), the same functions fall back to bundled package data under `cogniverse_cli/data/`: the Helm chart with its dependency charts, the Argo workflow templates and the configuration tree. `libs/cli/hatch_build.py` bundles the git-tracked files under `charts/cogniverse`, `workflows` and `configs` into both the sdist and the wheel (a wheel built from the unpacked sdist carries the same files), and fails the build when an asset listed in `required-assets` in `libs/cli/pyproject.toml` is missing.
+`resolve_project_root()` (in `config.py`) walks up from the current directory looking for a `pyproject.toml` with a `[tool.uv.workspace]` table and `project.name = "cogniverse"` to find the monorepo root; another uv workspace is skipped. When the CLI is installed as a wheel (no such root), the same functions fall back to bundled package data under `cogniverse_cli/data/`: the Helm chart with its dependency charts, the Argo workflow templates and the configuration tree. `libs/cli/hatch_build.py` bundles the git-tracked files under `charts/cogniverse`, `workflows` and `configs` into both the sdist and the wheel (a wheel built from the unpacked sdist carries the same files), and fails the build when an asset listed in `required-assets` in `libs/cli/pyproject.toml` is missing.
 
 Environment variables read across CLI commands:
 

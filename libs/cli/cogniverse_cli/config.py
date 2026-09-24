@@ -8,6 +8,7 @@ installed wheel, where assets are bundled as package data).
 
 from __future__ import annotations
 
+import tomllib
 from importlib import resources
 from pathlib import Path
 
@@ -15,18 +16,26 @@ import yaml
 
 
 def resolve_project_root(start: Path | None = None) -> Path | None:
-    """Walk up from *start* looking for a ``pyproject.toml`` that contains
-    ``[tool.uv.workspace]``, indicating the monorepo root.
+    """Walk up from *start* looking for the monorepo root: a
+    ``pyproject.toml`` with a ``[tool.uv.workspace]`` table whose project
+    is named ``cogniverse``.
 
     Returns the directory containing that file, or ``None`` if the
-    filesystem root is reached without finding one.
+    filesystem root is reached without finding one. Raises ``ValueError``
+    naming a ``pyproject.toml`` on the way that is not valid TOML.
     """
     current = (start or Path.cwd()).resolve()
     while True:
         candidate = current / "pyproject.toml"
         if candidate.is_file():
-            text = candidate.read_text(encoding="utf-8")
-            if "[tool.uv.workspace]" in text:
+            try:
+                pyproject = tomllib.loads(candidate.read_text(encoding="utf-8"))
+            except tomllib.TOMLDecodeError as exc:
+                raise ValueError(f"Cannot parse {candidate}: {exc}") from exc
+            if (
+                "workspace" in pyproject.get("tool", {}).get("uv", {})
+                and pyproject.get("project", {}).get("name") == "cogniverse"
+            ):
                 return current
         parent = current.parent
         if parent == current:
