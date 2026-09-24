@@ -749,12 +749,16 @@ class SchemaRegistry:
                     if intents:
                         detail = "Durable registration recovery is pending; the schema is preserved."
                     elif isinstance(exc, RegistryConflictError):
-                        raise SchemaRevisionConflictError(
-                            name,
-                            self._peer_revision(
+                        try:
+                            peer_revision = self._peer_revision(
                                 tenant_id, registration["base_schema_name"]
-                            ),
-                            activated=True,
+                            )
+                        except Exception as read_exc:
+                            raise SchemaRevisionConflictError(
+                                name, "unknown", activated=True
+                            ) from read_exc
+                        raise SchemaRevisionConflictError(
+                            name, peer_revision, activated=True
                         ) from exc
                     else:
                         self._rollback_deployment(previous_schemas, name)

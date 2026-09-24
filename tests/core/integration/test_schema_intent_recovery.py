@@ -1671,12 +1671,15 @@ def test_a_rollback_honours_a_peer_delete_in_its_window(recovery_backend, monkey
     )
 
 
+@pytest.mark.parametrize("peer_row_readable", [True, False])
 def test_a_peer_delete_after_activation_stands_and_is_not_retried(
-    recovery_backend, monkeypatch
+    recovery_backend, monkeypatch, peer_row_readable
 ):
     """A peer deletes a schema right after this deploy activated it: the
     conditional registration conflicts, the peer's deletion stands, and the
-    conflict is reported as not retryable."""
+    conflict is reported as not retryable. When the peer's row cannot be
+    read, the conflict is still the error, naming the revision unknown and
+    chaining the store error."""
     from cogniverse_core.registries.exceptions import (
         RegistryConflictError,
         SchemaRevisionConflictError,
@@ -1691,8 +1694,11 @@ def test_a_peer_delete_after_activation_stands_and_is_not_retried(
     schema = owner.schema_registry.deploy_schema(tenant, "wiki_pages")
     real_deploy = deployer.deploy_schemas
     real_write = store.compare_and_set_config
+    real_read = store.get_config
     peer_deleted = []
     conflicts = []
+    reads_after_conflict = []
+    store_error = ConnectionError("config store unreachable")
 
     def peer_deletes_after_activation(schemas, *args, **kwargs):
         activated = real_deploy(schemas, *args, **kwargs)
@@ -1705,22 +1711,43 @@ def test_a_peer_delete_after_activation_stands_and_is_not_retried(
             conflicts.append(kwargs["config_key"])
         return saved
 
+    def fail_the_handlers_read(*args, **kwargs):
+        if conflicts and kwargs.get("tenant_id") == tenant:
+            reads_after_conflict.append(kwargs["config_key"])
+            if len(reads_after_conflict) > 1:
+                raise store_error
+        return real_read(*args, **kwargs)
+
     monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_after_activation)
     monkeypatch.setattr(store, "compare_and_set_config", record_conflicts)
+    if not peer_row_readable:
+        monkeypatch.setattr(store, "get_config", fail_the_handlers_read)
     with pytest.raises(SchemaRevisionConflictError) as caught:
         deployer.schema_registry.deploy_schema(tenant, "wiki_pages", force=True)
+    monkeypatch.setattr(store, "get_config", real_read)
 
     assert peer_deleted == [schema]
     assert conflicts == ["schema_wiki_pages"]
     assert caught.value.activated is True
     assert caught.value.retryable is False
-    assert caught.value.peer_revision == "tombstone"
-    assert isinstance(caught.value.__cause__, RegistryConflictError)
-    assert str(caught.value) == (
-        f"Schema {schema!r} was deleted by another process after this deploy "
-        f"read its registry row; the peer's deletion stands and was not "
-        f"overwritten."
-    )
+    if peer_row_readable:
+        assert caught.value.peer_revision == "tombstone"
+        assert isinstance(caught.value.__cause__, RegistryConflictError)
+        assert str(caught.value) == (
+            f"Schema {schema!r} was deleted by another process after this deploy "
+            f"read its registry row; the peer's deletion stands and was not "
+            f"overwritten."
+        )
+    else:
+        assert reads_after_conflict == ["schema_wiki_pages", "schema_wiki_pages"]
+        assert caught.value.peer_revision == "unknown"
+        assert caught.value.__cause__ is store_error
+        assert isinstance(store_error.__context__, RegistryConflictError)
+        assert str(caught.value) == (
+            f"Schema {schema!r} was changed by another process after this deploy "
+            f"read its registry row; the peer's revision, which could not be read, "
+            f"was not overwritten."
+        )
     live = set(connect().schema_manager.list_deployed_document_types())
     assert schema not in live
     assert keeper in live
