@@ -1371,3 +1371,53 @@ class TestRepairOfAMalformedPrimary:
             manager.repair_provenance("m8")
         assert caught.value.memory_id == "m8"
         manager._provenance_store.attach.assert_not_called()
+
+
+class TestUpdateValidatesProvenanceBeforeWriting:
+    """A provenance payload the index cannot accept must stop the update
+    before the primary is rewritten, not after."""
+
+    @staticmethod
+    def _manager(stored_metadata):
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        Mem0MemoryManager._instances.pop("update_validation_tenant", None)
+        manager = Mem0MemoryManager(tenant_id="update_validation_tenant")
+        manager._initialized = True
+        manager.config = None
+        manager._knowledge_registry = None
+        manager.memory = MagicMock()
+        manager.memory.get.return_value = {
+            "id": "m9",
+            "memory": "stored",
+            "metadata": stored_metadata,
+        }
+        manager._provenance_store = MagicMock()
+        manager._provenance_lease_store = InMemoryConfigStore()
+        return manager
+
+    @pytest.mark.parametrize(
+        "stored_metadata, requested_metadata",
+        [
+            ({"kind": "entity_fact", "provenance": {"written_by": 7}}, None),
+            ({"kind": "note"}, {"kind": "entity_fact", "provenance": "malformed"}),
+        ],
+    )
+    def test_malformed_provenance_leaves_the_primary_unwritten(
+        self, stored_metadata, requested_metadata
+    ):
+        from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+        manager = self._manager(stored_metadata)
+
+        with pytest.raises(ProvenanceWriteError, match="invalid_provenance"):
+            manager.update_memory(
+                memory_id="m9",
+                content="rewritten",
+                tenant_id="update_validation_tenant",
+                agent_name="agent",
+                metadata=requested_metadata,
+            )
+        manager.memory.update.assert_not_called()
+        manager._provenance_store.attach.assert_not_called()
+        manager._provenance_store.delete.assert_not_called()

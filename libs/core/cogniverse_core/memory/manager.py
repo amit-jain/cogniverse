@@ -1948,6 +1948,9 @@ class Mem0MemoryManager:
             effective_metadata = (
                 metadata if metadata is not None else self._read_metadata(before)
             )
+            # Validated before the primary write: a payload the index cannot
+            # accept must leave the primary as it was.
+            provenance = self._provenance_for_index(effective_metadata)
             # Mem0's update() only accepts memory_id and data (content)
             # It does NOT accept user_id or agent_id
             self._check_provenance_ownership()
@@ -1957,7 +1960,6 @@ class Mem0MemoryManager:
                 metadata=effective_metadata,
             )
 
-            provenance = self._provenance_for_index(effective_metadata)
             if provenance is not None:
                 primary = self.memory.get(memory_id)
                 if not isinstance(primary, dict):
@@ -1990,7 +1992,7 @@ class Mem0MemoryManager:
             # disagrees with the stored content — a torn state reported as a
             # clean no-op, with no memory id to retry or repair from.
             logger.error(
-                "Provenance write failed after memory %s was updated for %s/%s",
+                "Provenance write failed for memory %s of %s/%s",
                 memory_id,
                 tenant_id,
                 agent_name,
