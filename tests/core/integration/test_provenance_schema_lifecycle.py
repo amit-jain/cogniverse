@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
@@ -284,3 +285,67 @@ def test_the_migration_does_not_redeploy_a_schema_a_peer_deleted_meanwhile(
         assert for_tenant["calls"] == [("registry", tenant, ["provenance"])]
     assert _schema_row(store, tenant).config_value["deleted"] is True
     assert schema not in set(peer.schema_manager.list_deployed_document_types(True))
+
+
+def _memory_row(backend, schema, memory_id, tenant):
+    backend.put_document_fields(
+        memory_id,
+        {"id": memory_id, "text": "a remembered turn", "user_id": tenant},
+        schema_name=schema,
+        namespace="memory_content",
+    )
+
+
+@pytest.mark.parametrize("state", ["client_cache_miss", "tombstoned_by_peer"])
+def test_a_memory_row_delete_never_deploys_the_memory_schema(
+    provenance_vespa, deploys, state
+):
+    """Memory deletes, namespace clears and retention remove primaries through
+    the vector store, reading each row first as Mem0's delete does; neither
+    the read nor the delete may deploy (or resurrect) the tenant's
+    agent_memories schema on an ingestion-client cache miss."""
+    connect, store = provenance_vespa
+    tenant = f"memdel_{uuid4().hex[:10]}:acme"
+    owner = connect(tenant)
+    schema = owner.schema_registry.deploy_schema(tenant, "agent_memories")
+    memory_id = f"mem-{uuid4().hex[:8]}"
+    _memory_row(owner, schema, memory_id, tenant)
+    assert owner.get_document_fields(
+        memory_id, schema_name=schema, namespace="memory_content"
+    ) == {"id": memory_id, "text": "a remembered turn", "user_id": tenant}
+    deleter = connect(tenant)
+    vectors = BackendVectorStore(
+        collection_name=schema,
+        backend_resolver=lambda: deleter,
+        tenant_id=tenant,
+        profile="agent_memories",
+    )
+    if state == "tombstoned_by_peer":
+        assert owner.schema_manager.delete_schema(tenant, "agent_memories") == schema
+    deploys.clear()
+
+    record = vectors.get(memory_id)
+    vectors.delete(memory_id)
+
+    assert deploys == []
+    assert deleter._vespa_ingestion_clients == {}
+    live = set(deleter.schema_manager.list_deployed_document_types(True))
+    if state == "tombstoned_by_peer":
+        assert record is None
+        assert schema not in live
+        row = store.get_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key="schema_agent_memories",
+        )
+        assert row.config_value["deleted"] is True
+    else:
+        assert (record.id, record.payload["data"]) == (memory_id, "a remembered turn")
+        assert schema in live
+        assert (
+            owner.get_document_fields(
+                memory_id, schema_name=schema, namespace="memory_content"
+            )
+            is None
+        )

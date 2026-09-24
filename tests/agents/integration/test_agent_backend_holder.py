@@ -365,7 +365,7 @@ def test_a_memory_read_in_flight_is_closed_only_after_it_releases(
 
     read_entered = threading.Event()
     clear_returned = threading.Event()
-    real_get = backend.get_document
+    real_get = backend.get_live_document
     closes_seen_during_read: list[int] = []
 
     def barrier_get(*args, **kwargs):
@@ -373,7 +373,7 @@ def test_a_memory_read_in_flight_is_closed_only_after_it_releases(
         assert clear_returned.wait(30), "the evictor never ran"
         return real_get(*args, **kwargs)
 
-    monkeypatch.setattr(backend, "get_document", barrier_get, raising=True)
+    monkeypatch.setattr(backend, "get_live_document", barrier_get, raising=True)
 
     def evict():
         assert read_entered.wait(30), "the read never reached the backend"
