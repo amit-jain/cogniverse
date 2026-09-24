@@ -101,9 +101,8 @@ def _resolve_service_and_profile(
 
     Profile resolution: request wins, else the tenant's default profile via
     the shared ``resolve_default_profile`` (``backend.default_profiles.video.
-    profile`` then ``active_video_profile``), else the first registered
-    backend profile. No silent "default" string fallback — the string
-    "default" isn't a valid profile.
+    profile`` then ``active_video_profile``). With neither, the request is
+    refused rather than run on a catalog profile nothing selected.
     """
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     search_service = SearchService(
@@ -116,15 +115,11 @@ def _resolve_service_and_profile(
     # named another profile ingested into one corpus and queried another.
     profile = requested_profile or resolve_default_profile(config)
     if not profile:
-        profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
-        if profiles_dict:
-            profile = next(iter(profiles_dict))
-    if not profile:
         raise HTTPException(
             status_code=400,
             detail=(
-                "No profile specified on the request and no "
-                "active_video_profile configured on the runtime."
+                f"No profile specified on the request and tenant {tenant_id!r} "
+                "has no configured default video profile."
             ),
         )
     return search_service, profile
