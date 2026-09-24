@@ -319,6 +319,7 @@ async def monitor_with_real_search(
     )
     monitor = QualityMonitor(
         tenant_id=qm_tenant,
+        search_profile=SEARCH_PROFILE,
         runtime_url="http://testserver",
         phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url=get_llm_base_url(),
@@ -577,6 +578,7 @@ def _live_result(tenant_id, sample_count):
 async def phoenix_monitor(phoenix_container, real_telemetry, qm_tenant):
     monitor = QualityMonitor(
         tenant_id=qm_tenant,
+        search_profile=SEARCH_PROFILE,
         runtime_url="http://testserver",
         phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url=get_llm_base_url(),
@@ -693,6 +695,7 @@ class TestQualityMonitorTenantOwnership:
         runtime_url = f"http://127.0.0.1:{port}"
         monitor = QualityMonitor(
             tenant_id=qm_tenant,
+            search_profile=SEARCH_PROFILE,
             runtime_url=runtime_url,
             phoenix_http_endpoint=phoenix_container["http_endpoint"],
             llm_base_url=runtime_url,
@@ -893,6 +896,7 @@ class TestQualityMonitorTenantOwnership:
             missing_tenant = f"qm:{uuid.uuid4().hex}"
             present_monitor = QualityMonitor(
                 tenant_id=qm_tenant,
+                search_profile=SEARCH_PROFILE,
                 runtime_url=runtime_url,
                 phoenix_http_endpoint=phoenix_container["http_endpoint"],
                 llm_base_url=runtime_url,
@@ -902,6 +906,7 @@ class TestQualityMonitorTenantOwnership:
             )
             missing_monitor = QualityMonitor(
                 tenant_id=missing_tenant,
+                search_profile=SEARCH_PROFILE,
                 runtime_url=runtime_url,
                 phoenix_http_endpoint=phoenix_container["http_endpoint"],
                 llm_base_url=runtime_url,
@@ -961,6 +966,7 @@ class TestQualityMonitorTenantOwnership:
         await _seed_golden_rows(second_provider, second_tenant, second_rows)
         second = QualityMonitor(
             tenant_id=second_tenant,
+            search_profile=SEARCH_PROFILE,
             runtime_url="http://unused",
             phoenix_http_endpoint=first.phoenix_http_endpoint,
             llm_base_url=first.llm_base_url,
@@ -1028,6 +1034,7 @@ class TestQualityMonitorTenantOwnership:
             )
             monitor = QualityMonitor(
                 tenant_id=healthy.tenant_id,
+                search_profile=SEARCH_PROFILE,
                 runtime_url=healthy.runtime_url,
                 phoenix_http_endpoint=unavailable_url,
                 llm_base_url=healthy.llm_base_url,
@@ -1208,6 +1215,7 @@ class TestXGBoostGateViaPhoenixProvider:
 
         monitor = QualityMonitor(
             tenant_id="xgboost_gate_test",
+            search_profile=SEARCH_PROFILE,
             runtime_url="http://localhost:99999",
             phoenix_http_endpoint=phoenix_url,
             llm_base_url=get_llm_base_url(),
@@ -1246,6 +1254,7 @@ class TestXGBoostGateViaPhoenixProvider:
 
         monitor = QualityMonitor(
             tenant_id="xgboost_skip_test",
+            search_profile=SEARCH_PROFILE,
             runtime_url="http://localhost:99999",
             phoenix_http_endpoint="http://localhost:99999",
             llm_base_url=get_llm_base_url(),
@@ -1549,6 +1558,7 @@ class TestLiveTrafficRealPhoenix:
 
         monitor = QualityMonitor(
             tenant_id=tenant_id,
+            search_profile=SEARCH_PROFILE,
             runtime_url="http://localhost:99999",
             phoenix_http_endpoint=real_telemetry.config.provider_config[
                 "http_endpoint"
