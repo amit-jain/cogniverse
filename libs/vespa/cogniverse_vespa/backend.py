@@ -933,7 +933,7 @@ class VespaBackend(Backend):
             # process moves past before this one posts. The convergence
             # wait below runs outside it, so peers are not blocked while
             # the content nodes bring the new document types online.
-            with self.schema_manager.deployment_lease():
+            with self.schema_manager.deployment_lease() as lease:
                 # Merge existing schemas into the deployment so the redeploy looks
                 # like an "add" rather than "remove + add". Two sources feed the
                 # merge:
@@ -1018,7 +1018,8 @@ class VespaBackend(Backend):
                     try:
                         registry_schemas.extend(
                             self.schema_registry.reconcile_deployment_intents(
-                                set(vespa_deployed)
+                                set(vespa_deployed),
+                                fence=None if lease is None else lease.ensure_owned,
                             )
                         )
                     except Exception as recovery_exc:

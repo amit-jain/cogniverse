@@ -11,7 +11,7 @@ import time
 import weakref
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.exceptions import (
@@ -728,11 +728,15 @@ class SchemaRegistry:
                 self._deployment_intents.complete(intent)
         return names
 
-    def reconcile_deployment_intents(self, live_names: set[str]) -> List[SchemaInfo]:
+    def reconcile_deployment_intents(
+        self, live_names: set[str], fence: Optional[Callable[[], None]] = None
+    ) -> List[SchemaInfo]:
         """Complete due intents for schemas confirmed live by the config server.
 
         Recovery writes the owner's exact registry payload and never deletes or
         deploys schemas. Fresh intents wait 90 seconds for normal registration.
+        ``fence`` runs before each write it makes (see
+        ``SchemaDeploymentIntents.reconcile``).
         """
         from dataclasses import asdict
 
@@ -744,6 +748,7 @@ class SchemaRegistry:
             live_names,
             registered,
             lambda row, version: self.register_schema(**row, expected_version=version),
+            fence=fence,
         )
         return [SchemaInfo(**row) for row in recovered]
 

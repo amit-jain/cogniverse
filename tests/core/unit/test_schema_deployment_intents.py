@@ -389,3 +389,42 @@ def test_reserved_read_failure_raises_with_context(journal, registration):
     ) as failure:
         journal.reserved({registration["full_schema_name"]})
     assert str(failure.value.__cause__) == "journal unavailable"
+
+
+def test_reconcile_writes_nothing_once_its_fence_refuses(journal, registration):
+    """Every journal and registry write is fenced by the deploy lease, so a
+    holder that lost it leaves both exactly as they were."""
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+    before = copy.deepcopy(journal._store.rows)
+    checks = []
+
+    def lost():
+        checks.append(True)
+        raise DeploymentLeaseLost("Vespa deployment lease expired or was replaced")
+
+    with pytest.raises(DeploymentLeaseLost):
+        journal.reconcile(
+            {registration["full_schema_name"]},
+            {},
+            lambda row, _version: pytest.fail(f"registered {row} after takeover"),
+            fence=lost,
+        )
+    assert checks == [True]
+    assert journal._store.rows == before
+
+
+def test_reconcile_fences_each_write(journal, registration):
+    """The fence runs before the attempt claim, the registration and the
+    completion — not once for the whole pass."""
+    journal.prepare(registration, grace_s=0)
+    events = []
+
+    assert journal.reconcile(
+        {registration["full_schema_name"]},
+        {},
+        lambda row, _version: events.append("register"),
+        fence=lambda: events.append("fence"),
+    ) == [registration]
+    assert events == ["fence", "fence", "register", "fence"]
