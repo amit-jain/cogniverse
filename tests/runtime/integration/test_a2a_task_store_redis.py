@@ -2295,3 +2295,90 @@ async def test_a_cancel_limit_below_one_is_refused_before_redis_is_touched():
     assert str(refused.value) == (
         "A2A_MAX_CONCURRENT_CANCELS (max_concurrent_cancels) must be >= 1, got 0"
     )
+
+
+async def _abort_whose_flush_fails_to_publish(store, handler, relay, task_id):
+    """Hold two producer events, then fail begin_cancel while Redis refuses
+    to publish, so the abort's flush of those events fails."""
+    real_publish = store.publish_event
+    refusing = {"on": False}
+
+    async def publish_event(task, event):
+        if refusing["on"]:
+            raise A2ATaskStoreError(
+                f"shared A2A task store unavailable: publish event for task {task}"
+            )
+        await real_publish(task, event)
+
+    store.publish_event = publish_event
+    real_begin_cancel = store.begin_cancel
+
+    async def producer_emits_then_begin_cancel_fails(task, **kwargs):
+        for mark in ("held-1", "held-2"):
+            await relay.enqueue_event(_status_event(task, TaskState.working, mark))
+        refusing["on"] = True
+        raise A2ATaskOwnershipLostError(f"cancel task {task} lost its owner")
+
+    store.begin_cancel = producer_emits_then_begin_cancel_fails
+    try:
+        with pytest.raises(A2ATaskStoreError) as refused:
+            await handler._cancel_owned(task_id)
+    finally:
+        refusing["on"] = False
+        store.begin_cancel = real_begin_cancel
+    return refused.value
+
+
+async def test_a_failed_abort_flush_leaves_the_relay_open_and_loud(
+    redis_client, caplog
+):
+    store, handler, relay = await _handler_with_live_relay(redis_client, "flush")
+    consumer = relay.tap()
+
+    refused = await _abort_whose_flush_fails_to_publish(store, handler, relay, "flush")
+    await relay.enqueue_event(_status_event("flush", TaskState.working, "later"))
+
+    delivered = [
+        (await consumer.dequeue_event(no_wait=True)).metadata for _ in range(3)
+    ]
+    started = time.monotonic()
+    await asyncio.wait_for(relay.close(immediate=True), timeout=10)
+    close_seconds = time.monotonic() - started
+    entries = await redis_client.xrange("test:a2a:events:flush")
+
+    # The failure reaches the canceller; nothing held is lost locally.
+    assert str(refused) == (
+        "shared A2A task store unavailable: publish event for task flush"
+    )
+    assert delivered == [{"mark": "held-1"}, {"mark": "held-2"}, {"mark": "later"}]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "ERROR" and "relay publish" in record.getMessage()
+    ] == [
+        "A2A task flush: 2 events held during a failed cancel reached local "
+        "consumers but not the relay publish"
+    ]
+    # The relay is open again: later events publish and the close is not held.
+    assert close_seconds < 1
+    assert "later" in str(entries)
+    assert _relay_states(entries) == [TaskState.working, TaskState.working, "closed"]
+
+
+async def test_a_cancel_after_a_failed_abort_flush_holds_and_publishes(
+    redis_client,
+):
+    store, handler, relay = await _handler_with_live_relay(redis_client, "again")
+    await _abort_whose_flush_fails_to_publish(store, handler, relay, "again")
+
+    canceled = await asyncio.wait_for(handler._cancel_owned("again"), timeout=10)
+    # A cancel that could hold the relay releases it when done; a relay the
+    # failed abort left holding would make this close wait out the 5s hold.
+    started = time.monotonic()
+    await asyncio.wait_for(relay.close(immediate=True), timeout=10)
+    close_seconds = time.monotonic() - started
+
+    assert canceled.status.state == TaskState.canceled
+    assert close_seconds < 1
+    entries = await redis_client.xrange("test:a2a:events:again")
+    assert _relay_states(entries) == [TaskState.working, TaskState.canceled, "closed"]

@@ -102,14 +102,45 @@ class RedisRelayEventQueue(EventQueue):
 
         The relay returns to the state it had before the hold; if that was
         open, the held events are delivered in order before anything newer.
+        Every held event reaches local consumers even when publishing it
+        fails; the first publish failure is raised after the relay is
+        restored, so the relay is never left holding.
         """
-        if self._state_before_cancel == "open":
-            while self._held:
-                await self._enqueue(self._held.pop(0))
-        else:
+        failure: Exception | None = None
+        unpublished = 0
+        try:
+            if self._state_before_cancel == "open":
+                while self._held:
+                    event = self._held.pop(0)
+                    try:
+                        await self._enqueue(event)
+                    except Exception as exc:
+                        # Delivered locally, not published; keep releasing
+                        # the rest and raise the first failure afterwards.
+                        unpublished += 1
+                        failure = failure or exc
+            else:
+                # An earlier cancel already ended this relay: still superseded.
+                self._held.clear()
+        finally:
+            if self._held:
+                logger.error(
+                    "A2A task %s: dropped %d events held during a cancel that "
+                    "was interrupted while releasing them",
+                    self._task_id,
+                    len(self._held),
+                )
             self._held.clear()
-        self._cancel_state = self._state_before_cancel
-        self._cancel_published.set()
+            self._cancel_state = self._state_before_cancel
+            self._cancel_published.set()
+        if failure is not None:
+            logger.error(
+                "A2A task %s: %d events held during a failed cancel reached local "
+                "consumers but not the relay publish",
+                self._task_id,
+                unpublished,
+            )
+            raise failure
 
     def end_cancel(self) -> None:
         """Release a close held for the cancel, published or abandoned."""
