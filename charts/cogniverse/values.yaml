@@ -1843,7 +1843,7 @@ multiTenant:
 #      endpoint can replay the full event history for late-connecting clients.
 # AOF on so a pod restart doesn't lose in-flight queue entries.
 redis:
-  enabled: true
+  enabled: true  # required by the runtime; false fails the render
   # In-cluster auth. Off by default for the local/dev stack; enable in
   # production (values.prod.yaml) with a secret password so any pod that reaches
   # the Redis Service can't read or flush the queue and session state.

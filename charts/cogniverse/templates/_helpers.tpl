@@ -598,6 +598,8 @@ copy of the auth branch.
 - name: REDIS_URL
   value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
 {{- end }}
+{{- else }}
+{{- fail "redis.enabled=false is unsupported: the runtime requires REDIS_URL, which the chart sets only from the in-cluster Redis" }}
 {{- end }}
 {{- end }}
 
