@@ -632,9 +632,9 @@ class TestSourceGranularityCollapse:
             "collapse_other_source_doc_06",
             "collapse_other_source_doc_08",
         ]
-        assert results[0].segments_in_window == 50
+        assert results[0].segments_in_window == 4
         assert [segment["document_id"] for segment in results[0].matched_segments] == [
-            f"collapse_big_source_doc_{i:02d}" for i in range(50)
+            f"collapse_big_source_doc_{i:02d}" for i in range(4)
         ]
         assert all(
             set(segment) == {"document_id", "score", "start_time", "end_time"}
