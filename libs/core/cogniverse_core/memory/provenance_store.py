@@ -301,9 +301,10 @@ class ProvenanceStore:
 
         When the tenant's provenance schema has never been deployed there
         can be no indexed row for it, so this returns idempotently instead
-        of deleting from it — deleting from an undeployed schema is what
-        forces a full application-package redeploy from the request path
-        (``_get_or_create_ingestion_client`` deploys on a cache miss). A
+        of deleting from it. The delete itself never deploys the schema
+        either: ``delete_live_document`` skips the ingestion client, whose
+        cache miss redeploys a missing, tombstoned or drifted schema, and
+        reads Vespa's "document type does not exist" as absence. A
         schema-registry lookup failure is surfaced rather than treated as
         "no schema": only a clean False short-circuits the delete.
         """
@@ -314,7 +315,7 @@ class ProvenanceStore:
                     self._base_schema, tenant_id=self._tenant_id
                 ):
                     return True
-                deleted = backend.delete_document(
+                deleted = backend.delete_live_document(
                     row_id,
                     schema_name=self._base_schema,
                 )

@@ -275,9 +275,9 @@ class TestMem0MemoryManager:
         manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
         backend = MagicMock()
         backend.schema_exists.return_value = True
-        # IngestionBackend.delete_document is declared to return a bool; a
-        # bare MagicMock return would let a broken delete read as success.
-        backend.delete_document.return_value = True
+        # The provenance row delete returns a bool; a bare MagicMock return
+        # would let a broken delete read as success.
+        backend.delete_live_document.return_value = True
         manager._resolve_backend = lambda: backend
         return backend
 
@@ -477,7 +477,7 @@ class TestMem0MemoryManager:
         mock_memory.delete.assert_called_once_with("mem_123")
         # The indexed provenance row goes with the primary: a row left behind
         # is an orphan that every later citation read rejects.
-        backend.delete_document.assert_called_once_with(
+        backend.delete_live_document.assert_called_once_with(
             f"prov-{canonical_tenant_id('test_tenant')}-mem_123",
             schema_name="provenance",
         )

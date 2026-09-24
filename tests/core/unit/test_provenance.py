@@ -528,7 +528,7 @@ class TestProvenanceStoreFaultContract:
 class _SchemaAwareDeleteBackend(_TenantScopedQueryBackend):
     """Backend stub distinguishing "schema not live" from a delete call.
 
-    ``delete_document`` blows up if invoked while ``schema_live`` is
+    ``delete_live_document`` blows up if invoked while ``schema_live`` is
     False, so a test using this stub fails loudly if ``delete()`` still
     tries to delete (which would force a schema deploy in production)
     instead of returning idempotently.
@@ -550,12 +550,14 @@ class _SchemaAwareDeleteBackend(_TenantScopedQueryBackend):
             raise self.exists_raises
         return self.schema_live
 
-    def delete_document(self, document_id, schema_name=None):
+    def delete_live_document(self, document_id, schema_name=None):
         self.delete_calls.append(
             {"document_id": document_id, "schema_name": schema_name}
         )
         if not self.schema_live:
-            raise AssertionError("delete_document called without a live tenant schema")
+            raise AssertionError(
+                "delete_live_document called without a live tenant schema"
+            )
         return True
 
 
@@ -623,7 +625,7 @@ class _DeleteAnswerBackend(_TenantScopedQueryBackend):
     def schema_exists(self, schema_name, tenant_id=None):
         return True
 
-    def delete_document(self, document_id, schema_name=None):
+    def delete_live_document(self, document_id, schema_name=None):
         self.delete_calls.append(document_id)
         if self.raises is not None:
             raise self.raises
