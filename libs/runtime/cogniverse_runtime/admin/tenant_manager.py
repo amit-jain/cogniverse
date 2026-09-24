@@ -1286,6 +1286,13 @@ def _remove_tenant_orphans(tenants: list, expected_schemas: list) -> list:
     return dropped
 
 
+def _phantom_document_type() -> str:
+    """The document type pyvespa adds, named after the application, to a
+    package deployed with no schemas; nothing registers it."""
+    config_manager = _config_manager or _default_config_manager()
+    return config_manager.get_system_config().application_name
+
+
 def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, list]:
     """Diff Vespa-deployed schemas against the registry and the tenant set.
 
@@ -1330,8 +1337,12 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
         # storage (a cold pod whose data-plane read failed while the config server
         # answered). Reconciling here would report EVERY tenant's schema as an
         # orphan and the dry_run=false path would bulk-delete them all. Refuse
-        # loudly instead of mass-deleting on an unconfirmed registry.
-        non_protected_deployed = deployed - schema_manager._PROTECTED_SCHEMAS
+        # loudly instead of mass-deleting on an unconfirmed registry. The
+        # phantom application type is never registered, so it alone proves
+        # nothing about the read.
+        non_protected_deployed = (
+            deployed - schema_manager._PROTECTED_SCHEMAS - {_phantom_document_type()}
+        )
         if not registered and non_protected_deployed:
             raise HTTPException(
                 status_code=503,
@@ -1453,7 +1464,7 @@ async def reconcile_orphans(
     diff = await asyncio.to_thread(_list_orphan_schemas, include_document_counts)
 
     deleted: list = []
-    if not dry_run and diff["orphan_tenants"]:
+    if not dry_run and diff["orphan_schemas"]:
         with metadata_backend() as backend:
             deleted = await asyncio.to_thread(
                 backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]

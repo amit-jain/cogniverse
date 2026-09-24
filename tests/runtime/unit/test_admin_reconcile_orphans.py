@@ -21,7 +21,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.admin import tenant_manager
+from tests.utils.memory_store import InMemoryConfigStore
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHIPPED_SCHEMAS_DIR = REPO_ROOT / "configs" / "schemas"
@@ -41,6 +43,9 @@ def admin_client():
 
     previous_loader = tenant_manager._schema_loader
     tenant_manager.set_schema_loader(FilesystemSchemaLoader(SHIPPED_SCHEMAS_DIR))
+    # The system config names the application, and so its phantom type.
+    previous_config_manager = tenant_manager._config_manager
+    tenant_manager.set_config_manager(ConfigManager(store=InMemoryConfigStore()))
 
     backend = MagicMock()
     schema_manager = MagicMock()
@@ -67,6 +72,7 @@ def admin_client():
 
     tenant_manager.get_backend = previous_get_backend
     tenant_manager.set_schema_loader(previous_loader)
+    tenant_manager.set_config_manager(previous_config_manager)
 
 
 @pytest.mark.unit
@@ -340,6 +346,68 @@ class TestReconcileOrphansConfirm:
             "video_colpali_smol500_mv_frame_beta",
         ]
 
+    def test_confirm_drops_an_orphan_no_shipped_base_attributes(self, admin_client):
+        """The delete follows the orphans found, not only those a base prefix
+        attributes to a tenant."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "knowledge_graph_legit",
+            "weird_custom_schema_acme",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        legit.tenant_id = "legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+        schema_manager.delete_orphan_schemas.return_value = ["weird_custom_schema_acme"]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert (data["orphan_tenants"], data["unrecovered_schemas"]) == (
+            [],
+            ["weird_custom_schema_acme"],
+        )
+        schema_manager.delete_orphan_schemas.assert_called_once_with(
+            ["weird_custom_schema_acme"]
+        )
+        assert data["deleted"] == ["weird_custom_schema_acme"]
+
+    def test_confirm_removes_the_phantom_application_type_on_an_empty_registry(
+        self, admin_client
+    ):
+        """A package deployed with no schemas carried pyvespa's default
+        document type, named after the application; nothing registers it, and
+        while it is live every deploy is refused. A cluster left that way
+        usually has an empty registry too."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "cogniverse",
+        ]
+        schema_registry._get_all_schemas.return_value = []
+        schema_manager.delete_orphan_schemas.return_value = ["cogniverse"]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert (data["orphan_schemas"], data["unrecovered_schemas"]) == (
+            ["cogniverse"],
+            ["cogniverse"],
+        )
+        schema_manager.delete_orphan_schemas.assert_called_once_with(["cogniverse"])
+        assert data["deleted"] == ["cogniverse"]
+
     def test_confirm_with_no_orphans_does_not_call_bulk_delete(self, admin_client):
         client, _, schema_manager, schema_registry = admin_client
 
@@ -382,6 +450,29 @@ class TestReconcileOrphansSafetyGuard:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
         assert resp.status_code == 503
         # And crucially, nothing was deleted.
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
+    def test_the_phantom_type_does_not_open_the_guard_for_other_schemas(
+        self, admin_client
+    ):
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "cogniverse",
+            "knowledge_graph_alpha",
+        ]
+        schema_registry._get_all_schemas.return_value = []
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"].startswith(
+            "Schema registry is empty while Vespa has deployed schemas"
+        )
         schema_manager.delete_orphan_schemas.assert_not_called()
 
 
