@@ -368,20 +368,30 @@ async def test_search_route_offloads_config_resolution(monkeypatch):
     slow_config.get = _slow_get
     monkeypatch.setattr(search_router, "get_config", lambda **k: slow_config)
 
+    from cogniverse_sdk.document import SearchResultBatch
+
     svc = MagicMock()
-    svc.search.return_value = []
+    svc.search.return_value = SearchResultBatch([], source_search_incomplete=False)
     monkeypatch.setattr(search_router, "SearchService", lambda **k: svc)
 
     req = search_router.SearchRequest(query="q", tenant_id="acme:acme")
-    ticks = await _ticks_during(
-        lambda: search_router.search(
-            req, config_manager=MagicMock(), schema_loader=MagicMock()
+    responses = []
+
+    async def _search():
+        responses.append(
+            await search_router.search(
+                req, config_manager=MagicMock(), schema_loader=MagicMock()
+            )
         )
-    )
+
+    ticks = await _ticks_during(_search)
     assert ticks >= 10, (
         f"only {ticks} ticks during a 0.3s config resolution — the ConfigUtils "
         "ensure-chain ran on the event loop"
     )
+    assert [
+        (r.results_count, r.results, r.source_search_incomplete) for r in responses
+    ] == [(0, [], False)]
 
 
 @pytest.mark.asyncio
