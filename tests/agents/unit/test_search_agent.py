@@ -2765,6 +2765,78 @@ class TestSearchAgentResolvesItsTenantsProfiles:
                 )
         assert create_encoder.call_args_list == []
 
+    @pytest.mark.asyncio
+    async def test_the_standalone_process_takes_the_selected_default(self, monkeypatch):
+        """The search-agent process entrypoint names no profile, so its agent
+        takes the system tenant's selected default through the same resolver."""
+        from cogniverse_agents import search_agent as search_agent_module
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+        config_manager = _memory_config_manager()
+        config_manager.add_backend_profile(
+            BackendProfileConfig(
+                profile_name="system_frames",
+                type="video",
+                schema_name="video_colpali_smol500_mv_frame",
+                embedding_model="acme/frame-encoder",
+                model_loader="colpali",
+            ),
+            tenant_id=SYSTEM_TENANT_ID,
+        )
+        backend = config_manager.get_backend_config(SYSTEM_TENANT_ID)
+        backend.default_profiles = {
+            "video": {"profile": "system_frames", "strategy": "segmentation"}
+        }
+        config_manager.set_backend_config(backend, tenant_id=SYSTEM_TENANT_ID)
+        monkeypatch.setenv("BACKEND_URL", "http://localhost")
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.create_default_config_manager",
+            lambda: config_manager,
+        )
+        monkeypatch.setattr(search_agent_module, "search_agent", None)
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            async with search_agent_module.lifespan(search_agent_module.app):
+                agent = search_agent_module.search_agent
+
+        assert agent.active_profile == "system_frames"
+        [call] = create_encoder.call_args_list
+        assert call.args[:2] == ("system_frames", None)
+
+    @pytest.mark.asyncio
+    async def test_the_standalone_process_refuses_without_a_default(
+        self, tmp_path, monkeypatch
+    ):
+        import json
+
+        from cogniverse_agents import search_agent as search_agent_module
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({"backend": {"profiles": {}}}))
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+        monkeypatch.setenv("BACKEND_URL", "http://localhost")
+        config_manager = _memory_config_manager()
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.create_default_config_manager",
+            lambda: config_manager,
+        )
+        monkeypatch.setattr(search_agent_module, "search_agent", None)
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            with pytest.raises(
+                ValueError,
+                match=r"^tenant '__system__' has no configured default video "
+                r"profile and the search agent was given none$",
+            ):
+                async with search_agent_module.lifespan(search_agent_module.app):
+                    pass
+
+        assert search_agent_module.search_agent is None
+        assert create_encoder.call_args_list == []
+
     def test_an_acoustic_profile_queries_its_semantic_model(self):
         """A ColBERT profile carrying a second, acoustic embedding is queried
         through its semantic model; its embedding_model is the acoustic one."""
