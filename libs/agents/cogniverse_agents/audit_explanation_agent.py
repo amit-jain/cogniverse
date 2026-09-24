@@ -31,7 +31,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.memory.contradiction import ContradictionDetector
-from cogniverse_core.memory.provenance import ProvenanceWalker
+from cogniverse_core.memory.provenance import ProvenanceReadError, ProvenanceWalker
 from cogniverse_core.memory.trust import apply_decay, extract_trust
 
 logger = logging.getLogger(__name__)
@@ -208,11 +208,16 @@ class AuditExplanationAgent(
             max_depth=input.max_chain_depth,
             max_nodes=input.max_chain_nodes,
         )
-        graph = await asyncio.to_thread(
-            walker.walk,
-            input.answer_memory_id,
-            tenant_id,
-        )
+        try:
+            graph = await asyncio.to_thread(
+                walker.walk,
+                input.answer_memory_id,
+                tenant_id,
+            )
+        except ProvenanceReadError as exc:
+            raise RuntimeError(
+                f"Failed to fetch memory {exc.memory_id!r} for tenant {tenant_id!r}"
+            ) from exc.cause
 
         sources: List[SourceExplanationOut] = []
         # Reused by the contradiction pass below so each memory is fetched once.
