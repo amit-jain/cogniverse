@@ -1031,57 +1031,148 @@ class TestLiveDemoGuideA2AContract:
         assert "message/stream" in row
 
 
-class TestBoundedInMemoryTaskStore:
-    """The A2A task store must not grow without bound — a long-lived server
-    receives one Task per request and the stock InMemoryTaskStore keeps them
-    all forever."""
+class TestServedTaskStoreIsBounded:
+    """The task store the runtime serves ``/a2a`` from keeps at most
+    ``A2A_MAX_TASKS`` tasks, dropping the least recently used idle one, so a
+    long-lived server does not accumulate one task per request."""
 
     @staticmethod
-    def _task(task_id: str):
-        from a2a.types import Task, TaskState, TaskStatus
+    def _dispatcher():
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=MagicMock(),
+            schema_loader=MagicMock(),
+        )
+        dispatcher.dispatch = AsyncMock(
+            return_value={"status": "success", "agent": "search_agent", "results": []}
+        )
+        agent_ep = MagicMock()
+        agent_ep.capabilities = ["search"]
+        dispatcher._registry.get_agent.return_value = agent_ep
+        return dispatcher
 
-        return Task(
-            id=task_id,
-            context_id=f"ctx-{task_id}",
-            status=TaskStatus(state=TaskState.working),
+    @staticmethod
+    def _own_database(redis_url: str) -> str:
+        """A database of the shared test Redis no other test serves from."""
+        return redis_url.rsplit("/", 1)[0] + "/7"
+
+    @staticmethod
+    async def _flush(redis_url: str) -> None:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(redis_url)
+        try:
+            await client.flushdb()
+        finally:
+            await client.aclose()
+
+    async def _served(self, redis_url: str, max_tasks: int):
+        from cogniverse_runtime.main import (
+            _a2a_settings_from_env,
+            _build_shared_a2a_protocol,
         )
 
-    def test_rejects_nonpositive_cap(self):
-        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
+        dispatcher = self._dispatcher()
+        return await _build_shared_a2a_protocol(
+            agent_registry=dispatcher._registry,
+            dispatcher=dispatcher,
+            redis_url=redis_url,
+            replica_id="bounded-store-replica",
+            **{**_a2a_settings_from_env({}), "max_tasks": max_tasks},
+        )
 
-        with pytest.raises(ValueError, match="max_tasks must be >= 1"):
-            BoundedInMemoryTaskStore(max_tasks=0)
+    @staticmethod
+    async def _send(client, text: str) -> str:
+        response = await client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": text,
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": f"msg-{text}",
+                        "parts": [{"kind": "text", "text": text}],
+                    },
+                    "metadata": {
+                        "agent_name": "search_agent",
+                        "tenant_id": "test_tenant",
+                    },
+                },
+            },
+        )
+        return response.json()["result"]["id"]
+
+    @staticmethod
+    async def _get(client, task_id: str) -> str:
+        response = await client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": f"get-{task_id}",
+                "method": "tasks/get",
+                "params": {"id": task_id},
+            },
+        )
+        body = response.json()
+        return body["result"]["id"] if "result" in body else body["error"]["message"]
 
     @pytest.mark.asyncio
-    async def test_evicts_oldest_once_capped(self):
-        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
-
-        store = BoundedInMemoryTaskStore(max_tasks=3)
-        for i in range(5):
-            await store.save(self._task(f"t{i}"))
-
-        assert len(store.tasks) == 3
-        assert await store.get("t0") is None
-        assert await store.get("t1") is None
-        for i in (2, 3, 4):
-            got = await store.get(f"t{i}")
-            assert got is not None and got.id == f"t{i}"
+    async def test_rejects_nonpositive_cap(self, workflow_state_redis_url):
+        with pytest.raises(ValueError) as refused:
+            await self._served(self._own_database(workflow_state_redis_url), 0)
+        assert str(refused.value) == "max_tasks must be >= 1, got 0"
 
     @pytest.mark.asyncio
-    async def test_get_refreshes_lru_so_hot_task_survives(self):
-        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
+    async def test_evicts_oldest_once_capped(self, workflow_state_redis_url):
+        import httpx
 
-        store = BoundedInMemoryTaskStore(max_tasks=2)
-        await store.save(self._task("a"))
-        await store.save(self._task("b"))
-        # Touch 'a' so it becomes most-recently-used; inserting 'c' must then
-        # evict 'b' (the coldest), not 'a'.
-        assert (await store.get("a")).id == "a"
-        await store.save(self._task("c"))
+        redis_url = self._own_database(workflow_state_redis_url)
+        await self._flush(redis_url)
+        protocol = await self._served(redis_url, 3)
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=protocol.app), base_url="http://a2a"
+            ) as client:
+                task_ids = [await self._send(client, f"turn {i}") for i in range(5)]
+                answers = [await self._get(client, task_id) for task_id in task_ids]
+            retained = await protocol.task_store._redis.hlen("cogniverse:a2a:tasks")
+        finally:
+            await protocol.close()
+            await self._flush(redis_url)
 
-        assert await store.get("b") is None
-        assert (await store.get("a")).id == "a"
-        assert (await store.get("c")).id == "c"
+        assert retained == 3
+        assert len(set(task_ids)) == 5
+        assert answers[:2] == ["Task not found"] * 2
+        assert answers[2:] == task_ids[2:]
+
+    @pytest.mark.asyncio
+    async def test_get_refreshes_lru_so_hot_task_survives(
+        self, workflow_state_redis_url
+    ):
+        import httpx
+
+        redis_url = self._own_database(workflow_state_redis_url)
+        await self._flush(redis_url)
+        protocol = await self._served(redis_url, 2)
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=protocol.app), base_url="http://a2a"
+            ) as client:
+                first = await self._send(client, "a")
+                second = await self._send(client, "b")
+                # Touch the first so it becomes most recently used; the next
+                # task must then evict the second, the coldest.
+                touched = await self._get(client, first)
+                third = await self._send(client, "c")
+                answers = [await self._get(client, t) for t in (first, second, third)]
+        finally:
+            await protocol.close()
+            await self._flush(redis_url)
+
+        assert touched == first
+        assert answers == [first, "Task not found", third]
 
 
 @pytest.mark.asyncio
