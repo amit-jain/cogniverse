@@ -150,6 +150,7 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
                 }
             },
             {"wiki": {"profile": "shared", "strategy": "tenant_rank"}},
+            None,
         ),
     )
     monkeypatch.setattr(
@@ -223,6 +224,7 @@ def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
                 }
             },
             {"wiki": {"profile": "shared", "strategy": "tenant_rank"}},
+            None,
         ),
     )
     monkeypatch.setattr(
@@ -292,6 +294,7 @@ def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
                 }
             },
             {"wiki": {"profile": "shared", "strategy": "tenant_rank"}},
+            None,
         ),
     )
     monkeypatch.setattr(

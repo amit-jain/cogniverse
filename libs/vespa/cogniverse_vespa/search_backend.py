@@ -1039,10 +1039,11 @@ class VespaSearchBackend(SearchBackend):
         return self._search_breaker.call(self._search_retried, query_dict)
 
     def _load_tenant_profiles(self, tenant_id):
-        """Return a tenant's (profiles, default_profiles) for per-request
-        resolution. Empty dicts when the tenant or config manager is absent."""
+        """Return a tenant's (profiles, default_profiles, config) for
+        per-request resolution. Empty dicts and no config when the tenant or
+        config manager is absent."""
         if not tenant_id or self._config_manager is None:
-            return {}, {}
+            return {}, {}, None
         from cogniverse_foundation.config.utils import get_config
 
         cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
@@ -1050,23 +1051,24 @@ class VespaSearchBackend(SearchBackend):
         return (
             dict(backend_section.get("profiles", {}) or {}),
             dict(backend_section.get("default_profiles", {}) or {}),
+            cfg,
         )
 
-    def _selected_default_profile(self, tenant_id, default_profiles, modality):
+    @staticmethod
+    def _selected_default_profile(tenant_config, default_profiles, modality):
         """The tenant's selected default profile for ``modality``, or None.
 
         Resolved by ``resolve_default_profile`` over this request's merged
-        ``default_profiles`` and the tenant's ``active_<modality>_profile``.
+        ``default_profiles`` and the ``active_<modality>_profile`` of the
+        tenant config the request already read.
         """
-        from cogniverse_foundation.config import utils as config_utils
+        from cogniverse_foundation.config.utils import resolve_default_profile
 
         view: Dict[str, Any] = {"backend": {"default_profiles": default_profiles}}
-        if tenant_id and self._config_manager is not None:
+        if tenant_config is not None:
             key = f"active_{modality}_profile"
-            view[key] = config_utils.get_config(
-                tenant_id=tenant_id, config_manager=self._config_manager
-            ).get(key)
-        return config_utils.resolve_default_profile(view, modality)
+            view[key] = tenant_config.get(key)
+        return resolve_default_profile(view, modality)
 
     def _encoder_service(self, profile_config):
         return (profile_config.get("inference_services") or {}).get("embedding")
@@ -1222,9 +1224,11 @@ class VespaSearchBackend(SearchBackend):
 
         Profile Resolution Logic:
             1. If profile in query_dict → use it
-            2. Else if only 1 profile for type → auto-select
-            3. Else if default_profiles[type] exists → use it
-            4. Else → raise ValueError
+            2. Else for type 'video' → the tenant's selected default video
+               profile (``resolve_default_profile``); none selected → ValueError
+            3. Else if only 1 profile for type → auto-select
+            4. Else if default_profiles[type] exists → use it
+            5. Else → raise ValueError
 
         Strategy Resolution: Same logic as profile
         """
@@ -1266,9 +1270,10 @@ class VespaSearchBackend(SearchBackend):
         # a per-tenant profile (or a backend built config-less at startup) may
         # be absent. Merge the query tenant's profiles per-request — locally,
         # so tenants can't leak profiles into each other's snapshots.
+        tenant_config = None
         if self._config_manager is not None:
-            tenant_profiles, tenant_defaults = self._load_tenant_profiles(
-                query_dict.get("tenant_id")
+            tenant_profiles, tenant_defaults, tenant_config = (
+                self._load_tenant_profiles(query_dict.get("tenant_id"))
             )
             profiles_snapshot = {**profiles_snapshot, **tenant_profiles}
             default_profiles_snapshot = {
@@ -1288,7 +1293,7 @@ class VespaSearchBackend(SearchBackend):
         elif content_type == "video":
             tenant_for_default = query_dict.get("tenant_id")
             profile_name = self._selected_default_profile(
-                tenant_for_default, default_profiles_snapshot, "video"
+                tenant_config, default_profiles_snapshot, "video"
             )
             if not profile_name:
                 raise ValueError(
