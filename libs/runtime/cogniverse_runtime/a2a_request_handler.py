@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 # Routed cancels one replica runs at once; more are refused, not queued.
 _MAX_CONCURRENT_CANCELS = 16
+# Resubscriptions one replica serves at once, each holding a pooled Redis
+# connection in a blocking read; more are refused, not queued.
+_MAX_CONCURRENT_RESUBSCRIPTIONS = 64
 # Producer events a relay holds while a cancel takes its generation; a
 # producer emitting more waits for the cancel to commit or abort.
 _MAX_HELD_EVENTS = 1000
@@ -299,6 +302,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         cancel_timeout_seconds: float = 10,
         drain_timeout_seconds: float = 30,
         max_concurrent_cancels: int = _MAX_CONCURRENT_CANCELS,
+        max_concurrent_resubscriptions: int = _MAX_CONCURRENT_RESUBSCRIPTIONS,
         **kwargs,
     ) -> None:
         if not replica_id.strip():
@@ -317,6 +321,11 @@ class RedisRequestHandler(DefaultRequestHandler):
             raise ValueError(
                 f"max_concurrent_cancels must be >= 1, got {max_concurrent_cancels}"
             )
+        if max_concurrent_resubscriptions < 1:
+            raise ValueError(
+                "max_concurrent_resubscriptions must be >= 1, got "
+                f"{max_concurrent_resubscriptions}"
+            )
         kwargs.setdefault("queue_manager", RedisRelayQueueManager(task_store))
         super().__init__(task_store=task_store, **kwargs)
         self.task_store = task_store
@@ -331,6 +340,8 @@ class RedisRequestHandler(DefaultRequestHandler):
         self._max_concurrent_cancels = max_concurrent_cancels
         self._routed_cancels: set[asyncio.Task] = set()
         self._inflight_cancels: dict[str, asyncio.Task] = {}
+        self._max_concurrent_resubscriptions = max_concurrent_resubscriptions
+        self._resubscriptions = 0
 
     async def start(self) -> None:
         """Start the owner-addressed cancellation listener."""
@@ -344,19 +355,27 @@ class RedisRequestHandler(DefaultRequestHandler):
     async def close(self) -> None:
         """Stop control intake once served producers have drained or expired.
 
-        A producer that outlives ``drain_timeout_seconds`` is cancelled rather
-        than held onto, so shutdown stays bounded; its lease is left to expire
-        so a peer reports the task interrupted instead of re-running it.
+        Served producers and running cancels get ``drain_timeout_seconds`` to
+        finish; whatever outlives that is cancelled rather than held onto,
+        and its cleanup gets at most as long again, so close() ends within
+        twice the drain budget. A cancelled producer keeps its lease, left to
+        expire so a peer reports the task interrupted instead of re-running
+        it.
         """
+        loop = asyncio.get_running_loop()
+        drained_by = loop.time() + self._drain_timeout_seconds
+        cleaned_by = drained_by + self._drain_timeout_seconds
+
+        def until(moment: float) -> float:
+            return max(0.0, moment - loop.time())
+
         producers = list(self._running_agents.values())
         if producers:
-            _, pending = await asyncio.wait(
-                producers, timeout=self._drain_timeout_seconds
-            )
+            _, pending = await asyncio.wait(producers, timeout=until(drained_by))
             for producer_task in pending:
                 producer_task.cancel()
             if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+                await asyncio.wait(pending, timeout=until(cleaned_by))
         # The SDK finishes a served turn in background tasks that still close
         # relay streams and release leases through Redis. The caller closes the
         # client next, so land them first; a second pass catches the ones a
@@ -365,37 +384,31 @@ class RedisRequestHandler(DefaultRequestHandler):
             if not self._background_tasks:
                 break
             _, pending = await asyncio.wait(
-                list(self._background_tasks), timeout=self._drain_timeout_seconds
+                list(self._background_tasks), timeout=until(cleaned_by)
             )
             if pending:
                 for background_task in pending:
                     background_task.cancel()
-                await asyncio.wait(pending, timeout=self._drain_timeout_seconds)
+                await asyncio.wait(pending, timeout=until(cleaned_by))
                 break
         if self._control_task is not None:
             self._control_task.cancel()
             await asyncio.gather(self._control_task, return_exceptions=True)
             self._control_task = None
-        # A cancel run still going at the drain budget is cancelled, so
+        # A cancel run still going at the drain deadline is cancelled, so
         # shutdown never waits out the owner deadline; routed requesters
         # waiting on it get an explicit refusal.
         if self._inflight_cancels:
             runs = set(self._inflight_cancels.values())
-            _, unfinished = await asyncio.wait(
-                runs, timeout=self._drain_timeout_seconds
-            )
+            _, unfinished = await asyncio.wait(runs, timeout=until(drained_by))
             for run in unfinished:
                 run.cancel()
             if unfinished:
-                await asyncio.wait(unfinished, timeout=self._drain_timeout_seconds)
+                await asyncio.wait(unfinished, timeout=until(cleaned_by))
         if self._routed_cancels:
-            await asyncio.wait(
-                set(self._routed_cancels), timeout=self._drain_timeout_seconds
-            )
+            await asyncio.wait(set(self._routed_cancels), timeout=until(cleaned_by))
         if self._abandoned_cancels:
-            await asyncio.wait(
-                set(self._abandoned_cancels), timeout=self._drain_timeout_seconds
-            )
+            await asyncio.wait(set(self._abandoned_cancels), timeout=until(cleaned_by))
 
     async def _setup_message_execution(
         self,
@@ -412,6 +425,8 @@ class RedisRequestHandler(DefaultRequestHandler):
             initial_message=params.message,
             context=call_context,
         )
+        loop = asyncio.get_running_loop()
+        acquired_at = loop.time()
         try:
             if params.message.task_id:
                 lease = await self._acquire(params.message.task_id)
@@ -448,6 +463,7 @@ class RedisRequestHandler(DefaultRequestHandler):
             )
             task_id = cast("str", request_context.task_id)
             if lease is None:
+                acquired_at = loop.time()
                 lease = await self._acquire(task_id)
                 self.task_store.attach_execution(call_context, lease)
 
@@ -469,7 +485,7 @@ class RedisRequestHandler(DefaultRequestHandler):
             await self._register_producer(task_id, producer_task)
             self._producer_leases[producer_task] = lease
             self._renewal_tasks[producer_task] = asyncio.create_task(
-                self._renew_while_running(lease, producer_task),
+                self._renew_while_running(lease, producer_task, acquired_at),
                 name=f"a2a-lease-renewal:{task_id}",
             )
             return (
@@ -517,17 +533,47 @@ class RedisRequestHandler(DefaultRequestHandler):
             ) from exc
 
     async def _renew_while_running(
-        self, lease: TaskLease, producer_task: asyncio.Task
+        self, lease: TaskLease, producer_task: asyncio.Task, acquired_at: float
     ) -> None:
+        """Renew ``lease`` while its producer runs.
+
+        A renewal the store cannot complete is retried until the lease would
+        expire; the producer is cancelled only once it has, or when another
+        owner took the task. ``acquired_at`` is this loop's time before the
+        acquire was sent: Redis dates the lease no earlier, so counting from
+        it never outlives the lease.
+        """
+        loop = asyncio.get_running_loop()
         interval = max(0.01, self._lease_seconds / 3)
+        retry_interval = min(1.0, interval)
+        held_until = acquired_at + self._lease_seconds
+        delay = interval
         try:
-            while not producer_task.done():
-                await asyncio.sleep(interval)
+            while True:
+                await asyncio.sleep(delay)
                 if producer_task.done():
                     return
-                await self.task_store.renew_execution(
-                    lease, lease_seconds=self._lease_seconds
-                )
+                sent_at = loop.time()
+                try:
+                    await self.task_store.renew_execution(
+                        lease, lease_seconds=self._lease_seconds
+                    )
+                except A2ATaskOwnershipLostError:
+                    raise
+                except A2ATaskStoreError as exc:
+                    if loop.time() >= held_until:
+                        raise
+                    logger.warning(
+                        "A2A execution lease renewal for task %s failed with "
+                        "%.1fs of the lease left; retrying: %s",
+                        lease.task_id,
+                        held_until - loop.time(),
+                        exc,
+                    )
+                    delay = min(retry_interval, max(0.0, held_until - loop.time()))
+                    continue
+                held_until = sent_at + self._lease_seconds
+                delay = interval
         except asyncio.CancelledError:
             raise
         except A2ATaskStoreError:
@@ -650,25 +696,43 @@ class RedisRequestHandler(DefaultRequestHandler):
     async def on_resubscribe_to_task(
         self, params: TaskIdParams, context: ServerCallContext | None = None
     ):
-        """Relay an active owner's future events to any replica."""
-        task = await self.task_store.get(params.id, context)
-        if task is None:
-            raise ServerError(error=TaskNotFoundError())
-        if task.status.state in _TERMINAL_STATES:
+        """Relay an active owner's future events to any replica.
+
+        At most ``max_concurrent_resubscriptions`` run at once on a replica;
+        one past that is refused before it touches Redis.
+        """
+        if self._resubscriptions >= self._max_concurrent_resubscriptions:
             raise ServerError(
                 error=InvalidParamsError(
                     message=(
-                        f"Task {task.id} is in terminal state: "
-                        f"{task.status.state.value}"
+                        f"replica {self._replica_id} is already serving "
+                        f"{self._max_concurrent_resubscriptions} resubscriptions; "
+                        "retry"
                     )
                 )
             )
-        # The SDK requires a live queue here; the shared relay's equivalent is
-        # a live owner, without which there is nothing left to stream.
-        if not await self.task_store.has_live_owner(params.id):
-            raise ServerError(error=TaskNotFoundError())
-        async for event in self.task_store.subscribe_events(params.id):
-            yield event
+        self._resubscriptions += 1
+        try:
+            task = await self.task_store.get(params.id, context)
+            if task is None:
+                raise ServerError(error=TaskNotFoundError())
+            if task.status.state in _TERMINAL_STATES:
+                raise ServerError(
+                    error=InvalidParamsError(
+                        message=(
+                            f"Task {task.id} is in terminal state: "
+                            f"{task.status.state.value}"
+                        )
+                    )
+                )
+            # The SDK requires a live queue here; the shared relay's equivalent
+            # is a live owner, without which there is nothing left to stream.
+            if not await self.task_store.has_live_owner(params.id):
+                raise ServerError(error=TaskNotFoundError())
+            async for event in self.task_store.subscribe_events(params.id):
+                yield event
+        finally:
+            self._resubscriptions -= 1
 
     def _coalesced_cancel(self, task_id: str) -> asyncio.Task:
         """The one cancel run for ``task_id``, started if none is in flight.

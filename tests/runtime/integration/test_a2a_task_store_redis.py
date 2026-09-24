@@ -40,15 +40,21 @@ from a2a.utils.errors import ServerError
 
 from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
 from cogniverse_runtime.a2a_task_store import (
+    A2ACancelTimeoutError,
     A2ATaskCapacityError,
     A2ATaskConflictError,
     A2ATaskOwnershipLostError,
     A2ATaskStoreError,
     RedisTaskStore,
 )
-from cogniverse_runtime.main import _build_shared_a2a_protocol
+from cogniverse_runtime.main import _a2a_settings_from_env, _build_shared_a2a_protocol
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+def _a2a_settings(**overrides):
+    """Production A2A settings with a test's overrides."""
+    return {**_a2a_settings_from_env({}), **overrides}
 
 
 def _free_port() -> int:
@@ -822,16 +828,38 @@ async def test_runtime_protocol_factory_owns_shared_store_and_handler(redis_url)
         dispatcher=SimpleNamespace(),
         redis_url=redis_url,
         replica_id="factory-replica",
-        max_tasks=7,
-        lease_seconds=1,
-        cancel_timeout_seconds=2,
-        drain_timeout_seconds=1,
-        max_concurrent_cancels=5,
+        **_a2a_settings(
+            max_tasks=7,
+            lease_seconds=1,
+            cancel_timeout_seconds=2,
+            drain_timeout_seconds=1,
+            max_concurrent_cancels=5,
+            max_concurrent_resubscriptions=3,
+            redis_timeout_seconds=2.5,
+            redis_max_connections=9,
+        ),
     )
     try:
         assert protocol.skill_ids == ("search_agent",)
         assert protocol.handler.task_store is protocol.task_store
         assert protocol.handler._max_concurrent_cancels == 5
+        assert protocol.handler._max_concurrent_resubscriptions == 3
+        pool = protocol.task_store._redis.connection_pool
+        assert (pool.max_connections, pool.timeout) == (9, 2.5)
+        assert {
+            key: pool.connection_kwargs[key]
+            for key in (
+                "socket_timeout",
+                "socket_connect_timeout",
+                "socket_keepalive",
+                "health_check_interval",
+            )
+        } == {
+            "socket_timeout": 2.5,
+            "socket_connect_timeout": 2.5,
+            "socket_keepalive": True,
+            "health_check_interval": 30,
+        }
         assert [route.path for route in protocol.app.routes] == [
             "/",
             "/.well-known/agent-card.json",
@@ -855,10 +883,12 @@ async def test_runtime_protocol_factory_validates_redis_before_registry_access()
             dispatcher=SimpleNamespace(),
             redis_url=f"redis://127.0.0.1:{closed_port}/0",
             replica_id="factory-replica",
-            max_tasks=7,
-            lease_seconds=1,
-            cancel_timeout_seconds=2,
-            drain_timeout_seconds=1,
+            **_a2a_settings(
+                max_tasks=7,
+                lease_seconds=1,
+                cancel_timeout_seconds=2,
+                drain_timeout_seconds=1,
+            ),
         )
 
 
@@ -900,10 +930,12 @@ async def test_runtime_protocol_close_cancels_and_drains_active_execution(redis_
         dispatcher=SimpleNamespace(),
         redis_url=redis_url,
         replica_id="shutdown-replica",
-        max_tasks=7,
-        lease_seconds=0.2,
-        cancel_timeout_seconds=1,
-        drain_timeout_seconds=0.2,
+        **_a2a_settings(
+            max_tasks=7,
+            lease_seconds=0.2,
+            cancel_timeout_seconds=1,
+            drain_timeout_seconds=0.2,
+        ),
     )
     protocol.handler.agent_executor = BlockingExecutor()
     async with httpx.AsyncClient(
@@ -2351,11 +2383,13 @@ async def test_a_cancel_limit_below_one_is_refused_before_redis_is_touched():
             dispatcher=SimpleNamespace(),
             redis_url=f"redis://127.0.0.1:{closed_port}/0",
             replica_id="factory-replica",
-            max_tasks=7,
-            lease_seconds=1,
-            cancel_timeout_seconds=2,
-            drain_timeout_seconds=1,
-            max_concurrent_cancels=0,
+            **_a2a_settings(
+                max_tasks=7,
+                lease_seconds=1,
+                cancel_timeout_seconds=2,
+                drain_timeout_seconds=1,
+                max_concurrent_cancels=0,
+            ),
         )
     assert str(refused.value) == (
         "A2A_MAX_CONCURRENT_CANCELS (max_concurrent_cancels) must be >= 1, got 0"
@@ -3013,3 +3047,543 @@ async def test_a_non_integer_cancel_limit_is_refused_with_its_name():
     )
     assert max_concurrent_cancels_from_env({}) == 16
     assert max_concurrent_cancels_from_env({"A2A_MAX_CONCURRENT_CANCELS": "3"}) == 3
+
+
+@pytest.fixture
+def black_hole_redis():
+    """An owned Redis a test can freeze: ``docker pause`` keeps its TCP
+    endpoint accepting while nothing answers, the state of a Redis pod
+    rescheduled from under its clients."""
+    port = _free_port()
+    container_name = f"redis-a2a-black-hole-{os.getpid()}-{uuid.uuid4().hex}"
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start Redis: {result.stderr}")
+
+    def docker(*args: str) -> None:
+        done = subprocess.run(["docker", *args, container_name], capture_output=True)
+        assert done.returncode == 0, done.stderr
+
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ping = subprocess.run(
+                ["docker", "exec", container_name, "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+            )
+            if ping.stdout.strip() == "PONG":
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail("Redis did not become ready within 30 seconds")
+        yield SimpleNamespace(
+            url=f"redis://127.0.0.1:{port}/0",
+            pause=lambda: docker("pause"),
+            unpause=lambda: docker("unpause"),
+        )
+    finally:
+        subprocess.run(["docker", "unpause", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+async def _failure_within(call, bound_seconds: float):
+    """``call``'s exception and how long it took; hanging past the bound fails."""
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(call, timeout=bound_seconds)
+    except asyncio.TimeoutError:
+        pytest.fail(f"still waiting on Redis after {bound_seconds}s")
+    except Exception as exc:
+        return exc, time.monotonic() - started
+    pytest.fail("the call succeeded against a Redis that answers nothing")
+
+
+async def test_every_store_call_on_a_black_holed_redis_fails_within_its_timeout(
+    black_hole_redis,
+):
+    store = await RedisTaskStore.from_url(black_hole_redis.url, key_prefix="test:a2a")
+    try:
+        lease = await store.acquire_execution(
+            "bh-task", replica_id="replica-a", lease_seconds=60
+        )
+        await store.save(
+            _task("bh-task", TaskState.working), _owned_context(store, lease)
+        )
+        black_hole_redis.pause()
+
+        async def first_event():
+            return await anext(store.subscribe_events("bh-task"))
+
+        calls = {
+            "get": store.get("bh-task"),
+            "save": store.save(
+                _task("bh-task", TaskState.working), _owned_context(store, lease)
+            ),
+            "acquire": store.acquire_execution(
+                "bh-other", replica_id="replica-a", lease_seconds=60
+            ),
+            "renew": store.renew_execution(lease, lease_seconds=60),
+            "publish": store.publish_event(
+                "bh-task", _status_event("bh-task", TaskState.working)
+            ),
+            "listen": store.next_cancel(replica_id="replica-a"),
+            "route": store.request_cancel(
+                owner_replica_id="replica-b", task_id="bh-task", timeout_seconds=30
+            ),
+            "subscribe": first_event(),
+        }
+        outcomes = dict(
+            zip(
+                calls,
+                await asyncio.gather(
+                    *(_failure_within(call, 20) for call in calls.values())
+                ),
+            )
+        )
+    finally:
+        black_hole_redis.unpause()
+        await store.close()
+
+    assert {name: str(exc) for name, (exc, _) in outcomes.items()} == {
+        "get": "shared A2A task store unavailable: get task bh-task",
+        "save": "shared A2A task store unavailable: save task bh-task",
+        "acquire": "shared A2A task store unavailable: acquire task bh-other",
+        "renew": "shared A2A task store unavailable: renew task bh-task",
+        "publish": "shared A2A task store unavailable: publish event for task bh-task",
+        "listen": "shared A2A task store unavailable: listen for cancels on replica "
+        "replica-a",
+        "route": "shared A2A task store unavailable: route cancel for task bh-task",
+        "subscribe": "shared A2A task store unavailable: subscribe to task bh-task",
+    }
+    assert {type(exc) for exc, _ in outcomes.values()} == {A2ATaskStoreError}
+    # One command timeout (5 s by default), plus reconnecting to the frozen
+    # endpoint, which answers the TCP handshake but nothing after it.
+    assert max(elapsed for _, elapsed in outcomes.values()) < 11
+
+
+async def test_connecting_to_a_black_holed_redis_is_refused_within_its_timeout(
+    black_hole_redis,
+):
+    black_hole_redis.pause()
+    try:
+        refused, elapsed = await _failure_within(
+            RedisTaskStore.from_url(
+                black_hole_redis.url, key_prefix="test:a2a", timeout_seconds=2
+            ),
+            20,
+        )
+    finally:
+        black_hole_redis.unpause()
+
+    assert type(refused) is A2ATaskStoreError
+    assert str(refused) == (
+        f"shared A2A task store unavailable: connect to {black_hole_redis.url}"
+    )
+    assert elapsed < 5
+
+
+async def test_a_store_timeout_must_exceed_one_blocking_read():
+    with pytest.raises(ValueError) as refused:
+        await RedisTaskStore.from_url("redis://127.0.0.1:1/0", timeout_seconds=1)
+    assert str(refused.value) == (
+        "timeout_seconds must be > 1 (one blocking read), got 1"
+    )
+
+
+async def test_a_routed_cancel_waits_its_full_timeout_in_bounded_reads(redis_url):
+    store = await RedisTaskStore.from_url(
+        redis_url, key_prefix=f"test:{uuid.uuid4().hex}", timeout_seconds=2
+    )
+    try:
+        refused, elapsed = await _failure_within(
+            store.request_cancel(
+                owner_replica_id="silent-owner", task_id="quiet", timeout_seconds=3.5
+            ),
+            20,
+        )
+    finally:
+        await store.close()
+
+    assert type(refused) is A2ACancelTimeoutError
+    assert str(refused) == (
+        "owner silent-owner did not acknowledge cancel for task quiet within 3.5s"
+    )
+    assert 3.4 < elapsed < 4.5
+
+
+def test_a2a_settings_default_to_production_and_refuse_non_numbers_by_name():
+    from cogniverse_runtime.main import _a2a_settings_from_env
+
+    assert _a2a_settings_from_env({}) == {
+        "max_tasks": 10000,
+        "lease_seconds": 30.0,
+        "cancel_timeout_seconds": 10.0,
+        "drain_timeout_seconds": 30.0,
+        "max_concurrent_cancels": 16,
+        "max_concurrent_resubscriptions": 64,
+        "redis_timeout_seconds": 5.0,
+        "redis_max_connections": 128,
+    }
+    assert _a2a_settings_from_env(
+        {
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS": "8",
+            "A2A_REDIS_TIMEOUT_SECONDS": "2.5",
+            "A2A_REDIS_MAX_CONNECTIONS": "20",
+        }
+    ) == {
+        **_a2a_settings_from_env({}),
+        "max_concurrent_resubscriptions": 8,
+        "redis_timeout_seconds": 2.5,
+        "redis_max_connections": 20,
+    }
+    refusals = {}
+    for name, raw in (
+        ("A2A_MAX_TASKS", "many"),
+        ("A2A_REDIS_TIMEOUT_SECONDS", "soon"),
+        ("A2A_REDIS_MAX_CONNECTIONS", "1.5"),
+        ("A2A_MAX_CONCURRENT_RESUBSCRIPTIONS", "lots"),
+    ):
+        with pytest.raises(ValueError) as refused:
+            _a2a_settings_from_env({name: raw})
+        refusals[name] = str(refused.value)
+    assert refusals == {
+        "A2A_MAX_TASKS": "A2A_MAX_TASKS must be an integer, got 'many'",
+        "A2A_REDIS_TIMEOUT_SECONDS": "A2A_REDIS_TIMEOUT_SECONDS must be a number, "
+        "got 'soon'",
+        "A2A_REDIS_MAX_CONNECTIONS": "A2A_REDIS_MAX_CONNECTIONS must be an integer, "
+        "got '1.5'",
+        "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS": "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS "
+        "must be an integer, got 'lots'",
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides,message",
+    [
+        (
+            {"max_concurrent_resubscriptions": 0},
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS (max_concurrent_resubscriptions) "
+            "must be >= 1, got 0",
+        ),
+        (
+            {"max_concurrent_resubscriptions": 10, "redis_max_connections": 11},
+            "A2A_REDIS_MAX_CONNECTIONS (redis_max_connections) must be at least "
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS + 2 (12), got 11",
+        ),
+        (
+            {"redis_timeout_seconds": 1.0},
+            "A2A_REDIS_TIMEOUT_SECONDS (redis_timeout_seconds) must be > 1, got 1.0",
+        ),
+    ],
+)
+async def test_a_pool_that_resubscriptions_could_exhaust_is_refused_before_redis(
+    overrides, message
+):
+    class Registry:
+        def list_agents(self):
+            raise AssertionError("registry accessed before the settings were checked")
+
+    with pytest.raises(ValueError) as refused:
+        await _build_shared_a2a_protocol(
+            agent_registry=Registry(),
+            dispatcher=SimpleNamespace(),
+            redis_url=f"redis://127.0.0.1:{_free_port()}/0",
+            replica_id="factory-replica",
+            **_a2a_settings(**overrides),
+        )
+    assert str(refused.value) == message
+
+
+async def _resubscribed(handler, task_id: str):
+    """A resubscription waiting for its first event, or the refusal it got."""
+    from a2a.types import TaskIdParams
+
+    stream = handler.on_resubscribe_to_task(TaskIdParams(id=task_id))
+    first = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0.3)
+    if first.done() and first.exception() is not None:
+        return None, first.exception()
+    return (stream, first), None
+
+
+async def test_resubscriptions_past_the_replica_cap_are_refused_until_one_ends(
+    redis_client,
+):
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await seed.save(_task("resub", TaskState.working))
+    await store.acquire_execution("resub", replica_id="replica-a", lease_seconds=30)
+    handler = RedisRequestHandler(
+        agent_executor=_CancellableExecutor(),
+        task_store=store,
+        replica_id="replica-a",
+        max_concurrent_resubscriptions=2,
+    )
+    attempts = await asyncio.gather(
+        *(_resubscribed(handler, "resub") for _ in range(5))
+    )
+    admitted = [waiting for waiting, _ in attempts if waiting is not None]
+    refused = [error for _, error in attempts if error is not None]
+    try:
+        assert len(admitted) == 2
+        assert [
+            (type(error), type(error.error), error.error.message) for error in refused
+        ] == [
+            (
+                ServerError,
+                InvalidParamsError,
+                "replica replica-a is already serving 2 resubscriptions; retry",
+            )
+        ] * 3
+
+        ended_stream, ended_first = admitted.pop()
+        ended_first.cancel()
+        await asyncio.gather(ended_first, return_exceptions=True)
+        await ended_stream.aclose()
+        waiting, error = await _resubscribed(handler, "resub")
+        assert error is None
+        admitted.append(waiting)
+        await store.publish_event(
+            "resub", _status_event("resub", TaskState.working, "after-cap")
+        )
+        firsts = await asyncio.wait_for(
+            asyncio.gather(*(first for _, first in admitted)), timeout=5
+        )
+        assert [event.metadata for event in firsts] == [{"mark": "after-cap"}] * 2
+    finally:
+        for stream, first in admitted:
+            first.cancel()
+            await asyncio.gather(first, return_exceptions=True)
+            await stream.aclose()
+    assert handler._resubscriptions == 0
+
+
+async def test_blocking_reads_share_the_bounded_pool_without_exceeding_it(
+    black_hole_redis,
+):
+    admin = aioredis.from_url(black_hole_redis.url, decode_responses=True)
+    store = await RedisTaskStore.from_url(
+        black_hole_redis.url,
+        key_prefix="test:a2a",
+        timeout_seconds=2,
+        max_connections=2,
+    )
+    peak = 0
+    reading = True
+
+    async def watch_connections():
+        nonlocal peak
+        while reading:
+            clients = await admin.client_list()
+            peak = max(peak, len(clients) - 1)
+            await asyncio.sleep(0.05)
+
+    watcher = asyncio.create_task(watch_connections())
+    started = time.monotonic()
+    try:
+        replies = await asyncio.gather(
+            *(store.next_cancel(replica_id=f"idle-{index}") for index in range(4))
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        reading = False
+        await watcher
+        await store.close()
+        await admin.aclose()
+
+    assert replies == [None] * 4
+    assert peak == 2
+    # Two rounds of two one-second reads, never four at once.
+    assert 1.9 < elapsed < 3.5
+
+
+async def _renewing_execution(store, executor, lease_seconds: float):
+    handler = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-renew",
+        lease_seconds=lease_seconds,
+    )
+    send = asyncio.create_task(handler.on_message_send(_send_params("renew")))
+    await asyncio.wait_for(executor.working.wait(), timeout=5)
+    task_id = next(iter(handler._running_agents))
+    # Nothing but the renewals writes to Redis from here on.
+    async with asyncio.timeout(5):
+        while True:
+            stored = await store.get(task_id)
+            if stored is not None and stored.status.state == TaskState.working:
+                break
+            await asyncio.sleep(0.01)
+    return handler, send, task_id, handler._running_agents[task_id]
+
+
+async def test_a_transient_renewal_failure_is_retried_not_fatal(
+    redis_url, redis_client, caplog
+):
+    caplog.set_level("WARNING", logger="cogniverse_runtime.a2a_request_handler")
+    store = await RedisTaskStore.from_url(
+        redis_url, key_prefix="test:a2a", timeout_seconds=1.2
+    )
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=6
+    )
+    try:
+        # The first renewal (at 2 s) meets a Redis that answers nothing for
+        # longer than the command timeout; the lease still has 4 s left.
+        await redis_client.execute_command("CLIENT", "PAUSE", "3400", "WRITE")
+        await asyncio.sleep(5)
+        running_after_outage = not producer.done()
+        lease = await store.get_execution_lease(task_id)
+        live = await store.has_live_owner(task_id)
+    finally:
+        # A blocking send whose producer is cancelled never gets a final
+        # event, so the send is cancelled with it.
+        producer.cancel()
+        send.cancel()
+        await asyncio.gather(send, return_exceptions=True)
+        await handler.close()
+        await store.close()
+
+    assert running_after_outage is True
+    assert (lease.replica_id, live) == ("replica-renew", True)
+    renewal_logs = [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if "renewal" in record.getMessage()
+    ]
+    assert len(renewal_logs) == 1
+    level, message = renewal_logs[0]
+    assert level == "WARNING"
+    assert message.startswith(
+        f"A2A execution lease renewal for task {task_id} failed with "
+    )
+    assert message.endswith(
+        f"s of the lease left; retrying: shared A2A task store unavailable: "
+        f"renew task {task_id}"
+    )
+
+
+async def test_renewal_that_cannot_reach_redis_cancels_only_once_the_lease_expired(
+    redis_url, redis_client, caplog
+):
+    store = await RedisTaskStore.from_url(
+        redis_url, key_prefix="test:a2a", timeout_seconds=1.2
+    )
+    executor = _CancellableExecutor()
+    started = asyncio.get_running_loop().time()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=3
+    )
+    try:
+        await redis_client.execute_command("CLIENT", "PAUSE", "8000", "WRITE")
+        await asyncio.wait_for(asyncio.shield(asyncio.wait({producer})), timeout=15)
+        cancelled_after = asyncio.get_running_loop().time() - started
+    finally:
+        await redis_client.execute_command("CLIENT", "UNPAUSE")
+        send.cancel()
+        await asyncio.gather(send, return_exceptions=True)
+        await handler.close()
+        await store.close()
+
+    assert producer.cancelled() is True
+    # The first renewal fails at about 2.2 s; the lease runs to 3 s.
+    assert 3.0 <= cancelled_after < 6
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "ERROR" and "renewal" in record.getMessage()
+    ] == [f"A2A execution lease renewal failed for task {task_id}"]
+
+
+async def test_renewal_that_lost_ownership_cancels_at_once(redis_client):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    started = asyncio.get_running_loop().time()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=3
+    )
+    peer = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    try:
+        # The owner's own cancel path takes the next generation.
+        await peer.begin_cancel(task_id, replica_id="replica-renew", lease_seconds=30)
+        await asyncio.wait_for(asyncio.shield(asyncio.wait({producer})), timeout=10)
+        cancelled_after = asyncio.get_running_loop().time() - started
+    finally:
+        send.cancel()
+        await asyncio.gather(send, return_exceptions=True)
+        await handler.close()
+
+    assert producer.cancelled() is True
+    # At the first renewal (1 s), not at the lease's expiry (3 s).
+    assert cancelled_after < 2
+
+
+class _StubbornExecutor(_CancellableExecutor):
+    """An execution that keeps running for a while after being cancelled."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=context.task_id,
+                context_id=context.context_id,
+                final=False,
+                status=TaskStatus(state=TaskState.working),
+            )
+        )
+        self.working.set()
+        while not self.unwedge.is_set():
+            try:
+                await self.unwedge.wait()
+            except asyncio.CancelledError:
+                continue
+
+
+async def test_close_finishes_within_twice_its_drain_budget(redis_client):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    stubborn = _StubbornExecutor()
+    handler = RedisRequestHandler(
+        agent_executor=stubborn,
+        task_store=store,
+        replica_id="replica-drain",
+        drain_timeout_seconds=1.0,
+        cancel_timeout_seconds=30,
+    )
+    try:
+        send, task_id = await _running_blocking_send(handler, store, stubborn)
+        # A cancel whose executor never answers is running too.
+        stubborn.wedged_cancels.add(task_id)
+        stubborn.stubborn = True
+        cancel = handler._coalesced_cancel(task_id)
+        await asyncio.wait_for(stubborn.cancelling.wait(), timeout=5)
+
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(handler.close(), timeout=10)
+        finally:
+            elapsed = time.monotonic() - started
+    finally:
+        stubborn.unwedge.set()
+    # Released, the abandoned cancel publishes its canceled event, which is
+    # what ends the blocking send.
+    await asyncio.wait_for(
+        asyncio.gather(send, cancel, return_exceptions=True), timeout=30
+    )
+    # One second to drain, at most one more for what it cancelled to stop.
+    assert 1.9 < elapsed < 2.4

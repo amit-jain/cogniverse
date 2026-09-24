@@ -24,7 +24,7 @@ from a2a.types import (
 )
 from a2a.utils import new_agent_text_message
 from pydantic import TypeAdapter, ValidationError
-from redis.asyncio import Redis
+from redis.asyncio import BlockingConnectionPool, Redis
 from redis.exceptions import (
     NoPermissionError,
     ReadOnlyError,
@@ -41,6 +41,14 @@ _RELAY_MAXLEN = 1000
 _CANCEL_REPLY_TTL_SECONDS = 30
 # Floor on the expiry of a replica's cancel command list.
 _CANCEL_CONTROL_MIN_TTL_SECONDS = 30
+# Bound on one Redis command, a connect, and the wait for a pooled connection.
+_DEFAULT_REDIS_TIMEOUT_SECONDS = 5.0
+# Pooled connections one store opens at most.
+_DEFAULT_REDIS_MAX_CONNECTIONS = 128
+# Server-side wait of one blocking read (BRPOP, XREAD BLOCK); kept below the
+# command timeout so a silent Redis is told apart from an empty wait.
+_BLOCK_SECONDS = 1
+_HEALTH_CHECK_INTERVAL_SECONDS = 30
 
 
 class A2ATaskStoreError(RuntimeError):
@@ -402,12 +410,37 @@ class RedisTaskStore(TaskStore):
         max_tasks: int = 10000,
         key_prefix: str = "cogniverse:a2a",
         enforce_leases: bool = True,
+        timeout_seconds: float = _DEFAULT_REDIS_TIMEOUT_SECONDS,
+        max_connections: int = _DEFAULT_REDIS_MAX_CONNECTIONS,
     ) -> RedisTaskStore:
-        """Connect to Redis and validate it before serving A2A requests."""
+        """Connect to Redis and validate it before serving A2A requests.
+
+        Every command, connect and wait for one of the ``max_connections``
+        pooled connections is bounded by ``timeout_seconds``, so a Redis that
+        stops answering fails the call instead of hanging it.
+        """
         if not redis_url.strip():
             raise ValueError("redis_url must be non-empty")
+        if timeout_seconds <= _BLOCK_SECONDS:
+            raise ValueError(
+                f"timeout_seconds must be > {_BLOCK_SECONDS} (one blocking "
+                f"read), got {timeout_seconds}"
+            )
+        if max_connections < 1:
+            raise ValueError(f"max_connections must be >= 1, got {max_connections}")
         named = _redacted_redis_url(redis_url)
-        client = Redis.from_url(redis_url, decode_responses=True)
+        client = Redis.from_pool(
+            BlockingConnectionPool.from_url(
+                redis_url,
+                decode_responses=True,
+                max_connections=max_connections,
+                timeout=timeout_seconds,
+                socket_timeout=timeout_seconds,
+                socket_connect_timeout=timeout_seconds,
+                socket_keepalive=True,
+                health_check_interval=_HEALTH_CHECK_INTERVAL_SECONDS,
+            )
+        )
         try:
             await client.ping()
         except RedisError as exc:
@@ -775,10 +808,16 @@ class RedisTaskStore(TaskStore):
                 max(_CANCEL_CONTROL_MIN_TTL_SECONDS, math.ceil(timeout_seconds * 2)),
             )
             await pipeline.execute()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout_seconds
             async with asyncio.timeout(timeout_seconds + 1):
-                response = await self._redis.brpop(
-                    reply_key, timeout=max(1, math.ceil(timeout_seconds))
-                )
+                response = None
+                while response is None and loop.time() < deadline:
+                    response = await self._redis.brpop(
+                        reply_key,
+                        # Redis reads a timeout under 1 ms as "block forever".
+                        timeout=max(0.01, min(_BLOCK_SECONDS, deadline - loop.time())),
+                    )
             if response is None:
                 raise A2ACancelTimeoutError(
                     f"owner {owner_replica_id} did not acknowledge cancel for "
@@ -810,15 +849,11 @@ class RedisTaskStore(TaskStore):
             except RedisError:
                 pass
 
-    async def next_cancel(
-        self, *, replica_id: str, timeout_seconds: float = 1
-    ) -> CancelCommand | None:
+    async def next_cancel(self, *, replica_id: str) -> CancelCommand | None:
         """Wait briefly for the next cancellation addressed to this replica."""
         control_key = f"{self._key_prefix}:control:{replica_id}"
         try:
-            response = await self._redis.brpop(
-                control_key, timeout=max(1, math.ceil(timeout_seconds))
-            )
+            response = await self._redis.brpop(control_key, timeout=_BLOCK_SECONDS)
         except RedisError as exc:
             raise A2ATaskStoreError(
                 f"{_UNAVAILABLE}: listen for cancels on replica {replica_id}"
@@ -942,7 +977,7 @@ class RedisTaskStore(TaskStore):
                 cursor = "0-0"
             while True:
                 batches = await self._redis.xread(
-                    {stream_key: cursor}, count=100, block=1000
+                    {stream_key: cursor}, count=100, block=_BLOCK_SECONDS * 1000
                 )
                 if not batches and not await self.has_live_owner(task_id):
                     return
