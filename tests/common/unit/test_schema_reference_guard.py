@@ -267,8 +267,8 @@ SCHEMA_REFERENCE_FIXTURES = {
         "ProfileSelectionExampleSchema RoutingExperienceSchema source_schema",
     ),
     "tests/runtime/unit/test_admin_profiles_routes_http.py": (
-        "Injected profiles for administrative route responses",
-        "acme_video_colpali_sv video_colpali_sv video_new_sv video_prism_mv",
+        "Injected profiles for administrative route responses and the deploy route's catalog/tenant resolution",
+        "acme_video_colpali_sv beta_only_mv catalog_prism_mv shipped_video_mv tenant_prism_mv video_colpali_sv video_new_sv video_prism_mv",
     ),
     "tests/runtime/unit/test_admin_reconcile_orphans.py": (
         "Injected deployed schema list for tenant recovery",
