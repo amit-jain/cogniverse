@@ -296,9 +296,28 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
     ]
 
 
+def _migration_failures():
+    from cogniverse_core.registries.exceptions import (
+        BackendDeploymentError,
+        SchemaRevisionConflictError,
+    )
+
+    return [
+        RuntimeError("Vespa refused the application package"),
+        BackendDeploymentError("Vespa refused the application package"),
+        SchemaRevisionConflictError(
+            "provenance_acme_acme", "tombstone", activated=True
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    _migration_failures(),
+    ids=["runtime", "backend-deployment", "tombstone-after-activation"],
+)
 @pytest.mark.asyncio
-async def test_a_failed_schema_migration_is_logged_not_raised(caplog):
-    failure = RuntimeError("Vespa refused the application package")
+async def test_a_failed_schema_migration_is_logged_not_raised(caplog, failure):
     registry = _MigratingRegistry([failure])
 
     with caplog.at_level("ERROR", logger=runtime_main.logger.name):
