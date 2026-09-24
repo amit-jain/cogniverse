@@ -2831,14 +2831,27 @@ async def test_a_flush_into_a_hung_redis_stops_publishing_and_marks_the_gap(
     ]
 
 
-async def test_an_interrupted_release_logs_what_it_delivered_and_dropped(
-    redis_url, redis_client, caplog
+@pytest.mark.parametrize("publish_after", [False, True])
+async def test_an_interrupted_release_logs_and_marks_what_it_did_not_publish(
+    redis_url, redis_client, caplog, publish_after
 ):
+    """A release cut short while its first publish hangs still records the
+    gap: the next publish, or else the close marker, carries the count, and a
+    resubscriber fails on it instead of reading a clean stream."""
     client = aioredis.from_url(redis_url, decode_responses=True)
     store, handler, relay, _lease = await _live_relay_on(
         client, redis_client, "interrupted"
     )
     consumer = relay.tap()
+    resubscriber = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    received = []
+
+    async def resubscribe():
+        async for event in resubscriber.subscribe_events("interrupted"):
+            received.append(event.metadata)
+
+    subscription = asyncio.create_task(resubscribe())
+    await asyncio.sleep(0.3)
     store.begin_cancel = _producer_emits_then_redis_pauses(
         relay, redis_client, count=8, pause_ms=1500
     )
@@ -2849,23 +2862,84 @@ async def test_an_interrupted_release_logs_what_it_delivered_and_dropped(
     cancel.cancel()
     await asyncio.gather(cancel, return_exceptions=True)
     await asyncio.sleep(1.5)
-    await relay.enqueue_event(_status_event("interrupted", TaskState.working, "next"))
-    following = await asyncio.wait_for(consumer.dequeue_event(), timeout=5)
+    if publish_after:
+        await relay.enqueue_event(
+            _status_event("interrupted", TaskState.working, "next")
+        )
+        following = await asyncio.wait_for(consumer.dequeue_event(), timeout=5)
+        assert following.metadata == {"mark": "next"}
     await relay.close(immediate=True)
+    with pytest.raises(A2ATaskStoreError) as gap:
+        await asyncio.wait_for(subscription, timeout=5)
+    entries = await redis_client.xrange("test:a2a:events:interrupted")
     await client.aclose()
 
     assert cancel.cancelled()
     assert first.metadata == {"mark": "held-0"}
-    assert following.metadata == {"mark": "next"}
+    assert str(gap.value) == (
+        "event relay for task interrupted is missing 8 events its owner could "
+        "not publish"
+    )
+    # The cut-short publish of held-0 may still land once Redis resumes.
+    assert received in ([], [{"mark": "held-0"}])
+    tail = _relay_states(entries)[-3:]
+    if publish_after:
+        assert tail[-3:] == ["missing:8", TaskState.working, "closed"]
+        assert entries[-1][1] == {"closed": "1"}
+    else:
+        assert entries[-1][1] == {"closed": "1", "missing": "8"}
     assert [
         record.getMessage()
         for record in caplog.records
         if record.levelname == "ERROR" and "interrupted" in record.getMessage()
     ] == [
-        "A2A task interrupted: of the events held during a failed cancel, 0 "
+        "A2A task interrupted: of the events held during a failed cancel, 1 "
         "reached local consumers but not the relay publish and 7 were dropped "
         "by an interrupted release"
     ]
+
+
+async def test_a_gap_counts_each_unpublished_event_once(redis_client):
+    """A release whose first publish finds an earlier gap still unmarked, and
+    cannot mark it, counts its own event once."""
+    store, handler, relay, _lease = await _live_relay_on(
+        redis_client, redis_client, "once"
+    )
+    real_publish, real_mark = store.publish_event, store.mark_event_stream_incomplete
+    refusing = {"on": False}
+
+    async def publish_event(task, event):
+        if refusing["on"]:
+            raise A2ATaskStoreError(f"publish event for task {task} refused")
+        await real_publish(task, event)
+
+    async def mark_event_stream_incomplete(task, *, missing):
+        if refusing["on"]:
+            raise A2ATaskStoreError(f"mark event stream for task {task} refused")
+        await real_mark(task, missing=missing)
+
+    def emits_then_fails(count):
+        async def begin_cancel(task, **kwargs):
+            for index in range(count):
+                await relay.enqueue_event(
+                    _status_event(task, TaskState.working, f"{count}-{index}")
+                )
+            refusing["on"] = True
+            raise A2ATaskOwnershipLostError(f"cancel task {task} lost its owner")
+
+        return begin_cancel
+
+    store.publish_event = publish_event
+    store.mark_event_stream_incomplete = mark_event_stream_incomplete
+    for count in (2, 3):
+        store.begin_cancel = emits_then_fails(count)
+        with pytest.raises(A2ATaskOwnershipLostError):
+            await handler._cancel_owned("once")
+    refusing["on"] = False
+    await relay.close(immediate=True)
+    entries = await redis_client.xrange("test:a2a:events:once")
+
+    assert entries[-1][1] == {"closed": "1", "missing": "5"}
 
 
 async def test_a_non_integer_cancel_limit_is_refused_with_its_name():

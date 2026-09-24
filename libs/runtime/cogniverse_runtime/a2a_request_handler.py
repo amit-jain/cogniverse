@@ -136,28 +136,34 @@ class RedisRelayEventQueue(EventQueue):
         failure the rest are not published, and the relay stream is marked
         as missing them so a resubscriber does not read past the gap.
         """
-        unpublished = 0
+        # Events delivered locally without a publish attempt; an event whose
+        # publish failed or was cut short is counted by _enqueue itself.
+        skipped = 0
+        publishing = False
         failure: Exception | None = None
         try:
             if self._state_before_cancel == "open":
                 while self._held:
                     event = self._held.pop(0)
                     if failure is not None:
+                        skipped += 1
                         await EventQueue.enqueue_event(self, event)
-                        unpublished += 1
                         continue
+                    publishing = True
                     try:
                         await self._enqueue(event)
                     except Exception as exc:
                         # Delivered locally, not published.
                         failure = exc
-                        unpublished += 1
+                    publishing = False
             else:
                 # An earlier cancel already ended this relay: still superseded.
                 self._held.clear()
         finally:
             dropped = len(self._held)
             self._held.clear()
+            self._unmarked_gap += skipped + dropped
+            unpublished = skipped + (1 if failure is not None or publishing else 0)
             self._cancel_state = self._state_before_cancel
             self._hold_released.set()
             self._cancel_published.set()
@@ -171,8 +177,7 @@ class RedisRelayEventQueue(EventQueue):
                     dropped,
                     f" (first publish failure: {failure})" if failure else "",
                 )
-        if unpublished:
-            self._unmarked_gap += unpublished
+        if self._unmarked_gap:
             await self._mark_gap()
 
     async def _mark_gap(self) -> None:
@@ -220,22 +225,26 @@ class RedisRelayEventQueue(EventQueue):
         await self._enqueue(event)
 
     async def _enqueue(self, event) -> None:
-        await super().enqueue_event(event)
-        # An event after the close marker would also PERSIST the drained
-        # stream, so nothing is published once the relay is closed.
-        async with self._relay_lock:
-            if self._relay_closed:
-                return
-            if self._unmarked_gap:
-                try:
+        published = False
+        try:
+            await super().enqueue_event(event)
+            # An event after the close marker would also PERSIST the drained
+            # stream, so nothing is published once the relay is closed.
+            async with self._relay_lock:
+                if self._relay_closed:
+                    published = True
+                    return
+                if self._unmarked_gap:
                     await self._task_store.mark_event_stream_incomplete(
                         self._task_id, missing=self._unmarked_gap
                     )
-                except Exception:
-                    self._unmarked_gap += 1
-                    raise
-                self._unmarked_gap = 0
-            await self._task_store.publish_event(self._task_id, event)
+                    self._unmarked_gap = 0
+                await self._task_store.publish_event(self._task_id, event)
+                published = True
+        finally:
+            # Not on the relay, whether the publish failed or was cut short.
+            if not published:
+                self._unmarked_gap += 1
 
     async def close(self, immediate: bool = False) -> None:
         if (
