@@ -6,9 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
-import sys
 import tarfile
 import threading
 import time
@@ -22,20 +20,21 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
+from tests.cli.integration.release_build import (
+    BUILD_TIMEOUT,
+    CHECKOUT_PATHS,
+    EXPECTED_RELEASE,
+    REPO_ROOT,
+    build_command,
+    describe_run,
+    git,
+    make_checkout,
+    run_build,
+)
+
 pytestmark = pytest.mark.integration
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CHECKOUT_PATHS = (
-    ".gitignore",
-    "pyproject.toml",
-    "uv.lock",
-    "LICENSE",
-    "Readme.md",
-    "libs",
-    "scripts",
-)
 _MANIFEST = "BUILD_MANIFEST.json"
-_BUILD_TIMEOUT = 900
 
 _PUBLICATION_ROOTS = (
     "cogniverse-core",
@@ -44,27 +43,7 @@ _PUBLICATION_ROOTS = (
     "cogniverse-runtime",
     "cogniverse-dashboard",
 )
-_EXPECTED_RELEASE = {
-    "cogniverse-sdk",
-    "cogniverse-foundation",
-    "cogniverse-core",
-    "cogniverse-evaluation",
-    "cogniverse-synthetic",
-    "cogniverse-vespa",
-    "cogniverse-agents",
-    "cogniverse-telemetry-phoenix",
-    "cogniverse-runtime",
-    "cogniverse-dashboard",
-}
 
-_GIT_ENV = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_AUTHOR_NAME": "Release Test",
-    "GIT_AUTHOR_EMAIL": "release-test@example.invalid",
-    "GIT_COMMITTER_NAME": "Release Test",
-    "GIT_COMMITTER_EMAIL": "release-test@example.invalid",
-}
 
 _METADATA_STRIPPING_BACKEND = """\
 import os
@@ -158,73 +137,9 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
 """
 
 
-def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        env={**os.environ, **_GIT_ENV},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-def _make_checkout(root: Path, tag: str | None) -> Path:
-    listed = subprocess.run(
-        [
-            "git",
-            "ls-files",
-            "-z",
-            "--cached",
-            "--",
-            *_CHECKOUT_PATHS,
-        ],
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        check=True,
-    ).stdout.decode()
-    for relative in filter(None, listed.split("\0")):
-        source = _REPO_ROOT / relative
-        if not source.is_file():
-            continue
-        target = root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-q", "-m", "release inputs")
-    if tag is not None:
-        _git(root, "tag", "-a", tag, "-m", tag)
-    return root
-
-
 def _commit_all(repo: Path, message: str) -> None:
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", message)
-
-
-def _build_command(repo: Path, *args: str) -> tuple[list[str], dict[str, str]]:
-    env = {**os.environ, **_GIT_ENV, "UV_PROJECT_ENVIRONMENT": sys.prefix}
-    return [str(repo / "scripts" / "build_packages.sh"), *args], env
-
-
-def _run_build(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    command, env = _build_command(repo, *args)
-    return subprocess.run(
-        command,
-        cwd=repo,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=_BUILD_TIMEOUT,
-    )
-
-
-def _output(result: subprocess.CompletedProcess) -> str:
-    return (
-        f"exit={result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-    )
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "--allow-empty", "-m", message)
 
 
 def _sha256(path: Path) -> str:
@@ -255,7 +170,7 @@ def _sdist_metadata(path: Path):
 
 def _artifact_names(version: str) -> set[str]:
     names = set()
-    for package in _EXPECTED_RELEASE:
+    for package in EXPECTED_RELEASE:
         stem = f"{package.replace('-', '_')}-{version}"
         names |= {f"{stem}-py3-none-any.whl", f"{stem}.tar.gz"}
     return names
@@ -284,7 +199,7 @@ def _assert_release(repo: Path, expected_version: str) -> dict:
     assert manifest["version"] == expected_version
     names = [package["name"] for package in manifest["packages"]]
     assert len(names) == len(set(names))
-    assert set(names) == _EXPECTED_RELEASE
+    assert set(names) == EXPECTED_RELEASE
 
     built_before: set[str] = set()
     produced_names = set()
@@ -318,7 +233,7 @@ def _assert_release(repo: Path, expected_version: str) -> dict:
 def _dev_version(repo: Path, public: str) -> str:
     """The manifest version, once shown to be ``public`` plus this HEAD's hash."""
     version = Version(json.loads((repo / "dist" / _MANIFEST).read_text())["version"])
-    head = _git(repo, "rev-parse", "HEAD")
+    head = git(repo, "rev-parse", "HEAD")
     assert version.public == public
     local = version.local or ""
     assert local.startswith("g") and len(local) >= 8
@@ -379,7 +294,7 @@ def _add_undeclared_internal_dependency(repo: Path) -> None:
 
 def test_release_set_is_the_closure_of_the_publication_roots():
     requirements = {}
-    for path in (_REPO_ROOT / "libs").glob("*/pyproject.toml"):
+    for path in (REPO_ROOT / "libs").glob("*/pyproject.toml"):
         project = tomllib.loads(path.read_text())["project"]
         requirements[canonicalize_name(project["name"])] = {
             canonicalize_name(Requirement(line).name)
@@ -399,34 +314,34 @@ def test_release_set_is_the_closure_of_the_publication_roots():
         closure.add(name)
         pending.extend(requirements[name] & requirements.keys())
 
-    assert closure == _EXPECTED_RELEASE
+    assert closure == EXPECTED_RELEASE
 
 
 def test_release_tag_builds_declared_set_at_tag_version(tmp_path):
-    repo = _make_checkout(tmp_path / "tagged", tag="v0.2.0")
+    repo = make_checkout(tmp_path / "tagged", tag="v0.2.0")
 
-    result = _run_build(repo)
+    result = run_build(repo)
 
-    assert result.returncode == 0, _output(result)
+    assert result.returncode == 0, describe_run(result)
     _assert_release(repo, "0.2.0")
     assert set(os.listdir(repo / "dist")) == _artifact_names("0.2.0") | {_MANIFEST}
 
 
 def test_untagged_commit_builds_pep440_dev_version(tmp_path):
-    repo = _make_checkout(tmp_path / "dev", tag="v0.2.0")
+    repo = make_checkout(tmp_path / "dev", tag="v0.2.0")
     _commit_all(repo, "unreleased change")
 
-    result = _run_build(repo)
+    result = run_build(repo)
 
-    assert result.returncode == 0, _output(result)
+    assert result.returncode == 0, describe_run(result)
     expected = _dev_version(repo, "0.2.1.dev1")
     _assert_release(repo, expected)
     assert set(os.listdir(repo / "dist")) == _artifact_names(expected) | {_MANIFEST}
 
 
 def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
-    tagged = _make_checkout(tmp_path / "tagged", tag="v0.3.0")
-    dev = _make_checkout(tmp_path / "dev", tag="v0.3.0")
+    tagged = make_checkout(tmp_path / "tagged", tag="v0.3.0")
+    dev = make_checkout(tmp_path / "dev", tag="v0.3.0")
     _commit_all(dev, "first unreleased change")
     _commit_all(dev, "second unreleased change")
 
@@ -434,7 +349,7 @@ def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
     outcomes: dict[str, tuple[float, float, subprocess.CompletedProcess]] = {}
 
     def build(label: str, repo: Path) -> None:
-        command, env = _build_command(repo)
+        command, env = build_command(repo)
         barrier.wait()
         started = time.monotonic()
         result = subprocess.run(
@@ -443,7 +358,7 @@ def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
             env=env,
             capture_output=True,
             text=True,
-            timeout=_BUILD_TIMEOUT,
+            timeout=BUILD_TIMEOUT,
         )
         outcomes[label] = (started, time.monotonic(), result)
 
@@ -459,8 +374,8 @@ def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
     tagged_start, tagged_end, tagged_result = outcomes["tagged"]
     dev_start, dev_end, dev_result = outcomes["dev"]
     assert tagged_start < dev_end and dev_start < tagged_end
-    assert tagged_result.returncode == 0, _output(tagged_result)
-    assert dev_result.returncode == 0, _output(dev_result)
+    assert tagged_result.returncode == 0, describe_run(tagged_result)
+    assert dev_result.returncode == 0, describe_run(dev_result)
     dev_version = _dev_version(dev, "0.3.1.dev2")
     _assert_release(tagged, "0.3.0")
     _assert_release(dev, dev_version)
@@ -523,9 +438,9 @@ def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
 def test_failed_build_exits_nonzero_and_leaves_previous_artifacts_untouched(
     tmp_path, break_release, expected_messages
 ):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     dist = repo / "dist"
     (dist / _MANIFEST).unlink()
     old_artifact_hashes_before = _hashes(dist)
@@ -533,39 +448,39 @@ def test_failed_build_exits_nonzero_and_leaves_previous_artifacts_untouched(
 
     break_release(repo)
     _commit_all(repo, "break the release")
-    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
-    failed_build = _run_build(repo)
+    git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    failed_build = run_build(repo)
 
-    assert failed_build.returncode != 0, _output(failed_build)
+    assert failed_build.returncode != 0, describe_run(failed_build)
     output = failed_build.stdout + failed_build.stderr
     for message in expected_messages:
-        assert message in output, _output(failed_build)
+        assert message in output, describe_run(failed_build)
     old_artifact_hashes_after = _hashes(dist)
     assert old_artifact_hashes_after == old_artifact_hashes_before
 
 
 def test_failed_copy_into_dist_exits_nonzero_without_manifest(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     dist = repo / "dist"
     (dist / _MANIFEST).unlink()
     old_artifact_hashes_before = _hashes(dist)
     assert set(old_artifact_hashes_before) == _artifact_names("0.1.0")
 
     _commit_all(repo, "next release")
-    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
     dist.chmod(0o555)
     try:
-        failed_build = _run_build(repo)
+        failed_build = run_build(repo)
     finally:
         dist.chmod(0o755)
 
-    assert failed_build.returncode != 0, _output(failed_build)
+    assert failed_build.returncode != 0, describe_run(failed_build)
     assert (
         f"Failed to copy cogniverse_sdk-0.2.0-py3-none-any.whl into {dist}"
         in failed_build.stderr
-    ), _output(failed_build)
+    ), describe_run(failed_build)
     old_artifact_hashes_after = _hashes(dist)
     assert old_artifact_hashes_after == old_artifact_hashes_before
 
@@ -580,20 +495,20 @@ exit 1
 
 
 def test_interrupted_copy_leaves_no_artifact_under_its_real_name(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     dist = repo / "dist"
     (dist / _MANIFEST).unlink()
     old_artifact_hashes_before = _hashes(dist)
 
     _commit_all(repo, "next release")
-    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
     shim = tmp_path / "shim"
     shim.mkdir()
     (shim / "cp").write_text(_TRUNCATING_CP)
     (shim / "cp").chmod(0o755)
-    command, env = _build_command(repo)
+    command, env = build_command(repo)
     env["PATH"] = f"{shim}{os.pathsep}{env['PATH']}"
     failed_build = subprocess.run(
         command,
@@ -601,28 +516,28 @@ def test_interrupted_copy_leaves_no_artifact_under_its_real_name(tmp_path):
         env=env,
         capture_output=True,
         text=True,
-        timeout=_BUILD_TIMEOUT,
+        timeout=BUILD_TIMEOUT,
     )
 
-    assert failed_build.returncode != 0, _output(failed_build)
+    assert failed_build.returncode != 0, describe_run(failed_build)
     assert (
         f"Failed to copy cogniverse_sdk-0.2.0-py3-none-any.whl into {dist}"
         in failed_build.stderr
-    ), _output(failed_build)
+    ), describe_run(failed_build)
     old_artifact_hashes_after = _hashes(dist)
     assert old_artifact_hashes_after == old_artifact_hashes_before
 
 
 def test_parallel_test_runs_write_separate_logs(tmp_path):
     repos = [
-        _make_checkout(tmp_path / "first", tag="v0.2.0"),
-        _make_checkout(tmp_path / "second", tag="v0.2.0"),
+        make_checkout(tmp_path / "first", tag="v0.2.0"),
+        make_checkout(tmp_path / "second", tag="v0.2.0"),
     ]
     barrier = threading.Barrier(2)
     results: dict[int, subprocess.CompletedProcess] = {}
 
     def build(index: int) -> None:
-        command, env = _build_command(repos[index], "--test")
+        command, env = build_command(repos[index], "--test")
         env["UV_NO_SYNC"] = "1"
         env["TMPDIR"] = str(tmp_path)
         barrier.wait()
@@ -632,7 +547,7 @@ def test_parallel_test_runs_write_separate_logs(tmp_path):
             env=env,
             capture_output=True,
             text=True,
-            timeout=_BUILD_TIMEOUT,
+            timeout=BUILD_TIMEOUT,
         )
 
     threads = [threading.Thread(target=build, args=(index,)) for index in (0, 1)]
@@ -644,14 +559,12 @@ def test_parallel_test_runs_write_separate_logs(tmp_path):
     log_dirs = []
     for index, repo in enumerate(repos):
         result = results[index]
-        assert result.returncode == 0, _output(result)
+        assert result.returncode == 0, describe_run(result)
         [line] = [line for line in result.stdout.splitlines() if "Test logs: " in line]
         log_dir = Path(line.split("Test logs: ", 1)[1])
         assert log_dir.parent == tmp_path
         log_dirs.append(log_dir)
-        packages = sorted(
-            name.removeprefix("cogniverse-") for name in _EXPECTED_RELEASE
-        )
+        packages = sorted(name.removeprefix("cogniverse-") for name in EXPECTED_RELEASE)
         assert sorted(path.name for path in log_dir.iterdir()) == [
             f"{package}.log" for package in packages
         ]
@@ -663,45 +576,45 @@ def test_parallel_test_runs_write_separate_logs(tmp_path):
 
 
 def test_checkout_inputs_are_tracked_files_only(tmp_path):
-    untracked = _REPO_ROOT / "libs" / "sdk" / "release-input-probe-untracked.txt"
+    untracked = REPO_ROOT / "libs" / "sdk" / "release-input-probe-untracked.txt"
     assert not untracked.exists()
     untracked.write_text("untracked developer file\n")
     try:
-        repo = _make_checkout(tmp_path / "release", tag=None)
+        repo = make_checkout(tmp_path / "release", tag=None)
     finally:
         untracked.unlink()
 
     tracked = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--", *_CHECKOUT_PATHS],
-        cwd=_REPO_ROOT,
+        ["git", "ls-files", "-z", "--cached", "--", *CHECKOUT_PATHS],
+        cwd=REPO_ROOT,
         capture_output=True,
         check=True,
     ).stdout.decode()
-    copied = set(_git(repo, "ls-files").splitlines())
+    copied = set(git(repo, "ls-files").splitlines())
     assert copied == {
-        path for path in tracked.split("\0") if path and (_REPO_ROOT / path).is_file()
+        path for path in tracked.split("\0") if path and (REPO_ROOT / path).is_file()
     }
     assert "libs/sdk/release-input-probe-untracked.txt" not in copied
 
 
 def test_failed_build_removes_the_previous_manifest(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     _assert_release(repo, "0.1.0")
 
     _break_backend_child(repo)
     _commit_all(repo, "break the release")
-    failed_build = _run_build(repo)
+    failed_build = run_build(repo)
 
-    assert failed_build.returncode != 0, _output(failed_build)
+    assert failed_build.returncode != 0, describe_run(failed_build)
     assert set(os.listdir(repo / "dist")) == _artifact_names("0.1.0")
 
 
 def test_rebuild_without_clean_leaves_unrelated_artifacts_untouched(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     dist = repo / "dist"
     (dist / "operator-notes.txt").write_text("kept across builds\n")
     old_artifact_hashes_before = {
@@ -709,10 +622,10 @@ def test_rebuild_without_clean_leaves_unrelated_artifacts_untouched(tmp_path):
     }
 
     _commit_all(repo, "next release")
-    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
-    result = _run_build(repo)
+    git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    result = run_build(repo)
 
-    assert result.returncode == 0, _output(result)
+    assert result.returncode == 0, describe_run(result)
     _assert_release(repo, "0.2.0")
     old_artifact_hashes_after = {
         name: digest
@@ -726,14 +639,14 @@ def test_rebuild_without_clean_leaves_unrelated_artifacts_untouched(tmp_path):
 
 
 def test_existing_artifact_with_different_bytes_is_never_replaced(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.2.0")
-    first = _run_build(repo)
-    assert first.returncode == 0, _output(first)
+    repo = make_checkout(tmp_path / "release", tag="v0.2.0")
+    first = run_build(repo)
+    assert first.returncode == 0, describe_run(first)
     dist = repo / "dist"
     first_manifest = (dist / _MANIFEST).read_text()
 
-    identical = _run_build(repo)
-    assert identical.returncode == 0, _output(identical)
+    identical = run_build(repo)
+    assert identical.returncode == 0, describe_run(identical)
     assert (dist / _MANIFEST).read_text() == first_manifest
 
     wheel = dist / "cogniverse_core-0.2.0-py3-none-any.whl"
@@ -741,37 +654,37 @@ def test_existing_artifact_with_different_bytes_is_never_replaced(tmp_path):
     old_artifact_hashes_before = {
         name: digest for name, digest in _hashes(dist).items() if name != _MANIFEST
     }
-    failed_build = _run_build(repo)
+    failed_build = run_build(repo)
 
-    assert failed_build.returncode != 0, _output(failed_build)
+    assert failed_build.returncode != 0, describe_run(failed_build)
     assert (
         f"{dist / wheel.name} differs from the artifact built by this invocation"
         in failed_build.stdout + failed_build.stderr
-    ), _output(failed_build)
+    ), describe_run(failed_build)
     old_artifact_hashes_after = _hashes(dist)
     assert old_artifact_hashes_after == old_artifact_hashes_before
 
 
 def test_clean_in_disposable_copy_leaves_only_this_release(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
-    previous = _run_build(repo)
-    assert previous.returncode == 0, _output(previous)
+    repo = make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = run_build(repo)
+    assert previous.returncode == 0, describe_run(previous)
     (repo / "dist" / "operator-notes.txt").write_text("removed by --clean\n")
 
     _commit_all(repo, "next release")
-    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
-    result = _run_build(repo, "--verbose", "--clean")
+    git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    result = run_build(repo, "--verbose", "--clean")
 
-    assert result.returncode == 0, _output(result)
+    assert result.returncode == 0, describe_run(result)
     _assert_release(repo, "0.2.0")
     assert set(os.listdir(repo / "dist")) == _artifact_names("0.2.0") | {_MANIFEST}
 
 
 def test_unknown_option_exits_nonzero_without_building(tmp_path):
-    repo = _make_checkout(tmp_path / "release", tag="v0.2.0")
+    repo = make_checkout(tmp_path / "release", tag="v0.2.0")
 
-    result = _run_build(repo, "--no-such-option")
+    result = run_build(repo, "--no-such-option")
 
-    assert result.returncode == 2, _output(result)
-    assert "Unknown option: --no-such-option" in result.stderr, _output(result)
+    assert result.returncode == 2, describe_run(result)
+    assert "Unknown option: --no-such-option" in result.stderr, describe_run(result)
     assert not (repo / "dist").exists()

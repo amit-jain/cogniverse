@@ -136,6 +136,8 @@ pip install cogniverse-dashboard
 # - streamlit, plotly, pandas, polars
 ```
 
+With uv, allow the graphql-core pre-release that arize-phoenix requires: `uv pip install --prerelease=allow cogniverse-dashboard`.
+
 ---
 
 ## Usage
