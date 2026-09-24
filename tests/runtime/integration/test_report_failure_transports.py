@@ -37,7 +37,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_runtime.a2a_task_store import RedisTaskStore
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, AnswerGrounding
-from cogniverse_runtime.main import _build_shared_a2a_protocol
+from cogniverse_runtime.main import _a2a_settings_from_env, _build_shared_a2a_protocol
 from cogniverse_runtime.routers import openai_compat
 from tests.utils.memory_store import InMemoryConfigStore
 
@@ -444,10 +444,7 @@ def a2a_url(report_runtime, redis_url):
             dispatcher=dispatcher,
             redis_url=redis_url,
             replica_id="report-failure-replica",
-            max_tasks=64,
-            lease_seconds=30,
-            cancel_timeout_seconds=10,
-            drain_timeout_seconds=10,
+            **_a2a_settings_from_env({}),
         )
         app.mount("/a2a", built.app)
         try:

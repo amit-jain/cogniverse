@@ -106,6 +106,179 @@ class _SharedA2AProtocol:
             await self.task_store.close()
 
 
+def _a2a_settings_from_env(environ: Mapping[str, str]) -> dict[str, Any]:
+    """The A2A protocol settings the ``A2A_*`` variables select.
+
+    Unset variables take the production defaults; a value that is not a
+    number is refused by name.
+    """
+    from cogniverse_runtime.a2a_request_handler import max_concurrent_cancels_from_env
+
+    def number(name: str, default: int | float, kind: type) -> Any:
+        raw = environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return kind(raw)
+        except ValueError:
+            expected = "an integer" if kind is int else "a number"
+            raise ValueError(f"{name} must be {expected}, got {raw!r}") from None
+
+    return {
+        "max_tasks": number("A2A_MAX_TASKS", 10000, int),
+        "lease_seconds": number("A2A_TASK_LEASE_SECONDS", 30.0, float),
+        "cancel_timeout_seconds": number("A2A_CANCEL_TIMEOUT_SECONDS", 10.0, float),
+        "drain_timeout_seconds": number("A2A_DRAIN_TIMEOUT_SECONDS", 30.0, float),
+        "max_concurrent_cancels": max_concurrent_cancels_from_env(environ),
+        "max_concurrent_resubscriptions": number(
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS", 64, int
+        ),
+        "redis_timeout_seconds": number("A2A_REDIS_TIMEOUT_SECONDS", 5.0, float),
+        "redis_max_connections": number("A2A_REDIS_MAX_CONNECTIONS", 128, int),
+    }
+
+
+def _check_a2a_settings(
+    *,
+    max_concurrent_cancels: int,
+    max_concurrent_resubscriptions: int,
+    redis_timeout_seconds: float,
+    redis_max_connections: int,
+    **_: Any,
+) -> None:
+    """Refuse A2A settings that cannot serve, before Redis is touched."""
+    # A blocking read waits up to one second server-side.
+    if redis_timeout_seconds <= 1:
+        raise ValueError(
+            "A2A_REDIS_TIMEOUT_SECONDS (redis_timeout_seconds) must be > 1, got "
+            f"{redis_timeout_seconds}"
+        )
+    if max_concurrent_cancels < 1:
+        raise ValueError(
+            "A2A_MAX_CONCURRENT_CANCELS (max_concurrent_cancels) must be >= 1, "
+            f"got {max_concurrent_cancels}"
+        )
+    if max_concurrent_resubscriptions < 1:
+        raise ValueError(
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS (max_concurrent_resubscriptions) "
+            f"must be >= 1, got {max_concurrent_resubscriptions}"
+        )
+    # Every resubscription holds one pooled connection and the cancel
+    # listener another; the rest serve every other command.
+    if redis_max_connections < max_concurrent_resubscriptions + 2:
+        raise ValueError(
+            "A2A_REDIS_MAX_CONNECTIONS (redis_max_connections) must be at least "
+            "A2A_MAX_CONCURRENT_RESUBSCRIPTIONS + 2 "
+            f"({max_concurrent_resubscriptions + 2}), got {redis_max_connections}"
+        )
+
+
+async def _validate_a2a_redis(redis_url: str, settings: Mapping[str, Any]) -> None:
+    """Refuse unusable A2A settings or Redis before anything else starts."""
+    from cogniverse_runtime.a2a_task_store import RedisTaskStore
+
+    _check_a2a_settings(**settings)
+    store = await RedisTaskStore.from_url(
+        redis_url, timeout_seconds=settings["redis_timeout_seconds"], max_connections=1
+    )
+    await store.close()
+
+
+# Seconds between background attempts at a metadata deploy that found the
+# deployment lease held at startup.
+METADATA_DEPLOY_RETRY_SECONDS = 30.0
+
+
+async def _deploy_metadata_schemas_at_startup(
+    schema_manager: Any, application_name: str
+) -> asyncio.Task | None:
+    """Deploy the metadata schemas unless the live ones already match.
+
+    A deploy that waits out another deployer's lease does not fail startup:
+    it is retried in the background, and the returned task is that retry.
+    """
+    from cogniverse_runtime.backend_startup import metadata_schemas_current
+
+    if await asyncio.to_thread(metadata_schemas_current, schema_manager):
+        logger.info("Metadata schemas are live and current; startup deploy skipped")
+        return None
+    try:
+        await asyncio.to_thread(
+            schema_manager.upload_metadata_schemas,
+            app_name=application_name,
+            allow_schema_removal=False,
+        )
+    except TimeoutError as exc:
+        logger.warning(
+            "Metadata schema deploy did not get the deployment lease (%s); "
+            "retrying every %.0fs in the background",
+            exc,
+            METADATA_DEPLOY_RETRY_SECONDS,
+        )
+        return asyncio.create_task(
+            _retry_metadata_deploy(schema_manager, application_name),
+            name="metadata-schema-deploy-retry",
+        )
+    logger.info("Metadata schemas deployed via system backend")
+    return None
+
+
+async def _retry_metadata_deploy(schema_manager: Any, application_name: str) -> None:
+    """Retry the startup metadata deploy until it gets the deployment lease."""
+    while True:
+        await asyncio.sleep(METADATA_DEPLOY_RETRY_SECONDS)
+        try:
+            await asyncio.to_thread(
+                schema_manager.upload_metadata_schemas,
+                app_name=application_name,
+                allow_schema_removal=False,
+            )
+        except TimeoutError as exc:
+            logger.warning("Metadata schema deploy still waiting: %s", exc)
+            continue
+        except Exception:
+            logger.exception("Background metadata schema deploy failed; not retried")
+            return
+        logger.info("Metadata schemas deployed via system backend in the background")
+        return
+
+
+async def _migrate_drifted_schemas(schema_registry: Any, base_schema_name: str) -> None:
+    """Redeploy tenants' ``base_schema_name`` schemas registered with a
+    definition other than the shipped one.
+
+    Runs in the background once startup completes. A deploy that finds the
+    deployment lease held is retried; any other failure is logged, and the
+    next runtime start runs the migration again.
+    """
+    while True:
+        try:
+            drifted = await asyncio.to_thread(
+                schema_registry.redeploy_drifted_schemas, base_schema_name
+            )
+        except TimeoutError as exc:
+            logger.warning(
+                "Migration of drifted %s schemas did not get the deployment lease "
+                "(%s); retrying in %.0fs",
+                base_schema_name,
+                exc,
+                METADATA_DEPLOY_RETRY_SECONDS,
+            )
+            await asyncio.sleep(METADATA_DEPLOY_RETRY_SECONDS)
+            continue
+        except Exception:
+            logger.exception(
+                "Migration of drifted %s schemas failed; the next runtime start "
+                "runs it again",
+                base_schema_name,
+            )
+            return
+        logger.info(
+            "Migration of drifted %s schemas redeployed %s", base_schema_name, drifted
+        )
+        return
+
+
 async def _build_shared_a2a_protocol(
     *,
     agent_registry: Any,
@@ -116,14 +289,18 @@ async def _build_shared_a2a_protocol(
     lease_seconds: float,
     cancel_timeout_seconds: float,
     drain_timeout_seconds: float,
-    max_concurrent_cancels: int = 16,
+    max_concurrent_cancels: int,
+    max_concurrent_resubscriptions: int,
+    redis_timeout_seconds: float,
+    redis_max_connections: int,
 ) -> _SharedA2AProtocol:
     """Validate Redis and construct the replica-safe A2A protocol app."""
-    if max_concurrent_cancels < 1:
-        raise ValueError(
-            "A2A_MAX_CONCURRENT_CANCELS (max_concurrent_cancels) must be >= 1, "
-            f"got {max_concurrent_cancels}"
-        )
+    _check_a2a_settings(
+        max_concurrent_cancels=max_concurrent_cancels,
+        max_concurrent_resubscriptions=max_concurrent_resubscriptions,
+        redis_timeout_seconds=redis_timeout_seconds,
+        redis_max_connections=redis_max_connections,
+    )
     from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
     from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
@@ -135,6 +312,8 @@ async def _build_shared_a2a_protocol(
         redis_url,
         max_tasks=max_tasks,
         enforce_leases=True,
+        timeout_seconds=redis_timeout_seconds,
+        max_connections=redis_max_connections,
     )
     handler: RedisRequestHandler | None = None
     try:
@@ -181,6 +360,7 @@ async def _build_shared_a2a_protocol(
             cancel_timeout_seconds=cancel_timeout_seconds,
             drain_timeout_seconds=drain_timeout_seconds,
             max_concurrent_cancels=max_concurrent_cancels,
+            max_concurrent_resubscriptions=max_concurrent_resubscriptions,
         )
         await handler.start()
         protocol_app = A2AStarletteApplication(
@@ -952,32 +1132,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         f"{len(agent_registry.list_agents())} agents"
     )
 
-    # 7. Create system backend and deploy metadata schemas
+    # 7. Resolve SystemConfig with the deployment's env-var overrides, refuse
+    # an unusable A2A Redis, then deploy metadata schemas via a system backend.
+    # Redis is checked before anything with a side effect, so a pod
+    # crashlooping on it repeats no schema deploy, probe or loop start.
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
     bootstrap = BootstrapConfig.from_environment()
-    system_backend = BackendRegistry.get_instance().get_ingestion_backend(
-        name=bootstrap.backend_type,
-        tenant_id="system",
-        config={
-            "backend": {"url": bootstrap.backend_url, "port": bootstrap.backend_port}
-        },
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
-
-    # Deploy metadata schemas once at startup (not in every VespaBackend.__init__).
-    # The package carries every schema live at build time, so this deploy never
-    # needs to remove one; without the override a package that nonetheless
-    # missed a peer's schema is refused instead of destroying its documents.
-    # Dropping schemas left behind by deleted tenants belongs to
-    # POST /admin/reconcile-orphans, which enumerates both orphan classes and
-    # removes them in one redeploy.
     system_config = config_manager.get_system_config()
-    system_backend.schema_manager.upload_metadata_schemas(
-        app_name=system_config.application_name, allow_schema_removal=False
-    )
-    logger.info("Metadata schemas deployed via system backend")
 
     # Store SystemConfig with env var overrides so all components
     # (search backend, agents, dashboard) read the correct service URLs.
@@ -1066,6 +1228,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if sr_config is not None and sr_config != system_config.semantic_router:
         system_config.semantic_router = sr_config
         updated = True
+    redis_url = system_config.redis_url.strip()
+    if not redis_url:
+        raise RuntimeError("SystemConfig.redis_url is required for A2A task storage")
+    a2a_settings = _a2a_settings_from_env(os.environ)
+    await _validate_a2a_redis(redis_url, a2a_settings)
+
+    def system_backend():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            name=bootstrap.backend_type,
+            tenant_id="system",
+            config={
+                "backend": {
+                    "url": bootstrap.backend_url,
+                    "port": bootstrap.backend_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+    # Deploy metadata schemas once at startup (not in every VespaBackend.__init__).
+    # The package carries every schema live at build time, so this deploy never
+    # needs to remove one; without the override a package that nonetheless
+    # missed a peer's schema is refused instead of destroying its documents.
+    # Dropping schemas left behind by deleted tenants belongs to
+    # POST /admin/reconcile-orphans, which enumerates both orphan classes and
+    # removes them in one redeploy.
+    metadata_retry = await _deploy_metadata_schemas_at_startup(
+        system_backend().schema_manager, system_config.application_name
+    )
+
     if updated:
         config_manager.set_system_config(system_config)
         BackendRegistry.get_instance().clear_instances()
@@ -1454,26 +1647,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
-    redis_url = system_config.redis_url.strip()
-    if not redis_url:
-        raise RuntimeError("SystemConfig.redis_url is required for A2A task storage")
     replica_id = (
         f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     )
-    from cogniverse_runtime.a2a_request_handler import max_concurrent_cancels_from_env
-
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
         redis_url=redis_url,
         replica_id=replica_id,
-        max_tasks=int(os.environ.get("A2A_MAX_TASKS", "10000")),
-        lease_seconds=float(os.environ.get("A2A_TASK_LEASE_SECONDS", "30")),
-        cancel_timeout_seconds=float(
-            os.environ.get("A2A_CANCEL_TIMEOUT_SECONDS", "10")
-        ),
-        drain_timeout_seconds=float(os.environ.get("A2A_DRAIN_TIMEOUT_SECONDS", "30")),
-        max_concurrent_cancels=max_concurrent_cancels_from_env(),
+        **a2a_settings,
     )
     app.mount("/a2a", a2a_protocol.app)
     app.state.a2a_protocol = a2a_protocol
@@ -1484,6 +1666,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     logger.info("Cogniverse Runtime started successfully")
+
+    # Tenants' provenance schemas registered with an older definition are
+    # redeployed off the startup path: one package per drifted tenant.
+    from cogniverse_core.memory.manager import PROVENANCE_BASE_SCHEMA
+
+    schema_migration = asyncio.create_task(
+        _migrate_drifted_schemas(
+            system_backend().schema_registry, PROVENANCE_BASE_SCHEMA
+        ),
+        name="provenance-schema-migration",
+    )
 
     yield
 
@@ -1499,6 +1692,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
+    for startup_deploy in (metadata_retry, schema_migration):
+        if startup_deploy is not None:
+            startup_deploy.cancel()
+            await asyncio.gather(startup_deploy, return_exceptions=True)
     try:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):
