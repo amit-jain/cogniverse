@@ -33,6 +33,7 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.profile_models import (
     ProfileCreateRequest,
     ProfileCreateResponse,
@@ -685,6 +686,16 @@ async def delete_profile(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _catalog_profile(
+    config_manager: ConfigManager, profile_name: str, tenant_id: str
+) -> Optional[BackendProfileConfig]:
+    """``profile_name`` from the tenant's merged catalog: the shipped profiles
+    with the tenant's stored overrides on top, as ingestion resolves it."""
+    profiles = get_config(tenant_id, config_manager).get("backend", {}).get("profiles")
+    raw = (profiles or {}).get(profile_name)
+    return None if raw is None else BackendProfileConfig.from_dict(profile_name, raw)
+
+
 @router.post("/profiles/{profile_name}/deploy", response_model=SchemaDeploymentResponse)
 async def deploy_profile_schema(
     profile_name: str,
@@ -716,6 +727,10 @@ async def deploy_profile_schema(
             tenant_id=request.tenant_id,
             service="backend",
         )
+        if not profile:
+            profile = await asyncio.to_thread(
+                _catalog_profile, config_manager, profile_name, request.tenant_id
+            )
 
         if not profile:
             raise HTTPException(
