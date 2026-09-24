@@ -1055,6 +1055,46 @@ def test_a_selected_vlm_profile_without_a_student_endpoint_is_refused():
     ), stderr
 
 
+def _schema_deployment_calls(docs: list[dict]) -> list[tuple[str, str]]:
+    """(tenant, profile) for each deploy call the schema-deployment job makes."""
+    (job,) = [
+        d
+        for d in docs
+        if d.get("kind") == "Job"
+        and d["metadata"]["name"] == "cogniverse-schema-deployment"
+    ]
+    script = job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
+    return re.findall(
+        r'/admin/profiles/([^/"]+)/deploy" \\\n.*\n\s*-d \'\{"tenant_id": "([^"]+)"',
+        script,
+    )
+
+
+@pytest.mark.parametrize(
+    ("values", "set_args", "expected"),
+    [
+        (_cli_values_stack("cpu", use_k3d=True), (), []),
+        (
+            _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
+            (),
+            [(_SELECTED_VIDEO_PROFILE, "default")],
+        ),
+        (
+            _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
+            ("config.defaultProfiles.video=video_colqwen_omni_mv_chunk_30s",),
+            [("video_colqwen_omni_mv_chunk_30s", "default")],
+        ),
+    ],
+    ids=["cli-k3d-cpu", "cli-k3d-rocm-modal", "cli-k3d-rocm-modal-chunk-profile"],
+)
+def test_schema_deployment_job_deploys_only_the_selected_video_profile(
+    values: tuple[str, ...], set_args: tuple[str, ...], expected: list
+):
+    docs = _render(*set_args, values=values)
+
+    assert _schema_deployment_calls(docs) == expected
+
+
 def _is_rocm(dep: dict) -> bool:
     vols = dep["spec"]["template"]["spec"].get("volumes", [])
     return any(v.get("name") == "kfd" for v in vols)

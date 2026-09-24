@@ -441,11 +441,11 @@ runtime admin API so it goes through `SchemaRegistry.deploy_schema` and
 the `VespaBackend.deploy_schemas` merge path.
 
 **In-cluster path:** `charts/cogniverse/templates/init-jobs.yaml`
-iterates `.Values.config.tenants` × `.Values.initJobs.schemaDeployment.profiles`
-and calls the runtime:
+deploys `.Values.config.defaultProfiles.video` (none when it is empty) for each
+`.Values.config.tenants` entry by calling the runtime:
 
 ```yaml
-curl -X POST "$RUNTIME_URL/admin/profiles/{{ . }}/deploy" \
+curl -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
   -H "Content-Type: application/json" \
   -d '{"tenant_id": "{{ $tenant.id }}", "force": false}'
 ```

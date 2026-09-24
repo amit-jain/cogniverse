@@ -46,11 +46,11 @@ spec:
             done
             echo "Runtime is healthy!"
 
-            {{- range $tenant := .Values.config.tenants }}
+            {{- with $profile := .Values.config.defaultProfiles.video }}
+            {{- range $tenant := $.Values.config.tenants }}
             echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
-            {{- range $.Values.initJobs.schemaDeployment.profiles }}
-            echo "  Deploying profile: {{ . }}"
-            RESPONSE=$(curl -sf -X POST "$RUNTIME_URL/admin/profiles/{{ . }}/deploy" \
+            echo "  Deploying profile: {{ $profile }}"
+            RESPONSE=$(curl -sf -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
               -H "Content-Type: application/json" \
               -d '{"tenant_id": "{{ $tenant.id }}", "force": false}' 2>&1) || true
             echo "  Response: $RESPONSE"
