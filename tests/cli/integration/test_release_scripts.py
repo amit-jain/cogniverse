@@ -113,6 +113,50 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     return name
 """
 
+_PKG_INFO_HIDING_BACKEND = """\
+import io
+import os
+import tarfile
+
+from hatchling.build import *  # noqa: F403
+from hatchling.build import build_sdist as _build_sdist
+from hatchling.build import build_wheel as _build_wheel
+
+PKG_INFO_AS_DIRECTORY = {as_directory}
+
+
+def build_sdist(sdist_directory, config_settings=None):
+    name = _build_sdist(sdist_directory, config_settings)
+    path = os.path.join(sdist_directory, name)
+    pkg_info = name.removesuffix(".tar.gz") + "/PKG-INFO"
+    with tarfile.open(path) as source:
+        members = [
+            (member, source.extractfile(member).read() if member.isfile() else None)
+            for member in source.getmembers()
+        ]
+    with tarfile.open(path, "w:gz") as target:
+        for member, data in members:
+            if member.name == pkg_info:
+                member.name = pkg_info + ".orig"
+                if PKG_INFO_AS_DIRECTORY:
+                    directory = tarfile.TarInfo(pkg_info)
+                    directory.type = tarfile.DIRTYPE
+                    directory.mode = 0o755
+                    target.addfile(directory)
+            target.addfile(member, None if data is None else io.BytesIO(data))
+    return name
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    if os.path.isfile("PKG-INFO.orig"):
+        with open("PKG-INFO.orig") as pkg_info:
+            for line in pkg_info:
+                if line.startswith("Version: "):
+                    os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = line[9:].strip()
+                    break
+    return _build_wheel(wheel_directory, config_settings, metadata_directory)
+"""
+
 
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
@@ -133,8 +177,6 @@ def _make_checkout(root: Path, tag: str | None) -> Path:
             "ls-files",
             "-z",
             "--cached",
-            "--others",
-            "--exclude-standard",
             "--",
             *_CHECKOUT_PATHS,
         ],
@@ -315,6 +357,14 @@ def _rewrite_wheel_metadata_version(repo: Path) -> None:
     _use_vespa_backend(repo, _METADATA_VERSION_REWRITING_BACKEND)
 
 
+def _hide_sdist_pkg_info(repo: Path) -> None:
+    _use_vespa_backend(repo, _PKG_INFO_HIDING_BACKEND.format(as_directory=False))
+
+
+def _replace_sdist_pkg_info_with_directory(repo: Path) -> None:
+    _use_vespa_backend(repo, _PKG_INFO_HIDING_BACKEND.format(as_directory=True))
+
+
 def _add_undeclared_internal_dependency(repo: Path) -> None:
     pyproject = repo / "libs" / "runtime" / "pyproject.toml"
     text = pyproject.read_text()
@@ -446,6 +496,21 @@ def test_parallel_builds_in_separate_roots_keep_their_own_artifacts(tmp_path):
             id="metadata-disagrees-with-filename",
         ),
         pytest.param(
+            _hide_sdist_pkg_info,
+            [
+                "cogniverse_vespa-0.2.0.tar.gz: missing cogniverse_vespa-0.2.0/PKG-INFO",
+            ],
+            id="missing-sdist-pkg-info",
+        ),
+        pytest.param(
+            _replace_sdist_pkg_info_with_directory,
+            [
+                "cogniverse_vespa-0.2.0.tar.gz: cogniverse_vespa-0.2.0/PKG-INFO "
+                "is not a regular file",
+            ],
+            id="sdist-pkg-info-not-a-file",
+        ),
+        pytest.param(
             _add_undeclared_internal_dependency,
             [
                 "cogniverse-runtime requires cogniverse-messaging, which the "
@@ -477,6 +542,146 @@ def test_failed_build_exits_nonzero_and_leaves_previous_artifacts_untouched(
         assert message in output, _output(failed_build)
     old_artifact_hashes_after = _hashes(dist)
     assert old_artifact_hashes_after == old_artifact_hashes_before
+
+
+def test_failed_copy_into_dist_exits_nonzero_without_manifest(tmp_path):
+    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = _run_build(repo)
+    assert previous.returncode == 0, _output(previous)
+    dist = repo / "dist"
+    (dist / _MANIFEST).unlink()
+    old_artifact_hashes_before = _hashes(dist)
+    assert set(old_artifact_hashes_before) == _artifact_names("0.1.0")
+
+    _commit_all(repo, "next release")
+    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    dist.chmod(0o555)
+    try:
+        failed_build = _run_build(repo)
+    finally:
+        dist.chmod(0o755)
+
+    assert failed_build.returncode != 0, _output(failed_build)
+    assert (
+        f"Failed to copy cogniverse_sdk-0.2.0-py3-none-any.whl into {dist}"
+        in failed_build.stderr
+    ), _output(failed_build)
+    old_artifact_hashes_after = _hashes(dist)
+    assert old_artifact_hashes_after == old_artifact_hashes_before
+
+
+_TRUNCATING_CP = """\
+#!/bin/bash
+size=$(stat -c %s "$1")
+head -c $((size / 2)) "$1" > "$2"
+echo "cp: error writing '$2': No space left on device" >&2
+exit 1
+"""
+
+
+def test_interrupted_copy_leaves_no_artifact_under_its_real_name(tmp_path):
+    repo = _make_checkout(tmp_path / "release", tag="v0.1.0")
+    previous = _run_build(repo)
+    assert previous.returncode == 0, _output(previous)
+    dist = repo / "dist"
+    (dist / _MANIFEST).unlink()
+    old_artifact_hashes_before = _hashes(dist)
+
+    _commit_all(repo, "next release")
+    _git(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "cp").write_text(_TRUNCATING_CP)
+    (shim / "cp").chmod(0o755)
+    command, env = _build_command(repo)
+    env["PATH"] = f"{shim}{os.pathsep}{env['PATH']}"
+    failed_build = subprocess.run(
+        command,
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_BUILD_TIMEOUT,
+    )
+
+    assert failed_build.returncode != 0, _output(failed_build)
+    assert (
+        f"Failed to copy cogniverse_sdk-0.2.0-py3-none-any.whl into {dist}"
+        in failed_build.stderr
+    ), _output(failed_build)
+    old_artifact_hashes_after = _hashes(dist)
+    assert old_artifact_hashes_after == old_artifact_hashes_before
+
+
+def test_parallel_test_runs_write_separate_logs(tmp_path):
+    repos = [
+        _make_checkout(tmp_path / "first", tag="v0.2.0"),
+        _make_checkout(tmp_path / "second", tag="v0.2.0"),
+    ]
+    barrier = threading.Barrier(2)
+    results: dict[int, subprocess.CompletedProcess] = {}
+
+    def build(index: int) -> None:
+        command, env = _build_command(repos[index], "--test")
+        env["UV_NO_SYNC"] = "1"
+        env["TMPDIR"] = str(tmp_path)
+        barrier.wait()
+        results[index] = subprocess.run(
+            command,
+            cwd=repos[index],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_BUILD_TIMEOUT,
+        )
+
+    threads = [threading.Thread(target=build, args=(index,)) for index in (0, 1)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    log_dirs = []
+    for index, repo in enumerate(repos):
+        result = results[index]
+        assert result.returncode == 0, _output(result)
+        [line] = [line for line in result.stdout.splitlines() if "Test logs: " in line]
+        log_dir = Path(line.split("Test logs: ", 1)[1])
+        assert log_dir.parent == tmp_path
+        log_dirs.append(log_dir)
+        packages = sorted(
+            name.removeprefix("cogniverse-") for name in _EXPECTED_RELEASE
+        )
+        assert sorted(path.name for path in log_dir.iterdir()) == [
+            f"{package}.log" for package in packages
+        ]
+        for package in packages:
+            log = (log_dir / f"{package}.log").read_text()
+            assert f"rootdir: {repo}\n" in log, log
+            assert f"ERROR: file or directory not found: tests/{package}/\n" in log, log
+    assert log_dirs[0] != log_dirs[1]
+
+
+def test_checkout_inputs_are_tracked_files_only(tmp_path):
+    untracked = _REPO_ROOT / "libs" / "sdk" / "release-input-probe-untracked.txt"
+    assert not untracked.exists()
+    untracked.write_text("untracked developer file\n")
+    try:
+        repo = _make_checkout(tmp_path / "release", tag=None)
+    finally:
+        untracked.unlink()
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--", *_CHECKOUT_PATHS],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    copied = set(_git(repo, "ls-files").splitlines())
+    assert copied == {
+        path for path in tracked.split("\0") if path and (_REPO_ROOT / path).is_file()
+    }
+    assert "libs/sdk/release-input-probe-untracked.txt" not in copied
 
 
 def test_failed_build_removes_the_previous_manifest(tmp_path):
