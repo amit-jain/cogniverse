@@ -236,6 +236,9 @@ class _ArchiveSpyMemory:
     def get_all(self, user_id=None):
         return {"results": list(self._rows)}
 
+    def get(self, memory_id):
+        return next((row for row in self._rows if row["id"] == memory_id), None)
+
     def update(self, memory_id=None, data=None, metadata=None):
         self.reembedding_update_calls.append(memory_id)
 
@@ -260,10 +263,12 @@ class TestArchiveRestoreDoNotReembed:
 
     def test_archive_flips_flag_without_reembedding(self):
         mm = _spy_mm()
-        spy = _ArchiveSpyMemory([])
+        spy = _ArchiveSpyMemory(
+            [{"id": "m1", "memory": "the fact", "metadata": {"kind": "external_doc"}}]
+        )
         mm.memory = spy
 
-        mm._archive_memory("m1", {"kind": "external_doc"}, existing_data="the fact")
+        mm._archive_memory("m1")
 
         assert spy.reembedding_update_calls == [], (
             "archive must not call Memory.update — that re-embeds the text"
@@ -272,7 +277,7 @@ class TestArchiveRestoreDoNotReembed:
         call = spy.vector_store.update_calls[0]
         assert call["vector_id"] == "m1"
         assert call["vector"] is None, "vector=None keeps the stored embedding"
-        assert call["payload"]["data"] == "the fact", "text is preserved unchanged"
+        assert "data" not in call["payload"], "the stored text is left as it is"
         md = call["payload"]["metadata"]
         assert md["archived"] is True
         assert md["archived_at"]
@@ -330,3 +335,39 @@ def test_flip_falls_back_to_memory_update_without_partial_store():
 
     assert mm._flip_metadata_no_reembed("m1", "text", {"archived": True}) is True
     assert mm.memory.update_calls == [("m1", "text", {"archived": True})]
+
+
+def test_a_retention_archive_keeps_a_content_update_made_after_the_sweep_read(
+    lifecycle_mm, monkeypatch
+):
+    """A leased update landing between the sweep's read and its archive keeps
+    its content: the archive writes only the flag, on the current metadata."""
+    mm = lifecycle_mm
+    memory_id = _seed_aged(mm, "h8 the ferry leaves at nine", age_days=1.5)
+    get_all = mm.memory.get_all
+    updated = []
+
+    def sweep_read_then_peer_update(*args, **kwargs):
+        rows = get_all(*args, **kwargs)
+        if not updated:
+            updated.append(
+                mm.update_memory(
+                    memory_id=memory_id,
+                    content="h8 the ferry leaves at ten",
+                    tenant_id=TENANT,
+                    agent_name=AGENT,
+                )
+            )
+        return rows
+
+    monkeypatch.setattr(mm.memory, "get_all", sweep_read_then_peer_update)
+
+    archived = mm.cleanup_with_schema(_registry_with_short_ttl())
+
+    assert updated == [True]
+    assert archived.get(f"{KIND}:archived", 0) >= 1
+    stored = mm.memory.get(memory_id)
+    assert stored["memory"] == "h8 the ferry leaves at ten"
+    assert stored["metadata"]["archived"] is True
+    assert stored["metadata"]["kind"] == KIND
+    mm.delete_memory(memory_id, tenant_id=TENANT, agent_name=AGENT)

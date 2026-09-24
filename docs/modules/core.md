@@ -1335,7 +1335,8 @@ read of it and the write. An update that leaves the primary without provenance
 also deletes its indexed row. Deletion,
 repair, archiving and admin restore always take it; restore reads the primary
 inside the lease, so it cannot revert a leased update or archive with a stale
-copy. The search path's `last_accessed` bump runs outside the lease from the
+copy, and a retention archive re-reads the metadata inside the lease and writes
+only the metadata. The search path's `last_accessed` bump runs outside the lease from the
 search's own snapshot, so it skips provenance-bearing hits and writes only the
 metadata of the rest, never their text; a metadata change landing between the
 search and the bump (an archive) can still be overwritten. The sweeps (`clear_agent_memory`,

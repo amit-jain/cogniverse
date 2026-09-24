@@ -1649,14 +1649,9 @@ class Mem0MemoryManager:
                     should_delete = True
                 elif age_seconds > cutoff and not meta.get("archived"):
                     # Soft-delete: flip archived flag, do not remove.
+                    self._prepare_indexed_writes()
                     with self._provenance_write_ownership():
-                        self._archive_memory(
-                            memory_id,
-                            meta,
-                            existing_data=(
-                                memory.get("memory") or memory.get("text") or ""
-                            ),
-                        )
+                        self._archive_memory(memory_id)
                     deleted_by_kind[f"{kind}:archived"] = (
                         deleted_by_kind.get(f"{kind}:archived", 0) + 1
                     )
@@ -1821,7 +1816,7 @@ class Mem0MemoryManager:
         return meta if isinstance(meta, dict) else {}
 
     def _flip_metadata_no_reembed(
-        self, memory_id: str, data: str, metadata: Dict[str, Any]
+        self, memory_id: str, data: Optional[str], metadata: Dict[str, Any]
     ) -> bool:
         """Rewrite a memory's metadata WITHOUT re-embedding its text.
 
@@ -1831,41 +1826,46 @@ class Mem0MemoryManager:
         untouched) — the same path ``_bump_last_accessed_for_hits`` uses —
         instead of Mem0's ``Memory.update``, which re-embeds over HTTP on every
         call. Falls back to ``Memory.update`` only when no partial-update store
-        is available. Exceptions propagate to the caller.
+        is available. ``data=None`` writes the metadata alone, leaving the
+        stored text as it is. Exceptions propagate to the caller.
         """
         store = getattr(self.memory, "vector_store", None) if self.memory else None
         if store is not None and hasattr(store, "update"):
-            store.update(
-                vector_id=memory_id,
-                vector=None,
-                payload={"data": data, "metadata": metadata},
-            )
+            payload = {"metadata": metadata}
+            if data is not None:
+                payload["data"] = data
+            store.update(vector_id=memory_id, vector=None, payload=payload)
             return True
         if self.memory:
             self.memory.update(memory_id=memory_id, data=data, metadata=metadata)
             return True
         return False
 
-    def _archive_memory(
-        self,
-        memory_id: str,
-        meta: Dict[str, Any],
-        existing_data: str = "",
-    ) -> None:
+    def _archive_memory(self, memory_id: str) -> None:
         """soft-delete: flip metadata.archived=true with a timestamp.
 
         The lifecycle scheduler calls this when a memory hits its TTL but
         not yet 2*TTL. The memory remains queryable via opt-in
         ``include_archived=True`` paths and via the admin restore
-        endpoint; default reads filter it out.
+        endpoint; default reads filter it out. Runs inside the write lease:
+        the metadata is re-read here and only the metadata is written, so
+        an update that landed after the sweep's read is neither reverted
+        nor has its text rewritten.
         """
         from datetime import datetime, timezone
 
+        self._check_provenance_ownership()
+        current = self.memory.get(memory_id)
+        if not isinstance(current, dict):
+            return
+        meta = self._read_metadata(current)
+        if meta.get("archived"):
+            return
         new_meta = dict(meta)
         new_meta["archived"] = True
         new_meta["archived_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            self._flip_metadata_no_reembed(memory_id, existing_data, new_meta)
+            self._flip_metadata_no_reembed(memory_id, None, new_meta)
             logger.info(
                 "Soft-deleted (archived) memory %s for tenant %s",
                 memory_id,
