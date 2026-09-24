@@ -178,18 +178,15 @@ def test_startup_probe_can_be_disabled_by_operator():
     assert "startupProbe" not in container
 
 
-def test_termination_grace_covers_every_shutdown_drain():
-    """SIGTERM lets uvicorn close open connections for its graceful-shutdown
-    timeout, then the lifespan drains accepted admin blob writes, pending
-    conversation saves and the A2A protocol in turn. The pod's grace period
-    must cover all of them plus the rest of teardown, or SIGKILL lands
-    mid-drain and an accepted write or a draining execution is lost."""
+def _grace_and_budgets(*set_args: str) -> tuple[int, dict]:
+    """The runtime pod's grace period and each shutdown budget it must cover,
+    each budget read from where the runtime takes it."""
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S,
     )
     from cogniverse_runtime.routers.admin import drain_blob_writes
 
-    manifests = _render_chart()
+    manifests = _render_chart(*set_args)
     deployments = [
         m
         for m in manifests
@@ -215,6 +212,17 @@ def test_termination_grace_covers_every_shutdown_drain():
         "A2A shutdown": 2
         * runtime_main._a2a_settings_from_env(env)["drain_timeout_seconds"],
     }
+    return grace, budgets
+
+
+def test_termination_grace_covers_every_shutdown_drain():
+    """SIGTERM lets uvicorn close open connections for its graceful-shutdown
+    timeout, then the lifespan drains accepted admin blob writes, pending
+    conversation saves and the A2A protocol in turn. The pod's grace period
+    must cover all of them plus the rest of teardown, or SIGKILL lands
+    mid-drain and an accepted write or a draining execution is lost."""
+    grace, budgets = _grace_and_budgets()
+
     assert grace == 190
     assert budgets == {
         "uvicorn graceful shutdown": 15.0,
@@ -222,7 +230,33 @@ def test_termination_grace_covers_every_shutdown_drain():
         "conversation-save drain": 40.0,
         "A2A shutdown": 60.0,
     }
-    assert grace - sum(budgets.values()) >= 15, (
-        f"grace {grace}s leaves {grace - sum(budgets.values())}s after {budgets} "
-        "for the rest of teardown"
-    )
+    assert grace - sum(budgets.values()) == 15
+
+
+@pytest.mark.parametrize(
+    "set_args,grace_expected",
+    [
+        (("runtime.shutdown.a2aDrainSeconds=45.5",), 221),
+        (("runtime.shutdown.uvicornGracefulSeconds=40",), 215),
+        (("runtime.shutdown.teardownSeconds=30",), 205),
+    ],
+)
+def test_termination_grace_follows_the_configured_budgets(set_args, grace_expected):
+    """A raised budget raises the grace period with it, so the chart never
+    renders a pod SIGKILLed mid-drain."""
+    grace, budgets = _grace_and_budgets(*set_args)
+
+    assert grace == grace_expected
+    assert grace >= sum(budgets.values()) + 15
+
+
+@pytest.mark.parametrize(
+    "variable", ["A2A_DRAIN_TIMEOUT_SECONDS", "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"]
+)
+def test_a_shutdown_budget_set_around_the_grace_period_is_refused(variable):
+    with pytest.raises(AssertionError) as refused:
+        _render_chart(f"runtime.env.{variable}=90")
+    assert (
+        f"{variable} is set from runtime.shutdown, which also sizes the pod's "
+        "termination grace period; set it there"
+    ) in str(refused.value)

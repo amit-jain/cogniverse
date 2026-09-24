@@ -256,10 +256,7 @@ spec:
         {{- include "cogniverse.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: runtime
     spec:
-      # Covers uvicorn's graceful shutdown, then the lifespan drains of
-      # accepted admin blob writes, conversation saves and the A2A protocol,
-      # plus teardown.
-      terminationGracePeriodSeconds: 190
+      terminationGracePeriodSeconds: {{ include "cogniverse.runtime.terminationGracePeriodSeconds" . }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -297,7 +294,9 @@ spec:
         # After this, uvicorn stops waiting on open connections (SSE streams
         # included) and the lifespan shutdown runs.
         - name: UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
-          value: "15"
+          value: {{ .Values.runtime.shutdown.uvicornGracefulSeconds | quote }}
+        - name: A2A_DRAIN_TIMEOUT_SECONDS
+          value: {{ .Values.runtime.shutdown.a2aDrainSeconds | quote }}
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: VESPA_URL
@@ -429,6 +428,11 @@ spec:
             secretKeyRef:
               name: {{ $fullName }}-minio
               key: rootPassword
+        {{- end }}
+        {{- range $name := list "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN" "A2A_DRAIN_TIMEOUT_SECONDS" }}
+        {{- if hasKey $.Values.runtime.env $name }}
+        {{- fail (printf "%s is set from runtime.shutdown, which also sizes the pod's termination grace period; set it there" $name) }}
+        {{- end }}
         {{- end }}
         {{- if hasKey .Values.runtime.env "COGNIVERSE_ROOT_PATH" }}
         {{- fail "COGNIVERSE_ROOT_PATH is derived from ingress paths; set ingress.hosts[].paths[].path instead" }}

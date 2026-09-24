@@ -403,6 +403,16 @@ runtime:
     LOG_LEVEL: "INFO"
     WORKERS: "4"
 
+  # Shutdown budgets; the pod's terminationGracePeriodSeconds is derived
+  # from them (cogniverse.runtime.terminationGracePeriodSeconds).
+  shutdown:
+    # UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN: wait on open connections.
+    uvicornGracefulSeconds: 15
+    # A2A_DRAIN_TIMEOUT_SECONDS: served executions' drain; what it cancels
+    # then gets as long again.
+    a2aDrainSeconds: 30
+    teardownSeconds: 15
+
   # Autoscaling
   autoscaling:
     enabled: true

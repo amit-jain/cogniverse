@@ -664,3 +664,16 @@ runtime under two different prefixes has no single answer, so it fails.
 {{- end -}}
 {{- first $distinct | default "" -}}
 {{- end -}}
+
+{{/*
+The runtime pod's termination grace period: uvicorn's graceful shutdown,
+then the lifespan drains in turn (admin blob writes 60 s, conversation saves
+40 s, and the A2A drain whose cancelled work gets as long again), plus
+teardown. The two fixed drains are the runtime's own budgets.
+*/}}
+{{- define "cogniverse.runtime.terminationGracePeriodSeconds" -}}
+{{- $shutdown := .Values.runtime.shutdown -}}
+{{- $a2a := mulf 2 $shutdown.a2aDrainSeconds -}}
+{{- $total := addf $shutdown.uvicornGracefulSeconds 60 40 $a2a $shutdown.teardownSeconds -}}
+{{- int (ceil $total) -}}
+{{- end -}}
