@@ -425,7 +425,7 @@ class _CountingDeleteRegistry:
             acquire=lambda: None, ensure_owned=lambda: None, release=lambda: None
         )
 
-    def get_tenant_schemas(self, tenant_id):
+    def get_tenant_schemas(self, tenant_id, strict=False):
         self.visits += 1
         return [SimpleNamespace(base_schema_name="conflictprobe")]
 
