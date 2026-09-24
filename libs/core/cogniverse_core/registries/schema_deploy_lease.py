@@ -57,27 +57,47 @@ def _forget_live(holder: str) -> None:
         _live_holders.pop(holder, None)
 
 
+def _pid_namespace() -> str:
+    """Name this process's PID namespace, or ``""`` when it cannot be read.
+
+    The kernel boot id plus the namespace inode: two processes share a pid
+    space exactly when both match, whatever hostname their containers carry.
+    """
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as handle:
+            boot_id = handle.read().strip()
+        inode = os.stat("/proc/self/ns/pid").st_ino
+    except OSError:
+        return ""
+    return f"{boot_id}.{inode}"
+
+
 def _holder_is_gone(holder: str) -> bool:
     """Report whether the holder's process provably no longer runs it.
 
-    Holders are ``host:pid:uuid``. A record this node can prove is abandoned
-    must not block deploys for its hold time: a waiter whose wait is shorter
-    than that hold can never wait it out, so without this probe one leaked
-    record poisons every later deploy in reach of it. The probe only ever
-    says "gone" when it is certain:
+    Holders are ``host:pidns:pid:uuid``. A record this node can prove is
+    abandoned must not block deploys for its hold time: a waiter whose wait
+    is shorter than that hold can never wait it out, so without this probe
+    one leaked record poisons every later deploy in reach of it. The probe
+    only ever says "gone" when it is certain:
 
-    * another host — this node cannot see that host's processes, so never;
+    * another host, or another PID namespace on it (a container sharing the
+      hostname), or one this process cannot name — its pids mean nothing
+      here, so never;
     * this very process — gone exactly when no live holder object owns it;
-    * another process on this host — gone when its pid is not running. A pid
-      that is running (including one recycled by an unrelated process) reads
-      as live, which only delays takeover to the stall watch below.
+    * another process in this PID namespace — gone when its pid is not
+      running. A pid that is running (including one recycled by an unrelated
+      process) reads as live, which only delays takeover to the stall watch
+      below.
     """
     try:
-        host, pid_text, _ = holder.split(":", 2)
+        host, namespace, pid_text, _ = holder.split(":", 3)
         pid = int(pid_text)
     except (AttributeError, ValueError):
         return False
-    if host != socket.gethostname():
+    if host != socket.gethostname() or not namespace:
+        return False
+    if namespace != _pid_namespace():
         return False
     if pid == os.getpid():
         with _process_state:
@@ -158,7 +178,9 @@ class SchemaDeployLease:
         self._wait_seconds = (
             DEFAULT_WAIT_SECONDS if wait_seconds is None else wait_seconds
         )
-        self.holder = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+        self.holder = ":".join(
+            (socket.gethostname(), _pid_namespace(), str(os.getpid()), uuid.uuid4().hex)
+        )
         self._held_since: Optional[float] = None
 
     def _read(self) -> tuple[Optional[dict[str, Any]], int]:

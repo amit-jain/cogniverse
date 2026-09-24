@@ -1128,7 +1128,11 @@ class TestProvenanceWriteLeaseScope:
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         manager = self._manager("lease_recover_tenant")
-        abandoned = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+        from cogniverse_core.registries.schema_deploy_lease import _pid_namespace
+
+        abandoned = ":".join(
+            (socket.gethostname(), _pid_namespace(), str(os.getpid()), uuid.uuid4().hex)
+        )
         manager._provenance_lease_store.compare_and_set_config(
             tenant_id="__system__",
             scope=ConfigScope.SCHEMA,
