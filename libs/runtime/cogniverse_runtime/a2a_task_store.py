@@ -24,7 +24,12 @@ from a2a.types import (
 from a2a.utils import new_agent_text_message
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis
-from redis.exceptions import RedisError, ResponseError
+from redis.exceptions import (
+    NoPermissionError,
+    ReadOnlyError,
+    RedisError,
+    ResponseError,
+)
 
 _UNAVAILABLE = "shared A2A task store unavailable"
 # How long a closed or orphaned event relay stays readable for late consumers.
@@ -55,6 +60,10 @@ class A2ATaskOwnershipLostError(A2ATaskStoreError):
 
 class A2ACancelTimeoutError(A2ATaskStoreError):
     """Raised when a task owner does not acknowledge cancellation in time."""
+
+
+class A2ACancelCapacityError(A2ATaskStoreError):
+    """Raised when a task owner is already running its limit of cancels."""
 
 
 @dataclass(frozen=True)
@@ -397,6 +406,18 @@ class RedisTaskStore(TaskStore):
                 1,
                 "probe",
             )
+        except NoPermissionError as exc:
+            await client.aclose()
+            raise A2ATaskStoreError(
+                f"shared A2A task store cannot use {redis_url}: its Redis user is "
+                "not permitted HPEXPIRE"
+            ) from exc
+        except ReadOnlyError as exc:
+            await client.aclose()
+            raise A2ATaskStoreError(
+                f"shared A2A task store cannot use {redis_url}: it is a read-only "
+                "replica"
+            ) from exc
         except ResponseError as exc:
             await client.aclose()
             raise A2ATaskStoreError(
