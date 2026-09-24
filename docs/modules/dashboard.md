@@ -804,7 +804,9 @@ Key points from the actual Dockerfile:
 - Builder stage: `python:3.12-slim`, copies `libs/sdk`, `libs/foundation`,
   `libs/evaluation`, `libs/core`, `libs/synthetic`, `libs/vespa`,
   `libs/agents`, `libs/telemetry-phoenix`, and `libs/dashboard`, then runs
-  `uv sync --package cogniverse-dashboard --no-dev --frozen`.
+  `uv sync --package cogniverse-dashboard --no-dev --frozen`, then
+  `uv sync --only-group runtime-models --inexact --frozen` to install the
+  pinned `en_core_web_sm` spaCy model from the lock.
 - The `TORCH_BACKEND` build-arg swaps in the matching torch wheel (cpu/rocm)
   or keeps the default cu128 wheel (cuda), and strips the unused
   `nvidia`/`triton` packages when not building for CUDA.
