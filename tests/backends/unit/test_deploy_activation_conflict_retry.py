@@ -367,23 +367,122 @@ def test_deploy_fences_check_a_heartbeating_lease_without_store_writes():
     assert store.deploy_thread_writes == 2
 
 
+def _worst_visit_page_seconds(monkeypatch) -> float:
+    """One config-store visit page run to its retry bound, measured from the
+    store's own retries: every attempt times out on connect and on read."""
+    import requests as requests_module
+
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from cogniverse_vespa.config import config_store
+    from cogniverse_vespa.config.config_store import (
+        ConfigStoreUnavailableError,
+        VespaConfigStore,
+    )
+
+    timeouts: list[float] = []
+    backoffs: list[float] = []
+
+    def unreachable(*_args, timeout, **_kwargs):
+        timeouts.append(timeout)
+        raise requests_module.ConnectionError("config store unreachable")
+
+    monkeypatch.setattr(config_store.requests, "get", unreachable)
+    monkeypatch.setattr(config_store.time, "sleep", backoffs.append)
+    store = VespaConfigStore(vespa_app=SimpleNamespace(url="http://127.0.0.1:9"))
+    with pytest.raises(ConfigStoreUnavailableError):
+        store.list_all_configs(scope=ConfigScope.SCHEMA, service="schema_registry")
+    monkeypatch.undo()
+    return sum(2 * timeout for timeout in timeouts) + sum(backoffs)
+
+
+def _worst_schema_listing_seconds(monkeypatch) -> float:
+    """One config-server schema listing timing out on connect and on read."""
+    import requests as requests_module
+
+    timeouts: list[float] = []
+
+    def unreachable(*_args, timeout, **_kwargs):
+        timeouts.append(timeout)
+        raise requests_module.ConnectionError("config server unreachable")
+
+    monkeypatch.setattr(requests_module, "get", unreachable)
+    manager = _make_schema_manager(9)
+    with pytest.raises(requests_module.ConnectionError):
+        manager.list_deployed_document_types(raise_on_failure=True)
+    monkeypatch.undo()
+    assert len(timeouts) == 1
+    return 2 * timeouts[0]
+
+
+class _CountingDeleteRegistry:
+    """Counts every registry call that is one config-store visit."""
+
+    def __init__(self):
+        self.visits = 0
+
+    def deployment_lease(self, **kwargs):
+        return SimpleNamespace(
+            acquire=lambda: None, ensure_owned=lambda: None, release=lambda: None
+        )
+
+    def get_tenant_schemas(self, tenant_id):
+        self.visits += 1
+        return [SimpleNamespace(base_schema_name="conflictprobe")]
+
+    def _get_all_schemas(self):
+        self.visits += 1
+        return [
+            SimpleNamespace(
+                full_schema_name="conflictprobe_acme_acme",
+                schema_definition='{"name": "conflictprobe_acme_acme"}',
+            )
+        ]
+
+    def reserved_schemas(self, live_names):
+        self.visits += 1
+        return {}
+
+    def unregister_schema(self, tenant_id, base_schema_name):
+        return None
+
+
 def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch):
-    """The heartbeat's cap must outlast a deploy that exhausts every retry
-    with every request running to its timeout."""
+    """The heartbeat's cap must outlast the longest lease body: a tenant
+    delete whose every read and every deploy request runs to its bound and
+    whose every attempt conflicts. Visits are one page each."""
     from cogniverse_core.registries.schema_deploy_lease import MAX_TOTAL_HOLD_SECONDS
     from cogniverse_vespa import vespa_schema_manager
 
+    visit_page = _worst_visit_page_seconds(monkeypatch)
+    listing = _worst_schema_listing_seconds(monkeypatch)
+    assert visit_page == 303.75
+    assert listing == 20
+
+    registry = _CountingDeleteRegistry()
+    listings = []
     backoffs: list[float] = []
     monkeypatch.setattr(vespa_schema_manager.time, "sleep", backoffs.append)
     with _ConfigServer([409]) as server:
         manager = _make_schema_manager(server.port)
+        manager._schema_registry = registry
+        manager._PROTECTED_SCHEMAS = frozenset()
+        manager.get_tenant_schema_name = lambda tid, base: f"{base}_acme_acme"
+
+        def list_deployed(raise_on_failure=False):
+            listings.append(raise_on_failure)
+            return ["conflictprobe_acme_acme"]
+
+        manager.list_deployed_document_types = list_deployed
         with pytest.raises(RuntimeError, match="409"):
-            manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
+            manager.delete_tenant_schemas("acme")
 
     requests_made = len(server.paths)
-    assert requests_made == 15
-    longest = requests_made * sum(vespa_schema_manager.DEPLOY_REQUEST_TIMEOUT_S) + sum(
-        backoffs
+    assert (requests_made, registry.visits, len(listings)) == (15, 12, 7)
+    longest = (
+        requests_made * sum(vespa_schema_manager.DEPLOY_REQUEST_TIMEOUT_S)
+        + sum(backoffs)
+        + registry.visits * visit_page
+        + len(listings) * listing
     )
-    assert longest == 4657.5
+    assert longest == 8442.5
     assert MAX_TOTAL_HOLD_SECONDS >= longest
