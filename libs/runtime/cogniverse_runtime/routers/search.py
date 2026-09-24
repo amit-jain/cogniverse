@@ -84,6 +84,7 @@ class SearchResponse(BaseModel):
     strategy: Optional[str]
     results_count: int
     results: list
+    source_search_incomplete: bool
     session_id: Optional[str] = None
 
 
@@ -210,6 +211,10 @@ async def search(
                         )
 
                         span.set_attribute("results_count", len(results))
+                        span.set_attribute(
+                            "source_search_incomplete",
+                            results.source_search_incomplete,
+                        )
 
                         # Emit final event with results
                         final_data = {
@@ -220,6 +225,9 @@ async def search(
                                 "strategy": request.strategy,
                                 "results_count": len(results),
                                 "results": [r.to_dict() for r in results],
+                                "source_search_incomplete": (
+                                    results.source_search_incomplete
+                                ),
                                 "session_id": request.session_id,
                             },
                         }
@@ -250,6 +258,9 @@ async def search(
                 )
 
                 span.set_attribute("results_count", len(results))
+                span.set_attribute(
+                    "source_search_incomplete", results.source_search_incomplete
+                )
 
                 return SearchResponse(
                     query=request.query,
@@ -257,6 +268,7 @@ async def search(
                     strategy=request.strategy,
                     results_count=len(results),
                     results=[r.to_dict() for r in results],
+                    source_search_incomplete=results.source_search_incomplete,
                     session_id=request.session_id,
                 )
 
