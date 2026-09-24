@@ -731,6 +731,7 @@ class TestSearchAgentEdgeCases:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
+                profile="frame_based_colpali",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -768,6 +769,7 @@ class TestSearchAgentEdgeCases:
         with pytest.raises(Exception, match="Encoder creation failed"):
             SearchAgent(
                 deps=SearchAgentDeps(
+                    profile="frame_based_colpali",
                     tenant_id="test_tenant",
                     backend_url="http://localhost",
                     backend_port=8080,
@@ -795,6 +797,7 @@ class TestSearchAgentEdgeCases:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
+                profile="frame_based_colpali",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -830,6 +833,7 @@ class TestSearchAgentEdgeCases:
 
         agent = SearchAgent(
             deps=SearchAgentDeps(
+                profile="frame_based_colpali",
                 backend_url="http://localhost",
                 backend_port=8080,
             ),
@@ -2712,6 +2716,54 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         assert call.kwargs["config"] is agent.search_config
         assert agent.search_config.tenant_id == "acme:acme"
         assert agent.active_profile == "acme_frames"
+
+    def test_an_unnamed_profile_resolves_the_tenants_default_selection(self):
+        """With no profile named, the agent takes the tenant default through
+        the one resolver upload, search and the dispatcher share:
+        ``backend.default_profiles.video.profile`` before
+        ``active_video_profile``, which still names the shipped profile."""
+        config_manager = self._config_manager_with_tenant_profile()
+        backend = config_manager.get_backend_config("acme:acme")
+        backend.default_profiles = {
+            "video": {"profile": "acme_frames", "strategy": "segmentation"}
+        }
+        config_manager.set_backend_config(backend, tenant_id="acme:acme")
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            agent = SearchAgent(
+                deps=SearchAgentDeps(tenant_id="acme:acme"),
+                schema_loader=mock_schema_loader,
+                config_manager=config_manager,
+            )
+
+        assert agent.search_config.get("active_video_profile") != "acme_frames"
+        assert agent.active_profile == "acme_frames"
+        [call] = create_encoder.call_args_list
+        assert call.args[:2] == ("acme_frames", None)
+
+    def test_a_tenant_with_no_default_profile_is_refused(self, tmp_path, monkeypatch):
+        """No named profile and no configured default is an error, not a
+        hardcoded profile name the tenant never configured."""
+        import json
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({"backend": {"profiles": {}}}))
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            with pytest.raises(
+                ValueError,
+                match=r"^tenant 'acme:acme' has no configured default video "
+                r"profile and the search agent was given none$",
+            ):
+                SearchAgent(
+                    deps=SearchAgentDeps(tenant_id="acme:acme"),
+                    schema_loader=mock_schema_loader,
+                    config_manager=_memory_config_manager(),
+                )
+        assert create_encoder.call_args_list == []
 
     def test_an_acoustic_profile_queries_its_semantic_model(self):
         """A ColBERT profile carrying a second, acoustic embedding is queried

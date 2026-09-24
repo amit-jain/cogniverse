@@ -807,33 +807,27 @@ class SearchAgent(
         # Profiles, models and backend URLs as the deps' tenant sees them: a
         # tenant's own profiles merged over the system's.
         from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-        from cogniverse_foundation.config.utils import get_config
+        from cogniverse_foundation.config.utils import (
+            get_config,
+            resolve_default_profile,
+        )
 
+        tenant_id = deps.tenant_id or SYSTEM_TENANT_ID
         self.search_config = get_config(
-            tenant_id=deps.tenant_id or SYSTEM_TENANT_ID,
+            tenant_id=tenant_id,
             config_manager=config_manager,
         )
 
         # Memory is initialized per-request via MemoryAwareMixin.initialize_memory()
         # when tenant_id is known. Not at startup.
 
-        # Get model from active profile: explicit param > config lookup > default
-        active_profile_raw = (
-            deps.profile
-            or self.search_config.get("active_video_profile")
-            or "video_colpali_smol500_mv_frame"
-        )
-
-        # Ensure active_profile is a string (config may return dict)
-        if isinstance(active_profile_raw, dict):
-            active_profile = active_profile_raw.get(
-                "name", "video_colpali_smol500_mv_frame"
-            )
-        else:
-            active_profile = (
-                str(active_profile_raw)
-                if active_profile_raw
-                else "video_colpali_smol500_mv_frame"
+        # An explicit profile, else the tenant default from the resolver upload,
+        # search and the dispatcher share, so all four land on one profile.
+        active_profile = deps.profile or resolve_default_profile(self.search_config)
+        if not active_profile:
+            raise ValueError(
+                f"tenant {tenant_id!r} has no configured default video profile "
+                "and the search agent was given none"
             )
 
         self.active_profile = active_profile

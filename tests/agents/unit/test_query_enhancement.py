@@ -1392,7 +1392,9 @@ class TestVideoSearchAgent:
 
             from cogniverse_agents.search_agent import SearchAgentDeps as SearchDeps1
 
-            deps = SearchDeps1(tenant_id="test_tenant")
+            deps = SearchDeps1(
+                tenant_id="test_tenant", profile="video_colpali_smol500_mv_frame"
+            )
             agent = SearchAgent(
                 deps=deps,
                 schema_loader=mock_schema_loader,
@@ -1463,7 +1465,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            deps = SearchAgentDeps()
+            deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
             agent = SearchAgent(
                 deps=deps,
                 schema_loader=mock_schema_loader,
