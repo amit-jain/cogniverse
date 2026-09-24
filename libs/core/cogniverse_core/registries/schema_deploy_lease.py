@@ -166,6 +166,7 @@ class SchemaDeployLease:
         service: str = _SERVICE,
         config_key: str = _KEY,
         purpose: str = "Vespa deployment",
+        heartbeat: bool = False,
     ) -> None:
         self._store = store
         self._tenant_id = tenant_id
@@ -182,6 +183,11 @@ class SchemaDeployLease:
             (socket.gethostname(), _pid_namespace(), str(os.getpid()), uuid.uuid4().hex)
         )
         self._held_since: Optional[float] = None
+        self._heartbeat = heartbeat
+        self._lost = False
+        self._renew_lock = threading.Lock()
+        self._heartbeat_stop: Optional[threading.Event] = None
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
     def _read(self) -> tuple[Optional[dict[str, Any]], int]:
         entry = self._store.get_config(
@@ -238,7 +244,10 @@ class SchemaDeployLease:
                     _released_holders.discard(self.holder)
                 _register_live(self)
                 self._held_since = time.monotonic()
+                self._lost = False
                 logger.info("%s lease acquired by %s", self._purpose, self.holder)
+                if self._heartbeat:
+                    self._start_heartbeat()
                 return self
             if time.monotonic() >= deadline:
                 if self._purpose == "Vespa deployment":
@@ -265,6 +274,8 @@ class SchemaDeployLease:
         """
         if self._held_since is None:
             raise DeploymentLeaseLost(f"{self._purpose} lease is not held")
+        if self._lost:
+            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
         elapsed = time.monotonic() - self._held_since
         if elapsed >= self._lease_seconds:
             raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
@@ -273,16 +284,48 @@ class SchemaDeployLease:
 
     def renew(self) -> None:
         """Extend the lease, or raise if this holder no longer owns it."""
-        if (
-            self._held_since is None
-            or time.monotonic() - self._held_since >= self._lease_seconds
-        ):
-            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
-        record, version = self._read()
-        current = None if record is None else record.get("holder")
-        if current != self.holder or not self._claim(version, self.holder):
-            raise DeploymentLeaseLost(f"{self._purpose} lease expired or was replaced")
-        self._held_since = time.monotonic()
+        with self._renew_lock:
+            if (
+                self._lost
+                or self._held_since is None
+                or time.monotonic() - self._held_since >= self._lease_seconds
+            ):
+                raise DeploymentLeaseLost(
+                    f"{self._purpose} lease expired or was replaced"
+                )
+            record, version = self._read()
+            current = None if record is None else record.get("holder")
+            if current != self.holder or not self._claim(version, self.holder):
+                self._lost = True
+                raise DeploymentLeaseLost(
+                    f"{self._purpose} lease expired or was replaced"
+                )
+            self._held_since = time.monotonic()
+
+    def _start_heartbeat(self) -> None:
+        """Renew every third of the hold time until released or lost.
+
+        The thread holds the lease only weakly, so a holder its owner dropped
+        without a release still reads as abandoned and is taken over.
+        """
+        stop = threading.Event()
+        self._heartbeat_stop = stop
+        self._heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            args=(weakref.ref(self), stop, self._lease_seconds / 3),
+            name=f"deploy-lease-heartbeat:{self.holder}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        if self._heartbeat_stop is not None:
+            self._heartbeat_stop.set()
+        thread = self._heartbeat_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
+        self._heartbeat_stop = None
+        self._heartbeat_thread = None
 
     def release(self) -> None:
         """Hand the lease back; a lease already taken over is left alone.
@@ -292,6 +335,7 @@ class SchemaDeployLease:
         taken over at once by this process, and by peers once they have
         watched it stand still for the hold time.
         """
+        self._stop_heartbeat()
         cleared = False
         try:
             record, version = self._read()
@@ -313,3 +357,39 @@ class SchemaDeployLease:
             if not cleared:
                 with _process_state:
                     _released_holders.add(self.holder)
+
+
+def _heartbeat(
+    lease_ref: "weakref.ReferenceType[SchemaDeployLease]",
+    stop: threading.Event,
+    interval: float,
+) -> None:
+    """Keep a live holder's lease renewed; stop once it is released or lost.
+
+    A refused renewal ends the lease: the holder's next fence raises. A store
+    error is retried on the next beat, and the holder's own hold-time clock
+    fences it if the store stays unreachable for a whole hold.
+    """
+    while not stop.wait(interval):
+        lease = lease_ref()
+        if lease is None:
+            return
+        try:
+            lease.renew()
+        except DeploymentLeaseLost:
+            logger.warning(
+                "%s lease held by %s was lost; its next step is refused",
+                lease._purpose,
+                lease.holder,
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "%s lease renewal for %s failed (%s: %s); retrying",
+                lease._purpose,
+                lease.holder,
+                type(exc).__name__,
+                exc,
+            )
+        finally:
+            del lease

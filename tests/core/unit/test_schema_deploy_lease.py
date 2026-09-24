@@ -409,3 +409,128 @@ def test_a_holder_on_another_host_is_not_taken_over_by_a_pid_probe():
     with pytest.raises(TimeoutError):
         _lease(store, wait_seconds=0).acquire()
     assert _lease_record(store).config_value["holder"] == foreign.holder
+
+
+def _heartbeat_threads():
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name.startswith("deploy-lease-heartbeat:")
+    ]
+
+
+class _SwitchableStore(InMemoryConfigStore):
+    """Refuses or fails the lease's own writes while switched on."""
+
+    def __init__(self):
+        super().__init__()
+        self.refuse = threading.Event()
+        self.fail = threading.Event()
+        self.refused = threading.Event()
+        self.failed = threading.Event()
+
+    def compare_and_set_config(self, *args, **kwargs):
+        if self.refuse.is_set():
+            self.refused.set()
+            return None
+        if self.fail.is_set():
+            self.failed.set()
+            raise ConnectionError("config store unreachable")
+        return super().compare_and_set_config(*args, **kwargs)
+
+
+def test_a_heartbeating_holder_is_never_taken_over_past_its_hold():
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=0.6, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    try:
+        peer = _lease(store, wait_seconds=2.4)
+        with pytest.raises(TimeoutError):
+            peer.acquire()
+        assert _lease_record(store).config_value["holder"] == holder.holder
+        holder.ensure_owned(renew_after=1.0)
+        assert holder.renew() is None
+    finally:
+        holder.release()
+    assert _heartbeat_threads() == []
+
+
+def test_a_refused_heartbeat_renewal_fences_the_holder_before_its_next_step():
+    """Once the store refuses a renewal the lease is gone; the next fence
+    refuses at once even if the store would accept a write again."""
+    store = _SwitchableStore()
+    holder = _lease(store, lease_seconds=3.0, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    try:
+        store.refuse.set()
+        assert store.refused.wait(5) is True
+        deadline = time.monotonic() + 5
+        while _heartbeat_threads() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _heartbeat_threads() == []
+        store.refuse.clear()
+        with pytest.raises(DeploymentLeaseLost) as caught:
+            holder.ensure_owned(renew_after=1.0)
+        assert str(caught.value) == "Vespa deployment lease expired or was replaced"
+        with pytest.raises(DeploymentLeaseLost):
+            holder.renew()
+    finally:
+        holder.release()
+
+
+def test_a_transient_store_error_in_the_heartbeat_keeps_the_lease():
+    store = _SwitchableStore()
+    holder = _lease(store, lease_seconds=3.0, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    try:
+        before = _lease_record(store).version
+        store.fail.set()
+        assert store.failed.wait(5) is True
+        store.fail.clear()
+        holder.ensure_owned(renew_after=1.0)
+        deadline = time.monotonic() + 5
+        while _lease_record(store).version == before and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _lease_record(store).version > before
+        assert _lease_record(store).config_value["holder"] == holder.holder
+    finally:
+        holder.release()
+
+
+def test_the_heartbeat_runs_while_held_and_is_gone_after_release():
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=3.0, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    assert [thread.name for thread in _heartbeat_threads()] == [
+        f"deploy-lease-heartbeat:{holder.holder}"
+    ]
+    holder.release()
+    assert _heartbeat_threads() == []
+    assert _lease_record(store).config_value["holder"] is None
+
+
+def test_a_failed_acquire_starts_no_heartbeat():
+    store = InMemoryConfigStore()
+    first = _lease(store, wait_seconds=0)
+    first.acquire()
+    with pytest.raises(TimeoutError):
+        _lease(store, wait_seconds=0, heartbeat=True).acquire()
+    assert _heartbeat_threads() == []
+    first.release()
+
+
+def test_an_abandoned_heartbeating_holder_is_still_taken_over_at_once():
+    """The heartbeat must not keep a holder alive that its owner dropped."""
+    store = InMemoryConfigStore()
+    abandoned = _lease(store, lease_seconds=3.0, wait_seconds=0, heartbeat=True)
+    abandoned.acquire()
+    del abandoned
+    gc.collect()
+
+    successor = _lease(store, wait_seconds=0)
+    assert successor.acquire() is successor
+    deadline = time.monotonic() + 5
+    while _heartbeat_threads() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _heartbeat_threads() == []
+    successor.release()
