@@ -116,6 +116,7 @@ async def _build_shared_a2a_protocol(
     lease_seconds: float,
     cancel_timeout_seconds: float,
     drain_timeout_seconds: float,
+    max_concurrent_cancels: int = 16,
 ) -> _SharedA2AProtocol:
     """Validate Redis and construct the replica-safe A2A protocol app."""
     from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
@@ -174,6 +175,7 @@ async def _build_shared_a2a_protocol(
             lease_seconds=lease_seconds,
             cancel_timeout_seconds=cancel_timeout_seconds,
             drain_timeout_seconds=drain_timeout_seconds,
+            max_concurrent_cancels=max_concurrent_cancels,
         )
         await handler.start()
         protocol_app = A2AStarletteApplication(
@@ -1464,6 +1466,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             os.environ.get("A2A_CANCEL_TIMEOUT_SECONDS", "10")
         ),
         drain_timeout_seconds=float(os.environ.get("A2A_DRAIN_TIMEOUT_SECONDS", "30")),
+        max_concurrent_cancels=int(os.environ.get("A2A_MAX_CONCURRENT_CANCELS", "16")),
     )
     app.mount("/a2a", a2a_protocol.app)
     app.state.a2a_protocol = a2a_protocol
