@@ -700,3 +700,72 @@ def test_a_reader_that_cannot_name_its_pid_namespace_never_pid_probes(monkeypatc
     assert not schema_deploy_lease._holder_is_gone(
         f"{socket.gethostname()}::{dead}:{uuid.uuid4().hex}"
     )
+
+
+def test_a_renewal_slower_than_the_interval_does_not_start_the_next_at_once():
+    """When one renewal outlasts the interval, the next still waits a
+    minimum spacing instead of hammering an already slow store."""
+
+    class _VerySlowStore(InMemoryConfigStore):
+        def __init__(self):
+            super().__init__()
+            self.calls: list[tuple[float, float]] = []
+
+        def compare_and_set_config(self, *args, **kwargs):
+            beating = threading.current_thread().name.startswith(
+                "deploy-lease-heartbeat:"
+            )
+            started = time.monotonic()
+            if beating:
+                time.sleep(0.6)
+            entry = super().compare_and_set_config(*args, **kwargs)
+            if beating:
+                self.calls.append((started, time.monotonic()))
+            return entry
+
+    store = _VerySlowStore()
+    holder = _lease(store, lease_seconds=1.5, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    time.sleep(3.0)
+    holder.release()
+
+    idle = [
+        next_start - previous_end
+        for (_, previous_end), (next_start, _) in zip(store.calls, store.calls[1:])
+    ]
+    assert len(idle) >= 2
+    assert min(idle) >= 0.5 / 4 - 0.02
+
+
+def test_a_renewal_refused_at_the_cap_marks_the_lease_lost(monkeypatch):
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 0.4)
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=5.0, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    try:
+        time.sleep(0.5)
+        with pytest.raises(DeploymentLeaseLost, match="maximum"):
+            holder.renew()
+        with pytest.raises(DeploymentLeaseLost):
+            holder.ensure_owned(renew_after=1.0)
+    finally:
+        holder.release()
+
+
+def test_a_holder_dates_its_hold_from_before_a_slow_claim():
+    """A peer's stall watch can start as soon as the claim lands, so the
+    holder must count its hold from before sending the claim, never after."""
+
+    class _SlowClaimStore(InMemoryConfigStore):
+        def compare_and_set_config(self, *args, **kwargs):
+            time.sleep(0.4)
+            return super().compare_and_set_config(*args, **kwargs)
+
+    store = _SlowClaimStore()
+    holder = _lease(store, lease_seconds=1.0, wait_seconds=0)
+    sent = time.monotonic()
+    holder.acquire()
+    time.sleep(max(0.0, sent + 1.0 + 0.1 - time.monotonic()))
+    assert time.monotonic() - sent < 1.4
+    with pytest.raises(DeploymentLeaseLost):
+        holder.ensure_owned(renew_after=1.0)

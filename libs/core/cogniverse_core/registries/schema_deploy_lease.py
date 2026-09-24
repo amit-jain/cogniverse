@@ -261,14 +261,18 @@ class SchemaDeployLease:
                     or _holder_is_gone(current)
                     or _stalled_for(current, version) >= self._hold_seconds(record)
                 )
+            # Dated from before the claim is sent: a peer's stall watch can
+            # start as soon as the claim lands, so the holder must never count
+            # its hold from later than that.
+            claim_sent = time.monotonic()
             if claimable and self._claim(version, self.holder):
                 with _process_state:
                     _stalled_records.pop(current, None)
                     _released_holders.discard(current)
                     _released_holders.discard(self.holder)
                 _register_live(self)
-                self._held_since = time.monotonic()
-                self._acquired_at = self._held_since
+                self._held_since = claim_sent
+                self._acquired_at = claim_sent
                 self._lost = False
                 logger.info("%s lease acquired by %s", self._purpose, self.holder)
                 if self._heartbeat:
@@ -319,18 +323,20 @@ class SchemaDeployLease:
                     f"{self._purpose} lease expired or was replaced"
                 )
             if self._held_past_cap():
+                self._lost = True
                 raise DeploymentLeaseLost(
                     f"{self._purpose} lease held past its "
                     f"{self._max_total_hold:.0f}s maximum"
                 )
             record, version = self._read()
             current = None if record is None else record.get("holder")
+            claim_sent = time.monotonic()
             if current != self.holder or not self._claim(version, self.holder):
                 self._lost = True
                 raise DeploymentLeaseLost(
                     f"{self._purpose} lease expired or was replaced"
                 )
-            self._held_since = time.monotonic()
+            self._held_since = claim_sent
 
     def _held_past_cap(self) -> bool:
         return (
@@ -455,5 +461,7 @@ def _heartbeat(
         finally:
             del lease
         # Scheduled from this beat's start, so a slow renewal does not stretch
-        # the gap between claims.
-        delay = max(0.0, started + interval - time.monotonic())
+        # the gap between claims, but never less than a quarter interval after
+        # the last attempt, so a renewal slower than the interval does not
+        # start the next one at once against an already slow store.
+        delay = max(interval / 4, started + interval - time.monotonic())
