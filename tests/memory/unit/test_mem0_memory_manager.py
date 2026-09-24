@@ -1624,6 +1624,71 @@ class TestProvenanceWriteLeaseScope:
 
         assert prepared == [("agent_memories", None), ("provenance", None)]
 
+    def test_a_retention_archive_prepares_first_and_writes_the_current_metadata_only(
+        self,
+    ):
+        """The archive runs from the sweep's snapshot. It prepares its schemas
+        before the lease, re-reads the primary inside it, and writes only the
+        metadata, so a content update that landed after the snapshot survives."""
+        from datetime import datetime, timedelta, timezone
+
+        from cogniverse_core.memory.schema import (
+            KnowledgeRegistry,
+            KnowledgeSchema,
+            Retention,
+        )
+
+        manager = self._manager("archive_tenant")
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+        manager.tenant_partition_schema_exists = lambda *args, **kwargs: True
+        backend = MagicMock()
+        prepared = []
+        backend.prepare_ingestion.side_effect = lambda schema_name: prepared.append(
+            (schema_name, self._lease_record(manager))
+        )
+        manager._resolve_backend = lambda: backend
+        created = (datetime.now(timezone.utc) - timedelta(days=1.5)).isoformat()
+        stored = {
+            "id": "m13",
+            "memory": "before",
+            "created_at": created,
+            "metadata": {"kind": "short_lived"},
+        }
+
+        def sweep_snapshot(**kwargs):
+            snapshot = {**stored, "metadata": dict(stored["metadata"])}
+            stored["memory"] = "after"
+            stored["metadata"] = {"kind": "short_lived", "edited": True}
+            return {"results": [snapshot]}
+
+        manager.memory.get_all.side_effect = sweep_snapshot
+        manager.memory.get.side_effect = lambda memory_id: {
+            **stored,
+            "metadata": dict(stored["metadata"]),
+        }
+        registry = KnowledgeRegistry()
+        registry.register(
+            KnowledgeSchema(
+                kind="short_lived",
+                retention=Retention.EPHEMERAL_DAYS,
+                retention_days=1,
+            )
+        )
+
+        assert manager.cleanup_with_schema(registry) == {"short_lived:archived": 1}
+
+        assert prepared == [("agent_memories", None), ("provenance", None)]
+        (call,) = manager.memory.vector_store.update.call_args_list
+        payload = call.kwargs["payload"]
+        assert (call.kwargs["vector_id"], call.kwargs["vector"]) == ("m13", None)
+        assert list(payload) == ["metadata"]
+        assert {k: v for k, v in payload["metadata"].items() if k != "archived_at"} == {
+            "kind": "short_lived",
+            "edited": True,
+            "archived": True,
+        }
+        assert isinstance(payload["metadata"]["archived_at"], str)
+
 
 class TestAddMemoryErrorPrecedence:
     """Malformed input reports the first contract it breaks, as before the
