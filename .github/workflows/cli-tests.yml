@@ -96,7 +96,7 @@ jobs:
 
   release-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 125
 
     steps:
     - uses: actions/checkout@v4
@@ -121,15 +121,21 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+        uv cache prune --ci
 
     - name: Run release, clean-install and image-provisioning tests
-      timeout-minutes: 95
+      timeout-minutes: 110
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/cli/integration/test_release_scripts.py \
           tests/cli/integration/test_release_clean_install.py \
           tests/cli/integration/test_image_model_provisioning.py \
+          -o tmp_path_retention_policy=failed \
           -v --tb=short
+
+    - name: Disk usage after the tests
+      if: always()
+      run: df -h
 
   lint:
     runs-on: ubuntu-latest
