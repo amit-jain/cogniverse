@@ -1126,6 +1126,8 @@ kubectl delete job cogniverse-schema-deployment -n cogniverse
 helm upgrade cogniverse ./charts/cogniverse -n cogniverse --reuse-values
 ```
 
+Helm waits up to its `--timeout` (the CLI passes `10m`) for the schema-deployment hook, and that bound governs the install: when a deploy is still running at that point, `helm install`/`upgrade` (and `cogniverse up`) fails while the Job keeps running. Each deploy call in the Job allows `--max-time 9240` seconds (the deploy lease wait, the lease's hold cap and the convergence wait), and the Job fails, then retries up to `backoffLimit`, on any status other than `success` or `already_deployed`.
+
 ### Service Connection Issues
 
 ```bash

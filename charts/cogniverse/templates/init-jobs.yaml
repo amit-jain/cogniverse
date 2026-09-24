@@ -53,7 +53,7 @@ spec:
             {{- range $tenant := $.Values.config.tenants }}
             echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
             echo "  Deploying profile: {{ $profile }}"
-            RESPONSE=$(curl -sSf --max-time 900 -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
+            RESPONSE=$(curl -sSf --max-time 9240 -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
               -H "Content-Type: application/json" \
               -d '{"tenant_id": "{{ $tenant.id }}", "force": false}')
             echo "  Response: $RESPONSE"
