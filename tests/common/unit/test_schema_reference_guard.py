@@ -94,6 +94,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Synthetic registry rows and deletion failures",
         "video video_colpali video_x video_x_acme_acme",
     ),
+    "tests/backends/unit/test_deploy_activation_conflict_retry.py": (
+        "Synthetic registry rows for the conflict-rebuild package",
+        "conflictprobe conflictprobe_acme_acme",
+    ),
     "tests/backends/unit/test_edge_inputs_vespa.py": (
         "Embedding token and namespace parser inputs",
         "agent_memories_acme_acme agent_memories_sv_768 agent_memories_sv_x archived_config_metadata knowledge_graph_acme_acme legacy_knowledge_graph_acme_acme tenant_metadata_acme_acme video_colpali_smol500_mv_frame_acme_acme video_test_mv_frame video_x_mv_frame wiki_agent_memories_index",

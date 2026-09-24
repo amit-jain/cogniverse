@@ -127,8 +127,20 @@ class TestMirrorMinioCredentialsToAws:
 
     @pytest.fixture(autouse=True)
     def _clear(self, monkeypatch):
+        from cogniverse_agents import _rlm_promotion
+        from cogniverse_agents.inference import deno_check
+
         for name in self._NAMES:
             monkeypatch.delenv(name, raising=False)
+        for module, attribute in (
+            (s3_backend, "_CONFIGURED_ENDPOINT"),
+            (s3_backend, "_CONFIGURED_ACCESS_KEY"),
+            (s3_backend, "_CONFIGURED_SECRET_KEY"),
+            (_rlm_promotion, "_promotion_enabled"),
+            (_rlm_promotion, "_promotion_fraction"),
+            (deno_check, "_skip_deno_check"),
+        ):
+            monkeypatch.setattr(module, attribute, getattr(module, attribute))
 
     @staticmethod
     def _runtime_defaults(access_key, secret_key):
