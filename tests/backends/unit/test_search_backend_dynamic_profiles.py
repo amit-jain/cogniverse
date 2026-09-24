@@ -710,3 +710,156 @@ def test_search_types_hits_by_resolved_profile_not_by_query_type():
         ("clip-1", ContentType.AUDIO),
         ("clip-2", ContentType.AUDIO),
     ]
+
+
+def _profile_resolution_backend(profiles, default_profiles=None, config_manager=None):
+    """A backend over the shipped schemas whose Vespa answers every query empty."""
+    from pathlib import Path
+
+    from vespa.io import VespaQueryResponse
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+                "profiles": profiles,
+                "default_profiles": default_profiles or {},
+            },
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            is_schema_deployed=lambda _tenant_id, _base: True,
+        )
+    backend.pool = None
+    backend.vespa = MagicMock()
+    backend.vespa.query.return_value = VespaQueryResponse(
+        json={
+            "root": {
+                "id": "toplevel",
+                "relevance": 1.0,
+                "fields": {"totalCount": 0},
+                "coverage": {"coverage": 100, "documents": 0},
+            }
+        },
+        status_code=200,
+        url="http://localhost:8080/search/",
+    )
+    return backend
+
+
+def _queried_schemas(backend) -> list:
+    return [
+        call.kwargs["body"]["model.restrict"]
+        for call in backend.vespa.query.call_args_list
+    ]
+
+
+VIDEO_PROFILES = {
+    "vcolpali": {"type": "video", "schema_name": "video_colpali_smol500_mv_frame"},
+}
+TWO_VIDEO_PROFILES = {
+    **VIDEO_PROFILES,
+    "vqwen": {"type": "video", "schema_name": "video_colqwen_omni_mv_chunk_30s"},
+}
+
+
+def _video_query(**extra) -> dict:
+    return {
+        "query": "ocean waves",
+        "type": "video",
+        "strategy": "bm25_only",
+        "tenant_id": "acme",
+        "result_granularity": "segment",
+        **extra,
+    }
+
+
+def test_video_search_naming_no_profile_and_no_selected_default_is_refused():
+    backend = _profile_resolution_backend(VIDEO_PROFILES)
+
+    with pytest.raises(ValueError) as excinfo:
+        backend.search(_video_query())
+
+    assert str(excinfo.value) == (
+        "No profile specified on the request and tenant 'acme' has no "
+        "configured default video profile."
+    )
+    assert _queried_schemas(backend) == []
+
+
+def test_video_search_naming_no_profile_uses_the_selected_default():
+    backend = _profile_resolution_backend(
+        TWO_VIDEO_PROFILES, default_profiles={"video": {"profile": "vqwen"}}
+    )
+
+    backend.search(_video_query())
+
+    assert _queried_schemas(backend) == ["video_colqwen_omni_mv_chunk_30s_acme_acme"]
+
+
+def test_video_search_naming_no_profile_uses_the_active_video_profile(monkeypatch):
+    import cogniverse_foundation.config.utils as config_utils
+
+    read = []
+
+    def get_config(tenant_id, config_manager):
+        read.append(tenant_id)
+        return {"active_video_profile": "vcolpali"}
+
+    monkeypatch.setattr(config_utils, "get_config", get_config)
+    backend = _profile_resolution_backend(
+        TWO_VIDEO_PROFILES, config_manager=MagicMock()
+    )
+    monkeypatch.setattr(backend, "_load_tenant_profiles", lambda _tenant: ({}, {}))
+
+    backend.search(_video_query())
+
+    assert read == ["acme"]
+    assert _queried_schemas(backend) == ["video_colpali_smol500_mv_frame_acme_acme"]
+
+
+def test_video_search_selecting_a_non_video_default_is_refused():
+    backend = _profile_resolution_backend(
+        {**VIDEO_PROFILES, "wiki": {"type": "wiki", "schema_name": "wiki_pages"}},
+        default_profiles={"video": {"profile": "wiki"}},
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        backend.search(_video_query())
+
+    assert str(excinfo.value) == (
+        "Default profile 'wiki' for type 'video' not found in available "
+        "profiles: ['vcolpali']"
+    )
+    assert _queried_schemas(backend) == []
+
+
+@pytest.mark.parametrize(
+    ("profiles", "query", "schema"),
+    [
+        (
+            {"wiki_semantic": {"type": "wiki", "schema_name": "wiki_pages"}},
+            {"type": "wiki", "strategy": "bm25"},
+            "wiki_pages_acme_acme",
+        ),
+        (
+            {"audio_clap": {"type": "audio", "schema_name": "audio_content"}},
+            {"type": "audio", "strategy": "transcript_search"},
+            "audio_content_acme_acme",
+        ),
+    ],
+    ids=["wiki", "audio"],
+)
+def test_types_without_a_default_selection_still_resolve_their_only_profile(
+    profiles, query, schema
+):
+    backend = _profile_resolution_backend(profiles)
+
+    backend.search({"query": "ocean waves", "tenant_id": "acme", **query})
+
+    assert _queried_schemas(backend) == [schema]

@@ -313,6 +313,7 @@ def test_search_retries_soft_timeout_and_records_failures(monkeypatch):
             {
                 "query": "cat videos",
                 "type": "video",
+                "profile": "p1",
                 "tenant_id": "acme",
                 "strategy": "bm25",
             }
@@ -355,6 +356,7 @@ def test_search_honors_constructor_retry_configuration(monkeypatch):
             {
                 "query": "cat videos",
                 "type": "video",
+                "profile": "p1",
                 "tenant_id": "acme",
                 "strategy": "bm25",
             }
