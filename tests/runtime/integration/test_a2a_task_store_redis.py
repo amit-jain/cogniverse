@@ -125,6 +125,22 @@ def _owned_context(store: RedisTaskStore, lease) -> ServerCallContext:
     return context
 
 
+def _seed_store(redis, **kwargs) -> RedisTaskStore:
+    """Write a precondition with no execution behind it; serving never does."""
+    return RedisTaskStore(redis, enforce_leases=False, **kwargs)
+
+
+async def _save_owned(store: RedisTaskStore, task: Task) -> None:
+    """Save one task the way a served execution does: acquire, save, release."""
+    lease = await store.acquire_execution(
+        task.id, replica_id="replica-writer", lease_seconds=2
+    )
+    try:
+        await store.save(task, _owned_context(store, lease))
+    finally:
+        await store.release_execution(lease)
+
+
 def _task(task_id: str, state: TaskState = TaskState.input_required) -> Task:
     context_id = f"context-{task_id}"
     user = Message(
@@ -174,7 +190,7 @@ def _task(task_id: str, state: TaskState = TaskState.input_required) -> Task:
 
 
 async def test_exact_task_round_trip_across_clients(redis_client, redis_url):
-    writer = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    writer = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     peer_client = aioredis.from_url(redis_url, decode_responses=True)
     reader = RedisTaskStore(peer_client, max_tasks=10, key_prefix="test:a2a")
     expected = _task("task-round-trip")
@@ -192,7 +208,7 @@ async def test_owned_store_connects_deletes_and_closes(redis_url):
         redis_url, max_tasks=10, key_prefix="test:a2a-owned"
     )
     task = _task("task-delete")
-    await store.save(task)
+    await _save_owned(store, task)
 
     await store.delete(task.id)
     deleted = await store.get(task.id)
@@ -202,7 +218,7 @@ async def test_owned_store_connects_deletes_and_closes(redis_url):
 
 
 async def test_inactive_lru_eviction_preserves_active_tasks(redis_client):
-    store = RedisTaskStore(redis_client, max_tasks=3, key_prefix="test:a2a")
+    store = _seed_store(redis_client, max_tasks=3, key_prefix="test:a2a")
     await store.save(_task("inactive-old"))
     await store.save(_task("active", TaskState.working))
     await store.save(_task("inactive-hot"))
@@ -218,7 +234,7 @@ async def test_inactive_lru_eviction_preserves_active_tasks(redis_client):
 
 
 async def test_capacity_rejects_when_only_active_tasks_can_be_retained(redis_client):
-    store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    store = _seed_store(redis_client, max_tasks=2, key_prefix="test:a2a")
     await store.save(_task("active-a", TaskState.submitted))
     await store.save(_task("active-b", TaskState.auth_required))
 
@@ -239,7 +255,7 @@ async def test_capacity_rejects_when_only_active_tasks_can_be_retained(redis_cli
 
 
 async def test_concurrent_saves_never_exceed_capacity(redis_client):
-    store = RedisTaskStore(redis_client, max_tasks=4, key_prefix="test:a2a")
+    store = _seed_store(redis_client, max_tasks=4, key_prefix="test:a2a")
     tasks = [_task(f"concurrent-{index}") for index in range(12)]
 
     await asyncio.gather(*(store.save(task) for task in tasks))
@@ -301,7 +317,10 @@ async def test_same_task_conflicts_while_distinct_tasks_acquire(redis_client):
             "task-distinct-c", replica_id="replica-c", lease_seconds=2
         ),
     )
-    assert (lease_a.generation, lease_b.generation, lease_c.generation) == (1, 1, 1)
+    # One monotonic sequence issues every generation, so no two leases share
+    # one even across tasks, and a recycled task id can never reissue one.
+    assert lease_a.generation == 1
+    assert sorted((lease_b.generation, lease_c.generation)) == [2, 3]
     await asyncio.gather(
         store.release_execution(lease_a),
         store.release_execution(lease_b),
@@ -332,7 +351,7 @@ async def test_lease_renewal_prevents_takeover(redis_client):
 
 
 async def test_cancel_generation_fences_late_owner_save(redis_client):
-    seed = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(
         redis_client,
         max_tasks=10,
@@ -406,36 +425,300 @@ async def test_retention_bookkeeping_is_dropped_with_the_task(redis_client):
     """Eviction and delete must not leave per-task bookkeeping behind forever.
 
     The task hash is capped by ``max_tasks``; the lease, generation and event
-    keys are per task id, so leaving them behind grows without bound.
+    keys are per task id, so leaving them behind grows without bound. The one
+    key that outlives every task is the single generation sequence.
     """
     store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
-    await store.save(_task("deleted"))
-    await store.acquire_execution("deleted", replica_id="replica-a", lease_seconds=2)
+    working = TaskStatusUpdateEvent(
+        task_id="deleted",
+        context_id="context-deleted",
+        final=False,
+        status=TaskStatus(state=TaskState.working),
+    )
+    await _save_owned(store, _task("deleted"))
+    await store.publish_event("deleted", working)
+    await store.delete("deleted")
+
+    await _save_owned(store, _task("evicted"))
     await store.publish_event(
-        "deleted",
+        "evicted", working.model_copy(update={"task_id": "evicted"})
+    )
+    await _save_owned(store, _task("kept"))
+    await _save_owned(store, _task("incoming"))
+
+    assert await store.get("evicted") is None
+    assert await store.get("kept") is not None
+    assert sorted(await redis_client.hkeys("test:a2a:generations")) == [
+        "incoming",
+        "kept",
+    ]
+    assert await redis_client.hkeys("test:a2a:leases") == []
+    assert await redis_client.exists("test:a2a:events:deleted") == 0
+    assert await redis_client.exists("test:a2a:events:evicted") == 0
+    assert sorted(await redis_client.keys("test:a2a:*")) == [
+        "test:a2a:generation-seq",
+        "test:a2a:generations",
+        "test:a2a:inactive-lru",
+        "test:a2a:tasks",
+    ]
+
+
+async def test_an_id_acquired_but_never_saved_leaves_no_bookkeeping(redis_client):
+    """An execution that never lands a task must not leave a generation behind.
+
+    ``message/send`` with an unknown task id acquires before it reads, then
+    fails with task-not-found; so does an owner that dies before its first
+    save. Neither creates a task, so neither may grow the bookkeeping.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    released = await store.acquire_execution(
+        "never-saved", replica_id="replica-a", lease_seconds=0.2
+    )
+    await store.release_execution(released)
+    await store.acquire_execution(
+        "owner-died", replica_id="replica-a", lease_seconds=0.2
+    )
+    assert sorted(await redis_client.hkeys("test:a2a:generations")) == [
+        "never-saved",
+        "owner-died",
+    ]
+
+    await asyncio.sleep(0.3)
+
+    assert await redis_client.hkeys("test:a2a:generations") == []
+    assert await redis_client.hkeys("test:a2a:leases") == []
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match=f"save task never-saved with stale ownership generation "
+        f"{released.generation}",
+    ):
+        await store.save(_task("never-saved"), _owned_context(store, released))
+    assert await store.get("never-saved") is None
+
+
+async def test_a_new_task_saved_within_its_lease_keeps_its_generation(redis_client):
+    """The first save of a task makes its bookkeeping permanent.
+
+    The non-blocking path can land a task's first save just after its lease
+    was released; that save must still land and must not be expired later.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "late-first-save", replica_id="replica-a", lease_seconds=0.2
+    )
+    await store.release_execution(owner)
+    first = _task("late-first-save", TaskState.input_required)
+    await store.save(first, _owned_context(store, owner))
+
+    await asyncio.sleep(0.3)
+
+    assert await redis_client.hget("test:a2a:generations", "late-first-save") == str(
+        owner.generation
+    )
+    landed = await store.get("late-first-save")
+    assert landed.model_dump(mode="json") == first.model_dump(mode="json")
+
+
+async def test_a_straggler_cannot_resurrect_an_evicted_task(redis_client):
+    store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "victim", replica_id="replica-a", lease_seconds=2
+    )
+    owner_context = _owned_context(store, owner)
+    await store.save(_task("victim"), owner_context)
+    assert await store.release_execution(owner) is True
+    await _save_owned(store, _task("kept"))
+    await _save_owned(store, _task("incoming"))
+    assert await store.get("victim") is None
+
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match=f"save task victim with stale ownership generation {owner.generation}",
+    ):
+        await store.save(_task("victim", TaskState.working), owner_context)
+
+    assert await store.get("victim") is None
+    assert (await store.get("kept")).id == "kept"
+    assert (await store.get("incoming")).id == "incoming"
+
+
+async def test_a_straggler_cannot_resurrect_or_overwrite_a_deleted_task(redis_client):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "recycled", replica_id="replica-a", lease_seconds=2
+    )
+    owner_context = _owned_context(store, owner)
+    await store.save(_task("recycled"), owner_context)
+    await store.release_execution(owner)
+    await store.delete("recycled")
+
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match=f"save task recycled with stale ownership generation {owner.generation}",
+    ):
+        await store.save(_task("recycled", TaskState.working), owner_context)
+    assert await store.get("recycled") is None
+
+    reborn = await store.acquire_execution(
+        "recycled", replica_id="replica-b", lease_seconds=2
+    )
+    assert reborn.generation > owner.generation
+    current = _task("recycled", TaskState.working)
+    await store.save(current, _owned_context(store, reborn))
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match=f"save task recycled with stale ownership generation {owner.generation}",
+    ):
+        await store.save(_task("recycled", TaskState.completed), owner_context)
+
+    stored = await store.get("recycled")
+    assert stored.model_dump(mode="json") == current.model_dump(mode="json")
+
+
+async def test_a_task_with_a_live_lease_is_never_evicted(redis_client):
+    """A continuation owns its task before it saves the next state.
+
+    Until that save the task is still recorded in ``input_required``, which is
+    inactive, so an LRU-only victim choice evicts it from under its owner.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    await _save_owned(store, _task("continuing"))
+    continuation = await store.acquire_execution(
+        "continuing", replica_id="replica-a", lease_seconds=5
+    )
+    await _save_owned(store, _task("idle"))
+
+    await _save_owned(store, _task("incoming"))
+
+    assert await store.get("idle") is None
+    assert (await store.get("continuing")).id == "continuing"
+    assert (await store.get("incoming")).id == "incoming"
+
+    # With every retained task leased, capacity refuses rather than evicts.
+    await store.acquire_execution("incoming", replica_id="replica-b", lease_seconds=5)
+    with pytest.raises(
+        A2ATaskCapacityError,
+        match="capacity 2 is full of active tasks; rejected task overflow",
+    ):
+        await _save_owned(store, _task("overflow"))
+    assert await store.get("overflow") is None
+
+    continued = _task("continuing", TaskState.working)
+    await store.save(continued, _owned_context(store, continuation))
+    stored = await store.get("continuing")
+    assert stored.model_dump(mode="json") == continued.model_dump(mode="json")
+
+
+async def test_stragglers_racing_eviction_never_resurrect_or_overflow(redis_client):
+    """Released owners' late saves race capacity eviction of their tasks.
+
+    Whatever interleaving Redis serializes, retention never exceeds capacity,
+    a straggler that was refused leaves no task behind, and bookkeeping names
+    only retained tasks.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=4, key_prefix="test:a2a")
+    owners = []
+    for index in range(8):
+        task_id = f"old-{index}"
+        lease = await store.acquire_execution(
+            task_id, replica_id="replica-old", lease_seconds=2
+        )
+        context = _owned_context(store, lease)
+        await store.save(_task(task_id), context)
+        await store.release_execution(lease)
+        owners.append((task_id, context))
+
+    outcomes = await asyncio.gather(
+        *(
+            store.save(_task(task_id, TaskState.working), context)
+            for task_id, context in owners
+        ),
+        *(_save_owned(store, _task(f"new-{index}")) for index in range(8)),
+        return_exceptions=True,
+    )
+
+    stragglers, writers = outcomes[:8], outcomes[8:]
+    assert [
+        outcome
+        for outcome in stragglers
+        if outcome is not None and not isinstance(outcome, A2ATaskOwnershipLostError)
+    ] == []
+    assert [
+        outcome
+        for outcome in writers
+        if outcome is not None and not isinstance(outcome, A2ATaskCapacityError)
+    ] == []
+    refused = [
+        task_id
+        for (task_id, _), outcome in zip(owners, stragglers, strict=True)
+        if outcome is not None
+    ]
+    retained = await redis_client.hkeys("test:a2a:tasks")
+    assert len(retained) <= 4
+    assert set(refused).isdisjoint(retained)
+    assert await redis_client.hkeys("test:a2a:leases") == []
+
+    # A writer refused at capacity never created its task; its generation
+    # lapses with the lease it was issued under.
+    await asyncio.sleep(2.1)
+    assert sorted(await redis_client.hkeys("test:a2a:generations")) == sorted(retained)
+
+
+async def test_a_default_store_fences_every_save(redis_client, redis_url):
+    """Fencing is what serving relies on, so it is not an opt-in."""
+    constructed = RedisTaskStore(redis_client, max_tasks=2, key_prefix="test:a2a")
+    connected = await RedisTaskStore.from_url(
+        redis_url, max_tasks=2, key_prefix="test:a2a"
+    )
+    try:
+        for store in (constructed, connected):
+            with pytest.raises(
+                A2ATaskOwnershipLostError,
+                match="save task unowned with stale ownership generation 0",
+            ):
+                await store.save(_task("unowned"))
+    finally:
+        await connected.close()
+    assert await redis_client.hkeys("test:a2a:tasks") == []
+
+
+async def test_a_dead_owners_relay_expires_even_after_its_terminal_save(redis_client):
+    """An owner can die between saving its terminal status and closing its relay.
+
+    The task is then inactive, so the interruption is declined; the relay it
+    left behind still has no expiry and must get the drain window anyway. A
+    live owner's relay is never expired.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "task-dead-owner", replica_id="replica-dead", lease_seconds=0.3
+    )
+    owner_context = _owned_context(store, owner)
+    await store.save(_task("task-dead-owner", TaskState.working), owner_context)
+    await store.publish_event(
+        "task-dead-owner",
         TaskStatusUpdateEvent(
-            task_id="deleted",
-            context_id="context-deleted",
+            task_id="task-dead-owner",
+            context_id="context-task-dead-owner",
             final=False,
             status=TaskStatus(state=TaskState.working),
         ),
     )
-    await store.delete("deleted")
+    await store.save(_task("task-dead-owner", TaskState.input_required), owner_context)
 
-    await store.save(_task("evicted"))
-    await store.acquire_execution("evicted", replica_id="replica-a", lease_seconds=2)
-    await store.save(_task("kept"))
-    await store.save(_task("incoming"))
+    assert await store.mark_owner_lost("task-dead-owner") is False
+    assert await redis_client.ttl("test:a2a:events:task-dead-owner") == -1
 
-    assert await store.get("evicted") is None
-    assert await store.get("kept") is not None
-    assert await redis_client.hkeys("test:a2a:generations") == []
-    assert await redis_client.hkeys("test:a2a:leases") == []
-    assert await redis_client.exists("test:a2a:events:deleted") == 0
+    await asyncio.sleep(0.4)
+
+    assert await store.mark_owner_lost("task-dead-owner") is False
+    ttl = await redis_client.ttl("test:a2a:events:task-dead-owner")
+    assert 0 < ttl <= 60
+    assert (await store.get("task-dead-owner")).status.state == TaskState.input_required
 
 
 async def test_expired_owner_is_marked_interrupted_without_reexecution(redis_client):
-    seed = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(
         redis_client,
         max_tasks=10,
@@ -692,8 +975,9 @@ async def test_cancel_uses_redis_time_not_the_replica_wall_clock(redis_client):
     """
     from a2a.types import TaskIdParams
 
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
-    await store.save(_task("task-skew", TaskState.working))
+    await seed.save(_task("task-skew", TaskState.working))
     lease = await store.acquire_execution(
         "task-skew", replica_id="replica-owner", lease_seconds=30
     )
@@ -735,13 +1019,14 @@ async def test_cancel_honors_a_declined_interruption_instead_of_raising(redis_cl
     """
     from a2a.types import TaskIdParams
 
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
-    await store.save(_task("task-idle-stale", TaskState.working))
+    await seed.save(_task("task-idle-stale", TaskState.working))
     await store.acquire_execution(
         "task-idle-stale", replica_id="replica-gone", lease_seconds=0.05
     )
     await asyncio.sleep(0.1)
-    await store.save(_task("task-idle-stale", TaskState.input_required))
+    await seed.save(_task("task-idle-stale", TaskState.input_required))
     assert await store.get_execution_lease("task-idle-stale") is not None
     assert await store.has_live_owner("task-idle-stale") is False
     assert await store.mark_owner_lost("task-idle-stale") is False
@@ -775,8 +1060,9 @@ async def test_idle_cancel_losing_the_race_is_a_conflict_not_an_internal_error(
     from a2a.types import TaskIdParams
     from a2a.utils.errors import ServerError
 
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
-    await store.save(_task("task-race", TaskState.input_required))
+    await seed.save(_task("task-race", TaskState.input_required))
     handler = _cancel_handler(store, "replica-self")
 
     async def lost_race(*args, **kwargs):
@@ -793,3 +1079,260 @@ async def test_idle_cancel_losing_the_race_is_a_conflict_not_an_internal_error(
     assert caught.value.error.message == (
         "Task task-race is active on another replica; retry"
     )
+
+
+async def test_a_stale_save_of_the_stored_terminal_state_is_acknowledged_unwritten(
+    redis_client,
+):
+    """A superseded owner repeating the terminal state already stored is a no-op.
+
+    The owner's own consumers persist the cancel event a canceller already
+    persisted under the newer generation. That write can change nothing, so
+    it is acknowledged without being written; any other stale write is still
+    refused.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "task-stale-terminal", replica_id="replica-a", lease_seconds=2
+    )
+    owner_context = _owned_context(store, owner)
+    await store.save(_task("task-stale-terminal", TaskState.working), owner_context)
+    canceling = await store.begin_cancel(
+        "task-stale-terminal", replica_id="replica-a", lease_seconds=2
+    )
+    canceled = _task("task-stale-terminal", TaskState.canceled)
+    await store.save(canceled, _owned_context(store, canceling))
+
+    repeated = _task("task-stale-terminal", TaskState.canceled)
+    repeated.metadata = {"written_by": "superseded owner"}
+    await store.save(repeated, owner_context)
+    stored = await store.get("task-stale-terminal")
+    assert stored.model_dump(mode="json") == canceled.model_dump(mode="json")
+
+    for state in (TaskState.completed, TaskState.working):
+        with pytest.raises(
+            A2ATaskOwnershipLostError,
+            match=(
+                "save task task-stale-terminal with stale ownership generation "
+                f"{owner.generation}"
+            ),
+        ):
+            await store.save(_task("task-stale-terminal", state), owner_context)
+    stored = await store.get("task-stale-terminal")
+    assert stored.model_dump(mode="json") == canceled.model_dump(mode="json")
+
+
+def _send_params(text: str, *, task_id: str | None = None, blocking: bool = True):
+    from a2a.types import MessageSendConfiguration, MessageSendParams
+
+    return MessageSendParams(
+        message=Message(
+            message_id=f"message-{uuid.uuid4().hex}",
+            context_id="context-cancel",
+            task_id=task_id,
+            role=Role.user,
+            parts=[Part(root=TextPart(text=text))],
+        ),
+        configuration=MessageSendConfiguration(
+            accepted_output_modes=["text"], blocking=blocking
+        ),
+        metadata={"agent_name": "search_agent", "tenant_id": "test:cancel"},
+    )
+
+
+class _CancellableExecutor(AgentExecutor):
+    """Runs until cancelled; its cancel answers with ``cancel_state``."""
+
+    def __init__(self, cancel_state: TaskState = TaskState.canceled) -> None:
+        self.cancel_state = cancel_state
+        self.wedged_cancels: set[str] = set()
+        self.working = asyncio.Event()
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=context.task_id,
+                context_id=context.context_id,
+                final=False,
+                status=TaskStatus(state=TaskState.working),
+            )
+        )
+        self.working.set()
+        await asyncio.Event().wait()
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        if context.task_id in self.wedged_cancels:
+            await asyncio.Event().wait()
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=context.task_id,
+                context_id=context.context_id,
+                final=True,
+                status=TaskStatus(state=self.cancel_state),
+            )
+        )
+
+
+def _relay_states(entries) -> list[str]:
+    return [
+        "closed"
+        if "closed" in fields
+        else TaskStatusUpdateEvent.model_validate_json(fields["payload"]).status.state
+        for _, fields in entries
+    ]
+
+
+async def test_a_local_stream_consumer_observes_its_task_being_canceled(redis_client):
+    """The owner's own ``message/stream`` consumer sees the cancel and ends.
+
+    The cancel event used to go to a fresh queue nobody local read, so the
+    stream stayed open waiting on a producer that had been cancelled.
+    """
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler = RedisRequestHandler(
+        agent_executor=executor, task_store=store, replica_id="replica-a"
+    )
+    events = []
+    first_event = asyncio.Event()
+
+    async def consume() -> None:
+        async for event in handler.on_message_send_stream(_send_params("stream")):
+            events.append(event)
+            first_event.set()
+
+    stream = asyncio.create_task(consume())
+    await asyncio.wait_for(first_event.wait(), timeout=5)
+    task_id = events[0].task_id
+
+    result = await handler.on_cancel_task(TaskIdParams(id=task_id))
+    await asyncio.wait_for(stream, timeout=5)
+    await handler.close()
+
+    assert result.status.state == TaskState.canceled
+    assert [event.status.state for event in events] == [
+        TaskState.working,
+        TaskState.canceled,
+    ]
+    assert (await store.get(task_id)).status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+
+
+async def test_a_local_blocking_send_returns_its_task_canceled(redis_client):
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler = RedisRequestHandler(
+        agent_executor=executor, task_store=store, replica_id="replica-a"
+    )
+    send = asyncio.create_task(handler.on_message_send(_send_params("blocking")))
+    await asyncio.wait_for(executor.working.wait(), timeout=5)
+    task_id = next(iter(handler._running_agents))
+    async with asyncio.timeout(5):
+        while await store.get(task_id) is None:
+            await asyncio.sleep(0.01)
+
+    await handler.on_cancel_task(TaskIdParams(id=task_id))
+    sent = await asyncio.wait_for(send, timeout=5)
+    await handler.close()
+
+    assert sent.id == task_id
+    assert sent.status.state == TaskState.canceled
+    assert (await store.get(task_id)).status.state == TaskState.canceled
+
+
+async def test_an_idle_cancel_closes_the_relay_it_publishes_on(redis_client):
+    """With no live queue the cancel publishes on a relay it must also close."""
+    from a2a.types import TaskIdParams
+
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await seed.save(_task("task-idle-relay", TaskState.input_required))
+    handler = RedisRequestHandler(
+        agent_executor=_CancellableExecutor(),
+        task_store=store,
+        replica_id="replica-a",
+    )
+
+    result = await handler.on_cancel_task(TaskIdParams(id="task-idle-relay"))
+
+    assert result.status.state == TaskState.canceled
+    relay = await redis_client.xrange("test:a2a:events:task-idle-relay")
+    assert _relay_states(relay) == [TaskState.canceled, "closed"]
+    ttl = await redis_client.ttl("test:a2a:events:task-idle-relay")
+    assert 0 < ttl <= 60
+
+
+async def test_a_cancel_that_does_not_end_canceled_is_not_cancelable(redis_client):
+    """The stock handler refuses a cancel whose result is not ``canceled``."""
+    from a2a.types import TaskIdParams, TaskNotCancelableError
+    from a2a.utils.errors import ServerError
+
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await seed.save(_task("task-refuses-cancel", TaskState.input_required))
+    handler = RedisRequestHandler(
+        agent_executor=_CancellableExecutor(cancel_state=TaskState.completed),
+        task_store=store,
+        replica_id="replica-a",
+    )
+
+    with pytest.raises(ServerError) as caught:
+        await handler.on_cancel_task(TaskIdParams(id="task-refuses-cancel"))
+
+    assert isinstance(caught.value.error, TaskNotCancelableError)
+    assert caught.value.error.message == (
+        f"Task cannot be canceled - current state: {TaskState.completed}"
+    )
+
+
+async def test_a_wedged_cancel_does_not_stop_the_owner_serving_later_cancels(
+    redis_client,
+):
+    """One executor cancel that never returns must not starve the listener."""
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner_store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    requester = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await seed.save(_task("task-wedged", TaskState.input_required))
+    await seed.save(_task("task-healthy", TaskState.input_required))
+    executor = _CancellableExecutor()
+    executor.wedged_cancels.add("task-wedged")
+    owner = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=owner_store,
+        replica_id="replica-owner",
+        cancel_timeout_seconds=0.5,
+    )
+    await owner.start()
+    try:
+        wedged = asyncio.create_task(
+            requester.request_cancel(
+                owner_replica_id="replica-owner",
+                task_id="task-wedged",
+                timeout_seconds=3,
+            )
+        )
+        await asyncio.sleep(0.1)
+        healthy = await requester.request_cancel(
+            owner_replica_id="replica-owner",
+            task_id="task-healthy",
+            timeout_seconds=3,
+        )
+        with pytest.raises(A2ATaskStoreError) as refused:
+            await wedged
+    finally:
+        await owner.close()
+
+    assert healthy.status.state == TaskState.canceled
+    assert (await seed.get("task-healthy")).status.state == TaskState.canceled
+    assert str(refused.value) == (
+        "owner replica-owner rejected cancel for task task-wedged: "
+        "A2ACancelTimeoutError: cancel of task task-wedged did not finish "
+        "within 0.5s"
+    )
+    assert (await seed.get("task-wedged")).status.state == TaskState.input_required
+    assert await owner_store.get_execution_lease("task-wedged") is None
