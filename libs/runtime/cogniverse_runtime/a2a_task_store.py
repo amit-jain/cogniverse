@@ -864,12 +864,40 @@ class RedisTaskStore(TaskStore):
                 f"{_UNAVAILABLE}: publish event for task {task_id}"
             ) from exc
 
-    async def close_event_stream(self, task_id: str) -> None:
-        """Close an active event relay while retaining a short drain window."""
+    async def mark_event_stream_incomplete(self, task_id: str, *, missing: int) -> None:
+        """Record on an active relay that ``missing`` owner events were not
+        published, so a resubscriber reading past them fails instead."""
         stream_key = self._event_stream_key(task_id)
         try:
             pipeline = self._redis.pipeline(transaction=True)
-            pipeline.xadd(stream_key, {"closed": "1"})
+            pipeline.xadd(
+                stream_key,
+                {"missing": str(missing)},
+                maxlen=_RELAY_MAXLEN,
+                approximate=True,
+            )
+            pipeline.persist(stream_key)
+            await pipeline.execute()
+        except RedisError as exc:
+            raise A2ATaskStoreError(
+                f"{_UNAVAILABLE}: mark event stream incomplete for task {task_id}"
+            ) from exc
+
+    async def close_event_stream(self, task_id: str, *, missing: int = 0) -> None:
+        """Close an active event relay while retaining a short drain window.
+
+        ``missing`` owner events that were never published are recorded on
+        the close marker.
+        """
+        stream_key = self._event_stream_key(task_id)
+        try:
+            pipeline = self._redis.pipeline(transaction=True)
+            pipeline.xadd(
+                stream_key,
+                {"closed": "1", "missing": str(missing)}
+                if missing
+                else {"closed": "1"},
+            )
             pipeline.expire(stream_key, _EVENT_STREAM_DRAIN_SECONDS)
             await pipeline.execute()
         except RedisError as exc:
@@ -902,6 +930,12 @@ class RedisTaskStore(TaskStore):
                 for _, records in batches:
                     for event_id, fields in records:
                         cursor = self._text(event_id)
+                        if fields.get("missing"):
+                            raise A2ATaskStoreError(
+                                f"event relay for task {task_id} is missing "
+                                f"{fields['missing']} events its owner could not "
+                                "publish"
+                            )
                         if fields.get("closed") == "1":
                             return
                         payload = fields.get("payload")
