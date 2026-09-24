@@ -253,7 +253,7 @@ class _BulkRegistry:
         self.reserved_queries.append(set(live_names))
         return dict(self._reserved)
 
-    def _get_all_schemas(self):
+    def _get_all_schemas(self, strict=False):
         return [
             SimpleNamespace(full_schema_name=n, schema_definition="{}")
             for n in self._registered
@@ -488,7 +488,9 @@ class TestSchemaEnumerationRefusesPartial:
 
         mgr = object.__new__(VespaSchemaManager)
         mgr._logger = logging.getLogger("test_schema_enumeration")
-        mgr._schema_registry = SimpleNamespace(_get_all_schemas=lambda: rows)
+        mgr._schema_registry = SimpleNamespace(
+            _get_all_schemas=lambda strict=False: rows
+        )
         return mgr
 
     def test_empty_definition_aborts_enumeration(self):
