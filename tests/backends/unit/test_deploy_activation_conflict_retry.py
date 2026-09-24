@@ -429,7 +429,7 @@ class _CountingDeleteRegistry:
         self.visits += 1
         return [SimpleNamespace(base_schema_name="conflictprobe")]
 
-    def _get_all_schemas(self):
+    def _get_all_schemas(self, strict=False):
         self.visits += 1
         return [
             SimpleNamespace(

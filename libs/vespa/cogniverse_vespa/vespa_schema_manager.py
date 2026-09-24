@@ -770,7 +770,7 @@ class VespaSchemaManager:
             return []
 
         try:
-            deployed_schemas = self._schema_registry._get_all_schemas()
+            deployed_schemas = self._schema_registry._get_all_schemas(strict=True)
             self._logger.warning(
                 f"🔍 SchemaRegistry._get_all_schemas() returned {len(deployed_schemas) if deployed_schemas else 0} schemas"
             )
