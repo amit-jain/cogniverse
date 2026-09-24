@@ -19,6 +19,12 @@ on:
       - 'scripts/**'
       - '.github/workflows/release-images.yml'
       - '.github/workflows/publish-packages.yml'
+      # test_installed_assets.py copies the CLI's asset trees and .gitignore
+      # into a checkout it builds from.
+      - '.gitignore'
+      - 'charts/cogniverse/**'
+      - 'workflows/**'
+      - 'configs/**'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -37,6 +43,12 @@ on:
       - 'scripts/**'
       - '.github/workflows/release-images.yml'
       - '.github/workflows/publish-packages.yml'
+      # test_installed_assets.py copies the CLI's asset trees and .gitignore
+      # into a checkout it builds from.
+      - '.gitignore'
+      - 'charts/cogniverse/**'
+      - 'workflows/**'
+      - 'configs/**'
 
 jobs:
   unit-tests:

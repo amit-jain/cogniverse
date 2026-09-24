@@ -247,12 +247,13 @@ def _artifacts(out_dir: Path) -> list[str]:
 def _disposable_checkout(destination: Path) -> Path:
     """A git checkout of the CLI package and its asset sources, copied from the
     working tree of this repository, that a test may mutate or delete."""
-    for name in _tracked_files(
-        _REPO_ROOT, ".gitignore", "libs/cli", *(str(p) for p in _ASSET_DIRS.values())
-    ):
-        target = destination / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_REPO_ROOT / name, target)
+    for source in (_CLI_ROOT, *_ASSET_DIRS.values()):
+        prefix = source.relative_to(_REPO_ROOT)
+        for name in _tracked_files(source, "."):
+            target = destination / prefix / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / name, target)
+    shutil.copy2(_REPO_ROOT / ".gitignore", destination / ".gitignore")
     _git(destination, "init", "-q", "-b", "main")
     _git(destination, "add", "-A")
     _git(destination, "commit", "-q", "-m", "snapshot")
