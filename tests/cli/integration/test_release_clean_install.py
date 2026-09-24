@@ -191,28 +191,49 @@ _DISTRIBUTIONS_PROBE = (
 )
 
 
-def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[str]]:
+def _prereleases(distributions, requested: list[str]) -> tuple[set[str], set[str]]:
     """Installed pre-releases, and those no requirement asks for explicitly.
 
-    A pre-release is explicit when an installed distribution's requirement, or
-    one the install line documents, has a specifier that admits pre-releases
-    (``graphql-core>=3.3.0a0``, ``x==0.65b0``; never ``!=``). pip admits only
-    those without a flag; anything else came from admitting pre-releases
-    wholesale. A requirement behind an extra, or whose marker does not hold
-    here, asks for nothing.
+    ``requested`` is the install line: the target and any extra requirements.
+    A pre-release is explicit when an applicable requirement has a specifier
+    that admits pre-releases (``graphql-core>=3.3.0a0``, ``x==0.65b0``; never
+    ``!=``). pip admits only those without a flag; anything else came from
+    admitting pre-releases wholesale. A requirement applies when its marker
+    holds here for no extra or for an extra something installed its
+    distribution with.
     """
-    explicit = set()
-    for line in [
-        *documented,
-        *(req for _, _, requires in distributions for req in requires),
-    ]:
-        requirement = Requirement(line)
-        if requirement.marker is not None and (
-            "extra" in str(requirement.marker) or not requirement.marker.evaluate()
+    requires = {
+        canonicalize_name(name): [Requirement(line) for line in lines]
+        for name, _, lines in distributions
+    }
+    extras: dict[str, set[str]] = {}
+    applicable: list[Requirement] = []
+    pending = [(None, Requirement(line)) for line in requested]
+    seen = set()
+    while pending:
+        owner, requirement = pending.pop()
+        if (owner, str(requirement)) in seen:
+            continue
+        if requirement.marker is not None and not any(
+            requirement.marker.evaluate({"extra": extra})
+            for extra in {"", *extras.get(owner, set())}
         ):
             continue
-        if any(spec.prereleases for spec in requirement.specifier):
-            explicit.add(canonicalize_name(requirement.name))
+        seen.add((owner, str(requirement)))
+        applicable.append(requirement)
+        name = canonicalize_name(requirement.name)
+        added = set(requirement.extras) - extras.get(name, set())
+        extras.setdefault(name, set()).update(requirement.extras)
+        pending.extend((name, dependency) for dependency in requires.get(name, []))
+        if added:
+            # Requirements of this distribution skipped before its extras
+            # were known are reconsidered.
+            seen = {entry for entry in seen if entry[0] != name}
+    explicit = {
+        canonicalize_name(requirement.name)
+        for requirement in applicable
+        if any(spec.prereleases for spec in requirement.specifier)
+    }
     installed = {
         canonicalize_name(name)
         for name, version, _ in distributions
@@ -223,6 +244,18 @@ def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[st
 
 def test_only_an_applicable_pre_release_specifier_requests_a_pre_release():
     distributions = [
+        [
+            "root",
+            "1.0",
+            [
+                "s3fs",
+                "opentelemetry-proto",
+                "boto3",
+                "x",
+                "google-cloud[logging]",
+                "graphql-core",
+            ],
+        ],
         ["s3fs", "2025.9.0", ["aiohttp!=4.0.0a0,!=4.0.0a1"]],
         ["aiohttp", "4.0.0a2", []],
         ["opentelemetry-proto", "1.36.0", ['protobuf<6.0.0dev; extra == "protobuf"']],
@@ -232,12 +265,28 @@ def test_only_an_applicable_pre_release_specifier_requests_a_pre_release():
         ["x", "1.0", ['y==0.65b0; python_version < "3"', "z==0.65b0"]],
         ["y", "0.65b0", []],
         ["z", "0.65b0", []],
+        [
+            "google-cloud",
+            "1.0",
+            ['opentelemetry-exporter-gcp-logging>=1.9.0a0; extra == "logging"'],
+        ],
+        ["opentelemetry-exporter-gcp-logging", "1.9.0a0", []],
         ["graphql-core", "3.3.0rc1", []],
     ]
 
-    installed, unrequested = _prereleases(distributions, ["graphql-core>=3.3.0a0"])
+    installed, unrequested = _prereleases(
+        distributions, ["root", "graphql-core>=3.3.0a0"]
+    )
 
-    assert installed == {"aiohttp", "protobuf", "botocore", "y", "z", "graphql-core"}
+    assert installed == {
+        "aiohttp",
+        "protobuf",
+        "botocore",
+        "y",
+        "z",
+        "opentelemetry-exporter-gcp-logging",
+        "graphql-core",
+    }
     assert unrequested == {"aiohttp", "protobuf", "botocore", "y"}
 
 
@@ -545,8 +594,13 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
 
     listed = _run([str(python), "-c", _DISTRIBUTIONS_PROBE], work, caches)
     assert listed.returncode == 0, listed.stderr
-    documented = _documented_uv_install(root)[0] if installer == "uv" else []
-    prereleases, unrequested = _prereleases(json.loads(listed.stdout), documented)
+    if installer == "uv":
+        extra_requirements, target = _documented_uv_install(root)
+    else:
+        extra_requirements, target = [], _documented_pip_target(root)
+    prereleases, unrequested = _prereleases(
+        json.loads(listed.stdout), [target, *extra_requirements]
+    )
     assert unrequested == set(), sorted(unrequested)
     if root != "cogniverse-agents":
         assert "graphql-core" in prereleases, sorted(prereleases)
