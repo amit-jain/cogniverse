@@ -890,7 +890,8 @@ class _Disconnected(Exception):
 
 class _RegistryProxy(http.server.ThreadingHTTPServer):
     """HTTPS proxy terminating TLS for the (Test)PyPI hosts and relaying every
-    request to the owned pypiserver, recording each and injecting upload faults:
+    request to the owned pypiserver, recording each and injecting faults per
+    uploaded filename or, once per queued entry, per index path:
     ``server-error`` answers 503 without relaying; ``disconnect`` relays, then
     drops the connection partway through the registry's response."""
 
@@ -901,6 +902,7 @@ class _RegistryProxy(http.server.ThreadingHTTPServer):
         self.upstream_port = upstream_port
         self.tls_context = tls_context
         self.faults: dict[str, str] = {}
+        self.index_faults: dict[str, list[str]] = {}
         self.requests: list[dict] = []
         self._lock = threading.Lock()
 
@@ -986,6 +988,8 @@ class _RegistryHandler(http.server.BaseHTTPRequestHandler):
         }
         self.server.record(entry)
         fault = self.server.faults.get(filename) if filename else None
+        if self.command == "GET" and self.server.index_faults.get(self.path):
+            fault = self.server.index_faults[self.path].pop(0)
 
         if fault == "server-error":
             status, reason = 503, "Service Unavailable"
@@ -1258,9 +1262,7 @@ def registry(tmp_path, publish_tools):
         server.wait(timeout=60)
 
 
-def _publish_env(
-    tools: _PublishTools, proxy_port: int, token: str, **overrides: str
-) -> dict[str, str]:
+def _proxy_env(tools: _PublishTools, proxy_port: int) -> dict[str, str]:
     proxy = f"http://127.0.0.1:{proxy_port}"
     return {
         **tools.env,
@@ -1271,9 +1273,17 @@ def _publish_env(
         "REQUESTS_CA_BUNDLE": str(tools.authority),
         "SSL_CERT_FILE": str(tools.authority),
         "CURL_CA_BUNDLE": str(tools.authority),
+        "VERIFY_TIMEOUT": "0",
+    }
+
+
+def _publish_env(
+    tools: _PublishTools, proxy_port: int, token: str, **overrides: str
+) -> dict[str, str]:
+    return {
+        **_proxy_env(tools, proxy_port),
         "PYPI_TOKEN": token,
         "TEST_PYPI_TOKEN": token,
-        "VERIFY_TIMEOUT": "0",
         **overrides,
     }
 
@@ -1368,10 +1378,12 @@ def test_publication_uploads_and_verifies_exactly_the_manifest_artifacts(
     expected = _manifest_files(dist)
 
     result = _run_publish(
-        root, _registry_env(publish_tools, registry), *target_args, "--yes"
+        root, _registry_env(publish_tools, registry), *target_args, "--yes", "--verbose"
     )
 
     assert result.returncode == 0, describe_run(result)
+    assert "password: <hidden>" in result.stdout + result.stderr, describe_run(result)
+    assert registry.token not in result.stdout + result.stderr
     successful_upload_names = set(registry.files())
     expected_names = set(expected)
     assert successful_upload_names == expected_names
@@ -1446,11 +1458,15 @@ def test_authentication_refusal_fails_without_storing_any_file(
     root = _publication_root(tmp_path / "publish", dist)
     names = _manifest_names(dist)
     first_wheel = next(iter(_manifest_files(dist)))
-    env = _publish_env(publish_tools, registry.proxy.port, "not-" + registry.token)
+    refused_token = "not-" + registry.token
+    env = _publish_env(publish_tools, registry.proxy.port, refused_token)
 
-    result = _run_publish(root, env, "--test", "--yes")
+    result = _run_publish(root, env, "--test", "--yes", "--verbose")
 
     assert result.returncode != 0, describe_run(result)
+    assert "password: <hidden>" in result.stdout + result.stderr, describe_run(result)
+    assert registry.token not in result.stdout + result.stderr
+    assert refused_token not in result.stdout + result.stderr
     assert registry.files() == {}
     assert registry.proxy.uploads() == [("test.pypi.org", first_wheel, 403)]
     assert registry.proxy.index_reads() == []
@@ -1563,8 +1579,8 @@ def test_dry_run_verifies_artifacts_without_contacting_the_registry(
     assert "Target: TestPyPI" in lines
     assert f"Twine: {_TWINE}" in lines
     assert (
-        "Mode: DRY RUN (verifies artifacts; uploads nothing and contacts no registry)"
-        in lines
+        "Mode: DRY RUN (verifies artifacts; uploads nothing and does not query the "
+        "index for the release packages)" in lines
     )
     wheels_first = [name for name in expected if name.endswith(".whl")] + [
         name for name in expected if name.endswith(".tar.gz")
@@ -1576,7 +1592,8 @@ def test_dry_run_verifies_artifacts_without_contacting_the_registry(
         f"[DRY RUN] Would upload {name}" for name in expected
     ]
     assert lines[-1] == (
-        "DRY RUN complete: nothing was uploaded and no registry was contacted"
+        "DRY RUN complete: nothing was uploaded and the index was not queried for the "
+        "release packages"
     )
     assert "Uploaded or already present" not in result.stdout
 
@@ -1720,12 +1737,82 @@ def test_concurrent_publications_of_different_builds_report_what_the_registry_ho
     assert not (tagged_result.returncode == 0 and rebuilt_result.returncode == 0)
 
 
+@pytest.mark.parametrize("fault", ["server-error", "disconnect"])
+def test_index_check_retries_a_transient_index_failure_until_every_file_is_served(
+    tmp_path, release_dists, publish_tools, registry, fault
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    names = _manifest_names(dist)
+    registry.proxy.index_faults["/simple/cogniverse-core/"] = [fault]
+    env = _registry_env(publish_tools, registry, VERIFY_TIMEOUT="120")
+
+    result = _run_publish(root, env, "--test", "--yes")
+
+    assert result.returncode == 0, describe_run(result)
+    assert registry.files() == _manifest_files(dist)
+    assert (
+        registry.proxy.index_reads()
+        == [("test.pypi.org", f"/simple/{name}/") for name in names] * 2
+    )
+    assert (
+        "Verified 20 file(s) at https://test.pypi.org/simple/ against the manifest "
+        "digests" in result.stdout
+    ), describe_run(result)
+
+
+def test_index_check_fails_when_the_index_stays_unavailable_past_the_timeout(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    registry.proxy.index_faults["/simple/cogniverse-core/"] = ["server-error"]
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--yes"
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.files() == _manifest_files(dist)
+    assert (
+        "error: https://test.pypi.org/simple/ does not serve "
+        "cogniverse_core-0.2.0-py3-none-any.whl, cogniverse_core-0.2.0.tar.gz "
+        "(last error: https://test.pypi.org/simple/cogniverse-core/: HTTP 503)"
+        in result.stderr
+    ), describe_run(result)
+
+
 @pytest.mark.parametrize(
-    ("job", "publish_step", "upload_host", "index_url"),
+    ("variable", "value"),
+    [
+        ("TWINE_REPOSITORY_URL", "http://127.0.0.1:9/legacy/"),
+        ("TWINE_REPOSITORY", "pypi"),
+    ],
+)
+def test_ambient_twine_repository_setting_is_refused_before_any_upload(
+    tmp_path, release_dists, publish_tools, registry, variable, value
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+    env = _registry_env(publish_tools, registry, **{variable: value})
+
+    result = _run_publish(root, env, "--test", "--yes")
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert (
+        f"error: {variable} is set; publish_packages.sh publishes only to PyPI, or "
+        "TestPyPI with --test; unset it" in result.stderr
+    ), describe_run(result)
+
+
+@pytest.mark.parametrize(
+    ("job", "publish_step", "secret", "upload_host", "index_url"),
     [
         pytest.param(
             "publish-testpypi",
             "Publish to TestPyPI",
+            "TEST_PYPI_TOKEN",
             "test.pypi.org",
             "https://test.pypi.org/simple/",
             id="testpypi",
@@ -1733,6 +1820,7 @@ def test_concurrent_publications_of_different_builds_report_what_the_registry_ho
         pytest.param(
             "publish-pypi",
             "Publish to PyPI",
+            "PYPI_TOKEN",
             "upload.pypi.org",
             "https://pypi.org/simple/",
             id="pypi",
@@ -1746,6 +1834,7 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
     registry,
     job,
     publish_step,
+    secret,
     upload_host,
     index_url,
 ):
@@ -1763,7 +1852,21 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
     dist = release_dists["tagged"]
     root = _publication_root(tmp_path / "publish", dist)
     expected = _manifest_files(dist)
-    env = _registry_env(publish_tools, registry)
+    secrets_ = {
+        name: registry.token if name == secret else f"{name}-for-another-index"
+        for name in ("PYPI_TOKEN", "TEST_PYPI_TOKEN")
+    }
+
+    def step_env(name: str) -> dict[str, str]:
+        declared = {
+            variable: re.sub(
+                r"\$\{\{ secrets\.(\w+) \}\}",
+                lambda match: secrets_[match.group(1)],
+                value,
+            )
+            for variable, value in steps[name].get("env", {}).items()
+        }
+        return {**_proxy_env(publish_tools, registry.proxy.port), **declared}
 
     def run_step(name: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -1777,7 +1880,7 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
                 steps[name]["run"],
             ],
             cwd=root,
-            env=env,
+            env=step_env(name),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -1790,8 +1893,8 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
     assert registry.proxy.requests == []
     assert registry.files() == {}
     assert (
-        "DRY RUN complete: nothing was uploaded and no registry was contacted"
-        in verified.stdout
+        "DRY RUN complete: nothing was uploaded and the index was not queried for the "
+        "release packages" in verified.stdout
     ), describe_run(verified)
 
     published = run_step(publish_step)

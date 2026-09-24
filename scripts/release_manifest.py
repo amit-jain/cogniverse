@@ -318,20 +318,29 @@ class _IndexLinks(HTMLParser):
         self.digests[filename] = digest if algorithm == "sha256" else None
 
 
+class _IndexUnavailable(Exception):
+    pass
+
+
 def _served_digests(index_url: str, name: str) -> dict[str, str | None]:
+    """The files the index serves for ``name``; raises ``_IndexUnavailable`` for a
+    5xx answer or a failed request, which may clear up before the timeout."""
     import requests
 
     url = f"{index_url.rstrip('/')}/{name}/"
     try:
         response = requests.get(url, headers={"Accept": "text/html"}, timeout=60)
+        text = response.text
     except requests.RequestException as error:
-        raise ReleaseArtifactError(f"{url}: {error!r}")
+        raise _IndexUnavailable(f"{url}: {error!r}")
     if response.status_code == 404:
         return {}
+    if 500 <= response.status_code < 600:
+        raise _IndexUnavailable(f"{url}: HTTP {response.status_code}")
     if response.status_code != 200:
         raise ReleaseArtifactError(f"{url}: HTTP {response.status_code}")
     links = _IndexLinks()
-    links.feed(response.text)
+    links.feed(text)
     return links.digests
 
 
@@ -339,13 +348,19 @@ def check_index(
     dist_dir: Path, index_url: str, timeout: float, interval: float = 10.0
 ) -> int:
     """Wait until ``index_url`` serves every manifest artifact and return their
-    count; any served artifact whose sha256 differs from the manifest fails."""
+    count; any served artifact whose sha256 differs from the manifest fails, as
+    does a 4xx other than 404. A 5xx or failed request is retried until ``timeout``."""
     packages = publication_plan(dist_dir)
     deadline = time.monotonic() + timeout
     while True:
         missing = []
+        unavailable = None
         for package in packages:
-            served = _served_digests(index_url, package["name"])
+            try:
+                served = _served_digests(index_url, package["name"])
+            except _IndexUnavailable as error:
+                served = {}
+                unavailable = error
             for entry in (package["wheel"], package["sdist"]):
                 if entry["filename"] not in served:
                     missing.append(entry["filename"])
@@ -357,8 +372,9 @@ def check_index(
         if not missing:
             return 2 * len(packages)
         if time.monotonic() >= deadline:
+            last_error = f" (last error: {unavailable})" if unavailable else ""
             raise ReleaseArtifactError(
-                f"{index_url} does not serve {', '.join(missing)}"
+                f"{index_url} does not serve {', '.join(missing)}{last_error}"
             )
         time.sleep(interval)
 

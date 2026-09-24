@@ -87,7 +87,7 @@ print_header() {
     echo "Manifest: $MANIFEST"
     echo "Twine: $TWINE_REQUIREMENT"
     if [ "$DRY_RUN" = true ]; then
-        echo "Mode: DRY RUN (verifies artifacts; uploads nothing and contacts no registry)"
+        echo "Mode: DRY RUN (verifies artifacts; uploads nothing and does not query the index for the release packages)"
     fi
     echo "=========================================="
     echo ""
@@ -171,7 +171,7 @@ report_dry_run() {
         echo "[DRY RUN] Would upload ${SDISTS[$i]}"
     done
     echo ""
-    echo "DRY RUN complete: nothing was uploaded and no registry was contacted"
+    echo "DRY RUN complete: nothing was uploaded and the index was not queried for the release packages"
 }
 
 # Publish one package's wheel and sdist; the twine exit status is the result
@@ -263,8 +263,20 @@ print_post_publish() {
     echo ""
 }
 
+# Twine settings that would redirect uploads away from the chosen target
+refuse_repository_overrides() {
+    local variable
+    for variable in TWINE_REPOSITORY_URL TWINE_REPOSITORY; do
+        if [ -n "${!variable+set}" ]; then
+            echo "error: $variable is set; publish_packages.sh publishes only to PyPI, or TestPyPI with --test; unset it" >&2
+            exit 1
+        fi
+    done
+}
+
 # Main publishing process
 main() {
+    refuse_repository_overrides
     configure_target
     print_header
 
