@@ -1458,3 +1458,93 @@ def test_recovery_taken_over_mid_reconcile_leaves_journal_and_registry_unchanged
     assert connect().deploy_schemas([]) is True
     assert _entry(store, tenant).config_value == registration
     _restore_registration(store, tenant, registration)
+
+
+def _schema_row(store, tenant):
+    return store.get_config(
+        tenant_id=tenant,
+        scope=ConfigScope.SCHEMA,
+        service="schema_registry",
+        config_key="schema_wiki_pages",
+    )
+
+
+def test_a_peer_delete_before_the_lease_is_not_resurrected_as_a_carried_schema(
+    recovery_backend, monkeypatch
+):
+    """Another tenant's schema, carried in a deploy's package snapshot, is
+    deleted by a peer before the deploy takes the lease: it stays dropped and
+    tombstoned, and the next deploy is not wedged by it."""
+    connect, store = recovery_backend
+    owner, deployer = connect(), connect()
+    victim = f"carried_{uuid4().hex[:10]}:victim"
+    creator = f"carried_{uuid4().hex[:10]}:creator"
+    victim_schema = owner.schema_registry.deploy_schema(victim, "wiki_pages")
+    real_deploy = deployer.deploy_schemas
+    peer_deleted = []
+
+    def peer_deletes_first(schemas, *args, **kwargs):
+        if not peer_deleted:
+            peer_deleted.append(
+                owner.schema_manager.delete_schema(victim, "wiki_pages")
+            )
+        return real_deploy(schemas, *args, **kwargs)
+
+    monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_first)
+    created = deployer.schema_registry.deploy_schema(creator, "wiki_pages")
+
+    assert peer_deleted == [victim_schema]
+    live = set(connect().schema_manager.list_deployed_document_types())
+    assert victim_schema not in live
+    assert created in live
+    assert _schema_row(store, victim).config_value["deleted"] is True
+    assert _schema_row(store, creator).config_value["full_schema_name"] == created
+    assert connect().deploy_schemas([]) is True
+    assert victim_schema not in set(
+        connect().schema_manager.list_deployed_document_types()
+    )
+
+
+def test_a_peer_delete_before_the_lease_refuses_redeploying_that_schema(
+    recovery_backend, monkeypatch
+):
+    """A schema this deploy was asked to redeploy, deleted by a peer between
+    the deploy's registry read and its lease, is refused before activation."""
+    from cogniverse_core.registries.exceptions import SchemaDeploymentError
+
+    connect, store = recovery_backend
+    owner, deployer = connect(), connect()
+    tenant = f"requested_{uuid4().hex[:10]}:victim"
+    schema = owner.schema_registry.deploy_schema(tenant, "wiki_pages")
+    real_deploy = deployer.deploy_schemas
+    peer_deleted = []
+
+    def peer_deletes_first(schemas, *args, **kwargs):
+        if not peer_deleted:
+            peer_deleted.append(
+                owner.schema_manager.delete_schema(tenant, "wiki_pages")
+            )
+        return real_deploy(schemas, *args, **kwargs)
+
+    monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_first)
+    with pytest.raises(SchemaDeploymentError) as caught:
+        deployer.schema_registry.deploy_schema(tenant, "wiki_pages", force=True)
+
+    assert peer_deleted == [schema]
+    assert schema not in set(connect().schema_manager.list_deployed_document_types())
+    assert _schema_row(store, tenant).config_value["deleted"] is True
+    assert connect().deploy_schemas([]) is True
+
+    from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
+
+    assert type(caught.value) is SchemaRevisionConflictError
+    assert (caught.value.schema_name, caught.value.peer_revision) == (
+        schema,
+        "tombstone",
+    )
+    assert caught.value.activated is False
+    assert str(caught.value) == (
+        f"Schema {schema!r} was deleted by another process after this deploy "
+        f"read its registry row; nothing was activated or registered. Retry the "
+        f"deploy."
+    )

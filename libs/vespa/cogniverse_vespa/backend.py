@@ -11,6 +11,7 @@ import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
 from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
@@ -874,6 +875,11 @@ class VespaBackend(Backend):
                 - definition: Schema JSON definition
                 - tenant_id: Tenant identifier
                 - base_schema_name: Original base schema name
+                - carried (optional): the caller's snapshot of a schema it is
+                  not deploying; with a registry it is rebuilt from the
+                  registry under the deploy lease instead
+                - registry_version (optional): the registry revision the
+                  deploy was decided from, confirmed under the lease
             allow_schema_removal: When True, pass the Vespa
                 ``contentTypeRemoval`` validation override. Schema discovery
                 and survivor reconstruction remain mandatory. Defaults to
@@ -907,6 +913,18 @@ class VespaBackend(Backend):
             parser = JsonSchemaParser()
             schemas_to_deploy = []
 
+            # A "carried" definition is the caller's snapshot of a schema it
+            # is not deploying. With a registry the merge below rebuilds every
+            # registered schema under the deploy lease, so the snapshot is not
+            # used: a schema a peer deleted since would otherwise be
+            # reactivated here while its registry row is a tombstone.
+            if self.schema_registry is not None:
+                schema_definitions = [
+                    schema_def
+                    for schema_def in schema_definitions
+                    if not schema_def.get("carried", False)
+                ]
+
             # Parse all schema definitions into pyvespa Schema objects
             for schema_def in schema_definitions:
                 schema_name = schema_def["name"]
@@ -934,6 +952,11 @@ class VespaBackend(Backend):
             # wait below runs outside it, so peers are not blocked while
             # the content nodes bring the new document types online.
             with self.schema_manager.deployment_lease() as lease:
+                # The registry revisions the requested schemas were decided
+                # from must still stand now that the lease is held.
+                if self.schema_registry is not None:
+                    self.schema_registry.confirm_decided_revisions(schema_definitions)
+
                 # Merge existing schemas into the deployment so the redeploy looks
                 # like an "add" rather than "remove + add". Two sources feed the
                 # merge:
@@ -1098,11 +1121,13 @@ class VespaBackend(Backend):
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
 
-        except BackendDeploymentError:
+        except (BackendDeploymentError, SchemaRevisionConflictError):
             # A data-loss refusal (unregistered, unreconstructable schemas that
             # a redeploy would destroy) is NOT a transient failure — surface it
             # so the caller does not mistake it for a retryable False and force
-            # the destructive deploy. Transient failures still return False.
+            # the destructive deploy. A registry revision conflict names the
+            # peer revision the caller must see. Transient failures still
+            # return False.
             raise
         except Exception as e:
             logger.error(f"Failed to deploy schemas: {e}")

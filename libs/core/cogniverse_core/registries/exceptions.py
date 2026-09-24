@@ -71,6 +71,36 @@ class RegistryConflictError(RegistryStorageError):
     """
 
 
+class SchemaRevisionConflictError(SchemaDeploymentError):
+    """A peer's registry revision superseded the one a deploy was decided from.
+
+    ``peer_revision`` is ``"tombstone"`` when the peer deleted the schema and
+    ``"registration"`` when it registered it again. Raised before activation
+    when the deploy lease finds the revision moved, so nothing was activated
+    or registered; raised after activation when the conditional registration
+    finds it moved, so the activation stands and the peer's revision was kept.
+    Either way the peer's revision is authoritative and the deploy may simply
+    be retried.
+    """
+
+    retryable = True
+
+    def __init__(self, schema_name: str, peer_revision: str, *, activated: bool):
+        self.schema_name = schema_name
+        self.peer_revision = peer_revision
+        self.activated = activated
+        action = "deleted" if peer_revision == "tombstone" else "re-registered"
+        outcome = (
+            "the activation stands and that revision was not overwritten"
+            if activated
+            else "nothing was activated or registered"
+        )
+        super().__init__(
+            f"Schema {schema_name!r} was {action} by another process after this "
+            f"deploy read its registry row; {outcome}. Retry the deploy."
+        )
+
+
 class SchemaRegistryInitializationError(Exception):
     """
     SchemaRegistry failed to initialize.

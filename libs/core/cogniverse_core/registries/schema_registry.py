@@ -21,6 +21,7 @@ from cogniverse_core.registries.exceptions import (
     SchemaConvergenceError,
     SchemaLoadError,
     SchemaRegistryInitializationError,
+    SchemaRevisionConflictError,
 )
 from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
 from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
@@ -632,9 +633,11 @@ class SchemaRegistry:
             ]
             registrations = []
             intents = {}
-            # The registry revision each existing schema's deploy was decided
-            # from: its re-registration is conditional on it, so a peer's
-            # tombstone or registration landing after the activation is kept.
+            # The registry revision each requested schema's deploy was decided
+            # from. The backend re-checks it under the deploy lease before
+            # activating, and an existing schema's re-registration is
+            # conditional on it, so a peer's tombstone or registration landing
+            # at any point after this read is never overwritten.
             decided_versions: Dict[str, int] = {}
             for base, name in requested:
                 for existing in existing_schemas:
@@ -672,8 +675,13 @@ class SchemaRegistry:
                 registrations.append(registration)
 
             replacing = {row["full_schema_name"] for row in registrations}
+            # Carried schemas are this snapshot's view of every other schema;
+            # a backend that rebuilds them from the registry under its deploy
+            # lease drops the ones a peer deleted since.
             all_schemas = [
-                schema for schema in previous_schemas if schema["name"] not in replacing
+                {**schema, "carried": True}
+                for schema in previous_schemas
+                if schema["name"] not in replacing
             ]
             all_schemas.extend(
                 {
@@ -681,6 +689,11 @@ class SchemaRegistry:
                     "definition": row["schema_definition"],
                     "tenant_id": tenant_id,
                     "base_schema_name": row["base_schema_name"],
+                    "registry_version": (
+                        intents[row["full_schema_name"]]["registry_version"]
+                        if row["full_schema_name"] in intents
+                        else decided_versions[row["full_schema_name"]]
+                    ),
                 }
                 for row in registrations
             )
@@ -694,12 +707,16 @@ class SchemaRegistry:
                     raise BackendDeploymentError(f"Backend failed to deploy {subject}")
             except Exception as exc:
                 activated = isinstance(exc, SchemaConvergenceError)
-                deployment_error = BackendDeploymentError(
-                    f"Backend deployment failed for {subject}: {exc}. "
-                    + (
-                        "The schema is live; its registration completes by recovery."
-                        if activated and intents
-                        else "The durable definition is retained for late activation."
+                deployment_error = (
+                    exc
+                    if isinstance(exc, SchemaRevisionConflictError)
+                    else BackendDeploymentError(
+                        f"Backend deployment failed for {subject}: {exc}. "
+                        + (
+                            "The schema is live; its registration completes by recovery."
+                            if activated and intents
+                            else "The durable definition is retained for late activation."
+                        )
                     )
                 )
                 if not activated:
@@ -710,6 +727,8 @@ class SchemaRegistry:
                             detail = f"Intent retirement failed: {retirement_exc}. The durable record is retained for recovery."
                             deployment_error.add_note(detail)
                             logger.error(detail)
+                if deployment_error is exc:
+                    raise
                 raise deployment_error from exc
 
             for registration in registrations:
@@ -728,10 +747,13 @@ class SchemaRegistry:
                     if intents:
                         detail = "Durable registration recovery is pending; the schema is preserved."
                     elif isinstance(exc, RegistryConflictError):
-                        detail = (
-                            "A peer changed its registration after the activation; "
-                            "nothing was rolled back over it."
-                        )
+                        raise SchemaRevisionConflictError(
+                            name,
+                            self._peer_revision(
+                                tenant_id, registration["base_schema_name"]
+                            ),
+                            activated=True,
+                        ) from exc
                     else:
                         self._rollback_deployment(previous_schemas, name)
                         detail = "Existing-schema deployment rollback was requested."
@@ -741,6 +763,53 @@ class SchemaRegistry:
             for intent in intents.values():
                 self._deployment_intents.complete(intent)
         return names
+
+    def _peer_revision(self, tenant_id: str, base_schema_name: str) -> str:
+        """``"tombstone"`` when the stored row is a deletion, else
+        ``"registration"``."""
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        stored = self._config_manager.store.get_config(
+            tenant_id=canonical_tenant_id(tenant_id),
+            scope=ConfigScope.SCHEMA,
+            service=SCHEMA_REGISTRY_SERVICE,
+            config_key=f"schema_{base_schema_name}",
+        )
+        if stored is None or stored.config_value.get("deleted", False):
+            return "tombstone"
+        return "registration"
+
+    def confirm_decided_revisions(
+        self, schema_definitions: List[Dict[str, Any]]
+    ) -> None:
+        """Refuse a deploy whose requested schemas' registry rows moved.
+
+        Called by a backend under its deploy lease, before it activates: each
+        definition carrying the ``registry_version`` its deploy was decided
+        from must still find that revision stored. A peer's tombstone or
+        registration since is authoritative, so the deploy raises
+        :class:`SchemaRevisionConflictError` instead of activating over it.
+        """
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        for definition in schema_definitions:
+            if "registry_version" not in definition:
+                continue
+            stored = self._config_manager.store.get_config(
+                tenant_id=canonical_tenant_id(definition["tenant_id"]),
+                scope=ConfigScope.SCHEMA,
+                service=SCHEMA_REGISTRY_SERVICE,
+                config_key=f"schema_{definition['base_schema_name']}",
+            )
+            current = 0 if stored is None else stored.version
+            if current != definition["registry_version"]:
+                raise SchemaRevisionConflictError(
+                    definition["name"],
+                    "tombstone"
+                    if stored is not None and stored.config_value.get("deleted", False)
+                    else "registration",
+                    activated=False,
+                )
 
     def reconcile_deployment_intents(
         self, live_names: set[str], fence: Optional[Callable[[], None]] = None
