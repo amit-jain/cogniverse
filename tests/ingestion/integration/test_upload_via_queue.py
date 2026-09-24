@@ -740,13 +740,53 @@ def upload_config_manager(real_stack):
 
     manager = create_default_config_manager()
     manager._scoped_config_cache_ttl_s = 0
+    coordinates = {
+        "tenant_id": f"{TENANT_ID}:{TENANT_ID}",
+        "scope": ConfigScope.BACKEND,
+        "service": "backend",
+        "config_key": "backend_config",
+    }
+    before = manager.store.get_config(**coordinates)
     yield manager
-    manager.store.delete_config(
-        tenant_id=f"{TENANT_ID}:{TENANT_ID}",
-        scope=ConfigScope.BACKEND,
-        service="backend",
-        config_key="backend_config",
-    )
+    if before is None:
+        manager.store.delete_config(**coordinates)
+    else:
+        manager.store.set_config(**coordinates, config_value=before.config_value)
+
+
+@pytest.mark.parametrize("prior", [None, {"sentinel": "pre-test backend"}])
+def test_upload_config_manager_restores_the_tenant_backend_config(real_stack, prior):
+    """The fixture's teardown puts back the tenant backend_config it found and
+    removes only one it did not find."""
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    coordinates = {
+        "tenant_id": f"{TENANT_ID}:{TENANT_ID}",
+        "scope": ConfigScope.BACKEND,
+        "service": "backend",
+        "config_key": "backend_config",
+    }
+    store = create_default_config_manager().store
+    store.delete_config(**coordinates)
+    if prior is not None:
+        store.set_config(**coordinates, config_value=prior)
+    try:
+        fixture = upload_config_manager.__wrapped__(real_stack)
+        manager = next(fixture)
+        manager.store.set_config(
+            **coordinates, config_value={"sentinel": "written by the test"}
+        )
+        with pytest.raises(StopIteration):
+            next(fixture)
+
+        restored = store.get_config(**coordinates)
+        if prior is None:
+            assert restored is None
+        else:
+            assert restored.config_value == prior
+    finally:
+        store.delete_config(**coordinates)
 
 
 @pytest_asyncio.fixture
