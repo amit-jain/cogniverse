@@ -569,10 +569,11 @@ class VespaSchemaManager:
         is fenced: the config server activates a session only while the
         generation it was created from is still active, and answers 409
         ACTIVATION_CONFLICT once a successor has activated. ``fence`` runs
-        immediately before the activate and raises to abandon a session this
-        deployer no longer owns, so a holder stalled past its lease either
-        refuses itself or is refused by the config server. Returns the
-        response of the first step that did not answer 200.
+        immediately before the prepare and again before the activate, and
+        raises to abandon a session this deployer no longer owns, so a holder
+        that lost its lease either refuses itself or is refused by the config
+        server. Returns the response of the first step that did not answer
+        200.
         """
         import requests
 
@@ -587,6 +588,8 @@ class VespaSchemaManager:
             if created.status_code != 200:
                 return created
             session_id = created.json()["session-id"]
+            if fence is not None:
+                fence()
             prepared = requests.put(
                 f"{tenant_url}/session/{session_id}/prepared",
                 verify=False,

@@ -1110,9 +1110,12 @@ class VespaBackend(Backend):
         schema set and posting the package it built from it — that package
         would carry none of these schemas.
         """
-        with self.schema_manager.deployment_lease():
+        with self.schema_manager.deployment_lease() as lease:
             return self._activate_application_package(
-                app_package, allow_field_type_change, allow_schema_removal
+                app_package,
+                allow_field_type_change,
+                allow_schema_removal,
+                fence=None if lease is None else lease.renew,
             )
 
     def _activate_application_package(
@@ -1120,6 +1123,7 @@ class VespaBackend(Backend):
         app_package,
         allow_field_type_change: bool = False,
         allow_schema_removal: bool = False,
+        fence=None,
     ) -> int:
         """
         Deploy an application package to Vespa.
@@ -1132,6 +1136,8 @@ class VespaBackend(Backend):
                 cluster currently has — without this, partial deploys (e.g., adding a
                 single tenant schema) get rejected because Vespa interprets the missing
                 schemas as a destructive removal.
+            fence: Runs before every prepare-and-activate attempt and raises
+                to abandon the deploy once the deployment lease is lost.
 
         Returns:
             The config generation the config server activated (its session id).
@@ -1201,6 +1207,8 @@ class VespaBackend(Backend):
             last_error: Optional[str] = None
             max_attempts = 5
             for attempt in range(1, max_attempts + 1):
+                if fence is not None:
+                    fence()
                 response = requests.post(
                     deploy_url,
                     headers={"Content-Type": "application/zip"},

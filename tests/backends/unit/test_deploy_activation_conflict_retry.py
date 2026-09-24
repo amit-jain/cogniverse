@@ -258,27 +258,49 @@ def test_schema_manager_retry_rebuilds_and_resends_the_complete_package():
     ]
 
 
+class _LosingLease:
+    """Owned for ``owned_renewals`` renewals, then lost."""
+
+    def __init__(self, owned_renewals):
+        self.owned_renewals = owned_renewals
+        self.renewals = 0
+
+    def acquire(self):
+        return self
+
+    def renew(self):
+        self.renewals += 1
+        if self.renewals > self.owned_renewals:
+            raise RuntimeError("Vespa deployment lease expired or was replaced")
+
+    def release(self):
+        return None
+
+
 def test_a_lease_lost_between_prepare_and_activate_never_activates():
     """A holder stalled past its lease must not activate the package it
     prepared. The fence runs immediately before the config server activates,
     so the session is created and prepared and then abandoned."""
+    lease = _LosingLease(owned_renewals=2)
 
-    class _Lease:
-        def __init__(self):
-            self.renewals = 0
+    with _ConfigServer([200]) as server:
+        manager = _make_schema_manager(server.port)
+        manager._schema_registry = SimpleNamespace(
+            deployment_lease=lambda **kwargs: lease
+        )
+        with pytest.raises(RuntimeError, match="lease expired or was replaced"):
+            manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
 
-        def acquire(self):
-            return self
+    assert lease.renewals == 3
+    assert server.paths == [SESSION_PATH, f"{SESSION_PATH}/4242/prepared"]
+    assert server.activations == 0
+    assert [_entries(body) for body in server.bodies] == [EXPECTED_PACKAGE_ENTRIES]
 
-        def renew(self):
-            self.renewals += 1
-            if self.renewals > 1:
-                raise RuntimeError("Vespa deployment lease expired or was replaced")
 
-        def release(self):
-            return None
-
-    lease = _Lease()
+def test_a_lease_lost_after_the_session_is_created_never_prepares():
+    """Ownership is re-checked before every mutating step: a lease lost once
+    the session exists abandons it before the config server prepares it."""
+    lease = _LosingLease(owned_renewals=1)
 
     with _ConfigServer([200]) as server:
         manager = _make_schema_manager(server.port)
@@ -289,6 +311,23 @@ def test_a_lease_lost_between_prepare_and_activate_never_activates():
             manager._deploy_package(lambda: ApplicationPackage(name="conflictprobe"))
 
     assert lease.renewals == 2
-    assert server.paths == [SESSION_PATH, f"{SESSION_PATH}/4242/prepared"]
+    assert server.paths == [SESSION_PATH]
     assert server.activations == 0
-    assert [_entries(body) for body in server.bodies] == [EXPECTED_PACKAGE_ENTRIES]
+
+
+def test_a_backend_deploy_whose_lease_is_lost_never_retries_the_activation():
+    """The single-request prepare-and-activate is fenced before every attempt,
+    so a conflict retry never posts once the lease is gone."""
+    lease = _LosingLease(owned_renewals=1)
+
+    with _ConfigServer([409, 200]) as server:
+        backend = _make_backend(server.port)
+        backend.schema_manager._schema_registry = SimpleNamespace(
+            deployment_lease=lambda **kwargs: lease
+        )
+        with pytest.raises(RuntimeError, match="lease expired or was replaced"):
+            backend._deploy_package(ApplicationPackage(name="conflictprobe"))
+
+    assert lease.renewals == 2
+    assert server.paths == [DEPLOY_PATH]
+    assert server.activations == 1
