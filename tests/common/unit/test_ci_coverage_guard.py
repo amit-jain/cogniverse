@@ -752,20 +752,38 @@ def test_project_root_helpers_resolve_only_under_their_subtrees(tmp_path) -> Non
 
     chart = tmp_path / "charts" / "cogniverse"
     chart.mkdir(parents=True)
-    for name in ("values.k3s.yaml", "values.prod.yaml", "values.cuda.yaml"):
+    for name in (
+        "values.k3s.yaml",
+        "values.prod.yaml",
+        "values.cpu.yaml",
+        "values.cuda.yaml",
+        "values.rocm.yaml",
+        "values.modal-llm.yaml",
+    ):
         (chart / name).write_text("{}\n")
-    (chart / "values.modal-llm.yaml").write_text("{}\n")
     (tmp_path / "workflows").mkdir()
     (tmp_path / "configs").mkdir()
-    arguments = {
-        "get_device_values_file": ("cuda",),
-        "get_llm_serving_values_file": (config.LLM_SERVING_MODAL,),
+    calls = {
+        "get_chart_path": [((), {})],
+        "get_workflows_path": [((), {})],
+        "get_configs_path": [((), {})],
+        "get_values_file": [((), {}), ((), {"prod": False}), ((), {"prod": True})],
+        "get_device_values_file": [
+            ((backend,), {}) for backend in ("cpu", "cuda", "rocm", "mps")
+        ],
+        "get_llm_serving_values_file": [
+            ((config.LLM_SERVING_LOCAL,), {}),
+            ((config.LLM_SERVING_MODAL,), {}),
+        ],
     }
+    assert set(calls) == set(_PROJECT_ROOT_HELPERS) - {"compose_values_files"}
 
     resolved = {
-        name: getattr(config, name)(*arguments.get(name, ()), project_root=tmp_path)
-        for name in _PROJECT_ROOT_HELPERS
-        if name != "compose_values_files"
+        (name, args, tuple(sorted(kwargs.items()))): getattr(config, name)(
+            *args, project_root=tmp_path, **kwargs
+        )
+        for name, argument_sets in calls.items()
+        for args, kwargs in argument_sets
     }
     composed = config.compose_values_files(
         use_k3d=True,
@@ -775,19 +793,47 @@ def test_project_root_helpers_resolve_only_under_their_subtrees(tmp_path) -> Non
     )
 
     assert {
-        name: path.relative_to(tmp_path).as_posix() for name, path in resolved.items()
+        call: None if path is None else path.relative_to(tmp_path).as_posix()
+        for call, path in resolved.items()
     } == {
-        "get_chart_path": "charts/cogniverse",
-        "get_workflows_path": "workflows",
-        "get_configs_path": "configs",
-        "get_values_file": "charts/cogniverse/values.k3s.yaml",
-        "get_device_values_file": "charts/cogniverse/values.cuda.yaml",
-        "get_llm_serving_values_file": "charts/cogniverse/values.modal-llm.yaml",
+        ("get_chart_path", (), ()): "charts/cogniverse",
+        ("get_workflows_path", (), ()): "workflows",
+        ("get_configs_path", (), ()): "configs",
+        ("get_values_file", (), ()): "charts/cogniverse/values.k3s.yaml",
+        (
+            "get_values_file",
+            (),
+            (("prod", False),),
+        ): "charts/cogniverse/values.k3s.yaml",
+        (
+            "get_values_file",
+            (),
+            (("prod", True),),
+        ): "charts/cogniverse/values.prod.yaml",
+        ("get_device_values_file", ("cpu",), ()): "charts/cogniverse/values.cpu.yaml",
+        (
+            "get_device_values_file",
+            ("cuda",),
+            (),
+        ): "charts/cogniverse/values.cuda.yaml",
+        (
+            "get_device_values_file",
+            ("rocm",),
+            (),
+        ): "charts/cogniverse/values.rocm.yaml",
+        ("get_device_values_file", ("mps",), ()): None,
+        ("get_llm_serving_values_file", (config.LLM_SERVING_LOCAL,), ()): None,
+        (
+            "get_llm_serving_values_file",
+            (config.LLM_SERVING_MODAL,),
+            (),
+        ): "charts/cogniverse/values.modal-llm.yaml",
     }
-    for name, path in resolved.items():
-        assert _under(
-            path.relative_to(tmp_path).as_posix(), _PROJECT_ROOT_HELPERS[name]
-        )
+    for (name, _args, _kwargs), path in resolved.items():
+        if path is not None:
+            assert _under(
+                path.relative_to(tmp_path).as_posix(), _PROJECT_ROOT_HELPERS[name]
+            )
     assert [path.relative_to(tmp_path).as_posix() for path in composed] == [
         "charts/cogniverse/values.k3s.yaml",
         "charts/cogniverse/values.cuda.yaml",
