@@ -26,9 +26,7 @@ import yaml
 from cogniverse_cli.config import (
     LLM_SERVING_LOCAL,
     LLM_SERVING_MODAL,
-    get_device_values_file,
-    get_llm_serving_values_file,
-    get_values_file,
+    compose_values_files,
 )
 from cogniverse_cli.images import SIDECAR_BUILDS
 
@@ -779,27 +777,21 @@ _VISUAL_SERVICES = {"vllm_colpali", "vllm_asr", "vllm_llm_student"}
 def _cli_values_stack(
     backend: str | None, *, use_k3d: bool, serving: str = LLM_SERVING_LOCAL
 ) -> tuple[str, ...]:
-    """The values files ``cogniverse up`` composes, in its order.
-
-    On an existing cluster it applies ``values.prod.yaml`` alone; on k3d it
-    layers the host's device overlay and the LLM serving overlay on
-    ``values.k3s.yaml``.
-    """
-    files = [get_values_file(prod=not use_k3d)]
-    if use_k3d:
-        device = get_device_values_file(backend) if backend is not None else None
-        if device is not None:
-            files.append(device)
-        serving_file = get_llm_serving_values_file(serving)
-        if serving_file is not None:
-            files.append(serving_file)
-    else:
-        assert (backend, serving) == (None, LLM_SERVING_LOCAL)
-    return tuple(path.name for path in files)
+    """The values files ``cogniverse up`` composes, in its order."""
+    return tuple(
+        path.name
+        for path in compose_values_files(
+            use_k3d=use_k3d, backend=backend, serving=serving
+        )
+    )
 
 
 def test_cli_values_stacks_name_the_composed_files():
-    assert _cli_values_stack(None, use_k3d=False) == ("values.prod.yaml",)
+    """An existing cluster gets values.prod.yaml alone whatever the host's
+    device and serving mode; k3d layers both overlays on values.k3s.yaml."""
+    assert _cli_values_stack("rocm", use_k3d=False, serving=LLM_SERVING_MODAL) == (
+        "values.prod.yaml",
+    )
     assert _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL) == (
         "values.k3s.yaml",
         "values.rocm.yaml",
@@ -809,6 +801,7 @@ def test_cli_values_stacks_name_the_composed_files():
         "values.k3s.yaml",
         "values.cpu.yaml",
     )
+    assert _cli_values_stack("mps", use_k3d=True) == ("values.k3s.yaml",)
 
 
 def _composition_failure(values: tuple[str, ...], *set_args: str) -> str:
