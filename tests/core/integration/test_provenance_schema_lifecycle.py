@@ -215,9 +215,10 @@ def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
 
     migrated = writer.schema_registry.redeploy_drifted_schemas("provenance")
 
-    assert schema in migrated
-    assert current_schema not in migrated
-    assert all(name.startswith("provenance_") for name in migrated)
+    assert schema in migrated.redeployed
+    assert current_schema not in migrated.redeployed
+    assert all(name.startswith("provenance_") for name in migrated.redeployed)
+    assert [f for f in migrated.failed if f.tenant_id in {tenant, current}] == []
     assert ("registry", tenant, ["provenance"]) in deploys
     assert ("registry", current, ["provenance"]) not in deploys
     assert _schema_row(store, current).version == current_row.version
@@ -231,7 +232,8 @@ def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
     assert indexed.primary_digest == "b" * 64
     deploys.clear()
 
-    assert writer.schema_registry.redeploy_drifted_schemas("provenance") == []
+    again = writer.schema_registry.redeploy_drifted_schemas("provenance")
+    assert (again.redeployed, again.failed) == ([], [])
     assert deploys == []
 
 
@@ -280,7 +282,8 @@ def test_the_migration_does_not_redeploy_a_schema_a_peer_deleted_meanwhile(
 
     migrated = registry.redeploy_drifted_schemas("provenance")
 
-    assert schema not in migrated
+    assert schema not in migrated.redeployed
+    assert [f for f in migrated.failed if f.tenant_id == tenant] == []
     assert for_tenant["calls"][0] == ("registry", tenant, ["provenance"])
     if peer_deletes == "before_the_decision":
         assert for_tenant["calls"] == [("registry", tenant, ["provenance"])]
@@ -363,3 +366,61 @@ def test_a_memory_row_delete_never_deploys_the_memory_schema(
             )
             is None
         )
+
+
+class _IncompatiblePreDigestLoader(_PreDigestLoader):
+    """A pre-digest provenance schema whose ``written_at`` was a string, so
+    redeploying the shipped long field is a type change Vespa refuses."""
+
+    def load_schema(self, schema_name):
+        definition = super().load_schema(schema_name)
+        if schema_name == "provenance":
+            for field in definition["document"]["fields"]:
+                if field["name"] == "written_at":
+                    field["type"] = "string"
+        return definition
+
+
+def test_the_migration_continues_past_a_tenant_whose_redeploy_fails(
+    provenance_vespa, deploys
+):
+    """One tenant's refused redeploy is reported, not raised: the migration
+    goes on to the remaining tenants."""
+    connect, store = provenance_vespa
+    first = f"provcont_{uuid4().hex[:10]}:first"
+    refused = f"provcont_{uuid4().hex[:10]}:refused"
+    last = f"provcont_{uuid4().hex[:10]}:last"
+    legacy = _PreDigestLoader(Path("configs/schemas"))
+    first_schema = connect(first, legacy).schema_registry.deploy_schema(
+        first, "provenance"
+    )
+    refused_owner = connect(
+        refused, _IncompatiblePreDigestLoader(Path("configs/schemas"))
+    )
+    refused_schema = refused_owner.schema_registry.deploy_schema(refused, "provenance")
+    last_schema = connect(last, legacy).schema_registry.deploy_schema(
+        last, "provenance"
+    )
+    refused_row = _schema_row(store, refused)
+    writer = connect(first)
+    deploys.clear()
+
+    result = writer.schema_registry.redeploy_drifted_schemas("provenance")
+
+    assert {first_schema, last_schema} <= set(result.redeployed)
+    assert refused_schema not in result.redeployed
+    failures = [f for f in result.failed if f.schema_name == refused_schema]
+    assert [(f.tenant_id, f.schema_name) for f in failures] == [
+        (refused, refused_schema)
+    ]
+    assert "Vespa refused the application package" in failures[0].error
+    for tenant in (first, last):
+        assert ("registry", tenant, ["provenance"]) in deploys
+        definition = _schema_row(store, tenant).config_value["schema_definition"]
+        assert "primary_digest" in _field_names(definition)
+    assert _schema_row(store, refused).version == refused_row.version
+    live = set(writer.schema_manager.list_deployed_document_types(True))
+    assert {first_schema, refused_schema, last_schema} <= live
+    assert refused_owner.schema_manager.delete_schema(refused, "provenance") == (
+        refused_schema
+    )

@@ -60,6 +60,23 @@ class SchemaInfo:
     deployment_time: str
 
 
+@dataclass(frozen=True)
+class DriftedSchemaFailure:
+    """One tenant's drifted schema whose redeploy failed."""
+
+    tenant_id: str
+    schema_name: str
+    error: str
+
+
+@dataclass(frozen=True)
+class DriftedSchemaRedeploy:
+    """Outcome of :meth:`SchemaRegistry.redeploy_drifted_schemas`."""
+
+    redeployed: List[str]
+    failed: List[DriftedSchemaFailure]
+
+
 def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[str]:
     """Base schema names the tenant has deployed, activations in flight included.
 
@@ -519,7 +536,7 @@ class SchemaRegistry:
                 f"Expected schemas: {[s['name'] for s in previous_schemas]}"
             )
 
-    def redeploy_drifted_schemas(self, base_schema_name: str) -> List[str]:
+    def redeploy_drifted_schemas(self, base_schema_name: str) -> DriftedSchemaRedeploy:
         """Redeploy every tenant's ``base_schema_name`` registered with a
         definition other than the one the schema loader ships.
 
@@ -529,7 +546,9 @@ class SchemaRegistry:
         each drifted tenant, so the redeploy is decided again from the stored
         row under the deploy lock, and only while that row is registered: a
         tenant whose schema a peer deleted since the listing is skipped, not
-        deployed again. Returns the full names redeployed.
+        deployed again. A tenant whose redeploy is refused (a revision conflict
+        or a backend refusal) is logged and reported in ``failed``, and the
+        remaining tenants are still redeployed; any other error propagates.
         """
         import json
 
@@ -541,7 +560,8 @@ class SchemaRegistry:
             shipped["name"] = info.full_schema_name
             if not _same_definition(info.schema_definition, json.dumps(shipped)):
                 drifted.append(info)
-        redeployed = []
+        redeployed: List[str] = []
+        failed: List[DriftedSchemaFailure] = []
         for info in drifted:
             logger.info(
                 f"Redeploying '{info.full_schema_name}' to the shipped "
@@ -553,14 +573,30 @@ class SchemaRegistry:
                         info.tenant_id, [base_schema_name], require_registered=True
                     )
                 )
-            except SchemaRevisionConflictError as exc:
-                if exc.peer_revision != "tombstone" or exc.activated:
-                    raise
-                logger.info(
-                    f"'{info.full_schema_name}' was deleted by another process "
-                    f"before its redeploy activated; skipped"
+            except (SchemaRevisionConflictError, BackendDeploymentError) as exc:
+                if (
+                    isinstance(exc, SchemaRevisionConflictError)
+                    and exc.peer_revision == "tombstone"
+                    and not exc.activated
+                ):
+                    logger.info(
+                        f"'{info.full_schema_name}' was deleted by another process "
+                        f"before its redeploy activated; skipped"
+                    )
+                    continue
+                logger.error(
+                    f"Redeploy of '{info.full_schema_name}' for tenant "
+                    f"'{info.tenant_id}' failed; continuing with the remaining "
+                    f"tenants: {exc}"
                 )
-        return redeployed
+                failed.append(
+                    DriftedSchemaFailure(
+                        tenant_id=info.tenant_id,
+                        schema_name=info.full_schema_name,
+                        error=str(exc),
+                    )
+                )
+        return DriftedSchemaRedeploy(redeployed=redeployed, failed=failed)
 
     def deploy_schema(
         self,
