@@ -40,8 +40,8 @@ PROVENANCE_BASE_SCHEMA = "provenance"
 MEMORY_EMBEDDING_DIMS = 768
 
 # Hold time for the provenance write lease. A memory write is not a Vespa
-# application-package activation, so this is not the deploy lease's 600 s: it
-# covers one primary write, its read-back and the indexed provenance feed,
+# application-package activation, so this is not sized like the deploy lease:
+# it covers one primary write, its read-back and the indexed provenance feed,
 # with enough margin for a mem0 extraction pass on a slow model.
 PROVENANCE_LEASE_SECONDS = 60.0
 # How long a writer waits for a peer. Deliberately longer than the hold: a
@@ -1974,6 +1974,12 @@ class Mem0MemoryManager:
                     provenance,
                     primary_digest=primary_provenance_digest(primary, provenance),
                 )
+            elif self.provenance_store is not None:
+                # A primary that no longer declares provenance keeps no indexed
+                # row: a row left behind makes every citation read and every
+                # repair of this memory raise "primary provenance is missing".
+                self._check_provenance_ownership()
+                self.provenance_store.delete(memory_id)
 
             logger.info(f"Updated memory {memory_id} for {tenant_id}/{agent_name}")
             return True

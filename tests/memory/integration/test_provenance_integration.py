@@ -876,7 +876,12 @@ def test_provenance_dropping_update_serializes_with_a_peer_repair(
     assert updated["memory"] == "Primary after a provenance-dropping update."
     assert updated["metadata"]["kind"] == "note"
     assert "provenance" not in updated["metadata"]
-    assert peer.provenance_store.delete(memory_id) is True
+    assert peer.provenance_store.fetch([memory_id]) == {}
+    graph = ProvenanceWalker(peer).walk(memory_id, tenant_id=TENANT)
+    assert [node.memory_id for node in graph.nodes] == [memory_id]
+    assert [(ref.ref_kind, ref.ref_id) for ref in graph.primary_sources] == [
+        ("memory", memory_id)
+    ]
     peer.memory.delete(memory_id)
     assert peer.memory.get(memory_id) is None
     Mem0MemoryManager._instances.pop(canonical_tenant, None)
@@ -963,8 +968,12 @@ def test_provenance_free_update_serializes_with_a_peer_provenance_write(
     assert final["memory"] == "Primary after the provenance-free update."
     assert final["metadata"]["kind"] == "note"
     assert "provenance" not in final["metadata"]
-    assert list(peer.provenance_store.fetch([memory_id])) == [memory_id]
-    assert peer.provenance_store.delete(memory_id) is True
+    assert peer.provenance_store.fetch([memory_id]) == {}
+    graph = ProvenanceWalker(peer).walk(memory_id, tenant_id=TENANT)
+    assert [node.memory_id for node in graph.nodes] == [memory_id]
+    assert [(ref.ref_kind, ref.ref_id) for ref in graph.primary_sources] == [
+        ("memory", memory_id)
+    ]
     peer.memory.delete(memory_id)
     assert peer.memory.get(memory_id) is None
     Mem0MemoryManager._instances.pop(canonical_tenant, None)

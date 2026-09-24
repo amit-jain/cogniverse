@@ -1308,7 +1308,8 @@ store lease when there is none — so a conversation turn and an agent remember,
 which carry no provenance, never take a cluster-wide per-tenant mutex and never
 hold one across mem0's extraction pass. `update_memory` always takes the lease:
 whether the stored primary declares provenance can change between any unleased
-read of it and the write. Deletion,
+read of it and the write. An update that leaves the primary without provenance
+also deletes its indexed row. Deletion,
 repair and archiving always take it. The sweeps (`clear_agent_memory`,
 `cleanup_with_schema`, `drop_session`) acquire **per row**: one lease for a
 whole retention pass excluded every other writer for the tenant until the last
