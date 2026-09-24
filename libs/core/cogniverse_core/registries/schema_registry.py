@@ -519,6 +519,34 @@ class SchemaRegistry:
                 f"Expected schemas: {[s['name'] for s in previous_schemas]}"
             )
 
+    def redeploy_drifted_schemas(self, base_schema_name: str) -> List[str]:
+        """Redeploy every tenant's ``base_schema_name`` registered with a
+        definition other than the one the schema loader ships.
+
+        A release that changes a shipped schema otherwise leaves each tenant's
+        copy to whichever request first ensures it, which then redeploys the
+        application package from the request path. Runs the normal deploy for
+        each drifted tenant, so the redeploy is decided again from the stored
+        row under the deploy lock. Returns the full names found drifted.
+        """
+        import json
+
+        drifted = []
+        for info in self._get_all_schemas(strict=True):
+            if info.base_schema_name != base_schema_name:
+                continue
+            shipped = self._schema_loader.load_schema(base_schema_name)
+            shipped["name"] = info.full_schema_name
+            if not _same_definition(info.schema_definition, json.dumps(shipped)):
+                drifted.append(info)
+        for info in drifted:
+            logger.info(
+                f"Redeploying '{info.full_schema_name}' to the shipped "
+                f"'{base_schema_name}' definition"
+            )
+            self.deploy_schemas(info.tenant_id, [base_schema_name])
+        return [info.full_schema_name for info in drifted]
+
     def deploy_schema(
         self,
         tenant_id: str,

@@ -1353,11 +1353,13 @@ reporting the memory fully deleted.
 
 `ProvenanceStore.delete` does not deploy a schema in order to delete from it.
 When the tenant's provenance schema has never been deployed, there can be no
-indexed row for it, so `delete` returns idempotently instead of reaching
-`delete_document` — deleting from an undeployed schema is what forces a full
-application-package redeploy from the request path, and a namespace clear
-that fans out one delete per memory turns that into a redeploy race between
-tenants. A schema-registry lookup failure still raises rather than being read
+indexed row for it, so `delete` returns idempotently. The delete itself goes
+through `VespaBackend.delete_live_document`, a Document v1 delete that never
+builds an ingestion client — a client's cache miss redeploys a missing,
+tombstoned or drifted schema, which from the request path is a full
+application-package redeploy, and a namespace clear that fans out one delete
+per memory turns that into a redeploy race between tenants. Vespa's answer
+that the document type does not exist is read as the row's absence. A schema-registry lookup failure still raises rather than being read
 as "no schema": only a clean, successful "not deployed" answer short-circuits
 the delete. The known cost is that a tenant whose provenance schema exists
 but is briefly unreadable at the moment of the check also skips its indexed
@@ -1386,6 +1388,11 @@ migration or bulk sweep is required — the next `attach` or an explicit
 which the row is checked like any other. `primary_provenance_digest` always
 returns 64 hex characters, so an empty digest is unambiguously a legacy row and
 never a real mismatch.
+The provenance schema gained the `primary_digest` field in the same change.
+`SchemaRegistry.redeploy_drifted_schemas("provenance")` redeploys every
+tenant's registered provenance schema whose stored definition differs from
+the shipped one, one normal deploy per drifted tenant, and returns their
+names; an up-to-date schema is left alone.
 Concurrent external changes inside repair are retried up to the requested bound
 and then raise `ProvenanceRepairConflictError`.
 

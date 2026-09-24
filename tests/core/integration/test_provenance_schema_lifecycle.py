@@ -13,7 +13,10 @@ from cogniverse_core.memory.provenance import (
     DerivationKind,
     make_provenance,
 )
-from cogniverse_core.memory.provenance_store import ProvenanceStore
+from cogniverse_core.memory.provenance_store import (
+    ProvenanceStore,
+    ProvenanceWriteError,
+)
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
@@ -171,3 +174,44 @@ def test_a_provenance_row_delete_never_deploys_the_schema(
     if state == "pre_digest_definition":
         definition = _schema_row(store, tenant).config_value["schema_definition"]
         assert "primary_digest" not in _field_names(definition)
+
+
+def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
+    provenance_vespa, deploys
+):
+    connect, store = provenance_vespa
+    tenant = f"provmig_{uuid4().hex[:10]}:acme"
+    current = f"provmig_{uuid4().hex[:10]}:current"
+    legacy = connect(tenant, _PreDigestLoader(Path("configs/schemas")))
+    schema = legacy.schema_registry.deploy_schema(tenant, "provenance")
+    current_schema = connect(current).schema_registry.deploy_schema(
+        current, "provenance"
+    )
+    writer = connect(tenant)
+    with pytest.raises(ProvenanceWriteError):
+        ProvenanceStore(lambda: legacy, tenant_id=tenant).attach(
+            "mem-before", _provenance(), primary_digest="a" * 64
+        )
+    current_row = _schema_row(store, current)
+    deploys.clear()
+
+    migrated = writer.schema_registry.redeploy_drifted_schemas("provenance")
+
+    assert schema in migrated
+    assert current_schema not in migrated
+    assert all(name.startswith("provenance_") for name in migrated)
+    assert ("registry", tenant, ["provenance"]) in deploys
+    assert ("registry", current, ["provenance"]) not in deploys
+    assert _schema_row(store, current).version == current_row.version
+    definition = _schema_row(store, tenant).config_value["schema_definition"]
+    assert "primary_digest" in _field_names(definition)
+    row_id = ProvenanceStore(lambda: writer, tenant_id=tenant).attach(
+        "mem-after", _provenance(), primary_digest="b" * 64
+    )
+    assert row_id == f"prov-{tenant}-mem-after"
+    indexed = ProvenanceStore(lambda: writer, tenant_id=tenant).get("mem-after")
+    assert indexed.primary_digest == "b" * 64
+    deploys.clear()
+
+    assert writer.schema_registry.redeploy_drifted_schemas("provenance") == []
+    assert deploys == []
