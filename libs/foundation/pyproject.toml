@@ -2,6 +2,7 @@
 name = "cogniverse-foundation"
 dynamic = ["version"]
 description = "Cogniverse Foundation - Cross-cutting concerns and shared infrastructure"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cogniverse-sdk",

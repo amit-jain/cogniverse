@@ -2,6 +2,7 @@
 name = "cogniverse-evaluation"
 dynamic = ["version"]
 description = "Cogniverse Evaluation - Provider-agnostic evaluation framework"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cogniverse-foundation",

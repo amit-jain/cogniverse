@@ -345,6 +345,12 @@ def _assert_release(repo: Path, expected_version: str) -> dict:
         assert wheel_metadata.get_all("Requires-Dist") == sdist_metadata.get_all(
             "Requires-Dist"
         )
+        readme = (
+            repo / "libs" / package["name"].removeprefix("cogniverse-") / "README.md"
+        ).read_text()
+        for metadata in (wheel_metadata, sdist_metadata):
+            assert metadata["Description-Content-Type"] == "text/markdown"
+            assert metadata.get_payload(decode=True).decode() == readme
         internal = _internal_requirement_lines(wheel_metadata, workspace)
         assert {canonicalize_name(line.name) for line in internal} == set(requires)
         assert [str(line.specifier) for line in internal] == [
@@ -1563,11 +1569,8 @@ def test_dry_run_verifies_artifacts_without_contacting_the_registry(
     wheels_first = [name for name in expected if name.endswith(".whl")] + [
         name for name in expected if name.endswith(".tar.gz")
     ]
-    without_readme = {"cogniverse_foundation", "cogniverse_evaluation"}
     assert [_ANSI.sub("", line) for line in lines if line.startswith("Checking ")] == [
-        f"Checking {name}: PASSED"
-        + (" with warnings" if name.split("-")[0] in without_readme else "")
-        for name in wheels_first
+        f"Checking {name}: PASSED" for name in wheels_first
     ]
     assert [line for line in lines if line.startswith("[DRY RUN]")] == [
         f"[DRY RUN] Would upload {name}" for name in expected
