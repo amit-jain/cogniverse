@@ -1612,6 +1612,8 @@ CMD ["python", "-m", "cogniverse_runtime.runtime_cli", \
      "--host", "0.0.0.0", "--port", "8000"]
 ```
 
+The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime --extra all --no-dev --frozen`, then `uv sync --only-group runtime-models --inexact --frozen` to install the pinned `en_core_web_sm` spaCy model from the lock.
+
 ### Docker Compose
 
 ```yaml
