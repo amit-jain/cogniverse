@@ -1269,6 +1269,54 @@ class TestProvenanceWriteLeaseScope:
         assert caught.value.memory_id == "m5"
         manager.memory.update.assert_called_once()
 
+    @pytest.mark.parametrize("failure", ["read_raises", "read_missing", "row_delete"])
+    def test_update_never_reports_false_once_the_primary_is_rewritten(self, failure):
+        """After the primary write, any failure leaves primary and index torn;
+        it surfaces with the memory id instead of reading as a no-op."""
+        from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+
+        manager = self._manager("lease_update_torn_tenant")
+        outage = ConnectionError("vespa unreachable")
+        reads = [{"id": "m6", "memory": "before"}]
+
+        def read(memory_id):
+            if reads:
+                return reads.pop()
+            if failure == "read_raises":
+                raise outage
+            return None
+
+        manager.memory.get.side_effect = read
+        manager._provenance_store.delete.side_effect = outage
+        metadata = (
+            {"kind": "note"} if failure == "row_delete" else self._provenance_metadata()
+        )
+
+        with pytest.raises(ProvenanceWriteError) as caught:
+            manager.update_memory(
+                memory_id="m6",
+                content="after",
+                tenant_id="lease_update_torn_tenant",
+                agent_name="agent",
+                metadata=metadata,
+            )
+
+        assert caught.value.memory_id == "m6"
+        assert caught.value.row_id is None
+        if failure == "read_missing":
+            assert type(caught.value.cause) is RuntimeError
+            assert str(caught.value.cause) == (
+                "primary memory 'm6' is unreadable after update"
+            )
+        else:
+            assert caught.value.cause is outage
+        assert caught.value.__cause__ is caught.value.cause
+        manager.memory.update.assert_called_once_with(
+            "m6", data="after", metadata=metadata
+        )
+        manager._provenance_store.attach.assert_not_called()
+        assert self._lease_record(manager).config_value["holder"] is None
+
     def test_a_primary_read_outage_inside_the_lease_returns_false(self):
         """An update whose primary cannot be read writes nothing, reports
         False and releases the lease it took."""
