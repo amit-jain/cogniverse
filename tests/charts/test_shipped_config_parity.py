@@ -10,10 +10,12 @@ serving. Chart values are rendered by Helm before parsing.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from cogniverse_agents.optimizer.golden_set_ground_truth import (
     canonicalize_golden_set_ground_truth_rows,
@@ -55,6 +57,85 @@ def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
 
     assert parsed.backend_config.tenant_id == SYSTEM_TENANT_ID
     assert parsed.backend_config.profiles
+
+
+def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str, Any]:
+    """The runtime config.json a values composition renders."""
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART.parents[1]),
+        "--show-only",
+        "templates/configmap.yaml",
+    ]
+    for values_file in values:
+        cmd += ["-f", str(CHART.parents[1] / values_file)]
+    for arg in ("runtime.qualityMonitor.tenantId=test-tenant", *set_args):
+        cmd += ["--set", arg]
+    rendered = subprocess.run(
+        cmd, check=True, capture_output=True, text=True, timeout=30
+    )
+    (configmap,) = [
+        doc
+        for doc in yaml.safe_load_all(rendered.stdout)
+        if doc["metadata"]["name"] == "cogniverse-config"
+    ]
+    return json.loads(configmap["data"]["config.json"])
+
+
+_SELECTED = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("values", "set_args", "expected"),
+    [
+        ((), (), {}),
+        (
+            ("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"),
+            (),
+            _SELECTED,
+        ),
+        (
+            ("values.prod.yaml", "values.cuda.yaml"),
+            (
+                "minio.rootPassword=test-minio",
+                "openshell.server.sshHandshakeSecret=test-handshake",
+                "phoenix.postgres.auth.password=test-postgres",
+                "redis.auth.password=test-redis",
+                "runtime.primaryLLM.apiBase=https://student.example.com/v1",
+            ),
+            _SELECTED,
+        ),
+        (
+            ("values.prod.yaml",),
+            (
+                "minio.rootPassword=test-minio",
+                "openshell.server.sshHandshakeSecret=test-handshake",
+                "phoenix.postgres.auth.password=test-postgres",
+                "redis.auth.password=test-redis",
+                "config.defaultProfiles.video=video_colpali_smol500_mv_frame",
+                "inference.vllm_colpali.externalUrl=https://colpali.example.com",
+                "inference.vllm_asr.enabled=false",
+                "inference.vllm_asr.externalUrl=https://asr.example.com",
+                "runtime.primaryLLM.apiBase=https://student.example.com/v1",
+            ),
+            _SELECTED,
+        ),
+    ],
+    ids=["base", "k3s-rocm-modal", "prod-cuda-student", "prod-external"],
+)
+def test_composed_chart_config_passes_the_runtime_startup_parse(
+    values: tuple[str, ...], set_args: tuple[str, ...], expected: dict
+):
+    """The runtime's own startup parse validates backend.default_profiles
+    against the catalog, for each composition the chart selects a profile in."""
+    parsed = parse_synthetic_runtime_config(
+        _composed_chart_config(values, *set_args), tenant_id=SYSTEM_TENANT_ID
+    )
+
+    assert parsed.backend_default_profiles == expected
 
 
 @pytest.mark.unit
