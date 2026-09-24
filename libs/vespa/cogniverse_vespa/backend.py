@@ -1023,6 +1023,16 @@ class VespaBackend(Backend):
                             )
                         )
                     except Exception as recovery_exc:
+                        from cogniverse_core.registries.schema_deploy_lease import (
+                            DeploymentLeaseLost,
+                        )
+
+                        if isinstance(recovery_exc, DeploymentLeaseLost):
+                            raise BackendDeploymentError(
+                                "Deployment lease was taken over during intent "
+                                "recovery; nothing was activated or registered. "
+                                f"Retry the deploy: {recovery_exc}"
+                            ) from recovery_exc
                         raise BackendDeploymentError(
                             f"Cannot reconcile schema deployment intents: {recovery_exc}"
                         ) from recovery_exc
