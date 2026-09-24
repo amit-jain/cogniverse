@@ -62,10 +62,28 @@ def _wait_for_telemetry_manager(
     )
 
 
+def _tenant_search_profile(tenant_id: str, config_manager=None) -> str | None:
+    """The tenant's selected default video profile, through the resolver
+    upload, search and the dispatcher share; None when none is selected."""
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+        resolve_default_profile,
+    )
+
+    return resolve_default_profile(
+        get_config(
+            tenant_id=tenant_id,
+            config_manager=config_manager or create_default_config_manager(),
+        )
+    )
+
+
 def _wait_for_runtime_search(
     *,
     runtime_url: str,
     tenant_id: str,
+    search_profile: str,
     golden_dataset_path: str | None = None,
     golden_queries: list[dict] | None = None,
     timeout_seconds: float = 300.0,
@@ -100,7 +118,7 @@ def _wait_for_runtime_search(
     post = post or requests.post
     payload = {
         "query": query,
-        "profile": "video_colpali_smol500_mv_frame",
+        "profile": search_profile,
         "top_k": 1,
         "tenant_id": tenant_id,
     }
@@ -909,7 +927,9 @@ def main():
         http_endpoint=telemetry_http_endpoint,
         grpc_endpoint=telemetry_otlp_endpoint,
     )
+    search_profile = None
     if not one_shot:
+        search_profile = _tenant_search_profile(args.tenant_id)
         if golden_queries is not None:
             asyncio.run(
                 _seed_golden_set_blob(
@@ -925,10 +945,17 @@ def main():
                     tenant_id=args.tenant_id,
                 )
             )
-        if golden_queries:
+        if golden_queries and search_profile is None:
+            logger.warning(
+                "Tenant %s has no default video profile selected; skipping the "
+                "search readiness probe and golden-set evaluation.",
+                args.tenant_id,
+            )
+        elif golden_queries:
             _wait_for_runtime_search(
                 runtime_url=args.runtime_url,
                 tenant_id=args.tenant_id,
+                search_profile=search_profile,
                 golden_queries=golden_queries,
                 timeout_seconds=args.startup_timeout,
                 poll_interval_seconds=args.startup_poll_interval,
@@ -964,6 +991,7 @@ def main():
         live_eval_interval_seconds=args.live_interval,
         live_sample_count=args.live_sample_count,
         telemetry_provider=telemetry_provider,
+        search_profile=search_profile,
         workflow_template=workflow_template,
     )
     monitor = QualityMonitor(**monitor_kwargs)
