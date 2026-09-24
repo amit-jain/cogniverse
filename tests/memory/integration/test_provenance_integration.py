@@ -18,6 +18,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 import pytest
 from fastapi import FastAPI
@@ -376,6 +377,91 @@ async def test_synthesis_provenance_refusal_removes_new_primary(memory_env):
     failed_memory_id = exc_info.value.memory_id
     assert mm.memory.get(failed_memory_id) is None
     assert mm.provenance_store.fetch([failed_memory_id]) == {}
+
+
+def test_add_compensation_removes_a_provenance_row_that_landed(memory_env):
+    """A feed that landed but answered as failed leaves no orphan row."""
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:landed-row",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.71,
+        derived_from=[CitationRef.external("https://source.test/landed-row")],
+    )
+    memory_env.proxy.arm(
+        lambda method, path, _body: (
+            method in {"POST", "PUT"} and "/document/v1/content/provenance_" in path
+        ),
+        failure=True,
+        after_upstream=True,
+    )
+    memory_env.proxy.release.set()
+    first_request = len(memory_env.proxy.requests)
+
+    with pytest.raises(ProvenanceWriteError) as exc_info:
+        mm.add_memory(
+            content="A primary whose provenance row landed under a refused answer.",
+            tenant_id=TENANT,
+            agent_name=AGENT,
+            metadata=attach_to_metadata({"kind": "entity_fact"}, provenance),
+            infer=False,
+        )
+
+    error = exc_info.value
+    memory_id = error.memory_id
+    row_id = f"prov-{mm._storage_tenant_id}-{memory_id}"
+    assert error.compensation_error is None
+    assert mm.memory.get(memory_id) is None
+    assert mm.provenance_store.fetch([memory_id]) == {}
+    assert [
+        method
+        for method, path, _ in memory_env.proxy.requests[first_request:]
+        if "/provenance_" in path
+        and unquote(path.split("?", 1)[0]).endswith(f"/docid/{row_id}")
+    ] == ["POST", "DELETE"]
+
+
+def test_provenance_row_delete_refused_by_vespa_raises_and_keeps_the_row(
+    memory_env,
+):
+    """A refused indexed-row delete is an error, never a reported deletion."""
+    mm = memory_env.manager
+    provenance = make_provenance(
+        written_by="agent:refused-delete",
+        derivation_kind=DerivationKind.DIRECT_INGEST,
+        confidence=0.66,
+        derived_from=[CitationRef.external("https://source.test/refused-delete")],
+    )
+    memory_id = _add_with_provenance(
+        mm, "A primary whose indexed row delete is refused.", provenance
+    )
+    row_id = f"prov-{mm._storage_tenant_id}-{memory_id}"
+    indexed = mm.provenance_store.fetch([memory_id])
+    assert list(indexed) == [memory_id]
+
+    memory_env.proxy.arm(
+        lambda method, path, _body: (
+            method == "DELETE" and "/provenance_" in path and row_id in unquote(path)
+        ),
+        failure=True,
+    )
+    memory_env.proxy.release.set()
+
+    with pytest.raises(ProvenanceWriteError) as exc_info:
+        mm.provenance_store.delete(memory_id)
+
+    error = exc_info.value
+    assert error.memory_id == memory_id
+    assert error.row_id == row_id
+    assert error.result is None
+    assert type(error.cause) is RuntimeError
+    assert "HTTP 400" in str(error.cause)
+    assert mm.provenance_store.fetch([memory_id]) == indexed
+
+    assert mm.provenance_store.delete(memory_id) is True
+    assert mm.provenance_store.fetch([memory_id]) == {}
+    mm.memory.delete(memory_id)
+    assert mm.memory.get(memory_id) is None
 
 
 def test_walker_rejects_primary_with_missing_indexed_provenance(memory_env):

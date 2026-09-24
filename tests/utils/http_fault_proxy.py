@@ -21,6 +21,7 @@ class HTTPFaultProxy:
         self._lock = threading.Lock()
         self._predicate = None
         self._failure = False
+        self._after_upstream = False
         proxy = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -49,10 +50,8 @@ class HTTPFaultProxy:
                     proxy.entered.set()
                     if not proxy.release.wait(3):
                         proxy.expired.set()
-                    if proxy._failure:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b'{"error":"injected storage refusal"}')
+                    if proxy._failure and not proxy._after_upstream:
+                        self._refuse()
                         return
                 upstream = proxy.upstream(self.path)
                 response = requests.request(
@@ -66,6 +65,9 @@ class HTTPFaultProxy:
                     },
                     timeout=120,
                 )
+                if gated and proxy._failure:
+                    self._refuse()
+                    return
                 self.send_response(response.status_code)
                 self.send_header(
                     "Content-Type",
@@ -75,6 +77,11 @@ class HTTPFaultProxy:
                 self.end_headers()
                 self.wfile.write(response.content)
 
+            def _refuse(self):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error":"injected storage refusal"}')
+
             def log_message(self, *_args):
                 pass
 
@@ -82,12 +89,13 @@ class HTTPFaultProxy:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.port = self.server.server_address[1]
 
-    def arm(self, predicate, *, failure=False):
+    def arm(self, predicate, *, failure=False, after_upstream=False):
         self.entered.clear()
         self.release.clear()
         self.expired.clear()
         self._predicate = predicate
         self._failure = failure
+        self._after_upstream = after_upstream
 
     def __enter__(self):
         self.thread.start()

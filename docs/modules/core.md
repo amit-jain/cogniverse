@@ -1275,7 +1275,8 @@ each BFS level into one indexed query; cycle and depth limits
 The primary and indexed records form one verified persistence contract.
 `ProvenanceStore.attach()` requires an exact one-document feed result and
 raises `ProvenanceWriteError` for rejected or unresolved writes. A newly
-created Mem0 `ADD` is removed when its indexed write fails. An existing
+created Mem0 `ADD` is removed when its indexed write fails, together with any
+indexed row that write left behind. An existing
 `UPDATE` is retained and the error identifies its memory id for explicit
 repair; it is never deleted as compensation.
 

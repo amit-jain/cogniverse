@@ -612,6 +612,85 @@ class TestProvenanceStoreDeleteDoesNotForceDeploy:
         assert isinstance(excinfo.value.cause, RuntimeError)
 
 
+class _DeleteAnswerBackend(_TenantScopedQueryBackend):
+    """Live-schema backend whose delete answers or raises as configured."""
+
+    def __init__(self, *, answer: Any = True, raises: BaseException | None = None):
+        self.answer = answer
+        self.raises = raises
+        self.delete_calls: list[str] = []
+
+    def schema_exists(self, schema_name, tenant_id=None):
+        return True
+
+    def delete_document(self, document_id, schema_name=None):
+        self.delete_calls.append(document_id)
+        if self.raises is not None:
+            raise self.raises
+        return self.answer
+
+
+class TestProvenanceStoreDeleteFaultContract:
+    """Neither delete raise branch may be read as a completed deletion."""
+
+    def test_a_backend_resolution_failure_raises_a_write_error(self):
+        from cogniverse_core.memory.provenance_store import (
+            ProvenanceStore,
+            ProvenanceWriteError,
+        )
+
+        outage = RuntimeError("backend registry closed the instance")
+
+        def resolver():
+            raise outage
+
+        store = ProvenanceStore(backend_resolver=resolver, tenant_id="t1")
+
+        with pytest.raises(ProvenanceWriteError) as excinfo:
+            store.delete("m1")
+
+        assert excinfo.value.memory_id == "m1"
+        assert excinfo.value.row_id == "prov-t1-m1"
+        assert excinfo.value.cause is outage
+        assert excinfo.value.result is None
+
+    def test_a_delete_transport_failure_raises_a_write_error(self):
+        from cogniverse_core.memory.provenance_store import (
+            ProvenanceStore,
+            ProvenanceWriteError,
+        )
+
+        refused = RuntimeError("Vespa returned HTTP 400")
+        backend = _DeleteAnswerBackend(raises=refused)
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        with pytest.raises(ProvenanceWriteError) as excinfo:
+            store.delete("m1")
+
+        assert backend.delete_calls == ["prov-t1-m1"]
+        assert excinfo.value.cause is refused
+        assert excinfo.value.result is None
+
+    @pytest.mark.parametrize("answer", [False, None, "deleted"])
+    def test_an_unconfirmed_delete_raises_with_the_backend_answer(self, answer):
+        from cogniverse_core.memory.provenance_store import (
+            ProvenanceStore,
+            ProvenanceWriteError,
+        )
+
+        backend = _DeleteAnswerBackend(answer=answer)
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        with pytest.raises(ProvenanceWriteError) as excinfo:
+            store.delete("m1")
+
+        assert backend.delete_calls == ["prov-t1-m1"]
+        assert excinfo.value.memory_id == "m1"
+        assert excinfo.value.row_id == "prov-t1-m1"
+        assert excinfo.value.result == {"deleted": answer}
+        assert excinfo.value.cause is None
+
+
 @pytest.mark.unit
 class TestLegacyIndexedRows:
     """Rows indexed before the digest field exists stay readable.
