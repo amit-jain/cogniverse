@@ -437,6 +437,17 @@ def test_invalid_explicit_profile_rejected_before_side_effects(upload_client, pr
     assert captured == {}
 
 
+def test_an_empty_profile_field_resolves_the_tenant_default(upload_client):
+    """An empty form value is dropped as omitted, not rejected as a blank
+    explicit profile; only a non-empty blank value is that."""
+    client, captured, _ = upload_client
+
+    resp = _post(client, data={"profile": ""})
+
+    assert resp.status_code == 200, resp.text
+    assert captured["profile"] == _TENANT_DEFAULT_PROFILE
+
+
 def test_config_store_outage_precedes_object_and_queue_writes(
     upload_client, monkeypatch
 ):
