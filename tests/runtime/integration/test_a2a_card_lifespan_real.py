@@ -43,3 +43,44 @@ async def test_a2a_card_advertises_loaded_agents(monkeypatch, workflow_state_red
         assert "search_agent" in skill_ids, skill_ids
         assert "default" not in skill_ids, skill_ids
         assert len(skill_ids) > 1, skill_ids
+
+
+@pytest.mark.asyncio
+async def test_the_schema_migration_runs_after_startup_without_holding_it(
+    monkeypatch, workflow_state_redis_url
+):
+    """The provenance schema migration deploys one package per drifted tenant,
+    so it runs once startup completes: the runtime serves while it runs."""
+    import asyncio
+
+    import dspy
+
+    from cogniverse_runtime import main as runtime_main
+
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
+    monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
+    monkeypatch.setattr(dspy, "configure", lambda *a, **kw: None)
+    running = asyncio.Event()
+    release = asyncio.Event()
+    migrated = []
+
+    async def migration_in_progress(schema_registry, base_schema_name):
+        migrated.append(base_schema_name)
+        running.set()
+        await release.wait()
+
+    monkeypatch.setattr(runtime_main, "_migrate_drifted_schemas", migration_in_progress)
+
+    app = FastAPI()
+    async with runtime_main.lifespan(app):
+        await asyncio.wait_for(running.wait(), timeout=5)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            served = await client.get("/a2a/.well-known/agent-card.json")
+        release.set()
+
+    assert migrated == ["provenance"]
+    assert served.status_code == 200
+    assert served.json()["name"] == "Cogniverse Runtime"

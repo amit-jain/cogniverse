@@ -60,7 +60,7 @@ class _FakeConfigLoader:
 
 @pytest.mark.asyncio
 async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, workflow_state_redis_url
 ):
     captured = {}
     saved = admin._phoenix_endpoints
@@ -96,6 +96,10 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
     monkeypatch.setattr(ConfigManager, "get_system_config", _spy_get_system_config)
     monkeypatch.setattr(admin, "set_phoenix_endpoints", _spy_set_phoenix_endpoints)
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setattr(
+        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+    )
 
     try:
         with pytest.raises(_AbortStartup, match="stop after endpoint wiring"):
