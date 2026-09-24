@@ -3,7 +3,8 @@ Integration tests for A2A multi-turn conversation support.
 
 Full stack: real A2A app -> real CogniverseAgentExecutor -> real AgentDispatcher
 -> real DSPy query rewrite -> real Vespa search. Exercises contextId-based
-history accumulation via InMemoryTaskStore (the production a2a-sdk store).
+history accumulation through RedisRequestHandler over RedisTaskStore (the
+production store) on an owned Redis.
 """
 
 import asyncio
@@ -18,7 +19,7 @@ import subprocess
 import sys
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 import httpx
 import pytest
@@ -52,6 +53,7 @@ class _ProcessExecutor(AgentExecutor):
     def __init__(self, redis_url: str, key_prefix: str) -> None:
         self._redis_url = redis_url
         self._process_key = f"{key_prefix}:test-process"
+        self._release_key = f"{key_prefix}:test-release"
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         query = context.get_user_input()
@@ -88,7 +90,14 @@ class _ProcessExecutor(AgentExecutor):
             return
 
         if query.startswith("delay-"):
-            await asyncio.sleep(0.4)
+            # Hold the turn, and its lease, until the test releases it.
+            redis = aioredis.from_url(self._redis_url, decode_responses=True)
+            try:
+                async with asyncio.timeout(10):
+                    while not await redis.exists(self._release_key):
+                        await asyncio.sleep(0.02)
+            finally:
+                await redis.aclose()
         history_ids = [
             message.message_id
             for message in (
@@ -444,7 +453,7 @@ class TestA2ASharedProcessIdentity:
     def test_simultaneous_continuations_have_one_acknowledged_winner(
         self, a2a_process_cluster
     ):
-        ports, _, _, _ = a2a_process_cluster
+        ports, _, redis_url, key_prefix = a2a_process_cluster
         context_id = f"context-{uuid.uuid4().hex}"
         first = _process_send(
             ports[0],
@@ -466,12 +475,20 @@ class TestA2ASharedProcessIdentity:
                 )
                 for index, port in enumerate(ports)
             ]
-            responses = [future.result(timeout=10) for future in futures]
+            # The winner's executor holds its lease until released, so the
+            # other continuation can only be answered with the conflict.
+            done, pending = wait(futures, timeout=10, return_when=FIRST_COMPLETED)
+            assert (len(done), len(pending)) == (1, 1)
+            conflicts = [future.result() for future in done]
+            redis = sync_redis.Redis.from_url(redis_url, decode_responses=True)
+            try:
+                redis.set(f"{key_prefix}:test-release", "1")
+            finally:
+                redis.close()
+            winners = [future.result(timeout=10) for future in pending]
 
-        winners = [response for response in responses if "result" in response]
-        conflicts = [response for response in responses if "error" in response]
-        assert len(winners) == 1
-        assert len(conflicts) == 1
+        assert "error" in conflicts[0], conflicts[0]
+        assert "result" in winners[0], winners[0]
         assert conflicts[0]["error"]["message"].startswith(
             f"Task {task_id} is active on replica-"
         )
@@ -733,6 +750,49 @@ def dispatch_history_spy(dispatcher, monkeypatch):
 
     monkeypatch.setattr(dispatcher, "dispatch", _recording_dispatch)
     return captured
+
+
+async def _stored_task(redis_url: str, key_prefix: str, task_id: str) -> dict:
+    """The task as a peer replica reads it from the shared store."""
+    store = await RedisTaskStore.from_url(redis_url, key_prefix=key_prefix)
+    try:
+        task = await store.get(task_id)
+    finally:
+        await store.close()
+    assert task is not None, f"task {task_id} is not in the shared store"
+    return task.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+@pytest.mark.integration
+class TestA2AClientServesFromTheSharedStore:
+    def test_a_served_turn_is_the_task_a_peer_reads_from_redis(
+        self, a2a_client, workflow_state_redis_url, a2a_key_prefix
+    ):
+        """The multi-turn client runs the real executor and dispatcher on
+        the production handler, so its task lands in the shared store."""
+        body = _send_message(
+            a2a_client,
+            "search for cat videos",
+            f"test-shared-store-{uuid.uuid4()}",
+            agent_name="unregistered_agent",
+            rpc_id=60,
+        )
+        served = body["result"]
+
+        assert served["status"]["state"] == "failed"
+        assert json.loads(served["status"]["message"]["parts"][0]["text"]) == {
+            "type": "error",
+            "agent": "unregistered_agent",
+            "error_type": "ValueError",
+            "message": (
+                "Agent 'unregistered_agent' failed with ValueError. "
+                "See runtime logs for detail."
+            ),
+        }
+        stored = asyncio.run(
+            _stored_task(workflow_state_redis_url, a2a_key_prefix, served["id"])
+        )
+        assert stored == served
 
 
 @pytest.mark.integration
