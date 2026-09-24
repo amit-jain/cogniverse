@@ -221,3 +221,7 @@ llm:
   model: google/gemma-4-e4b-it
   builtin:
     enabled: false
+
+config:
+  defaultProfiles:
+    video: video_colpali_smol500_mv_frame

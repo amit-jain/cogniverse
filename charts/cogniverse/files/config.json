@@ -15,7 +15,9 @@
       "cogniverse/coding": "coding_agent"
     }
   },
-  "active_video_profile": "video_colpali_smol500_mv_frame",
+{{- with .Values.config.defaultProfiles.video }}
+  "active_video_profile": {{ . | quote }},
+{{- end }}
   "answer_grounding_search_timeout_seconds": 12.0,
   "agents": {
     "search_agent": {
@@ -1231,10 +1233,12 @@
       }
     },
     "default_profiles": {
+{{- with .Values.config.defaultProfiles.video }}
       "video": {
-        "profile": "video_colpali_smol500_mv_frame",
+        "profile": {{ . | quote }},
         "strategy": "segmentation"
       }
+{{- end }}
     }
   },
   "messaging": {
