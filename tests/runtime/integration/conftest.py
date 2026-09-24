@@ -6,6 +6,7 @@ plus ConfigManager, SchemaLoader, and FastAPI TestClient fixtures
 wired with real dependencies including real ColPali query encoder.
 """
 
+import dataclasses
 import json
 import logging
 import uuid
@@ -190,12 +191,7 @@ def config_manager(vespa_instance):
         profile_type="video", embedding_type="single_vector"
     )
     cm.add_backend_profile(
-        BackendProfileConfig(
-            profile_name="test_xclip",
-            type=single_vector_video.type,
-            schema_name=single_vector_video.schema_name,
-            embedding_model=single_vector_video.embedding_model,
-        ),
+        dataclasses.replace(single_vector_video, profile_name="test_xclip"),
         tenant_id="test:unit",
     )
 

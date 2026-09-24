@@ -100,6 +100,7 @@ def tomoro_service_configured(config_manager):
     previous = dict(sys_cfg.inference_service_urls)
     sys_cfg.inference_service_urls = dict(previous)
     sys_cfg.inference_service_urls["tomoro_embedding"] = "http://tomoro.invalid:8000"
+    sys_cfg.inference_service_urls["video_embed"] = "http://video-embed.invalid:8000"
     config_manager.set_system_config(sys_cfg)
     QueryEncoderFactory._encoder_cache.clear()
     yield
