@@ -499,7 +499,9 @@ class SchemaRegistry:
 
         try:
             # Re-deploy previous schema set (removes failed schema implicitly)
-            success = self._backend.deploy_schemas(previous_schemas)
+            success = self._backend.deploy_schemas(
+                [{**schema, "carried": True} for schema in previous_schemas]
+            )
             if success:
                 logger.info(
                     f"Successfully rolled back '{failed_schema_name}'. "
