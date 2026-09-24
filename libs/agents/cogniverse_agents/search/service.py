@@ -309,12 +309,14 @@ class SearchService:
                 results_output_value = serialize_search_results(results)
                 if result_granularity == "source":
                     collapsed_documents = results.num_collapsed_documents
-                    backend_span_ctx.set_attribute(
-                        "num_collapsed_documents", collapsed_documents
-                    )
-                    search_span_ctx.set_attribute(
-                        "num_collapsed_documents", collapsed_documents
-                    )
+                    for span_ctx in (backend_span_ctx, search_span_ctx):
+                        span_ctx.set_attribute(
+                            "num_collapsed_documents", collapsed_documents
+                        )
+                        span_ctx.set_attribute(
+                            "source_search_incomplete",
+                            results.source_search_incomplete,
+                        )
                 add_search_results_to_span(
                     backend_span_ctx, results, output_value=results_output_value
                 )

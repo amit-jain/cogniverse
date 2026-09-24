@@ -641,7 +641,7 @@ class TestSearchEndpoint:
         }.get(k, d)
 
         service = MagicMock()
-        service.search.return_value = []
+        service.search.return_value = SearchResultBatch()
 
         with (
             patch(
@@ -675,7 +675,7 @@ class TestSearchEndpoint:
     async def test_search_accepts_explicit_result_granularity(self):
         with _search_app_context() as test_app:
             mock_backend = MagicMock()
-            mock_backend.search.return_value = []
+            mock_backend.search.return_value = SearchResultBatch()
 
             with (
                 patch(
@@ -791,7 +791,7 @@ class TestSearchEndpoint:
     def test_search_success(self, mock_service_cls, search_client):
         """POST /search with valid query returns SearchResponse."""
         mock_instance = MagicMock()
-        mock_instance.search.return_value = [_make_search_result()]
+        mock_instance.search.return_value = SearchResultBatch([_make_search_result()])
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -810,25 +810,27 @@ class TestSearchEndpoint:
         self, mock_service_cls, search_client
     ):
         mock_instance = MagicMock()
-        mock_instance.search.return_value = [
-            _make_search_result(
-                matched_segments=[
-                    {
-                        "document_id": "doc-1",
-                        "score": 0.95,
-                        "start_time": 0.0,
-                        "end_time": 5.0,
-                    },
-                    {
-                        "document_id": "doc-2",
-                        "score": 0.90,
-                        "start_time": 5.0,
-                        "end_time": 10.0,
-                    },
-                ],
-                segments_in_window=2,
-            )
-        ]
+        mock_instance.search.return_value = SearchResultBatch(
+            [
+                _make_search_result(
+                    matched_segments=[
+                        {
+                            "document_id": "doc-1",
+                            "score": 0.95,
+                            "start_time": 0.0,
+                            "end_time": 5.0,
+                        },
+                        {
+                            "document_id": "doc-2",
+                            "score": 0.90,
+                            "start_time": 5.0,
+                            "end_time": 10.0,
+                        },
+                    ],
+                    segments_in_window=2,
+                )
+            ]
+        )
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -864,7 +866,7 @@ class TestSearchEndpoint:
         self, mock_service_cls, search_client
     ):
         mock_instance = MagicMock()
-        mock_instance.search.return_value = [_make_search_result()]
+        mock_instance.search.return_value = SearchResultBatch([_make_search_result()])
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -886,7 +888,7 @@ class TestSearchEndpoint:
     def test_search_empty_results(self, mock_service_cls, search_client):
         """POST /search returns results_count=0 when no matches."""
         mock_instance = MagicMock()
-        mock_instance.search.return_value = []
+        mock_instance.search.return_value = SearchResultBatch()
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -912,7 +914,7 @@ class TestSearchEndpoint:
     def test_search_with_session_id(self, mock_service_cls, search_client):
         """POST /search with session_id uses session_span for telemetry."""
         mock_instance = MagicMock()
-        mock_instance.search.return_value = []
+        mock_instance.search.return_value = SearchResultBatch()
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -938,7 +940,7 @@ class TestSearchStreaming:
     def test_search_stream_success(self, mock_service_cls, search_client):
         """POST /search with stream=True returns SSE with status + final events."""
         mock_instance = MagicMock()
-        mock_instance.search.return_value = [_make_search_result()]
+        mock_instance.search.return_value = SearchResultBatch([_make_search_result()])
         mock_service_cls.return_value = mock_instance
 
         resp = search_client.post(
@@ -1155,7 +1157,7 @@ class TestSearchEventLoopOffload:
 
         def _slow_search(**kwargs):
             time.sleep(0.4)
-            return []
+            return SearchResultBatch()
 
         mock_service = MagicMock()
         mock_service.search = _slow_search

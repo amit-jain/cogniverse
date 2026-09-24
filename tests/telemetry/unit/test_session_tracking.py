@@ -253,6 +253,7 @@ class TestSearchRouterSessionIntegration:
             strategy="hybrid",
             results_count=0,
             results=[],
+            source_search_incomplete=False,
             session_id="client-session-456",
         )
         assert response_with.session_id == "client-session-456"
@@ -262,6 +263,7 @@ class TestSearchRouterSessionIntegration:
             "strategy": "hybrid",
             "results_count": 0,
             "results": [],
+            "source_search_incomplete": False,
             "session_id": "client-session-456",
         }
 
@@ -272,5 +274,6 @@ class TestSearchRouterSessionIntegration:
             strategy="hybrid",
             results_count=0,
             results=[],
+            source_search_incomplete=False,
         )
         assert response_without.session_id is None
