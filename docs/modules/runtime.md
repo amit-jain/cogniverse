@@ -774,6 +774,7 @@ curl "http://localhost:8000/search/strategies?tenant_id=acme:acme"
 ```
 Strategies are per-profile (derived from the profile's schema), so `tenant_id`
 is required and an optional `profile` defaults to the tenant's active profile.
+With no `profile` and no default video profile from `resolve_default_profile`, `POST /search` and `GET /search/strategies` return 400 `No profile specified on the request and tenant '<tenant>' has no configured default video profile.`
 The returned names can be passed straight to the `strategy` field of `POST /search`.
 
 **GET /search/profiles** - List the profiles this tenant can be served
