@@ -15,10 +15,12 @@ on:
       - '.github/workflows/chart-validation.yml'
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
+      - 'configs/schemas/**'
       - 'libs/foundation/cogniverse_foundation/config/unified_config.py'
       - 'libs/cli/cogniverse_cli/deploy.py'
       - 'libs/core/cogniverse_core/registries/schema_deploy_lease.py'
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
+      - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
   pull_request:
@@ -34,12 +36,14 @@ on:
       # shipped and example configs.
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
+      - 'configs/schemas/**'
       # test_semantic_router_chart.py pins the router's response-cache bounds
       # against SemanticRouterConfig.
       - 'libs/foundation/cogniverse_foundation/config/unified_config.py'
       - 'libs/cli/cogniverse_cli/deploy.py'
       - 'libs/core/cogniverse_core/registries/schema_deploy_lease.py'
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
+      - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
 
