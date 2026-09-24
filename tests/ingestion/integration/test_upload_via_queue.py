@@ -736,10 +736,17 @@ def _tenant_registration_cleanup(vespa_backend):
 @pytest.fixture
 def upload_config_manager(real_stack):
     from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     manager = create_default_config_manager()
     manager._scoped_config_cache_ttl_s = 0
-    return manager
+    yield manager
+    manager.store.delete_config(
+        tenant_id=f"{TENANT_ID}:{TENANT_ID}",
+        scope=ConfigScope.BACKEND,
+        service="backend",
+        config_key="backend_config",
+    )
 
 
 @pytest_asyncio.fixture
@@ -1484,8 +1491,23 @@ class TestUploadRealStack:
     @pytest.mark.requires_inference("colbert_pylate")
     @pytest.mark.asyncio
     async def test_upload_writes_to_minio_queues_runs_pipeline_and_lands_in_vespa(
-        self, real_stack, worker_task, http_client, upload_video_path
+        self,
+        real_stack,
+        worker_task,
+        http_client,
+        upload_video_path,
+        upload_config_manager,
     ):
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        stored_tenant_backend = upload_config_manager.store.get_config(
+            tenant_id=f"{TENANT_ID}:{TENANT_ID}",
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="backend_config",
+        )
+        assert stored_tenant_backend is None, stored_tenant_backend.config_value
+
         video_bytes = upload_video_path.read_bytes()
         content_digest = hashlib.sha256(video_bytes).hexdigest()
 
