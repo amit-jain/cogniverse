@@ -2866,3 +2866,18 @@ async def test_an_interrupted_release_logs_what_it_delivered_and_dropped(
         "reached local consumers but not the relay publish and 7 were dropped "
         "by an interrupted release"
     ]
+
+
+async def test_a_non_integer_cancel_limit_is_refused_with_its_name():
+    from cogniverse_runtime.a2a_request_handler import (
+        max_concurrent_cancels_from_env,
+    )
+
+    with pytest.raises(ValueError) as refused:
+        max_concurrent_cancels_from_env({"A2A_MAX_CONCURRENT_CANCELS": "sixteen"})
+
+    assert str(refused.value) == (
+        "A2A_MAX_CONCURRENT_CANCELS must be an integer, got 'sixteen'"
+    )
+    assert max_concurrent_cancels_from_env({}) == 16
+    assert max_concurrent_cancels_from_env({"A2A_MAX_CONCURRENT_CANCELS": "3"}) == 3

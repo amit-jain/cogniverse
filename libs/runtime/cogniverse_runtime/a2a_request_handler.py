@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from collections.abc import Mapping
 from typing import cast
 
 from a2a.server.agent_execution import RequestContext
@@ -49,6 +51,17 @@ _TERMINAL_STATES = {
     TaskState.failed,
     TaskState.rejected,
 }
+
+
+def max_concurrent_cancels_from_env(environ: Mapping[str, str] = os.environ) -> int:
+    """``A2A_MAX_CONCURRENT_CANCELS`` as an integer, refusing any other value."""
+    raw = environ.get("A2A_MAX_CONCURRENT_CANCELS", str(_MAX_CONCURRENT_CANCELS))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(
+            f"A2A_MAX_CONCURRENT_CANCELS must be an integer, got {raw!r}"
+        ) from None
 
 
 def _retryable_conflict(exc: Exception) -> ServerError:

@@ -1460,6 +1460,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     replica_id = (
         f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     )
+    from cogniverse_runtime.a2a_request_handler import max_concurrent_cancels_from_env
+
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1471,7 +1473,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             os.environ.get("A2A_CANCEL_TIMEOUT_SECONDS", "10")
         ),
         drain_timeout_seconds=float(os.environ.get("A2A_DRAIN_TIMEOUT_SECONDS", "30")),
-        max_concurrent_cancels=int(os.environ.get("A2A_MAX_CONCURRENT_CANCELS", "16")),
+        max_concurrent_cancels=max_concurrent_cancels_from_env(),
     )
     app.mount("/a2a", a2a_protocol.app)
     app.state.a2a_protocol = a2a_protocol
