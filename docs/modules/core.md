@@ -737,7 +737,10 @@ than `DEFAULT_LEASE_SECONDS` (60 s), one wait outlasts its hold. A backend
 deploy (`deploy_schemas`), the runtime's startup metadata deploy, schema
 deletion and the orphan reconciler's redeploy all hold it while they enumerate
 the live schemas, build their package and post it, so no package is built from
-a snapshot another process has already moved past.
+a snapshot another process has already moved past. Every registry read made
+inside the lease is strict: a failed refresh raises instead of answering from
+the in-memory registry, which may still hold a schema a peer deleted or lack
+one a peer registered since.
 
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
 conditionally; `grace_s` is a required keyword-only argument.
