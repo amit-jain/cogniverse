@@ -88,6 +88,46 @@ jobs:
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/cli/unit/ tests/cli/integration/ \
+          --ignore tests/cli/integration/test_release_scripts.py \
+          --ignore tests/cli/integration/test_release_clean_install.py \
+          --ignore tests/cli/integration/test_image_model_provisioning.py \
+          -v --tb=short
+
+  release-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Run release, clean-install and image-provisioning tests
+      timeout-minutes: 95
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/cli/integration/test_release_scripts.py \
+          tests/cli/integration/test_release_clean_install.py \
+          tests/cli/integration/test_image_model_provisioning.py \
           -v --tb=short
 
   lint:
