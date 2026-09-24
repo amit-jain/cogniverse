@@ -755,11 +755,16 @@ def upload_config_manager(real_stack):
 
 
 @pytest.mark.parametrize("prior", [None, {"sentinel": "pre-test backend"}])
-def test_upload_config_manager_restores_the_tenant_backend_config(real_stack, prior):
+def test_upload_config_manager_restores_the_tenant_backend_config(
+    vespa_backend, monkeypatch, prior
+):
     """The fixture's teardown puts back the tenant backend_config it found and
     removes only one it did not find."""
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    monkeypatch.setenv("BACKEND_URL", "http://localhost")
+    monkeypatch.setenv("BACKEND_PORT", str(vespa_backend["http_port"]))
 
     coordinates = {
         "tenant_id": f"{TENANT_ID}:{TENANT_ID}",
@@ -772,7 +777,7 @@ def test_upload_config_manager_restores_the_tenant_backend_config(real_stack, pr
     if prior is not None:
         store.set_config(**coordinates, config_value=prior)
     try:
-        fixture = upload_config_manager.__wrapped__(real_stack)
+        fixture = upload_config_manager.__wrapped__(real_stack=None)
         manager = next(fixture)
         manager.store.set_config(
             **coordinates, config_value={"sentinel": "written by the test"}
