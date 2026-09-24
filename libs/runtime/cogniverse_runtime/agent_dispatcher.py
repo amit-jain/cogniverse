@@ -3023,8 +3023,8 @@ class AgentDispatcher:
         )
         if not profile:
             raise ValueError(
-                f"No search profile for tenant {tenant_id!r}: the request named "
-                "none and no tenant default video profile is configured."
+                f"No profile specified on the request and tenant {tenant_id!r} "
+                "has no configured default video profile."
             )
         return profile
 

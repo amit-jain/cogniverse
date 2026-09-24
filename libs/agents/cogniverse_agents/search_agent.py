@@ -826,8 +826,8 @@ class SearchAgent(
         active_profile = deps.profile or resolve_default_profile(self.search_config)
         if not active_profile:
             raise ValueError(
-                f"tenant {tenant_id!r} has no configured default video profile "
-                "and the search agent was given none"
+                f"No profile specified on the request and tenant {tenant_id!r} "
+                "has no configured default video profile."
             )
 
         self.active_profile = active_profile

@@ -2755,8 +2755,8 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         ) as create_encoder:
             with pytest.raises(
                 ValueError,
-                match=r"^tenant 'acme:acme' has no configured default video "
-                r"profile and the search agent was given none$",
+                match=r"^No profile specified on the request and tenant "
+                r"'acme:acme' has no configured default video profile\.$",
             ):
                 SearchAgent(
                     deps=SearchAgentDeps(tenant_id="acme:acme"),
@@ -2828,8 +2828,8 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         ) as create_encoder:
             with pytest.raises(
                 ValueError,
-                match=r"^tenant '__system__' has no configured default video "
-                r"profile and the search agent was given none$",
+                match=r"^No profile specified on the request and tenant "
+                r"'__system__' has no configured default video profile\.$",
             ):
                 async with search_agent_module.lifespan(search_agent_module.app):
                     pass
