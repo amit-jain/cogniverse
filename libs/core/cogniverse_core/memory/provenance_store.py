@@ -303,8 +303,8 @@ class ProvenanceStore:
         can be no indexed row for it, so this returns idempotently instead
         of deleting from it. The delete itself never deploys the schema
         either: ``delete_live_document`` skips the ingestion client, whose
-        cache miss redeploys a missing, tombstoned or drifted schema, and
-        reads Vespa's "document type does not exist" as absence. A
+        cache miss redeploys a missing, tombstoned or drifted schema; Vespa
+        answers a delete from a document type it does not have with success. A
         schema-registry lookup failure is surfaced rather than treated as
         "no schema": only a clean False short-circuits the delete.
         """

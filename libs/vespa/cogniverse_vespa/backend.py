@@ -62,19 +62,6 @@ def _http_status_of(exc: BaseException) -> Optional[int]:
     return None
 
 
-def _names_missing_document_type(exc: BaseException, document_type: str) -> bool:
-    """Whether Vespa refused an operation because ``document_type`` is not deployed."""
-    node: Optional[BaseException] = exc
-    for _ in range(5):
-        if node is None:
-            return False
-        text = str(node)
-        if f"Document type {document_type} does not exist" in text:
-            return True
-        node = node.__cause__ or node.__context__
-    return False
-
-
 class VespaBackend(Backend):
     """
     Vespa backend implementation supporting both ingestion and search.
@@ -623,9 +610,9 @@ class VespaBackend(Backend):
         """Delete one document from this tenant's schema without deploying it.
 
         Goes straight to Document v1 instead of through the ingestion client,
-        whose cache miss deploys the schema. A schema Vespa does not have
-        holds no documents, so Vespa's answer that the document type does not
-        exist is an idempotent absence; any other refusal raises.
+        whose cache miss deploys the schema. Vespa answers a delete from a
+        document type it does not have with success — such a schema holds no
+        documents — so that absence is idempotent; any refusal raises.
         """
         from cogniverse_vespa.ingestion_client import document_namespace
 
@@ -642,11 +629,6 @@ class VespaBackend(Backend):
                 schema=target, data_id=document_id, namespace=namespace
             )
         except Exception as exc:
-            if _names_missing_document_type(exc, target):
-                logger.info(
-                    f"Document type {target} is not deployed; {route} is absent"
-                )
-                return True
             raise RuntimeError(f"Failed to delete {route}: {exc}") from exc
         status = getattr(response, "status_code", None)
         if status in (200, 404):

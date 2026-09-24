@@ -1367,8 +1367,9 @@ through `VespaBackend.delete_live_document`, a Document v1 delete that never
 builds an ingestion client — a client's cache miss redeploys a missing,
 tombstoned or drifted schema, which from the request path is a full
 application-package redeploy, and a namespace clear that fans out one delete
-per memory turns that into a redeploy race between tenants. Vespa's answer
-that the document type does not exist is read as the row's absence. A schema-registry lookup failure still raises rather than being read
+per memory turns that into a redeploy race between tenants. Vespa answers a
+delete from a document type it does not have (never deployed, or removed by a
+peer) with success, so the row's absence stays idempotent. A schema-registry lookup failure still raises rather than being read
 as "no schema": only a clean, successful "not deployed" answer short-circuits
 the delete. The known cost is that a tenant whose provenance schema exists
 but is briefly unreadable at the moment of the check also skips its indexed
