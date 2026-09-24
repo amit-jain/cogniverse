@@ -245,19 +245,24 @@ _TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S = 4.0
 def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
     """Return True when a tenant schema deploy can safely be retried.
 
-    Only transport-layer failures from the HTTP client are retryable here.
-    The schema registry flattens config-server failures before they reach this
-    helper, so message sniffing would just paper over a backend contract gap.
+    Transport-layer failures from the HTTP client are retryable, and so is a
+    registry revision conflict: the peer's revision it names is authoritative
+    and the next attempt deploys from it. The schema registry flattens
+    config-server failures before they reach this helper, so message sniffing
+    would just paper over a backend contract gap.
     """
     from cogniverse_core.registries.exceptions import (
         RegistryStorageError,
         SchemaConvergenceError,
+        SchemaRevisionConflictError,
     )
 
     node: BaseException | None = exc
     for _ in range(4):
         if node is None:
             break
+        if isinstance(node, SchemaRevisionConflictError):
+            return True
         if isinstance(node, (RegistryStorageError, SchemaConvergenceError)):
             return False
         if isinstance(
