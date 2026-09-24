@@ -54,3 +54,43 @@ def test_a_deploy_without_tenant_schemas_adds_no_document_type(vespa_instance):
     assert set(manager.list_deployed_document_types(raise_on_failure=True)) == (
         before | {schema}
     )
+
+
+def test_delete_orphan_schemas_removes_a_phantom_type_a_prior_release_left(
+    vespa_instance,
+):
+    """A cluster a prior release deployed a tenant-less package to carries the
+    default type, and every deploy refuses it; dropping it as an orphan is the
+    one-time fix."""
+    from vespa.package import ApplicationPackage, Document, Schema
+
+    from cogniverse_core.registries.exceptions import BackendDeploymentError
+    from cogniverse_vespa.metadata_schemas import add_metadata_schemas_to_package
+
+    backend = _backend(vespa_instance)
+    manager = backend.schema_manager
+    before = set(manager.list_deployed_document_types(raise_on_failure=True))
+
+    def package_with_the_phantom():
+        package = ApplicationPackage(
+            name="cogniverse",
+            schema=[Schema(name="cogniverse", document=Document())]
+            + manager._get_existing_tenant_schemas(),
+        )
+        add_metadata_schemas_to_package(package)
+        return package
+
+    manager._deploy_package(package_with_the_phantom)
+    assert set(manager.list_deployed_document_types(raise_on_failure=True)) == (
+        before | {"cogniverse"}
+    )
+    with pytest.raises(BackendDeploymentError, match=r"\['cogniverse'\]"):
+        backend.schema_registry.deploy_schema("phantom:acme", "agent_memories")
+
+    assert manager.delete_orphan_schemas(["cogniverse"]) == ["cogniverse"]
+
+    assert set(manager.list_deployed_document_types(raise_on_failure=True)) == before
+    schema = backend.schema_registry.deploy_schema("phantom:acme", "agent_memories")
+    assert set(manager.list_deployed_document_types(raise_on_failure=True)) == (
+        before | {schema}
+    )
