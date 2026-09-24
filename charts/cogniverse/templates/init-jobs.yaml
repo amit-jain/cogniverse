@@ -53,10 +53,14 @@ spec:
             {{- range $tenant := $.Values.config.tenants }}
             echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
             echo "  Deploying profile: {{ $profile }}"
-            RESPONSE=$(curl -sf -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
+            RESPONSE=$(curl -sSf --max-time 900 -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
               -H "Content-Type: application/json" \
-              -d '{"tenant_id": "{{ $tenant.id }}", "force": false}' 2>&1) || true
+              -d '{"tenant_id": "{{ $tenant.id }}", "force": false}')
             echo "  Response: $RESPONSE"
+            case "$RESPONSE" in
+              *'"deployment_status":"success"'*|*'"deployment_status":"already_deployed"'*) ;;
+              *) echo "Schema deployment failed for tenant {{ $tenant.id }}"; exit 1 ;;
+            esac
             {{- end }}
             {{- end }}
 
