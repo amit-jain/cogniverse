@@ -1336,6 +1336,106 @@ class TestProvenanceWriteLeaseScope:
         assert self._lease_record(manager).config_value["holder"] is None
         manager.memory.update.assert_not_called()
 
+    def test_provenance_free_adds_run_concurrently(self):
+        """A conversation turn's add spends seconds in mem0's extraction pass;
+        with no indexed row to keep consistent it must not queue behind the
+        other adds of the tenant."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        manager = self._manager("lease_concurrent_adds_tenant")
+        inside = threading.Barrier(4, timeout=5)
+
+        def add(content, **kwargs):
+            inside.wait()
+            return {"results": [{"id": f"id-{content}", "event": "ADD"}]}
+
+        manager.memory.add.side_effect = add
+
+        def remember(index):
+            return manager.add_memory(
+                content=f"turn-{index}",
+                tenant_id="lease_concurrent_adds_tenant",
+                agent_name="conversation",
+                metadata={"type": "conversation"},
+                infer=False,
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            added = sorted(pool.map(remember, range(4)))
+
+        assert added == ["id-turn-0", "id-turn-1", "id-turn-2", "id-turn-3"]
+        assert self._lease_record(manager) is None
+
+    def test_a_provenance_free_add_is_not_fenced_by_another_threads_lease(
+        self, monkeypatch
+    ):
+        """A provenance write holding the lease on one thread neither blocks
+        a provenance-free add on another nor lends it its lease to fence on."""
+        import threading
+
+        from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+
+        manager = self._manager("lease_thread_local_tenant")
+        attaching = threading.Event()
+        release = threading.Event()
+        fenced_from = []
+        ensure_owned = SchemaDeployLease.ensure_owned
+
+        def record_fence(lease, *args, **kwargs):
+            fenced_from.append(threading.current_thread().name)
+            return ensure_owned(lease, *args, **kwargs)
+
+        monkeypatch.setattr(SchemaDeployLease, "ensure_owned", record_fence)
+
+        def add(content, **kwargs):
+            return {"results": [{"id": f"id-{content}", "event": "ADD"}]}
+
+        def blocked_attach(memory_id, provenance, **kwargs):
+            attaching.set()
+            assert release.wait(timeout=10)
+            return "prov-row"
+
+        manager.memory.add.side_effect = add
+        manager.memory.get.return_value = {"id": "id-cited", "memory": "cited"}
+        manager._provenance_store.attach.side_effect = blocked_attach
+        outcomes = {}
+
+        def cited_write():
+            outcomes["cited"] = manager.add_memory(
+                content="cited",
+                tenant_id="lease_thread_local_tenant",
+                agent_name="agent",
+                metadata=self._provenance_metadata(),
+                infer=False,
+            )
+
+        def plain_write():
+            outcomes["plain"] = manager.add_memory(
+                content="plain",
+                tenant_id="lease_thread_local_tenant",
+                agent_name="conversation",
+                metadata={"type": "conversation"},
+                infer=False,
+            )
+
+        cited = threading.Thread(target=cited_write, name="cited-writer")
+        plain = threading.Thread(target=plain_write, name="plain-writer")
+        cited.start()
+        assert attaching.wait(timeout=10)
+        plain.start()
+        plain.join(timeout=5)
+        plain_finished_while_lease_held = not plain.is_alive()
+        release.set()
+        cited.join(timeout=10)
+        plain.join(timeout=10)
+
+        assert plain_finished_while_lease_held is True
+        assert outcomes == {"cited": "id-cited", "plain": "id-plain"}
+        assert "plain-writer" not in fenced_from
+        assert set(fenced_from) == {"cited-writer"}
+        assert self._lease_record(manager).config_value["holder"] is None
+
 
 class TestAddMemoryErrorPrecedence:
     """Malformed input reports the first contract it breaks, as before the

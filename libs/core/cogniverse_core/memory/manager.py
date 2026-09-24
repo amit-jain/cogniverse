@@ -250,10 +250,11 @@ class Mem0MemoryManager:
             # indexed upsert, and verification, so a manager write cannot make
             # the verified snapshot obsolete before repair returns.
             instance._provenance_write_lock = threading.RLock()
-            # The lease held by the provenance ownership scope this thread is
-            # inside, if any. Mutations and successful returns are fenced
-            # against it, so a holder that lost ownership stops.
-            instance._active_provenance_lease = None
+            # Per thread: the lease held by the provenance ownership scope
+            # the thread is inside, if any. Mutations and successful returns
+            # are fenced against it, so a holder that lost ownership stops;
+            # a thread outside every scope has none to fence on.
+            instance._provenance_lease_local = threading.local()
             # Built lazily by the provenance_store property once the manager
             # has a backend resolver; delete paths read it before that.
             instance._provenance_store = None
@@ -681,6 +682,8 @@ class Mem0MemoryManager:
         # would serialize every replica's writes for the tenant behind one
         # mutex held across mem0's extraction pass.
         indexed_provenance = self._provenance_for_index(metadata)
+        if indexed_provenance is not None:
+            self._prepare_indexed_writes()
         with self._provenance_write_ownership(
             store_lease=indexed_provenance is not None
         ):
@@ -901,6 +904,7 @@ class Mem0MemoryManager:
 
     def repair_provenance(self, memory_id: str, max_attempts: int = 3) -> str:
         """Reattach a primary memory's canonical provenance idempotently."""
+        self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._repair_provenance(memory_id, max_attempts=max_attempts)
 
@@ -999,15 +1003,18 @@ class Mem0MemoryManager:
         result is returned; a holder that lost the lease raises
         ``DeploymentLeaseLost`` instead of mutating or reporting success.
 
-        ``store_lease=False`` keeps the in-process ordering but skips the
-        cluster-wide record. The store lease is what keeps a primary and its
-        indexed provenance row consistent across replicas, so an operation
-        with no index row to coordinate must not pay for it — nor hold a
-        per-tenant mutex across the whole cluster while it runs.
+        ``store_lease=False`` takes nothing. The lease and the in-process
+        lock in front of it are what keep a primary and its indexed
+        provenance row consistent, so an operation with no index row to
+        coordinate must not pay for them — nor queue behind every other
+        write of the tenant while mem0's extraction pass runs.
         """
+        if not store_lease:
+            yield
+            return
         with self._provenance_write_lock:
             store = getattr(self, "_provenance_lease_store", None)
-            if store is None or not store_lease:
+            if store is None:
                 yield
                 return
             from cogniverse_core.registries.schema_deploy_lease import (
@@ -1023,20 +1030,37 @@ class Mem0MemoryManager:
                 purpose=f"provenance writes for {self._storage_tenant_id}",
             )
             lease.acquire()
-            previous_lease = self._active_provenance_lease
-            self._active_provenance_lease = lease
+            local = self._provenance_lease_local
+            previous_lease = getattr(local, "lease", None)
+            local.lease = lease
             try:
                 yield
                 lease.ensure_owned()
             finally:
-                self._active_provenance_lease = previous_lease
+                local.lease = previous_lease
                 lease.release()
 
     def _check_provenance_ownership(self) -> None:
         """Fence the caller against a lease it no longer owns."""
-        lease = self._active_provenance_lease
+        lease = getattr(self._provenance_lease_local, "lease", None)
         if lease is not None:
             lease.ensure_owned()
+
+    def _prepare_indexed_writes(self) -> None:
+        """Ensure the memory and provenance schemas can be fed, before the lease.
+
+        A write's first feed to a schema in this process builds its ingestion
+        client, which deploys the schema when it is missing or drifted. Inside
+        the write lease that deploy would outlast a hold sized for a memory
+        write and expire the lease after the write had landed.
+        """
+        resolve = getattr(self, "_resolve_backend", None)
+        if resolve is None:
+            return
+        memory_schema = self.config["vector_store"]["config"]["profile"]
+        with leased_backend(resolve) as backend:
+            backend.prepare_ingestion(memory_schema)
+            backend.prepare_ingestion(PROVENANCE_BASE_SCHEMA)
 
     def _detect_and_persist_contradictions(
         self,
@@ -1905,6 +1929,8 @@ class Mem0MemoryManager:
         # update can prove it has no indexed row to keep consistent. Updates
         # are off the hot path; provenance-free adds keep their lease-free
         # path.
+        if metadata is None or "provenance" in metadata:
+            self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._update_memory(
                 memory_id=memory_id,

@@ -1643,3 +1643,56 @@ def test_mounted_synthesis_and_citation_routes_reject_torn_provenance(
 
     mm.memory.delete(partial_id)
     assert mm.memory.get(partial_id) is None
+
+
+def test_a_slow_provenance_schema_ensure_runs_before_the_write_lease(
+    memory_env, monkeypatch
+):
+    """A provenance write whose tenant schema must first be ensured (an
+    ingestion-client cache miss, which can deploy it) does that before taking
+    the write lease: a deploy longer than the lease's hold would expire it
+    after the write had landed."""
+    import time
+
+    from cogniverse_core.memory import manager as manager_module
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    monkeypatch.setattr(manager_module, "PROVENANCE_LEASE_SECONDS", 2.0)
+    monkeypatch.setattr(manager_module, "PROVENANCE_WAIT_SECONDS", 5.0)
+    mm = memory_env.manager
+    backend = mm._resolve_backend()
+    schema = backend.get_tenant_schema_name(mm._storage_tenant_id, "provenance")
+    backend._vespa_ingestion_clients.pop(schema, None)
+    registry = backend.schema_registry
+    ensure = registry.deploy_schema
+    holders_during_ensure = []
+
+    def slow_ensure(*, tenant_id, base_schema_name, **kwargs):
+        if base_schema_name == "provenance":
+            record = mm._provenance_lease_store.get_config(
+                tenant_id="__system__",
+                scope=ConfigScope.SCHEMA,
+                service="provenance_write_lease",
+                config_key=mm._storage_tenant_id,
+            )
+            holders_during_ensure.append(
+                None if record is None else record.config_value["holder"]
+            )
+            time.sleep(3.0)
+        return ensure(tenant_id=tenant_id, base_schema_name=base_schema_name, **kwargs)
+
+    monkeypatch.setattr(registry, "deploy_schema", slow_ensure)
+    provenance = make_provenance(
+        written_by="agent:slow-ensure",
+        derivation_kind=DerivationKind.DIRECT_INGEST,
+        confidence=0.6,
+        derived_from=[CitationRef.external("https://source.test/slow-ensure")],
+    )
+
+    memory_id = _add_with_provenance(
+        mm, "A primary written after a slow provenance schema ensure.", provenance
+    )
+
+    assert holders_during_ensure == [None]
+    assert list(mm.provenance_store.fetch([memory_id])) == [memory_id]
+    assert schema in backend._vespa_ingestion_clients

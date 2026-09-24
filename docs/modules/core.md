@@ -1314,7 +1314,13 @@ keep consistent. `add_memory` resolves the requested
 provenance from the caller's metadata before taking anything, and skips the
 store lease when there is none — so a conversation turn and an agent remember,
 which carry no provenance, never take a cluster-wide per-tenant mutex and never
-hold one across mem0's extraction pass. `update_memory` always takes the lease:
+hold one across mem0's extraction pass. They skip the in-process lock in front
+of the lease too, so they run concurrently with each other. The lease a thread
+holds is recorded per thread, so only that thread's writes are fenced on it.
+A leased write ensures the tenant's memory and provenance schemas can be fed
+before it takes the lock and lease: that first feed in a process can deploy a
+missing or drifted schema, and inside the lease the deploy would outlast a
+hold sized for a memory write. `update_memory` always takes the lease:
 whether the stored primary declares provenance can change between any unleased
 read of it and the write. An update that leaves the primary without provenance
 also deletes its indexed row. Deletion,
