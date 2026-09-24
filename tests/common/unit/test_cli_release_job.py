@@ -19,10 +19,12 @@ INSTALLING_FILES = (
     "tests/cli/integration/test_image_model_provisioning.py",
 )
 
-# pytest wall time of the three files on a 32-thread host (1349 s clean
-# install, 450 s release scripts, 56 s image provisioning), scaled for a
-# 4-vCPU hosted runner.
+# pytest wall time on a 32-thread host, scaled for a 4-vCPU hosted runner:
+# the three files (1349 s clean install, 450 s release scripts, 56 s image
+# provisioning), and the rest of the unit-tests job (308 s, plus 11 s of k3s
+# secrets sync).
 MEASURED_HOST_SECONDS = 1855
+MEASURED_REST_HOST_SECONDS = 319
 RUNNER_SLOWDOWN = 3
 
 
@@ -61,3 +63,14 @@ def test_the_release_job_budgets_the_measured_run_and_frees_disk_first():
     assert test_step["timeout-minutes"] >= math.ceil(
         MEASURED_HOST_SECONDS * RUNNER_SLOWDOWN / 60
     )
+
+
+def test_the_unit_job_budgets_the_measured_rest():
+    job = yaml.safe_load((WORKFLOWS_DIR / "cli-tests.yml").read_text())["jobs"][
+        "unit-tests"
+    ]
+    steps = {step.get("name"): step for step in job["steps"]}
+
+    assert steps["Run unit and integration tests"].get(
+        "timeout-minutes", 0
+    ) >= math.ceil(MEASURED_REST_HOST_SECONDS * RUNNER_SLOWDOWN / 60)
