@@ -246,8 +246,9 @@ def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
     """Return True when a tenant schema deploy can safely be retried.
 
     Transport-layer failures from the HTTP client are retryable, and so is a
-    registry revision conflict: the peer's revision it names is authoritative
-    and the next attempt deploys from it. The schema registry flattens
+    registry revision conflict the error marks ``retryable``: the peer's
+    registration it names is authoritative and the next attempt deploys from
+    it. The schema registry flattens
     config-server failures before they reach this helper, so message sniffing
     would just paper over a backend contract gap.
     """
@@ -262,7 +263,7 @@ def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
         if node is None:
             break
         if isinstance(node, SchemaRevisionConflictError):
-            return True
+            return node.retryable
         if isinstance(node, (RegistryStorageError, SchemaConvergenceError)):
             return False
         if isinstance(

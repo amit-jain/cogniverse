@@ -320,7 +320,7 @@ async def test_registration_deploys_every_schema_memory_init_would_ensure(monkey
 
 @pytest.mark.asyncio
 async def test_create_tenant_retries_a_registry_revision_conflict(monkeypatch):
-    """A peer's tombstone or registration superseding the deploy's revision is
+    """A peer's registration superseding the deploy's revision is
     authoritative and retryable: the next attempt deploys from it."""
     from cogniverse_core.registries.exceptions import (
         RegistryConflictError,
@@ -329,7 +329,7 @@ async def test_create_tenant_retries_a_registry_revision_conflict(monkeypatch):
     from cogniverse_runtime.admin import tenant_manager as tenant_manager_mod
 
     conflict = SchemaRevisionConflictError(
-        "wiki_pages_acme_prod", "tombstone", activated=True
+        "wiki_pages_acme_prod", "registration", activated=True
     )
     conflict.__cause__ = RegistryConflictError(
         "Registration of 'wiki_pages_acme_prod' conflicted with a newer registry revision"
@@ -352,3 +352,45 @@ async def test_create_tenant_retries_a_registry_revision_conflict(monkeypatch):
         ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
     ]
     assert backend.schema_manager.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("peer_revision", "activated"),
+    [("tombstone", True), ("tombstone", False), ("unknown", True)],
+)
+async def test_create_tenant_does_not_retry_a_peer_deletion(
+    monkeypatch, peer_revision, activated
+):
+    """A peer's deletion, or a peer revision that could not be read, is not
+    retried: a retry would recreate a schema the peer deliberately removed."""
+    from cogniverse_core.registries.exceptions import (
+        RegistryConflictError,
+        SchemaRevisionConflictError,
+    )
+    from cogniverse_runtime.admin import tenant_manager as tenant_manager_mod
+
+    conflict = SchemaRevisionConflictError(
+        "wiki_pages_acme_prod", peer_revision, activated=activated
+    )
+    conflict.__cause__ = RegistryConflictError(
+        "Registration of 'wiki_pages_acme_prod' conflicted with a newer registry revision"
+    )
+    backend = _RecordingBackend(
+        deploy_outcomes=[conflict, None],
+        create_outcomes=[True, True],
+    )
+    tenant_manager = _prepare_create_tenant(monkeypatch, backend)
+
+    with pytest.raises(HTTPException) as caught:
+        await tenant_manager.create_tenant(
+            tenant_manager_mod.CreateTenantRequest(
+                tenant_id="acme:prod", created_by="admin"
+            )
+        )
+
+    assert caught.value.status_code == 500
+    assert caught.value.detail == str(conflict)
+    assert backend.schema_registry.calls == [
+        ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
+    ]

@@ -1545,8 +1545,7 @@ def test_a_peer_delete_before_the_lease_refuses_redeploying_that_schema(
     assert caught.value.activated is False
     assert str(caught.value) == (
         f"Schema {schema!r} was deleted by another process after this deploy "
-        f"read its registry row; nothing was activated or registered. Retry the "
-        f"deploy."
+        f"read its registry row; nothing was activated or registered."
     )
 
 
@@ -1670,3 +1669,61 @@ def test_a_rollback_honours_a_peer_delete_in_its_window(recovery_backend, monkey
     assert victim_schema not in set(
         connect().schema_manager.list_deployed_document_types()
     )
+
+
+def test_a_peer_delete_after_activation_stands_and_is_not_retried(
+    recovery_backend, monkeypatch
+):
+    """A peer deletes a schema right after this deploy activated it: the
+    conditional registration conflicts, the peer's deletion stands, and the
+    conflict is reported as not retryable."""
+    from cogniverse_core.registries.exceptions import (
+        RegistryConflictError,
+        SchemaRevisionConflictError,
+    )
+
+    connect, store = recovery_backend
+    owner, deployer = connect(), connect()
+    tenant = f"after_{uuid4().hex[:10]}:victim"
+    keeper = owner.schema_registry.deploy_schema(
+        f"after_{uuid4().hex[:10]}:keeper", "wiki_pages"
+    )
+    schema = owner.schema_registry.deploy_schema(tenant, "wiki_pages")
+    real_deploy = deployer.deploy_schemas
+    real_write = store.compare_and_set_config
+    peer_deleted = []
+    conflicts = []
+
+    def peer_deletes_after_activation(schemas, *args, **kwargs):
+        activated = real_deploy(schemas, *args, **kwargs)
+        peer_deleted.append(owner.schema_manager.delete_schema(tenant, "wiki_pages"))
+        return activated
+
+    def record_conflicts(**kwargs):
+        saved = real_write(**kwargs)
+        if saved is None and kwargs["tenant_id"] == tenant:
+            conflicts.append(kwargs["config_key"])
+        return saved
+
+    monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_after_activation)
+    monkeypatch.setattr(store, "compare_and_set_config", record_conflicts)
+    with pytest.raises(SchemaRevisionConflictError) as caught:
+        deployer.schema_registry.deploy_schema(tenant, "wiki_pages", force=True)
+
+    assert peer_deleted == [schema]
+    assert conflicts == ["schema_wiki_pages"]
+    assert caught.value.activated is True
+    assert caught.value.retryable is False
+    assert caught.value.peer_revision == "tombstone"
+    assert isinstance(caught.value.__cause__, RegistryConflictError)
+    assert str(caught.value) == (
+        f"Schema {schema!r} was deleted by another process after this deploy "
+        f"read its registry row; the peer's deletion stands and was not "
+        f"overwritten."
+    )
+    live = set(connect().schema_manager.list_deployed_document_types())
+    assert schema not in live
+    assert keeper in live
+    assert _schema_row(store, tenant).config_value["deleted"] is True
+    assert connect().deploy_schemas([]) is True
+    assert schema not in set(connect().schema_manager.list_deployed_document_types())
