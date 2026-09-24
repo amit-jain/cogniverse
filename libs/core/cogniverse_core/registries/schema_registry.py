@@ -901,7 +901,7 @@ class SchemaRegistry:
             if tid == tenant_id
         ]
 
-    def _get_all_schemas(self) -> List[SchemaInfo]:
+    def _get_all_schemas(self, strict: bool = False) -> List[SchemaInfo]:
         """
         Get all deployed schemas across all tenants (PRIVATE - internal use only).
 
@@ -917,6 +917,10 @@ class SchemaRegistry:
         own stale in-memory dict, the deploy package omits document_text,
         and Vespa rejects the deploy as "schema removal".
 
+        Args:
+            strict: Raise when the refresh fails instead of answering from
+                the in-memory cache.
+
         Returns:
             List of all SchemaInfo objects across all tenants
 
@@ -927,6 +931,8 @@ class SchemaRegistry:
         try:
             self._load_schemas_from_storage()
         except Exception as exc:
+            if strict:
+                raise
             logger.warning(
                 f"_get_all_schemas: refresh from storage failed, "
                 f"falling back to in-memory cache: {exc}"

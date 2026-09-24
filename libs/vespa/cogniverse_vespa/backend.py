@@ -982,7 +982,9 @@ class VespaBackend(Backend):
                 registry_schemas: List[Any] = []
                 if self.schema_registry is not None:
                     try:
-                        registry_schemas = self.schema_registry._get_all_schemas() or []
+                        registry_schemas = (
+                            self.schema_registry._get_all_schemas(strict=True) or []
+                        )
                         for schema_info in registry_schemas:
                             full_name = schema_info.full_schema_name
                             if full_name in merged_schema_names:
