@@ -67,6 +67,14 @@ def _sdist_assets(data_dir: Path, asset_roots: list[str]) -> dict[str, Path]:
 
 
 def _git(cwd: Path, *args: str) -> bytes:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, check=True
-    ).stdout
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", None)
+        detail = detail.decode().strip() if detail else str(exc)
+        raise RuntimeError(
+            "cogniverse-cli builds its deployment assets from a git checkout or "
+            f"an sdist; git {' '.join(args)} failed in {cwd}: {detail}"
+        ) from exc
