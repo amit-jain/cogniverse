@@ -1558,6 +1558,11 @@ Add search results details to span.
 - `num_collapsed_documents`: Number of documents collapsed into the returned
   source-level results when `result_granularity="source"`
 
+- `source_search_incomplete`: `True` when a source-granularity search returned
+  fewer than `top_k` sources from a saturated nearest-neighbor candidate
+  budget. `SearchService.search` sets it with `num_collapsed_documents` on the
+  search and backend spans, and `POST /search` sets it on `api.search.request`
+
 **Events Added:**
 
 - `search_results`: Top 3 results with rank, document_id, video_id, score, content_type
