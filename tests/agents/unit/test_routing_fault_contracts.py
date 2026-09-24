@@ -92,8 +92,11 @@ class TestAMissingSpaCyPipelineIsNamedNotEmpty:
             analyzer.extract_semantic_relationships(QUERY)
 
         assert excinfo.value.model_name == MISSING_PIPELINE
-        assert str(excinfo.value).startswith(
+        assert str(excinfo.value) == (
             f"spaCy model '{MISSING_PIPELINE}' could not be loaded: OSError: "
+            f"[E050] Can't find model '{MISSING_PIPELINE}'. It doesn't seem to be a "
+            "Python package or a valid path to a data directory. Install it as "
+            "described under 'spaCy pipeline' in the cogniverse-agents README."
         )
         assert type(excinfo.value.__cause__) is OSError
 
