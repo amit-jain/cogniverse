@@ -50,7 +50,7 @@ Cogniverse consists of **13 independent packages** organized in a **layered arch
 ```mermaid
 flowchart LR
     A["<span style='color:#000'><b>Tag</b><br/>make release VERSION=x.y.z</span>"]
-    B["<span style='color:#000'><b>Build</b><br/>build 5 packages<br/>in dependency order</span>"]
+    B["<span style='color:#000'><b>Build</b><br/>build release set<br/>in dependency order</span>"]
     C["<span style='color:#000'><b>Test</b><br/>pytest by layer<br/>test dependencies</span>"]
     D["<span style='color:#000'><b>Publish</b><br/>publish 5 packages<br/>in dependency order</span>"]
     E["<span style='color:#000'><b>Release</b><br/>GitHub Release</span>"]
@@ -66,13 +66,9 @@ flowchart LR
 
 **Publishing Scripts Handle 5 Packages**
 
-Pushing a `v*` tag drives CI, which builds + publishes these packages in dependency order (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag:
+Pushing a `v*` tag drives CI, which builds + publishes these packages (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag. `build_packages.sh` builds them together with every internal package they require — the release set, in dependency order: sdk, foundation, core, evaluation, synthetic, vespa, agents, telemetry-phoenix, runtime, dashboard.
 
-1. **cogniverse-core** - Built first (has workspace dependencies on foundation, sdk, evaluation)
-2. **cogniverse-agents**, **cogniverse-vespa** - Built in parallel (depend on core)
-3. **cogniverse-runtime**, **cogniverse-dashboard** - Built last (depend on core, agents, vespa)
-
-**Note:** The other 8 packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning, cli, messaging) must be published manually or require script updates.
+**Note:** `publish_packages.sh` uploads the 5 packages above. finetuning, cli and messaging are not built or published by the scripts.
 
 ---
 
@@ -328,7 +324,7 @@ which builds and publishes everything at `0.2.0`:
 
 | Artifact | Versioned by | Published by |
 |---|---|---|
-| Python wheels (13 packages) | `hatch-vcs`, from the tag | `publish-packages.yml` → PyPI |
+| Python wheels + sdists (release set) | `hatch-vcs`, from the tag | `publish-packages.yml` → PyPI |
 | Docker images (runtime/dashboard ×3, gliner, 3 sidecars) | the tag (`github.ref_name`) | `release-images.yml` → docker.io/cogniverse |
 | Helm chart | `Chart.yaml` `appVersion`/`version` | `release-images.yml` (`publish-chart` job) → OCI `oci://registry-1.docker.io/cogniverse` |
 
@@ -401,29 +397,40 @@ CONTINUE_ON_ERROR=true ./scripts/build_packages.sh
 
 ```text
 dist/
-├── cogniverse_core-0.1.0-py3-none-any.whl
-├── cogniverse_core-0.1.0.tar.gz
-├── cogniverse_agents-0.1.0-py3-none-any.whl
-├── cogniverse_agents-0.1.0.tar.gz
-├── cogniverse_vespa-0.1.0-py3-none-any.whl
-├── cogniverse_vespa-0.1.0.tar.gz
-├── cogniverse_runtime-0.1.0-py3-none-any.whl
-├── cogniverse_runtime-0.1.0.tar.gz
-├── cogniverse_dashboard-0.1.0-py3-none-any.whl
-├── cogniverse_dashboard-0.1.0.tar.gz
-└── BUILD_MANIFEST.txt
+├── cogniverse_sdk-0.2.0-py3-none-any.whl
+├── cogniverse_sdk-0.2.0.tar.gz
+├── ...                                  # one wheel + sdist per release package
+├── cogniverse_dashboard-0.2.0-py3-none-any.whl
+├── cogniverse_dashboard-0.2.0.tar.gz
+└── BUILD_MANIFEST.json
 ```
+
+`BUILD_MANIFEST.json` lists exactly the artifacts this invocation built, in build order:
+
+```json
+{
+  "version": "0.2.0",
+  "packages": [
+    {
+      "name": "cogniverse-sdk",
+      "version": "0.2.0",
+      "requires": [],
+      "wheel": {"filename": "cogniverse_sdk-0.2.0-py3-none-any.whl", "sha256": "..."},
+      "sdist": {"filename": "cogniverse_sdk-0.2.0.tar.gz", "sha256": "..."}
+    }
+  ]
+}
+```
+
+`requires` holds the package's internal requirements (base and extras).
 
 #### Build Process
 
-1. **Validation:** Checks package structure and version format for 5 packages (core, agents, vespa, runtime, dashboard)
-2. **Dependency Order:** Builds packages respecting dependencies:
-   - core (built first)
-   - agents, vespa (built in parallel after core)
-   - runtime, dashboard (built last)
-3. **Artifact Generation:** Creates wheel (.whl) and source (.tar.gz) distributions
-4. **Verification:** Validates metadata and contents for each package
-5. **Manifest:** Generates build manifest
+1. **Build:** `uv build --no-sources` builds each release package's sdist, then its wheel from that sdist, into a per-invocation staging directory.
+2. **Validation:** `scripts/release_manifest.py` (run with `uv run --no-sync`, so the project environment must be synced) reads `METADATA`/`PKG-INFO` from each wheel and sdist. Name and version must agree across the pyproject, both filenames and both metadata files; versions are PEP 440 (`packaging.version.Version`), so tag builds (`0.2.0`) and dev builds (`0.2.1.dev1+g<sha>`) are both valid. All packages must share one version, and every internal requirement must be built earlier in the release set.
+3. **Collection:** Only after every package validates are the artifacts copied into `dist/` and the manifest written. Existing files in `dist/` are left untouched; an existing file with the same name but different bytes fails the build. `--clean` removes `dist/` first.
+
+Any failure exits nonzero and leaves no `BUILD_MANIFEST.json`.
 
 ---
 
@@ -610,7 +617,7 @@ git push origin v0.1.0
 
 ```mermaid
 flowchart TD
-    A["<span style='color:#000'><b>Build</b><br/>Build 5 packages<br/>(core, agents, vespa, runtime, dashboard)</span>"]
+    A["<span style='color:#000'><b>Build</b><br/>Build release set<br/>(5 published packages + internal dependencies)</span>"]
     B["<span style='color:#000'><b>Test</b><br/>Run test suite with Vespa</span>"]
     C["<span style='color:#000'><b>TestPyPI</b><br/>Publish based on tag type</span>"]
     D["<span style='color:#000'><b>PyPI</b><br/>Publish based on tag type</span>"]
@@ -902,7 +909,7 @@ release — pushing the tag does it. Those scripts remain for local/offline buil
 ## Support
 
 - **PyPI Issues:** Check [PyPI Help](https://pypi.org/help/)
-- **Build Issues:** Review build logs in `dist/BUILD_MANIFEST.txt`
+- **Build Issues:** Review the `build_packages.sh` output; `dist/BUILD_MANIFEST.json` exists only after a successful build
 - **CI/CD Issues:** Check GitHub Actions logs
 
 ---
