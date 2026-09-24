@@ -40,10 +40,6 @@ from typing import Any, Dict, List
 import httpx
 import pytest
 import uvicorn
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard
 
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_core.common.agent_models import AgentEndpoint
@@ -57,7 +53,6 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime import main as runtime_main
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     AgentDispatcher,
@@ -65,6 +60,7 @@ from cogniverse_runtime.agent_dispatcher import (
 )
 from cogniverse_runtime.routers import openai_compat
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.a2a_protocol import a2a_app
 from tests.utils.hermetic_llm import MODEL
 from tests.utils.vespa_docker import VespaDockerManager
 
@@ -504,34 +500,18 @@ def _assert_framing(raw: str, *, usage_requested: bool) -> str:
     return "".join(frame["choices"][0]["delta"]["content"] for frame in middle)
 
 
-def _a2a_app(dispatcher):
-    """The A2A JSON-RPC app over the production executor."""
-    card = AgentCard(
-        name="Cogniverse",
-        description="Live LM stream module",
-        url="http://localhost/a2a/",
-        version="1",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[],
-    )
-    return A2AStarletteApplication(
-        agent_card=card,
-        http_handler=DefaultRequestHandler(
-            agent_executor=CogniverseAgentExecutor(dispatcher),
-            task_store=InMemoryTaskStore(),
-        ),
-    ).build(rpc_url="/a2a/")
+def _a2a_app(dispatcher, redis_url: str):
+    """The runtime's ``/a2a`` protocol over the production executor and store."""
+    return a2a_app(dispatcher._registry, dispatcher, redis_url)
 
 
 @contextlib.asynccontextmanager
-async def _served(app):
+async def _served(app, lifespan: str = "off"):
     """``app`` on a real uvicorn socket, served from this test's loop."""
     port = _free_port()
     server = uvicorn.Server(
         uvicorn.Config(
-            app, host="127.0.0.1", port=port, lifespan="off", log_level="warning"
+            app, host="127.0.0.1", port=port, lifespan=lifespan, log_level="warning"
         )
     )
     serving = asyncio.create_task(server.serve())
@@ -631,13 +611,22 @@ class TestNothingToSearch:
         [(AGENT, "summary"), (REPORT_AGENT, "executive_summary")],
     )
     async def test_a2a_stream_and_send_return_the_canned_reply(
-        self, dispatcher, proxy, tmp_path, monkeypatch, agent_name, answer_field
+        self,
+        dispatcher,
+        proxy,
+        tmp_path,
+        monkeypatch,
+        workflow_state_redis_url,
+        agent_name,
+        answer_field,
     ):
         _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
         proxy.clear()
         prompt = HARD_PROMPT.format(marker=f"{RUN}-nothing-a2a-{agent_name}")
 
-        async with _served(_a2a_app(dispatcher)) as url:
+        async with _served(
+            _a2a_app(dispatcher, workflow_state_redis_url), lifespan="on"
+        ) as url:
             async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
                 streamed = await http.post(
                     "/a2a/",
@@ -728,13 +717,15 @@ class TestFailedGroundingSearch:
         )
 
     async def test_a2a_stream_fails_the_task_with_the_grounding_error(
-        self, dispatcher, proxy, tmp_path, monkeypatch
+        self, dispatcher, proxy, tmp_path, monkeypatch, workflow_state_redis_url
     ):
         _point_every_lm_at(proxy.api_base, dispatcher, tmp_path, monkeypatch)
         proxy.clear()
         prompt = HARD_PROMPT.format(marker=f"{RUN}-failing-a2a")
 
-        async with _served(_a2a_app(dispatcher)) as url:
+        async with _served(
+            _a2a_app(dispatcher, workflow_state_redis_url), lifespan="on"
+        ) as url:
             async with httpx.AsyncClient(base_url=url, timeout=300.0) as http:
                 response = await http.post(
                     "/a2a/", json=_a2a_request(AGENT, TENANT_FAILING, prompt, True)

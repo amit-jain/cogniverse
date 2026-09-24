@@ -394,17 +394,13 @@ class TestHandleEventShapeGuards:
 
 
 @pytest.fixture
-def failing_coding_runtime():
+def failing_coding_runtime(workflow_state_redis_url):
     import asyncio
     import socket
     import threading
     import time
 
     import uvicorn
-    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-    from a2a.server.request_handlers import DefaultRequestHandler
-    from a2a.server.tasks import InMemoryTaskStore
-    from a2a.types import AgentCapabilities, AgentCard
 
     from cogniverse_core.agents.base import (
         AgentBase,
@@ -415,8 +411,8 @@ def failing_coding_runtime():
     from cogniverse_core.common.agent_models import AgentEndpoint
     from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.manager import ConfigManager
-    from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
     from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+    from tests.utils.a2a_protocol import a2a_app
     from tests.utils.memory_store import InMemoryConfigStore
 
     entered = threading.Event()
@@ -462,27 +458,11 @@ def failing_coding_runtime():
             return (await agent.process(CodingInput(query=query))).model_dump()
 
     dispatcher = CodingDispatcher(registry, config_manager, None)
-    card = AgentCard(
-        name="Coding",
-        description="Coding fixture",
-        url="http://localhost/a2a/",
-        version="1",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[],
-    )
-    app = A2AStarletteApplication(
-        agent_card=card,
-        http_handler=DefaultRequestHandler(
-            agent_executor=CogniverseAgentExecutor(dispatcher),
-            task_store=InMemoryTaskStore(),
-        ),
-    ).build(rpc_url="/a2a/")
+    app = a2a_app(registry, dispatcher, workflow_state_redis_url)
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="on"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]})
     thread.start()
     deadline = time.monotonic() + 10
@@ -490,7 +470,7 @@ def failing_coding_runtime():
         time.sleep(0.01)
     assert server.started is True
     try:
-        yield app, f"http://127.0.0.1:{port}", entered, release
+        yield f"http://127.0.0.1:{port}", entered, release
     finally:
         release.set()
         server.should_exit = True
@@ -511,14 +491,12 @@ async def test_a2a_failure_has_exact_failed_terminal(
 
     import httpx
 
-    app, _, _, _ = failing_coding_runtime
+    runtime_url, _, _ = failing_coding_runtime
     request = _build_a2a_request(query, "test:cli")
     request["params"]["metadata"]["stream"] = streaming
     if not streaming:
         request["method"] = "message/send"
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://runtime"
-    ) as client:
+    async with httpx.AsyncClient(base_url=runtime_url, timeout=30) as client:
         response = await client.post("/a2a/", json=request)
     assert response.status_code == 200
     events = (
@@ -549,7 +527,7 @@ def test_cli_process_shows_failure_once_and_recovers(
     import json
     import subprocess
 
-    _, runtime_url, _, _ = failing_coding_runtime
+    runtime_url, _, _ = failing_coding_runtime
     script = """
 import json, sys
 from cogniverse_cli.code import CodingSession
@@ -599,7 +577,7 @@ print("RECOVERED=" + json.dumps({"summary": recovered.summary, "history": s.hist
 def test_cli_failed_turn_keeps_concurrent_session_result(failing_coding_runtime):
     from concurrent.futures import ThreadPoolExecutor
 
-    _, runtime_url, entered, release = failing_coding_runtime
+    runtime_url, entered, release = failing_coding_runtime
     failed = CodingSession("test:cli", "python", 1, ".", runtime_url)
     healthy = CodingSession("test:peer", "python", 1, ".", runtime_url)
     release.clear()
