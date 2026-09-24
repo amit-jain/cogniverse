@@ -510,6 +510,35 @@ def test_every_cogniverse_app_container_gets_redis_url():
     )
 
 
+def test_disabling_the_in_cluster_redis_is_refused_at_render():
+    """The runtime raises at startup without REDIS_URL, and only the in-cluster
+    Redis supplies it, so ``redis.enabled=false`` would crash-loop the runtime
+    instead of failing the render."""
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "cogniverse",
+            str(CHART_PATH),
+            "--set",
+            "runtime.qualityMonitor.tenantId=test-tenant",
+            "--set",
+            "redis.enabled=false",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout[:2000]
+    first_line = result.stderr.strip().splitlines()[0]
+    assert first_line.startswith("Error: execution error at ("), result.stderr
+    assert first_line.split("): ", 1)[1] == (
+        "redis.enabled=false is unsupported: the runtime requires REDIS_URL, "
+        "which the chart sets only from the in-cluster Redis"
+    ), result.stderr
+
+
 def test_no_container_declares_the_same_env_var_twice():
     """No container repeats an env var name.
 
