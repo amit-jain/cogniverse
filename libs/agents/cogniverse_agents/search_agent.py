@@ -2356,6 +2356,7 @@ async def lifespan(application):
         deps = SearchAgentDeps(
             backend_url=bootstrap.backend_url,
             backend_port=bootstrap.backend_port,
+            profile=getattr(application.state, "profile", None),
         )
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -2568,7 +2569,7 @@ async def enhanced_search(params: RelationshipAwareSearchParams, request: Reques
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
+def main(argv: Optional[List[str]] = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -2581,8 +2582,13 @@ if __name__ == "__main__":
     parser.add_argument("--profile", type=str, help="Processing profile to use")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    # Profile is passed via config.json active_video_profile, not env vars
+    # --profile names the profile; without it the tenant default resolves
+    app.state.profile = args.profile
     logger.info(f"Starting Generic Multi-Modal Search Agent on {args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+
+
+if __name__ == "__main__":
+    main()

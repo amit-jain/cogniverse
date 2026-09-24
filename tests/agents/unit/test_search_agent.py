@@ -2837,6 +2837,53 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         assert search_agent_module.search_agent is None
         assert create_encoder.call_args_list == []
 
+    def test_the_process_profile_argument_names_the_agent_profile(
+        self, tmp_path, monkeypatch
+    ):
+        """``--profile`` reaches the agent; without a tenant default that is
+        the only way the process starts at all."""
+        import asyncio
+        import json
+
+        from cogniverse_agents import search_agent as search_agent_module
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({"backend": {"profiles": {}}}))
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+        monkeypatch.setenv("BACKEND_URL", "http://localhost")
+        config_manager = _memory_config_manager()
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.create_default_config_manager",
+            lambda: config_manager,
+        )
+        monkeypatch.setattr(search_agent_module, "search_agent", None)
+        served = {}
+
+        def serve(app, **kwargs):
+            async def start():
+                async with search_agent_module.lifespan(app):
+                    served["profile"] = search_agent_module.search_agent.active_profile
+
+            asyncio.run(start())
+            served["kwargs"] = kwargs
+
+        monkeypatch.setattr(search_agent_module.uvicorn, "run", serve)
+        # main() records the argument on the shared app; undo it afterwards.
+        monkeypatch.setattr(
+            search_agent_module.app.state, "profile", None, raising=False
+        )
+        with patch(
+            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+        ) as create_encoder:
+            search_agent_module.main(["--profile", "explicit_frames", "--port", "8123"])
+
+        assert served == {
+            "profile": "explicit_frames",
+            "kwargs": {"host": "0.0.0.0", "port": 8123, "reload": False},
+        }
+        [call] = create_encoder.call_args_list
+        assert call.args[0] == "explicit_frames"
+
     def test_an_acoustic_profile_queries_its_semantic_model(self):
         """A ColBERT profile carrying a second, acoustic embedding is queried
         through its semantic model; its embedding_model is the acoustic one."""
