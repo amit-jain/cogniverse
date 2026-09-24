@@ -18,17 +18,16 @@ _SERVICE = "schema_deploy_lease"
 _KEY = "application"
 _POLL_SECONDS = 0.25
 
-# Longer than one prepare-and-activate attempt (the deploy POST's read
-# timeout), so a holder that renews before each attempt cannot expire while
-# that attempt is in flight, and short enough that a holder killed mid-deploy
-# blocks its peers for a bounded time.
-DEFAULT_LEASE_SECONDS = 600.0
+# A deploy holder renews on a heartbeat every third of this for as long as
+# it holds the lease, so a request in flight longer than the hold stays
+# owned; the hold only bounds how long a dead or partitioned holder blocks
+# its peers.
+DEFAULT_LEASE_SECONDS = 60.0
 
 # How long a deployer waits for a live holder before failing. Request-facing
 # deploys run this wait on a worker thread — a tenant's first wiki access
-# deploys its schema — so it is bounded well under a request timeout rather
-# than at the lease expiry; a waiter that gives up raises and the next attempt
-# re-queues.
+# deploys its schema — so it is bounded well under a request timeout. Longer
+# than the hold, so one wait outlasts a holder that stopped renewing.
 DEFAULT_WAIT_SECONDS = 120.0
 
 _process_state = threading.Lock()

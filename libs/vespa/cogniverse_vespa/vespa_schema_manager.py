@@ -548,7 +548,7 @@ class VespaSchemaManager:
                 "before any application exists, may deploy this way."
             )
         else:
-            lease = self._schema_registry.deployment_lease()
+            lease = self._schema_registry.deployment_lease(heartbeat=True)
         with SchemaRegistry._deploy_lock:
             if lease is not None:
                 lease.acquire()

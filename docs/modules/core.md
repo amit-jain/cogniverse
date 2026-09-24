@@ -691,7 +691,7 @@ version and a completed prior intent; older snapshots are rejected.
 (built by `SchemaRegistry.deployment_lease()`) serialises application-package
 replacement across processes and pods. The record lives under the system
 tenant's `SCHEMA` scope, `schema_deploy_lease` service, `application` key, and
-holds the current holder id and the hold time (`DEFAULT_LEASE_SECONDS`, 600 s)
+holds the current holder id and the hold time (`DEFAULT_LEASE_SECONDS`, 60 s)
 it was taken with; it moves only through `compare_and_set_config`. `acquire()`
 waits out a live holder for up to `DEFAULT_WAIT_SECONDS` (120 s) and then
 raises `TimeoutError`; a process takes over a holder only after watching the
@@ -707,6 +707,15 @@ when the store is unreachable: the package is already activated by then. A
 record the store did not confirm cleared is taken over at once by the process
 that released it, and by peers once they have watched it stand still.
 
+A deploy holder (`VespaSchemaManager.deployment_lease`) renews on a background
+heartbeat every third of its hold for as long as it holds the lease, so a live
+holder is never taken over however long its activation runs; the heartbeat
+stops at `release()`. A renewal the store refuses loses the lease, and the
+deploy re-checks ownership before each mutating step (session create, prepare,
+activate, and each backend prepare-and-activate attempt), so it stops before
+the next one. A step already in flight when the lease is lost cannot be
+recalled, because Vespa accepts no fencing token.
+
 A record is also taken over at once when this node can *prove* its holder is
 gone. Holders are `host:pidns:pid:uuid`, where `pidns` names the PID
 namespace (kernel boot id and namespace inode); the probe answers "gone" only
@@ -714,14 +723,9 @@ for a holder in this host's own PID namespace whose pid is no longer running,
 or one naming this very process
 that no live holder object owns any more — the state a thread that died, or a
 coroutine abandoned mid-deploy, leaves behind and the record itself cannot
-express. It never guesses about another node. Without that proof a leaked
-record is unrecoverable in practice, because `DEFAULT_WAIT_SECONDS` (120 s) is
-shorter than `DEFAULT_LEASE_SECONDS` (600 s): every waiter gives up before the
-stall watch matures, and only the accumulated observation of five consecutive
-failed acquires in one process ever reaches the hold time. Where a lease is
-sized so a waiter must be able to wait a stalled *remote* holder out on its
-own, give it `wait_seconds` greater than `lease_seconds` — as the provenance
-write lease does. A backend
+express. It never guesses about another node; a dead or partitioned holder
+there stops renewing, and because `DEFAULT_WAIT_SECONDS` (120 s) is longer
+than `DEFAULT_LEASE_SECONDS` (60 s), one wait outlasts its hold. A backend
 deploy (`deploy_schemas`), the runtime's startup metadata deploy, schema
 deletion and the orphan reconciler's redeploy all hold it while they enumerate
 the live schemas, build their package and post it, so no package is built from
