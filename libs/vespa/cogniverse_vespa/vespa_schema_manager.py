@@ -1109,9 +1109,13 @@ class VespaSchemaManager:
         # The tombstone belongs inside the lease: between the redeploy and the
         # registry write the schema is gone from Vespa but still a survivor in
         # the registry, and a peer package built from that view would restore it.
-        with self.deployment_lease():
+        with self.deployment_lease() as lease:
             self._deploy_package(build_package, allow_schema_removal=True)
 
+            # A holder stuck past its lease must not write the registry a
+            # successor now owns.
+            if lease is not None:
+                lease.ensure_owned()
             try:
                 self._schema_registry.unregister_schema(tenant_id, base_schema_name)
             except Exception as e:
@@ -1268,7 +1272,7 @@ class VespaSchemaManager:
         unreconstructable peer-tenant orphan exists. Returns the list of
         full schema names dropped from Vespa.
         """
-        with self.deployment_lease():
+        with self.deployment_lease() as lease:
             if not self._schema_registry:
                 raise ValueError(
                     "schema_registry required for tenant schema operations"
@@ -1313,6 +1317,8 @@ class VespaSchemaManager:
 
             tombstone_failures = []
             for base in registry_base_names:
+                if lease is not None:
+                    lease.ensure_owned()
                 try:
                     self._schema_registry.unregister_schema(tenant_id, base)
                 except Exception as e:
@@ -1343,7 +1349,7 @@ class VespaSchemaManager:
         it into the deletion — a schema that cannot be confirmed an orphan is
         never dropped. Returns the full list of schemas dropped.
         """
-        with self.deployment_lease():
+        with self.deployment_lease() as lease:
             if not self._schema_registry:
                 raise ValueError(
                     "schema_registry required for tenant schema operations"
@@ -1400,6 +1406,8 @@ class VespaSchemaManager:
             tombstone_failures = []
             for tid, bases in registry_bases_by_tenant.items():
                 for base in bases:
+                    if lease is not None:
+                        lease.ensure_owned()
                     try:
                         self._schema_registry.unregister_schema(tid, base)
                     except Exception as e:

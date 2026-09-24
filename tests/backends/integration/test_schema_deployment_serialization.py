@@ -666,3 +666,75 @@ def test_a_live_holder_stuck_past_the_total_hold_cap_is_taken_over(vespa_instanc
         holder.kill()
         holder.join(timeout=30)
         acquired_at.close()
+
+
+def _delete_stuck_until_taken_over(ports, tenant, redeployed, resume, result):
+    """Delete a tenant schema, sticking after the redeploy until a peer has
+    taken the lease over, then report every registry write attempted."""
+    from cogniverse_core.registries import schema_deploy_lease
+
+    schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
+    schema_deploy_lease.MAX_TOTAL_HOLD_SECONDS = LEASE_SECONDS * 2
+    manager = _backend(ports).schema_manager
+    registry = manager._schema_registry
+    writes = []
+    real_unregister = registry.unregister_schema
+
+    def unregister(*args, **kwargs):
+        writes.append(args)
+        return real_unregister(*args, **kwargs)
+
+    registry.unregister_schema = unregister
+    real_deploy = manager._deploy_package
+
+    def deploy(*args, **kwargs):
+        real_deploy(*args, **kwargs)
+        redeployed.set()
+        resume.wait(600)
+
+    manager._deploy_package = deploy
+    try:
+        manager.delete_schema(tenant, BASE_SCHEMA)
+        outcome = "deleted"
+    except Exception as exc:
+        outcome = f"{type(exc).__name__}: {exc}"
+    result.put((outcome, writes))
+
+
+def test_a_holder_taken_over_mid_delete_writes_no_registry_tombstone(
+    vespa_instance,
+):
+    """Once a peer holds the lease the stuck holder's registry is the peer's
+    to write: resuming, the holder refuses instead of tombstoning."""
+    tenant = "fencedtombstone"
+    backend = _backend(vespa_instance)
+    name = backend.schema_registry.deploy_schema(tenant, BASE_SCHEMA)
+    ctx = multiprocessing.get_context("spawn")
+    redeployed, resume, result = ctx.Event(), ctx.Event(), ctx.Queue()
+    holder = ctx.Process(
+        target=_delete_stuck_until_taken_over,
+        args=(vespa_instance, tenant, redeployed, resume, result),
+    )
+    holder.start()
+    try:
+        assert redeployed.wait(300) is True
+        registry = _backend(vespa_instance).schema_registry
+        successor = registry.deployment_lease(wait_seconds=LEASE_SECONDS * 3 + 30)
+        assert successor.acquire() is successor
+        resume.set()
+        outcome, writes = result.get(timeout=120)
+        successor.release()
+        holder.join(timeout=60)
+        assert holder.exitcode == 0
+        assert outcome.startswith("DeploymentLeaseLost: ")
+        assert writes == []
+        assert [
+            info.full_schema_name for info in registry.get_tenant_schemas(tenant)
+        ] == [name]
+    finally:
+        resume.set()
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=30)
+        result.close()
+        _backend(vespa_instance).schema_registry.unregister_schema(tenant, BASE_SCHEMA)

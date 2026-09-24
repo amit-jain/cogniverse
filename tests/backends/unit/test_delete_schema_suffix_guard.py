@@ -521,3 +521,97 @@ def test_upload_metadata_schemas_defaults_to_removal_disabled():
 
     signature = inspect.signature(VespaSchemaManager.upload_metadata_schemas)
     assert signature.parameters["allow_schema_removal"].default is False
+
+
+class TestTombstonesAreFencedAgainstATakeover:
+    """A holder stuck mid-operation past the heartbeat cap is taken over; when
+    it resumes it must not write the registry the successor now owns."""
+
+    @staticmethod
+    def _stuck_until_taken_over(monkeypatch, registry):
+        from cogniverse_core.registries import schema_deploy_lease
+        from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 0.6)
+        store = InMemoryConfigStore()
+        registry.deployment_lease = lambda **kwargs: SchemaDeployLease(
+            store, lease_seconds=0.3, **kwargs
+        )
+        successors = []
+
+        def stuck(*_args, **_kwargs):
+            successor = SchemaDeployLease(store, wait_seconds=5)
+            assert successor.acquire() is successor
+            successors.append(successor)
+            return []
+
+        return stuck, successors
+
+    def test_delete_schema_writes_no_tombstone_after_a_takeover(self, monkeypatch):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        mgr = _guard_manager(
+            survivor_names=["video_other_acme_acme"],
+            deployed_names=[
+                *METADATA_SCHEMAS,
+                "video_colpali_acme_acme",
+                "video_other_acme_acme",
+            ],
+        )
+        stuck, successors = self._stuck_until_taken_over(
+            monkeypatch, mgr._schema_registry
+        )
+        mgr._deploy_package = stuck
+
+        with pytest.raises(DeploymentLeaseLost):
+            mgr.delete_schema("acme", "video_colpali")
+
+        assert len(successors) == 1
+        assert mgr._schema_registry.unregistered == []
+        successors[0].release()
+
+    def test_delete_tenant_schemas_writes_no_tombstone_after_a_takeover(
+        self, monkeypatch
+    ):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        registry = _BulkRegistry(
+            ["video_acme_acme", *METADATA_SCHEMAS],
+            tenant_bases={"acme": ["video"]},
+        )
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._schema_registry = registry
+        mgr._logger = logging.getLogger("test_tombstone_fence")
+        mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
+        stuck, successors = self._stuck_until_taken_over(monkeypatch, registry)
+        mgr._redeploy_dropping = stuck
+
+        with pytest.raises(DeploymentLeaseLost):
+            mgr.delete_tenant_schemas("acme")
+
+        assert len(successors) == 1
+        assert registry.unregistered == []
+        successors[0].release()
+
+    def test_bulk_delete_writes_no_tombstone_after_a_takeover(self, monkeypatch):
+        from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+        registry = _BulkRegistry(
+            ["video_acme_acme", "wiki_globex_globex", *METADATA_SCHEMAS],
+            tenant_bases={"acme": ["video"], "globex": ["wiki"]},
+        )
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._schema_registry = registry
+        mgr._logger = logging.getLogger("test_bulk_tombstone_fence")
+        mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid}_{tid}"
+        stuck, successors = self._stuck_until_taken_over(monkeypatch, registry)
+        mgr._redeploy_dropping = stuck
+
+        with pytest.raises(DeploymentLeaseLost):
+            mgr.delete_tenant_schemas_bulk(["acme", "globex"])
+
+        assert len(successors) == 1
+        assert registry.unregistered == []
+        successors[0].release()
