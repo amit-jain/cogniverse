@@ -268,6 +268,63 @@ async def test_concurrent_saves_never_exceed_capacity(redis_client):
     assert set(retained_ids).issubset({task.id for task in tasks})
 
 
+def _rendered_chain(exc: BaseException) -> str:
+    """Every message and traceback line a logger prints for ``exc``."""
+    import traceback
+
+    return "".join(traceback.format_exception(exc))
+
+
+@pytest.mark.parametrize(
+    "credentials,query",
+    [
+        ("a2a-user:a2a-secret-pw@", ""),
+        (":a2a-secret-pw@", ""),
+        ("", "?password=a2a-secret-pw"),
+    ],
+)
+async def test_an_unreachable_redis_is_named_without_its_credentials(
+    credentials, query
+):
+    closed_port = _free_port()
+    url = f"redis://{credentials}127.0.0.1:{closed_port}/0{query}"
+
+    with pytest.raises(A2ATaskStoreError) as refused:
+        await RedisTaskStore.from_url(url, key_prefix="test:a2a")
+
+    assert str(refused.value) == (
+        "shared A2A task store unavailable: connect to "
+        f"redis://127.0.0.1:{closed_port}/0"
+    )
+    assert "a2a-secret-pw" not in _rendered_chain(refused.value)
+
+
+async def test_a_wrong_password_is_refused_without_echoing_it(redis_url):
+    admin = aioredis.from_url(redis_url, decode_responses=True)
+    try:
+        await admin.execute_command(
+            "ACL", "SETUSER", "a2a-authed", "on", ">right-pw", "~*", "&*", "+@all"
+        )
+    finally:
+        await admin.aclose()
+    url = redis_url.replace("redis://", "redis://a2a-authed:a2a-secret-pw@")
+
+    try:
+        with pytest.raises(A2ATaskStoreError) as refused:
+            await RedisTaskStore.from_url(url, key_prefix="test:a2a")
+    finally:
+        admin = aioredis.from_url(redis_url, decode_responses=True)
+        try:
+            await admin.execute_command("ACL", "DELUSER", "a2a-authed")
+        finally:
+            await admin.aclose()
+
+    assert str(refused.value) == (
+        f"shared A2A task store unavailable: connect to {redis_url}"
+    )
+    assert "a2a-secret-pw" not in _rendered_chain(refused.value)
+
+
 async def test_redis_outage_is_an_explicit_store_error():
     closed_port = _free_port()
     client = aioredis.from_url(
@@ -1716,15 +1773,16 @@ async def test_a_user_not_permitted_hash_field_expiry_is_refused_at_connect(
         )
     finally:
         await admin.aclose()
-    url = restricted_redis_url.replace("redis://", "redis://a2a-limited:unused@")
+    url = restricted_redis_url.replace("redis://", "redis://a2a-limited:a2a-secret-pw@")
 
     with pytest.raises(A2ATaskStoreError) as refused:
         await RedisTaskStore.from_url(url, key_prefix="test:a2a")
 
     assert str(refused.value) == (
-        f"shared A2A task store cannot use {url}: its Redis user is not "
-        "permitted HPEXPIRE"
+        f"shared A2A task store cannot use {restricted_redis_url}: its Redis "
+        "user is not permitted HPEXPIRE"
     )
+    assert "a2a-secret-pw" not in _rendered_chain(refused.value)
 
 
 async def test_a_read_only_replica_is_refused_at_connect(restricted_redis_url):
