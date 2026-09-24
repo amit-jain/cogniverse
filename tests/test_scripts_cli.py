@@ -1339,3 +1339,32 @@ class TestSetupEvaluationScriptContract:
         assert profile == "video_colpali_smol500_mv_frame"
         schema = _SCRIPTS.parent / "configs" / "schemas" / f"{profile}_schema.json"
         assert schema.exists(), schema
+
+
+def test_release_manifest_imports_only_root_declared_distributions():
+    import ast
+    import importlib.metadata
+    import tomllib
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    tree = ast.parse((_SCRIPTS / "release_manifest.py").read_text())
+    top_level = {
+        (node.module if isinstance(node, ast.ImportFrom) else alias.name).split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+        if not isinstance(node, ast.ImportFrom) or node.level == 0
+    }
+    third_party = sorted(top_level - set(sys.stdlib_module_names) - {"__future__"})
+    providers = importlib.metadata.packages_distributions()
+    root = tomllib.loads((_SCRIPTS.parent / "pyproject.toml").read_text())
+    declared = {
+        canonicalize_name(Requirement(spec).name): spec
+        for spec in root["project"]["dependencies"]
+    }
+
+    assert third_party == ["packaging"]
+    assert {canonicalize_name(d) for d in providers["packaging"]} == {"packaging"}
+    assert declared["packaging"] == "packaging==26.0"
