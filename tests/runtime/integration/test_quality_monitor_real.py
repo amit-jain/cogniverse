@@ -445,6 +445,9 @@ class TestGoldenEvalRealVespa:
         _assert_golden_result(result2)
         assert result2.baseline_mrr == 0.95
         assert result2.baseline_ndcg == 0.95
+        # Only check_thresholds' records: whether the evaluations above logged
+        # at INFO depends on the level another module left on the root logger.
+        caplog.clear()
         with caplog.at_level(
             logging.INFO, logger="cogniverse_evaluation.quality_monitor"
         ):

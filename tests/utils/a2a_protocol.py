@@ -8,8 +8,6 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI
 
-from cogniverse_runtime.main import _a2a_settings_from_env, _build_shared_a2a_protocol
-
 
 @asynccontextmanager
 async def production_a2a(
@@ -18,8 +16,15 @@ async def production_a2a(
     """The runtime's A2A protocol on ``redis_url`` with its production settings.
 
     Built in the caller's loop: the store's Redis client and the handler's
-    cancel listener belong to the loop that runs them.
+    cancel listener belong to the loop that runs them. ``cogniverse_runtime.main``
+    is imported here, not at module import: importing it configures the
+    runtime's logging for the whole test process.
     """
+    from cogniverse_runtime.main import (
+        _a2a_settings_from_env,
+        _build_shared_a2a_protocol,
+    )
+
     protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
