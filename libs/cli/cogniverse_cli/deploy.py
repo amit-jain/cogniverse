@@ -104,10 +104,10 @@ def helm_install(
     applied in order so later overlays override earlier ones. ``timeout``
     is passed through to ``helm --timeout`` (cold-start clusters with
     GB-scale model pulls need ``20m`` headroom). It is also how long helm
-    waits for each post-install/post-upgrade hook Job, and it governs: a
-    schema deploy still running when it expires fails the install here,
-    while the schema-deployment Job keeps running under its own longer
-    per-deploy bound (``curl --max-time 9240``). ``chart_version`` (a git
+    waits for each post-install/post-upgrade hook Job: longer than one
+    schema deploy attempt (``curl --max-time 580``), shorter than the
+    schema-deployment Job's ``activeDeadlineSeconds``, so a Job still
+    retrying fails the install here while it keeps running. ``chart_version`` (a git
     version) repackages the chart so the release records dev provenance
     instead of the static ``Chart.yaml`` line.
     """
