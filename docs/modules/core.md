@@ -742,6 +742,14 @@ inside the lease is strict: a failed refresh raises instead of answering from
 the in-memory registry, which may still hold a schema a peer deleted or lack
 one a peer registered since.
 
+A package with no tenant schema carries only the metadata schemas. Before
+that, pyvespa added a default document type named after the application
+(`cogniverse`), which nothing registers, and every later deploy refused it as
+an unknown live schema. A cluster that already carries it is fixed once by
+dropping it as an orphan: `VespaSchemaManager.delete_orphan_schemas(["cogniverse"])`,
+or `POST /admin/reconcile-orphans?dry_run=false`, which reports it among the
+orphan schemas.
+
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
 conditionally; `grace_s` is a required keyword-only argument.
 `reserved(live_names)` (exposed as `SchemaRegistry.reserved_schemas`) maps each
