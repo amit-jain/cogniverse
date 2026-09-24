@@ -97,7 +97,7 @@ local enforce_lease = ARGV[5]
 local generation = tonumber(ARGV[6])
 local events_prefix = ARGV[7]
 local state = ARGV[8]
-local terminal = ARGV[9]
+local canceled = ARGV[9]
 -- Fence on the generation, not on the lease still being present: the SDK can
 -- persist an execution's last event after its lease was released, and that
 -- write is legitimate until some other owner takes the next generation.
@@ -107,9 +107,9 @@ local terminal = ARGV[9]
 if enforce_lease == '1' then
     local current = tonumber(redis.call('HGET', generations_key, task_id))
     if generation < 1 or not current or generation < current then
-        -- A superseded owner repeating the terminal state a newer owner
-        -- already stored cannot change anything: acknowledge, do not write.
-        if generation >= 1 and current and terminal == '1' then
+        -- A superseded owner repeating the cancel a newer owner already
+        -- stored cannot change anything: acknowledge, do not write.
+        if generation >= 1 and current and canceled == '1' then
             local stored = redis.call('HGET', tasks_key, task_id)
             if stored and cjson.decode(stored).status.state == state then
                 return {2, ''}
@@ -336,14 +336,6 @@ _ACTIVE_STATES = frozenset(
         TaskState.auth_required,
     }
 )
-_TERMINAL_STATES = frozenset(
-    {
-        TaskState.completed,
-        TaskState.canceled,
-        TaskState.failed,
-        TaskState.rejected,
-    }
-)
 
 
 class RedisTaskStore(TaskStore):
@@ -392,6 +384,28 @@ class RedisTaskStore(TaskStore):
         except RedisError as exc:
             await client.aclose()
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {redis_url}") from exc
+        # Lease bookkeeping for ids that never become tasks expires per hash
+        # field, so a server without HPEXPIRE must be refused here rather than
+        # failing every new task's acquire. The probe key does not exist, so
+        # nothing is written.
+        try:
+            await client.execute_command(
+                "HPEXPIRE",
+                f"{key_prefix.rstrip(':')}:capability-probe",
+                1000,
+                "FIELDS",
+                1,
+                "probe",
+            )
+        except ResponseError as exc:
+            await client.aclose()
+            raise A2ATaskStoreError(
+                "shared A2A task store requires Redis >= 7.4 (HPEXPIRE); "
+                f"{redis_url} does not support hash-field expiry"
+            ) from exc
+        except RedisError as exc:
+            await client.aclose()
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {redis_url}") from exc
         return cls(
             client,
             max_tasks=max_tasks,
@@ -420,7 +434,7 @@ class RedisTaskStore(TaskStore):
                 bound_lease.generation if bound_lease else 0,
                 self._event_stream_key(""),
                 task.status.state.value,
-                "1" if task.status.state in _TERMINAL_STATES else "0",
+                "1" if task.status.state == TaskState.canceled else "0",
             )
         except RedisError as exc:
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: save task {task.id}") from exc
@@ -434,7 +448,7 @@ class RedisTaskStore(TaskStore):
             )
         if result_code != 1:
             raise A2ATaskCapacityError(
-                f"capacity {self._max_tasks} is full of active tasks; "
+                f"capacity {self._max_tasks} is full of active or leased tasks; "
                 f"rejected task {task.id}"
             )
 
