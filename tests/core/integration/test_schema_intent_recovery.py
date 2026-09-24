@@ -1548,3 +1548,64 @@ def test_a_peer_delete_before_the_lease_refuses_redeploying_that_schema(
         f"read its registry row; nothing was activated or registered. Retry the "
         f"deploy."
     )
+
+
+def test_a_failed_registry_read_inside_the_lease_refuses_instead_of_resurrecting(
+    recovery_backend, monkeypatch
+):
+    """A peer deletes a schema after the deploy's out-of-lease snapshot, and the
+    registry listing inside the lease then fails: the deploy refuses rather
+    than rebuilding its package from the cached snapshot that still holds the
+    deleted schema."""
+    from cogniverse_core.registries.exceptions import BackendDeploymentError
+
+    connect, store = recovery_backend
+    owner, deployer = connect(), connect()
+    victim = f"strict_{uuid4().hex[:10]}:victim"
+    keeper = f"strict_{uuid4().hex[:10]}:keeper"
+    victim_schema = owner.schema_registry.deploy_schema(victim, "wiki_pages")
+    keeper_schema = owner.schema_registry.deploy_schema(keeper, "wiki_pages")
+    keeper_row = _schema_row(store, keeper)
+    real_deploy = deployer.deploy_schemas
+    real_list = store.list_all_configs
+    peer_deleted = []
+    failed_listings = []
+
+    def fail_the_next_registry_listing(*args, **kwargs):
+        if (
+            peer_deleted
+            and not failed_listings
+            and kwargs.get("service") == "schema_registry"
+        ):
+            failed_listings.append(kwargs)
+            raise ConnectionError("config store unreachable")
+        return real_list(*args, **kwargs)
+
+    def peer_deletes_first(schemas, *args, **kwargs):
+        if not peer_deleted:
+            peer_deleted.append(
+                owner.schema_manager.delete_schema(victim, "wiki_pages")
+            )
+        return real_deploy(schemas, *args, **kwargs)
+
+    monkeypatch.setattr(store, "list_all_configs", fail_the_next_registry_listing)
+    monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_first)
+    with pytest.raises(BackendDeploymentError) as caught:
+        deployer.schema_registry.deploy_schema(keeper, "wiki_pages", force=True)
+
+    assert peer_deleted == [victim_schema]
+    assert len(failed_listings) == 1
+    assert str(caught.value.__cause__) == (
+        "Cannot enumerate the schema registry before deploy: Cannot initialize "
+        "SchemaRegistry: failed to read schema storage: ConnectionError: config "
+        "store unreachable"
+    )
+    live = set(connect().schema_manager.list_deployed_document_types())
+    assert victim_schema not in live
+    assert keeper_schema in live
+    assert _schema_row(store, victim).config_value["deleted"] is True
+    assert _schema_row(store, keeper).version == keeper_row.version
+    assert connect().deploy_schemas([]) is True
+    assert victim_schema not in set(
+        connect().schema_manager.list_deployed_document_types()
+    )
