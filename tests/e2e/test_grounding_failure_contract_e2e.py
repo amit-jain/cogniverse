@@ -13,11 +13,13 @@ then removes that profile and its schema itself.
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import httpx
 import pytest
 
+from cogniverse_agents.wiki.wiki_manager import _AUTO_FILE_AGENTS, _WIKI_BASE_SCHEMA
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_SEARCHED,
     AnswerGroundingUnavailable,
@@ -28,6 +30,7 @@ from tests.e2e.conftest import (
     TENANT_DEPLOY_TIMEOUT_S,
     _deployed_schema_names_strict,
     _ingest_sample_documents,
+    _tenant_schema_name,
     _tenant_schema_names_in_vespa,
     register_tenant_and_wait,
     runtime_available,
@@ -131,6 +134,15 @@ class TestAnswerAgentsFailWhenRetrievalCannotRun:
             assert body["message"] == GROUNDED_MESSAGES[agent_name], body["message"]
 
         # 2. Take the profile and its schema away. Nothing else changes.
+        #    First wait for the wiki schema the background wiki filing deploys.
+        assert "detailed_report_agent" in _AUTO_FILE_AGENTS
+        wiki_schema = _tenant_schema_name(_WIKI_BASE_SCHEMA, grounded_tenant)
+        deadline = time.monotonic() + TENANT_DEPLOY_TIMEOUT_S
+        while wiki_schema not in _tenant_schema_names_in_vespa(
+            grounded_tenant, _deployed_schema_names_strict()
+        ):
+            assert time.monotonic() < deadline, f"{wiki_schema} never deployed"
+            time.sleep(2)
         document_schema = document_schema_for(grounded_tenant)
         before = _tenant_schema_names_in_vespa(
             grounded_tenant, _deployed_schema_names_strict()
