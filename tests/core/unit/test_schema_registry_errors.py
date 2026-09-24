@@ -162,35 +162,34 @@ def test_batch_reloads_definition_when_peer_deletes_cached_schema():
     } == {"wiki_pages_acme_prod", "provenance_acme_prod"}
 
 
-def test_a_peer_tombstone_after_activation_is_never_overwritten():
-    """An existing schema's re-registration after activation must be
-    conditional on the row the deploy was decided from: a peer that deleted
-    the schema in between owns the row, and nothing is rolled back over it."""
+def _registry_with_peer(peer_action):
+    """A registry whose backend activation is followed by ``peer_action``
+    from another registry over the same store, before registration."""
     import json
     from types import SimpleNamespace
 
-    from cogniverse_core.registries.exceptions import RegistryStorageError
-    from cogniverse_sdk.interfaces.config_store import ConfigScope
     from tests.utils.memory_store import InMemoryConfigStore
 
     store = InMemoryConfigStore()
     tenant, base, name = "acme:prod", "wiki_pages", "wiki_pages_acme_prod"
-    shipped = {"name": base, "document": {"fields": ["v2"]}}
-    loader = SimpleNamespace(load_schema=lambda _base: dict(shipped))
+    loader = SimpleNamespace(
+        load_schema=lambda _base: {"name": base, "document": {"fields": ["v2"]}}
+    )
     packages = []
 
-    def peer_deletes_after_activation(schemas):
+    def deploy_then_peer_acts(schemas):
         packages.append([schema["name"] for schema in schemas])
-        SchemaRegistry(
+        peer = SchemaRegistry(
             config_manager=SimpleNamespace(store=store),
             backend=SimpleNamespace(deploy_schemas=lambda _schemas: True),
             schema_loader=loader,
-        ).unregister_schema(tenant, base)
+        )
+        peer_action(peer, tenant, base, name)
         return True
 
     registry = SchemaRegistry(
         config_manager=SimpleNamespace(store=store),
-        backend=SimpleNamespace(deploy_schemas=peer_deletes_after_activation),
+        backend=SimpleNamespace(deploy_schemas=deploy_then_peer_acts),
         schema_loader=loader,
     )
     registry.register_schema(
@@ -199,15 +198,78 @@ def test_a_peer_tombstone_after_activation_is_never_overwritten():
         full_schema_name=name,
         schema_definition=json.dumps({"name": name, "document": {"fields": ["v1"]}}),
     )
+    return registry, store, packages, (tenant, base, name)
 
-    with pytest.raises(RegistryStorageError, match="conflicted with a newer"):
-        registry.deploy_schema(tenant, base)
 
-    row = store.get_config(
+def _row(store, tenant, base):
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    return store.get_config(
         tenant_id=tenant,
         scope=ConfigScope.SCHEMA,
         service="schema_registry",
         config_key=f"schema_{base}",
     )
-    assert row.config_value["deleted"] is True
+
+
+def test_a_peer_tombstone_after_activation_is_never_overwritten():
+    """An existing schema's re-registration after activation is conditional on
+    the row the deploy was decided from: a peer that deleted the schema in
+    between owns the row, nothing is rolled back over it, and the conflict is
+    reported as a retryable tombstone conflict."""
+    from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
+
+    registry, store, packages, (tenant, base, name) = _registry_with_peer(
+        lambda peer, tenant, base, _name: peer.unregister_schema(tenant, base)
+    )
+
+    with pytest.raises(SchemaRevisionConflictError) as caught:
+        registry.deploy_schema(tenant, base)
+
+    assert (caught.value.schema_name, caught.value.peer_revision) == (
+        name,
+        "tombstone",
+    )
+    assert caught.value.activated is True
+    assert caught.value.retryable is True
+    assert str(caught.value) == (
+        f"Schema {name!r} was deleted by another process after this deploy read "
+        f"its registry row; the activation stands and that revision was not "
+        f"overwritten. Retry the deploy."
+    )
+    assert _row(store, tenant, base).config_value["deleted"] is True
+    assert packages == [[name]]
+
+
+def test_a_peer_registration_after_activation_is_reported_as_one():
+    import json
+
+    from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
+
+    def peer_registers(peer, tenant, base, name):
+        peer.register_schema(
+            tenant_id=tenant,
+            base_schema_name=base,
+            full_schema_name=name,
+            schema_definition=json.dumps(
+                {"name": name, "document": {"fields": ["v3"]}}
+            ),
+        )
+
+    registry, store, packages, (tenant, base, name) = _registry_with_peer(
+        peer_registers
+    )
+
+    with pytest.raises(SchemaRevisionConflictError) as caught:
+        registry.deploy_schema(tenant, base)
+
+    assert caught.value.peer_revision == "registration"
+    assert str(caught.value) == (
+        f"Schema {name!r} was re-registered by another process after this deploy "
+        f"read its registry row; the activation stands and that revision was not "
+        f"overwritten. Retry the deploy."
+    )
+    assert json.loads(_row(store, tenant, base).config_value["schema_definition"])[
+        "document"
+    ] == {"fields": ["v3"]}
     assert packages == [[name]]
