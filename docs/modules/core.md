@@ -1298,14 +1298,13 @@ before releasing that lease. Its success linearizes at the verified primary
 read while lease ownership excludes supported writers.
 
 The lease covers only operations that have a primary *and* an indexed row to
-keep consistent. `add_memory` and `update_memory` resolve the requested
-provenance from the caller's metadata before taking anything, and skip the
+keep consistent. `add_memory` resolves the requested
+provenance from the caller's metadata before taking anything, and skips the
 store lease when there is none — so a conversation turn and an agent remember,
 which carry no provenance, never take a cluster-wide per-tenant mutex and never
-hold one across mem0's extraction pass. `update_memory` called without metadata
-keeps whatever the stored primary declares, so it takes the lease; so does an
-update of a primary that declares provenance, even when the new metadata does
-not, because dropping it changes what the indexed row must agree with. Deletion,
+hold one across mem0's extraction pass. `update_memory` always takes the lease:
+whether the stored primary declares provenance can change between any unleased
+read of it and the write. Deletion,
 repair and archiving always take it. The sweeps (`clear_agent_memory`,
 `cleanup_with_schema`, `drop_session`) acquire **per row**: one lease for a
 whole retention pass excluded every other writer for the tenant until the last

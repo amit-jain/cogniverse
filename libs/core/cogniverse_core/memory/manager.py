@@ -1900,17 +1900,12 @@ class Mem0MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Update a primary while excluding provenance verification."""
-        # ``metadata=None`` keeps whatever the stored primary declares, which
-        # may be provenance this update has to keep the index agreeing with,
-        # so it takes the lease. Explicit metadata takes it when either it or
-        # the stored primary declares provenance: dropping a primary's
-        # provenance changes what its indexed row has to agree with too. Only
-        # an update with no index row on either side skips it.
-        with self._provenance_write_ownership(
-            store_lease=metadata is None
-            or self._provenance_for_index(metadata) is not None
-            or self._stored_primary_declares_provenance(memory_id)
-        ):
+        # Always leased: whether the stored primary declares provenance can
+        # change between any unleased read of it and this write, so no
+        # update can prove it has no indexed row to keep consistent. Updates
+        # are off the hot path; provenance-free adds keep their lease-free
+        # path.
+        with self._provenance_write_ownership():
             return self._update_memory(
                 memory_id=memory_id,
                 content=content,
@@ -1918,18 +1913,6 @@ class Mem0MemoryManager:
                 agent_name=agent_name,
                 metadata=metadata,
             )
-
-    def _stored_primary_declares_provenance(self, memory_id: str) -> bool:
-        """Whether the stored primary carries provenance; unknown reads as yes."""
-        if not self.memory:
-            return False
-        try:
-            before = self.memory.get(memory_id)
-        except Exception:
-            return True
-        if not isinstance(before, dict):
-            return False
-        return "provenance" in self._read_metadata(before)
 
     def _update_memory(
         self,

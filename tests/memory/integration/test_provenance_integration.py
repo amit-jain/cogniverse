@@ -882,6 +882,94 @@ def test_provenance_dropping_update_serializes_with_a_peer_repair(
     Mem0MemoryManager._instances.pop(canonical_tenant, None)
 
 
+def test_provenance_free_update_serializes_with_a_peer_provenance_write(
+    memory_env, monkeypatch
+):
+    """A provenance-free update cannot interleave with a peer's provenance
+    write to the same primary, however their reads of it were ordered."""
+    mm = memory_env.manager
+    memory_id = mm.add_memory(
+        content="Primary with no provenance before either update.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata={"kind": "note"},
+        infer=False,
+    )
+    assert mm.provenance_store.fetch([memory_id]) == {}
+    provenance = make_provenance(
+        written_by="agent:peer-provenance-write",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.77,
+        derived_from=[CitationRef.external("https://source.test/peer-write")],
+    )
+    canonical_tenant = mm._storage_tenant_id
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+    peer = Mem0MemoryManager(canonical_tenant)
+    peer.initialize(
+        backend_host="http://127.0.0.1",
+        backend_port=memory_env.proxy.port,
+        backend_config_port=memory_env.proxy.port,
+        base_schema_name="agent_memories",
+        llm_model=get_llm_model(),
+        embedding_model="lightonai/DenseOn",
+        llm_base_url=get_llm_base_url(),
+        embedder_base_url=memory_env.denseon,
+        auto_create_schema=False,
+        config_manager=memory_env.config_manager,
+        schema_loader=memory_env.schema_loader,
+    )
+    old_embedders = (mm.memory.embedding_model, peer.memory.embedding_model)
+    mm.memory.embedding_model = _StaticEmbedder()
+    peer.memory.embedding_model = _StaticEmbedder()
+    entered = threading.Event()
+    release = threading.Event()
+    real_update = mm.memory.update
+
+    def blocked_update(*args, **kwargs):
+        entered.set()
+        assert release.wait(10) is True
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(mm.memory, "update", blocked_update)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            provenance_future = pool.submit(
+                mm.update_memory,
+                memory_id,
+                "Primary after the peer's provenance write.",
+                TENANT,
+                AGENT,
+                attach_to_metadata({"kind": "entity_fact"}, provenance),
+            )
+            assert entered.wait(10) is True
+            free_future = pool.submit(
+                peer.update_memory,
+                memory_id,
+                "Primary after the provenance-free update.",
+                canonical_tenant,
+                AGENT,
+                {"kind": "note"},
+            )
+            threading.Event().wait(0.5)
+            assert free_future.done() is False
+            release.set()
+            assert provenance_future.result(timeout=20) is True
+            assert free_future.result(timeout=20) is True
+    finally:
+        release.set()
+        mm.memory.embedding_model, peer.memory.embedding_model = old_embedders
+
+    final = peer.memory.get(memory_id)
+    assert final["memory"] == "Primary after the provenance-free update."
+    assert final["metadata"]["kind"] == "note"
+    assert "provenance" not in final["metadata"]
+    assert list(peer.provenance_store.fetch([memory_id])) == [memory_id]
+    assert peer.provenance_store.delete(memory_id) is True
+    peer.memory.delete(memory_id)
+    assert peer.memory.get(memory_id) is None
+    Mem0MemoryManager._instances.pop(canonical_tenant, None)
+
+
 def test_raw_mutation_after_repair_final_read_is_detected_by_reader(
     memory_env, monkeypatch
 ):

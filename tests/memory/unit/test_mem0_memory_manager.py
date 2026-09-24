@@ -1065,9 +1065,21 @@ class TestProvenanceWriteLeaseScope:
         )
         assert self._lease_record(manager) is None
 
-    def test_a_provenance_free_update_takes_no_store_lease(self):
+    def test_a_provenance_free_update_still_takes_the_store_lease(self):
+        """Updates are off the hot path, and a peer can add provenance to the
+        same primary between any unleased read and this write."""
+        import os
+
+        from cogniverse_core.memory.manager import PROVENANCE_LEASE_SECONDS
+
         manager = self._manager("lease_scope_update_tenant")
         manager.memory.get.return_value = {"id": "m1", "memory": "before"}
+        held = {}
+
+        def record_hold(*args, **kwargs):
+            held["record"] = self._lease_record(manager).config_value
+
+        manager.memory.update.side_effect = record_hold
 
         assert (
             manager.update_memory(
@@ -1079,7 +1091,10 @@ class TestProvenanceWriteLeaseScope:
             )
             is True
         )
-        assert self._lease_record(manager) is None
+        assert held["record"]["lease_seconds"] == PROVENANCE_LEASE_SECONDS
+        assert str(os.getpid()) in held["record"]["holder"].split(":")
+        manager._provenance_store.attach.assert_not_called()
+        assert self._lease_record(manager).config_value["holder"] is None
 
     def test_a_provenance_bearing_add_holds_a_memory_sized_lease(self):
         """The hold covers a memory write with margin; the wait exceeds the
