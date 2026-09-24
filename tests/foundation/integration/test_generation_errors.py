@@ -235,6 +235,7 @@ def telemetry_off():
 def build_dispatcher(provider, tmp_path, monkeypatch, telemetry_off):
     config = json.loads(Path("configs/config.json").read_text())
     config.pop("active_video_profile", None)
+    config["backend"].get("default_profiles", {}).pop("video", None)
     config["llm_config"] = {
         "primary": {
             "model": MODEL,
