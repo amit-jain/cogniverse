@@ -69,7 +69,7 @@ class _FakeConfigLoader:
 
 @pytest.mark.asyncio
 async def test_lifespan_passes_config_manager_to_synthetic_service(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, workflow_state_redis_url
 ):
     """The manager reaching configure_service is the runtime's own instance."""
     captured: dict = {}
@@ -88,6 +88,10 @@ async def test_lifespan_passes_config_manager_to_synthetic_service(
     )
     monkeypatch.setattr(runtime_main, "get_config_loader", lambda: _FakeConfigLoader())
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setattr(
+        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+    )
     monkeypatch.setattr(
         "cogniverse_synthetic.api.configure_service", _spy_configure_synthetic
     )

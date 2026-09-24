@@ -334,3 +334,43 @@ def test_upload_metadata_schemas_removal_disabled_refuses_partial_package(
         )
 
     assert _deployed_schema_files(vespa_instance["config_port"]) == before
+
+
+def test_metadata_schemas_current_compares_the_live_definitions(
+    vespa_instance, monkeypatch
+):
+    """Startup skips the metadata redeploy only when every metadata schema
+    the config server serves equals the one this build deploys."""
+    from vespa.package import Field
+
+    import cogniverse_vespa.metadata_schemas as metadata_schemas
+    from cogniverse_runtime.backend_startup import metadata_schemas_current
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    def manager(config_port: int) -> VespaSchemaManager:
+        return VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=config_port,
+            schema_registry=None,
+        )
+
+    live = manager(vespa_instance["config_port"])
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    current = metadata_schemas_current(live)
+    unreachable = metadata_schemas_current(manager(closed_port))
+
+    shipped = metadata_schemas.create_config_metadata_schema
+
+    def drifted():
+        schema = shipped()
+        schema.add_fields(
+            Field(name="drift_probe", type="string", indexing=["attribute"])
+        )
+        return schema
+
+    monkeypatch.setattr(metadata_schemas, "create_config_metadata_schema", drifted)
+    after_drift = metadata_schemas_current(live)
+
+    assert (current, unreachable, after_drift) == (True, False, False)
