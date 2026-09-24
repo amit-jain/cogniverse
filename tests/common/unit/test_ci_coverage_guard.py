@@ -125,6 +125,18 @@ _READ_METHODS = frozenset({"read_text", "read_bytes", "open"})
 # Calls that take a path without reading the tree under it.
 _PATH_PASSTHROUGH = frozenset({"Path", "len", "print", "repr", "str"})
 
+# cogniverse_cli.config helpers handed a project root read only these subtrees
+# of it. ``test_project_root_helpers_resolve_only_under_their_subtrees`` pins
+# each entry against the helper itself.
+_PROJECT_ROOT_HELPERS = {
+    "get_chart_path": "charts/cogniverse",
+    "get_workflows_path": "workflows",
+    "get_configs_path": "configs",
+    "get_values_file": "charts/cogniverse",
+    "get_device_values_file": "charts/cogniverse",
+    "get_llm_serving_values_file": "charts/cogniverse",
+}
+
 
 def _ancestor(relative_path: str, levels: int) -> str:
     parts = relative_path.split("/")
@@ -243,8 +255,9 @@ def scanned_trees(
             roots.update(_resolve(node.args[0], env, module_rel))
         elif isinstance(function, ast.Name) and function.id not in _PATH_PASSTHROUGH:
             arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+            subtree = _PROJECT_ROOT_HELPERS.get(function.id)
             roots.update(
-                candidate
+                _join(candidate, subtree) if subtree else candidate
                 for argument in arguments
                 for candidate in _resolve(argument, env, module_rel)
                 if (repo_root / candidate).is_dir()
@@ -710,6 +723,63 @@ _OFFENDER = "tests/backends/unit/test_synthetic_guard.py"
 
 def test_scan_detector_reads_the_trees_a_module_walks() -> None:
     assert scanned_trees(_OFFENDER, _REPO_WIDE_SOURCE) == ("libs", "scripts")
+
+
+def test_scan_detector_reads_only_the_subtree_a_project_root_helper_resolves() -> None:
+    source = (
+        "from pathlib import Path\n"
+        "_REPO_ROOT = Path(__file__).resolve().parents[3]\n"
+        "CHART = get_chart_path(_REPO_ROOT)\n"
+        "VALUES = get_values_file(project_root=_REPO_ROOT, prod=True)\n"
+        "WORKFLOWS = get_workflows_path(_REPO_ROOT)\n"
+    )
+    assert scanned_trees(_OFFENDER, source) == ("charts/cogniverse", "workflows")
+
+
+def test_scan_detector_reads_the_whole_root_an_unknown_helper_is_handed() -> None:
+    source = (
+        "from pathlib import Path\n"
+        "_REPO_ROOT = Path(__file__).resolve().parents[3]\n"
+        "CHART = get_chart_path(_REPO_ROOT)\n"
+        "FILES = list_everything(_REPO_ROOT)\n"
+    )
+    assert scanned_trees(_OFFENDER, source) == ("",)
+
+
+def test_project_root_helpers_resolve_only_under_their_subtrees(tmp_path) -> None:
+    from cogniverse_cli import config
+
+    chart = tmp_path / "charts" / "cogniverse"
+    chart.mkdir(parents=True)
+    for name in ("values.k3s.yaml", "values.prod.yaml", "values.cuda.yaml"):
+        (chart / name).write_text("{}\n")
+    (chart / "values.modal-llm.yaml").write_text("{}\n")
+    (tmp_path / "workflows").mkdir()
+    (tmp_path / "configs").mkdir()
+    arguments = {
+        "get_device_values_file": ("cuda",),
+        "get_llm_serving_values_file": (config.LLM_SERVING_MODAL,),
+    }
+
+    resolved = {
+        name: getattr(config, name)(*arguments.get(name, ()), project_root=tmp_path)
+        for name in _PROJECT_ROOT_HELPERS
+    }
+
+    assert {
+        name: path.relative_to(tmp_path).as_posix() for name, path in resolved.items()
+    } == {
+        "get_chart_path": "charts/cogniverse",
+        "get_workflows_path": "workflows",
+        "get_configs_path": "configs",
+        "get_values_file": "charts/cogniverse/values.k3s.yaml",
+        "get_device_values_file": "charts/cogniverse/values.cuda.yaml",
+        "get_llm_serving_values_file": "charts/cogniverse/values.modal-llm.yaml",
+    }
+    for name, path in resolved.items():
+        assert _under(
+            path.relative_to(tmp_path).as_posix(), _PROJECT_ROOT_HELPERS[name]
+        )
 
 
 def test_scan_detector_ignores_a_module_that_reads_only_its_own_package() -> None:

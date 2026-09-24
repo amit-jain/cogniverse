@@ -27,6 +27,8 @@ on:
       - 'data/testset/dataset_summary.md'
       - 'tests/system/resources/**'
       - 'libs/runtime/cogniverse_runtime/optimization_cli.py'
+      # test_agents_declared_dependencies.py reads the lock.
+      - 'uv.lock'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -52,6 +54,8 @@ on:
       - 'data/testset/dataset_summary.md'
       - 'tests/system/resources/**'
       - 'libs/runtime/cogniverse_runtime/optimization_cli.py'
+      # test_agents_declared_dependencies.py reads the lock.
+      - 'uv.lock'
 
 env:
   CARGO_NET_RETRY: "10"
