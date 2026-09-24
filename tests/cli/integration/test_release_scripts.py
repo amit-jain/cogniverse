@@ -29,6 +29,7 @@ from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
+import yaml
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -1562,3 +1563,88 @@ def test_concurrent_publications_of_different_builds_report_what_the_registry_ho
             describe_run(result),
         )
     assert not (tagged_result.returncode == 0 and rebuilt_result.returncode == 0)
+
+
+@pytest.mark.parametrize(
+    ("job", "publish_step", "upload_host", "index_url"),
+    [
+        pytest.param(
+            "publish-testpypi",
+            "Publish to TestPyPI",
+            "test.pypi.org",
+            "https://test.pypi.org/simple/",
+            id="testpypi",
+        ),
+        pytest.param(
+            "publish-pypi",
+            "Publish to PyPI",
+            "upload.pypi.org",
+            "https://pypi.org/simple/",
+            id="pypi",
+        ),
+    ],
+)
+def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
+    tmp_path,
+    release_dists,
+    publish_tools,
+    registry,
+    job,
+    publish_step,
+    upload_host,
+    index_url,
+):
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "publish-packages.yml").read_text()
+    )
+    steps = {step["name"]: step for step in workflow["jobs"][job]["steps"]}
+    assert [name for name, step in steps.items() if "run" in step] == [
+        "Install uv",
+        "Verify release artifacts",
+        publish_step,
+    ]
+    assert "if" not in steps["Verify release artifacts"]
+    assert steps[publish_step]["if"] == "${{ !inputs.dry_run }}"
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    env = _registry_env(publish_tools, registry)
+
+    def run_step(name: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                "bash",
+                "--noprofile",
+                "--norc",
+                "-eo",
+                "pipefail",
+                "-c",
+                steps[name]["run"],
+            ],
+            cwd=root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_PUBLISH_TIMEOUT,
+        )
+
+    verified = run_step("Verify release artifacts")
+
+    assert verified.returncode == 0, describe_run(verified)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert (
+        "DRY RUN complete: nothing was uploaded and no registry was contacted"
+        in verified.stdout
+    ), describe_run(verified)
+
+    published = run_step(publish_step)
+
+    assert published.returncode == 0, describe_run(published)
+    assert registry.files() == expected
+    assert registry.proxy.uploads() == [(upload_host, name, 200) for name in expected]
+    assert (
+        f"Verified 20 file(s) at {index_url} against the manifest digests"
+        in published.stdout
+    ), describe_run(published)

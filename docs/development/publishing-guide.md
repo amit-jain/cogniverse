@@ -643,9 +643,9 @@ git push origin v0.1.0
 ```mermaid
 flowchart TD
     A["<span style='color:#000'><b>Build</b><br/>Build release set<br/>(5 published packages + internal dependencies)</span>"]
-    B["<span style='color:#000'><b>Test</b><br/>Run test suite with Vespa</span>"]
-    C["<span style='color:#000'><b>TestPyPI</b><br/>Publish based on tag type</span>"]
-    D["<span style='color:#000'><b>PyPI</b><br/>Publish based on tag type</span>"]
+    B["<span style='color:#000'><b>Test</b><br/>Install manifest wheels in a fresh venv,<br/>run test suite with Vespa</span>"]
+    C["<span style='color:#000'><b>TestPyPI</b><br/>Dry run, publish, verify index digests</span>"]
+    D["<span style='color:#000'><b>PyPI</b><br/>Dry run, publish, verify index digests</span>"]
     E["<span style='color:#000'><b>GitHub Release</b><br/>Create release with notes</span>"]
 
     A --> B
