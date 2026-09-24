@@ -768,6 +768,11 @@ to its best-ranked document and returns `matched_segments` plus
 hit and omits those fields. Video profiles default to `source`; other profiles
 keep `segment` unless their config opts into a different default.
 
+The response, and the streamed `final` event's `data`, also carry
+`source_search_incomplete`: `true` when a `source` search returned fewer than
+`top_k` sources because its nearest-neighbor candidate budget was full, so more
+matching sources may exist; `false` otherwise.
+
 **GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash
 curl "http://localhost:8000/search/strategies?tenant_id=acme:acme"
