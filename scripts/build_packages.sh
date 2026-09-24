@@ -203,7 +203,7 @@ main() {
     echo ""
 
     log_info "Validating artifacts and writing manifest..."
-    if ! uv run --no-sync python "$PROJECT_ROOT/scripts/release_manifest.py" \
+    if ! uv run --no-sync python "$PROJECT_ROOT/scripts/release_manifest.py" build \
         --libs-dir "$LIBS_DIR" \
         --stage-dir "$STAGE_DIR" \
         --output "$STAGE_DIR/$MANIFEST_NAME" \

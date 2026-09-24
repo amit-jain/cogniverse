@@ -1,21 +1,38 @@
 """``scripts/build_packages.sh`` run in disposable Git checkouts of the real
-package manifests, building through the real Hatch-VCS backend."""
+package manifests, building through the real Hatch-VCS backend, and
+``scripts/publish_packages.sh`` publishing those builds with the real Twine to an
+owned pypiserver reached at the PyPI and TestPyPI URLs."""
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import http.client
+import http.server
 import json
 import os
+import re
+import secrets
+import shutil
+import signal
+import socket
+import ssl
 import subprocess
 import tarfile
 import threading
 import time
 import tomllib
+import urllib.request
 import zipfile
+from dataclasses import dataclass
 from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -688,3 +705,860 @@ def test_unknown_option_exits_nonzero_without_building(tmp_path):
     assert result.returncode == 2, describe_run(result)
     assert "Unknown option: --no-such-option" in result.stderr, describe_run(result)
     assert not (repo / "dist").exists()
+
+
+_TWINE = "twine==7.0.0"
+_PYPISERVER = "pypiserver[passlib]==2.4.2"
+_PUBLISH_TIMEOUT = 900
+_REGISTRY_HOSTS = ("test.pypi.org", "upload.pypi.org", "pypi.org", "pypi.python.org")
+_TESTPYPI_INDEX = "https://test.pypi.org/simple/"
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_PROXY_VARIABLES = {
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+}
+
+
+class _Disconnected(Exception):
+    pass
+
+
+class _RegistryProxy(http.server.ThreadingHTTPServer):
+    """HTTPS proxy terminating TLS for the (Test)PyPI hosts and relaying every
+    request to the owned pypiserver, recording each and injecting upload faults:
+    ``server-error`` answers 503 without relaying; ``disconnect`` relays, then
+    drops the connection partway through the registry's response."""
+
+    daemon_threads = True
+
+    def __init__(self, upstream_port: int, tls_context: ssl.SSLContext):
+        super().__init__(("127.0.0.1", 0), _ConnectHandler)
+        self.upstream_port = upstream_port
+        self.tls_context = tls_context
+        self.faults: dict[str, str] = {}
+        self.requests: list[dict] = []
+        self._lock = threading.Lock()
+
+    @property
+    def port(self) -> int:
+        return self.server_address[1]
+
+    def record(self, entry: dict) -> None:
+        with self._lock:
+            self.requests.append(entry)
+
+    def clear(self) -> None:
+        with self._lock:
+            self.requests.clear()
+
+    def uploads(self) -> list[tuple[str, str, int | None]]:
+        return [
+            (entry["host"], entry["filename"], entry["status"])
+            for entry in self.requests
+            if entry["method"] == "POST"
+        ]
+
+    def index_reads(self) -> list[tuple[str, str]]:
+        return [
+            (entry["host"], entry["path"])
+            for entry in self.requests
+            if entry["method"] == "GET" and entry["path"].startswith("/simple/")
+        ]
+
+
+class _ConnectHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    timeout = 120
+
+    def do_CONNECT(self):
+        host = self.path.rsplit(":", 1)[0]
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            tunnel = self.server.tls_context.wrap_socket(
+                self.connection, server_side=True
+            )
+        except (ssl.SSLError, OSError):
+            return
+        handler = type("_TunnelHandler", (_RegistryHandler,), {"host": host})
+        try:
+            handler(tunnel, self.client_address, self.server)
+        except (_Disconnected, ssl.SSLError, OSError):
+            pass
+        finally:
+            tunnel.close()
+
+    def log_message(self, format, *args):
+        pass
+
+
+class _RegistryHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    timeout = 120
+    host = ""
+
+    def do_GET(self):
+        self._relay()
+
+    def do_POST(self):
+        self._relay()
+
+    def log_message(self, format, *args):
+        pass
+
+    def _relay(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        match = re.search(rb'name="content"; filename="([^"]+)"', body)
+        filename = match.group(1).decode() if match else None
+        entry = {
+            "method": self.command,
+            "host": self.host,
+            "path": self.path,
+            "filename": filename,
+            "status": None,
+        }
+        self.server.record(entry)
+        fault = self.server.faults.get(filename) if filename else None
+
+        if fault == "server-error":
+            status, reason = 503, "Service Unavailable"
+            content_type, payload = "text/plain", b"registry unavailable"
+        else:
+            upstream = http.client.HTTPConnection(
+                "127.0.0.1", self.server.upstream_port, timeout=120
+            )
+            headers = {
+                name: value
+                for name, value in self.headers.items()
+                if name.lower()
+                in {"authorization", "content-type", "user-agent", "accept"}
+            }
+            path = "/" if self.path == "/legacy/" else self.path
+            upstream.request(self.command, path, body=body or None, headers=headers)
+            response = upstream.getresponse()
+            payload = response.read()
+            status, reason = response.status, response.reason
+            content_type = response.getheader("Content-Type", "text/plain")
+            upstream.close()
+
+        entry["status"] = status
+        self.send_response(status, reason)
+        self.send_header("Content-Type", content_type)
+        if fault == "disconnect":
+            self.send_header("Content-Length", str(len(payload) + 64))
+            self.end_headers()
+            self.wfile.write(payload)
+            self.connection.shutdown(socket.SHUT_RDWR)
+            raise _Disconnected(filename)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+@dataclass
+class _Registry:
+    packages: Path
+    token: str
+    proxy: _RegistryProxy
+
+    def files(self) -> dict[str, str]:
+        return _hashes(self.packages)
+
+
+@dataclass
+class _PublishTools:
+    env: dict[str, str]
+    authority: Path
+    tls_context: ssl.SSLContext
+
+
+def _certificate_authority(directory: Path) -> tuple[Path, ssl.SSLContext]:
+    now = datetime.datetime.now(datetime.UTC)
+    validity = (now - datetime.timedelta(minutes=5), now + datetime.timedelta(days=1))
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Release Test CA")])
+    ca_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(validity[0])
+        .not_valid_after(validity[1])
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    server_key = ec.generate_private_key(ec.SECP256R1())
+    server_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _REGISTRY_HOSTS[0])])
+        )
+        .issuer_name(ca_name)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(validity[0])
+        .not_valid_after(validity[1])
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(h) for h in _REGISTRY_HOSTS]),
+            critical=False,
+        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    authority = directory / "authority.pem"
+    authority.write_bytes(ca_certificate.public_bytes(serialization.Encoding.PEM))
+    chain = directory / "server.pem"
+    chain.write_bytes(server_certificate.public_bytes(serialization.Encoding.PEM))
+    key = directory / "server.key"
+    key.write_bytes(
+        server_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(chain, key)
+    return authority, context
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _wait_for_http(url: str, process: subprocess.Popen, log: Path) -> None:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        assert process.poll() is None, log.read_text()
+        try:
+            with opener.open(url, timeout=5) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            time.sleep(0.2)
+    raise TimeoutError(f"{url} not ready:\n{log.read_text()}")
+
+
+@pytest.fixture(scope="module")
+def release_dists(tmp_path_factory) -> dict[str, Path]:
+    tagged = make_checkout(tmp_path_factory.mktemp("tagged"), tag="v0.2.0")
+    rebuilt = make_checkout(tmp_path_factory.mktemp("rebuilt"), tag=None)
+    readme = rebuilt / "libs" / "sdk" / "README.md"
+    readme.write_text(readme.read_text() + "\nRebuilt from a different commit.\n")
+    _commit_all(rebuilt, "change the sdk description")
+    git(rebuilt, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+    dev = make_checkout(tmp_path_factory.mktemp("dev"), tag="v0.2.0")
+    _commit_all(dev, "unreleased change")
+    for repo in (tagged, rebuilt, dev):
+        result = run_build(repo)
+        assert result.returncode == 0, describe_run(result)
+    return {"tagged": tagged / "dist", "rebuilt": rebuilt / "dist", "dev": dev / "dist"}
+
+
+@pytest.fixture(scope="module")
+def publish_tools(tmp_path_factory) -> _PublishTools:
+    home = tmp_path_factory.mktemp("publish-home")
+    cache = subprocess.run(
+        ["uv", "cache", "dir"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in _PROXY_VARIABLES and not name.startswith("TWINE_")
+    }
+    env.update(
+        HOME=str(home),
+        UV_CACHE_DIR=cache,
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    for requirement, probe in (
+        (_TWINE, "import twine"),
+        (_PYPISERVER, "import passlib, pypiserver"),
+    ):
+        subprocess.run(
+            ["uv", "run", "--no-project", "--with", requirement, "python", "-c", probe],
+            cwd=home,
+            env=env,
+            capture_output=True,
+            check=True,
+            timeout=_PUBLISH_TIMEOUT,
+        )
+    env["UV_OFFLINE"] = "1"
+    authority, context = _certificate_authority(tmp_path_factory.mktemp("tls"))
+    return _PublishTools(env=env, authority=authority, tls_context=context)
+
+
+@pytest.fixture
+def registry(tmp_path, publish_tools):
+    root = tmp_path / "registry"
+    packages = root / "packages"
+    packages.mkdir(parents=True)
+    token = secrets.token_urlsafe(24)
+    htpasswd = root / "htpasswd"
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--with",
+            _PYPISERVER,
+            "python",
+            "-c",
+            "import sys; from passlib.apache import HtpasswdFile; "
+            "f = HtpasswdFile(sys.argv[1], new=True); "
+            "f.set_password('__token__', sys.argv[2]); f.save()",
+            str(htpasswd),
+            token,
+        ],
+        cwd=root,
+        env=publish_tools.env,
+        capture_output=True,
+        check=True,
+    )
+    port = _free_port()
+    log = root / "pypiserver.log"
+    with log.open("w") as log_file:
+        server = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--no-project",
+                "--with",
+                _PYPISERVER,
+                "pypi-server",
+                "run",
+                "-p",
+                str(port),
+                "-i",
+                "127.0.0.1",
+                "-P",
+                str(htpasswd),
+                "-a",
+                "update",
+                "--disable-fallback",
+                "--backend",
+                "simple-dir",
+                "--hash-algo",
+                "sha256",
+                str(packages),
+            ],
+            cwd=root,
+            env=publish_tools.env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    proxy = None
+    try:
+        _wait_for_http(f"http://127.0.0.1:{port}/simple/", server, log)
+        proxy = _RegistryProxy(port, publish_tools.tls_context)
+        threading.Thread(target=proxy.serve_forever, daemon=True).start()
+        yield _Registry(packages=packages, token=token, proxy=proxy)
+    finally:
+        if proxy is not None:
+            proxy.shutdown()
+            proxy.server_close()
+        os.killpg(server.pid, signal.SIGTERM)
+        server.wait(timeout=60)
+
+
+def _publish_env(
+    tools: _PublishTools, proxy_port: int, token: str, **overrides: str
+) -> dict[str, str]:
+    proxy = f"http://127.0.0.1:{proxy_port}"
+    return {
+        **tools.env,
+        "HTTPS_PROXY": proxy,
+        "https_proxy": proxy,
+        "HTTP_PROXY": proxy,
+        "http_proxy": proxy,
+        "REQUESTS_CA_BUNDLE": str(tools.authority),
+        "SSL_CERT_FILE": str(tools.authority),
+        "CURL_CA_BUNDLE": str(tools.authority),
+        "PYPI_TOKEN": token,
+        "TEST_PYPI_TOKEN": token,
+        "VERIFY_TIMEOUT": "0",
+        **overrides,
+    }
+
+
+def _registry_env(
+    tools: _PublishTools, registry: _Registry, **overrides: str
+) -> dict[str, str]:
+    return _publish_env(tools, registry.proxy.port, registry.token, **overrides)
+
+
+def _publication_root(root: Path, dist: Path) -> Path:
+    (root / "scripts").mkdir(parents=True)
+    for script in ("publish_packages.sh", "release_manifest.py"):
+        shutil.copy2(REPO_ROOT / "scripts" / script, root / "scripts" / script)
+    shutil.copytree(dist, root / "dist")
+    return root
+
+
+def _run_publish(
+    root: Path, env: dict[str, str], *args: str, answer: str | None = None
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(root / "scripts" / "publish_packages.sh"), *args],
+        cwd=root,
+        env=env,
+        input=answer,
+        stdin=subprocess.DEVNULL if answer is None else None,
+        capture_output=True,
+        text=True,
+        timeout=_PUBLISH_TIMEOUT,
+    )
+
+
+def _manifest_files(dist: Path) -> dict[str, str]:
+    manifest = json.loads((dist / _MANIFEST).read_text())
+    return {
+        entry["filename"]: entry["sha256"]
+        for package in manifest["packages"]
+        for entry in (package["wheel"], package["sdist"])
+    }
+
+
+def _manifest_names(dist: Path) -> list[str]:
+    manifest = json.loads((dist / _MANIFEST).read_text())
+    return [package["name"] for package in manifest["packages"]]
+
+
+def test_publication_with_every_child_failing_exits_nonzero(
+    tmp_path, release_dists, publish_tools
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    names = _manifest_names(dist)
+    env = _publish_env(
+        publish_tools, _free_port(), "unused-token", CONTINUE_ON_ERROR="true"
+    )
+
+    all_failed = _run_publish(root, env, "--test", "--yes", answer="yes\n")
+
+    assert all_failed.returncode != 0, describe_run(all_failed)
+    output = all_failed.stdout + all_failed.stderr
+    for name in names:
+        assert f"Failed to publish {name} 0.2.0 (twine exited 1)" in output, (
+            describe_run(all_failed)
+        )
+    assert f"Failed: 10 package(s): {', '.join(names)}" in output, describe_run(
+        all_failed
+    )
+    assert "Uploaded or already present: 0 package(s)" in output, describe_run(
+        all_failed
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_args", "upload_host", "index_host"),
+    [
+        pytest.param(("--test",), "test.pypi.org", "test.pypi.org", id="testpypi"),
+        pytest.param((), "upload.pypi.org", "pypi.org", id="pypi"),
+    ],
+)
+def test_publication_uploads_and_verifies_exactly_the_manifest_artifacts(
+    tmp_path,
+    release_dists,
+    publish_tools,
+    registry,
+    target_args,
+    upload_host,
+    index_host,
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), *target_args, "--yes"
+    )
+
+    assert result.returncode == 0, describe_run(result)
+    successful_upload_names = set(registry.files())
+    expected_names = set(expected)
+    assert successful_upload_names == expected_names
+    assert registry.files() == expected
+    assert registry.proxy.uploads() == [(upload_host, name, 200) for name in expected]
+    assert registry.proxy.index_reads() == [
+        (index_host, f"/simple/{name}/") for name in _manifest_names(dist)
+    ]
+    assert "Uploaded or already present: 10 package(s)" in result.stdout, describe_run(
+        result
+    )
+    assert (
+        f"Verified 20 file(s) at https://{index_host}/simple/ against the "
+        "manifest digests" in result.stdout
+    ), describe_run(result)
+
+
+def test_republishing_identical_artifacts_is_the_accepted_duplicate_skip(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    env = _registry_env(publish_tools, registry)
+    first = _run_publish(root, env, "--test", "--yes")
+    assert first.returncode == 0, describe_run(first)
+    registry.proxy.clear()
+
+    genuine_duplicates = _run_publish(root, env, "--test", "--yes")
+
+    assert genuine_duplicates.returncode == 0, describe_run(genuine_duplicates)
+    assert registry.files() == expected
+    assert registry.proxy.uploads() == [
+        ("test.pypi.org", name, 400) for name in expected
+    ]
+    assert "Uploaded or already present: 10 package(s)" in genuine_duplicates.stdout
+
+
+def test_duplicate_name_with_different_registry_bytes_fails_publication(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    rebuilt = _manifest_files(release_dists["rebuilt"])
+    sdk_wheel, sdk_sdist = list(expected)[:2]
+    assert [name for name in expected if rebuilt[name] != expected[name]] == [
+        sdk_wheel,
+        sdk_sdist,
+    ]
+    shutil.copy2(release_dists["rebuilt"] / sdk_wheel, registry.packages / sdk_wheel)
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--yes"
+    )
+
+    assert result.returncode != 0, describe_run(result)
+    assert registry.files() == {**expected, sdk_wheel: rebuilt[sdk_wheel]}
+    assert registry.proxy.uploads() == [("test.pypi.org", sdk_wheel, 400)] + [
+        ("test.pypi.org", name, 200) for name in list(expected)[1:]
+    ]
+    assert (
+        f"error: {_TESTPYPI_INDEX}: {sdk_wheel} has sha256 {rebuilt[sdk_wheel]}, "
+        f"manifest has {expected[sdk_wheel]}" in result.stderr
+    ), describe_run(result)
+
+
+def test_authentication_refusal_fails_without_storing_any_file(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    names = _manifest_names(dist)
+    first_wheel = next(iter(_manifest_files(dist)))
+    env = _publish_env(publish_tools, registry.proxy.port, "not-" + registry.token)
+
+    result = _run_publish(root, env, "--test", "--yes")
+
+    assert result.returncode != 0, describe_run(result)
+    assert registry.files() == {}
+    assert registry.proxy.uploads() == [("test.pypi.org", first_wheel, 403)]
+    assert registry.proxy.index_reads() == []
+    output = result.stdout + result.stderr
+    assert "Failed: 1 package(s): cogniverse-sdk" in output, describe_run(result)
+    assert f"Not attempted: 9 package(s): {', '.join(names[1:])}" in output, (
+        describe_run(result)
+    )
+
+
+def test_server_error_mid_release_fails_and_a_rerun_completes_it(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    files = list(expected)
+    names = _manifest_names(dist)
+    vespa_sdist = "cogniverse_vespa-0.2.0.tar.gz"
+    assert files.index(vespa_sdist) == 11
+    registry.proxy.faults[vespa_sdist] = "server-error"
+    env = _registry_env(publish_tools, registry)
+
+    partial_failure = _run_publish(root, env, "--test", "--yes")
+
+    assert partial_failure.returncode != 0, describe_run(partial_failure)
+    assert registry.files() == {name: expected[name] for name in files[:11]}
+    assert (
+        registry.proxy.uploads()
+        == [("test.pypi.org", name, 200) for name in files[:11]]
+        + [("test.pypi.org", vespa_sdist, 503)] * 5
+    )
+    assert registry.proxy.index_reads() == []
+    output = partial_failure.stdout + partial_failure.stderr
+    assert "Failed: 1 package(s): cogniverse-vespa" in output, describe_run(
+        partial_failure
+    )
+    assert f"Not attempted: 4 package(s): {', '.join(names[6:])}" in output, (
+        describe_run(partial_failure)
+    )
+
+    registry.proxy.faults.clear()
+    registry.proxy.clear()
+    resumed = _run_publish(root, env, "--test", "--yes")
+
+    assert resumed.returncode == 0, describe_run(resumed)
+    assert registry.files() == expected
+    assert registry.proxy.uploads() == [
+        ("test.pypi.org", name, 400) for name in files[:11]
+    ] + [("test.pypi.org", name, 200) for name in files[11:]]
+
+
+def test_disconnect_after_the_registry_stored_a_file_fails_and_a_rerun_completes(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    files = list(expected)
+    core_wheel, core_sdist = files[4:6]
+    assert core_wheel == "cogniverse_core-0.2.0-py3-none-any.whl"
+    registry.proxy.faults[core_wheel] = "disconnect"
+    env = _registry_env(publish_tools, registry, CONTINUE_ON_ERROR="true")
+
+    partial_failure = _run_publish(root, env, "--test", "--yes")
+
+    assert partial_failure.returncode != 0, describe_run(partial_failure)
+    assert registry.files() == {
+        name: digest for name, digest in expected.items() if name != core_sdist
+    }
+    assert registry.proxy.uploads() == [
+        ("test.pypi.org", name, 200) for name in files if name != core_sdist
+    ]
+    assert registry.proxy.index_reads() == []
+    output = partial_failure.stdout + partial_failure.stderr
+    assert "Failed: 1 package(s): cogniverse-core" in output, describe_run(
+        partial_failure
+    )
+    assert "Uploaded or already present: 9 package(s)" in output, describe_run(
+        partial_failure
+    )
+
+    registry.proxy.faults.clear()
+    registry.proxy.clear()
+    resumed = _run_publish(root, env, "--test", "--yes")
+
+    assert resumed.returncode == 0, describe_run(resumed)
+    assert registry.files() == expected
+    assert registry.proxy.uploads() == [
+        ("test.pypi.org", name, 200 if name == core_sdist else 400) for name in files
+    ]
+
+
+def test_dry_run_verifies_artifacts_without_contacting_the_registry(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--dry-run"
+    )
+
+    assert result.returncode == 0, describe_run(result)
+    dry_run_registry_requests = registry.proxy.requests
+    assert dry_run_registry_requests == []
+    assert registry.files() == {}
+    lines = result.stdout.splitlines()
+    assert "Target: TestPyPI" in lines
+    assert f"Twine: {_TWINE}" in lines
+    assert (
+        "Mode: DRY RUN (verifies artifacts; uploads nothing and contacts no registry)"
+        in lines
+    )
+    wheels_first = [name for name in expected if name.endswith(".whl")] + [
+        name for name in expected if name.endswith(".tar.gz")
+    ]
+    without_readme = {"cogniverse_foundation", "cogniverse_evaluation"}
+    assert [_ANSI.sub("", line) for line in lines if line.startswith("Checking ")] == [
+        f"Checking {name}: PASSED"
+        + (" with warnings" if name.split("-")[0] in without_readme else "")
+        for name in wheels_first
+    ]
+    assert [line for line in lines if line.startswith("[DRY RUN]")] == [
+        f"[DRY RUN] Would upload {name}" for name in expected
+    ]
+    assert lines[-1] == (
+        "DRY RUN complete: nothing was uploaded and no registry was contacted"
+    )
+    assert "Uploaded or already present" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "mode_args", [("--yes",), ("--dry-run",)], ids=["publish", "dry-run"]
+)
+def test_local_version_is_refused_before_any_upload(
+    tmp_path, release_dists, publish_tools, registry, mode_args
+):
+    dist = release_dists["dev"]
+    root = _publication_root(tmp_path / "publish", dist)
+    version = Version(json.loads((dist / _MANIFEST).read_text())["version"])
+    assert version.public == "0.2.1.dev1"
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", *mode_args
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert (
+        f"error: release version {version} has the local segment +{version.local}, "
+        "which PyPI and TestPyPI reject; publish a build of a release tag"
+        in result.stderr
+    ), describe_run(result)
+    assert "[DRY RUN]" not in result.stdout
+
+
+def test_artifact_differing_from_the_manifest_is_refused_before_any_upload(
+    tmp_path, release_dists, publish_tools, registry
+):
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    expected = _manifest_files(dist)
+    tampered = root / "dist" / "cogniverse_core-0.2.0.tar.gz"
+    tampered.write_bytes(tampered.read_bytes() + b"not the built bytes")
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--yes"
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert (
+        f"error: {tampered}: sha256 {_sha256(tampered)} does not match the manifest "
+        f"sha256 {expected[tampered.name]}" in result.stderr
+    ), describe_run(result)
+
+
+def test_missing_manifest_is_refused_before_any_upload(
+    tmp_path, release_dists, publish_tools, registry
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+    (root / "dist" / _MANIFEST).unlink()
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--yes"
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert (
+        f"error: {root / 'dist' / _MANIFEST} not found; run "
+        "scripts/build_packages.sh first" in result.stderr
+    ), describe_run(result)
+
+
+@pytest.mark.parametrize("answer", [None, "no\n"], ids=["no-input", "declined"])
+def test_unconfirmed_publication_uploads_nothing_and_exits_nonzero(
+    tmp_path, release_dists, publish_tools, registry, answer
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", answer=answer
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert "Publishing cancelled: nothing was uploaded" in result.stderr, describe_run(
+        result
+    )
+
+
+def test_unknown_publish_option_exits_2_without_contacting_the_registry(
+    tmp_path, release_dists, publish_tools, registry
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--no-such-option"
+    )
+
+    assert result.returncode == 2, describe_run(result)
+    assert "Unknown option: --no-such-option" in result.stderr, describe_run(result)
+    assert registry.proxy.requests == []
+
+
+def test_concurrent_publications_of_different_builds_report_what_the_registry_holds(
+    tmp_path, release_dists, publish_tools, registry
+):
+    roots = {
+        label: _publication_root(tmp_path / label, release_dists[label])
+        for label in ("tagged", "rebuilt")
+    }
+    expected = {label: _manifest_files(release_dists[label]) for label in roots}
+    assert set(expected["tagged"]) == set(expected["rebuilt"])
+    assert expected["tagged"] != expected["rebuilt"]
+    env = _registry_env(publish_tools, registry)
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, tuple[float, float, subprocess.CompletedProcess]] = {}
+
+    def publish(label: str) -> None:
+        barrier.wait()
+        started = time.monotonic()
+        result = _run_publish(roots[label], env, "--test", "--yes")
+        outcomes[label] = (started, time.monotonic(), result)
+
+    threads = [threading.Thread(target=publish, args=(label,)) for label in roots]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    tagged_start, tagged_end, tagged_result = outcomes["tagged"]
+    rebuilt_start, rebuilt_end, rebuilt_result = outcomes["rebuilt"]
+    assert tagged_start < rebuilt_end and rebuilt_start < tagged_end
+    held = registry.files()
+    assert set(held) == set(expected["tagged"])
+    for name, digest in held.items():
+        assert digest in {expected["tagged"][name], expected["rebuilt"][name]}
+    for label, result in (("tagged", tagged_result), ("rebuilt", rebuilt_result)):
+        assert (result.returncode == 0) == (held == expected[label]), (
+            label,
+            describe_run(result),
+        )
+    assert not (tagged_result.returncode == 0 and rebuilt_result.returncode == 0)
