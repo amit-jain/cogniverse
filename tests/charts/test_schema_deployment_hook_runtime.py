@@ -46,7 +46,6 @@ def _render_e2e_stack() -> list[dict]:
         use_k3d=True,
         backend="rocm",
         serving=LLM_SERVING_MODAL,
-        project_root=REPO_ROOT,
     ):
         cmd.extend(["-f", str(values_file)])
     cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
