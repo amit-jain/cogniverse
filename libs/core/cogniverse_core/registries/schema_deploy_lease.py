@@ -32,22 +32,26 @@ DEFAULT_WAIT_SECONDS = 120.0
 
 # The heartbeat proves the holder's process is alive, not that its deploy is
 # moving, so it stops renewing once a lease has been held this long; a holder
-# stuck past it is then taken over like a dead one. It is the longest
-# legitimate lease body, a tenant schema delete whose every read and request
-# runs to its bound and whose every activation conflicts:
+# stuck past it is then taken over like a dead one. It covers the longest
+# legitimate lease body the guard in test_deploy_activation_conflict_retry.py
+# measures from the real retry and timeout policy: a one-tenant, one-schema
+# delete whose every read and request runs to its bound, whose first four
+# activations conflict and whose fifth activates and tombstones:
 #   * 15 deploy requests: 5 attempts x (session create, prepare, activate),
 #     each DEPLOY_REQUEST_TIMEOUT_S = 10 s connect + 300 s read = 310 s;
 #   * 7.5 s of backoff between attempts (0.5 + 1 + 2 + 4);
-#   * 12 config-store visits: registry and tenant reads before the redeploy,
-#     then the registry and the intent journal in every attempt's package
-#     build. One page each, a page being 5 attempts x (30 s connect + 30 s
-#     read) + 3.75 s backoff = 303.75 s (VespaConfigStore visit reads);
+#   * 13 config-store visits: registry and tenant reads before the redeploy,
+#     the registry and the intent journal in every attempt's package build,
+#     and the tombstone's read of the current row. One page each, a page
+#     being 5 attempts x (30 s connect + 30 s read) + 3.75 s backoff =
+#     303.75 s (VespaConfigStore visit reads);
 #   * 7 schema listings of 10 s connect + 10 s read = 20 s: two before the
 #     redeploy and one in every attempt's build.
-# 15 x 310 + 7.5 + 12 x 303.75 + 7 x 20 = 8442.5 s, rounded up to 2.5 hours,
-# which also covers the registry tombstone writes after the activation and
-# one extra tenant's registry read in a bulk delete. Pinned against the real
-# retry and timeout policy by test_deploy_activation_conflict_retry.py.
+# 15 x 310 + 7.5 + 13 x 303.75 + 7 x 20 = 8746.25 s, rounded up to 2.5 hours.
+# Not covered, each adding to that figure: 303.75 s per extra visit page,
+# per extra tenant in a bulk delete, and per extra tombstone, plus each
+# tombstone's own write (set_config's query, feed and prune). The requests
+# timeouts bound inactivity between bytes, not a whole call's duration.
 MAX_TOTAL_HOLD_SECONDS = 9000.0
 
 _process_state = threading.Lock()
@@ -434,6 +438,7 @@ def _heartbeat(
             return
         try:
             if lease._held_past_cap():
+                lease._lost = True
                 logger.error(
                     "%s lease held by %s for its %.0fs maximum; no longer "
                     "renewing, so peers take it over",

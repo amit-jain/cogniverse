@@ -769,3 +769,42 @@ def test_a_holder_dates_its_hold_from_before_a_slow_claim():
     assert time.monotonic() - sent < 1.4
     with pytest.raises(DeploymentLeaseLost):
         holder.ensure_owned(renew_after=1.0)
+
+
+def test_a_renewal_dates_its_hold_from_before_a_slow_claim():
+    class _SlowOnDemandStore(InMemoryConfigStore):
+        def __init__(self):
+            super().__init__()
+            self.slow = threading.Event()
+
+        def compare_and_set_config(self, *args, **kwargs):
+            if self.slow.is_set():
+                time.sleep(0.4)
+            return super().compare_and_set_config(*args, **kwargs)
+
+    store = _SlowOnDemandStore()
+    holder = _lease(store, lease_seconds=1.0, wait_seconds=0)
+    holder.acquire()
+    store.slow.set()
+    sent = time.monotonic()
+    assert holder.renew() is None
+    time.sleep(max(0.0, sent + 1.0 + 0.1 - time.monotonic()))
+    assert time.monotonic() - sent < 1.4
+    with pytest.raises(DeploymentLeaseLost):
+        holder.ensure_owned(renew_after=1.0)
+
+
+def test_the_heartbeat_stopping_at_the_cap_marks_the_lease_lost(monkeypatch):
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 0.4)
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=3.0, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    try:
+        deadline = time.monotonic() + 5
+        while _heartbeat_threads() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _heartbeat_threads() == []
+        with pytest.raises(DeploymentLeaseLost):
+            holder.ensure_owned(renew_after=1.0)
+    finally:
+        holder.release()

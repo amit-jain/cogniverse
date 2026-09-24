@@ -711,11 +711,11 @@ A deploy holder (`VespaSchemaManager.deployment_lease`) renews on a background
 heartbeat every third of its hold for as long as it holds the lease, so a live
 holder is not taken over while its requests run longer than the hold; the
 heartbeat stops at `release()`. It also stops renewing once the lease has been
-held for `MAX_TOTAL_HOLD_SECONDS` (9000 s, the longest legitimate lease body:
-a tenant delete whose five attempts of three 310 s requests, backoff, twelve
-one-page config-store visits and seven schema listings all run to their
-bounds), so a holder stuck past that is taken over a hold later like a dead
-one. A renewal the store refuses
+held for `MAX_TOTAL_HOLD_SECONDS` (9000 s, above the longest legitimate
+lease body: a one-schema tenant delete whose five attempts of three 310 s
+requests, backoff, thirteen one-page config-store visits and seven schema
+listings all run to their bounds), so a holder stuck past that is taken over
+a hold later like a dead one. A renewal the store refuses
 loses the lease, and the deploy re-checks ownership before each mutating step
 (session create, prepare, activate, and each backend prepare-and-activate
 attempt), so it stops before the next one. A step already in flight when the

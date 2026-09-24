@@ -443,13 +443,16 @@ class _CountingDeleteRegistry:
         return {}
 
     def unregister_schema(self, tenant_id, base_schema_name):
+        # A tombstone reads the current row before writing the deleted one.
+        self.visits += 1
         return None
 
 
 def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch):
     """The heartbeat's cap must outlast the longest lease body: a tenant
-    delete whose every read and every deploy request runs to its bound and
-    whose every attempt conflicts. Visits are one page each."""
+    delete whose every read and every deploy request runs to its bound, whose
+    first four attempts conflict and whose last activates and tombstones.
+    Visits are one page each."""
     from cogniverse_core.registries.schema_deploy_lease import MAX_TOTAL_HOLD_SECONDS
     from cogniverse_vespa import vespa_schema_manager
 
@@ -462,7 +465,7 @@ def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch
     listings = []
     backoffs: list[float] = []
     monkeypatch.setattr(vespa_schema_manager.time, "sleep", backoffs.append)
-    with _ConfigServer([409]) as server:
+    with _ConfigServer([409, 409, 409, 409, 200]) as server:
         manager = _make_schema_manager(server.port)
         manager._schema_registry = registry
         manager._PROTECTED_SCHEMAS = frozenset()
@@ -473,16 +476,15 @@ def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch
             return ["conflictprobe_acme_acme"]
 
         manager.list_deployed_document_types = list_deployed
-        with pytest.raises(RuntimeError, match="409"):
-            manager.delete_tenant_schemas("acme")
+        assert manager.delete_tenant_schemas("acme") == ["conflictprobe_acme_acme"]
 
     requests_made = len(server.paths)
-    assert (requests_made, registry.visits, len(listings)) == (15, 12, 7)
+    assert (requests_made, registry.visits, len(listings)) == (15, 13, 7)
     longest = (
         requests_made * sum(vespa_schema_manager.DEPLOY_REQUEST_TIMEOUT_S)
         + sum(backoffs)
         + registry.visits * visit_page
         + len(listings) * listing
     )
-    assert longest == 8442.5
+    assert longest == 8746.25
     assert MAX_TOTAL_HOLD_SECONDS >= longest
