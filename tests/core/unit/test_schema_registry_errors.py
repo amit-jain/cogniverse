@@ -216,7 +216,8 @@ def test_a_peer_tombstone_after_activation_is_never_overwritten():
     """An existing schema's re-registration after activation is conditional on
     the row the deploy was decided from: a peer that deleted the schema in
     between owns the row, nothing is rolled back over it, and the conflict is
-    reported as a retryable tombstone conflict."""
+    reported as a tombstone conflict that is not retried: a retry would
+    recreate the schema the peer deleted."""
     from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
 
     registry, store, packages, (tenant, base, name) = _registry_with_peer(
@@ -231,11 +232,10 @@ def test_a_peer_tombstone_after_activation_is_never_overwritten():
         "tombstone",
     )
     assert caught.value.activated is True
-    assert caught.value.retryable is True
+    assert caught.value.retryable is False
     assert str(caught.value) == (
         f"Schema {name!r} was deleted by another process after this deploy read "
-        f"its registry row; the activation stands and that revision was not "
-        f"overwritten. Retry the deploy."
+        f"its registry row; the peer's deletion stands and was not overwritten."
     )
     assert _row(store, tenant, base).config_value["deleted"] is True
     assert packages == [[name]]
@@ -264,6 +264,7 @@ def test_a_peer_registration_after_activation_is_reported_as_one():
         registry.deploy_schema(tenant, base)
 
     assert caught.value.peer_revision == "registration"
+    assert caught.value.retryable is True
     assert str(caught.value) == (
         f"Schema {name!r} was re-registered by another process after this deploy "
         f"read its registry row; the activation stands and that revision was not "
