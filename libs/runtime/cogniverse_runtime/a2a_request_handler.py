@@ -57,36 +57,71 @@ class RedisRelayEventQueue(EventQueue):
         self._task_store = task_store
         self._relay_closed = False
         self._relay_lock = asyncio.Lock()
-        self._cancel_committed = False
+        # open: events flow. pending: a cancel is taking its generation, so
+        # events wait in _held until it commits (dropped) or aborts
+        # (delivered). committed: only the cancel's own events flow. ended:
+        # the cancel is over and later producer events stay superseded.
+        self._cancel_state = "open"
+        self._state_before_cancel = "open"
+        self._held: list = []
         self._cancel_published = asyncio.Event()
         self._cancel_hold_seconds = 0.0
 
-    def commit_cancel(self, hold_seconds: float) -> bool:
-        """Refuse every later event but the cancel's own, and hold the close.
+    def hold_for_cancel(self, hold_seconds: float) -> bool:
+        """Hold producer events and the close while a cancel takes its generation.
 
-        A non-cooperative producer keeps running through the cancel; what it
-        emits from here on is superseded, so the relay ends with the cancel.
         A close waits at most ``hold_seconds`` for the cancel to publish.
-        Returns False when a cancel already holds this relay.
+        Returns False when another cancel already holds this relay.
         """
-        if self._cancel_committed and not self._cancel_published.is_set():
+        if self._cancel_state in ("pending", "committed"):
             return False
-        self._cancel_committed = True
+        self._state_before_cancel = self._cancel_state
+        self._cancel_state = "pending"
         self._cancel_published = asyncio.Event()
         self._cancel_hold_seconds = hold_seconds
         return True
 
-    def abort_cancel(self) -> None:
-        """Undo a commit whose cancel never took its fencing generation."""
-        self._cancel_committed = False
+    def commit_cancel(self) -> None:
+        """The cancel took its generation: what the producer emits is superseded.
+
+        A non-cooperative producer keeps running through the cancel, so the
+        relay refuses everything but the cancel's own events from here on and
+        ends with the cancel.
+        """
+        if self._held:
+            logger.debug(
+                "A2A task %s: dropped %d events held while its cancel committed",
+                self._task_id,
+                len(self._held),
+            )
+        self._held.clear()
+        self._cancel_state = "committed"
+
+    async def abort_cancel(self) -> None:
+        """Undo a hold whose cancel never took its generation.
+
+        The relay returns to the state it had before the hold; if that was
+        open, the held events are delivered in order before anything newer.
+        """
+        if self._state_before_cancel == "open":
+            while self._held:
+                await self._enqueue(self._held.pop(0))
+        else:
+            self._held.clear()
+        self._cancel_state = self._state_before_cancel
         self._cancel_published.set()
 
     def end_cancel(self) -> None:
         """Release a close held for the cancel, published or abandoned."""
+        if self._cancel_state == "committed":
+            self._cancel_state = "ended"
         self._cancel_published.set()
 
     async def enqueue_event(self, event) -> None:
-        if self._cancel_committed:
+        if self._cancel_state == "pending":
+            self._held.append(event)
+            return
+        if self._cancel_state != "open":
             logger.debug(
                 "A2A task %s: dropped %s emitted after its cancel was committed",
                 self._task_id,
@@ -108,7 +143,10 @@ class RedisRelayEventQueue(EventQueue):
             await self._task_store.publish_event(self._task_id, event)
 
     async def close(self, immediate: bool = False) -> None:
-        if self._cancel_committed and not self._cancel_published.is_set():
+        if (
+            self._cancel_state in ("pending", "committed")
+            and not self._cancel_published.is_set()
+        ):
             try:
                 await asyncio.wait_for(
                     self._cancel_published.wait(), self._cancel_hold_seconds
@@ -232,14 +270,21 @@ class RedisRequestHandler(DefaultRequestHandler):
             self._control_task.cancel()
             await asyncio.gather(self._control_task, return_exceptions=True)
             self._control_task = None
-        # Each cancel run, and each routed cancel waiting on one, is bounded
-        # by the owner deadline.
-        if self._routed_cancels:
-            await asyncio.gather(*list(self._routed_cancels), return_exceptions=True)
+        # A cancel run still going at the drain budget is cancelled, so
+        # shutdown never waits out the owner deadline; routed requesters
+        # waiting on it get an explicit refusal.
         if self._inflight_cancels:
+            runs = set(self._inflight_cancels.values())
+            _, unfinished = await asyncio.wait(
+                runs, timeout=self._drain_timeout_seconds
+            )
+            for run in unfinished:
+                run.cancel()
+            if unfinished:
+                await asyncio.wait(unfinished, timeout=self._drain_timeout_seconds)
+        if self._routed_cancels:
             await asyncio.wait(
-                set(self._inflight_cancels.values()),
-                timeout=self._drain_timeout_seconds,
+                set(self._routed_cancels), timeout=self._drain_timeout_seconds
             )
         if self._abandoned_cancels:
             await asyncio.wait(
@@ -444,6 +489,14 @@ class RedisRequestHandler(DefaultRequestHandler):
         if lease is None or lease.replica_id == self._replica_id:
             try:
                 result = await asyncio.shield(self._coalesced_cancel(params.id))
+            except A2ACancelTimeoutError as exc:
+                # A retryable conflict, as the routed path answers, not the
+                # JSON-RPC internal error an unmapped exception becomes.
+                raise ServerError(
+                    error=InvalidParamsError(message=f"{exc}; retry")
+                ) from exc
+            except A2ACancelCapacityError as exc:
+                raise ServerError(error=InvalidParamsError(message=str(exc))) from exc
             except A2ATaskOwnershipLostError as exc:
                 # Same conflict ``message/send`` reports for a lost race, so
                 # the client sees a retryable conflict, not an internal error.
@@ -536,7 +589,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         if live_queue is not None and live_queue.is_closed():
             live_queue = None
         relay = live_queue if isinstance(live_queue, RedisRelayEventQueue) else None
-        committed = relay is not None and relay.commit_cancel(
+        committed = relay is not None and relay.hold_for_cancel(
             self._cancel_timeout_seconds / 2
         )
         try:
@@ -547,8 +600,10 @@ class RedisRequestHandler(DefaultRequestHandler):
             )
         except BaseException:
             if committed:
-                relay.abort_cancel()
+                await relay.abort_cancel()
             raise
+        if committed:
+            relay.commit_cancel()
         cancel_context = ServerCallContext()
         self.task_store.attach_execution(cancel_context, cancel_lease)
         try:
@@ -690,6 +745,16 @@ class RedisRequestHandler(DefaultRequestHandler):
             task = await asyncio.shield(run)
             await self.task_store.acknowledge_cancel(command, task=task)
         except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if run.cancelled() and not (current and current.cancelling()):
+                await self._refuse_routed_cancel(
+                    command,
+                    A2ACancelTimeoutError(
+                        f"replica {self._replica_id} shut down before the cancel "
+                        f"of task {command.task_id} finished"
+                    ),
+                )
+                return
             raise
         except Exception as exc:
             logger.exception(

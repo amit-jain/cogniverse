@@ -723,8 +723,10 @@ results = search_service.search(
 returns one `SearchResult` per source content item, using the best-ranked
 document for that source, for the best `top_k` sources by their best segment's
 score. Each source result includes `matched_segments` with that source's best
-segments (the profile's `source_collapse_oversample`, default 4) in relevance
-order and `segments_in_window` with the source's number of matched segments.
+segments (the profile's `source_collapse_oversample`, default 4, at most 64) in
+relevance order and `segments_in_window` with the source's number of matched
+segments. A `source` search that would need more than 10000 grouping rows
+(`top_k * (1 + source_collapse_oversample)`) is refused with 400.
 The response also carries `source_search_incomplete`: `true` when a `source`
 search returned fewer than `top_k` sources because its nearest-neighbor
 candidate budget was full, so more matching sources may exist; `false`
@@ -769,7 +771,8 @@ curl -X POST http://localhost:8000/search/ \
 
 The same `result_granularity` rules apply here: `source` returns the best
 `top_k` sources, each collapsed to its best-ranked document with
-`matched_segments` (its best `source_collapse_oversample` segments, default 4)
+`matched_segments` (its best `source_collapse_oversample` segments, default 4,
+at most 64)
 and `segments_in_window` (its number of matched segments); the response, and
 the streamed `final` event's `data`, carry `source_search_incomplete`.
 `segment` keeps every hit and omits those fields. Video profiles default to
