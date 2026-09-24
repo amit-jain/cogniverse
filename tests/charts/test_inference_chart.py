@@ -869,6 +869,41 @@ def test_cpu_composition_omits_visual_ingestion(prod: bool):
     assert _VISUAL_SERVICES & set(_inference_deployments(docs)) == {"vllm_asr"}
 
 
+def test_cuda_composition_without_a_student_endpoint_is_refused():
+    stderr = _composition_failure(_cli_values_stack("cuda", prod=True), *_PROD_SECRETS)
+
+    assert stderr == (
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
+        "with VLMDescriptionStrategy on the student endpoint: set "
+        "runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true"
+    ), stderr
+
+
+def test_cuda_composition_with_an_explicit_student_endpoint_renders():
+    docs = _render(
+        *_PROD_SECRETS,
+        f"runtime.primaryLLM.apiBase={_STUDENT_API_BASE}",
+        values=_cli_values_stack("cuda", prod=True),
+    )
+    config = _chart_config(docs)
+    deployments = _inference_deployments(docs)
+
+    assert resolve_default_profile(config) == _SELECTED_VIDEO_PROFILE
+    assert {key: _service_urls(docs)[key] for key in ("vllm_colpali", "vllm_asr")} == {
+        "vllm_colpali": "http://cogniverse-vllm-colpali:8000",
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
+    }
+    assert _VISUAL_SERVICES & set(deployments) == {"vllm_colpali", "vllm_asr"}
+    assert [
+        deployments[key]["spec"]["template"]["spec"]["nodeSelector"]
+        for key in ("vllm_colpali", "vllm_asr")
+    ] == [{"nvidia.com/gpu.present": "true"}] * 2
+    assert (
+        _video_description_endpoint(config, _SELECTED_VIDEO_PROFILE)
+        == _STUDENT_API_BASE
+    )
+
+
 def test_fully_external_composition_renders_without_local_model_pods():
     """Every selected key off-cluster plus the CLI's ``--llm external``
     overrides: no local Deployment serves any of them."""

@@ -320,7 +320,9 @@ class TestDeviceOverlaysKeepDevMode:
     that device's hosts, killing the edit→restart loop."""
 
     def test_k3s_plus_cuda_keeps_dev_mounts(self):
-        manifests = _render_with_values("values.k3s.yaml", "values.cuda.yaml")
+        manifests = _render_with_values(
+            "values.k3s.yaml", "values.cuda.yaml", "values.modal-llm.yaml"
+        )
         assert _dev_mount_deployments(manifests) == [
             "cogniverse-dashboard",
             "cogniverse-quality-monitor",
@@ -328,7 +330,7 @@ class TestDeviceOverlaysKeepDevMode:
         ]
 
     def test_base_plus_cuda_stays_non_dev(self):
-        manifests = _render_with_values("values.cuda.yaml")
+        manifests = _render_with_values("values.cuda.yaml", "values.modal-llm.yaml")
         assert _dev_mount_deployments(manifests) == []
 
     def test_k3s_plus_rocm_keeps_dev_mounts(self):

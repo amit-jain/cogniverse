@@ -102,3 +102,7 @@ inference:
 # colpali warm-cache duplication problem.
 # ---------------------------------------------------------------------------
 runtime: {}
+
+config:
+  defaultProfiles:
+    video: video_colpali_smol500_mv_frame
