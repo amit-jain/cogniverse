@@ -1296,8 +1296,8 @@ class TestStreamingSearchResolvesTheSelectedProfile:
             )
 
         assert str(refusal.value) == (
-            "No search profile for tenant 'acme:acme': the request named none "
-            "and no tenant default video profile is configured."
+            "No profile specified on the request and tenant 'acme:acme' has no "
+            "configured default video profile."
         )
         assert _RecordingSearchAgent.builds == []
 
@@ -1315,8 +1315,8 @@ class TestStreamingSearchResolvesTheSelectedProfile:
                 pass
 
         assert str(refusal.value) == (
-            "No search profile for tenant 'acme:acme': the request named none "
-            "and no tenant default video profile is configured."
+            "No profile specified on the request and tenant 'acme:acme' has no "
+            "configured default video profile."
         )
         assert _RecordingSearchAgent.builds == []
 
