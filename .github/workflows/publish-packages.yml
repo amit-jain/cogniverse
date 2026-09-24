@@ -125,19 +125,23 @@ jobs:
 
       - name: Install packages from dist
         run: |
-          # Install built wheels in dependency order
-          uv pip install dist/cogniverse_core-*.whl
-          uv pip install dist/cogniverse_agents-*.whl
-          uv pip install dist/cogniverse_vespa-*.whl
-          uv pip install dist/cogniverse_runtime-*.whl
-          uv pip install dist/cogniverse_dashboard-*.whl
+          # Every wheel in the build manifest, into an environment outside the checkout
+          wheel_list=$(python -c 'import json; m = json.load(open("dist/BUILD_MANIFEST.json")); print("\n".join("dist/" + p["wheel"]["filename"] for p in m["packages"]))')
+          mapfile -t wheels <<< "$wheel_list"
+          uv venv "$RUNNER_TEMP/release-venv" --python 3.12
+          uv pip install --python "$RUNNER_TEMP/release-venv/bin/python" "${wheels[@]}"
 
       - name: Verify package imports
+        working-directory: ${{ runner.temp }}
         run: |
-          uv run python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
-          uv run python -c "from cogniverse_agents.gateway_agent import GatewayAgent"
-          uv run python -c "from cogniverse_vespa import VespaBackend"
+          release-venv/bin/python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
+          release-venv/bin/python -c "from cogniverse_agents.gateway_agent import GatewayAgent"
+          release-venv/bin/python -c "from cogniverse_vespa import VespaBackend"
           echo "All packages imported successfully"
+
+      - name: Sync workspace dependencies
+        run: |
+          uv sync --frozen --extra cpu
 
       - name: Run package tests
         env:
@@ -146,7 +150,7 @@ jobs:
           VESPA_CONFIG_PORT: 19071
         run: |
           # Run critical tests
-          JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/common/ tests/routing/unit/ -v --tb=short
+          JAX_PLATFORM_NAME=cpu timeout 1800 uv run --no-sync pytest tests/common/ tests/routing/unit/ -v --tb=short
 
   # Publish to TestPyPI
   publish-testpypi:
@@ -174,7 +178,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv twine
+          pip install uv
           uv --version
 
       - name: Download build artifacts
@@ -183,27 +187,17 @@ jobs:
           name: dist-packages
           path: dist/
 
-      - name: Validate distributions
+      - name: Verify release artifacts
         run: |
-          twine check dist/*
+          ./scripts/publish_packages.sh --test --dry-run
 
       - name: Publish to TestPyPI
         if: ${{ !inputs.dry_run }}
         env:
           TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
         run: |
-          TEST_PYPI=true ./scripts/publish_packages.sh
+          ./scripts/publish_packages.sh --test --yes
 
-      - name: Dry run publish
-        if: ${{ inputs.dry_run }}
-        run: |
-          TEST_PYPI=true DRY_RUN=true ./scripts/publish_packages.sh
-
-      - name: Test installation from TestPyPI
-        if: ${{ !inputs.dry_run }}
-        run: |
-          sleep 60  # Wait for packages to be available
-          pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ cogniverse-core
 
   # Publish to production PyPI
   publish-pypi:
@@ -231,7 +225,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv twine
+          pip install uv
           uv --version
 
       - name: Download build artifacts
@@ -240,28 +234,16 @@ jobs:
           name: dist-packages
           path: dist/
 
-      - name: Validate distributions
+      - name: Verify release artifacts
         run: |
-          twine check dist/*
+          ./scripts/publish_packages.sh --dry-run
 
       - name: Publish to PyPI
         if: ${{ !inputs.dry_run }}
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
-          ./scripts/publish_packages.sh
-
-      - name: Dry run publish
-        if: ${{ inputs.dry_run }}
-        run: |
-          DRY_RUN=true ./scripts/publish_packages.sh
-
-      - name: Test installation from PyPI
-        if: ${{ !inputs.dry_run }}
-        run: |
-          sleep 60  # Wait for packages to be available
-          pip install cogniverse-core
-          python -c "from cogniverse_foundation.config.unified_config import SystemConfig; print('Successfully installed from PyPI')"
+          ./scripts/publish_packages.sh --yes
 
   # Create GitHub Release
   create-release:

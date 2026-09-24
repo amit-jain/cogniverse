@@ -1060,24 +1060,24 @@ flowchart TB
 
 ### Scenario 22: SDK Package Testing & Publishing
 
-Package publishing runs in `.github/workflows/publish-packages.yml`, triggered by a `v*.*.*` tag push (or manual dispatch). It builds the release package set (the five published packages plus their internal dependencies) with `scripts/build_packages.sh`, verifies the wheels against a real Vespa service container, then gates TestPyPI/PyPI publication on tag shape.
+Package publishing runs in `.github/workflows/publish-packages.yml`, triggered by a `v*.*.*` tag push (or manual dispatch). It builds the release package set (the five published packages plus their internal dependencies) with `scripts/build_packages.sh`, installs the manifest's wheels into a fresh environment and runs tests with a real Vespa service container, then gates TestPyPI/PyPI publication on tag shape. Each publish job verifies the manifest's artifacts with a dry run, then uploads exactly those artifacts and succeeds only when the index serves every one with the manifest's sha256.
 
 ```mermaid
 flowchart TB
     Tag[<span style='color:#000'>Push tag v*.*.*<br/>or workflow_dispatch</span>] --> Build[<span style='color:#000'>scripts/build_packages.sh --clean<br/>builds release-set wheels + sdists<br/>and dist/BUILD_MANIFEST.json</span>]
 
     Build --> TestJob[<span style='color:#000'>Test Packages job<br/>real Vespa service container</span>]
-    TestJob --> Install[<span style='color:#000'>Install built wheels in dependency order<br/>core &rarr; agents &rarr; vespa &rarr; runtime &rarr; dashboard</span>]
+    TestJob --> Install[<span style='color:#000'>Install every manifest wheel<br/>into a fresh venv</span>]
     Install --> VerifyImports[<span style='color:#000'>Verify imports<br/>SystemConfig, GatewayAgent, VespaBackend</span>]
-    VerifyImports --> RunTests[<span style='color:#000'>uv run pytest<br/>tests/common/ tests/routing/unit/</span>]
+    VerifyImports --> RunTests[<span style='color:#000'>uv sync, uv run pytest<br/>tests/common/ tests/routing/unit/</span>]
 
     RunTests --> TagShape{<span style='color:#000'>Tag shape?</span>}
 
-    TagShape -->|"-alpha/-beta/-rc<br/>or dispatch target=testpypi"| TestPyPI[<span style='color:#000'>publish-testpypi job<br/>scripts/publish_packages.sh TEST_PYPI=true</span>]
-    TagShape -->|"vX.Y.Z (no prerelease)<br/>or dispatch target=pypi"| PyPI[<span style='color:#000'>publish-pypi job<br/>scripts/publish_packages.sh</span>]
+    TagShape -->|"-alpha/-beta/-rc<br/>or dispatch target=testpypi"| TestPyPI[<span style='color:#000'>publish-testpypi job<br/>publish_packages.sh --test --dry-run, then --test --yes</span>]
+    TagShape -->|"vX.Y.Z (no prerelease)<br/>or dispatch target=pypi"| PyPI[<span style='color:#000'>publish-pypi job<br/>publish_packages.sh --dry-run, then --yes</span>]
 
-    TestPyPI --> VerifyInstallTest[<span style='color:#000'>pip install from TestPyPI<br/>verify cogniverse-core resolves</span>]
-    PyPI --> VerifyInstallProd[<span style='color:#000'>pip install from PyPI<br/>verify cogniverse-core resolves</span>]
+    TestPyPI --> VerifyInstallTest[<span style='color:#000'>TestPyPI simple index serves<br/>every manifest file with its sha256</span>]
+    PyPI --> VerifyInstallProd[<span style='color:#000'>PyPI simple index serves<br/>every manifest file with its sha256</span>]
 
     style Tag fill:#90caf9,stroke:#1565c0,color:#000
     style Build fill:#ce93d8,stroke:#7b1fa2,color:#000
