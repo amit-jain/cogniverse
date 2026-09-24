@@ -1092,10 +1092,20 @@ class VespaBackend(Backend):
                 # explicitly asked for it. The merge above + live Vespa discovery
                 # should make the override unnecessary; if something still slips
                 # through, failing loudly beats silently dropping a schema.
+                from cogniverse_core.registries.schema_deploy_lease import (
+                    DeploymentLeaseLost,
+                )
+
                 try:
                     generation = self._deploy_package(
                         app_package, allow_schema_removal=allow_schema_removal
                     )
+                except DeploymentLeaseLost as lost:
+                    raise BackendDeploymentError(
+                        "Deployment lease was taken over before activation; "
+                        "nothing was activated or registered. Retry the deploy: "
+                        f"{lost}"
+                    ) from lost
                 except RuntimeError as refused:
                     raise BackendDeploymentError(
                         f"Vespa refused the application package: {refused}"
