@@ -295,6 +295,17 @@ def _helm_template(chart: Path, values_files: list[Path], set_values: tuple[str,
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
 
 
+def _resolve_probe(venv: Path, cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(venv / "bin" / "python"), "-c", _RESOLVE_PROBE, *_HOST_BACKENDS],
+        cwd=cwd,
+        env=_clean_env(),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
 @pytest.fixture(scope="module")
 def checkout_wheel(tmp_path_factory) -> Path:
     return _build(_CLI_ROOT, tmp_path_factory.mktemp("checkout-wheel"), "wheel")
@@ -395,14 +406,7 @@ def test_installed_cli_resolves_every_consumer_to_the_packaged_assets(
 
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
-    probe = subprocess.run(
-        [str(venv / "bin" / "python"), "-c", _RESOLVE_PROBE, *_HOST_BACKENDS],
-        cwd=unrelated,
-        env=_clean_env(),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    probe = _resolve_probe(venv, unrelated)
     assert probe.returncode == 0, probe.stdout + probe.stderr
     resolved = json.loads(probe.stdout)
 
@@ -426,6 +430,25 @@ def test_installed_cli_resolves_every_consumer_to_the_packaged_assets(
         "configs": str(data / "configs"),
     }
     assert resolved["serving_mode_of_modal_overlay"] == LLM_SERVING_MODAL
+
+    foreign_workspace = tmp_path / "foreign-workspace"
+    for name, content in {
+        "pyproject.toml": '[tool.uv.workspace]\nmembers = []\n\n[project]\nname = "demo"\n',
+        "workflows/stray.yaml": "kind: WorkflowTemplate\n",
+        "configs/config.json": "{}\n",
+        "charts/cogniverse/Chart.yaml": "name: demo\n",
+        **{
+            f"charts/cogniverse/values.{name}.yaml": "{}\n"
+            for name in ("k3s", "prod", "modal-llm", *_HOST_BACKENDS)
+        },
+    }.items():
+        (foreign_workspace / name).parent.mkdir(parents=True, exist_ok=True)
+        (foreign_workspace / name).write_text(content)
+    from_foreign_workspace = _resolve_probe(venv, foreign_workspace)
+    assert from_foreign_workspace.returncode == 0, (
+        from_foreign_workspace.stdout + from_foreign_workspace.stderr
+    )
+    assert json.loads(from_foreign_workspace.stdout) == resolved
 
     installed_chart_hashes = _tree_hashes(chart)
     installed_workflow_hashes = _tree_hashes(data / "workflows")
