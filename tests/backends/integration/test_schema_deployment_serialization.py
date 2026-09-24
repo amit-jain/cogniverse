@@ -609,3 +609,60 @@ def test_a_holder_whose_renewal_is_refused_aborts_before_preparing(
         for thread in threading.enumerate()
         if thread.name.startswith("deploy-lease-heartbeat:")
     ] == []
+
+
+CAPPED_HOLD_SECONDS = 30.0
+
+
+def _holder_stuck_mid_activation(ports, paused, acquired_at):
+    """Heartbeat a short hold under a short cap, stuck inside the activation."""
+    from cogniverse_core.registries import schema_deploy_lease
+
+    schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
+    schema_deploy_lease.MAX_TOTAL_HOLD_SECONDS = CAPPED_HOLD_SECONDS
+    real_acquire = schema_deploy_lease.SchemaDeployLease.acquire
+
+    def acquire(self):
+        lease = real_acquire(self)
+        acquired_at.put(time.monotonic())
+        return lease
+
+    schema_deploy_lease.SchemaDeployLease.acquire = acquire
+    manager = _backend(ports).schema_manager
+    _delay_activation(600, paused)
+    manager.upload_metadata_schemas()
+
+
+def test_a_live_holder_stuck_past_the_total_hold_cap_is_taken_over(vespa_instance):
+    """Under the cap a stuck-but-live holder keeps the lease; past it the
+    heartbeat stops and the holder is taken over while its process lives."""
+    ctx = multiprocessing.get_context("spawn")
+    paused, acquired_at = ctx.Event(), ctx.Queue()
+    holder = ctx.Process(
+        target=_holder_stuck_mid_activation,
+        args=(vespa_instance, paused, acquired_at),
+    )
+    holder.start()
+    try:
+        assert paused.wait(180) is True
+        held_from = acquired_at.get(timeout=10)
+        registry = _backend(vespa_instance).schema_registry
+
+        probe = registry.deployment_lease(wait_seconds=LEASE_SECONDS * 2)
+        with pytest.raises(TimeoutError):
+            probe.acquire()
+        assert time.monotonic() - held_from < CAPPED_HOLD_SECONDS
+
+        successor = registry.deployment_lease(
+            wait_seconds=CAPPED_HOLD_SECONDS + LEASE_SECONDS + 30
+        )
+        assert successor.acquire() is successor
+        taken_over_after = time.monotonic() - held_from
+        successor.release()
+        assert holder.is_alive() is True
+        assert CAPPED_HOLD_SECONDS <= taken_over_after
+        assert taken_over_after < CAPPED_HOLD_SECONDS + LEASE_SECONDS + 10
+    finally:
+        holder.kill()
+        holder.join(timeout=30)
+        acquired_at.close()

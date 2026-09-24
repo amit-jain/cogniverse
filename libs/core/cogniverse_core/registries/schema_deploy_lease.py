@@ -30,6 +30,17 @@ DEFAULT_LEASE_SECONDS = 60.0
 # than the hold, so one wait outlasts a holder that stopped renewing.
 DEFAULT_WAIT_SECONDS = 120.0
 
+# The heartbeat proves the holder's process is alive, not that its deploy is
+# moving, so it stops renewing once a lease has been held this long; a holder
+# stuck past it is then taken over like a dead one. It is the longest
+# legitimate activation: VespaSchemaManager._deploy_package makes up to 5
+# attempts, each a session create, prepare and activate request bounded by
+# DEPLOY_REQUEST_TIMEOUT_S = (10 s connect, 300 s read), with 0.5 + 1 + 2 + 4
+# = 7.5 s of backoff between them: 5 x 3 x 310 + 7.5 = 4657.5 s. The backend's
+# single-request prepare-and-activate is smaller (5 x 310 + 7.5 = 1557.5 s).
+# Rounded up to 80 minutes for the enumeration reads inside the lease.
+MAX_TOTAL_HOLD_SECONDS = 4800.0
+
 _process_state = threading.Lock()
 # holder -> (record version, monotonic time this process first saw it there).
 # Kept across acquire() calls, so a record that stands still is taken over
@@ -75,10 +86,8 @@ def _holder_is_gone(holder: str) -> bool:
     """Report whether the holder's process provably no longer runs it.
 
     Holders are ``host:pidns:pid:uuid``. A record this node can prove is
-    abandoned must not block deploys for its hold time: a waiter whose wait
-    is shorter than that hold can never wait it out, so without this probe
-    one leaked record poisons every later deploy in reach of it. The probe
-    only ever says "gone" when it is certain:
+    abandoned is taken over at once instead of blocking deploys for its hold
+    time. The probe only ever says "gone" when it is certain:
 
     * another host, or another PID namespace on it (a container sharing the
       hostname), or one this process cannot name — its pids mean nothing
@@ -146,13 +155,18 @@ class SchemaDeployLease:
 
     A record is also taken over at once when this node can prove its holder
     is gone — the holder's own process released it without the store
-    confirming, its pid is not running on this host, or it names this very
-    process and no live holder object owns it. That proof is what makes a
-    leaked record recoverable by a waiter whose ``wait_seconds`` is shorter
-    than the hold time; where no such proof exists (a holder on another
-    node, or one still alive but stuck) the stall watch above remains the
-    only takeover path, so size ``wait_seconds`` above ``lease_seconds``
+    confirming, its pid is not running in this PID namespace, or it names
+    this very process and no live holder object owns it. Where no such proof
+    exists (a holder on another node) the stall watch above is the only
+    takeover path, so ``wait_seconds`` should exceed ``lease_seconds``
     wherever a waiter must be able to wait a stalled peer out on its own.
+
+    With ``heartbeat=True`` a background thread renews the lease every third
+    of the hold, so a live holder is not taken over while its requests run
+    longer than the hold. The heartbeat stops renewing once the lease has
+    been held for ``MAX_TOTAL_HOLD_SECONDS``, the longest legitimate
+    activation: a holder stuck past that — deadlocked, looping, blocked
+    without a timeout — is taken over a hold later like a dead one.
     """
 
     def __init__(
@@ -183,6 +197,8 @@ class SchemaDeployLease:
         )
         self._held_since: Optional[float] = None
         self._heartbeat = heartbeat
+        self._max_total_hold = MAX_TOTAL_HOLD_SECONDS if heartbeat else None
+        self._acquired_at: Optional[float] = None
         self._lost = False
         self._renew_lock = threading.Lock()
         self._heartbeat_stop: Optional[threading.Event] = None
@@ -243,6 +259,7 @@ class SchemaDeployLease:
                     _released_holders.discard(self.holder)
                 _register_live(self)
                 self._held_since = time.monotonic()
+                self._acquired_at = self._held_since
                 self._lost = False
                 logger.info("%s lease acquired by %s", self._purpose, self.holder)
                 if self._heartbeat:
@@ -292,6 +309,11 @@ class SchemaDeployLease:
                 raise DeploymentLeaseLost(
                     f"{self._purpose} lease expired or was replaced"
                 )
+            if self._held_past_cap():
+                raise DeploymentLeaseLost(
+                    f"{self._purpose} lease held past its "
+                    f"{self._max_total_hold:.0f}s maximum"
+                )
             record, version = self._read()
             current = None if record is None else record.get("holder")
             if current != self.holder or not self._claim(version, self.holder):
@@ -300,6 +322,13 @@ class SchemaDeployLease:
                     f"{self._purpose} lease expired or was replaced"
                 )
             self._held_since = time.monotonic()
+
+    def _held_past_cap(self) -> bool:
+        return (
+            self._max_total_hold is not None
+            and self._acquired_at is not None
+            and time.monotonic() - self._acquired_at >= self._max_total_hold
+        )
 
     def _start_heartbeat(self) -> None:
         """Renew every third of the hold time until released or lost.
@@ -318,11 +347,24 @@ class SchemaDeployLease:
         self._heartbeat_thread.start()
 
     def _stop_heartbeat(self) -> None:
+        """Stop the heartbeat, waiting at most one hold for it to exit.
+
+        A renewal hung on the store must not stall the release; it is
+        reported, and the stopped thread exits once the store answers.
+        """
         if self._heartbeat_stop is not None:
             self._heartbeat_stop.set()
         thread = self._heartbeat_thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join()
+            thread.join(timeout=self._lease_seconds)
+            if thread.is_alive():
+                logger.error(
+                    "%s lease heartbeat for %s did not stop within %.1fs; its "
+                    "renewal is hung on the config store",
+                    self._purpose,
+                    self.holder,
+                    self._lease_seconds,
+                )
         self._heartbeat_stop = None
         self._heartbeat_thread = None
 
@@ -369,11 +411,22 @@ def _heartbeat(
     error is retried on the next beat, and the holder's own hold-time clock
     fences it if the store stays unreachable for a whole hold.
     """
-    while not stop.wait(interval):
+    delay = interval
+    while not stop.wait(delay):
+        started = time.monotonic()
         lease = lease_ref()
         if lease is None:
             return
         try:
+            if lease._held_past_cap():
+                logger.error(
+                    "%s lease held by %s for its %.0fs maximum; no longer "
+                    "renewing, so peers take it over",
+                    lease._purpose,
+                    lease.holder,
+                    lease._max_total_hold,
+                )
+                return
             lease.renew()
         except DeploymentLeaseLost:
             logger.warning(
@@ -392,3 +445,6 @@ def _heartbeat(
             )
         finally:
             del lease
+        # Scheduled from this beat's start, so a slow renewal does not stretch
+        # the gap between claims.
+        delay = max(0.0, started + interval - time.monotonic())
