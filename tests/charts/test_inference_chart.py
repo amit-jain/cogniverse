@@ -24,6 +24,7 @@ import pytest
 import yaml
 from cogniverse_cli.images import SIDECAR_BUILDS
 
+from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
     get_inference_service_spec,
@@ -715,6 +716,44 @@ def test_shipped_video_chunk_profile_has_one_exact_colqwen3_contract():
             "embedding_dim": 320,
             "binary_dim": 40,
         }
+
+
+def _chart_config(docs: list[dict]) -> dict:
+    cm = next(
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and "config.json" in (d.get("data") or {})
+    )
+    return json.loads(cm["data"]["config.json"])
+
+
+def _shipped_default_video_selection() -> dict:
+    local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+    return local["backend"]["default_profiles"]["video"]
+
+
+def test_base_values_select_no_video_profile():
+    """The base values are the CPU defaults, and no visual embedder is enabled
+    there, so they select no video profile rather than one nothing serves."""
+    config = _chart_config(_render())
+
+    assert config["backend"]["default_profiles"] == {}
+    assert "active_video_profile" not in config
+    assert resolve_default_profile(config) is None
+
+
+def test_rocm_overlay_selects_the_shipped_default_video_profile():
+    config = _chart_config(_render(values="values.rocm.yaml"))
+
+    assert _shipped_default_video_selection() == {
+        "profile": "video_colpali_smol500_mv_frame",
+        "strategy": "segmentation",
+    }
+    assert config["backend"]["default_profiles"] == {
+        "video": _shipped_default_video_selection()
+    }
+    assert config["active_video_profile"] == "video_colpali_smol500_mv_frame"
+    assert resolve_default_profile(config) == "video_colpali_smol500_mv_frame"
 
 
 def _is_rocm(dep: dict) -> bool:

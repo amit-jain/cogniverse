@@ -64,8 +64,9 @@ def test_chart_config_matches_the_shipped_default():
     )
     assert chart["pipeline_config"]["keyframe_fps"] == 0.5
 
-    backend = chart["backend"]
-    default_video_profile = backend["default_profiles"]["video"]["profile"]
-    profile = backend["profiles"][default_video_profile]
+    # The base chart selects no video profile; a device overlay selects the
+    # shipped default, so the chart's copy of that profile is what is pinned.
+    default_video_profile = _config()["backend"]["default_profiles"]["video"]["profile"]
+    profile = chart["backend"]["profiles"][default_video_profile]
     assert profile["pipeline_config"]["keyframe_fps"] == 0.5
     assert profile["strategies"]["segmentation"]["params"]["fps"] == 0.5
