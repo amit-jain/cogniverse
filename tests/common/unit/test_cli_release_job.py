@@ -65,6 +65,29 @@ def test_the_release_job_budgets_the_measured_run_and_frees_disk_first():
     )
 
 
+def test_the_release_job_keeps_disk_for_the_installs_and_records_it():
+    """Passed tests' tmp_path trees (22.8 GB kept for image provisioning alone
+    under the default policy, 28 KB with ``failed``) and the sync's download
+    cache are released before the installs, and disk use is logged after."""
+    job = yaml.safe_load((WORKFLOWS_DIR / "cli-tests.yml").read_text())["jobs"][
+        "release-tests"
+    ]
+    steps = {step.get("name"): step for step in job["steps"]}
+    names = list(steps)
+    test_step = steps["Run release, clean-install and image-provisioning tests"]
+
+    assert steps["Install dependencies"]["run"].splitlines()[-1] == (
+        "uv cache prune --ci"
+    )
+    assert "-o tmp_path_retention_policy=failed" in " ".join(test_step["run"].split())
+    assert names.index("Disk usage after the tests") == len(names) - 1
+    assert steps["Disk usage after the tests"] == {
+        "name": "Disk usage after the tests",
+        "if": "always()",
+        "run": "df -h",
+    }
+
+
 def test_the_unit_job_budgets_the_measured_rest():
     job = yaml.safe_load((WORKFLOWS_DIR / "cli-tests.yml").read_text())["jobs"][
         "unit-tests"
