@@ -195,9 +195,11 @@ def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[st
     """Installed pre-releases, and those no requirement asks for explicitly.
 
     A pre-release is explicit when an installed distribution's requirement, or
-    one the install line documents, has a specifier naming a pre-release
-    version (``graphql-core>=3.3.0a0``, ``x==0.65b0``). pip admits only those
-    without a flag; anything else came from admitting pre-releases wholesale.
+    one the install line documents, has a specifier that admits pre-releases
+    (``graphql-core>=3.3.0a0``, ``x==0.65b0``; never ``!=``). pip admits only
+    those without a flag; anything else came from admitting pre-releases
+    wholesale. A requirement behind an extra, or whose marker does not hold
+    here, asks for nothing.
     """
     explicit = set()
     for line in [
@@ -205,10 +207,11 @@ def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[st
         *(req for _, _, requires in distributions for req in requires),
     ]:
         requirement = Requirement(line)
-        if any(
-            Version(spec.version.removesuffix(".*")).is_prerelease
-            for spec in requirement.specifier
+        if requirement.marker is not None and (
+            "extra" in str(requirement.marker) or not requirement.marker.evaluate()
         ):
+            continue
+        if any(spec.prereleases for spec in requirement.specifier):
             explicit.add(canonicalize_name(requirement.name))
     installed = {
         canonicalize_name(name)
@@ -216,6 +219,26 @@ def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[st
         if Version(version).is_prerelease
     }
     return installed, installed - explicit
+
+
+def test_only_an_applicable_pre_release_specifier_requests_a_pre_release():
+    distributions = [
+        ["s3fs", "2025.9.0", ["aiohttp!=4.0.0a0,!=4.0.0a1"]],
+        ["aiohttp", "4.0.0a2", []],
+        ["opentelemetry-proto", "1.36.0", ['protobuf<6.0.0dev; extra == "protobuf"']],
+        ["protobuf", "6.0.0rc1", []],
+        ["boto3", "1.40.0", ["botocore[crt]<2.0a0; extra == 'crt'"]],
+        ["botocore", "2.0.0a1", []],
+        ["x", "1.0", ['y==0.65b0; python_version < "3"', "z==0.65b0"]],
+        ["y", "0.65b0", []],
+        ["z", "0.65b0", []],
+        ["graphql-core", "3.3.0rc1", []],
+    ]
+
+    installed, unrequested = _prereleases(distributions, ["graphql-core>=3.3.0a0"])
+
+    assert installed == {"aiohttp", "protobuf", "botocore", "y", "z", "graphql-core"}
+    assert unrequested == {"aiohttp", "protobuf", "botocore", "y"}
 
 
 _INHERITED_ENV = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}
