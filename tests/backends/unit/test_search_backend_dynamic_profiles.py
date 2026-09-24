@@ -19,6 +19,7 @@ from cogniverse_core.query.encoders import EncoderNotConfiguredError
 from cogniverse_vespa.search_backend import (
     VespaSearchBackend,
     _source_collapse_fetch_limit,
+    _source_collapse_oversample,
 )
 
 
@@ -373,7 +374,10 @@ def test_search_raises_naming_the_missing_model_when_embeddings_are_needed():
 def test_source_collapse_fetch_limit_uses_bounded_multiplier(
     top_k, profile_config, expected
 ):
-    assert _source_collapse_fetch_limit(top_k, profile_config) == expected
+    assert (
+        _source_collapse_fetch_limit(top_k, _source_collapse_oversample(profile_config))
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -393,13 +397,55 @@ def test_source_collapse_fetch_limit_uses_bounded_multiplier(
         ),
     ],
 )
-def test_source_collapse_fetch_limit_rejects_invalid_oversample(
-    profile_config, message
-):
+def test_source_collapse_oversample_rejects_invalid_values(profile_config, message):
     with pytest.raises(ValueError) as exc_info:
-        _source_collapse_fetch_limit(10, profile_config)
+        _source_collapse_oversample(profile_config)
 
     assert str(exc_info.value) == message
+
+
+def test_source_search_reads_the_profile_oversample_once(monkeypatch):
+    """A source search derives its fetch limit and its per-source window from
+    one read of the profile's oversample."""
+    from cogniverse_vespa import search_backend
+
+    reads = []
+    read = search_backend._source_collapse_oversample
+
+    def counting_read(profile_config):
+        reads.append(dict(profile_config))
+        return read(profile_config)
+
+    monkeypatch.setattr(search_backend, "_source_collapse_oversample", counting_read)
+    profile = {
+        "type": "video",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "source_collapse_oversample": 3,
+    }
+    backend = _make_backend({"vcolpali": profile})
+    with patch(
+        "cogniverse_vespa.search_backend._RANKING_STRATEGIES_CACHE",
+        {
+            "video_colpali_smol500_mv_frame": {
+                "bm25_only": {
+                    "needs_float_embeddings": False,
+                    "needs_binary_embeddings": False,
+                }
+            }
+        },
+    ):
+        with pytest.raises(ValueError, match="source granularity requires"):
+            backend.search(
+                query_dict={
+                    "query": "ocean waves",
+                    "type": "video",
+                    "profile": "vcolpali",
+                    "tenant_id": "acme",
+                    "result_granularity": "source",
+                }
+            )
+
+    assert reads == [profile]
 
 
 @pytest.mark.parametrize(

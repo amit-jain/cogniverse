@@ -194,9 +194,8 @@ def _source_grouping_rows(top_k: int, window: int) -> int:
     return rows
 
 
-def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
+def _source_collapse_fetch_limit(top_k: int, oversample: int) -> int:
     """Derive the fetch window for source-level collapse."""
-    oversample = _source_collapse_oversample(profile_config)
     # The ceiling bounds the OVERSAMPLING, never the request itself: collapsing
     # to top_k distinct sources is impossible from fewer than top_k documents,
     # so a ceiling below top_k would silently truncate a legal request.
@@ -1371,8 +1370,8 @@ class VespaSearchBackend(SearchBackend):
         )
         fetch_limit = top_k
         if result_granularity == "source":
-            fetch_limit = _source_collapse_fetch_limit(top_k, profile_config)
             source_window = _source_collapse_oversample(profile_config)
+            fetch_limit = _source_collapse_fetch_limit(top_k, source_window)
             source_grouping_rows = _source_grouping_rows(top_k, source_window)
         if result_granularity == "source" and self._schema_loader is None:
             raise ValueError(
