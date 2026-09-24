@@ -16,9 +16,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_a2a_card_advertises_loaded_agents(
-    monkeypatch, workflow_state_redis_url
-):
+async def test_a2a_card_advertises_loaded_agents(monkeypatch, workflow_state_redis_url):
     # Keep the lifespan light: no sandbox connect, no memory lifecycle scan.
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
