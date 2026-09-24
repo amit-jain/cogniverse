@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from tests.cli.integration.release_build import (
     EXPECTED_RELEASE,
@@ -113,6 +114,7 @@ report = {
         if d.metadata["Name"].startswith("cogniverse")
     ),
     "spacy": md.version("spacy"),
+    "torch": next((d.version for d in md.distributions() if d.metadata["Name"] == "torch"), None),
     "outcomes": sorted(
         [kind, value, count]
         for (kind, value), count in Counter(
@@ -183,25 +185,15 @@ MODEL = {
 }
 
 
-_WORKSPACE_ENV = {
-    "VIRTUAL_ENV",
-    "UV_PROJECT_ENVIRONMENT",
-    "PYTHONPATH",
-    "UV_CONSTRAINT",
-    "UV_OVERRIDE",
-    "UV_INDEX_URL",
-    "UV_EXTRA_INDEX_URL",
-    "UV_PRERELEASE",
-    "PIP_CONSTRAINT",
-    "PIP_INDEX_URL",
-    "PIP_EXTRA_INDEX_URL",
-    "PIP_FIND_LINKS",
-    "PIP_PRE",
-}
+_INHERITED_ENV = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}
 
 
 def _run(argv: list[str], cwd: Path, extra_env: dict[str, str]):
-    env = {k: v for k, v in os.environ.items() if k not in _WORKSPACE_ENV}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _INHERITED_ENV and not k.startswith(("UV_", "PIP_"))
+    }
     return subprocess.run(
         argv,
         cwd=cwd,
@@ -220,14 +212,26 @@ def _documented_model_requirement() -> str:
     return requirement
 
 
-def _documented_uv_flags(root: str) -> list[str]:
-    if root == "cogniverse-agents":
-        return []
-    readme = (
-        REPO / "libs" / root.removeprefix("cogniverse-") / "README.md"
-    ).read_text()
-    [flags] = re.findall(rf"`uv pip install ((?:--\S+ )+){root}`", readme)
-    return flags.split()
+def _readme(root: str) -> str:
+    return (REPO / "libs" / root.removeprefix("cogniverse-") / "README.md").read_text()
+
+
+def _documented_pip_target(root: str) -> str:
+    [target] = re.findall(
+        rf"^pip install ({root}(?:\[[a-z,-]+\])?)$", _readme(root), re.M
+    )
+    return target
+
+
+def _documented_uv_install(root: str) -> tuple[list[str], str]:
+    """The flags and target of the README's uv line; agents documents none."""
+    lines = re.findall(
+        rf"`uv pip install ((?:--\S+ )*)({root}(?:\[[a-z,-]+\])?)`", _readme(root)
+    )
+    if not lines:
+        return [], _documented_pip_target(root)
+    [(flags, target)] = lines
+    return flags.split(), target
 
 
 @pytest.fixture(scope="module")
@@ -254,7 +258,7 @@ def release(tmp_path_factory) -> Path:
 def caches(tmp_path_factory):
     """Installer caches private to this module, removed with everything they hold."""
     root = tmp_path_factory.mktemp("installer-caches")
-    yield {"PIP_CACHE_DIR": str(root / "pip"), "UV_CACHE_DIR": str(root / "uv")}
+    yield {"UV_CACHE_DIR": str(root / "uv")}
     shutil.rmtree(root)
 
 
@@ -272,10 +276,133 @@ def _installed_file_mismatches(site_packages: Path, wheel: Path) -> list[str]:
     return mismatched
 
 
-def test_the_readmes_document_exactly_one_uv_flag_for_the_phoenix_roots():
-    assert _documented_uv_flags("cogniverse-agents") == []
-    assert _documented_uv_flags("cogniverse-runtime") == ["--prerelease=allow"]
-    assert _documented_uv_flags("cogniverse-dashboard") == ["--prerelease=allow"]
+def test_the_readmes_document_the_installs_the_clean_install_runs():
+    assert _documented_pip_target("cogniverse-agents") == "cogniverse-agents"
+    assert _documented_pip_target("cogniverse-runtime") == "cogniverse-runtime[vespa]"
+    assert _documented_pip_target("cogniverse-dashboard") == "cogniverse-dashboard"
+    assert _documented_uv_install("cogniverse-agents") == ([], "cogniverse-agents")
+    assert _documented_uv_install("cogniverse-runtime") == (
+        ["--prerelease=allow"],
+        "cogniverse-runtime[vespa]",
+    )
+    assert _documented_uv_install("cogniverse-dashboard") == (
+        ["--prerelease=allow"],
+        "cogniverse-dashboard",
+    )
+
+
+_PLANTED_ENV = {
+    "UV_INDEX": "unreachable=http://127.0.0.1:9/simple",
+    "UV_DEFAULT_INDEX": "http://127.0.0.1:9/simple",
+    "UV_INDEX_URL": "http://127.0.0.1:9/simple",
+    "UV_EXTRA_INDEX_URL": "http://127.0.0.1:9/simple",
+    "UV_FIND_LINKS": "/nonexistent-find-links",
+    "UV_NO_INDEX": "1",
+    "UV_INDEX_STRATEGY": "unsafe-best-match",
+    "UV_TORCH_BACKEND": "cpu",
+    "UV_EXCLUDE_NEWER": "2000-01-01T00:00:00Z",
+    "UV_CONSTRAINT": "/nonexistent-constraints.txt",
+    "UV_OVERRIDE": "/nonexistent-overrides.txt",
+    "UV_PRERELEASE": "disallow",
+    "PIP_NO_INDEX": "1",
+    "PIP_INDEX_URL": "http://127.0.0.1:9/simple",
+    "PIP_EXTRA_INDEX_URL": "http://127.0.0.1:9/simple",
+    "PIP_FIND_LINKS": "/nonexistent-find-links",
+    "PIP_CONSTRAINT": "/nonexistent-constraints.txt",
+    "PIP_PRE": "1",
+}
+_NO_INDEX_CONFIG = {
+    "pip/pip.conf": "[global]\nno-index = true\n",
+    "uv/uv.toml": "no-index = true\n",
+}
+
+
+def test_parent_installer_settings_do_not_reach_the_clean_installs(
+    tmp_path, monkeypatch, caches
+):
+    """Planted installer variables and user-level no-index configs are ignored.
+
+    The controls show the planted user configs would block an index install
+    if the installers read them.
+    """
+    xdg = tmp_path / "xdg"
+    for relative, text in _NO_INDEX_CONFIG.items():
+        (xdg / relative).parent.mkdir(parents=True)
+        (xdg / relative).write_text(text)
+    pip_config = tmp_path / "pip-config-file.conf"
+    pip_config.write_text("[global]\nno-index = true\n")
+    for name, value in {**_PLANTED_ENV, "PIP_CONFIG_FILE": str(pip_config)}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    venv = tmp_path / "venv"
+    python = venv / "bin" / "python"
+    created = _run(
+        [UV, "venv", "--no-config", "--seed", "--python", "3.12", str(venv)],
+        tmp_path,
+        caches,
+    )
+    assert created.returncode == 0, created.stderr
+
+    seen = _run([str(python), "-c", _INSTALLER_ENV_PROBE], tmp_path, caches)
+    assert seen.returncode == 0, seen.stderr
+    assert json.loads(seen.stdout) == ["UV_CACHE_DIR"]
+
+    pip_dry_run = _run(
+        [*_pip_install(python, caches), "--dry-run", "--no-deps", "packaging==26.0"],
+        tmp_path,
+        caches,
+    )
+    assert pip_dry_run.returncode == 0, pip_dry_run.stderr
+    assert "Would install packaging-26.0" in pip_dry_run.stdout
+    uv_dry_run = _run(
+        [*_uv_pip_install(python), "--dry-run", "--no-deps", "packaging==26.0"],
+        tmp_path,
+        caches,
+    )
+    assert uv_dry_run.returncode == 0, uv_dry_run.stderr
+    assert " + packaging==26.0\n" in uv_dry_run.stderr
+
+    pip_reads_config = _run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--dry-run",
+            "--no-deps",
+            "packaging==26.0",
+        ],
+        tmp_path,
+        caches,
+    )
+    assert pip_reads_config.returncode == 1
+    assert "No matching distribution found for packaging==26.0" in (
+        pip_reads_config.stderr
+    )
+    uv_reads_config = _run(
+        [
+            UV,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--dry-run",
+            "--no-deps",
+            "packaging==26.0",
+        ],
+        tmp_path,
+        caches,
+    )
+    assert uv_reads_config.returncode == 1
+    assert "packaging was not found in the provided package locations" in (
+        uv_reads_config.stderr
+    )
+
+
+_INSTALLER_ENV_PROBE = (
+    "import json, os; print(json.dumps(sorted("
+    "k for k in os.environ if k.startswith(('UV_', 'PIP_')))))"
+)
 
 
 def test_the_agents_wheel_exports_spacy_but_not_the_model(release):
@@ -296,13 +423,32 @@ def test_the_agents_wheel_exports_spacy_but_not_the_model(release):
     assert [line for line in requires if "@" in line] == []
 
 
+def _pip_install(python: Path, caches: dict[str, str]) -> list[str]:
+    """pip ignoring environment variables and user/site config files."""
+    cache_dir = Path(caches["UV_CACHE_DIR"]).parent / "pip"
+    return [
+        str(python),
+        "-m",
+        "pip",
+        "--isolated",
+        "install",
+        "--cache-dir",
+        str(cache_dir),
+    ]
+
+
+def _uv_pip_install(python: Path) -> list[str]:
+    return [UV, "pip", "install", "--no-config", "--python", str(python)]
+
+
 def _install(installer: str, root: str, python: Path, release: Path, work: Path, env):
     if installer == "pip":
-        argv = [str(python), "-m", "pip", "install", "--find-links", str(release)]
+        argv = [*_pip_install(python, env), "--find-links", str(release)]
+        target = _documented_pip_target(root)
     else:
-        argv = [UV, "pip", "install", "--no-config", "--python", str(python)]
-        argv += ["--find-links", str(release), *_documented_uv_flags(root)]
-    return _run([*argv, f"{root}=={VERSION}"], work, env)
+        flags, target = _documented_uv_install(root)
+        argv = [*_uv_pip_install(python), "--find-links", str(release), *flags]
+    return _run([*argv, f"{target}=={VERSION}"], work, env)
 
 
 @pytest.mark.parametrize("installer", INSTALLERS)
@@ -339,7 +485,14 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
     probe = [str(python), "-c", _PROBE, ROOT_IMPORTS[root]]
     before = _run(probe, work, caches)
     assert before.returncode == 0, before.stderr
-    assert json.loads(before.stdout) == {
+    before_report = json.loads(before.stdout)
+    torch = before_report.pop("torch")
+    if root == "cogniverse-dashboard":
+        assert Version(torch).local is None, torch
+        assert str(Version(torch)) == torch
+    else:
+        assert torch is None or Version(torch).local is None, torch
+    assert before_report == {
         "cogniverse": sorted([n, VERSION] for n in BASE_CLOSURES[root]),
         "spacy": "3.8.14",
         "outcomes": [["raised", json.dumps(UNPROVISIONED_ERROR), THREADS]],
@@ -351,7 +504,7 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
         requirement == f"en-core-web-sm @ {SPACY_MODEL_URL}#sha256={SPACY_MODEL_SHA256}"
     )
     tampered = requirement.replace(SPACY_MODEL_SHA256, "0" * 64)
-    refused = _run([str(python), "-m", "pip", "install", tampered], work, caches)
+    refused = _run([*_pip_install(python, caches), tampered], work, caches)
     assert refused.returncode == 1
     assert "THESE PACKAGES DO NOT MATCH THE HASHES" in refused.stderr
     assert f"Expected sha256 {'0' * 64}" in refused.stderr
@@ -360,12 +513,14 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
     assert still_missing.returncode == 0, still_missing.stderr
     assert json.loads(still_missing.stdout) == json.loads(before.stdout)
 
-    provisioned = _run([str(python), "-m", "pip", "install", requirement], work, caches)
+    provisioned = _run([*_pip_install(python, caches), requirement], work, caches)
     assert provisioned.returncode == 0, provisioned.stderr
 
     after = _run(probe, work, caches)
     assert after.returncode == 0, after.stderr
-    assert json.loads(after.stdout) == {
+    after_report = json.loads(after.stdout)
+    assert after_report.pop("torch") == torch
+    assert after_report == {
         "cogniverse": sorted([n, VERSION] for n in BASE_CLOSURES[root]),
         "spacy": "3.8.14",
         "outcomes": [["ok", json.dumps(RELATIONSHIPS, sort_keys=True), THREADS]],
