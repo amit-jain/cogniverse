@@ -533,11 +533,7 @@ def deployment_helm_inputs(
     extra_set: dict[str, str] | None = None,
 ) -> dict:
     """Resolve the exact backend, overlays, image tags, and Helm overrides."""
-    from cogniverse_cli.config import (
-        LLM_SERVING_LOCAL,
-        get_device_values_file,
-        get_llm_serving_values_file,
-    )
+    from cogniverse_cli.config import LLM_SERVING_LOCAL, compose_values_files
     from cogniverse_cli.images import (
         detect_torch_backend,
         dev_image_set_values,
@@ -551,19 +547,16 @@ def deployment_helm_inputs(
     assert values_file.exists(), f"Values not found: {values_file}"
 
     backend = detect_torch_backend()
-    device_values_file = get_device_values_file(backend, project_root=project_root)
     image_versions = dev_versions(project_root)
-    helm_values = [values_file]
-    if device_values_file:
-        helm_values.append(device_values_file)
-    serving_values_file = get_llm_serving_values_file(
-        os.environ.get("COGNIVERSE_LLM_SERVING")
+    helm_values = compose_values_files(
+        use_k3d=True,
+        backend=backend,
+        serving=os.environ.get("COGNIVERSE_LLM_SERVING")
         or deployed_llm_serving_mode()
         or LLM_SERVING_LOCAL,
         project_root=project_root,
     )
-    if serving_values_file:
-        helm_values.append(serving_values_file)
+    assert helm_values[0] == values_file, helm_values
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,

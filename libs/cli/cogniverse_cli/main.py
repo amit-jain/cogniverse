@@ -36,10 +36,8 @@ from cogniverse_cli.cluster import (
 )
 from cogniverse_cli.config import (
     LLM_SERVING_LOCAL,
+    compose_values_files,
     get_chart_path,
-    get_device_values_file,
-    get_llm_serving_values_file,
-    get_values_file,
     get_workflows_path,
     resolve_project_root,
 )
@@ -345,24 +343,14 @@ def up(
     # front so the image build can gate optional sidecars on
     # inference.<svc>.enabled.
     chart_path = get_chart_path()
-    base_values_file = get_values_file(prod=not use_k3d)
-    values_files: list[Path] = [base_values_file]
-    if use_k3d:
-        host_backend = detect_torch_backend()
-        device_values = get_device_values_file(host_backend)
-        if device_values is not None:
-            values_files.append(device_values)
-            console.print(
-                f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
-            )
-        serving_values = get_llm_serving_values_file(
-            os.environ.get("COGNIVERSE_LLM_SERVING", LLM_SERVING_LOCAL)
-        )
-        if serving_values is not None:
-            values_files.append(serving_values)
-            console.print(
-                f"[cyan]Composing LLM serving overrides:[/cyan] {serving_values.name}"
-            )
+    host_backend = detect_torch_backend() if use_k3d else None
+    values_files = compose_values_files(
+        use_k3d=use_k3d,
+        backend=host_backend,
+        serving=os.environ.get("COGNIVERSE_LLM_SERVING", LLM_SERVING_LOCAL),
+    )
+    for overlay in values_files[1:]:
+        console.print(f"[cyan]Composing overrides:[/cyan] {overlay.name}")
 
     dev_image_overrides: dict[str, str] = {}
     image_version: str | None = None

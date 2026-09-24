@@ -185,3 +185,30 @@ def get_device_values_file(
     filename = f"values.{backend}.yaml"
     candidate = chart_dir / filename
     return candidate if candidate.is_file() else None
+
+
+def compose_values_files(
+    *,
+    use_k3d: bool,
+    backend: str | None,
+    serving: str,
+    project_root: Path | None = None,
+) -> list[Path]:
+    """The Helm values files ``cogniverse up`` applies, in order.
+
+    An existing cluster gets ``values.prod.yaml`` alone: the machine running
+    the CLI says nothing about that cluster's devices or LLM serving. k3d
+    layers the host's device overlay, then the LLM serving overlay, on
+    ``values.k3s.yaml``.
+    """
+    files = [get_values_file(project_root=project_root, prod=not use_k3d)]
+    if not use_k3d:
+        return files
+    if backend is not None:
+        device = get_device_values_file(backend, project_root=project_root)
+        if device is not None:
+            files.append(device)
+    serving_file = get_llm_serving_values_file(serving, project_root=project_root)
+    if serving_file is not None:
+        files.append(serving_file)
+    return files

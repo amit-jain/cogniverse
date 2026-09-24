@@ -239,7 +239,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
-    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.config.get_values_file", return_value=Path("/v.yaml"))
     @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
@@ -274,7 +274,7 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up"])
         assert result.exit_code == 0
         mock_prereq.assert_called_once_with(require_k3d=True)
-        mock_values.assert_called_once_with(prod=False)
+        mock_values.assert_called_once_with(project_root=None, prod=False)
         mock_helm.assert_called_once()
         call_kwargs = mock_helm.call_args
         set_vals = call_kwargs[1].get("set_values") or {}
@@ -291,7 +291,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
-    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.config.get_values_file", return_value=Path("/v.yaml"))
     @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
@@ -340,7 +340,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
-    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.config.get_values_file", return_value=Path("/v.yaml"))
     @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main._probe_host_llm", return_value=True)
@@ -393,7 +393,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
-    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.config.get_values_file", return_value=Path("/v.yaml"))
     @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
@@ -426,7 +426,7 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up"])
         assert result.exit_code == 0
         mock_prereq.assert_called_once_with(require_k3d=False)
-        mock_values.assert_called_once_with(prod=True)
+        mock_values.assert_called_once_with(project_root=None, prod=True)
 
     def _up_with_discovered_cluster(self, serving_mode: str | None):
         """Run `up` against a discovered e2e cluster, owning COGNIVERSE_LLM_SERVING."""
@@ -470,7 +470,8 @@ class TestUpCommand:
             )
             mock_values = stack.enter_context(
                 patch(
-                    "cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml")
+                    "cogniverse_cli.config.get_values_file",
+                    return_value=Path("/v.yaml"),
                 )
             )
             stack.enter_context(
@@ -500,7 +501,7 @@ class TestUpCommand:
                 patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
             )
             stack.enter_context(
-                patch("cogniverse_cli.main.get_device_values_file", return_value=None)
+                patch("cogniverse_cli.config.get_device_values_file", return_value=None)
             )
             stack.enter_context(
                 patch("cogniverse_cli.main.detect_torch_backend", return_value="cpu")
@@ -525,7 +526,7 @@ class TestUpCommand:
 
         assert result.exit_code == 0, result.output
         m["prereq"].assert_called_once_with(require_k3d=True)
-        m["values"].assert_called_once_with(prod=False)
+        m["values"].assert_called_once_with(project_root=None, prod=False)
         assert m["pull"].call_args_list == [
             call(
                 f"{CLUSTER_NAME}-e2e",
@@ -540,7 +541,7 @@ class TestUpCommand:
         m["deploy_wf"].assert_called_once()
 
     def test_up_composes_the_modal_overlay_when_serving_is_modal(self) -> None:
-        from cogniverse_cli.main import get_llm_serving_values_file
+        from cogniverse_cli.config import get_llm_serving_values_file
 
         result, m = self._up_with_discovered_cluster(serving_mode="modal")
 
@@ -596,7 +597,8 @@ class TestUpCommand:
             )
             mock_values = stack.enter_context(
                 patch(
-                    "cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml")
+                    "cogniverse_cli.config.get_values_file",
+                    return_value=Path("/v.yaml"),
                 )
             )
             mock_helm = stack.enter_context(patch("cogniverse_cli.main.helm_install"))
@@ -639,7 +641,7 @@ class TestUpCommand:
                 patch("cogniverse_cli.main.detect_torch_backend", return_value="cpu")
             )
             stack.enter_context(
-                patch("cogniverse_cli.main.get_device_values_file", return_value=None)
+                patch("cogniverse_cli.config.get_device_values_file", return_value=None)
             )
             stack.enter_context(patch("cogniverse_cli.main._print_status_table"))
 
@@ -660,7 +662,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.wait_for_url", return_value=True)
     @patch("cogniverse_cli.main.helm_install")
     @patch("cogniverse_cli.main.pull_and_import_third_party")
-    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.config.get_values_file", return_value=Path("/v.yaml"))
     @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
@@ -756,7 +758,6 @@ class TestUpImagePrune:
             "build_images": vals["build_images"],
             "dev_image_set_values": vals["dev_image_set_values"],
             "_probe_host_llm": vals["_probe_host_llm"],
-            "get_values_file": Path("/v.yaml"),
             "get_chart_path": Path("/chart"),
             "get_workflows_path": Path("/wf"),
             "wait_for_url": True,
@@ -778,6 +779,12 @@ class TestUpImagePrune:
                 )
             for name in no_return:
                 stack.enter_context(patch(f"cogniverse_cli.main.{name}"))
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.config.get_values_file",
+                    return_value=Path("/v.yaml"),
+                )
+            )
             # Sourced from cogniverse_cli.secrets (local import in up()); patch
             # them there so the test never kubectl-applies to a live cluster.
             stack.enter_context(
@@ -1387,7 +1394,7 @@ class TestUpImageSource:
         ("cogniverse_cli.main.wait_for_url", {"return_value": True}),
         ("cogniverse_cli.main.helm_install", {}),
         ("cogniverse_cli.main.pull_and_import_third_party", {}),
-        ("cogniverse_cli.main.get_values_file", {"return_value": Path("/v.yaml")}),
+        ("cogniverse_cli.config.get_values_file", {"return_value": Path("/v.yaml")}),
         ("cogniverse_cli.main.get_chart_path", {"return_value": Path("/chart")}),
         ("cogniverse_cli.main.get_workflows_path", {"return_value": Path("/wf")}),
         ("cogniverse_cli.main._probe_host_llm", {"return_value": False}),
