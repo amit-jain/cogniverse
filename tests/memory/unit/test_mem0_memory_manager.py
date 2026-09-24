@@ -1236,3 +1236,136 @@ class TestProvenanceWriteLeaseScope:
             )
         assert caught.value.memory_id == "m5"
         manager.memory.update.assert_called_once()
+
+    def test_an_update_of_a_provenance_bearing_primary_takes_the_lease(self):
+        """Dropping a stored primary's provenance still changes what its
+        indexed row has to agree with, so repair must stay excluded."""
+        manager = self._manager("lease_update_declared_tenant")
+        manager.memory.get.return_value = {
+            "id": "m6",
+            "memory": "before",
+            "metadata": self._provenance_metadata(),
+        }
+        held = {}
+
+        def record_hold(*args, **kwargs):
+            held["record"] = self._lease_record(manager).config_value
+
+        manager.memory.update.side_effect = record_hold
+
+        assert (
+            manager.update_memory(
+                memory_id="m6",
+                content="after",
+                tenant_id="lease_update_declared_tenant",
+                agent_name="agent",
+                metadata={"kind": "note"},
+            )
+            is True
+        )
+        assert held["record"]["holder"] is not None
+        manager._provenance_store.attach.assert_not_called()
+        assert self._lease_record(manager).config_value["holder"] is None
+
+    def test_an_unreadable_primary_is_updated_under_the_lease(self):
+        """An outage on the before-read cannot prove the primary carries no
+        provenance; the update keeps its False contract and stays leased."""
+        manager = self._manager("lease_update_outage_tenant")
+        manager.memory.get.side_effect = ConnectionError("vespa unreachable")
+
+        assert (
+            manager.update_memory(
+                memory_id="m7",
+                content="after",
+                tenant_id="lease_update_outage_tenant",
+                agent_name="agent",
+                metadata={"kind": "note"},
+            )
+            is False
+        )
+        assert self._lease_record(manager).config_value["holder"] is None
+        manager.memory.update.assert_not_called()
+
+
+class TestAddMemoryErrorPrecedence:
+    """Malformed input reports the first contract it breaks, as before the
+    provenance lease scope was decided ahead of the write."""
+
+    @staticmethod
+    def _malformed_metadata():
+        return {"kind": "entity_fact", "provenance": "not-a-provenance-block"}
+
+    def test_an_uninitialized_manager_reports_that_first(self):
+        Mem0MemoryManager._instances.pop("precedence_uninit_tenant", None)
+        manager = Mem0MemoryManager(tenant_id="precedence_uninit_tenant")
+        manager.memory = None
+
+        with pytest.raises(RuntimeError, match="Mem0MemoryManager not initialized"):
+            manager.add_memory(
+                content="content",
+                tenant_id="precedence_uninit_tenant",
+                agent_name="agent",
+                metadata=self._malformed_metadata(),
+                infer=False,
+            )
+
+    def test_a_schema_violation_wins_over_a_malformed_provenance_block(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceWriteError
+        from cogniverse_core.memory.schema import (
+            KnowledgeSchema,
+            SchemaViolationError,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        Mem0MemoryManager._instances.pop("precedence_schema_tenant", None)
+        manager = Mem0MemoryManager(tenant_id="precedence_schema_tenant")
+        manager._initialized = True
+        manager.config = None
+        manager.memory = MagicMock()
+        manager._provenance_store = MagicMock()
+        manager._provenance_lease_store = InMemoryConfigStore()
+        registry = MagicMock()
+        registry.get.return_value = KnowledgeSchema(
+            kind="entity_fact", provenance_required=True
+        )
+        manager._knowledge_registry = registry
+
+        with pytest.raises(SchemaViolationError) as caught:
+            manager.add_memory(
+                content="content",
+                tenant_id="precedence_schema_tenant",
+                agent_name="agent",
+                metadata=self._malformed_metadata(),
+                infer=False,
+            )
+        assert not isinstance(caught.value, ProvenanceWriteError)
+        manager.memory.add.assert_not_called()
+
+
+class TestRepairOfAMalformedPrimary:
+    def test_repair_reports_a_malformed_primary_as_inconsistent(self):
+        """Repair reads stored state; a bad stored payload is torn provenance,
+        not a failed write of the caller's own request."""
+        from cogniverse_core.memory.provenance import ProvenanceConsistencyError
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        Mem0MemoryManager._instances.pop("repair_malformed_tenant", None)
+        manager = Mem0MemoryManager(tenant_id="repair_malformed_tenant")
+        manager._initialized = True
+        manager.config = None
+        manager._knowledge_registry = None
+        manager.memory = MagicMock()
+        manager.memory.get.return_value = {
+            "id": "m8",
+            "memory": "stored",
+            "metadata": {"kind": "entity_fact", "provenance": {"written_by": 7}},
+        }
+        manager._provenance_store = MagicMock()
+        manager._provenance_lease_store = InMemoryConfigStore()
+
+        with pytest.raises(
+            ProvenanceConsistencyError, match="primary provenance payload is malformed"
+        ) as caught:
+            manager.repair_provenance("m8")
+        assert caught.value.memory_id == "m8"
+        manager._provenance_store.attach.assert_not_called()
