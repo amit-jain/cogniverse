@@ -25,6 +25,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+from cogniverse_agents.search.service import SearchService
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.utils import get_config
@@ -37,7 +38,12 @@ from cogniverse_foundation.telemetry.config import (
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_runtime.routers import search as search_router
 from tests.backends.integration.test_source_grouped_search import (
+    FAST_RETRY,
+    _fault_backend,
     _feed,
+    _grouped_body,
+    _is_backend_search,
+    _search_requests,
     _video_fields,
     _wait_for_count,
 )
@@ -268,3 +274,63 @@ def test_concurrent_requests_each_report_their_own_flag(client, spans):
         slot: ((["restdom"], True) if top_k == 10 else (["restdom", *MINORITY], False))
         for slot, top_k in enumerate(top_ks)
     }
+
+
+DEGRADED = _grouped_body(
+    60,
+    [{"id": "group:root:0", "relevance": 1.0}],
+    coverage={"coverage": 40, "degraded": {"timeout": True}},
+)
+GROUPS_LOST = _grouped_body(60, [{"id": "group:root:0", "relevance": 1.0}])
+
+
+@pytest.fixture(params=["degraded", "groups_lost"])
+def faulted(request, vespa_instance, rest_corpus, client):
+    """The request's SearchService searches through a real backend whose
+    Vespa answers every search with an unusable grouped response."""
+    body, message = {
+        "degraded": (DEGRADED, "Vespa query coverage degraded"),
+        "groups_lost": (
+            GROUPS_LOST,
+            "Vespa grouped 60 matched segments into no source groups",
+        ),
+    }[request.param]
+
+    def intercept(method, path, payload):
+        return (200, body) if _is_backend_search(path, payload) else None
+
+    backend, proxy = _fault_backend(rest_corpus, vespa_instance, intercept)
+    try:
+        with patch.object(SearchService, "_get_backend", lambda *_: backend):
+            yield proxy, message
+    finally:
+        backend.close()
+        proxy.__exit__(None, None, None)
+
+
+def test_a_faulted_search_is_a_server_error_not_an_empty_answer(client, faulted):
+    proxy, message = faulted
+
+    response = _post(client, "restcorpus")
+
+    assert response.status_code == 500, response.text
+    assert message in response.json()["detail"], response.text
+    assert "source_search_incomplete" not in response.text
+    assert _search_requests(proxy) == FAST_RETRY.max_attempts
+
+
+def test_a_faulted_stream_ends_in_an_error_event_not_a_final_one(client, faulted):
+    proxy, message = faulted
+
+    response = _post(client, "restcorpus", stream=True)
+
+    assert response.status_code == 200, response.text
+    events = [
+        json.loads(line[len("data: ") :])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert [event["type"] for event in events] == ["status", "error"]
+    assert message in events[1]["error"]
+    assert events[1]["error_type"] == "VespaError"
+    assert _search_requests(proxy) == FAST_RETRY.max_attempts
