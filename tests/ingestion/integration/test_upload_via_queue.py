@@ -1508,29 +1508,50 @@ class TestUploadRealStack:
         )
         assert stored_tenant_backend is None, stored_tenant_backend.config_value
 
+        from cogniverse_runtime.ingestion_worker.queue import QUEUE_STREAM
+
         video_bytes = upload_video_path.read_bytes()
         content_digest = hashlib.sha256(video_bytes).hexdigest()
-
-        files = {"file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")}
-        data = {"backend": "vespa", "tenant_id": TENANT_ID}
-        resp = await http_client.post(
-            "/ingestion/upload",
-            params={"wait": "true", "wait_timeout": 600},
-            files=files,
-            data=data,
-        )
-        assert resp.status_code == 200, (
-            f"Upload returned {resp.status_code}: {resp.text[:500]}"
-        )
-
-        body = resp.json()
-
         canonical_tenant = f"{TENANT_ID}:{TENANT_ID}"
         bucket = real_stack["bucket"]
         expected_source_url = f"s3://{bucket}/{canonical_tenant}/{content_digest}.mp4"
         expected_sha = hashlib.sha256(
             f"{expected_source_url}|{PROFILE}|{canonical_tenant}".encode()
         ).hexdigest()[:16]
+
+        async def _queued_fields_while_pending() -> list[dict]:
+            while True:
+                entries = await real_stack["redis"].xrange(
+                    QUEUE_STREAM, min="-", max="+"
+                )
+                matching = [
+                    fields
+                    for _message_id, fields in entries
+                    if fields["sha"] == expected_sha
+                ]
+                if matching:
+                    return matching
+                await asyncio.sleep(0.05)
+
+        queue_observer = asyncio.create_task(_queued_fields_while_pending())
+        files = {"file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")}
+        data = {"backend": "vespa", "tenant_id": TENANT_ID}
+        try:
+            resp = await http_client.post(
+                "/ingestion/upload",
+                params={"wait": "true", "wait_timeout": 600},
+                files=files,
+                data=data,
+            )
+        finally:
+            queue_observed_pending = queue_observer.done()
+            queue_observer.cancel()
+        assert resp.status_code == 200, (
+            f"Upload returned {resp.status_code}: {resp.text[:500]}"
+        )
+
+        body = resp.json()
+
         assert set(body) == {
             "ingest_id",
             "sha",
@@ -1602,16 +1623,22 @@ class TestUploadRealStack:
         )
         assert stored_bytes == video_bytes
 
-        from cogniverse_runtime.ingestion_worker.queue import QUEUE_STREAM
-
+        assert queue_observed_pending
+        assert queue_observer.result() == [
+            {
+                "ingest_id": ingest_id,
+                "source_url": expected_source_url,
+                "profile": PROFILE,
+                "tenant_id": canonical_tenant,
+                "sha": expected_sha,
+            }
+        ]
         queue_entries = await real_stack["redis"].xrange(QUEUE_STREAM, min="-", max="+")
-        queued_fields = [
+        assert [
             fields
             for _message_id, fields in queue_entries
             if fields["ingest_id"] == ingest_id
-        ]
-        assert len(queued_fields) == 1
-        assert queued_fields[0]["profile"] == PROFILE
+        ] == []
         assert [job.profile for job in worker_task["claimed_jobs"]] == [PROFILE]
 
         # 3. Vespa has documents for this tenant under the profile schema.
