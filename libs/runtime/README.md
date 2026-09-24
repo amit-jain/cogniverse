@@ -159,6 +159,8 @@ pip install cogniverse-runtime[vespa]
 # - fastapi, uvicorn, pydantic
 ```
 
+With uv, allow the graphql-core pre-release that arize-phoenix requires: `uv pip install --prerelease=allow cogniverse-runtime`.
+
 ---
 
 ## Usage

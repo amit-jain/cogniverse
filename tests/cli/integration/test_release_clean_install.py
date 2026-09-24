@@ -1,16 +1,19 @@
 """Released wheels install outside the workspace; the spaCy model is explicit.
 
 ``scripts/build_packages.sh`` builds the release set in a disposable Git
-checkout. Each published root is then installed into a fresh virtualenv with
-no workspace, project or uv source mappings: internal packages come only from
-the built ``dist/`` and third-party packages from the public index. Relationship
-analysis needs ``en_core_web_sm``, which is not a package dependency: without it
-imports succeed and the feature raises ``SpaCyModelUnavailableError``; after the
-README's hash-pinned install it parses a fixed sentence exactly.
+checkout. Each published root is then installed into a fresh virtualenv with no
+workspace, project or uv source mappings and no third-party constraints: internal
+packages come only from the built ``dist/``, everything else from the public
+index as a wheel consumer resolves it. pip installs with no flags; uv with exactly
+the flag the root's README documents. Relationship analysis needs
+``en_core_web_sm``, which is not a package dependency: without it imports succeed
+and the feature raises ``SpaCyModelUnavailableError``; after the README's
+hash-pinned install it parses a fixed sentence exactly.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -23,12 +26,11 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from tests.cli.integration.test_release_scripts import (
-    _EXPECTED_RELEASE,
-    _assert_release,
-    _make_checkout,
-    _output,
-    _run_build,
+from tests.cli.integration.release_build import (
+    EXPECTED_RELEASE,
+    describe_run,
+    make_checkout,
+    run_build,
 )
 
 pytestmark = pytest.mark.integration
@@ -66,9 +68,7 @@ ROOT_IMPORTS = {
     "cogniverse-dashboard": "cogniverse_dashboard",
 }
 THREADS = 8
-# The lock's torch for Linux is the CPU build (``torch==2.8.0+cpu``), published
-# only on the PyTorch CPU index; dashboard reaches it through embedding-atlas.
-TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
+INSTALLERS = ("pip", "uv")
 
 _PROBE = r"""
 import importlib
@@ -181,17 +181,32 @@ MODEL = {
 }
 
 
-def _clean_env() -> dict[str, str]:
-    return {
-        k: v
-        for k, v in os.environ.items()
-        if k not in {"VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH"}
-    }
+_WORKSPACE_ENV = {
+    "VIRTUAL_ENV",
+    "UV_PROJECT_ENVIRONMENT",
+    "PYTHONPATH",
+    "UV_CONSTRAINT",
+    "UV_OVERRIDE",
+    "UV_INDEX_URL",
+    "UV_EXTRA_INDEX_URL",
+    "UV_PRERELEASE",
+    "PIP_CONSTRAINT",
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+    "PIP_FIND_LINKS",
+    "PIP_PRE",
+}
 
 
-def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess:
+def _run(argv: list[str], cwd: Path, extra_env: dict[str, str]):
+    env = {k: v for k, v in os.environ.items() if k not in _WORKSPACE_ENV}
     return subprocess.run(
-        argv, cwd=cwd, env=_clean_env(), capture_output=True, text=True, timeout=1800
+        argv,
+        cwd=cwd,
+        env={**env, **extra_env},
+        capture_output=True,
+        text=True,
+        timeout=3600,
     )
 
 
@@ -203,46 +218,42 @@ def _documented_model_requirement() -> str:
     return requirement
 
 
+def _documented_uv_flags(root: str) -> list[str]:
+    if root == "cogniverse-agents":
+        return []
+    readme = (
+        REPO / "libs" / root.removeprefix("cogniverse-") / "README.md"
+    ).read_text()
+    [flags] = re.findall(rf"`uv pip install ((?:--\S+ )+){root}`", readme)
+    return flags.split()
+
+
 @pytest.fixture(scope="module")
 def release(tmp_path_factory) -> Path:
-    repo = _make_checkout(tmp_path_factory.mktemp("release"), tag=f"v{VERSION}")
-    result = _run_build(repo)
-    assert result.returncode == 0, _output(result)
-    manifest = _assert_release(repo, VERSION)
-    assert {p["name"] for p in manifest["packages"]} == _EXPECTED_RELEASE
-    return repo / "dist"
+    repo = make_checkout(tmp_path_factory.mktemp("release"), tag=f"v{VERSION}")
+    result = run_build(repo)
+    assert result.returncode == 0, describe_run(result)
+    dist = repo / "dist"
+    manifest = json.loads((dist / "BUILD_MANIFEST.json").read_text())
+    assert manifest["version"] == VERSION
+    assert {p["name"] for p in manifest["packages"]} == EXPECTED_RELEASE
+    for package in manifest["packages"]:
+        wheel = package["wheel"]
+        assert package["version"] == VERSION, package["name"]
+        assert wheel["filename"] == (
+            f"{package['name'].replace('-', '_')}-{VERSION}-py3-none-any.whl"
+        )
+        digest = hashlib.sha256((dist / wheel["filename"]).read_bytes()).hexdigest()
+        assert wheel["sha256"] == digest, wheel["filename"]
+    return dist
 
 
 @pytest.fixture(scope="module")
-def constraints(release) -> Path:
-    """Internal packages at the release version; third-party at the locked set."""
-    path = release.parent / "release-constraints.txt"
-    exported = _run(
-        [
-            UV,
-            "export",
-            "--frozen",
-            "--no-hashes",
-            "--no-header",
-            "--no-annotate",
-            "--no-emit-workspace",
-            "--no-default-groups",
-            "--all-packages",
-            "--extra",
-            "cpu",
-            "-o",
-            str(path),
-        ],
-        release.parent,
-    )
-    assert exported.returncode == 0, exported.stderr
-    locked = path.read_text()
-    assert "cogniverse" not in locked
-    assert "en-core-web-sm" not in locked
-    path.write_text(
-        locked + "".join(f"{n}=={VERSION}\n" for n in sorted(_EXPECTED_RELEASE))
-    )
-    return path
+def caches(tmp_path_factory):
+    """Installer caches private to this module, removed with everything they hold."""
+    root = tmp_path_factory.mktemp("installer-caches")
+    yield {"PIP_CACHE_DIR": str(root / "pip"), "UV_CACHE_DIR": str(root / "uv")}
+    shutil.rmtree(root)
 
 
 def _installed_file_mismatches(site_packages: Path, wheel: Path) -> list[str]:
@@ -257,6 +268,12 @@ def _installed_file_mismatches(site_packages: Path, wheel: Path) -> list[str]:
             ):
                 mismatched.append(member)
     return mismatched
+
+
+def test_the_readmes_document_exactly_one_uv_flag_for_the_phoenix_roots():
+    assert _documented_uv_flags("cogniverse-agents") == []
+    assert _documented_uv_flags("cogniverse-runtime") == ["--prerelease=allow"]
+    assert _documented_uv_flags("cogniverse-dashboard") == ["--prerelease=allow"]
 
 
 def test_the_agents_wheel_exports_spacy_but_not_the_model(release):
@@ -277,39 +294,39 @@ def test_the_agents_wheel_exports_spacy_but_not_the_model(release):
     assert [line for line in requires if "@" in line] == []
 
 
+def _install(installer: str, root: str, python: Path, release: Path, work: Path, env):
+    if installer == "pip":
+        argv = [str(python), "-m", "pip", "install", "--find-links", str(release)]
+    else:
+        argv = [UV, "pip", "install", "--no-config", "--python", str(python)]
+        argv += ["--find-links", str(release), *_documented_uv_flags(root)]
+    return _run([*argv, f"{root}=={VERSION}"], work, env)
+
+
+@pytest.mark.parametrize("installer", INSTALLERS)
 @pytest.mark.parametrize("root", sorted(BASE_CLOSURES))
 def test_clean_install_resolves_from_release_and_needs_the_model_explicitly(
-    root, release, constraints, tmp_path
+    root, installer, release, caches, tmp_path
 ):
     work = tmp_path / "outside-workspace"
     work.mkdir()
+    try:
+        _clean_install_lifecycle(root, installer, release, work, caches)
+    finally:
+        shutil.rmtree(work)
+
+
+def _clean_install_lifecycle(root, installer, release, work, caches):
     venv = work / "venv"
     python = venv / "bin" / "python"
     created = _run(
-        [UV, "venv", "--no-config", "--seed", "--python", "3.12", str(venv)], work
+        [UV, "venv", "--no-config", "--seed", "--python", "3.12", str(venv)],
+        work,
+        caches,
     )
     assert created.returncode == 0, created.stderr
 
-    installed = _run(
-        [
-            UV,
-            "pip",
-            "install",
-            "--no-config",
-            "--python",
-            str(python),
-            "--find-links",
-            str(release),
-            "--constraints",
-            str(constraints),
-            "--extra-index-url",
-            TORCH_CPU_INDEX,
-            "--index-strategy",
-            "unsafe-best-match",
-            f"{root}=={VERSION}",
-        ],
-        work,
-    )
+    installed = _install(installer, root, python, release, work, caches)
     assert installed.returncode == 0, installed.stderr
 
     site_packages = venv / "lib" / "python3.12" / "site-packages"
@@ -317,7 +334,8 @@ def test_clean_install_resolves_from_release_and_needs_the_model_explicitly(
         wheel = release / f"{name.replace('-', '_')}-{VERSION}-py3-none-any.whl"
         assert _installed_file_mismatches(site_packages, wheel) == [], name
 
-    before = _run([str(python), "-c", _PROBE, ROOT_IMPORTS[root]], work)
+    probe = [str(python), "-c", _PROBE, ROOT_IMPORTS[root]]
+    before = _run(probe, work, caches)
     assert before.returncode == 0, before.stderr
     assert json.loads(before.stdout) == {
         "cogniverse": sorted([n, VERSION] for n in BASE_CLOSURES[root]),
@@ -331,19 +349,19 @@ def test_clean_install_resolves_from_release_and_needs_the_model_explicitly(
         requirement == f"en-core-web-sm @ {SPACY_MODEL_URL}#sha256={SPACY_MODEL_SHA256}"
     )
     tampered = requirement.replace(SPACY_MODEL_SHA256, "0" * 64)
-    refused = _run([str(python), "-m", "pip", "install", tampered], work)
+    refused = _run([str(python), "-m", "pip", "install", tampered], work, caches)
     assert refused.returncode == 1
     assert "THESE PACKAGES DO NOT MATCH THE HASHES" in refused.stderr
     assert f"Expected sha256 {'0' * 64}" in refused.stderr
     assert f"Got        {SPACY_MODEL_SHA256}" in refused.stderr
-    still_missing = _run([str(python), "-c", _PROBE, ROOT_IMPORTS[root]], work)
+    still_missing = _run(probe, work, caches)
     assert still_missing.returncode == 0, still_missing.stderr
     assert json.loads(still_missing.stdout) == json.loads(before.stdout)
 
-    provisioned = _run([str(python), "-m", "pip", "install", requirement], work)
+    provisioned = _run([str(python), "-m", "pip", "install", requirement], work, caches)
     assert provisioned.returncode == 0, provisioned.stderr
 
-    after = _run([str(python), "-c", _PROBE, ROOT_IMPORTS[root]], work)
+    after = _run(probe, work, caches)
     assert after.returncode == 0, after.stderr
     assert json.loads(after.stdout) == {
         "cogniverse": sorted([n, VERSION] for n in BASE_CLOSURES[root]),
