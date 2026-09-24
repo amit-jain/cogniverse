@@ -4,11 +4,8 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
-      - 'libs/cli/**'
-      - 'libs/core/**'
-      - 'libs/foundation/**'
-      # index.py runs the graph extractors in-process.
-      - 'libs/agents/cogniverse_agents/graph/**'
+      # test_release_scripts.py builds every release package from libs/.
+      - 'libs/**'
       - 'tests/cli/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
@@ -17,16 +14,16 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/cli-tests.yml'
       # test_e2e_contracts.py reads run_e2e_batched.sh; test_images.py
-      # reads release-images.yml.
+      # reads release-images.yml; test_release_scripts.py reads
+      # publish-packages.yml.
       - 'scripts/**'
       - '.github/workflows/release-images.yml'
+      - '.github/workflows/publish-packages.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
-      - 'libs/cli/**'
-      - 'libs/core/**'
-      - 'libs/foundation/**'
-      - 'libs/agents/cogniverse_agents/graph/**'
+      # test_release_scripts.py builds every release package from libs/.
+      - 'libs/**'
       - 'tests/cli/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
@@ -35,9 +32,11 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/cli-tests.yml'
       # test_e2e_contracts.py reads run_e2e_batched.sh; test_images.py
-      # reads release-images.yml.
+      # reads release-images.yml; test_release_scripts.py reads
+      # publish-packages.yml.
       - 'scripts/**'
       - '.github/workflows/release-images.yml'
+      - '.github/workflows/publish-packages.yml'
 
 jobs:
   unit-tests:
