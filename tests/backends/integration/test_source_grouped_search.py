@@ -375,15 +375,15 @@ def counted(vespa_instance, config_manager, mv_corpus, ann_corpus, text_corpus):
             backend.close()
 
 
+def _is_backend_search(path: str, body: bytes) -> bool:
+    """A backend search query, as opposed to a connection health probe."""
+    if body[:2] == b"\x1f\x8b":
+        body = gzip.decompress(body)
+    return path.startswith("/search/") and b"model.restrict" in body
+
+
 def _search_requests(proxy) -> int:
-    """Backend searches through the proxy, excluding connection health probes."""
-    count = 0
-    for _, path, body in proxy.requests:
-        if body[:2] == b"\x1f\x8b":
-            body = gzip.decompress(body)
-        if path.startswith("/search/") and b"model.restrict" in body:
-            count += 1
-    return count
+    return sum(1 for _, path, body in proxy.requests if _is_backend_search(path, body))
 
 
 def _query(profile: str, tenant: str, top_k: int, **extra) -> dict:
@@ -413,23 +413,27 @@ def _mv_query(top_k: int, tag: str, strategy: str = "float_float", **extra) -> d
     )
 
 
-def _ann_query(top_k: int, tag: str, profile: str = ANN_PROFILE, **extra) -> dict:
+def _ann_query(
+    top_k: int,
+    tag: str,
+    profile: str = ANN_PROFILE,
+    strategy: str = "float_float",
+    **extra,
+) -> dict:
     embedding = np.zeros(768, dtype=np.float32)
     embedding[0] = 1.0
     return _query(
         profile,
         ANN_TENANT,
         top_k,
-        strategy="float_float",
+        strategy=strategy,
         query_embeddings=embedding,
         filters={"video_title": tag},
         **extra,
     )
 
 
-def _window(top_k: int) -> int:
-    budget = search_backend_module._source_collapse_fetch_limit(top_k, {})
-    return max(1, budget // top_k)
+WINDOW = search_backend_module._SOURCE_COLLAPSE_OVERSAMPLE_DEFAULT
 
 
 def _assert_matches_reference(results, segments, top_k: int) -> None:
@@ -443,14 +447,13 @@ def _assert_matches_reference(results, segments, top_k: int) -> None:
     ranked = sorted(by_source.items(), key=lambda item: (-max(item[1])[0], item[0]))[
         :top_k
     ]
-    window = _window(top_k)
     assert [(hit.document.metadata["source_id"], hit.score) for hit in results] == [
         (source_id, max(hits)[0]) for source_id, hits in ranked
     ]
     for hit, (_, hits) in zip(results, ranked):
-        scores = sorted((score for score, _ in hits), reverse=True)[:window]
+        scores = sorted((score for score, _ in hits), reverse=True)[:WINDOW]
         assert [row["score"] for row in hit.matched_segments] == scores
-        assert hit.segments_in_window == len(scores)
+        assert hit.segments_in_window == len(hits)
         rows = [(row["score"], row["document_id"]) for row in hit.matched_segments]
         assert set(rows) <= set(hits)
         assert rows == sorted(rows, key=lambda row: (-row[0], row[1]))
@@ -538,12 +541,34 @@ class TestGroupedSourcesWithoutAnn:
         assert [set(row) for row in results[0].matched_segments] == [
             {"document_id", "score", "start_time", "end_time"}
         ] * 4
-        assert [hit.segments_in_window for hit in results] == [4] + [1] * 9
+        assert [hit.segments_in_window for hit in results] == [401] + [1] * 9
         assert results.result_granularity == "source"
         assert results.total_count == 410
         assert results.num_collapsed_documents == 400
         assert results.source_search_incomplete is False
         _assert_matches_reference(results, _complete_segments(backend, query), 10)
+
+    def test_a_large_top_k_keeps_the_profile_window_per_source(self, counted):
+        backend, proxy = counted
+        query = _mv_query(200, "bigcorpus")
+        before = _search_requests(proxy)
+
+        results = backend.search(query)
+
+        assert _search_requests(proxy) - before == 1
+        assert [hit.document.metadata["source_id"] for hit in results] == [
+            "bigdom",
+            *BIG_OTHERS,
+        ]
+        assert [row["document_id"] for row in results[0].matched_segments] == [
+            "bigdom_000",
+            "bigdom_001",
+            "bigdom_002",
+            "bigdom_003",
+        ]
+        assert [hit.segments_in_window for hit in results] == [401] + [1] * 9
+        assert results.source_search_incomplete is False
+        _assert_matches_reference(results, _complete_segments(backend, query), 200)
 
     @pytest.mark.parametrize("strategy", ["float_float", "bm25_only", "default"])
     def test_eighteen_windows_of_one_source_do_not_hide_the_nineteenth(
@@ -586,6 +611,17 @@ class TestGroupedSourcesWithoutAnn:
             [row["document_id"] for row in hit.matched_segments] for hit in results
         ] == [["tie_a_0", "tie_a_1"], ["tie_b_0", "tie_b_1"], ["tie_c_0", "tie_c_1"]]
 
+    def test_tied_sources_at_the_cut_off_are_kept_by_source_identity(self, counted):
+        backend, _ = counted
+
+        results = backend.search(_mv_query(2, "tiecorpus"))
+
+        assert [
+            (hit.document.metadata["source_id"], hit.document.id) for hit in results
+        ] == [("tie_a", "tie_a_0"), ("tie_b", "tie_b_0")]
+        assert results.total_count == 6
+        assert results.num_collapsed_documents == 4
+
     def test_no_match_is_an_empty_complete_batch(self, counted):
         backend, proxy = counted
         before = _search_requests(proxy)
@@ -615,7 +651,24 @@ class TestGroupedSourcesWithAnn:
             "bigdom_002",
             "bigdom_003",
         ]
+        assert [hit.segments_in_window for hit in results] == [40]
         assert results.total_count == 40
+        assert results.source_search_incomplete is True
+
+    def test_a_large_top_k_keeps_the_window_within_the_candidate_ceiling(self, counted):
+        backend, _ = counted
+
+        results = backend.search(_ann_query(200, "bigcorpus"))
+
+        assert [hit.document.metadata["source_id"] for hit in results] == ["bigdom"]
+        assert [row["document_id"] for row in results[0].matched_segments] == [
+            "bigdom_000",
+            "bigdom_001",
+            "bigdom_002",
+            "bigdom_003",
+        ]
+        assert [hit.segments_in_window for hit in results] == [256]
+        assert results.total_count == 256
         assert results.source_search_incomplete is True
 
     def test_the_widest_budget_still_reports_what_it_could_not_reach(self, counted):
@@ -655,6 +708,34 @@ class TestGroupedSourcesWithAnn:
         ]
         assert wide.total_count == 19
         assert wide.source_search_incomplete is False
+
+    def test_hybrid_text_matches_saturating_the_budget_report_incomplete(self, counted):
+        backend, _ = counted
+
+        results = backend.search(
+            _ann_query(10, "bigcorpus", strategy="hybrid_float_bm25", query="harbour")
+        )
+
+        assert [hit.document.metadata["source_id"] for hit in results] == ["bigdom"]
+        assert [hit.segments_in_window for hit in results] == [401]
+        assert results.total_count == 401
+        assert results.source_search_incomplete is True
+
+    def test_hybrid_matches_within_the_budget_report_complete(self, counted):
+        backend, _ = counted
+        query = _ann_query(
+            10, "smallcorpus", strategy="hybrid_float_bm25", query="harbour"
+        )
+
+        results = backend.search(query)
+
+        assert {hit.document.metadata["source_id"] for hit in results} == {
+            "smalldom",
+            "smallother",
+        }
+        assert results.total_count == 19
+        assert results.source_search_incomplete is False
+        _assert_matches_reference(results, _complete_segments(backend, query), 10)
 
     def test_filters_apply_before_the_candidate_budget(self, counted):
         backend, _ = counted
@@ -787,8 +868,55 @@ def _grouped_body(total_count: int, root_children: list, **root) -> dict:
             {"root": {"id": "toplevel", "children": []}},
             "Vespa grouped response has no totalCount",
         ),
+        (
+            _grouped_body(
+                1,
+                [
+                    {
+                        "id": "group:root:0",
+                        "relevance": 1.0,
+                        "children": [
+                            {
+                                "id": "grouplist:video_id",
+                                "label": "video_id",
+                                "children": [
+                                    {
+                                        "id": "group:string:bigdom",
+                                        "value": "bigdom",
+                                        "children": [
+                                            {
+                                                "id": "hitlist:hits",
+                                                "label": "hits",
+                                                "children": [
+                                                    {
+                                                        "id": "id:video:x::bigdom_000",
+                                                        "relevance": 1.0,
+                                                        "fields": {
+                                                            "video_id": "bigdom"
+                                                        },
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            ),
+            "Vespa source group 'group:string:bigdom' reports segment count None "
+            "for 1 hits",
+        ),
     ],
-    ids=["degraded", "errors", "groups_lost", "root_lost", "count_lost"],
+    ids=[
+        "degraded",
+        "errors",
+        "groups_lost",
+        "root_lost",
+        "count_lost",
+        "group_count_lost",
+    ],
 )
 def test_a_degraded_grouped_response_raises_after_bounded_retries(
     vespa_instance, config_manager, mv_corpus, body, message
@@ -823,3 +951,58 @@ def test_a_failing_vespa_raises_instead_of_answering_empty(
     finally:
         backend.close()
         proxy.__exit__(None, None, None)
+
+
+class TestSelectedDefaultVideoProfileFromTheConfigStore:
+    """A video search naming no profile runs on the tenant's selection as the
+    real config store holds it."""
+
+    @staticmethod
+    def _restricted_schemas(proxy, before: int) -> list:
+        schemas = []
+        for _, path, body in proxy.requests[before:]:
+            if _is_backend_search(path, body):
+                if body[:2] == b"\x1f\x8b":
+                    body = gzip.decompress(body)
+                schemas.append(json.loads(body)["model.restrict"])
+        return schemas
+
+    def test_a_stored_tenant_default_selects_the_video_profile(
+        self, counted, config_manager, ann_corpus
+    ):
+        backend, proxy = counted
+        stored = config_manager.get_backend_config(ANN_TENANT)
+        stored.default_profiles = {"video": {"profile": ANN_PROFILE}}
+        config_manager.set_backend_config(stored, tenant_id=ANN_TENANT)
+        query = _ann_query(10, "bigcorpus")
+        del query["profile"]
+        before = len(proxy.requests)
+        try:
+            results = backend.search(query)
+        finally:
+            stored.default_profiles = {}
+            config_manager.set_backend_config(stored, tenant_id=ANN_TENANT)
+
+        assert self._restricted_schemas(proxy, before) == [ann_corpus]
+        assert [hit.document.metadata["source_id"] for hit in results] == ["bigdom"]
+        assert results.source_search_incomplete is True
+
+    def test_a_tenant_without_a_stored_default_uses_the_shipped_selection(
+        self, counted, mv_corpus
+    ):
+        backend, proxy = counted
+        shipped = json.loads(Path("configs/config.json").read_text())["backend"][
+            "default_profiles"
+        ]["video"]["profile"]
+        assert shipped == MV_PROFILE
+        query = _mv_query(10, "bigcorpus")
+        del query["profile"]
+        before = len(proxy.requests)
+
+        results = backend.search(query)
+
+        assert self._restricted_schemas(proxy, before) == [mv_corpus]
+        assert [hit.document.metadata["source_id"] for hit in results] == [
+            "bigdom",
+            *BIG_OTHERS,
+        ]

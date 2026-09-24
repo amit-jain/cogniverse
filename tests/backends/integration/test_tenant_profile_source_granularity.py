@@ -3,7 +3,7 @@
 ``POST /admin/profiles`` stores the tenant's copy of a shipped profile with the
 fields its request model carries, which do not include ``result_granularity``.
 Searching that profile through ``SearchService`` must still answer one hit per
-source, with every matching window of the source in ``matched_segments``: the
+source, with the source's best matching windows in ``matched_segments``: the
 tenant's stored profile overrides the keys it sets and nothing else.
 """
 
