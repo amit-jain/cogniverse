@@ -1,6 +1,7 @@
 [tool.uv]
 # Only allow pre-releases for graphql-core (required by arize-phoenix 14.x)
 prerelease = "if-necessary-or-explicit"
+default-groups = ["dev", "runtime-models"]
 
 # PyTorch backend extras — pick exactly one with `uv sync --extra <name>`.
 # macOS (Apple Silicon) installs without an extra: the default PyPI wheel
@@ -127,6 +128,7 @@ cogniverse-synthetic = { workspace = true }
 cogniverse-telemetry-phoenix = { workspace = true }
 cogniverse-vespa = { workspace = true }
 cogniverse-cli = { workspace = true }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 # Non-Darwin only: macOS arm64 uses the default PyPI wheel which already
 # ships MPS support. CUDA / ROCm wheels exist only for linux/win.
 torch = [
@@ -326,6 +328,7 @@ dev = [
     # through Remote*Loader and never imports pylate at runtime.
     "pylate==1.4.0",
 ]
+runtime-models = ["en-core-web-sm==3.8.0"]
 docs = [
     "mkdocs==1.6.1",
     "mkdocs-material==9.6.21",
