@@ -369,6 +369,16 @@ class VespaBackend(Backend):
             self._vespa_ingestion_clients[target_schema_name] = client
             return client
 
+    def prepare_ingestion(self, schema_name: str) -> None:
+        """Ensure this backend can feed ``schema_name`` before a caller leases.
+
+        Builds the tenant's ingestion client for the schema, which deploys it
+        when it is missing or its registered definition differs from the
+        shipped one. A caller holding a short write lease calls this first,
+        so that deploy does not run inside the lease.
+        """
+        self._get_or_create_ingestion_client(schema_name)
+
     def ingest_documents(
         self,
         documents: List[Document],
