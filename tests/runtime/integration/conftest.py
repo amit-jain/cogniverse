@@ -8,13 +8,14 @@ wired with real dependencies including real ColPali query encoder.
 
 import json
 import logging
+import uuid
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import dspy
 import pytest
+from a2a.server.agent_execution import AgentExecutor
 from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -36,6 +37,8 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
+from cogniverse_runtime.a2a_task_store import RedisTaskStore
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -699,12 +702,52 @@ def dispatcher(agent_registry, config_manager, schema_loader):
     )
 
 
-@pytest.fixture(scope="module")
-def a2a_client(dispatcher):
-    """Starlette TestClient wrapping a real A2A server with InMemoryTaskStore.
+@pytest.fixture
+def a2a_key_prefix():
+    """The shared A2A store namespace one test's client serves from."""
+    return f"test:a2a-client:{uuid.uuid4().hex}"
 
-    This is the production A2A stack: real executor, real task store,
-    real request handler. Only the transport is in-process (TestClient).
+
+@contextmanager
+def serve_a2a_on_redis(
+    card: AgentCard, executor: AgentExecutor, redis_url: str, key_prefix: str
+):
+    """A TestClient over the handler and store production serves ``/a2a`` with.
+
+    Built inside the serving loop: the store's Redis client and the handler's
+    cancel listener belong to the loop that runs them.
+    """
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        store = await RedisTaskStore.from_url(
+            redis_url, max_tasks=1000, key_prefix=key_prefix
+        )
+        handler = RedisRequestHandler(
+            agent_executor=executor,
+            task_store=store,
+            replica_id=f"test-replica-{uuid.uuid4().hex}",
+        )
+        await handler.start()
+        app.mount(
+            "/", A2AStarletteApplication(agent_card=card, http_handler=handler).build()
+        )
+        try:
+            yield
+        finally:
+            await handler.close()
+            await store.close()
+
+    with StarletteTestClient(FastAPI(lifespan=_lifespan)) as client:
+        yield client
+
+
+@pytest.fixture
+def a2a_client(dispatcher, workflow_state_redis_url, a2a_key_prefix):
+    """Starlette TestClient wrapping the production A2A stack.
+
+    Real executor, ``RedisRequestHandler`` over ``RedisTaskStore`` on an owned
+    Redis, one key prefix per test. Only the transport is in-process.
     """
     executor = CogniverseAgentExecutor(dispatcher=dispatcher)
 
@@ -726,17 +769,9 @@ def a2a_client(dispatcher):
         ],
     )
 
-    handler = DefaultRequestHandler(
-        agent_executor=executor,
-        task_store=InMemoryTaskStore(),
-    )
-
-    server = A2AStarletteApplication(
-        agent_card=card,
-        http_handler=handler,
-    )
-
-    with StarletteTestClient(server.build()) as client:
+    with serve_a2a_on_redis(
+        card, executor, workflow_state_redis_url, a2a_key_prefix
+    ) as client:
         yield client
 
 

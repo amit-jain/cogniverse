@@ -20,11 +20,7 @@ from typing import Any
 
 import pytest
 import requests
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from starlette.testclient import TestClient as StarletteTestClient
 
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -32,7 +28,7 @@ from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
-from tests.runtime.integration.conftest import skip_if_no_lm
+from tests.runtime.integration.conftest import serve_a2a_on_redis, skip_if_no_lm
 from tests.utils.vespa_test_helpers import (
     deploy_tenant_schema,
     load_raw_schema_json,
@@ -241,9 +237,11 @@ def streaming_dispatcher(streaming_registry, config_manager, schema_loader):
     )
 
 
-@pytest.fixture(scope="module")
-def streaming_a2a_client(streaming_dispatcher):
-    """A2A TestClient with streaming=True, backed by real services."""
+@pytest.fixture
+def streaming_a2a_client(
+    streaming_dispatcher, workflow_state_redis_url, a2a_key_prefix
+):
+    """A2A TestClient with streaming=True over the production handler and store."""
     executor = CogniverseAgentExecutor(dispatcher=streaming_dispatcher)
     card = AgentCard(
         name="Streaming Integration",
@@ -262,12 +260,9 @@ def streaming_a2a_client(streaming_dispatcher):
             ),
         ],
     )
-    handler = DefaultRequestHandler(
-        agent_executor=executor, task_store=InMemoryTaskStore()
-    )
-    server = A2AStarletteApplication(agent_card=card, http_handler=handler)
-
-    with StarletteTestClient(server.build()) as client:
+    with serve_a2a_on_redis(
+        card, executor, workflow_state_redis_url, a2a_key_prefix
+    ) as client:
         yield client
 
 
@@ -1043,6 +1038,37 @@ class TestDocumentAgentStreaming:
 
 
 # ── Full A2A round-trip streaming test ───────────────────────────────────────
+
+
+@pytest.mark.integration
+class TestA2AStreamingClientServesFromTheSharedStore:
+    def test_a_streamed_turn_ends_in_the_task_a_peer_reads_from_redis(
+        self, streaming_a2a_client, workflow_state_redis_url, a2a_key_prefix
+    ):
+        from cogniverse_runtime.a2a_task_store import RedisTaskStore
+
+        raw_events = _send_a2a_stream(
+            streaming_a2a_client, "summarize anything", agent_name="unregistered_agent"
+        )
+
+        assert [event["result"]["status"]["state"] for event in raw_events] == [
+            "failed"
+        ]
+        final = raw_events[-1]["result"]
+
+        async def stored_task() -> dict:
+            store = await RedisTaskStore.from_url(
+                workflow_state_redis_url, key_prefix=a2a_key_prefix
+            )
+            try:
+                task = await store.get(final["taskId"])
+            finally:
+                await store.close()
+            return task.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+        stored = asyncio.run(stored_task())
+        assert stored["status"] == final["status"]
+        assert stored["contextId"] == final["contextId"]
 
 
 @pytest.mark.integration
