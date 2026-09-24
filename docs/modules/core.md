@@ -746,9 +746,7 @@ A package with no tenant schema carries only the metadata schemas. Before
 that, pyvespa added a default document type named after the application
 (`cogniverse`), which nothing registers, and every later deploy refused it as
 an unknown live schema. A cluster that already carries it is fixed once by
-dropping it as an orphan: `VespaSchemaManager.delete_orphan_schemas(["cogniverse"])`,
-or `POST /admin/reconcile-orphans?dry_run=false`, which reports it among the
-orphan schemas.
+dropping it as an orphan with `VespaSchemaManager.delete_orphan_schemas(["cogniverse"])`.
 
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
 conditionally; `grace_s` is a required keyword-only argument.
