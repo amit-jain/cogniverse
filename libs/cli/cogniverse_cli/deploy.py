@@ -103,7 +103,11 @@ def helm_install(
     ``values_file`` accepts a single Path or a list — multiple files are
     applied in order so later overlays override earlier ones. ``timeout``
     is passed through to ``helm --timeout`` (cold-start clusters with
-    GB-scale model pulls need ``20m`` headroom). ``chart_version`` (a git
+    GB-scale model pulls need ``20m`` headroom). It is also how long helm
+    waits for each post-install/post-upgrade hook Job, and it governs: a
+    schema deploy still running when it expires fails the install here,
+    while the schema-deployment Job keeps running under its own longer
+    per-deploy bound (``curl --max-time 9240``). ``chart_version`` (a git
     version) repackages the chart so the release records dev provenance
     instead of the static ``Chart.yaml`` line.
     """

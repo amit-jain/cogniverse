@@ -15,6 +15,7 @@ The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 
 import contextlib
 import copy
+import inspect
 import json
 import os
 import re
@@ -22,6 +23,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -34,10 +36,14 @@ from cogniverse_cli.config import (
     LLM_SERVING_MODAL,
     compose_values_files,
 )
+from cogniverse_cli.deploy import helm_install
 from cogniverse_cli.images import SIDECAR_BUILDS
 from fastapi import Body, FastAPI, HTTPException
 
-from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
+from cogniverse_core.registries.schema_deploy_lease import (
+    DEFAULT_WAIT_SECONDS,
+    MAX_TOTAL_HOLD_SECONDS,
+)
 from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
@@ -1212,20 +1218,73 @@ def _schema_deployment_script() -> str:
     return job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
 
 
-def test_schema_deployment_request_outlasts_the_lease_wait_and_one_deploy():
-    """A deploy that waits out a live lease holder, posts the package and waits
-    for convergence answers within the job's request timeout."""
+# The deploy route's longest legitimate answer: the lease wait for a live
+# holder, the heartbeat's cap on one legitimate lease body, and the
+# convergence wait after the lease.
+_LONGEST_DEPLOY_ANSWER_SECONDS = (
+    DEFAULT_WAIT_SECONDS + MAX_TOTAL_HOLD_SECONDS + SCHEMA_CONVERGENCE_TIMEOUT_S
+)
+
+# One deploy's Vespa requests at their bounds: five conflict attempts of at
+# most three requests (the schema manager's session create, prepare and
+# activate; the backend's prepareandactivate is one), the backoff between
+# attempts, and the schema listing before the package is built.
+_DEPLOY_ATTEMPTS = 5
+_REQUESTS_PER_ATTEMPT = 3
+_BACKOFF_SECONDS = 0.5 + 1 + 2 + 4
+_SCHEMA_LISTING_SECONDS = 20
+
+
+def test_schema_deployment_request_outlasts_the_longest_deploy_answer():
+    """curl must not give up on a deploy the runtime is still legitimately
+    running: every deploy's --max-time is the longest answer the lease bounds
+    allow, which covers one deploy's own worst-case Vespa requests."""
     script = _schema_deployment_script()
     timeouts = re.findall(r"--max-time (\d+) -X POST \"\$RUNTIME_URL/admin/", script)
 
-    assert len(timeouts) == len(_SCHEMA_JOB_TENANTS), script
-    one_deploy = (
-        DEFAULT_WAIT_SECONDS
-        + sum(DEPLOY_REQUEST_TIMEOUT_S)
-        + SCHEMA_CONVERGENCE_TIMEOUT_S
+    assert _LONGEST_DEPLOY_ANSWER_SECONDS == 9240
+    assert [float(value) for value in timeouts] == [
+        _LONGEST_DEPLOY_ANSWER_SECONDS
+    ] * len(_SCHEMA_JOB_TENANTS), script
+    assert MAX_TOTAL_HOLD_SECONDS >= (
+        _DEPLOY_ATTEMPTS * _REQUESTS_PER_ATTEMPT * sum(DEPLOY_REQUEST_TIMEOUT_S)
+        + _BACKOFF_SECONDS
+        + _SCHEMA_LISTING_SECONDS
     )
-    assert len(set(timeouts)) == 1, script
-    assert int(timeouts[0]) > one_deploy, script
+
+
+def test_the_cli_helm_timeout_governs_the_schema_deployment_hook():
+    """``cogniverse up`` waits helm's --timeout for the hook; it is the shorter
+    bound, so a slow schema deploy fails the install rather than being cut
+    off by curl."""
+    default = inspect.signature(helm_install).parameters["timeout"].default
+
+    assert default == "10m"
+    assert 10 * 60 < _LONGEST_DEPLOY_ANSWER_SECONDS
+
+
+def test_chart_validation_fires_on_the_sources_the_schema_job_tests_import():
+    """The schema-deployment tests derive their bounds from runtime modules,
+    so editing those modules must re-run this suite."""
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "chart-validation.yml").read_text()
+    )
+    triggers = workflow.get("on", workflow.get(True))
+    sources = sorted(
+        str(Path(sys.modules[name].__file__).resolve().relative_to(REPO_ROOT))
+        for name in {
+            "cogniverse_core.registries.schema_deploy_lease",
+            SchemaDeploymentResponse.__module__,
+            helm_install.__module__,
+            "cogniverse_vespa.backend",
+            "cogniverse_vespa.vespa_schema_manager",
+        }
+    )
+
+    for trigger in ("push", "pull_request"):
+        assert [
+            path for path in sources if path not in triggers[trigger]["paths"]
+        ] == []
 
 
 @contextlib.contextmanager
