@@ -162,7 +162,10 @@ def test_gating_leaves_the_readiness_contract_untouched():
 
 def test_disabled_predecessor_releases_its_successor_instead_of_stranding_it():
     deployments = _inference_deployments(
-        "--set", "inference.vllm_colpali.enabled=false"
+        "--set",
+        "inference.vllm_colpali.enabled=false",
+        "--set",
+        "config.defaultProfiles.video=",
     )
 
     gated = {

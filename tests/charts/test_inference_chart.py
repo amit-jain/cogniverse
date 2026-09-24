@@ -16,12 +16,20 @@ The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 import copy
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+from cogniverse_cli.config import (
+    LLM_SERVING_LOCAL,
+    LLM_SERVING_MODAL,
+    get_device_values_file,
+    get_llm_serving_values_file,
+    get_values_file,
+)
 from cogniverse_cli.images import SIDECAR_BUILDS
 
 from cogniverse_foundation.config.utils import resolve_default_profile
@@ -754,6 +762,207 @@ def test_rocm_overlay_selects_the_shipped_default_video_profile():
     }
     assert config["active_video_profile"] == "video_colpali_smol500_mv_frame"
     assert resolve_default_profile(config) == "video_colpali_smol500_mv_frame"
+
+
+_SELECTED_VIDEO_PROFILE = "video_colpali_smol500_mv_frame"
+_STUDENT_API_BASE = "https://student.example.com/v1"
+_PROD_SECRETS = (
+    "minio.rootPassword=test-minio",
+    "openshell.server.sshHandshakeSecret=test-handshake",
+    "phoenix.postgres.auth.password=test-postgres",
+    "redis.auth.password=test-redis",
+)
+_VISUAL_SERVICES = {"vllm_colpali", "vllm_asr", "vllm_llm_student"}
+
+
+def _cli_values_stack(
+    backend: str | None, *, prod: bool, serving: str = LLM_SERVING_LOCAL
+) -> tuple[str, ...]:
+    """The values files ``cogniverse up`` composes, in its order."""
+    files = [get_values_file(prod=prod)]
+    if backend is not None:
+        device = get_device_values_file(backend)
+        assert device is not None, backend
+        files.append(device)
+    serving_file = get_llm_serving_values_file(serving)
+    if serving_file is not None:
+        files.append(serving_file)
+    return tuple(path.name for path in files)
+
+
+def _composition_failure(values: tuple[str, ...], *set_args: str) -> str:
+    """The message the configmap's validation refuses a composition with."""
+    cmd = ["helm", "template", "cogniverse", str(CHART_PATH)]
+    for values_file in values:
+        cmd.extend(["-f", str(CHART_PATH / values_file)])
+    cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
+    for arg in set_args:
+        cmd.extend(["--set", arg])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode != 0, (
+        "chart rendered instead of refusing:\n" + result.stdout[:2000]
+    )
+    first_line = result.stderr.strip().splitlines()[0]
+    prefix = "Error: execution error at (cogniverse/templates/configmap.yaml:2:4): "
+    assert first_line.startswith(prefix), result.stderr
+    return first_line.removeprefix(prefix)
+
+
+def _video_description_endpoint(config: dict, profile: str) -> str:
+    strategies = config["backend"]["profiles"][profile]["strategies"]
+    assert strategies["description"]["class"] == "VLMDescriptionStrategy"
+    return strategies["description"]["params"]["vlm_endpoint"]
+
+
+def _served_model_arg(deployment: dict) -> str:
+    """The model id ``vllm serve`` is given, in list or shell-script form."""
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    tokens = [
+        token
+        for part in [*container.get("command", []), *container.get("args", [])]
+        for token in shlex.split(part.replace("\\\n", " "))
+    ]
+    return tokens[tokens.index("serve") + 1]
+
+
+def test_rocm_composition_with_the_external_student_serves_its_selected_profile():
+    """The deployed composition: ROCm embedders in-cluster, student external."""
+    docs = _render(
+        *_PROD_SECRETS,
+        values=_cli_values_stack("rocm", prod=True, serving=LLM_SERVING_MODAL),
+    )
+    config = _chart_config(docs)
+    deployments = _inference_deployments(docs)
+    profile = config["backend"]["profiles"][_SELECTED_VIDEO_PROFILE]
+
+    assert resolve_default_profile(config) == _SELECTED_VIDEO_PROFILE
+    assert profile["inference_services"] == {
+        "embedding": "vllm_colpali",
+        "transcription": "vllm_asr",
+    }
+    assert {key: _service_urls(docs)[key] for key in ("vllm_colpali", "vllm_asr")} == {
+        "vllm_colpali": "http://cogniverse-vllm-colpali:8000",
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
+    }
+    assert _VISUAL_SERVICES & set(deployments) == {"vllm_colpali", "vllm_asr"}
+    assert {
+        key: _served_model_arg(deployments[key]) for key in ("vllm_colpali", "vllm_asr")
+    } == {
+        "vllm_colpali": profile["embedding_model"],
+        "vllm_asr": profile["strategies"]["transcription"]["params"]["model"],
+    }
+    assert (
+        _video_description_endpoint(config, _SELECTED_VIDEO_PROFILE)
+        == _values("values.modal-llm.yaml")["runtime"]["primaryLLM"]["apiBase"]
+    )
+
+
+@pytest.mark.parametrize("prod", [True, False], ids=["prod", "k3s"])
+def test_cpu_composition_omits_visual_ingestion(prod: bool):
+    docs = _render(*_PROD_SECRETS, values=_cli_values_stack("cpu", prod=prod))
+    config = _chart_config(docs)
+
+    assert config["backend"]["default_profiles"] == {}
+    assert "active_video_profile" not in config
+    assert resolve_default_profile(config) is None
+    assert "vllm_colpali" not in _service_urls(docs)
+    assert _VISUAL_SERVICES & set(_inference_deployments(docs)) == {"vllm_asr"}
+
+
+def test_fully_external_composition_renders_without_local_model_pods():
+    """Every selected key off-cluster plus the CLI's ``--llm external``
+    overrides: no local Deployment serves any of them."""
+    docs = _render(
+        *_PROD_SECRETS,
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE}",
+        "inference.vllm_colpali.externalUrl=https://colpali.example.com",
+        "inference.vllm_asr.enabled=false",
+        "inference.vllm_asr.externalUrl=https://asr.example.com",
+        f"runtime.primaryLLM.apiBase={_STUDENT_API_BASE}",
+        "llm.engine=external",
+        "llm.builtin.enabled=false",
+        "llm.external.enabled=true",
+        "llm.external.url=https://llm.example.com/v1",
+        values=_cli_values_stack(None, prod=True),
+    )
+    config = _chart_config(docs)
+
+    assert resolve_default_profile(config) == _SELECTED_VIDEO_PROFILE
+    assert {key: _service_urls(docs)[key] for key in ("vllm_colpali", "vllm_asr")} == {
+        "vllm_colpali": "https://colpali.example.com",
+        "vllm_asr": "https://asr.example.com",
+    }
+    assert _VISUAL_SERVICES & set(_inference_deployments(docs)) == set()
+    assert (
+        _video_description_endpoint(config, _SELECTED_VIDEO_PROFILE)
+        == _STUDENT_API_BASE
+    )
+
+
+@pytest.mark.parametrize(
+    ("set_args", "role", "key"),
+    [
+        ((), "embedding", "vllm_colpali"),
+        (
+            (
+                "inference.vllm_colpali.enabled=true",
+                "inference.vllm_asr.enabled=false",
+            ),
+            "transcription",
+            "vllm_asr",
+        ),
+    ],
+    ids=["colpali-disabled", "asr-disabled"],
+)
+def test_a_selected_profile_bound_to_an_undeployed_service_is_refused(
+    set_args: tuple[str, ...], role: str, key: str
+):
+    stderr = _composition_failure(
+        _cli_values_stack(None, prod=True),
+        *_PROD_SECRETS,
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE}",
+        f"runtime.primaryLLM.apiBase={_STUDENT_API_BASE}",
+        *set_args,
+    )
+
+    assert stderr == (
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} binds "
+        f"inference_services.{role} to {key}: set inference.{key}.enabled=true "
+        f"or inference.{key}.externalUrl"
+    ), stderr
+
+
+def test_a_selected_profile_bound_to_an_undefined_service_is_refused():
+    stderr = _composition_failure(("values.rocm.yaml",), "inference.vllm_colpali=null")
+
+    assert stderr == (
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} binds "
+        "inference_services.embedding to vllm_colpali, which is not a service "
+        "under inference"
+    ), stderr
+
+
+def test_an_unknown_selected_profile_is_refused():
+    stderr = _composition_failure(
+        ("values.rocm.yaml",), "config.defaultProfiles.video=video_missing"
+    )
+
+    assert stderr == (
+        "config.defaultProfiles.video=video_missing is not a profile in "
+        "backend.profiles"
+    ), stderr
+
+
+def test_a_selected_vlm_profile_without_a_student_endpoint_is_refused():
+    stderr = _composition_failure(
+        ("values.rocm.yaml",), "inference.vllm_llm_student.enabled=false"
+    )
+
+    assert stderr == (
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
+        "with VLMDescriptionStrategy on the student endpoint: set "
+        "runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true"
+    ), stderr
 
 
 def _is_rocm(dep: dict) -> bool:

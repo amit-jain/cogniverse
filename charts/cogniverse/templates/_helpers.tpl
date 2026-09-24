@@ -542,6 +542,40 @@ point at Modal.
 {{- end -}}
 
 {{/*
+Fails the render when config.defaultProfiles.video selects a profile this
+composition cannot serve. Reads the profile from the rendered config.json:
+every inference_services key it binds needs an enabled service or an
+externalUrl, and a VLMDescriptionStrategy needs the student endpoint, which
+is runtime.primaryLLM.apiBase or an enabled inference.vllm_llm_student.
+*/}}
+{{- define "cogniverse.validateDefaultVideoProfile" -}}
+{{- $name := .Values.config.defaultProfiles.video -}}
+{{- if $name -}}
+{{- $config := tpl (.Files.Get "files/config.json") . | fromJson -}}
+{{- $profile := index $config.backend.profiles $name -}}
+{{- if not $profile -}}
+{{- fail (printf "config.defaultProfiles.video=%s is not a profile in backend.profiles" $name) -}}
+{{- end -}}
+{{- range $role, $key := $profile.inference_services -}}
+{{- if not (hasKey $.Values.inference $key) -}}
+{{- fail (printf "config.defaultProfiles.video=%s binds inference_services.%s to %s, which is not a service under inference" $name $role $key) -}}
+{{- end -}}
+{{- $svc := index $.Values.inference $key -}}
+{{- if not (or $svc.enabled $svc.externalUrl) -}}
+{{- fail (printf "config.defaultProfiles.video=%s binds inference_services.%s to %s: set inference.%s.enabled=true or inference.%s.externalUrl" $name $role $key $key $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (dig "strategies" "description" "class" "" $profile) "VLMDescriptionStrategy" -}}
+{{- $apiBase := and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
+{{- $student := index .Values.inference "vllm_llm_student" | default dict -}}
+{{- if not (or $apiBase $student.enabled) -}}
+{{- fail (printf "config.defaultProfiles.video=%s describes frames with VLMDescriptionStrategy on the student endpoint: set runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 REDIS_URL for containers running cogniverse application code.
 
 cogniverse_dashboard.tabs.approval_queue raises when it is absent, which
