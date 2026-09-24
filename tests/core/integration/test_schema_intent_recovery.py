@@ -1386,3 +1386,71 @@ def test_concurrent_batches_share_one_activation(recovery_backend, monkeypatch):
         }
         for owner in owners
     ] == [set(expected), set(expected)]
+
+
+def test_recovery_taken_over_mid_reconcile_leaves_journal_and_registry_unchanged(
+    recovery_backend, monkeypatch
+):
+    """A deploy whose lease is taken over while it recovers a due intent must
+    write neither the journal nor the registry: the successor owns both."""
+    import threading
+
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries import schema_deployment_intents as intents_module
+    from cogniverse_core.registries.exceptions import BackendDeploymentError
+    from cogniverse_core.registries.schema_deploy_lease import (
+        DeploymentLeaseLost,
+        SchemaDeployLease,
+    )
+
+    connect, store = recovery_backend
+    owner = connect()
+    tenant = f"orphan_{uuid4().hex[:12]}:takeover"
+    registration = _activate_then_die(owner, store, monkeypatch, tenant)
+    intent_before = _entry(store, tenant, "schema_deployment_intents")
+    assert _entry(store, tenant) is None
+    # Past the owner's grace, so the survivor's deploy recovers this intent.
+    monkeypatch.setattr(intents_module, "_now", lambda: time.time() + 3600)
+
+    hold, cap = (
+        schema_deploy_lease.DEFAULT_LEASE_SECONDS,
+        schema_deploy_lease.MAX_TOTAL_HOLD_SECONDS,
+    )
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_LEASE_SECONDS", 1.0)
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 2.0)
+    survivor = connect()
+    journal = survivor.schema_registry._deployment_intents
+    real_reconcile = journal.reconcile
+    successors = []
+    stalled = threading.Event()
+
+    def reconcile_after_takeover(*args, **kwargs):
+        stalled.set()
+        successor = SchemaDeployLease(store, wait_seconds=30)
+        assert successor.acquire() is successor
+        successors.append(successor)
+        return real_reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(journal, "reconcile", reconcile_after_takeover)
+    try:
+        with pytest.raises(BackendDeploymentError) as failure:
+            survivor.deploy_schemas([])
+        assert stalled.is_set()
+        assert len(successors) == 1
+        assert isinstance(failure.value.__cause__, DeploymentLeaseLost)
+        intent_after = _entry(store, tenant, "schema_deployment_intents")
+        assert (intent_after.config_value, intent_after.version) == (
+            intent_before.config_value,
+            intent_before.version,
+        )
+        assert _entry(store, tenant) is None
+    finally:
+        for successor in successors:
+            successor.release()
+        monkeypatch.setattr(journal, "reconcile", real_reconcile)
+
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_LEASE_SECONDS", hold)
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", cap)
+    assert connect().deploy_schemas([]) is True
+    assert _entry(store, tenant).config_value == registration
+    _restore_registration(store, tenant, registration)
