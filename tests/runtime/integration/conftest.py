@@ -9,15 +9,11 @@ wired with real dependencies including real ColPali query encoder.
 import dataclasses
 import json
 import logging
-import uuid
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 
 import dspy
 import pytest
-from a2a.server.agent_execution import AgentExecutor
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import TestClient as StarletteTestClient
@@ -37,15 +33,13 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
 )
 from cogniverse_foundation.config.utils import get_config
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
-from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
-from cogniverse_runtime.a2a_task_store import RedisTaskStore
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 # Re-export the canonical session-scoped Vespa from the project root.
 from tests.conftest import shared_vespa  # noqa: F401, E402
+from tests.utils.a2a_protocol import a2a_app
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
 
@@ -700,73 +694,29 @@ def dispatcher(agent_registry, config_manager, schema_loader):
 
 @pytest.fixture
 def a2a_key_prefix():
-    """The shared A2A store namespace one test's client serves from."""
-    return f"test:a2a-client:{uuid.uuid4().hex}"
+    """The shared A2A store namespace the production protocol serves from."""
+    return "cogniverse:a2a"
 
 
 @contextmanager
-def serve_a2a_on_redis(
-    card: AgentCard, executor: AgentExecutor, redis_url: str, key_prefix: str
-):
-    """A TestClient over the handler and store production serves ``/a2a`` with.
-
-    Built inside the serving loop: the store's Redis client and the handler's
-    cancel listener belong to the loop that runs them.
-    """
-
-    @asynccontextmanager
-    async def _lifespan(app: FastAPI):
-        store = await RedisTaskStore.from_url(
-            redis_url, max_tasks=1000, key_prefix=key_prefix
-        )
-        handler = RedisRequestHandler(
-            agent_executor=executor,
-            task_store=store,
-            replica_id=f"test-replica-{uuid.uuid4().hex}",
-        )
-        await handler.start()
-        app.mount(
-            "/", A2AStarletteApplication(agent_card=card, http_handler=handler).build()
-        )
-        try:
-            yield
-        finally:
-            await handler.close()
-            await store.close()
-
-    with StarletteTestClient(FastAPI(lifespan=_lifespan)) as client:
+def serve_a2a_on_redis(agent_registry, dispatcher, redis_url: str):
+    """A TestClient over the ``/a2a`` protocol the runtime lifespan builds."""
+    with StarletteTestClient(
+        a2a_app(agent_registry, dispatcher, redis_url, path="/")
+    ) as client:
         yield client
 
 
 @pytest.fixture
-def a2a_client(dispatcher, workflow_state_redis_url, a2a_key_prefix):
+def a2a_client(agent_registry, dispatcher, workflow_state_redis_url):
     """Starlette TestClient wrapping the production A2A stack.
 
-    Real executor, ``RedisRequestHandler`` over ``RedisTaskStore`` on an owned
-    Redis, one key prefix per test. Only the transport is in-process.
+    The runtime's protocol factory over an owned Redis: real executor,
+    ``RedisRequestHandler`` over ``RedisTaskStore``. Only the transport is
+    in-process.
     """
-    executor = CogniverseAgentExecutor(dispatcher=dispatcher)
-
-    card = AgentCard(
-        name="Test Cogniverse",
-        description="Integration test agent",
-        url="http://localhost:9999/a2a",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=False),
-        skills=[
-            AgentSkill(
-                id="search_agent",
-                name="search_agent",
-                description="Search for videos",
-                tags=["search", "video_search"],
-            ),
-        ],
-    )
-
     with serve_a2a_on_redis(
-        card, executor, workflow_state_redis_url, a2a_key_prefix
+        agent_registry, dispatcher, workflow_state_redis_url
     ) as client:
         yield client
 

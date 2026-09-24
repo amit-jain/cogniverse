@@ -25,10 +25,6 @@ from pathlib import Path
 import dspy
 import httpx
 import pytest
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import FastAPI
 from PIL import Image
 
@@ -36,10 +32,10 @@ from cogniverse_core.registries.agent_registry import AgentEndpoint, AgentRegist
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.dspy import LenientJSONAdapter
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.harness_turn import derive_request_seed
 from cogniverse_runtime.routers import agents, openai_compat
+from tests.utils.a2a_protocol import production_a2a
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -323,40 +319,17 @@ def compat_route(build_dispatcher):
 
 
 @pytest.fixture
-async def a2a_route(build_dispatcher):
-    card = AgentCard(
-        name="Generation contract",
-        description="Generation failure transport contract",
-        url="http://127.0.0.1:9999/a2a",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[
-            AgentSkill(
-                id="summarizer_agent",
-                name="summarizer_agent",
-                description="Summarize content",
-                tags=["summarization"],
-            ),
-            AgentSkill(
-                id="text_analysis_agent",
-                name="text_analysis_agent",
-                description="Analyze text",
-                tags=["text_analysis"],
-            ),
-        ],
-    )
-    handler = DefaultRequestHandler(
-        agent_executor=CogniverseAgentExecutor(dispatcher=build_dispatcher()),
-        task_store=InMemoryTaskStore(),
-    )
-    app = A2AStarletteApplication(agent_card=card, http_handler=handler).build()
-    with dspy.context(adapter=LenientJSONAdapter()):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://runtime"
-        ) as client:
-            yield client
+async def a2a_route(build_dispatcher, workflow_state_redis_url):
+    dispatcher = build_dispatcher()
+    async with production_a2a(
+        dispatcher._registry, dispatcher, workflow_state_redis_url
+    ) as protocol:
+        with dspy.context(adapter=LenientJSONAdapter()):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=protocol.app),
+                base_url="http://runtime",
+            ) as client:
+                yield client
 
 
 SCHEDULE_HIT = {

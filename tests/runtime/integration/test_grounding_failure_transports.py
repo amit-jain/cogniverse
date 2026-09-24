@@ -1,7 +1,7 @@
 """A failed retrieval ends the turn on every transport that serves an answer.
 
-Real ``/v1`` router and real ``A2AStarletteApplication`` + ``CogniverseAgentExecutor``
-over real uvicorn sockets, in front of a real ``AgentDispatcher`` whose search
+Real ``/v1`` router and the runtime's ``/a2a`` protocol (its factory, on an
+owned Redis) over real uvicorn sockets, in front of a real ``AgentDispatcher`` whose search
 backend refuses one tenant while the answer path is otherwise healthy. Each
 transport must produce exactly one attributable terminal error, the summarizer
 must never be constructed for that tenant, and a tenant whose backend is up must
@@ -22,10 +22,6 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 import uvicorn
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard
 from fastapi import FastAPI
 
 from cogniverse_agents.search_agent import SearchAgent as RealSearchAgent
@@ -35,9 +31,9 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SystemConfig,
 )
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _flatten_search_hit
 from cogniverse_runtime.routers import openai_compat
+from tests.utils.a2a_protocol import a2a_app
 from tests.utils.memory_store import InMemoryConfigStore, register_deployed_schema
 
 pytestmark = [
@@ -204,37 +200,21 @@ def compat_url(dispatcher):
 
 
 @pytest.fixture
-def a2a_url(dispatcher):
-    card = AgentCard(
-        name="Cogniverse",
-        description="Grounding failure fixture",
-        url="http://localhost/a2a/",
-        version="1",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[],
-    )
-    app = A2AStarletteApplication(
-        agent_card=card,
-        http_handler=DefaultRequestHandler(
-            agent_executor=CogniverseAgentExecutor(dispatcher),
-            task_store=InMemoryTaskStore(),
-        ),
-    ).build(rpc_url="/a2a/")
-    with _serving(app) as url:
+def a2a_url(dispatcher, workflow_state_redis_url):
+    app = a2a_app(dispatcher._registry, dispatcher, workflow_state_redis_url)
+    with _serving(app, lifespan="on") as url:
         yield url
 
 
 class _serving:
     """Run an ASGI app on a real uvicorn socket for the duration of a block."""
 
-    def __init__(self, app):
+    def __init__(self, app, lifespan: str = "off"):
         self._listener = socket.socket()
         self._listener.bind(("127.0.0.1", 0))
         self._port = self._listener.getsockname()[1]
         self._server = uvicorn.Server(
-            uvicorn.Config(app, log_level="error", lifespan="off")
+            uvicorn.Config(app, log_level="error", lifespan=lifespan)
         )
         self._thread = threading.Thread(
             target=self._server.run, kwargs={"sockets": [self._listener]}, daemon=True
