@@ -448,6 +448,28 @@ def test_an_empty_profile_field_resolves_the_tenant_default(upload_client):
     assert captured["profile"] == _TENANT_DEFAULT_PROFILE
 
 
+def test_a_tenant_without_a_default_video_profile_is_refused_as_search_is(
+    upload_client,
+):
+    """No named profile and no default is a permanent configuration state:
+    the same 400 and wording as POST /search, never a retryable 503."""
+    client, captured, state = upload_client
+    state["tenant_defaults"]["acme:acme"] = None
+
+    resp = _post(client)
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json() == {
+        "detail": (
+            "No profile specified on the request and tenant 'acme:acme' has no "
+            "configured default video profile."
+        )
+    }
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
 def test_config_store_outage_precedes_object_and_queue_writes(
     upload_client, monkeypatch
 ):
