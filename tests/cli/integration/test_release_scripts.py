@@ -1857,6 +1857,44 @@ def test_index_check_fails_when_the_index_stays_unavailable_past_the_timeout(
     ), describe_run(result)
 
 
+@pytest.mark.parametrize("fault", ["server-error", "disconnect"])
+def test_index_check_fails_a_digest_mismatch_at_once_while_another_read_is_retrying(
+    tmp_path, release_dists, publish_tools, registry, fault
+):
+    """With a long verify timeout, a transient failure on one package's index
+    page does not delay the failure of another package's digest mismatch: the
+    first pass over the index fails on it."""
+    dist = release_dists["tagged"]
+    root = _publication_root(tmp_path / "publish", dist)
+    names = _manifest_names(dist)
+    expected = _manifest_files(dist)
+    last_wheel = next(
+        name
+        for name in reversed(list(expected))
+        if name.endswith(".whl") and name.startswith(names[-1].replace("-", "_"))
+    )
+    altered = (dist / last_wheel).read_bytes() + b"\0"
+    (registry.packages / last_wheel).write_bytes(altered)
+    altered_digest = hashlib.sha256(altered).hexdigest()
+    registry.proxy.index_faults[f"/simple/{names[0]}/"] = [fault]
+    env = _registry_env(publish_tools, registry, VERIFY_TIMEOUT="600")
+
+    started = time.monotonic()
+    result = _run_publish(root, env, "--test", "--yes")
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0, describe_run(result)
+    assert (
+        f"error: {_TESTPYPI_INDEX}: {last_wheel} has sha256 {altered_digest}, "
+        f"manifest has {expected[last_wheel]}" in result.stderr
+    ), describe_run(result)
+    assert registry.proxy.index_reads() == [
+        ("test.pypi.org", f"/simple/{name}/") for name in names
+    ]
+    assert registry.proxy.index_faults[f"/simple/{names[0]}/"] == []
+    assert elapsed < 300, describe_run(result)
+
+
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
