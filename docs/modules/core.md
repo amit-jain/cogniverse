@@ -1404,8 +1404,10 @@ never a real mismatch.
 The provenance schema gained the `primary_digest` field in the same change.
 `SchemaRegistry.redeploy_drifted_schemas("provenance")` redeploys every
 tenant's registered provenance schema whose stored definition differs from
-the shipped one, one normal deploy per drifted tenant, and returns their
-names; an up-to-date schema is left alone.
+the shipped one, one normal deploy per drifted tenant, and returns the names
+it redeployed; an up-to-date schema is left alone. Each deploy runs with
+`require_registered=True`, so a tenant whose schema a peer deleted after the
+listing is skipped rather than deployed and registered again.
 Concurrent external changes inside repair are retried up to the requested bound
 and then raise `ProvenanceRepairConflictError`.
 
