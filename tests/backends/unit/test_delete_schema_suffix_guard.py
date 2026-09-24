@@ -259,7 +259,7 @@ class _BulkRegistry:
             for n in self._registered
         ]
 
-    def get_tenant_schemas(self, tid: str):
+    def get_tenant_schemas(self, tid: str, strict=False):
         return [
             SimpleNamespace(base_schema_name=b) for b in self._tenant_bases.get(tid, [])
         ]

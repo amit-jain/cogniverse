@@ -1610,19 +1610,45 @@ def test_a_failed_registry_read_inside_the_lease_refuses_instead_of_resurrecting
     )
 
 
-@pytest.mark.parametrize("operation", ["startup_metadata_deploy", "schema_delete"])
+_STORAGE_FAILURE = (
+    "Cannot initialize SchemaRegistry: failed to read schema storage: "
+    "ConnectionError: config store unreachable"
+)
+_PACKAGE_FAILURE = (
+    f"Failed to retrieve tenant schemas from SchemaRegistry: {_STORAGE_FAILURE}. "
+    "Cannot safely deploy metadata schemas without the full schema list — "
+    "proceeding would wipe all existing tenant schemas from Vespa."
+)
+
+
+@pytest.mark.parametrize(
+    "operation, failing_listing, message",
+    [
+        ("startup_metadata_deploy", 1, _PACKAGE_FAILURE),
+        ("schema_delete", 1, _PACKAGE_FAILURE),
+        ("tenant_delete", 1, _STORAGE_FAILURE),
+        ("tenant_delete", 2, _STORAGE_FAILURE),
+        ("tenant_delete", 3, _STORAGE_FAILURE),
+        ("bulk_tenant_delete", 1, _STORAGE_FAILURE),
+        ("bulk_tenant_delete", 2, _STORAGE_FAILURE),
+        ("orphan_delete", 1, _STORAGE_FAILURE),
+    ],
+)
 def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_package(
-    recovery_backend, monkeypatch, operation
+    recovery_backend, monkeypatch, operation, failing_listing, message
 ):
-    """The schema manager's packages (the startup metadata deploy and a schema
-    delete's survivor set) are built inside the lease; a failed registry
-    listing there refuses instead of rebuilding from a cached registry that
-    still holds a schema a peer deleted."""
+    """Every package and deletion set the schema manager builds inside the
+    lease (the startup metadata deploy, a schema delete's survivors, a tenant
+    or bulk delete's targets and survivors, an orphan delete's registered
+    guard) reads the registry strictly: a failed listing refuses instead of
+    answering from a cache that still holds a schema a peer deleted and lacks
+    one a peer registered since."""
     connect, store = recovery_backend
     owner, deployer = connect(), connect()
     victim = f"strictsm_{uuid4().hex[:10]}:victim"
     keeper = f"strictsm_{uuid4().hex[:10]}:keeper"
     doomed = f"strictsm_{uuid4().hex[:10]}:doomed"
+    fresh = f"strictsm_{uuid4().hex[:10]}:fresh"
     victim_schema = owner.schema_registry.deploy_schema(victim, "wiki_pages")
     keeper_schema = owner.schema_registry.deploy_schema(keeper, "wiki_pages")
     doomed_schema = owner.schema_registry.deploy_schema(doomed, "wiki_pages")
@@ -1631,34 +1657,41 @@ def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_packag
     }
     assert {victim_schema, keeper_schema, doomed_schema} <= cached
     assert owner.schema_manager.delete_schema(victim, "wiki_pages") == victim_schema
+    fresh_schema = owner.schema_registry.deploy_schema(fresh, "wiki_pages")
+    assert fresh_schema not in cached
     real_list = store.list_all_configs
-    failed_listings = []
+    listings = []
 
-    def fail_the_next_registry_listing(*args, **kwargs):
-        if not failed_listings and kwargs.get("service") == "schema_registry":
-            failed_listings.append(kwargs)
-            raise ConnectionError("config store unreachable")
+    def fail_one_registry_listing(*args, **kwargs):
+        if kwargs.get("service") == "schema_registry":
+            listings.append(kwargs)
+            if len(listings) == failing_listing:
+                raise ConnectionError("config store unreachable")
         return real_list(*args, **kwargs)
 
-    monkeypatch.setattr(store, "list_all_configs", fail_the_next_registry_listing)
-    with pytest.raises(RuntimeError) as caught:
+    monkeypatch.setattr(store, "list_all_configs", fail_one_registry_listing)
+    manager = deployer.schema_manager
+    with pytest.raises(Exception) as caught:
         if operation == "startup_metadata_deploy":
-            deployer.schema_manager.upload_metadata_schemas(app_name="cogniverse")
+            manager.upload_metadata_schemas(app_name="cogniverse")
+        elif operation == "schema_delete":
+            manager.delete_schema(doomed, "wiki_pages")
+        elif operation == "tenant_delete":
+            manager.delete_tenant_schemas(doomed)
+        elif operation == "bulk_tenant_delete":
+            manager.delete_tenant_schemas_bulk([doomed])
         else:
-            deployer.schema_manager.delete_schema(doomed, "wiki_pages")
+            manager.delete_orphan_schemas([fresh_schema])
 
-    assert len(failed_listings) == 1
-    assert str(caught.value) == (
-        "Failed to retrieve tenant schemas from SchemaRegistry: Cannot initialize "
-        "SchemaRegistry: failed to read schema storage: ConnectionError: config "
-        "store unreachable. Cannot safely deploy metadata schemas without the full "
-        "schema list — proceeding would wipe all existing tenant schemas from Vespa."
-    )
+    assert len(listings) == failing_listing
+    assert str(caught.value) == message
+    monkeypatch.setattr(store, "list_all_configs", real_list)
     live = set(connect().schema_manager.list_deployed_document_types())
     assert victim_schema not in live
-    assert {keeper_schema, doomed_schema} <= live
+    assert {keeper_schema, doomed_schema, fresh_schema} <= live
     assert _schema_row(store, victim).config_value["deleted"] is True
     assert _schema_row(store, doomed).config_value.get("deleted", False) is False
+    assert _schema_row(store, fresh).config_value.get("deleted", False) is False
 
 
 def test_a_rollback_honours_a_peer_delete_in_its_window(recovery_backend, monkeypatch):

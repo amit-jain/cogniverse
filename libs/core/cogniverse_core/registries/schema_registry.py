@@ -887,7 +887,9 @@ class SchemaRegistry:
         """
         return self._deployment_intents.reserved(live_names)
 
-    def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
+    def get_tenant_schemas(
+        self, tenant_id: str, strict: bool = False
+    ) -> List[SchemaInfo]:
         """
         Get all schemas deployed for a specific tenant.
 
@@ -897,6 +899,8 @@ class SchemaRegistry:
 
         Args:
             tenant_id: Tenant identifier
+            strict: Raise when the refresh fails instead of answering from
+                the in-memory cache.
 
         Returns:
             List of SchemaInfo objects for all deployed schemas
@@ -925,6 +929,8 @@ class SchemaRegistry:
         try:
             self._load_schemas_from_storage()
         except Exception as exc:
+            if strict:
+                raise
             logger.warning(
                 f"get_tenant_schemas: refresh from storage failed, "
                 f"falling back to in-memory cache: {exc}"

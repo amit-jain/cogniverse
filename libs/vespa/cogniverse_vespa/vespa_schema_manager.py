@@ -1229,7 +1229,7 @@ class VespaSchemaManager:
             )
 
             registry_by_full_name: Dict[str, object] = {}
-            for info in self._schema_registry._get_all_schemas() or []:
+            for info in self._schema_registry._get_all_schemas(strict=True) or []:
                 registry_by_full_name[info.full_schema_name] = info
 
             parser = JsonSchemaParser()
@@ -1312,7 +1312,9 @@ class VespaSchemaManager:
 
             registry_full_names: list[str] = []
             registry_base_names: list[str] = []
-            for info in self._schema_registry.get_tenant_schemas(tenant_id):
+            for info in self._schema_registry.get_tenant_schemas(
+                tenant_id, strict=True
+            ):
                 registry_full_names.append(
                     self.get_tenant_schema_name(tenant_id, info.base_schema_name)
                 )
@@ -1330,7 +1332,7 @@ class VespaSchemaManager:
                 ) from e
             registered_full_names = {
                 info.full_schema_name
-                for info in self._schema_registry._get_all_schemas()
+                for info in self._schema_registry._get_all_schemas(strict=True)
             }
             vespa_orphan_names = [
                 name
@@ -1407,7 +1409,7 @@ class VespaSchemaManager:
 
             registered_full_names = {
                 info.full_schema_name
-                for info in (self._schema_registry._get_all_schemas() or [])
+                for info in (self._schema_registry._get_all_schemas(strict=True) or [])
             }
 
             deletion_targets: set = set()
@@ -1416,7 +1418,7 @@ class VespaSchemaManager:
 
             for tid in tenant_ids:
                 bases: list = []
-                for info in self._schema_registry.get_tenant_schemas(tid):
+                for info in self._schema_registry.get_tenant_schemas(tid, strict=True):
                     bases.append(info.base_schema_name)
                     deletion_targets.add(
                         self.get_tenant_schema_name(tid, info.base_schema_name)
@@ -1515,7 +1517,7 @@ class VespaSchemaManager:
 
             registered = {
                 info.full_schema_name
-                for info in (self._schema_registry._get_all_schemas() or [])
+                for info in (self._schema_registry._get_all_schemas(strict=True) or [])
             }
             active = targets & registered
             if active:
