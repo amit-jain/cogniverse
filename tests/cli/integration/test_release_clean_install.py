@@ -96,7 +96,7 @@ def call():
         outcomes.append(("ok", analyzer.extract_semantic_relationships(TEXT)))
     except SpaCyModelUnavailableError as exc:
         outcomes.append(("raised", (
-            exc.model_name, str(exc).split(" It doesn't")[0],
+            exc.model_name, str(exc),
             type(exc.__cause__).__name__,
         )))
 
@@ -141,7 +141,9 @@ print(json.dumps(report))
 UNPROVISIONED_ERROR = [
     "en_core_web_sm",
     "spaCy model 'en_core_web_sm' could not be loaded: OSError: [E050] Can't find "
-    "model 'en_core_web_sm'.",
+    "model 'en_core_web_sm'. It doesn't seem to be a Python package or a valid "
+    "path to a data directory. Install it as described under 'spaCy pipeline' in "
+    "the cogniverse-agents README.",
     "OSError",
 ]
 RELATIONSHIPS = [

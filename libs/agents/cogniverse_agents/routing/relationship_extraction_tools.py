@@ -397,7 +397,8 @@ class SpaCyDependencyAnalyzer:
         except OSError as e:
             raise SpaCyModelUnavailableError(
                 f"spaCy model {self.model_name!r} could not be loaded: "
-                f"{type(e).__name__}: {e}",
+                f"{type(e).__name__}: {e} Install it as described under "
+                "'spaCy pipeline' in the cogniverse-agents README.",
                 model_name=self.model_name,
             ) from e
         logger.info(f"Loaded spaCy model: {self.model_name}")
