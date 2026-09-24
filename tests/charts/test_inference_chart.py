@@ -1150,6 +1150,35 @@ def test_schema_deployment_job_deploys_only_the_selected_video_profile(
     assert _schema_deployment_calls(docs) == expected
 
 
+def test_the_removed_schema_deployment_profiles_key_fails_the_render():
+    """An override of the removed list would otherwise be ignored silently."""
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "cogniverse",
+            str(CHART_PATH),
+            "--set",
+            "runtime.qualityMonitor.tenantId=test-tenant",
+            "--set",
+            "initJobs.schemaDeployment.profiles[0]=image_colpali_mv",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout[:2000]
+    first_line = result.stderr.strip().splitlines()[0]
+    assert first_line.startswith(
+        "Error: execution error at (cogniverse/templates/init-jobs.yaml:"
+    ), result.stderr
+    assert first_line.split("): ", 1)[1] == (
+        "initJobs.schemaDeployment.profiles is removed: the schema-deployment "
+        "job deploys config.defaultProfiles.video"
+    ), result.stderr
+
+
 def _is_rocm(dep: dict) -> bool:
     vols = dep["spec"]["template"]["spec"].get("volumes", [])
     return any(v.get("name") == "kfd" for v in vols)
