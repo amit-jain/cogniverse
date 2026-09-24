@@ -1939,11 +1939,15 @@ async def test_a_producer_event_during_begin_cancel_never_reaches_the_relay(
     result = await asyncio.wait_for(
         handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=10
     )
+    # The cancel is published before on_cancel_task returns; whether the
+    # consumer has closed the relay yet is a race, so check what precedes it.
+    published = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    assert _relay_states(published)[:2] == [TaskState.working, TaskState.canceled]
+    assert "inside-begin-cancel" not in str(published)
     await asyncio.wait_for(handler.close(), timeout=10)
 
     assert result.status.state == TaskState.canceled
     relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
-    assert "inside-begin-cancel" not in str(relay)
     assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
 
 
