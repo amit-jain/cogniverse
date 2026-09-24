@@ -419,10 +419,10 @@ class BackendVectorStore(VectorStoreBase):
             raise
 
     def delete(self, vector_id: str) -> None:
-        """Delete via backend"""
+        """Delete via backend without deploying the schema to delete from."""
         try:
             with leased_backend(self._resolve_backend) as backend:
-                backend.delete_document(
+                backend.delete_live_document(
                     vector_id, schema_name=(self.profile or self.collection_name)
                 )
             logger.debug(f"Deleted memory {vector_id}")
@@ -540,13 +540,17 @@ class BackendVectorStore(VectorStoreBase):
             raise
 
     def get(self, vector_id: str) -> Optional[BackendRecord]:
-        """Get via backend"""
+        """Get via backend without deploying the schema to read from.
+
+        Mem0 reads a row before it updates or deletes it; a read that could
+        deploy would redeploy (or resurrect) the schema from a delete path.
+        """
         if self.is_telemetry:
             return None
 
         try:
             with leased_backend(self._resolve_backend) as backend:
-                doc = backend.get_document(
+                doc = backend.get_live_document(
                     vector_id, schema_name=(self.profile or self.collection_name)
                 )
             if doc is None:

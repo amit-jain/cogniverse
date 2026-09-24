@@ -300,7 +300,7 @@ class TestReadFaultContract:
     @pytest.mark.unit
     def test_get_raises_on_backend_failure(self):
         store = self._store()
-        store._resolve_backend().get_document.side_effect = ConnectionError(
+        store._resolve_backend().get_live_document.side_effect = ConnectionError(
             "backend down"
         )
 
@@ -310,7 +310,7 @@ class TestReadFaultContract:
     @pytest.mark.unit
     def test_get_returns_none_for_genuine_not_found(self):
         store = self._store()
-        store._resolve_backend().get_document.return_value = None
+        store._resolve_backend().get_live_document.return_value = None
 
         assert store.get("missing-id") is None
 
@@ -333,7 +333,7 @@ class TestReadFaultContract:
             [0.125, -0.25, 0.5],
             metadata={"model": "exact-test-model"},
         )
-        store._resolve_backend().get_document.return_value = document
+        store._resolve_backend().get_live_document.return_value = document
 
         record = store.get("mem-embedded")
 
@@ -341,7 +341,7 @@ class TestReadFaultContract:
         assert record.vector == [0.125, -0.25, 0.5]
         assert record.payload["data"] == "exact memory text"
         assert record.payload["created_at"] == "2023-11-14T22:13:20+00:00"
-        store._resolve_backend().get_document.assert_called_once_with(
+        store._resolve_backend().get_live_document.assert_called_once_with(
             "mem-embedded", schema_name="agent_memories"
         )
 

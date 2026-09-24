@@ -606,6 +606,40 @@ class VespaBackend(Backend):
 
         return success
 
+    def _live_route(self, schema_name: str) -> Tuple[str, str]:
+        """The tenant schema and Document v1 namespace for ``schema_name``."""
+        from cogniverse_vespa.ingestion_client import document_namespace
+
+        target = (
+            self.get_tenant_schema_name(self._tenant_id, schema_name)
+            if self._tenant_id
+            else schema_name
+        )
+        return target, document_namespace(target)
+
+    def get_live_document(
+        self, document_id: str, schema_name: str
+    ) -> Optional[Document]:
+        """Read one document of this tenant's schema without deploying it.
+
+        The Document v1 read :meth:`get_document` does, minus the ingestion
+        client whose cache miss deploys the schema; a read-before-delete must
+        not redeploy what it is about to delete from. None for a genuine 404.
+        """
+        self._require_open()
+        target, namespace = self._live_route(schema_name)
+        response = self._metadata_vespa_app().get_data(
+            schema=target,
+            data_id=document_id,
+            namespace=namespace,
+            raise_on_not_found=False,
+        )
+        if getattr(response, "status_code", None) == 404:
+            return None
+        self._check_document_response(response, "get", document_id)
+        fields = (getattr(response, "json", {}) or {}).get("fields", {})
+        return self._document_from_fields(document_id, fields)
+
     def delete_live_document(self, document_id: str, schema_name: str) -> bool:
         """Delete one document from this tenant's schema without deploying it.
 
@@ -614,15 +648,8 @@ class VespaBackend(Backend):
         document type it does not have with success — such a schema holds no
         documents — so that absence is idempotent; any refusal raises.
         """
-        from cogniverse_vespa.ingestion_client import document_namespace
-
         self._require_open()
-        target = (
-            self.get_tenant_schema_name(self._tenant_id, schema_name)
-            if self._tenant_id
-            else schema_name
-        )
-        namespace = document_namespace(target)
+        target, namespace = self._live_route(schema_name)
         route = f"{namespace}/{target}/{document_id}"
         try:
             response = self._metadata_vespa_app().delete_data(
@@ -822,7 +849,10 @@ class VespaBackend(Backend):
         fields = client.get_document_data(document_id)
         if fields is None:
             return None
+        return self._document_from_fields(document_id, fields)
 
+    @staticmethod
+    def _document_from_fields(document_id: str, fields: Dict[str, Any]) -> Document:
         document = Document(
             id=document_id,
             text_content=fields.get("text", ""),
