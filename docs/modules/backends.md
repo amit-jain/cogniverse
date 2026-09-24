@@ -877,7 +877,11 @@ flowchart TD
     Start["<span style='color:#000'>Query Request<br/>with type + query</span>"] --> ProfileCheck{"<span style='color:#000'>Has explicit<br/>profile param?</span>"}
 
     ProfileCheck -->|Yes| ValidateProfile["<span style='color:#000'>Validate profile exists</span>"]
-    ProfileCheck -->|No| CountTypeProfiles["<span style='color:#000'>Count profiles<br/>matching type</span>"]
+    ProfileCheck -->|No| VideoCheck{"<span style='color:#000'>type is<br/>video?</span>"}
+    VideoCheck -->|Yes| SelectedDefault{"<span style='color:#000'>Selected default<br/>video profile?</span>"}
+    VideoCheck -->|No| CountTypeProfiles["<span style='color:#000'>Count profiles<br/>matching type</span>"]
+    SelectedDefault -->|Yes| UseDefault
+    SelectedDefault -->|No| ErrorNoDefault["<span style='color:#000'>Error:<br/>No default video profile</span>"]
 
     ValidateProfile --> UseExplicit["<span style='color:#000'>Use Explicit Profile</span>"]
 
@@ -906,6 +910,9 @@ flowchart TD
     style ExecuteSearch fill:#a5d6a7,stroke:#388e3c,color:#000
     style ErrorNoProfile fill:#ffcccc,stroke:#c62828,color:#000
     style ErrorMultiple fill:#ffcccc,stroke:#c62828,color:#000
+    style ErrorNoDefault fill:#ffcccc,stroke:#c62828,color:#000
+    style VideoCheck fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SelectedDefault fill:#ffcc80,stroke:#ef6c00,color:#000
     style ProfileCheck fill:#ffcc80,stroke:#ef6c00,color:#000
     style StrategyCheck fill:#ffcc80,stroke:#ef6c00,color:#000
     style CheckCount fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -933,6 +940,15 @@ if requested_profile:
     if requested_profile not in self.profiles:
         raise ValueError(f"Requested profile '{requested_profile}' not found")
     profile_name = requested_profile
+elif content_type == "video":
+    # Video never auto-selects: resolve_default_profile over the merged
+    # default_profiles and the tenant's active_video_profile, or refuse.
+    profile_name = self._selected_default_profile(tenant_id, default_profiles, "video")
+    if not profile_name:
+        raise ValueError(
+            "No profile specified on the request and tenant ... has no "
+            "configured default video profile."
+        )
 else:
     # 2. Auto-select if only one profile for content type
     type_profiles = {
@@ -995,10 +1011,11 @@ query_dict = {
     # No 'profile' or 'strategy' specified
 }
 
-# Backend auto-resolves:
-# 1. Filters profiles by type="video"
-# 2. If single profile → auto-select
-#    If multiple → uses default_profiles["video"]["profile"]
+# Backend resolves:
+# 1. type="video" uses the tenant's selected default video profile
+#    (default_profiles["video"]["profile"], then active_video_profile) and
+#    raises ValueError when there is none; other types auto-select their
+#    only profile, or use default_profiles[type]["profile"] when several
 # 3. Similar logic for strategy
 # 4. Schema: base_schema_name + "_" + canonicalized tenant_id
 #    ("acme:prod" canonicalizes to itself -> "..._acme_prod")
@@ -1625,7 +1642,7 @@ than the multi-profile `config` dict shown above.
 | `query` | str | yes* | Text query (*or `query_embeddings`) |
 | `type` | str | yes | Content type, e.g. `"video"` |
 | `tenant_id` | str | yes | Tenant scope, e.g. `"acme:prod"` — routes to the tenant schema |
-| `profile` | str | no | Profile name, e.g. `"test_colpali"` (auto-selected if only one for the type) |
+| `profile` | str | no | Profile name, e.g. `"test_colpali"`. Omitted: `video` uses the tenant's selected default video profile or raises; other types auto-select their only profile |
 | `strategy` | str | no | Rank-profile name (auto-selected if only one available) |
 | `top_k` | int | no | Result count (defaults to 10) |
 | `query_embeddings` | numpy array | no | Pre-computed embeddings for visual/hybrid strategies |

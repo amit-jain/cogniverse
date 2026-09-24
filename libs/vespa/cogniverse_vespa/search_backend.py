@@ -1021,6 +1021,22 @@ class VespaSearchBackend(SearchBackend):
             dict(backend_section.get("default_profiles", {}) or {}),
         )
 
+    def _selected_default_profile(self, tenant_id, default_profiles, modality):
+        """The tenant's selected default profile for ``modality``, or None.
+
+        Resolved by ``resolve_default_profile`` over this request's merged
+        ``default_profiles`` and the tenant's ``active_<modality>_profile``.
+        """
+        from cogniverse_foundation.config import utils as config_utils
+
+        view: Dict[str, Any] = {"backend": {"default_profiles": default_profiles}}
+        if tenant_id and self._config_manager is not None:
+            key = f"active_{modality}_profile"
+            view[key] = config_utils.get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            ).get(key)
+        return config_utils.resolve_default_profile(view, modality)
+
     def _encoder_service(self, profile_config):
         return (profile_config.get("inference_services") or {}).get("embedding")
 
@@ -1238,6 +1254,31 @@ class VespaSearchBackend(SearchBackend):
                 )
             profile_name = requested_profile
             logger.info(f"[{correlation_id}] Using requested profile: {profile_name}")
+        elif content_type == "video":
+            tenant_for_default = query_dict.get("tenant_id")
+            profile_name = self._selected_default_profile(
+                tenant_for_default, default_profiles_snapshot, "video"
+            )
+            if not profile_name:
+                raise ValueError(
+                    "No profile specified on the request and tenant "
+                    f"{tenant_for_default!r} has no configured default video "
+                    "profile."
+                )
+            video_profiles = [
+                name
+                for name, config in profiles_snapshot.items()
+                if config.get("type") == "video"
+            ]
+            if profile_name not in video_profiles:
+                raise ValueError(
+                    f"Default profile '{profile_name}' for type 'video' not found "
+                    f"in available profiles: {video_profiles}"
+                )
+            logger.info(
+                f"[{correlation_id}] Using selected default video profile: "
+                f"{profile_name}"
+            )
         else:
             # 2. Auto-select based on type
             # Get all profiles for this type
