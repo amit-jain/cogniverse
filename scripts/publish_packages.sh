@@ -17,7 +17,8 @@ PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DIST_DIR="$PROJECT_ROOT/dist"
 MANIFEST="$DIST_DIR/BUILD_MANIFEST.json"
 RELEASE_MANIFEST="$PROJECT_ROOT/scripts/release_manifest.py"
-TWINE_REQUIREMENT="twine==7.0.0"
+PUBLISH_REQUIREMENTS="$PROJECT_ROOT/scripts/publish-requirements.txt"
+TOOL_DIR=""
 
 # Publishing options
 TEST_PYPI=${TEST_PYPI:-false}
@@ -54,9 +55,20 @@ join_names() {
     echo "$joined"
 }
 
-# Python with the pinned Twine (and packaging) installed, independent of the project environment
+# Python 3.12 with the hash-pinned Twine (and packaging) installed, independent of the project environment
+install_release_python() {
+    TOOL_DIR=$(mktemp -d)
+    trap 'rm -rf "$TOOL_DIR"' EXIT
+    if ! uv venv --no-config --python 3.12 "$TOOL_DIR/venv" ||
+        ! uv pip install --no-config --quiet --python "$TOOL_DIR/venv/bin/python" \
+            --require-hashes -r "$PUBLISH_REQUIREMENTS"; then
+        log_error "Nothing was uploaded: could not install the publish tool from $PUBLISH_REQUIREMENTS"
+        exit 1
+    fi
+}
+
 release_python() {
-    uv run --no-project --with "$TWINE_REQUIREMENT" python "$@"
+    "$TOOL_DIR/venv/bin/python" "$@"
 }
 
 configure_target() {
@@ -85,7 +97,7 @@ print_header() {
     echo "=========================================="
     echo "Target: $TARGET"
     echo "Manifest: $MANIFEST"
-    echo "Twine: $TWINE_REQUIREMENT"
+    echo "Twine: $(grep -o '^twine==[^ ]*' "$PUBLISH_REQUIREMENTS")"
     if [ "$DRY_RUN" = true ]; then
         echo "Mode: DRY RUN (verifies artifacts; uploads nothing and does not query the index for the release packages)"
     fi
@@ -282,6 +294,7 @@ main() {
 
     log_info "Running pre-flight checks..."
     check_uv
+    install_release_python
     if ! load_release; then
         exit 1
     fi

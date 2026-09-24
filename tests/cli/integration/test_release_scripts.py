@@ -867,6 +867,7 @@ def test_unknown_option_exits_nonzero_without_building(tmp_path):
 
 
 _TWINE = "twine==7.0.0"
+_PUBLISH_REQUIREMENTS = REPO_ROOT / "scripts" / "publish-requirements.txt"
 _PYPISERVER = "pypiserver[passlib]==2.4.2"
 _PUBLISH_TIMEOUT = 900
 _REGISTRY_HOSTS = ("test.pypi.org", "upload.pypi.org", "pypi.org", "pypi.python.org")
@@ -1171,18 +1172,41 @@ def publish_tools(tmp_path_factory) -> _PublishTools:
         UV_CACHE_DIR=cache,
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
     )
-    for requirement, probe in (
-        (_TWINE, "import twine"),
-        (_PYPISERVER, "import passlib, pypiserver"),
+    tool = home / "publish-tool"
+    for argv in (
+        ["uv", "venv", "--no-config", "--python", "3.12", str(tool)],
+        [
+            "uv",
+            "pip",
+            "install",
+            "--no-config",
+            "--python",
+            str(tool / "bin" / "python"),
+            "--require-hashes",
+            "-r",
+            str(_PUBLISH_REQUIREMENTS),
+        ],
+        [str(tool / "bin" / "python"), "-c", "import twine"],
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--with",
+            _PYPISERVER,
+            "python",
+            "-c",
+            "import passlib, pypiserver",
+        ],
     ):
         subprocess.run(
-            ["uv", "run", "--no-project", "--with", requirement, "python", "-c", probe],
+            argv,
             cwd=home,
             env=env,
             capture_output=True,
             check=True,
             timeout=_PUBLISH_TIMEOUT,
         )
+    shutil.rmtree(tool)
     env["UV_OFFLINE"] = "1"
     authority, context = _certificate_authority(tmp_path_factory.mktemp("tls"))
     return _PublishTools(env=env, authority=authority, tls_context=context)
@@ -1296,7 +1320,11 @@ def _registry_env(
 
 def _publication_root(root: Path, dist: Path) -> Path:
     (root / "scripts").mkdir(parents=True)
-    for script in ("publish_packages.sh", "release_manifest.py"):
+    for script in (
+        "publish_packages.sh",
+        "release_manifest.py",
+        _PUBLISH_REQUIREMENTS.name,
+    ):
         shutil.copy2(REPO_ROOT / "scripts" / script, root / "scripts" / script)
     shutil.copytree(dist, root / "dist")
     return root
@@ -1558,6 +1586,53 @@ def test_disconnect_after_the_registry_stored_a_file_fails_and_a_rerun_completes
     assert registry.proxy.uploads() == [
         ("test.pypi.org", name, 200 if name == core_sdist else 400) for name in files
     ]
+
+
+def test_publish_tool_with_a_mismatched_hash_is_refused_before_any_upload(
+    tmp_path, release_dists, publish_tools, registry
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+    requirements = root / "scripts" / _PUBLISH_REQUIREMENTS.name
+    pinned = requirements.read_text()
+    [twine_hashes] = re.findall(
+        rf"^{re.escape(_TWINE)} \\\n((?:    --hash=sha256:[0-9a-f]{{64}}.*\n)+)",
+        pinned,
+        re.MULTILINE,
+    )
+    requirements.write_text(
+        pinned.replace(
+            twine_hashes,
+            re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64, twine_hashes),
+        )
+    )
+
+    result = _run_publish(
+        root, _registry_env(publish_tools, registry), "--test", "--yes"
+    )
+
+    assert result.returncode == 1, describe_run(result)
+    assert registry.proxy.requests == []
+    assert registry.files() == {}
+    assert f"Hash mismatch for `{_TWINE}`" in result.stderr, describe_run(result)
+    assert (
+        "Nothing was uploaded: could not install the publish tool from "
+        f"{requirements}" in _ANSI.sub("", result.stderr)
+    ), describe_run(result)
+
+
+def test_publish_tool_runs_on_python_3_12_whatever_uv_would_pick(
+    tmp_path, release_dists, publish_tools, registry
+):
+    root = _publication_root(tmp_path / "publish", release_dists["tagged"])
+    env = _registry_env(publish_tools, registry, UV_PYTHON="3.11")
+
+    result = _run_publish(root, env, "--test", "--dry-run")
+
+    assert result.returncode == 0, describe_run(result)
+    assert re.search(r"^Using CPython 3\.12\.\d+ ", result.stderr, re.MULTILINE), (
+        describe_run(result)
+    )
+    assert registry.proxy.requests == []
 
 
 def test_dry_run_verifies_artifacts_without_contacting_the_registry(
@@ -1906,6 +1981,58 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
         f"Verified 20 file(s) at {index_url} against the manifest digests"
         in published.stdout
     ), describe_run(published)
+
+
+def test_release_notes_install_every_package_in_the_manifest(tmp_path, release_dists):
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "publish-packages.yml").read_text()
+    )
+    [step] = [
+        step
+        for step in workflow["jobs"]["create-release"]["steps"]
+        if step["name"] == "Generate release notes"
+    ]
+    tag_version = "${{ steps.version.outputs.version }}"
+    work = tmp_path / "release"
+    work.mkdir()
+    shutil.copy2(release_dists["tagged"] / _MANIFEST, work / _MANIFEST)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-eo",
+            "pipefail",
+            "-c",
+            step["run"].replace(tag_version, "0.2.0"),
+        ],
+        cwd=work,
+        env={
+            **os.environ,
+            **{
+                name: value.replace(tag_version, "0.2.0")
+                for name, value in step.get("env", {}).items()
+            },
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, describe_run(result)
+    lines = (work / "release_notes.md").read_text().splitlines()
+    installs = [line for line in lines if line.startswith("pip install ")]
+    assert installs == [
+        *(
+            f"pip install {name}==0.2.0"
+            for name in _manifest_names(release_dists["tagged"])
+        ),
+        "pip install cogniverse-runtime==0.2.0",
+    ]
+    assert set(_manifest_names(release_dists["tagged"])) == EXPECTED_RELEASE
+    assert lines[0] == "# Cogniverse SDK v0.2.0"
 
 
 @pytest.mark.parametrize("build", ["tagged", "dev"])

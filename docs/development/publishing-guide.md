@@ -210,7 +210,8 @@ pip install uv
 # Already provided by the dev dependency group: `uv sync --group dev`.
 pip install tomli-w
 
-# Twine: publish_packages.sh runs twine==7.0.0 through `uv run --no-project --with`;
+# Twine: publish_packages.sh installs twine==7.0.0 and its dependencies from the
+# hash-pinned scripts/publish-requirements.txt into a throwaway Python 3.12 venv;
 # nothing to install.
 ```
 
@@ -542,7 +543,7 @@ TEST_PYPI_TOKEN="your-test-token" ./scripts/publish_packages.sh --test
   input, exits 1 with nothing uploaded.
 - **`--dry-run`** runs the manifest checks and `twine check`, lists the uploads,
   and neither uploads nor queries the index for the release packages (uv may
-  still download `twine==7.0.0` from PyPI when it is not cached). Its exit 0 is
+  still download the pinned publish tool from PyPI when it is not cached). Its exit 0 is
   not evidence of publication.
 
 ### Test Installation
@@ -599,6 +600,8 @@ PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh
 
 **Note:** The scripts publish the ten release-set packages listed in the manifest. finetuning, cli and messaging require manual publishing.
 
+The CLI cannot join the staged release set as is: `scripts/release_manifest.py` deletes `PKG-INFO` from each staged source, and `libs/cli/hatch_build.py` takes `PKG-INFO` as its only sign of an sdist build. A CLI published by hand (`uv build --package cogniverse-cli`) requires `cogniverse-foundation` with no version pin.
+
 
 ### Verify Publication
 
@@ -644,6 +647,8 @@ git push origin v0.1.0
 # 3. Select target: testpypi or pypi
 # 4. Optional: Enable dry run
 ```
+
+Run it from a `v*` tag ref ("Use workflow from" → Tags). A branch build carries a local version, and "Verify release artifacts" refuses it, dry run included.
 
 ### Workflow Stages
 
