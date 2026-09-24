@@ -176,6 +176,22 @@ def test_a_provenance_row_delete_never_deploys_the_schema(
         assert "primary_digest" not in _field_names(definition)
 
 
+def test_a_delete_from_a_document_type_vespa_lacks_is_an_absence(
+    provenance_vespa, deploys
+):
+    connect, _store = provenance_vespa
+    tenant = f"provnone_{uuid4().hex[:10]}:acme"
+    backend = connect(tenant)
+    schema = backend.get_tenant_schema_name(tenant, "provenance")
+    assert schema not in set(backend.schema_manager.list_deployed_document_types(True))
+
+    assert backend.delete_live_document("prov-row", "provenance") is True
+
+    assert deploys == []
+    assert backend._vespa_ingestion_clients == {}
+    assert schema not in set(backend.schema_manager.list_deployed_document_types(True))
+
+
 def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
     provenance_vespa, deploys
 ):
