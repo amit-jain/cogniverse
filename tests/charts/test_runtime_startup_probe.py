@@ -178,15 +178,21 @@ def test_startup_probe_can_be_disabled_by_operator():
     assert "startupProbe" not in container
 
 
-def test_termination_grace_covers_the_blob_write_drain():
-    """Shutdown drains accepted admin blob writes before teardown; the pod's
-    grace period must cover that drain plus the rest of teardown, or SIGKILL
-    lands mid-drain and the accepted write is lost."""
+def test_termination_grace_covers_every_shutdown_drain():
+    """SIGTERM lets uvicorn close open connections for its graceful-shutdown
+    timeout, then the lifespan drains accepted admin blob writes, pending
+    conversation saves and the A2A protocol in turn. The pod's grace period
+    must cover all of them plus the rest of teardown, or SIGKILL lands
+    mid-drain and an accepted write or a draining execution is lost."""
+    from cogniverse_runtime.agent_dispatcher import (
+        CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S,
+    )
     from cogniverse_runtime.routers.admin import drain_blob_writes
 
+    manifests = _render_chart()
     deployments = [
         m
-        for m in _render_chart()
+        for m in manifests
         if m.get("kind") == "Deployment"
         and m.get("metadata", {}).get("name") == "cogniverse-runtime"
     ]
@@ -194,9 +200,29 @@ def test_termination_grace_covers_the_blob_write_drain():
     grace = deployments[0]["spec"]["template"]["spec"].get(
         "terminationGracePeriodSeconds"
     )
-    assert grace == 90
-    drain_budget = inspect.signature(drain_blob_writes).parameters["timeout_s"].default
-    assert grace - drain_budget >= 15, (
-        f"grace {grace}s leaves {grace - drain_budget}s after the {drain_budget}s "
-        f"blob-write drain for the rest of teardown"
+    env = {
+        item["name"]: item["value"]
+        for item in _runtime_container(manifests)["env"]
+        if "value" in item
+    }
+    budgets = {
+        "uvicorn graceful shutdown": float(env["UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"]),
+        "blob-write drain": inspect.signature(drain_blob_writes)
+        .parameters["timeout_s"]
+        .default,
+        "conversation-save drain": CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S,
+        # The A2A drain, then at most as long again for what it cancelled.
+        "A2A shutdown": 2
+        * runtime_main._a2a_settings_from_env(env)["drain_timeout_seconds"],
+    }
+    assert grace == 190
+    assert budgets == {
+        "uvicorn graceful shutdown": 15.0,
+        "blob-write drain": 60.0,
+        "conversation-save drain": 40.0,
+        "A2A shutdown": 60.0,
+    }
+    assert grace - sum(budgets.values()) >= 15, (
+        f"grace {grace}s leaves {grace - sum(budgets.values())}s after {budgets} "
+        "for the rest of teardown"
     )
