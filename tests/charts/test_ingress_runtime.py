@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -121,18 +122,87 @@ def test_in_cluster_callers_address_the_runtime_without_the_public_prefix(profil
     )
 
 
-def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(tmp_path):
+@pytest.fixture(scope="module")
+def a2a_redis_url():
+    """Owned Redis for the shared A2A task store the runtime serves ``/a2a`` on."""
+    port = _free_port()
+    name = f"cogniverse-ingress-a2a-redis-{os.getpid()}-{uuid.uuid4().hex}"
+    started = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"127.0.0.1:{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert started.returncode == 0, started.stderr
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ping = subprocess.run(
+                ["docker", "exec", name, "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if ping.stdout.strip() == "PONG":
+                break
+            time.sleep(0.25)
+        else:
+            raise AssertionError("A2A Redis did not become ready within 30s")
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+
+async def _seed_a2a_task(redis_url, task):
+    from cogniverse_runtime.a2a_task_store import RedisTaskStore
+
+    store = await RedisTaskStore.from_url(redis_url, enforce_leases=False)
+    try:
+        await store.save(task)
+    finally:
+        await store.close()
+
+
+def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(
+    tmp_path, a2a_redis_url
+):
     """Both entry points resolve every router and every mounted sub-app.
 
     The ingress forwards ``/api/...`` unrewritten while the dashboard, the CLI
     and the e2e suite reach the Service on the bare path, so the same process
     answers both shapes of every route.
     """
+    from a2a.types import Task, TaskState, TaskStatus
+
+    seeded = Task(
+        id=f"ingress-task-{uuid.uuid4().hex}",
+        context_id="ingress-context",
+        status=TaskStatus(state=TaskState.input_required),
+    )
+    asyncio.run(_seed_a2a_task(a2a_redis_url, seeded))
     port = _free_port()
     env = dict(os.environ, COGNIVERSE_ROOT_PATH="/api")
     env.pop("REDIS_URL", None)
     with _process(
-        [sys.executable, "-m", "tests.charts.test_ingress_runtime", str(port)],
+        [
+            sys.executable,
+            "-m",
+            "tests.charts.test_ingress_runtime",
+            str(port),
+            a2a_redis_url,
+        ],
         tmp_path / "runtime.log",
         env,
     ) as runtime:
@@ -172,6 +242,29 @@ def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(tmp_path
                 "jsonrpc": "2.0",
                 "id": "1",
                 "error": {"code": -32601, "message": "Method not found"},
+            }
+
+            # /a2a answers from the shared Redis task store production serves.
+            stored = httpx.post(
+                f"{base}{prefix}/a2a/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "2",
+                    "method": "tasks/get",
+                    "params": {"id": seeded.id},
+                },
+                timeout=10,
+            )
+            assert (prefix, stored.status_code) == (prefix, 200)
+            assert stored.json() == {
+                "jsonrpc": "2.0",
+                "id": "2",
+                "result": {
+                    "id": seeded.id,
+                    "contextId": "ingress-context",
+                    "kind": "task",
+                    "status": {"state": "input-required"},
+                },
             }
 
             index = httpx.get(f"{base}{prefix}/", timeout=10)
@@ -266,7 +359,7 @@ def _proxy_config(ingress, ports, listen_port):
 
 
 @pytest.fixture(params=["values.prod.yaml", "values.k3s.yaml"])
-def ingress_stack(request, tmp_path):
+def ingress_stack(request, tmp_path, a2a_redis_url):
     ingress, env = _render(request.param)
     runtime_port, dashboard_port, proxy_port = (_free_port() for _ in range(3))
     rule = ingress["spec"]["rules"][0]
@@ -293,6 +386,7 @@ def ingress_stack(request, tmp_path):
                     "-m",
                     "tests.charts.test_ingress_runtime",
                     str(runtime_port),
+                    a2a_redis_url,
                 ],
                 tmp_path / "runtime.log",
                 runtime_env,
@@ -492,49 +586,39 @@ async def test_ingress_runtime_failure_breaks_stream_and_returns_gateway_error(
         assert "<title>Streamlit</title>" in dashboard.text
 
 
-async def _serve_runtime(port):
+async def _serve_runtime(port, a2a_redis_url):
+    from types import SimpleNamespace
+
     import uvicorn
-    from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-    from a2a.server.request_handlers import DefaultRequestHandler
-    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
     from cogniverse_core.events import get_queue_manager
-    from cogniverse_runtime.a2a_executor import (
-        BoundedInMemoryTaskStore,
-        CogniverseAgentExecutor,
-    )
-    from cogniverse_runtime.main import app
+    from cogniverse_runtime.main import _build_shared_a2a_protocol, app
     from cogniverse_runtime.routers.openai_compat import set_api_keys, set_model_map
+
+    class _Registry:
+        def list_agents(self):
+            return ["search_agent"]
+
+        def get_agent(self, name):
+            return (
+                SimpleNamespace(capabilities=["search"])
+                if name == "search_agent"
+                else None
+            )
 
     set_api_keys({"ingress-test-key": TENANT})
     set_model_map({"cogniverse/search": "search_agent"})
-    agent_card = AgentCard(
-        name="Cogniverse Runtime",
-        description="Multi-agent AI platform for content intelligence",
-        url="http://localhost:8000/a2a",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[
-            AgentSkill(
-                id="search_agent",
-                name="search_agent",
-                description="Agent: search_agent (search)",
-                tags=["search"],
-            )
-        ],
+    protocol = await _build_shared_a2a_protocol(
+        agent_registry=_Registry(),
+        dispatcher=None,
+        redis_url=a2a_redis_url,
+        replica_id=f"ingress-test:{port}",
+        max_tasks=100,
+        lease_seconds=30,
+        cancel_timeout_seconds=10,
+        drain_timeout_seconds=10,
     )
-    app.mount(
-        "/a2a",
-        A2AStarletteApplication(
-            agent_card=agent_card,
-            http_handler=DefaultRequestHandler(
-                agent_executor=CogniverseAgentExecutor(dispatcher=None),
-                task_store=BoundedInMemoryTaskStore(),
-            ),
-        ).build(),
-    )
+    app.mount("/a2a", protocol.app)
     for task in ("roundtrip", "left", "right", "fault"):
         await get_queue_manager().create_queue(task_id=task, tenant_id=TENANT)
     server = uvicorn.Server(
@@ -542,7 +626,10 @@ async def _serve_runtime(port):
             app, host="127.0.0.1", port=port, lifespan="off", log_level="info"
         )
     )
-    await server.serve()
+    try:
+        await server.serve()
+    finally:
+        await protocol.close()
 
 
 async def _asgi_probe():
@@ -568,5 +655,7 @@ async def _asgi_probe():
 
 if __name__ == "__main__":
     asyncio.run(
-        _asgi_probe() if sys.argv[1] == "asgi" else _serve_runtime(int(sys.argv[1]))
+        _asgi_probe()
+        if sys.argv[1] == "asgi"
+        else _serve_runtime(int(sys.argv[1]), sys.argv[2])
     )

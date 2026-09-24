@@ -16,6 +16,7 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -363,9 +364,6 @@ def compat_url(report_runtime):
     openai_compat.set_model_map({})
 
 
-_REDIS_CONTAINER = "redis-report-failure-transports"
-
-
 @pytest.fixture(scope="module")
 def redis_url():
     """Owned Redis for the handler that actually serves ``/a2a``."""
@@ -378,14 +376,14 @@ def redis_url():
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
     listener.close()
-    subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+    container = f"redis-report-failure-transports-{os.getpid()}-{uuid.uuid4().hex}"
     started = subprocess.run(
         [
             "docker",
             "run",
             "-d",
             "--name",
-            _REDIS_CONTAINER,
+            container,
             "--label",
             f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
@@ -400,7 +398,7 @@ def redis_url():
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         ping = subprocess.run(
-            ["docker", "exec", _REDIS_CONTAINER, "redis-cli", "ping"],
+            ["docker", "exec", container, "redis-cli", "ping"],
             capture_output=True,
             text=True,
         )
@@ -408,12 +406,12 @@ def redis_url():
             break
         time.sleep(0.25)
     else:
-        subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
         pytest.fail("Redis did not become ready within 30s")
     try:
         yield f"redis://127.0.0.1:{port}/0"
     finally:
-        subprocess.run(["docker", "rm", "-f", _REDIS_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
 
 
 @pytest.fixture
