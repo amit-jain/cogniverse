@@ -1078,7 +1078,14 @@ class VespaBackend(Backend):
                 system_config = self._config_manager_instance.get_system_config()
                 app_name = system_config.application_name
 
-                app_package = ApplicationPackage(name=app_name, schema=merged_schemas)
+                # Without create_schema_by_default=False a package carrying no
+                # tenant schema gets a default document type named after the
+                # application, which nothing registers.
+                app_package = ApplicationPackage(
+                    name=app_name,
+                    schema=merged_schemas,
+                    create_schema_by_default=False,
+                )
 
                 # Add metadata schemas (Vespa-specific requirement)
                 from cogniverse_vespa.metadata_schemas import (
