@@ -26,8 +26,8 @@ class _Lease:
         self.events.append("acquire")
         return self
 
-    def renew(self):
-        self.events.append("renew")
+    def ensure_owned(self):
+        self.events.append("ensure_owned")
 
     def release(self):
         self.events.append("release")
@@ -76,7 +76,7 @@ def test_conflict_reposts_the_survivor_set_read_after_the_conflict(monkeypatch):
 
     def post(tenant_url, app_zip, fence=None):
         assert tenant_url == "http://localhost:19071/application/v2/tenant/default"
-        # The fence renews immediately before the config server activates.
+        # The fence re-checks ownership immediately before the activate.
         fence()
         posted.append(list(built[-1]))
         if len(posted) == 1:
@@ -98,18 +98,18 @@ def test_conflict_reposts_the_survivor_set_read_after_the_conflict(monkeypatch):
     assert posted == built
     assert lease.events == [
         "acquire",
-        "renew",
-        "renew",
-        "renew",
-        "renew",
+        "ensure_owned",
+        "ensure_owned",
+        "ensure_owned",
+        "ensure_owned",
         "release",
     ]
 
 
 def test_lost_lease_refuses_to_activate(monkeypatch):
     class _LostLease(_Lease):
-        def renew(self):
-            super().renew()
+        def ensure_owned(self):
+            super().ensure_owned()
             raise RuntimeError("Vespa deployment lease expired or was replaced")
 
     lease = _LostLease()
@@ -126,4 +126,4 @@ def test_lost_lease_refuses_to_activate(monkeypatch):
         manager._deploy_package(lambda: _package(["knowledge_graph_acme_acme"]))
 
     assert posted == []
-    assert lease.events == ["acquire", "renew", "release"]
+    assert lease.events == ["acquire", "ensure_owned", "release"]
