@@ -1065,21 +1065,33 @@ class TestProvenanceWriteLeaseScope:
         )
         assert self._lease_record(manager) is None
 
-    def test_a_provenance_free_update_still_takes_the_store_lease(self):
+    @pytest.mark.parametrize("stored_provenance", [False, True])
+    def test_a_provenance_free_update_takes_the_lease_and_drops_the_row(
+        self, stored_provenance
+    ):
         """Updates are off the hot path, and a peer can add provenance to the
-        same primary between any unleased read and this write."""
+        same primary between any unleased read and this write, so every update
+        is leased. A primary left without provenance keeps no indexed row."""
         import os
 
         from cogniverse_core.memory.manager import PROVENANCE_LEASE_SECONDS
 
         manager = self._manager("lease_scope_update_tenant")
-        manager.memory.get.return_value = {"id": "m1", "memory": "before"}
+        stored = {"id": "m1", "memory": "before"}
+        if stored_provenance:
+            stored["metadata"] = self._provenance_metadata()
+        manager.memory.get.return_value = stored
         held = {}
 
         def record_hold(*args, **kwargs):
             held["record"] = self._lease_record(manager).config_value
 
+        def record_delete(memory_id):
+            held["delete"] = (memory_id, self._lease_record(manager).config_value)
+            return True
+
         manager.memory.update.side_effect = record_hold
+        manager._provenance_store.delete.side_effect = record_delete
 
         assert (
             manager.update_memory(
@@ -1093,6 +1105,7 @@ class TestProvenanceWriteLeaseScope:
         )
         assert held["record"]["lease_seconds"] == PROVENANCE_LEASE_SECONDS
         assert str(os.getpid()) in held["record"]["holder"].split(":")
+        assert held["delete"] == ("m1", held["record"])
         manager._provenance_store.attach.assert_not_called()
         assert self._lease_record(manager).config_value["holder"] is None
 
@@ -1256,44 +1269,9 @@ class TestProvenanceWriteLeaseScope:
         assert caught.value.memory_id == "m5"
         manager.memory.update.assert_called_once()
 
-    def test_an_update_of_a_provenance_bearing_primary_takes_the_lease(self):
-        """Dropping a stored primary's provenance still changes what its
-        indexed row has to agree with, so repair must stay excluded."""
-        import os
-
-        from cogniverse_core.memory.manager import PROVENANCE_LEASE_SECONDS
-
-        manager = self._manager("lease_update_declared_tenant")
-        manager.memory.get.return_value = {
-            "id": "m6",
-            "memory": "before",
-            "metadata": self._provenance_metadata(),
-        }
-        held = {}
-
-        def record_hold(*args, **kwargs):
-            held["record"] = self._lease_record(manager).config_value
-
-        manager.memory.update.side_effect = record_hold
-
-        assert (
-            manager.update_memory(
-                memory_id="m6",
-                content="after",
-                tenant_id="lease_update_declared_tenant",
-                agent_name="agent",
-                metadata={"kind": "note"},
-            )
-            is True
-        )
-        assert held["record"]["lease_seconds"] == PROVENANCE_LEASE_SECONDS
-        assert str(os.getpid()) in held["record"]["holder"].split(":")
-        manager._provenance_store.attach.assert_not_called()
-        assert self._lease_record(manager).config_value["holder"] is None
-
-    def test_an_unreadable_primary_is_updated_under_the_lease(self):
-        """An outage on the before-read cannot prove the primary carries no
-        provenance; the update keeps its False contract and stays leased."""
+    def test_a_primary_read_outage_inside_the_lease_returns_false(self):
+        """An update whose primary cannot be read writes nothing, reports
+        False and releases the lease it took."""
         manager = self._manager("lease_update_outage_tenant")
         manager.memory.get.side_effect = ConnectionError("vespa unreachable")
 
