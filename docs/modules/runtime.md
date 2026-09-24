@@ -1536,11 +1536,11 @@ export A2A_MAX_TASKS="10000"                                # Shared Redis task-
 export A2A_TASK_LEASE_SECONDS="30"                          # Active execution lease and renewal basis
 export A2A_CANCEL_TIMEOUT_SECONDS="10"                      # Requester waits this long for a routed cancel; the owner abandons it at half
 export A2A_DRAIN_TIMEOUT_SECONDS="30"                       # Shutdown drain budget for served executions
+export A2A_MAX_CONCURRENT_CANCELS="16"                      # Cancels one replica runs at once; more are refused, not queued
 # Fixed in cogniverse_runtime.a2a_task_store: _RELAY_MAXLEN=1000 (approximate events kept per task relay),
 # _EVENT_STREAM_DRAIN_SECONDS=60 (closed or orphaned relay expiry), _CANCEL_REPLY_TTL_SECONDS=30
 # (uncollected cancel acknowledgement expiry), _CANCEL_CONTROL_MIN_TTL_SECONDS=30 (cancel command
-# list expiry floor; otherwise twice the cancel timeout). In a2a_request_handler: _MAX_CONCURRENT_CANCELS=16
-# (routed cancels one replica runs at once; more are refused, not queued).
+# list expiry floor; otherwise twice the cancel timeout).
 # Every emitted A2A event is published to Redis, so A2A streaming is available exactly when Redis is.
 
 # Debug router (routers/debug.py — dark unless set)

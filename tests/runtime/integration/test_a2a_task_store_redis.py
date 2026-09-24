@@ -38,6 +38,7 @@ from a2a.types import (
 
 from cogniverse_runtime.a2a_request_handler import RedisRequestHandler
 from cogniverse_runtime.a2a_task_store import (
+    A2ACancelTimeoutError,
     A2ATaskCapacityError,
     A2ATaskConflictError,
     A2ATaskOwnershipLostError,
@@ -767,10 +768,12 @@ async def test_runtime_protocol_factory_owns_shared_store_and_handler(redis_url)
         lease_seconds=1,
         cancel_timeout_seconds=2,
         drain_timeout_seconds=1,
+        max_concurrent_cancels=5,
     )
     try:
         assert protocol.skill_ids == ("search_agent",)
         assert protocol.handler.task_store is protocol.task_store
+        assert protocol.handler._max_concurrent_cancels == 5
         assert [route.path for route in protocol.app.routes] == [
             "/",
             "/.well-known/agent-card.json",
@@ -1146,6 +1149,10 @@ class _CancellableExecutor(AgentExecutor):
     def __init__(self, cancel_state: TaskState = TaskState.canceled) -> None:
         self.cancel_state = cancel_state
         self.wedged_cancels: set[str] = set()
+        self.wedge_every_cancel = False
+        # A stubborn wedged cancel swallows cancellation until unwedged.
+        self.stubborn = False
+        self.unwedge = asyncio.Event()
         self.working = asyncio.Event()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -1161,8 +1168,13 @@ class _CancellableExecutor(AgentExecutor):
         await asyncio.Event().wait()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        if context.task_id in self.wedged_cancels:
-            await asyncio.Event().wait()
+        if self.wedge_every_cancel or context.task_id in self.wedged_cancels:
+            while not self.unwedge.is_set():
+                try:
+                    await self.unwedge.wait()
+                except asyncio.CancelledError:
+                    if not self.stubborn:
+                        raise
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=context.task_id,
@@ -1491,9 +1503,10 @@ class _FinishesDuringCancelExecutor(AgentExecutor):
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        producer = self.handler._running_agents[context.task_id]
+        producer = self.handler._running_agents.get(context.task_id)
         self.release.set()
-        await asyncio.wait({producer}, timeout=1)
+        if producer is not None:
+            await asyncio.wait({producer}, timeout=1)
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=context.task_id,
@@ -1580,7 +1593,7 @@ async def test_wedged_cancels_do_not_delay_a_healthy_one_past_its_deadline(
     ]
 
 
-async def test_a_full_cancel_listener_refuses_instead_of_queueing(redis_client):
+async def test_a_full_cancel_listener_refuses_instead_of_queueing(redis_client, caplog):
     seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     owner_store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
     requester = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
@@ -1621,6 +1634,13 @@ async def test_a_full_cancel_listener_refuses_instead_of_queueing(redis_client):
         await owner.close()
 
     assert refused_seconds < 0.5
+    refusal_logs = [
+        record
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.a2a_request_handler"
+        and "task-overflow" in record.getMessage()
+    ]
+    assert [(r.levelname, r.exc_info) for r in refusal_logs] == [("WARNING", None)]
     assert str(refused.value) == (
         "owner replica-owner rejected cancel for task task-overflow: "
         "A2ACancelCapacityError: replica replica-owner is already running 2 "
@@ -1713,3 +1733,373 @@ async def test_a_read_only_replica_is_refused_at_connect(restricted_redis_url):
         f"shared A2A task store cannot use {restricted_redis_url}: it is a "
         "read-only replica"
     )
+
+
+async def _running_blocking_send(handler, store, executor):
+    send = asyncio.create_task(handler.on_message_send(_send_params("dbl")))
+    await asyncio.wait_for(executor.working.wait(), timeout=5)
+    task_id = next(iter(handler._running_agents))
+    async with asyncio.timeout(5):
+        while await store.get(task_id) is None:
+            await asyncio.sleep(0.01)
+    return send, task_id
+
+
+def _states(replies) -> list:
+    return [getattr(getattr(r, "status", None), "state", r) for r in replies]
+
+
+async def test_two_peers_cancelling_one_task_at_once_publish_one_cancel(
+    redis_client,
+):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    peers = [
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+        for _ in range(2)
+    ]
+    executor = _FinishesDuringCancelExecutor()
+    owner = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-owner",
+        cancel_timeout_seconds=4,
+    )
+    executor.handler = owner
+    await owner.start()
+    send, task_id = await _running_blocking_send(owner, store, executor)
+
+    replies = await asyncio.gather(
+        *(
+            peer.request_cancel(
+                owner_replica_id="replica-owner", task_id=task_id, timeout_seconds=4
+            )
+            for peer in peers
+        ),
+        return_exceptions=True,
+    )
+    sent = await asyncio.wait_for(send, timeout=5)
+    await owner.close()
+
+    assert _states(replies) == [TaskState.canceled, TaskState.canceled]
+    assert sent.status.state == TaskState.canceled
+    assert (await store.get(task_id)).status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+
+
+async def test_a_cancel_arriving_after_the_first_is_saved_is_not_republished(
+    redis_client,
+):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    peers = [
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+        for _ in range(2)
+    ]
+    executor = _FinishesDuringCancelExecutor()
+    owner = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-owner",
+        cancel_timeout_seconds=4,
+    )
+    executor.handler = owner
+    await owner.start()
+    send, task_id = await _running_blocking_send(owner, store, executor)
+
+    first = asyncio.create_task(
+        peers[0].request_cancel(
+            owner_replica_id="replica-owner", task_id=task_id, timeout_seconds=4
+        )
+    )
+    async with asyncio.timeout(5):
+        while (await store.get(task_id)).status.state != TaskState.canceled:
+            await asyncio.sleep(0.005)
+    second = await asyncio.gather(
+        peers[1].request_cancel(
+            owner_replica_id="replica-owner", task_id=task_id, timeout_seconds=4
+        ),
+        return_exceptions=True,
+    )
+    replies = [await asyncio.gather(first, return_exceptions=True), second]
+    sent = await asyncio.wait_for(send, timeout=5)
+    await owner.close()
+
+    assert _states([reply[0] for reply in replies]) == [
+        TaskState.canceled,
+        TaskState.canceled,
+    ]
+    assert sent.status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+
+
+async def test_a_local_and_a_routed_cancel_of_one_task_share_one_cancel(
+    redis_client,
+):
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    peer = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _FinishesDuringCancelExecutor()
+    owner = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-owner",
+        cancel_timeout_seconds=4,
+    )
+    executor.handler = owner
+    await owner.start()
+    send, task_id = await _running_blocking_send(owner, store, executor)
+
+    replies = await asyncio.gather(
+        owner.on_cancel_task(TaskIdParams(id=task_id)),
+        peer.request_cancel(
+            owner_replica_id="replica-owner", task_id=task_id, timeout_seconds=4
+        ),
+        return_exceptions=True,
+    )
+    sent = await asyncio.wait_for(send, timeout=5)
+    await owner.close()
+
+    assert _states(replies) == [TaskState.canceled, TaskState.canceled]
+    assert sent.status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+
+
+async def test_a_wedged_local_cancel_is_bounded_and_does_not_hang_close(
+    redis_client,
+):
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    executor.wedge_every_cancel = True
+    handler = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-a",
+        cancel_timeout_seconds=1,
+        drain_timeout_seconds=1,
+    )
+    sent = await handler.on_message_send(_send_params("wedged", blocking=False))
+
+    started = time.monotonic()
+    with pytest.raises(A2ACancelTimeoutError) as refused:
+        await asyncio.wait_for(
+            handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=5
+        )
+    cancel_seconds = time.monotonic() - started
+    await asyncio.wait_for(handler.close(), timeout=5)
+
+    assert str(refused.value) == (
+        f"cancel of task {sent.id} did not finish within 0.5s"
+    )
+    assert cancel_seconds < 1.5
+    assert (await store.get(sent.id)).status.state == TaskState.working
+    relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    assert _relay_states(relay) == [TaskState.working, "closed"]
+
+
+async def test_a_producer_event_during_begin_cancel_never_reaches_the_relay(
+    redis_client,
+):
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler = RedisRequestHandler(
+        agent_executor=executor, task_store=store, replica_id="replica-a"
+    )
+    sent = await handler.on_message_send(_send_params("window", blocking=False))
+    real_begin_cancel = store.begin_cancel
+
+    async def begin_cancel_then_producer_emits(task_id, **kwargs):
+        lease = await real_begin_cancel(task_id, **kwargs)
+        # The producer emits between the cancel taking its generation and the
+        # cancel running.
+        live = await handler._queue_manager.get(task_id)
+        await live.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id="context-cancel",
+                final=False,
+                status=TaskStatus(state=TaskState.working, message=None),
+                metadata={"emitted": "inside-begin-cancel"},
+            )
+        )
+        return lease
+
+    store.begin_cancel = begin_cancel_then_producer_emits
+
+    result = await asyncio.wait_for(
+        handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=10
+    )
+    await asyncio.wait_for(handler.close(), timeout=10)
+
+    assert result.status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    assert "inside-begin-cancel" not in str(relay)
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+
+
+async def test_abandoned_cancels_count_against_the_cancel_limit(redis_client):
+    seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner_store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    requester = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    for task_id in ("task-stubborn-1", "task-stubborn-2", "task-next"):
+        await seed.save(_task(task_id, TaskState.input_required))
+    executor = _CancellableExecutor()
+    executor.wedged_cancels.update({"task-stubborn-1", "task-stubborn-2"})
+    executor.stubborn = True
+    owner = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=owner_store,
+        replica_id="replica-owner",
+        cancel_timeout_seconds=1,
+        max_concurrent_cancels=2,
+    )
+    await owner.start()
+    try:
+        abandoned = await asyncio.gather(
+            *(
+                requester.request_cancel(
+                    owner_replica_id="replica-owner",
+                    task_id=task_id,
+                    timeout_seconds=1,
+                )
+                for task_id in ("task-stubborn-1", "task-stubborn-2")
+            ),
+            return_exceptions=True,
+        )
+        assert len(owner._abandoned_cancels) == 2
+        with pytest.raises(A2ATaskStoreError) as refused:
+            await requester.request_cancel(
+                owner_replica_id="replica-owner", task_id="task-next", timeout_seconds=1
+            )
+    finally:
+        executor.unwedge.set()
+        await owner.close()
+
+    assert [type(reply).__name__ for reply in abandoned] == [
+        "A2ATaskStoreError",
+        "A2ATaskStoreError",
+    ]
+    assert str(refused.value) == (
+        "owner replica-owner rejected cancel for task task-next: "
+        "A2ACancelCapacityError: replica replica-owner is already running 2 "
+        "cancels; retry"
+    )
+    assert (await seed.get("task-next")).status.state == TaskState.input_required
+
+
+def _owned_container(image: str, name_prefix: str):
+    port = _free_port()
+    container_name = f"{name_prefix}-{os.getpid()}-{uuid.uuid4().hex}"
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            image,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start {image}: {result.stderr}")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        ping = subprocess.run(
+            ["docker", "exec", container_name, "valkey-cli", "ping"],
+            capture_output=True,
+            text=True,
+        )
+        if ping.stdout.strip() == "PONG":
+            return container_name, f"redis://127.0.0.1:{port}/0"
+        time.sleep(0.25)
+    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+    pytest.fail(f"{image} did not become ready within 30 seconds")
+
+
+@pytest.fixture
+def valkey_url(request):
+    container_name, url = _owned_container(request.param, "valkey-a2a")
+    try:
+        yield url
+    finally:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+@pytest.mark.parametrize("valkey_url", ["valkey/valkey:9.0-alpine"], indirect=True)
+async def test_valkey_with_hash_field_expiry_is_admitted(valkey_url):
+    store = await RedisTaskStore.from_url(valkey_url, key_prefix="test:a2a")
+    try:
+        lease = await store.acquire_execution(
+            "valkey-task", replica_id="replica-a", lease_seconds=2
+        )
+        saved = _task("valkey-task")
+        await store.save(saved, _owned_context(store, lease))
+        await store.release_execution(lease)
+        loaded = await store.get("valkey-task")
+    finally:
+        await store.close()
+    assert loaded.model_dump(mode="json") == saved.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("valkey_url", ["valkey/valkey:8.1-alpine"], indirect=True)
+async def test_valkey_without_hash_field_expiry_is_refused(valkey_url):
+    with pytest.raises(A2ATaskStoreError) as refused:
+        await RedisTaskStore.from_url(valkey_url, key_prefix="test:a2a")
+    assert str(refused.value) == (
+        "shared A2A task store requires Redis >= 7.4 (HPEXPIRE); "
+        f"{valkey_url} does not support hash-field expiry"
+    )
+
+
+async def test_a_cancel_that_ignores_cancellation_holds_the_relay_close_boundedly(
+    redis_client, caplog
+):
+    """An abandoned cancel that never ends must not hold the relay's close."""
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    executor.wedge_every_cancel = True
+    executor.stubborn = True
+    handler = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-a",
+        cancel_timeout_seconds=1,
+        drain_timeout_seconds=1,
+    )
+    sent = await handler.on_message_send(_send_params("stubborn", blocking=False))
+    try:
+        with pytest.raises(A2ACancelTimeoutError):
+            await asyncio.wait_for(
+                handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=5
+            )
+        started = time.monotonic()
+        await asyncio.wait_for(handler.close(), timeout=10)
+        close_seconds = time.monotonic() - started
+    finally:
+        executor.unwedge.set()
+
+    assert close_seconds < 4
+    relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    assert _relay_states(relay) == [TaskState.working, "closed"]
+    assert 0 < await redis_client.ttl(f"test:a2a:events:{sent.id}") <= 60
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING" and "committed cancel" in record.getMessage()
+    ] == [
+        f"A2A task {sent.id}: closing its relay after 0.5s without the committed cancel"
+    ]
