@@ -177,9 +177,11 @@ class SchemaDeployLease:
     With ``heartbeat=True`` a background thread renews the lease every third
     of the hold, so a live holder is not taken over while its requests run
     longer than the hold. The heartbeat stops renewing once the lease has
-    been held for ``MAX_TOTAL_HOLD_SECONDS``, the longest legitimate
-    activation: a holder stuck past that — deadlocked, looping, blocked
-    without a timeout — is taken over a hold later like a dead one.
+    been held for ``MAX_TOTAL_HOLD_SECONDS``, which covers a one-tenant,
+    one-schema delete whose every read and request runs to its bound (see
+    that constant for what it leaves out): a holder stuck past that —
+    deadlocked, looping, blocked without a timeout — is taken over a hold
+    later like a dead one.
     """
 
     def __init__(
