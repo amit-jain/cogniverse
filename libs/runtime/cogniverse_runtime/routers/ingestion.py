@@ -81,6 +81,10 @@ class _UploadProfileConfigurationError(RuntimeError):
     pass
 
 
+class _NoDefaultUploadProfile(ValueError):
+    """No profile was named and the tenant selected no default video profile."""
+
+
 def _resolve_upload_profile(
     tenant_id: str,
     requested_profile: Optional[str],
@@ -107,8 +111,9 @@ def _resolve_upload_profile(
         # that named no profile ingests into the corpus it queries.
         profile_name = resolve_default_profile(config)
         if profile_name is None:
-            raise _UploadProfileConfigurationError(
-                f"tenant {tenant_id!r} has no configured default video profile"
+            raise _NoDefaultUploadProfile(
+                f"No profile specified on the request and tenant {tenant_id!r} "
+                "has no configured default video profile."
             )
 
     profile_config = profiles.get(profile_name)
@@ -407,6 +412,8 @@ async def upload_video(
         )
     except _InvalidUploadProfile as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _NoDefaultUploadProfile as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except _UploadProfileConfigurationError as exc:
         raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
     except Exception as exc:
