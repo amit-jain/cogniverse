@@ -13,15 +13,21 @@ The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 {service_key: url} for every enabled service. Profiles pick a service by key.
 """
 
+import contextlib
 import copy
 import json
+import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
+import uvicorn
 import yaml
 from cogniverse_cli.config import (
     LLM_SERVING_LOCAL,
@@ -29,12 +35,17 @@ from cogniverse_cli.config import (
     compose_values_files,
 )
 from cogniverse_cli.images import SIDECAR_BUILDS
+from fastapi import Body, FastAPI, HTTPException
 
+from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
 from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
     get_inference_service_spec,
 )
+from cogniverse_runtime.admin.profile_models import SchemaDeploymentResponse
+from cogniverse_vespa.backend import SCHEMA_CONVERGENCE_TIMEOUT_S
+from cogniverse_vespa.vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
@@ -1177,6 +1188,140 @@ def test_the_removed_schema_deployment_profiles_key_fails_the_render():
         "initJobs.schemaDeployment.profiles is removed: the schema-deployment "
         "job deploys config.defaultProfiles.video"
     ), result.stderr
+
+
+_SCHEMA_JOB_TENANTS = ("acme", "beta")
+_RUNTIME_URL_LINE = 'RUNTIME_URL="http://cogniverse-runtime:8000"'
+
+
+def _schema_deployment_script() -> str:
+    tenants = [
+        f"config.tenants[{index}].id={tenant}"
+        for index, tenant in enumerate(_SCHEMA_JOB_TENANTS)
+    ]
+    docs = _render(
+        *tenants,
+        values=_cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
+    )
+    (job,) = [
+        d
+        for d in docs
+        if d.get("kind") == "Job"
+        and d["metadata"]["name"] == "cogniverse-schema-deployment"
+    ]
+    return job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
+
+
+def test_schema_deployment_request_outlasts_the_lease_wait_and_one_deploy():
+    """A deploy that waits out a live lease holder, posts the package and waits
+    for convergence answers within the job's request timeout."""
+    script = _schema_deployment_script()
+    timeouts = re.findall(r"--max-time (\d+) -X POST \"\$RUNTIME_URL/admin/", script)
+
+    assert len(timeouts) == len(_SCHEMA_JOB_TENANTS), script
+    one_deploy = (
+        DEFAULT_WAIT_SECONDS
+        + sum(DEPLOY_REQUEST_TIMEOUT_S)
+        + SCHEMA_CONVERGENCE_TIMEOUT_S
+    )
+    assert len(set(timeouts)) == 1, script
+    assert int(timeouts[0]) > one_deploy, script
+
+
+@contextlib.contextmanager
+def _deploy_endpoint(outcomes: dict[str, str | int]):
+    """The runtime's deploy route answering each tenant with a fixed outcome:
+    a ``deployment_status`` string, or an HTTP error status."""
+    app = FastAPI()
+    requests: list[tuple[str, dict]] = []
+
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "healthy"}
+
+    @app.post(
+        "/admin/profiles/{profile_name}/deploy",
+        response_model=SchemaDeploymentResponse,
+    )
+    def deploy(profile_name: str, body: dict = Body(...)) -> SchemaDeploymentResponse:
+        requests.append((profile_name, body))
+        outcome = outcomes[body["tenant_id"]]
+        if isinstance(outcome, int):
+            raise HTTPException(status_code=outcome, detail="deploy error")
+        return SchemaDeploymentResponse(
+            profile_name=profile_name,
+            tenant_id=body["tenant_id"],
+            schema_name="video_colpali_smol500_mv_frame",
+            tenant_schema_name="",
+            deployment_status=outcome,
+            deployed_at="2026-09-24T00:00:00+00:00",
+            error_message="lease wait timed out" if outcome == "failed" else None,
+        )
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not server.started:
+        assert time.monotonic() < deadline, "deploy endpoint did not start"
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}", requests
+    finally:
+        server.should_exit = True
+        thread.join(timeout=30)
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "exit_code", "attempted"),
+    [
+        ({"acme": "success", "beta": "already_deployed"}, 0, ["acme", "beta"]),
+        ({"acme": "failed", "beta": "success"}, 1, ["acme"]),
+        ({"acme": "success", "beta": "failed"}, 1, ["acme", "beta"]),
+        ({"acme": 500, "beta": "success"}, 22, ["acme"]),
+    ],
+    ids=["deployed", "first-failed", "second-failed", "server-error"],
+)
+def test_schema_deployment_job_fails_unless_every_tenant_is_deployed(
+    outcomes: dict, exit_code: int, attempted: list[str]
+):
+    """A ``failed`` deploy answers HTTP 200; the job must still fail so the
+    Job's backoffLimit retries it instead of the hook reporting success."""
+    script = _schema_deployment_script()
+    assert script.count(_RUNTIME_URL_LINE) == 1, script
+
+    with _deploy_endpoint(outcomes) as (url, requests):
+        env = {
+            name: value
+            for name, value in os.environ.items()
+            if name.lower() not in {"http_proxy", "https_proxy", "all_proxy"}
+        }
+        result = subprocess.run(
+            [
+                "/bin/sh",
+                "-c",
+                script.replace(_RUNTIME_URL_LINE, f'RUNTIME_URL="{url}"'),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert requests == [
+        (_SELECTED_VIDEO_PROFILE, {"tenant_id": tenant, "force": False})
+        for tenant in attempted
+    ]
+    assert ("Schema deployment completed!" in result.stdout) is (exit_code == 0), (
+        result.stdout
+    )
 
 
 def _is_rocm(dep: dict) -> bool:
