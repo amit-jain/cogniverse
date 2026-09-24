@@ -814,6 +814,8 @@ class Mem0MemoryManager:
                             raise RuntimeError(
                                 f"memory {memory_id!r} remained after delete"
                             )
+                        self._check_provenance_ownership()
+                        self.provenance_store.delete(memory_id)
                     except Exception as compensation_error:
                         error.record_compensation_error(compensation_error)
                 raise error
