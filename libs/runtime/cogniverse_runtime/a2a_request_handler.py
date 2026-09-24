@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 # Routed cancels one replica runs at once; more are refused, not queued.
 _MAX_CONCURRENT_CANCELS = 16
+# Producer events a relay holds while a cancel takes its generation; a
+# producer emitting more waits for the cancel to commit or abort.
+_MAX_HELD_EVENTS = 1000
 
 _TERMINAL_STATES = {
     TaskState.completed,
@@ -72,8 +75,12 @@ class RedisRelayEventQueue(EventQueue):
         self._cancel_state = "open"
         self._state_before_cancel = "open"
         self._held: list = []
+        self._hold_released = asyncio.Event()
+        self._hold_released.set()
         self._cancel_published = asyncio.Event()
         self._cancel_hold_seconds = 0.0
+        # Events a failed release could not publish and no marker names yet.
+        self._unmarked_gap = 0
 
     def hold_for_cancel(self, hold_seconds: float) -> bool:
         """Hold producer events and the close while a cancel takes its generation.
@@ -85,6 +92,7 @@ class RedisRelayEventQueue(EventQueue):
             return False
         self._state_before_cancel = self._cancel_state
         self._cancel_state = "pending"
+        self._hold_released = asyncio.Event()
         self._cancel_published = asyncio.Event()
         self._cancel_hold_seconds = hold_seconds
         return True
@@ -104,51 +112,75 @@ class RedisRelayEventQueue(EventQueue):
             )
         self._held.clear()
         self._cancel_state = "committed"
+        self._hold_released.set()
 
     async def abort_cancel(self) -> None:
         """Undo a hold whose cancel never took its generation.
 
         The relay returns to the state it had before the hold; if that was
         open, the held events are delivered in order before anything newer.
-        Every held event reaches local consumers even when publishing it
-        fails; the first publish failure is raised after the relay is
-        restored, so the relay is never left holding.
+        Every held event reaches local consumers. After the first publish
+        failure the rest are not published, and the relay stream is marked
+        as missing them so a resubscriber does not read past the gap.
         """
-        failure: Exception | None = None
         unpublished = 0
+        failure: Exception | None = None
         try:
             if self._state_before_cancel == "open":
                 while self._held:
                     event = self._held.pop(0)
+                    if failure is not None:
+                        await EventQueue.enqueue_event(self, event)
+                        unpublished += 1
+                        continue
                     try:
                         await self._enqueue(event)
                     except Exception as exc:
-                        # Delivered locally, not published; keep releasing
-                        # the rest and raise the first failure afterwards.
+                        # Delivered locally, not published.
+                        failure = exc
                         unpublished += 1
-                        failure = failure or exc
             else:
                 # An earlier cancel already ended this relay: still superseded.
                 self._held.clear()
         finally:
-            if self._held:
-                logger.error(
-                    "A2A task %s: dropped %d events held during a cancel that "
-                    "was interrupted while releasing them",
-                    self._task_id,
-                    len(self._held),
-                )
+            dropped = len(self._held)
             self._held.clear()
             self._cancel_state = self._state_before_cancel
+            self._hold_released.set()
             self._cancel_published.set()
-        if failure is not None:
-            logger.error(
-                "A2A task %s: %d events held during a failed cancel reached local "
-                "consumers but not the relay publish",
-                self._task_id,
-                unpublished,
-            )
-            raise failure
+            if unpublished or dropped:
+                logger.error(
+                    "A2A task %s: of the events held during a failed cancel, %d "
+                    "reached local consumers but not the relay publish and %d "
+                    "were dropped by an interrupted release%s",
+                    self._task_id,
+                    unpublished,
+                    dropped,
+                    f" (first publish failure: {failure})" if failure else "",
+                )
+        if unpublished:
+            self._unmarked_gap += unpublished
+            await self._mark_gap()
+
+    async def _mark_gap(self) -> None:
+        """Record the unpublished events on the relay stream, once."""
+        async with self._relay_lock:
+            if self._relay_closed or not self._unmarked_gap:
+                return
+            try:
+                await self._task_store.mark_event_stream_incomplete(
+                    self._task_id, missing=self._unmarked_gap
+                )
+            except Exception as exc:
+                logger.error(
+                    "A2A task %s: could not mark its relay as missing %d events; "
+                    "nothing more is published until it is: %s",
+                    self._task_id,
+                    self._unmarked_gap,
+                    exc,
+                )
+                return
+            self._unmarked_gap = 0
 
     def end_cancel(self) -> None:
         """Release a close held for the cancel, published or abandoned."""
@@ -157,6 +189,8 @@ class RedisRelayEventQueue(EventQueue):
         self._cancel_published.set()
 
     async def enqueue_event(self, event) -> None:
+        while self._cancel_state == "pending" and len(self._held) >= _MAX_HELD_EVENTS:
+            await self._hold_released.wait()
         if self._cancel_state == "pending":
             self._held.append(event)
             return
@@ -179,6 +213,15 @@ class RedisRelayEventQueue(EventQueue):
         async with self._relay_lock:
             if self._relay_closed:
                 return
+            if self._unmarked_gap:
+                try:
+                    await self._task_store.mark_event_stream_incomplete(
+                        self._task_id, missing=self._unmarked_gap
+                    )
+                except Exception:
+                    self._unmarked_gap += 1
+                    raise
+                self._unmarked_gap = 0
             await self._task_store.publish_event(self._task_id, event)
 
     async def close(self, immediate: bool = False) -> None:
@@ -200,7 +243,9 @@ class RedisRelayEventQueue(EventQueue):
         async with self._relay_lock:
             if not self._relay_closed:
                 self._relay_closed = True
-                await self._task_store.close_event_stream(self._task_id)
+                await self._task_store.close_event_stream(
+                    self._task_id, missing=self._unmarked_gap
+                )
         await super().close(immediate)
 
 
@@ -656,7 +701,14 @@ class RedisRequestHandler(DefaultRequestHandler):
             )
         except BaseException:
             if committed:
-                await relay.abort_cancel()
+                try:
+                    await relay.abort_cancel()
+                except Exception:
+                    logger.exception(
+                        "A2A task %s: releasing the events held for a cancel "
+                        "that never began failed",
+                        task_id,
+                    )
             raise
         if committed:
             relay.commit_cancel()
