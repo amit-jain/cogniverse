@@ -45,6 +45,8 @@ Cogniverse consists of **13 independent packages** organized in a **layered arch
 | **cogniverse-cli** | `cogniverse` CLI for deploying and managing the platform (Helm charts, cluster, sandbox, secrets) | Application |
 | **cogniverse-messaging** | Messaging gateway for Telegram/Slack integration with the runtime | Application |
 
+`cogniverse-cli` ships the deployment assets its path helpers resolve when no checkout is present: the git-tracked files under `charts/cogniverse`, `workflows` and `configs`, as `cogniverse_cli/data/`. `libs/cli/hatch_build.py` adds them to the sdist and the wheel, so a wheel built from the unpacked sdist carries the same files, and fails the build when an asset listed in `required-assets` in `libs/cli/pyproject.toml` is missing. `uv build --package cogniverse-cli` builds the sdist and then the wheel from it.
+
 ### Publishing Workflow
 
 ```mermaid
