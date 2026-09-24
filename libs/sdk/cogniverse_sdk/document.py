@@ -727,8 +727,10 @@ class SearchResultBatch(list):
         result_granularity: str = "segment",
         num_collapsed_documents: int = 0,
         total_count: Optional[int] = None,
+        source_search_incomplete: bool = False,
     ):
         super().__init__(results or [])
         self.result_granularity = result_granularity
         self.num_collapsed_documents = num_collapsed_documents
         self.total_count = total_count
+        self.source_search_incomplete = source_search_incomplete

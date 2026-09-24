@@ -115,6 +115,25 @@ def _schema_source_identity_field(
     return mapping.id
 
 
+def _source_identity_attribute(
+    schema_json: Optional[Mapping[str, Any]], *, schema_name: str
+) -> str:
+    """Return the source identity field, which grouping needs as an attribute."""
+    field_name = _schema_source_identity_field(
+        schema_json, schema_name=schema_name, required=True
+    )
+    document = (schema_json or {}).get("document") or {}
+    for schema_field in document.get("fields") or ():
+        if isinstance(schema_field, Mapping) and schema_field.get("name") == field_name:
+            if "attribute" in (schema_field.get("indexing") or ()):
+                return field_name
+            break
+    raise ValueError(
+        f"Schema {schema_name!r} source identity field {field_name!r} is not an "
+        "attribute; source granularity groups by it"
+    )
+
+
 def _schema_temporal_field_names(
     schema_json: Optional[Mapping[str, Any]],
 ) -> tuple[str, ...]:
@@ -161,6 +180,19 @@ def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) 
     )
 
 
+def _source_grouping(field_name: str, top_k: int, fetch_limit: int) -> str:
+    """Grouping clause keeping the best ``top_k`` sources by best segment.
+
+    Each source keeps at most ``fetch_limit // top_k`` segments, so one query
+    returns no more segments than the candidate budget.
+    """
+    window = max(1, fetch_limit // top_k)
+    return (
+        f"all(group({field_name}) max({top_k}) order(-max(relevance())) "
+        f"each(max({window}) each(output(summary()))))"
+    )
+
+
 def _result_source_key(result: SearchResult) -> str:
     """Return the source identity key for one search hit."""
     source_id = result.document.metadata.get("source_id") or result.document.id
@@ -186,6 +218,7 @@ def _collapse_results_by_source(
     fetch_limit: int,
     total_count: Optional[int],
     temporal_field_names: tuple[str, ...] = (),
+    source_search_incomplete: bool = False,
 ) -> SearchResultBatch:
     """Keep the best hit per source identity in relevance order."""
     grouped_results: Dict[str, List[SearchResult]] = {}
@@ -225,6 +258,7 @@ def _collapse_results_by_source(
         result_granularity="source",
         num_collapsed_documents=num_collapsed_documents,
         total_count=total_count,
+        source_search_incomplete=source_search_incomplete,
     )
 
 
@@ -1284,11 +1318,10 @@ class VespaSearchBackend(SearchBackend):
                 required=False,
             )
             source_temporal_field_names = _schema_temporal_field_names(schema_json)
-        if result_granularity == "source" and not source_identity_field:
-            raise ValueError(
-                f"Schema {base_schema_name!r} declares no document_mapping.id — "
-                "source granularity requires a source identity field"
-            )
+            if result_granularity == "source":
+                source_identity_field = _source_identity_attribute(
+                    schema_json, schema_name=base_schema_name
+                )
 
         # Apply tenant scoping - tenant_id is REQUIRED in query_dict
         tenant_id = query_dict.get("tenant_id")
@@ -1488,57 +1521,34 @@ class VespaSearchBackend(SearchBackend):
                 return self.vespa.query(body=body)
 
             if result_granularity == "source":
-                page_count = 0
-                page_offset = 0
-                max_pages = max(1, min(top_k, 10))
-                seen_sources: set[str] = set()
-                window_results: List[SearchResult] = []
-                total_count = None
-
-                while True:
-                    page_query_params = dict(query_params)
-                    if page_offset:
-                        page_query_params["offset"] = page_offset
-                        page_query_params["maxOffset"] = page_offset + fetch_limit
-
-                    response = _execute_query(page_query_params)
-                    page_results = self._process_results(
-                        response,
-                        correlation_id,
-                        content_type,
-                        top_k=fetch_limit,
-                        fetch_limit=fetch_limit,
-                        result_granularity="segment",
-                        source_identity_field=source_identity_field,
-                        collapse_source_results=False,
-                    )
-
-                    if total_count is None:
-                        total_count = page_results.total_count
-                    window_results.extend(page_results)
-                    seen_sources.update(
-                        _result_source_key(result) for result in page_results
-                    )
-                    page_count += 1
-
-                    if len(seen_sources) >= top_k:
-                        break
-                    if len(page_results) < fetch_limit:
-                        break
-                    if total_count is not None and (
-                        page_offset + fetch_limit >= total_count
-                    ):
-                        break
-                    if page_count >= max_pages:
-                        break
-                    page_offset += fetch_limit
-
+                # Vespa groups every match by source; nearestNeighbor still
+                # caps the matches at targetHits == fetch_limit.
+                grouped_query_params = dict(query_params, hits=0)
+                grouped_query_params["yql"] = (
+                    f"{query_params['yql']} | "
+                    f"{_source_grouping(source_identity_field, top_k, fetch_limit)}"
+                )
+                response = _execute_query(grouped_query_params)
+                window_results, total_count = self._process_grouped_results(
+                    response,
+                    correlation_id,
+                    content_type,
+                    source_identity_field=source_identity_field,
+                )
+                source_count = len(
+                    {_result_source_key(result) for result in window_results}
+                )
                 results = _collapse_results_by_source(
                     window_results,
                     top_k=top_k,
                     fetch_limit=fetch_limit,
                     total_count=total_count,
                     temporal_field_names=source_temporal_field_names,
+                    source_search_incomplete=bool(
+                        rank_config.get("use_nearestneighbor")
+                        and source_count < top_k
+                        and total_count >= fetch_limit
+                    ),
                 )
             else:
                 response = _execute_query(query_params)
@@ -1915,44 +1925,14 @@ class VespaSearchBackend(SearchBackend):
             raise VespaError(
                 f"[{correlation_id}] Vespa response is missing a hits collection"
             ) from exc
-        try:
-            body = response.get_json()
-        except AttributeError as exc:
-            raise VespaError(
-                f"[{correlation_id}] Vespa response is missing get_json"
-            ) from exc
-        if not isinstance(body, Mapping):
-            raise VespaError(f"[{correlation_id}] Vespa response body is malformed")
-        root = body.get("root")
-        if not isinstance(root, Mapping):
-            raise VespaError(f"[{correlation_id}] Vespa response root is malformed")
-        errors = root.get("errors", [])
-        if errors:
-            raise VespaError(
-                f"[{correlation_id}] Vespa query returned errors: {errors}"
-            )
-        coverage = root.get("coverage", {})
-        if not isinstance(coverage, Mapping):
-            raise VespaError(f"[{correlation_id}] Vespa query coverage is malformed")
-        if coverage.get("degraded"):
-            raise VespaError(
-                f"[{correlation_id}] Vespa query coverage degraded: {coverage!r}"
-            )
+        root = self._healthy_response_root(response, correlation_id)
 
         results = []
         logger.debug(f"[{correlation_id}] Processing {len(leaf_hits)} hits from Vespa")
         for hit in leaf_hits:
-            doc = self._result_to_document(
-                hit,
-                content_type,
-                source_identity_field=source_identity_field,
+            results.append(
+                self._hit_to_result(hit, content_type, source_identity_field)
             )
-            try:
-                score = hit["relevance"]
-            except KeyError as exc:
-                raise ValueError("Vespa hit is missing relevance") from exc
-            highlights = hit.get("summaryfeatures", {})
-            results.append(SearchResult(doc, score, highlights))
 
         total_count = None
         root_fields = root.get("fields", {})
@@ -1988,6 +1968,122 @@ class VespaSearchBackend(SearchBackend):
             num_collapsed_documents=collapsed_documents,
             total_count=total_count,
         )
+
+    def _process_grouped_results(
+        self,
+        response: Any,
+        correlation_id: str,
+        content_type: str,
+        *,
+        source_identity_field: str,
+    ) -> tuple[List[SearchResult], int]:
+        """Flatten a source-grouped response into segments and its totalCount.
+
+        Sources come in best-segment order and each source's segments in score
+        order; equal scores order by source id and document id.
+
+        Raises:
+            VespaError: If the response is unhealthy or its grouping is
+                missing or inconsistent with the matched segment count.
+        """
+        if response is None:
+            raise VespaError(f"[{correlation_id}] Vespa response is missing")
+        root = self._healthy_response_root(response, correlation_id)
+        total_count = (root.get("fields") or {}).get("totalCount")
+        if type(total_count) is not int:
+            raise VespaError(
+                f"[{correlation_id}] Vespa grouped response has no totalCount"
+            )
+        group_roots = [
+            child
+            for child in root.get("children") or ()
+            if isinstance(child, Mapping)
+            and str(child.get("id", "")).startswith("group:root")
+        ]
+        if len(group_roots) != 1:
+            raise VespaError(f"[{correlation_id}] Vespa response has no grouping root")
+        groups: List[Any] = []
+        for group_list in group_roots[0].get("children") or ():
+            if (
+                isinstance(group_list, Mapping)
+                and group_list.get("label") == source_identity_field
+            ):
+                groups = group_list.get("children") or []
+        if total_count and not groups:
+            raise VespaError(
+                f"[{correlation_id}] Vespa grouped {total_count} matched segments "
+                "into no source groups"
+            )
+
+        sources: List[List[SearchResult]] = []
+        for group in groups:
+            if not isinstance(group, Mapping):
+                raise VespaError(f"[{correlation_id}] Vespa source group is malformed")
+            hits = []
+            for hit_list in group.get("children") or ():
+                if isinstance(hit_list, Mapping) and hit_list.get("label") == "hits":
+                    hits = hit_list.get("children") or []
+            if not hits:
+                raise VespaError(
+                    f"[{correlation_id}] Vespa source group {group.get('id')!r} "
+                    "has no hits"
+                )
+            segments = [
+                self._hit_to_result(hit, content_type, source_identity_field)
+                for hit in hits
+            ]
+            segments.sort(key=lambda result: (-result.score, result.document.id))
+            sources.append(segments)
+        sources.sort(
+            key=lambda segments: (-segments[0].score, _result_source_key(segments[0]))
+        )
+        return [segment for segments in sources for segment in segments], total_count
+
+    def _hit_to_result(
+        self,
+        hit: Any,
+        content_type: str,
+        source_identity_field: Optional[str],
+    ) -> SearchResult:
+        doc = self._result_to_document(
+            hit,
+            content_type,
+            source_identity_field=source_identity_field,
+        )
+        try:
+            score = hit["relevance"]
+        except KeyError as exc:
+            raise ValueError("Vespa hit is missing relevance") from exc
+        highlights = hit.get("summaryfeatures", {})
+        return SearchResult(doc, score, highlights)
+
+    @staticmethod
+    def _healthy_response_root(response: Any, correlation_id: str) -> Mapping:
+        """Return the response root, raising when Vespa reports it unhealthy."""
+        try:
+            body = response.get_json()
+        except AttributeError as exc:
+            raise VespaError(
+                f"[{correlation_id}] Vespa response is missing get_json"
+            ) from exc
+        if not isinstance(body, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa response body is malformed")
+        root = body.get("root")
+        if not isinstance(root, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa response root is malformed")
+        errors = root.get("errors", [])
+        if errors:
+            raise VespaError(
+                f"[{correlation_id}] Vespa query returned errors: {errors}"
+            )
+        coverage = root.get("coverage", {})
+        if not isinstance(coverage, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa query coverage is malformed")
+        if coverage.get("degraded"):
+            raise VespaError(
+                f"[{correlation_id}] Vespa query coverage degraded: {coverage!r}"
+            )
+        return root
 
     def _extract_metadata(
         self, fields: Dict[str, Any], source_identity_field: Optional[str] = None
