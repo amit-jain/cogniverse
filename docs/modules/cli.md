@@ -268,7 +268,7 @@ cogniverse sandbox status   # show gateway install/running/cluster-sync state
 
 ## Configuration
 
-`resolve_project_root()` (in `config.py`) walks up from the current directory looking for a `pyproject.toml` containing `[tool.uv.workspace]` to find the monorepo root. When the CLI is installed as a wheel (no such root), the same functions fall back to bundled package data under `cogniverse_cli/data/` for the Helm chart and workflow templates.
+`resolve_project_root()` (in `config.py`) walks up from the current directory looking for a `pyproject.toml` containing `[tool.uv.workspace]` to find the monorepo root. When the CLI is installed as a wheel (no such root), the same functions fall back to bundled package data under `cogniverse_cli/data/`: the Helm chart with its dependency charts, the Argo workflow templates and the configuration tree. `libs/cli/hatch_build.py` bundles the git-tracked files under `charts/cogniverse`, `workflows` and `configs` into both the sdist and the wheel (a wheel built from the unpacked sdist carries the same files), and fails the build when an asset listed in `required-assets` in `libs/cli/pyproject.toml` is missing.
 
 Environment variables read across CLI commands:
 
@@ -294,6 +294,8 @@ uv run pytest tests/cli/unit/ -v --tb=long
 ```
 
 One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token + inference-key sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
+
+`tests/cli/integration/test_installed_assets.py` builds the wheel from the checkout and from an unpacked sdist, installs it into a clean Python 3.12 environment, resolves every path helper from an unrelated directory against the tracked source files' hashes, and renders the packaged chart with `helm template`.
 
 `tests/e2e/test_coding_cli_e2e.py` and `tests/e2e/test_graph_cli_e2e.py` exercise the `index`, `code`, and `graph` commands against a real running runtime (upload → ingest → graph upsert round-trip).
 
