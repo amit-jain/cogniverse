@@ -88,11 +88,12 @@ scripts/
 │   ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
 │   ├── manage_phoenix_data.py        # Phoenix data management
 │   ├── prune_config_metadata.py      # Config metadata pruning
+│   ├── release_manifest.py           # Validate built release artifacts, write dist/BUILD_MANIFEST.json
 │   ├── start_phoenix.py              # Start Phoenix service
 │   └── version_bump.py               # Version management
 │
 └── Shell Scripts (build, local dev, test infrastructure)
-    ├── build_packages.sh             # Build all SDK packages in dependency order
+    ├── build_packages.sh             # Build the release package set in dependency order
     ├── publish_packages.sh           # Publish SDK packages to (Test)PyPI
     ├── install_with_gpu.sh           # uv sync with the PyTorch backend matching local hardware
     ├── download_test_data.sh         # Download the evaluation dataset

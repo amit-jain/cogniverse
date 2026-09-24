@@ -1060,11 +1060,11 @@ flowchart TB
 
 ### Scenario 22: SDK Package Testing & Publishing
 
-Package publishing runs in `.github/workflows/publish-packages.yml`, triggered by a `v*.*.*` tag push (or manual dispatch). It builds the whole UV workspace with `scripts/build_packages.sh`, verifies the wheels against a real Vespa service container, then gates TestPyPI/PyPI publication on tag shape.
+Package publishing runs in `.github/workflows/publish-packages.yml`, triggered by a `v*.*.*` tag push (or manual dispatch). It builds the release package set (the five published packages plus their internal dependencies) with `scripts/build_packages.sh`, verifies the wheels against a real Vespa service container, then gates TestPyPI/PyPI publication on tag shape.
 
 ```mermaid
 flowchart TB
-    Tag[<span style='color:#000'>Push tag v*.*.*<br/>or workflow_dispatch</span>] --> Build[<span style='color:#000'>scripts/build_packages.sh --clean<br/>builds all libs/* wheels + sdists</span>]
+    Tag[<span style='color:#000'>Push tag v*.*.*<br/>or workflow_dispatch</span>] --> Build[<span style='color:#000'>scripts/build_packages.sh --clean<br/>builds release-set wheels + sdists<br/>and dist/BUILD_MANIFEST.json</span>]
 
     Build --> TestJob[<span style='color:#000'>Test Packages job<br/>real Vespa service container</span>]
     TestJob --> Install[<span style='color:#000'>Install built wheels in dependency order<br/>core &rarr; agents &rarr; vespa &rarr; runtime &rarr; dashboard</span>]
