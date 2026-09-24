@@ -773,6 +773,7 @@ def test_upload_config_manager_restores_the_tenant_backend_config(
         "config_key": "backend_config",
     }
     store = create_default_config_manager().store
+    found = store.get_config(**coordinates)
     store.delete_config(**coordinates)
     if prior is not None:
         store.set_config(**coordinates, config_value=prior)
@@ -791,7 +792,10 @@ def test_upload_config_manager_restores_the_tenant_backend_config(
         else:
             assert restored.config_value == prior
     finally:
-        store.delete_config(**coordinates)
+        if found is None:
+            store.delete_config(**coordinates)
+        else:
+            store.set_config(**coordinates, config_value=found.config_value)
 
 
 @pytest_asyncio.fixture
