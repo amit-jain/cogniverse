@@ -1,5 +1,6 @@
 """Validate the wheel and sdist built for each release package and write the
-build manifest describing exactly those artifacts."""
+build manifest describing exactly those artifacts; check that the manifest's
+artifacts are publishable and that a package index serves them unchanged."""
 
 from __future__ import annotations
 
@@ -8,9 +9,12 @@ import hashlib
 import json
 import sys
 import tarfile
+import time
 import tomllib
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 from packaging.metadata import InvalidMetadata, Metadata
 from packaging.utils import (
@@ -20,6 +24,9 @@ from packaging.utils import (
     parse_sdist_filename,
     parse_wheel_filename,
 )
+from packaging.version import InvalidVersion, Version
+
+MANIFEST_NAME = "BUILD_MANIFEST.json"
 
 
 class ReleaseArtifactError(Exception):
@@ -159,19 +166,161 @@ def build_manifest(libs_dir: Path, stage_root: Path, packages: list[str]) -> dic
     return {"version": versions.pop(), "packages": records}
 
 
+def publication_plan(dist_dir: Path) -> list[dict]:
+    """Return the manifest's packages once every listed artifact is in ``dist_dir``
+    with the manifest's name, version and sha256, under a version an index accepts."""
+    manifest_path = dist_dir / MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise ReleaseArtifactError(
+            f"{manifest_path} not found; run scripts/build_packages.sh first"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        version = Version(manifest["version"])
+        packages = manifest["packages"]
+        entries = [
+            (package["name"], Version(package["version"]), package[kind], parse)
+            for package in packages
+            for kind, parse in (
+                ("wheel", parse_wheel_filename),
+                ("sdist", parse_sdist_filename),
+            )
+        ]
+    except (KeyError, TypeError, ValueError, InvalidVersion) as error:
+        raise ReleaseArtifactError(f"{manifest_path}: malformed manifest: {error!r}")
+    if not packages:
+        raise ReleaseArtifactError(f"{manifest_path} lists no packages")
+    if version.local is not None:
+        raise ReleaseArtifactError(
+            f"release version {version} has the local segment +{version.local}, "
+            "which PyPI and TestPyPI reject; publish a build of a release tag"
+        )
+
+    for name, package_version, entry, parse in entries:
+        path = dist_dir / entry["filename"]
+        try:
+            file_name, file_version = parse(entry["filename"])[:2]
+        except (InvalidWheelFilename, InvalidSdistFilename) as error:
+            raise ReleaseArtifactError(str(error))
+        if (file_name, file_version, package_version) != (name, version, version):
+            raise ReleaseArtifactError(
+                f"{manifest_path}: {entry['filename']} is listed for {name} "
+                f"{package_version} in release {version}"
+            )
+        if not path.is_file():
+            raise ReleaseArtifactError(f"{path} is listed in the manifest but missing")
+        digest = _sha256(path)
+        if digest != entry["sha256"]:
+            raise ReleaseArtifactError(
+                f"{path}: sha256 {digest} does not match the manifest sha256 "
+                f"{entry['sha256']}"
+            )
+    return packages
+
+
+class _IndexLinks(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.digests: dict[str, str | None] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        url, _, fragment = (dict(attrs).get("href") or "").partition("#")
+        algorithm, _, digest = fragment.partition("=")
+        filename = unquote(url.rsplit("/", 1)[-1])
+        self.digests[filename] = digest if algorithm == "sha256" else None
+
+
+def _served_digests(index_url: str, name: str) -> dict[str, str | None]:
+    import requests
+
+    url = f"{index_url.rstrip('/')}/{name}/"
+    try:
+        response = requests.get(url, headers={"Accept": "text/html"}, timeout=60)
+    except requests.RequestException as error:
+        raise ReleaseArtifactError(f"{url}: {error!r}")
+    if response.status_code == 404:
+        return {}
+    if response.status_code != 200:
+        raise ReleaseArtifactError(f"{url}: HTTP {response.status_code}")
+    links = _IndexLinks()
+    links.feed(response.text)
+    return links.digests
+
+
+def check_index(
+    dist_dir: Path, index_url: str, timeout: float, interval: float = 10.0
+) -> int:
+    """Wait until ``index_url`` serves every manifest artifact and return their
+    count; any served artifact whose sha256 differs from the manifest fails."""
+    packages = publication_plan(dist_dir)
+    deadline = time.monotonic() + timeout
+    while True:
+        missing = []
+        for package in packages:
+            served = _served_digests(index_url, package["name"])
+            for entry in (package["wheel"], package["sdist"]):
+                if entry["filename"] not in served:
+                    missing.append(entry["filename"])
+                elif served[entry["filename"]] != entry["sha256"]:
+                    raise ReleaseArtifactError(
+                        f"{index_url}: {entry['filename']} has sha256 "
+                        f"{served[entry['filename']]}, manifest has {entry['sha256']}"
+                    )
+        if not missing:
+            return 2 * len(packages)
+        if time.monotonic() >= deadline:
+            raise ReleaseArtifactError(
+                f"{index_url} does not serve {', '.join(missing)}"
+            )
+        time.sleep(interval)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--libs-dir", type=Path, required=True)
-    parser.add_argument("--stage-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("packages", nargs="+")
+    commands = parser.add_subparsers(dest="command", required=True)
+    build = commands.add_parser("build", help="validate staged builds, write manifest")
+    build.add_argument("--libs-dir", type=Path, required=True)
+    build.add_argument("--stage-dir", type=Path, required=True)
+    build.add_argument("--output", type=Path, required=True)
+    build.add_argument("packages", nargs="+")
+    publishable = commands.add_parser(
+        "publishable", help="verify dist/ against its manifest, print upload order"
+    )
+    publishable.add_argument("--dist-dir", type=Path, required=True)
+    index = commands.add_parser(
+        "check-index", help="verify an index serves the manifest artifacts"
+    )
+    index.add_argument("--dist-dir", type=Path, required=True)
+    index.add_argument("--index-url", required=True)
+    index.add_argument("--timeout", type=float, required=True)
     args = parser.parse_args(argv)
     try:
-        manifest = build_manifest(args.libs_dir, args.stage_dir, args.packages)
+        if args.command == "build":
+            manifest = build_manifest(args.libs_dir, args.stage_dir, args.packages)
+            args.output.write_text(json.dumps(manifest, indent=2) + "\n")
+        elif args.command == "publishable":
+            for package in publication_plan(args.dist_dir):
+                print(
+                    "\t".join(
+                        (
+                            package["name"],
+                            package["version"],
+                            package["wheel"]["filename"],
+                            package["sdist"]["filename"],
+                        )
+                    )
+                )
+        else:
+            count = check_index(args.dist_dir, args.index_url, args.timeout)
+            print(
+                f"Verified {count} file(s) at {args.index_url} against the "
+                "manifest digests"
+            )
     except ReleaseArtifactError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    args.output.write_text(json.dumps(manifest, indent=2) + "\n")
     return 0
 
 

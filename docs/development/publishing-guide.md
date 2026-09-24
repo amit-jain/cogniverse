@@ -20,7 +20,7 @@
 
 ## Overview
 
-Cogniverse consists of **13 independent packages** organized in a **layered architecture**. The publishing scripts currently support **5 main packages** (core, agents, vespa, runtime, dashboard):
+Cogniverse consists of **13 independent packages** organized in a **layered architecture**. The publishing scripts build and publish **5 main packages** (core, agents, vespa, runtime, dashboard) together with the internal packages they require:
 
 ### Packages Supported by Publishing Scripts
 
@@ -32,7 +32,7 @@ Cogniverse consists of **13 independent packages** organized in a **layered arch
 | **cogniverse-runtime** | FastAPI server runtime | cogniverse-sdk, cogniverse-core, cogniverse-synthetic (agents/vespa optional) |
 | **cogniverse-dashboard** | Standalone Streamlit UI dashboard | cogniverse-sdk, cogniverse-core, cogniverse-agents, cogniverse-evaluation, cogniverse-vespa, cogniverse-telemetry-phoenix |
 
-### Other Packages (Manual Publishing Required)
+### Other Packages
 
 | Package | Description | Layer |
 |---------|-------------|-------|
@@ -54,7 +54,7 @@ flowchart LR
     A["<span style='color:#000'><b>Tag</b><br/>make release VERSION=x.y.z</span>"]
     B["<span style='color:#000'><b>Build</b><br/>build release set<br/>in dependency order</span>"]
     C["<span style='color:#000'><b>Test</b><br/>pytest by layer<br/>test dependencies</span>"]
-    D["<span style='color:#000'><b>Publish</b><br/>publish 5 packages<br/>in dependency order</span>"]
+    D["<span style='color:#000'><b>Publish</b><br/>publish the manifest's artifacts<br/>in dependency order</span>"]
     E["<span style='color:#000'><b>Release</b><br/>GitHub Release</span>"]
 
     A --> B --> C --> D --> E
@@ -66,11 +66,11 @@ flowchart LR
     style E fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
-**Publishing Scripts Handle 5 Packages**
+**Publishing Scripts Handle the Release Set**
 
 Pushing a `v*` tag drives CI, which builds + publishes these packages (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag. `build_packages.sh` builds them together with every internal package they require — the release set, in dependency order: sdk, foundation, core, evaluation, synthetic, vespa, agents, telemetry-phoenix, runtime, dashboard.
 
-**Note:** `publish_packages.sh` uploads the 5 packages above. finetuning, cli and messaging are not built or published by the scripts.
+**Note:** `publish_packages.sh` uploads exactly the artifacts listed in `dist/BUILD_MANIFEST.json` — the whole release set, sdk through dashboard. finetuning, cli and messaging are not built or published by the scripts.
 
 ---
 
@@ -210,8 +210,8 @@ pip install uv
 # Already provided by the dev dependency group: `uv sync --group dev`.
 pip install tomli-w
 
-# Twine for PyPI uploads (optional - installed by scripts)
-pip install twine
+# Twine: publish_packages.sh runs twine==7.0.0 through `uv run --no-project --with`;
+# nothing to install.
 ```
 
 ### PyPI Account Setup
@@ -502,11 +502,41 @@ TEST_PYPI_TOKEN="your-test-token" ./scripts/publish_packages.sh --test --dry-run
 TEST_PYPI_TOKEN="your-test-token" ./scripts/publish_packages.sh --test
 
 # Output:
-# [INFO] Publishing package: cogniverse-core
-# [INFO]   Version: 0.1.0
-# [INFO]   Uploading...
-# [SUCCESS] Published successfully: cogniverse-core v0.1.0
+# [INFO] Publishing package: cogniverse-sdk 0.1.0
+# [SUCCESS] Uploaded or already present: cogniverse-sdk 0.1.0
+# ...
+# [INFO]   Uploaded or already present: 10 package(s)
+# Verified 20 file(s) at https://test.pypi.org/simple/ against the manifest digests
 ```
+
+#### What the script checks
+
+- **Manifest only**: it uploads the wheel and sdist of each package in
+  `dist/BUILD_MANIFEST.json`, in manifest order, and nothing else in `dist/`. A
+  missing manifest, a missing listed file, or a file whose sha256 differs from the
+  manifest fails before any upload.
+- **Local versions refused**: a build of an untagged commit
+  (`0.2.1.dev1+g<sha>`) carries a local version, which PyPI and TestPyPI reject;
+  the script exits 1 before any upload (also with `--dry-run`).
+- **`twine check`** runs on exactly the manifest's files.
+- **Child results**: each package is one `twine upload --skip-existing` of its
+  wheel and sdist, and twine's exit status is the result. A nonzero exit is a
+  failure, never counted as "already exists". Without `--continue` the remaining
+  packages are not attempted; with `--continue` they are, and the script still
+  exits 1.
+- **Duplicates**: twine 7.0.0 supports `--skip-existing` only for PyPI and
+  TestPyPI; it skips a file when the index answers `409`, or `400` with "already
+  exist", and exits 0.
+- **Index verification**: after every upload succeeds, the script reads the
+  index's simple page for each package and requires every manifest file to be
+  served with the manifest's sha256 (waiting up to `VERIFY_TIMEOUT` seconds,
+  default 300). A same-named file with other bytes — a skipped duplicate that is
+  not this build — fails the publication.
+- **Confirmation**: without `--yes` the script asks; any answer but `yes`, or no
+  input, exits 1 with nothing uploaded.
+- **`--dry-run`** runs the manifest checks and `twine check`, lists the uploads,
+  and neither uploads nor contacts the index. Its exit 0 is not evidence of
+  publication.
 
 ### Test Installation
 
@@ -556,18 +586,11 @@ PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh --dry-run
 # 3. Actual publish
 PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh
 
-# Output:
-# [INFO] Publishing package: cogniverse-core
-# [INFO]   Version: 0.1.0
-# [INFO]   Uploading...
-# [SUCCESS] Published successfully: cogniverse-core v0.1.0
-# [SUCCESS] Published successfully: cogniverse-agents v0.1.0
-# [SUCCESS] Published successfully: cogniverse-vespa v0.1.0
-# [SUCCESS] Published successfully: cogniverse-runtime v0.1.0
-# [SUCCESS] Published successfully: cogniverse-dashboard v0.1.0
+# Output ends with:
+# Verified 20 file(s) at https://pypi.org/simple/ against the manifest digests
 ```
 
-**Note:** The scripts publish all 5 packages (core, agents, vespa, runtime, dashboard). For other packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning, cli, messaging), manual publishing or script updates are required.
+**Note:** The scripts publish the ten release-set packages listed in the manifest. finetuning, cli and messaging require manual publishing.
 
 
 ### Verify Publication
@@ -681,9 +704,12 @@ gh secret set TEST_PYPI_TOKEN    --body "<testpypi-token>"
 
 **Error:**
 ```text
-HTTPError: 400 Bad Request from https://upload.pypi.org/legacy/
-File already exists
+error: https://pypi.org/simple/: cogniverse_core-0.1.0-py3-none-any.whl has sha256 <on index>, manifest has <this build>
 ```
+
+A same-named file that is byte-identical to this build is skipped and passes;
+one with other bytes fails. With `--no-skip-existing`, twine reports
+`HTTPError: 400 Bad Request ... File already exists` for either.
 
 **Solution:**
 ```bash
@@ -790,8 +816,8 @@ cat libs/foundation/cogniverse_foundation/__init__.py
    # Check wheel contents
    unzip -l dist/*.whl
 
-   # Validate with twine
-   twine check dist/*
+   # Verify the manifest's files and run twine check on exactly those
+   ./scripts/publish_packages.sh --test --dry-run
    ```
 
 ### Publishing
