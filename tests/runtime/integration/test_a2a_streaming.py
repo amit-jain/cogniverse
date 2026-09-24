@@ -20,12 +20,10 @@ from typing import Any
 
 import pytest
 import requests
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import get_backend_registry
-from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.runtime.integration.conftest import serve_a2a_on_redis, skip_if_no_lm
@@ -239,29 +237,11 @@ def streaming_dispatcher(streaming_registry, config_manager, schema_loader):
 
 @pytest.fixture
 def streaming_a2a_client(
-    streaming_dispatcher, workflow_state_redis_url, a2a_key_prefix
+    streaming_registry, streaming_dispatcher, workflow_state_redis_url
 ):
-    """A2A TestClient with streaming=True over the production handler and store."""
-    executor = CogniverseAgentExecutor(dispatcher=streaming_dispatcher)
-    card = AgentCard(
-        name="Streaming Integration",
-        description="Full streaming integration tests",
-        url="http://localhost:9998/a2a",
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        skills=[
-            AgentSkill(
-                id="summarizer_agent",
-                name="summarizer_agent",
-                description="Summarize content",
-                tags=["summarization", "text_generation"],
-            ),
-        ],
-    )
+    """A2A TestClient over the production protocol factory and store."""
     with serve_a2a_on_redis(
-        card, executor, workflow_state_redis_url, a2a_key_prefix
+        streaming_registry, streaming_dispatcher, workflow_state_redis_url
     ) as client:
         yield client
 
