@@ -180,14 +180,21 @@ class ProvenanceStore:
         memory_id: str,
         provenance: Provenance,
         *,
-        primary_digest: str = "",
+        primary_digest: str,
     ) -> str:
         """Persist a provenance record for ``memory_id``. Returns the row id.
 
         Idempotent on (memory_id, tenant_id): subsequent writes for the
         same memory overwrite the existing row (Vespa upsert semantics
         on the document id).
+
+        ``primary_digest`` is required and non-empty: an empty digest reads
+        back as a legacy row, which the walker never digest-checks.
         """
+        if not primary_digest:
+            raise ValueError(
+                f"primary_digest is required to index provenance for {memory_id!r}"
+            )
         record = ProvenanceRecord.from_provenance(
             memory_id,
             self._tenant_id,

@@ -691,6 +691,65 @@ class TestProvenanceStoreDeleteFaultContract:
         assert excinfo.value.cause is None
 
 
+class _RecordingIngestBackend(_TenantScopedQueryBackend):
+    def __init__(self) -> None:
+        self.fed: list[dict] = []
+
+    def ingest_documents(self, documents, schema_name=None):
+        self.fed.extend(document.metadata for document in documents)
+        return {
+            "success_count": len(documents),
+            "failed_count": 0,
+            "failed_documents": [],
+            "total_documents": len(documents),
+        }
+
+
+class TestAttachRequiresAPrimaryDigest:
+    """A row without a digest is read as legacy and never digest-checked, so
+    no in-contract writer may create one."""
+
+    @staticmethod
+    def _provenance():
+        return make_provenance(
+            written_by="agent:digest",
+            derivation_kind=DerivationKind.DIRECT_INGEST,
+            confidence=0.5,
+            derived_from=[CitationRef.external("https://source/digest")],
+        )
+
+    def test_attach_without_a_digest_is_refused_before_any_write(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _RecordingIngestBackend()
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        with pytest.raises(TypeError, match="primary_digest"):
+            store.attach("m1", self._provenance())
+        assert backend.fed == []
+
+    def test_attach_with_an_empty_digest_is_refused_before_any_write(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _RecordingIngestBackend()
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        with pytest.raises(ValueError, match="primary_digest"):
+            store.attach("m1", self._provenance(), primary_digest="")
+        assert backend.fed == []
+
+    def test_attach_writes_the_given_digest(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _RecordingIngestBackend()
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
+
+        assert store.attach("m1", self._provenance(), primary_digest="a" * 64) == (
+            "prov-t1-m1"
+        )
+        assert [row["primary_digest"] for row in backend.fed] == ["a" * 64]
+
+
 @pytest.mark.unit
 class TestLegacyIndexedRows:
     """Rows indexed before the digest field exists stay readable.

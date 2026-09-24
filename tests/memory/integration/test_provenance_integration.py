@@ -519,9 +519,9 @@ def test_walker_rejects_indexed_orphan_but_keeps_both_absent_leaf(memory_env):
         confidence=0.73,
         derived_from=[CitationRef.external("https://source.test/orphan")],
     )
-    assert mm.provenance_store.attach(orphan_id, provenance) == (
-        f"prov-{mm._storage_tenant_id}-{orphan_id}"
-    )
+    assert mm.provenance_store.attach(
+        orphan_id, provenance, primary_digest="0" * 64
+    ) == (f"prov-{mm._storage_tenant_id}-{orphan_id}")
     assert mm.memory.get(orphan_id) is None
 
     with pytest.raises(ProvenanceConsistencyError, match="primary memory is missing"):
