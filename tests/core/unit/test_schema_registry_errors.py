@@ -160,3 +160,54 @@ def test_batch_reloads_definition_when_peer_deletes_cached_schema():
     assert {
         info.full_schema_name for info in registry.get_tenant_schemas("acme:prod")
     } == {"wiki_pages_acme_prod", "provenance_acme_prod"}
+
+
+def test_a_peer_tombstone_after_activation_is_never_overwritten():
+    """An existing schema's re-registration after activation must be
+    conditional on the row the deploy was decided from: a peer that deleted
+    the schema in between owns the row, and nothing is rolled back over it."""
+    import json
+    from types import SimpleNamespace
+
+    from cogniverse_core.registries.exceptions import RegistryStorageError
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    tenant, base, name = "acme:prod", "wiki_pages", "wiki_pages_acme_prod"
+    shipped = {"name": base, "document": {"fields": ["v2"]}}
+    loader = SimpleNamespace(load_schema=lambda _base: dict(shipped))
+    packages = []
+
+    def peer_deletes_after_activation(schemas):
+        packages.append([schema["name"] for schema in schemas])
+        SchemaRegistry(
+            config_manager=SimpleNamespace(store=store),
+            backend=SimpleNamespace(deploy_schemas=lambda _schemas: True),
+            schema_loader=loader,
+        ).unregister_schema(tenant, base)
+        return True
+
+    registry = SchemaRegistry(
+        config_manager=SimpleNamespace(store=store),
+        backend=SimpleNamespace(deploy_schemas=peer_deletes_after_activation),
+        schema_loader=loader,
+    )
+    registry.register_schema(
+        tenant_id=tenant,
+        base_schema_name=base,
+        full_schema_name=name,
+        schema_definition=json.dumps({"name": name, "document": {"fields": ["v1"]}}),
+    )
+
+    with pytest.raises(RegistryStorageError, match="conflicted with a newer"):
+        registry.deploy_schema(tenant, base)
+
+    row = store.get_config(
+        tenant_id=tenant,
+        scope=ConfigScope.SCHEMA,
+        service="schema_registry",
+        config_key=f"schema_{base}",
+    )
+    assert row.config_value["deleted"] is True
+    assert packages == [[name]]

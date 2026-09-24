@@ -16,6 +16,7 @@ from typing import Any, Callable, ClassVar, Dict, List, Optional
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
+    RegistryConflictError,
     RegistryStorageError,
     SchemaConvergenceError,
     SchemaLoadError,
@@ -406,7 +407,7 @@ class SchemaRegistry:
                 if saved is None:
                     current = self._config_manager.store.get_config(**coordinates)
                     if current is None or current.config_value != value:
-                        raise RegistryStorageError(
+                        raise RegistryConflictError(
                             f"Registration of {full_schema_name!r} conflicted with a newer registry revision"
                         )
         finally:
@@ -631,6 +632,10 @@ class SchemaRegistry:
             ]
             registrations = []
             intents = {}
+            # The registry revision each existing schema's deploy was decided
+            # from: its re-registration is conditional on it, so a peer's
+            # tombstone or registration landing after the activation is kept.
+            decided_versions: Dict[str, int] = {}
             for base, name in requested:
                 for existing in existing_schemas:
                     if existing.full_schema_name == name and (
@@ -662,6 +667,8 @@ class SchemaRegistry:
                     )
                     intents[name] = intent
                     registration = intent["registration"]
+                else:
+                    decided_versions[name] = stored.version
                 registrations.append(registration)
 
             replacing = {row["full_schema_name"] for row in registrations}
@@ -714,10 +721,17 @@ class SchemaRegistry:
                             **registration, expected_version=intent["registry_version"]
                         )
                     else:
-                        self.register_schema(**registration)
+                        self.register_schema(
+                            **registration, expected_version=decided_versions[name]
+                        )
                 except Exception as exc:
                     if intents:
                         detail = "Durable registration recovery is pending; the schema is preserved."
+                    elif isinstance(exc, RegistryConflictError):
+                        detail = (
+                            "A peer changed its registration after the activation; "
+                            "nothing was rolled back over it."
+                        )
                     else:
                         self._rollback_deployment(previous_schemas, name)
                         detail = "Existing-schema deployment rollback was requested."

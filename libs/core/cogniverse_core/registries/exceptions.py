@@ -63,6 +63,14 @@ class RegistryStorageError(SchemaDeploymentError):
     pass
 
 
+class RegistryConflictError(RegistryStorageError):
+    """A conditional registration found a newer registry revision.
+
+    Another process registered or tombstoned the schema since the caller read
+    it; that revision is authoritative and must not be rolled back over.
+    """
+
+
 class SchemaRegistryInitializationError(Exception):
     """
     SchemaRegistry failed to initialize.
