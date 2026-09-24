@@ -590,6 +590,16 @@ def test_malformed_provenance_uses_typed_write_and_read_errors(
         mm.repair_provenance(memory_id)
     assert repair_error.value.memory_id == memory_id
     assert mm.provenance_store.fetch([memory_id]) == {}
+    with pytest.raises(ProvenanceWriteError, match="invalid_provenance"):
+        mm.update_memory(
+            memory_id,
+            "Rewritten over a malformed provenance payload.",
+            TENANT,
+            AGENT,
+        )
+    assert mm.memory.get(memory_id)["memory"] == (
+        "Malformed provenance persisted by an interrupted external writer."
+    )
     mm.memory.delete(memory_id)
     assert mm.memory.get(memory_id) is None
 
