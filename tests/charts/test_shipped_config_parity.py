@@ -59,6 +59,24 @@ def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
     assert parsed.backend_config.profiles
 
 
+_SELECTED = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path",
+    [SHIPPED, REPO_ROOT / "configs" / "examples" / "config.example.json"],
+    ids=lambda p: p.name,
+)
+def test_local_configs_select_the_default_video_profile_by_name_only(path: Path):
+    """The Vespa search backend reads default_profiles.<type>.strategy as a
+    ranking-strategy name ahead of the profile's own default_ranking, so a
+    value no schema ranks with only hides that default."""
+    config = json.loads(path.read_text())
+
+    assert config["backend"]["default_profiles"] == _SELECTED
+
+
 def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str, Any]:
     """The runtime config.json a values composition renders."""
     cmd = [
@@ -82,9 +100,6 @@ def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str,
         if doc["metadata"]["name"] == "cogniverse-config"
     ]
     return json.loads(configmap["data"]["config.json"])
-
-
-_SELECTED = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
 
 
 @pytest.mark.unit

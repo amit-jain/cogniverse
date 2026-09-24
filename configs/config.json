@@ -1324,8 +1324,7 @@
     },
     "default_profiles": {
       "video": {
-        "profile": "video_colpali_smol500_mv_frame",
-        "strategy": "segmentation"
+        "profile": "video_colpali_smol500_mv_frame"
       }
     }
   },
