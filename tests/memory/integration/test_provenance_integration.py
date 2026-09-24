@@ -1696,3 +1696,48 @@ def test_a_slow_provenance_schema_ensure_runs_before_the_write_lease(
     assert holders_during_ensure == [None]
     assert list(mm.provenance_store.fetch([memory_id])) == [memory_id]
     assert schema in backend._vespa_ingestion_clients
+
+
+def test_the_last_accessed_bump_does_not_revert_a_concurrent_content_update(
+    memory_env, monkeypatch
+):
+    """A leased update that lands between a search and its last_accessed bump
+    keeps its content: the bump writes only the hit's metadata."""
+    mm = memory_env.manager
+    memory_id = mm.add_memory(
+        content="The harbour ferry leaves at nine.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata={"kind": "note"},
+        infer=False,
+    )
+    search = mm.memory.search
+
+    def search_then_peer_update(*args, **kwargs):
+        results = search(*args, **kwargs)
+        assert (
+            mm.update_memory(
+                memory_id=memory_id,
+                content="The harbour ferry leaves at ten.",
+                tenant_id=TENANT,
+                agent_name=AGENT,
+            )
+            is True
+        )
+        return results
+
+    monkeypatch.setattr(mm.memory, "search", search_then_peer_update)
+
+    hits = mm.search_memory(
+        "The harbour ferry leaves at nine.",
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        top_k=20,
+    )
+
+    assert memory_id in [hit["id"] for hit in hits]
+    stored = mm.memory.get(memory_id)
+    assert stored["memory"] == "The harbour ferry leaves at ten."
+    assert stored["metadata"]["kind"] == "note"
+    assert isinstance(stored["metadata"]["last_accessed"], str)
+    mm.delete_memory(memory_id, tenant_id=TENANT, agent_name=AGENT)

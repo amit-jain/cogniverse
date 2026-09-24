@@ -1347,7 +1347,9 @@ class Mem0MemoryManager:
                     except ValueError:
                         pass
                 metadata["last_accessed"] = now_iso
-                payload = {"data": hit.get("memory", ""), "metadata": metadata}
+                # Metadata only: the hit's text is the search's snapshot, and
+                # re-sending it would revert an update that landed since.
+                payload = {"metadata": metadata}
                 if has_batch:
                     pending.append((mid, None, payload))
                 else:
@@ -1887,6 +1889,7 @@ class Mem0MemoryManager:
         """
         if not self.memory:
             return False
+        self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._restore_archived_memory(memory_id)
 
@@ -1941,8 +1944,7 @@ class Mem0MemoryManager:
         # update can prove it has no indexed row to keep consistent. Updates
         # are off the hot path; provenance-free adds keep their lease-free
         # path.
-        if metadata is None or "provenance" in metadata:
-            self._prepare_indexed_writes()
+        self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._update_memory(
                 memory_id=memory_id,

@@ -1558,6 +1558,72 @@ class TestProvenanceWriteLeaseScope:
         assert [vector_id for vector_id, _vector, _payload in bumped] == ["p1"]
         manager.memory.vector_store.update.assert_not_called()
 
+    def test_the_last_accessed_bump_writes_only_the_metadata(self):
+        """The bump's text comes from the search's snapshot; re-sending it
+        would revert a content update that landed after the search."""
+        manager = self._manager("bump_metadata_only_tenant")
+        plain = {"id": "p2", "memory": "stale text", "metadata": {"kind": "note"}}
+        manager.memory.search.return_value = {"results": [plain]}
+
+        manager.search_memory(
+            "query", tenant_id="bump_metadata_only_tenant", agent_name="agent"
+        )
+
+        ((vector_id, vector, payload),) = (
+            manager.memory.vector_store.update_many.call_args.args[0]
+        )
+        assert (vector_id, vector) == ("p2", None)
+        assert list(payload) == ["metadata"]
+        assert payload["metadata"]["kind"] == "note"
+        assert isinstance(payload["metadata"]["last_accessed"], str)
+
+    @pytest.mark.parametrize("operation", ["plain_update", "restore"])
+    def test_leased_writes_ensure_their_schemas_before_the_lease(self, operation):
+        """Every leased write builds its memory and provenance ingestion clients
+        (the cache miss that can deploy) before the lock and lease, so no
+        deploy runs inside a hold sized for a memory write."""
+        manager = self._manager(f"prepare_{operation}_tenant")
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+        backend = MagicMock()
+        prepared = []
+
+        def record(schema_name):
+            record_value = self._lease_record(manager)
+            prepared.append(
+                (
+                    schema_name,
+                    None
+                    if record_value is None
+                    else record_value.config_value["holder"],
+                )
+            )
+
+        backend.prepare_ingestion.side_effect = record
+        manager._resolve_backend = lambda: backend
+        manager.memory.get.return_value = {"id": "m12", "memory": "text"}
+        manager.memory.get_all.return_value = {
+            "results": [
+                {
+                    "id": "m12",
+                    "memory": "text",
+                    "metadata": {"kind": "note", "archived": True},
+                }
+            ]
+        }
+
+        if operation == "plain_update":
+            assert manager.update_memory(
+                memory_id="m12",
+                content="new text",
+                tenant_id=f"prepare_{operation}_tenant",
+                agent_name="agent",
+                metadata={"kind": "note"},
+            )
+        else:
+            assert manager.restore_archived_memory("m12") is True
+
+        assert prepared == [("agent_memories", None), ("provenance", None)]
+
 
 class TestAddMemoryErrorPrecedence:
     """Malformed input reports the first contract it breaks, as before the
