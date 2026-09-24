@@ -204,12 +204,9 @@ class MemoryAwareMixin(ConfigManagerAware):
             raise ValueError("tenant_id is required - no default tenant")
 
         try:
-            self._memory_agent_name = agent_name
-            self._memory_tenant_id = tenant_id
+            memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 
-            self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
-
-            if self.memory_manager.memory is None:
+            if memory_manager.memory is None:
                 # wire the knowledge_registry so add_memory enforces
                 # provenance_required + auto-attaches initial trust, AND
                 # get_relevant_context applies trust ranking + per-schema
@@ -218,7 +215,7 @@ class MemoryAwareMixin(ConfigManagerAware):
                 # (the registry stays None and every check short-circuits).
                 from cogniverse_core.memory.schema import build_default_registry
 
-                self.memory_manager.initialize(
+                memory_manager.initialize(
                     backend_host=backend_host,
                     backend_port=backend_port,
                     llm_model=llm_model,
@@ -234,6 +231,9 @@ class MemoryAwareMixin(ConfigManagerAware):
                     knowledge_registry=build_default_registry(),
                 )
 
+            self._memory_agent_name = agent_name
+            self._memory_tenant_id = tenant_id
+            self.memory_manager = memory_manager
             self._memory_initialized = True
             logger.info(
                 f"Memory initialized for {self._memory_agent_name} (tenant: {self._memory_tenant_id})"
@@ -242,10 +242,7 @@ class MemoryAwareMixin(ConfigManagerAware):
             return True
 
         except Exception as e:
-            logger.error(
-                f"Failed to initialize memory for {self._memory_agent_name}: {e}"
-            )
-            self._memory_initialized = False
+            logger.error(f"Failed to initialize memory for {agent_name}: {e}")
             return False
 
     def is_memory_enabled(self) -> bool:
