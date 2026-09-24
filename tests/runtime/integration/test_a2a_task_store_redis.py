@@ -240,7 +240,7 @@ async def test_capacity_rejects_when_only_active_tasks_can_be_retained(redis_cli
 
     with pytest.raises(
         A2ATaskCapacityError,
-        match="capacity 2 is full of active tasks; rejected task incoming",
+        match="capacity 2 is full of active or leased tasks; rejected task incoming",
     ):
         await store.save(_task("incoming"))
 
@@ -598,7 +598,7 @@ async def test_a_task_with_a_live_lease_is_never_evicted(redis_client):
     await store.acquire_execution("incoming", replica_id="replica-b", lease_seconds=5)
     with pytest.raises(
         A2ATaskCapacityError,
-        match="capacity 2 is full of active tasks; rejected task overflow",
+        match="capacity 2 is full of active or leased tasks; rejected task overflow",
     ):
         await _save_owned(store, _task("overflow"))
     assert await store.get("overflow") is None
@@ -1305,22 +1305,24 @@ async def test_a_wedged_cancel_does_not_stop_the_owner_serving_later_cancels(
         agent_executor=executor,
         task_store=owner_store,
         replica_id="replica-owner",
-        cancel_timeout_seconds=0.5,
+        cancel_timeout_seconds=2,
     )
     await owner.start()
+    # A requesting replica waits the same configured cancel timeout, so the
+    # owner has to give up first for its refusal to be read at all.
     try:
         wedged = asyncio.create_task(
             requester.request_cancel(
                 owner_replica_id="replica-owner",
                 task_id="task-wedged",
-                timeout_seconds=3,
+                timeout_seconds=2,
             )
         )
         await asyncio.sleep(0.1)
         healthy = await requester.request_cancel(
             owner_replica_id="replica-owner",
             task_id="task-healthy",
-            timeout_seconds=3,
+            timeout_seconds=2,
         )
         with pytest.raises(A2ATaskStoreError) as refused:
             await wedged
@@ -1332,7 +1334,124 @@ async def test_a_wedged_cancel_does_not_stop_the_owner_serving_later_cancels(
     assert str(refused.value) == (
         "owner replica-owner rejected cancel for task task-wedged: "
         "A2ACancelTimeoutError: cancel of task task-wedged did not finish "
-        "within 0.5s"
+        "within 1s"
     )
     assert (await seed.get("task-wedged")).status.state == TaskState.input_required
     assert await owner_store.get_execution_lease("task-wedged") is None
+
+
+async def test_a_stale_failed_copy_is_refused_even_when_it_matches(redis_client):
+    """Only a repeated ``canceled`` is acknowledged unwritten.
+
+    An interrupted owner's own ``failed`` must not be answered as if it were
+    the stored interruption the client would read.
+    """
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "task-stale-failed", replica_id="replica-lost", lease_seconds=0.1
+    )
+    owner_context = _owned_context(store, owner)
+    await store.save(_task("task-stale-failed", TaskState.working), owner_context)
+    await asyncio.sleep(0.15)
+    assert await store.mark_owner_lost("task-stale-failed") is True
+    interrupted = await store.get("task-stale-failed")
+
+    with pytest.raises(
+        A2ATaskOwnershipLostError,
+        match=(
+            "save task task-stale-failed with stale ownership generation "
+            f"{owner.generation}"
+        ),
+    ):
+        await store.save(_task("task-stale-failed", TaskState.failed), owner_context)
+    stored = await store.get("task-stale-failed")
+    assert stored.model_dump(mode="json") == interrupted.model_dump(mode="json")
+
+
+async def test_cancelling_a_non_blocking_send_leaves_a_closed_expiring_relay(
+    redis_client,
+):
+    """The SDK closes a non-blocking send's relay once its producer stops.
+
+    The cancel event has to be published before that close, never after it:
+    an event appended after ``closed`` also PERSISTs the stream, so the relay
+    of the commonest cancel would never expire.
+    """
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler = RedisRequestHandler(
+        agent_executor=executor, task_store=store, replica_id="replica-a"
+    )
+    sent = await handler.on_message_send(_send_params("non-blocking", blocking=False))
+    assert sent.status.state == TaskState.working
+
+    result = await handler.on_cancel_task(TaskIdParams(id=sent.id))
+    await handler.close()
+
+    assert result.status.state == TaskState.canceled
+    assert (await store.get(sent.id)).status.state == TaskState.canceled
+    relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+    ttl = await redis_client.ttl(f"test:a2a:events:{sent.id}")
+    assert 0 < ttl <= 60
+
+
+@pytest.fixture(scope="module")
+def redis_without_hash_field_expiry_url():
+    """An owned Redis older than 7.4, which has no hash-field expiry."""
+    port = _free_port()
+    container_name = f"redis-a2a-7-2-{os.getpid()}-{uuid.uuid4().hex}"
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "redis:7.2-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start Redis 7.2: {result.stderr}")
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ping = subprocess.run(
+                ["docker", "exec", container_name, "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+            )
+            if ping.stdout.strip() == "PONG":
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail("Redis 7.2 did not become ready within 30 seconds")
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+async def test_a_redis_without_hash_field_expiry_is_refused_at_connect(
+    redis_without_hash_field_expiry_url,
+):
+    url = redis_without_hash_field_expiry_url
+    with pytest.raises(A2ATaskStoreError) as refused:
+        await RedisTaskStore.from_url(url, key_prefix="test:a2a")
+    assert str(refused.value) == (
+        f"shared A2A task store requires Redis >= 7.4 (HPEXPIRE); {url} does not "
+        "support hash-field expiry"
+    )
+
+    probe = aioredis.from_url(url, decode_responses=True)
+    try:
+        assert await probe.keys("*") == []
+    finally:
+        await probe.aclose()

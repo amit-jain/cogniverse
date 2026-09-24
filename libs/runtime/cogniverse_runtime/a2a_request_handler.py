@@ -52,15 +52,22 @@ class RedisRelayEventQueue(EventQueue):
         self._task_id = task_id
         self._task_store = task_store
         self._relay_closed = False
+        self._relay_lock = asyncio.Lock()
 
     async def enqueue_event(self, event) -> None:
         await super().enqueue_event(event)
-        await self._task_store.publish_event(self._task_id, event)
+        # An event after the close marker would also PERSIST the drained
+        # stream, so nothing is published once the relay is closed.
+        async with self._relay_lock:
+            if self._relay_closed:
+                return
+            await self._task_store.publish_event(self._task_id, event)
 
     async def close(self, immediate: bool = False) -> None:
-        if not self._relay_closed:
-            self._relay_closed = True
-            await self._task_store.close_event_stream(self._task_id)
+        async with self._relay_lock:
+            if not self._relay_closed:
+                self._relay_closed = True
+                await self._task_store.close_event_stream(self._task_id)
         await super().close(immediate)
 
 
@@ -441,8 +448,6 @@ class RedisRequestHandler(DefaultRequestHandler):
                 ),
                 queue,
             )
-            if producer_task := self._running_agents.get(task.id):
-                producer_task.cancel()
             task_manager = TaskManager(
                 task_id=task.id,
                 context_id=task.context_id,
@@ -463,6 +468,10 @@ class RedisRequestHandler(DefaultRequestHandler):
             if live_queue is not None:
                 for event in events:
                     await live_queue.enqueue_event(event)
+            # Stopped only after the cancel reached the live relay: a stopped
+            # producer's cleanup closes that relay.
+            if producer_task := self._running_agents.get(task.id):
+                producer_task.cancel()
             if not isinstance(result, Task):
                 raise ServerError(
                     error=InternalError(message="Cancel returned no task")
@@ -480,8 +489,11 @@ class RedisRequestHandler(DefaultRequestHandler):
         cancel = asyncio.create_task(
             self._cancel_owned(task_id), name=f"a2a-owner-cancel:{task_id}"
         )
+        # A requesting replica waits the same configured timeout, so the owner
+        # gives up at half of it for its refusal to arrive before that.
+        deadline = self._cancel_timeout_seconds / 2
         try:
-            done, _ = await asyncio.wait({cancel}, timeout=self._cancel_timeout_seconds)
+            done, _ = await asyncio.wait({cancel}, timeout=deadline)
         except asyncio.CancelledError:
             cancel.cancel()
             raise
@@ -490,8 +502,7 @@ class RedisRequestHandler(DefaultRequestHandler):
             self._abandoned_cancels.add(cancel)
             cancel.add_done_callback(self._forget_abandoned_cancel)
             raise A2ACancelTimeoutError(
-                f"cancel of task {task_id} did not finish within "
-                f"{self._cancel_timeout_seconds:g}s"
+                f"cancel of task {task_id} did not finish within {deadline:g}s"
             )
         return cancel.result()
 
