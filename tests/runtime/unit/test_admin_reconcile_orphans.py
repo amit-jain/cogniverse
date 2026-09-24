@@ -452,6 +452,62 @@ class TestReconcileOrphansSafetyGuard:
         # And crucially, nothing was deleted.
         schema_manager.delete_orphan_schemas.assert_not_called()
 
+    def test_a_failed_registry_refresh_refuses_instead_of_reading_the_cache(
+        self, admin_client
+    ):
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "knowledge_graph_alpha",
+        ]
+        schema_registry._get_all_schemas.side_effect = ConnectionError(
+            "config store refused the read"
+        )
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == (
+            "Cannot read the schema registry during reconciliation: config store "
+            "refused the read"
+        )
+        schema_registry._get_all_schemas.assert_called_once_with(strict=True)
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
+    def test_a_failed_system_config_read_refuses_with_503(
+        self, admin_client, monkeypatch
+    ):
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "cogniverse",
+        ]
+        schema_registry._get_all_schemas.return_value = []
+
+        def unreadable():
+            raise ConnectionError("system config unreadable")
+
+        monkeypatch.setattr(
+            tenant_manager._config_manager, "get_system_config", unreadable
+        )
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == (
+            "Cannot read the system config naming the application during "
+            "reconciliation: system config unreadable"
+        )
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
     def test_the_phantom_type_does_not_open_the_guard_for_other_schemas(
         self, admin_client
     ):

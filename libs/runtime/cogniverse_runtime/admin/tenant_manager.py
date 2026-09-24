@@ -1329,8 +1329,26 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
                 status_code=503,
                 detail=f"Cannot enumerate deployed schemas during reconciliation: {exc}",
             ) from exc
-        registry_infos = list(schema_registry._get_all_schemas() or [])
+        try:
+            # Strict: a cached view could list a peer's newly registered
+            # schema as an orphan.
+            registry_infos = list(schema_registry._get_all_schemas(strict=True) or [])
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cannot read the schema registry during reconciliation: {exc}",
+            ) from exc
         registered = {info.full_schema_name for info in registry_infos}
+        try:
+            phantom = _phantom_document_type()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Cannot read the system config naming the application during "
+                    f"reconciliation: {exc}"
+                ),
+            ) from exc
 
         # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
         # schemas deployed, the registry almost certainly failed to load from
@@ -1341,7 +1359,7 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
         # phantom application type is never registered, so it alone proves
         # nothing about the read.
         non_protected_deployed = (
-            deployed - schema_manager._PROTECTED_SCHEMAS - {_phantom_document_type()}
+            deployed - schema_manager._PROTECTED_SCHEMAS - {phantom}
         )
         if not registered and non_protected_deployed:
             raise HTTPException(
