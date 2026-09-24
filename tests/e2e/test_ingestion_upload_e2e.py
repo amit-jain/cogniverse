@@ -697,6 +697,59 @@ def _chunk_documents(schema: str, video_id: str) -> list[dict]:
     )
 
 
+# --------------------------------------------------------------------- #
+# An upload that names no profile                                        #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.e2e
+def test_an_upload_naming_no_profile_ingests_under_the_tenant_default(
+    real_video_path,
+):
+    """With ``profile`` omitted the route resolves the tenant's default
+    through ``resolve_default_profile`` — ``backend.default_profiles.video.
+    profile`` first — and the run is queued, fed and indexed under exactly
+    that profile."""
+    default_profile = _CONFIG["backend"]["default_profiles"]["video"]["profile"]
+    default_schema = _CONFIG["backend"]["profiles"][default_profile]["schema_name"]
+    tenant_id = unique_id("prode2edefault")
+    register_tenant_and_wait(tenant_id, created_by="e2e-test")
+    schema = _tenant_schema_name(default_schema, canonical_tenant_id(tenant_id))
+    expected_documents = _expected_sample_documents_fed(
+        real_video_path, default_profile, "video/mp4"
+    )
+
+    with httpx.Client(base_url=RUNTIME_URL, timeout=1800.0) as client:
+        _deploy_profile_for_tenant(client, default_profile, tenant_id)
+        with open(real_video_path, "rb") as handle:
+            resp = client.post(
+                "/ingestion/upload",
+                files={"file": (real_video_path.name, handle, "video/mp4")},
+                data={"tenant_id": tenant_id},
+            )
+    assert resp.status_code == 200, (
+        f"upload of {real_video_path.name} failed: HTTP {resp.status_code} "
+        f"{resp.text[:500]}"
+    )
+    upload = resp.json()
+    assert upload["state"] == "queued", upload
+    assert upload["existing"] is False, upload
+
+    final = _wait_terminal(upload["ingest_id"], deadline_s=2400)
+
+    assert final["state"] == "complete", final
+    history = final["history"]
+    assert history[0]["state"] == "queued", history[0]
+    assert history[0]["profile"] == default_profile, history[0]
+    assert {event["profile"] for event in history if "profile" in event} == {
+        default_profile
+    }, history
+    result = final["latest"]["result"]
+    assert result["documents_fed"] == expected_documents, result
+    documents = _chunk_documents(schema, result["video_id"])
+    assert len(documents) == expected_documents
+
+
 @pytest.mark.e2e
 class TestRequiredTranscription:
     """A transcription outage fails the run; a silent container does not."""

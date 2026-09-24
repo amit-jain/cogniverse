@@ -330,6 +330,119 @@ def document_tenant():
         yield tenant_id
 
 
+def _a2a_call(client: httpx.Client, method: str, params: dict, rpc_id: str) -> dict:
+    """One JSON-RPC call to the deployed runtime's ``/a2a`` mount."""
+    response = client.post(
+        "/a2a/",
+        json={"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _a2a_turn(text: str, tenant_id: str, *, agent_name: str, task_id=None) -> dict:
+    message = {
+        "role": "user",
+        "parts": [{"kind": "text", "text": text}],
+        "messageId": str(uuid.uuid4()),
+    }
+    if task_id:
+        message["taskId"] = task_id
+    return {
+        "message": message,
+        "configuration": {"acceptedOutputModes": ["text"]},
+        "metadata": {"tenant_id": tenant_id, "agent_name": agent_name},
+    }
+
+
+@pytest.mark.e2e
+class TestA2ACancel:
+    """``tasks/cancel`` against the deployed runtime's shared task store."""
+
+    def test_cancelling_a_running_task_leaves_it_canceled(self, document_tenant):
+        _assert_runtime_ready()
+        params = _a2a_turn(
+            "summarize what these documents say about washing dishes",
+            document_tenant,
+            agent_name="summarizer_agent",
+        )
+        # A streaming agent's first progress event answers a non-blocking
+        # send while the summary is still being generated.
+        params["configuration"]["blocking"] = False
+        params["metadata"]["stream"] = True
+
+        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            started = _a2a_call(client, "message/send", params, "cancel-start")
+            assert "result" in started, started
+            task_id = started["result"]["id"]
+            assert started["result"]["status"]["state"] == "working", started
+
+            canceled = _a2a_call(
+                client, "tasks/cancel", {"id": task_id}, "cancel-running"
+            )
+            assert "result" in canceled, canceled
+            assert canceled["result"]["id"] == task_id
+            assert canceled["result"]["status"]["state"] == "canceled"
+
+            # The run it interrupted cannot write a later state over the cancel.
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                read = _a2a_call(client, "tasks/get", {"id": task_id}, "cancel-read")
+                assert read["result"]["status"]["state"] == "canceled", read
+                time.sleep(2.0)
+
+            continued = _a2a_call(
+                client,
+                "message/send",
+                _a2a_turn(
+                    "and the next step",
+                    document_tenant,
+                    agent_name="summarizer_agent",
+                    task_id=task_id,
+                ),
+                "cancel-continue",
+            )
+        assert continued["error"]["message"] == (
+            f"Task {task_id} is in terminal state: canceled"
+        ), continued
+
+    def test_cancelling_an_idle_task_leaves_it_canceled(self):
+        """A finished turn pauses its task in ``input-required`` with no owner;
+        cancelling it is the commonest cancel a client sends."""
+        _assert_runtime_ready()
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            created = _a2a_call(
+                client,
+                "message/send",
+                _a2a_turn("search for sports", TENANT_ID, agent_name="search_agent"),
+                "idle-create",
+            )
+            assert "result" in created, created
+            task_id = created["result"]["id"]
+            assert created["result"]["status"]["state"] == "input-required"
+
+            canceled = _a2a_call(client, "tasks/cancel", {"id": task_id}, "idle-cancel")
+            read = _a2a_call(client, "tasks/get", {"id": task_id}, "idle-read")
+            continued = _a2a_call(
+                client,
+                "message/send",
+                _a2a_turn(
+                    "show me more",
+                    TENANT_ID,
+                    agent_name="search_agent",
+                    task_id=task_id,
+                ),
+                "idle-continue",
+            )
+
+        assert canceled["result"]["id"] == task_id, canceled
+        assert canceled["result"]["status"]["state"] == "canceled", canceled
+        assert read["result"] == canceled["result"], read
+        assert continued["error"]["message"] == (
+            f"Task {task_id} is in terminal state: canceled"
+        ), continued
+
+
 def _conversation_rows(tenant_id: str, context_id: str) -> list[dict]:
     """This context's stored turns, oldest first, straight out of Mem0.
 
