@@ -7,7 +7,8 @@
 {{- $retries := int .Values.initJobs.schemaDeployment.backoffLimit -}}
 {{- $probe := .Values.runtime.startupProbe | default dict -}}
 {{- $runtimeStart := add ($probe.initialDelaySeconds | default 0) (mul ($probe.periodSeconds | default 10) ($probe.failureThreshold | default 3)) -}}
-{{- $deadline := add $runtimeStart (mul (add $retries 1) (len .Values.config.tenants) $attemptSeconds) (mul $retries 360) -}}
+{{- /* restartPolicy OnFailure retries in place: each retry waits out the kubelet's crash-loop backoff, capped at 300 s. */ -}}
+{{- $deadline := add $runtimeStart (mul (add $retries 1) (len .Values.config.tenants) $attemptSeconds) (mul $retries 300) -}}
 ---
 # Schema Deployment Job
 # Waits for runtime to be healthy, then deploys data schemas via runtime API.

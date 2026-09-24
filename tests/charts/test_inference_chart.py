@@ -1239,8 +1239,10 @@ _ATTEMPT_SECONDS = (
     + _ATTEMPT_MARGIN_SECONDS
 )
 
-# Kubernetes delays each Job retry by at most six minutes.
-_MAX_RETRY_DELAY_SECONDS = 360
+# restartPolicy OnFailure restarts a failed pod's container in place, so the
+# delay before each retry is the kubelet's crash-loop backoff, capped at five
+# minutes.
+_MAX_RETRY_DELAY_SECONDS = 300
 
 
 def _runtime_startup_budget(docs: list[dict]) -> int:
