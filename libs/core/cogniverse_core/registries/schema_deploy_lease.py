@@ -33,13 +33,22 @@ DEFAULT_WAIT_SECONDS = 120.0
 # The heartbeat proves the holder's process is alive, not that its deploy is
 # moving, so it stops renewing once a lease has been held this long; a holder
 # stuck past it is then taken over like a dead one. It is the longest
-# legitimate activation: VespaSchemaManager._deploy_package makes up to 5
-# attempts, each a session create, prepare and activate request bounded by
-# DEPLOY_REQUEST_TIMEOUT_S = (10 s connect, 300 s read), with 0.5 + 1 + 2 + 4
-# = 7.5 s of backoff between them: 5 x 3 x 310 + 7.5 = 4657.5 s. The backend's
-# single-request prepare-and-activate is smaller (5 x 310 + 7.5 = 1557.5 s).
-# Rounded up to 80 minutes for the enumeration reads inside the lease.
-MAX_TOTAL_HOLD_SECONDS = 4800.0
+# legitimate lease body, a tenant schema delete whose every read and request
+# runs to its bound and whose every activation conflicts:
+#   * 15 deploy requests: 5 attempts x (session create, prepare, activate),
+#     each DEPLOY_REQUEST_TIMEOUT_S = 10 s connect + 300 s read = 310 s;
+#   * 7.5 s of backoff between attempts (0.5 + 1 + 2 + 4);
+#   * 12 config-store visits: registry and tenant reads before the redeploy,
+#     then the registry and the intent journal in every attempt's package
+#     build. One page each, a page being 5 attempts x (30 s connect + 30 s
+#     read) + 3.75 s backoff = 303.75 s (VespaConfigStore visit reads);
+#   * 7 schema listings of 10 s connect + 10 s read = 20 s: two before the
+#     redeploy and one in every attempt's build.
+# 15 x 310 + 7.5 + 12 x 303.75 + 7 x 20 = 8442.5 s, rounded up to 2.5 hours,
+# which also covers the registry tombstone writes after the activation and
+# one extra tenant's registry read in a bulk delete. Pinned against the real
+# retry and timeout policy by test_deploy_activation_conflict_retry.py.
+MAX_TOTAL_HOLD_SECONDS = 9000.0
 
 _process_state = threading.Lock()
 # holder -> (record version, monotonic time this process first saw it there).
