@@ -1240,6 +1240,10 @@ class TestProvenanceWriteLeaseScope:
     def test_an_update_of_a_provenance_bearing_primary_takes_the_lease(self):
         """Dropping a stored primary's provenance still changes what its
         indexed row has to agree with, so repair must stay excluded."""
+        import os
+
+        from cogniverse_core.memory.manager import PROVENANCE_LEASE_SECONDS
+
         manager = self._manager("lease_update_declared_tenant")
         manager.memory.get.return_value = {
             "id": "m6",
@@ -1263,7 +1267,8 @@ class TestProvenanceWriteLeaseScope:
             )
             is True
         )
-        assert held["record"]["holder"] is not None
+        assert held["record"]["lease_seconds"] == PROVENANCE_LEASE_SECONDS
+        assert str(os.getpid()) in held["record"]["holder"].split(":")
         manager._provenance_store.attach.assert_not_called()
         assert self._lease_record(manager).config_value["holder"] is None
 
