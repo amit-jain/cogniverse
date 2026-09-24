@@ -1438,6 +1438,10 @@ def test_recovery_taken_over_mid_reconcile_leaves_journal_and_registry_unchanged
         assert stalled.is_set()
         assert len(successors) == 1
         assert isinstance(failure.value.__cause__, DeploymentLeaseLost)
+        assert str(failure.value).startswith(
+            "Deployment lease was taken over during intent recovery; nothing was "
+            "activated or registered. Retry the deploy: "
+        )
         intent_after = _entry(store, tenant, "schema_deployment_intents")
         assert (intent_after.config_value, intent_after.version) == (
             intent_before.config_value,

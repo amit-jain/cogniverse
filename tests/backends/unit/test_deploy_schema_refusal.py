@@ -153,8 +153,17 @@ def test_intent_recovery_writes_nothing_after_the_lease_is_taken_over(
         {"name": "video_acme_acme", "definition": {"name": "video_acme_acme"}}
     ]
 
-    with pytest.raises(BackendDeploymentError, match="lease expired or was replaced"):
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    with pytest.raises(BackendDeploymentError) as failure:
         backend_with_orphan.deploy_schemas(schema_defs)
+
+    assert str(failure.value) == (
+        "Deployment lease was taken over during intent recovery; nothing was "
+        "activated or registered. Retry the deploy: Vespa deployment lease "
+        "expired or was replaced"
+    )
+    assert isinstance(failure.value.__cause__, DeploymentLeaseLost)
 
     assert len(successors) == 1
     assert recovered == []
