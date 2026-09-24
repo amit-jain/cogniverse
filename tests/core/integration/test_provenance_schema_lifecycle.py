@@ -3,6 +3,7 @@ provenance schemas registered before ``primary_digest`` are redeployed once."""
 
 import copy
 import json
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -345,6 +346,14 @@ def test_a_memory_row_delete_never_deploys_the_memory_schema(
             config_key="schema_agent_memories",
         )
         assert row.config_value["deleted"] is True
+        deadline = time.monotonic() + 60
+        after_removal = vectors.get(memory_id)
+        while after_removal is not None and time.monotonic() < deadline:
+            time.sleep(1)
+            after_removal = vectors.get(memory_id)
+        assert after_removal is None
+        assert deploys == []
+        assert deleter._vespa_ingestion_clients == {}
     else:
         assert (record.id, record.payload["data"]) == (memory_id, "a remembered turn")
         assert schema in live
