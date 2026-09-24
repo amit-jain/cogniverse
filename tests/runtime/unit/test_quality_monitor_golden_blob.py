@@ -39,11 +39,13 @@ class _StubSearchResponse:
 class _StubSearchClient:
     def __init__(self, responses_by_query):
         self.calls: list[str] = []
+        self.profiles: list[str] = []
         self._responses_by_query = responses_by_query
 
     async def post(self, url, json=None):
         query = json["query"]
         self.calls.append(query)
+        self.profiles.append(json["profile"])
         return _StubSearchResponse(self._responses_by_query[query])
 
 
@@ -53,6 +55,7 @@ async def test_dataset_store_comes_from_telemetry_provider_identity():
     provider = StubTelemetryProvider(store)
     monitor = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://runtime",
         phoenix_http_endpoint="http://phoenix:6006",
         llm_base_url="http://llm",
@@ -94,6 +97,7 @@ async def test_evaluate_golden_set_iterates_loaded_blob_queries_exactly(monkeypa
     provider = StubTelemetryProvider(InMemoryDatasetStore())
     monitor = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="tenant_selected_frames",
         runtime_url="http://runtime",
         phoenix_http_endpoint="http://phoenix:6006",
         llm_base_url="http://llm",
@@ -115,6 +119,7 @@ async def test_evaluate_golden_set_iterates_loaded_blob_queries_exactly(monkeypa
         "find basketball highlights",
         "find ocean waves",
     ]
+    assert monitor._http_client.profiles == ["tenant_selected_frames"] * 2
     assert [entry["query"] for entry in result.per_query_scores] == [
         "find basketball highlights",
         "find ocean waves",
@@ -134,6 +139,7 @@ async def test_missing_blob_returns_status_without_opening_shipped_file(monkeypa
     provider = StubTelemetryProvider(InMemoryDatasetStore())
     monitor = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://runtime",
         phoenix_http_endpoint="http://phoenix:6006",
         llm_base_url="http://llm",
@@ -172,6 +178,7 @@ async def test_store_unavailable_propagates_chained(monkeypatch):
     provider = StubTelemetryProvider(InMemoryDatasetStore())
     monitor = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://runtime",
         phoenix_http_endpoint="http://phoenix:6006",
         llm_base_url="http://llm",
@@ -207,6 +214,7 @@ async def test_golden_set_update_uses_versioned_blob(monkeypatch):
     provider = StubTelemetryProvider(InMemoryDatasetStore())
     monitor = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://runtime",
         phoenix_http_endpoint="http://phoenix:6006",
         llm_base_url="http://llm",
@@ -261,3 +269,56 @@ async def test_golden_set_update_uses_versioned_blob(monkeypatch):
         }
     ]
     assert stub_manager.activate_calls == [("config", "golden_set_ground_truth", 1)]
+
+
+@pytest.mark.asyncio
+async def test_no_selected_search_profile_skips_golden_eval_without_searching(
+    monkeypatch, caplog
+):
+    stub_manager = StubArtifactManager(
+        raw=json.dumps([{"query": "find ocean waves", "expected_videos": ["v"]}])
+    )
+    monkeypatch.setattr(
+        "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+        lambda *args, **kwargs: stub_manager,
+    )
+    monitor = QualityMonitor(
+        tenant_id="test_tenant",
+        runtime_url="http://runtime",
+        phoenix_http_endpoint="http://phoenix:6006",
+        llm_base_url="http://llm",
+        llm_model="test-model",
+        golden_dataset_path=SHIPPED_GOLDEN_PATH,
+        telemetry_provider=StubTelemetryProvider(InMemoryDatasetStore()),
+    )
+    search = _StubSearchClient({})
+    monitor._http_client = search
+
+    async def no_live_traffic():
+        raise AssertionError("live traffic is not due")
+
+    monitor.evaluate_live_traffic = no_live_traffic
+    forced = await monitor.force_optimization_cycle()
+    with caplog.at_level("INFO", logger="cogniverse_evaluation.quality_monitor"):
+        attempted = await monitor._run_scheduled_iteration(
+            now=10_000.0, last_golden=float("-inf"), last_live=10_000.0
+        )
+
+    assert forced == {
+        "status": "skipped",
+        "reason": "search_profile_missing",
+        "retryable": False,
+        "error": "tenant 'test_tenant:test_tenant' has no default video profile "
+        "selected to search its golden set on",
+    }
+    assert attempted == (10_000.0, 10_000.0)
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Golden eval skipped")
+    ] == [
+        "Golden eval skipped: tenant 'test_tenant:test_tenant' has no default "
+        "video profile selected to search its golden set on"
+    ]
+    assert search.calls == []
+    assert stub_manager.load_calls == []

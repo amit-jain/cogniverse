@@ -256,9 +256,24 @@ async def submit_argo_optimization_workflow(
             await http_client.aclose()
 
 
+class SearchProfileNotSelectedError(RuntimeError):
+    """The tenant selected no default video profile to search its golden set on."""
+
+    def to_result(self) -> Dict[str, Any]:
+        return {
+            "status": "skipped",
+            "reason": "search_profile_missing",
+            "retryable": False,
+            "error": str(self),
+        }
+
+
 class QualityMonitor:
     """
     Continuous quality monitor for all agents.
+
+    ``search_profile`` is the tenant's selected default video profile the
+    golden set is searched on; with none, golden evaluation is skipped.
 
     Composes existing evaluation infrastructure:
     - SpanEvaluator for pulling/evaluating search spans
@@ -287,7 +302,7 @@ class QualityMonitor:
         live_sample_count: int = 20,
         thresholds: Optional[QualityThresholds] = None,
         telemetry_provider=None,
-        search_profile: str = "video_colpali_smol500_mv_frame",
+        search_profile: Optional[str] = None,
         workflow_template: Optional[str] = None,
     ):
         # Canonical org:tenant form — span writers canonicalize at the request
@@ -410,7 +425,7 @@ class QualityMonitor:
                 f"Forced golden eval: MRR={golden_result.mean_mrr:.3f}, "
                 f"nDCG={golden_result.mean_ndcg:.3f}"
             )
-        except GoldenSetGroundTruthMissingError as exc:
+        except (GoldenSetGroundTruthMissingError, SearchProfileNotSelectedError) as exc:
             logger.warning(f"Forced golden eval missing: {exc}")
             return exc.to_result()
 
@@ -495,7 +510,10 @@ class QualityMonitor:
                     f"nDCG={golden_result.mean_ndcg:.3f}, "
                     f"P@5={golden_result.mean_precision_at_5:.3f}"
                 )
-            except GoldenSetGroundTruthMissingError as exc:
+            except (
+                GoldenSetGroundTruthMissingError,
+                SearchProfileNotSelectedError,
+            ) as exc:
                 logger.info("Golden eval skipped: %s", exc)
             last_golden = now
 
@@ -551,6 +569,11 @@ class QualityMonitor:
 
     async def evaluate_golden_set(self) -> GoldenEvalResult:
         """Run golden queries against /search, score with IR metrics."""
+        if self.search_profile is None:
+            raise SearchProfileNotSelectedError(
+                f"tenant {self.tenant_id!r} has no default video profile selected "
+                "to search its golden set on"
+            )
         queries = await self._load_golden_queries_async()
         client = self._get_http_client()
 

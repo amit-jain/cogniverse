@@ -71,6 +71,7 @@ def monitor(golden_dataset):
     """
     m = QualityMonitor(
         tenant_id="test_tenant",
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://localhost:28000",
         phoenix_http_endpoint="http://localhost:6006",
         llm_base_url="http://localhost:11434",
@@ -91,6 +92,7 @@ class TestSpanEvaluatorEndpoint:
         the default endpoint is unreachable and every span query fails."""
         monitor = QualityMonitor(
             tenant_id="test_tenant",
+            search_profile="video_colpali_smol500_mv_frame",
             runtime_url="http://localhost:28000",
             phoenix_http_endpoint="http://cogniverse-phoenix:6006",
             llm_base_url="http://localhost:11434",
@@ -135,6 +137,7 @@ class TestGoldenDatasetLoading:
         )
         m = QualityMonitor(
             tenant_id="test_tenant",
+            search_profile="video_colpali_smol500_mv_frame",
             runtime_url="http://localhost:28000",
             phoenix_http_endpoint="http://localhost:6006",
             llm_base_url="http://localhost:11434",
@@ -455,6 +458,7 @@ class TestArgoSubmission:
 
         monitor = QualityMonitor(
             tenant_id="acme",
+            search_profile="video_colpali_smol500_mv_frame",
             runtime_url="http://runtime:8000",
             phoenix_http_endpoint="http://phoenix:6006",
             llm_base_url="http://llm:11434/v1",
@@ -2119,6 +2123,7 @@ class TestRunLoop:
 
         present = QualityMonitor(
             tenant_id="second:tenant",
+            search_profile="video_colpali_smol500_mv_frame",
             runtime_url=monitor.runtime_url,
             phoenix_http_endpoint=monitor.phoenix_http_endpoint,
             llm_base_url=monitor.llm_base_url,

@@ -65,6 +65,7 @@ def monitor(phoenix_container):
     )
     m = QualityMonitor(
         tenant_id=tenant_id,
+        search_profile="video_colpali_smol500_mv_frame",
         runtime_url="http://unused",
         phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url="http://unused",
