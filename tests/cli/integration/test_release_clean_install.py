@@ -185,6 +185,39 @@ MODEL = {
 }
 
 
+_DISTRIBUTIONS_PROBE = (
+    "import importlib.metadata as md, json; print(json.dumps(["
+    "[d.metadata['Name'], d.version, d.requires or []] for d in md.distributions()]))"
+)
+
+
+def _prereleases(distributions, documented: list[str]) -> tuple[set[str], set[str]]:
+    """Installed pre-releases, and those no requirement asks for explicitly.
+
+    A pre-release is explicit when an installed distribution's requirement, or
+    one the install line documents, has a specifier naming a pre-release
+    version (``graphql-core>=3.3.0a0``, ``x==0.65b0``). pip admits only those
+    without a flag; anything else came from admitting pre-releases wholesale.
+    """
+    explicit = set()
+    for line in [
+        *documented,
+        *(req for _, _, requires in distributions for req in requires),
+    ]:
+        requirement = Requirement(line)
+        if any(
+            Version(spec.version.removesuffix(".*")).is_prerelease
+            for spec in requirement.specifier
+        ):
+            explicit.add(canonicalize_name(requirement.name))
+    installed = {
+        canonicalize_name(name)
+        for name, version, _ in distributions
+        if Version(version).is_prerelease
+    }
+    return installed, installed - explicit
+
+
 _INHERITED_ENV = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}
 
 
@@ -224,14 +257,15 @@ def _documented_pip_target(root: str) -> str:
 
 
 def _documented_uv_install(root: str) -> tuple[list[str], str]:
-    """The flags and target of the README's uv line; agents documents none."""
+    """The extra requirements and target of the README's uv line; agents
+    documents none."""
     lines = re.findall(
-        rf"`uv pip install ((?:--\S+ )*)({root}(?:\[[a-z,-]+\])?)`", _readme(root)
+        rf'`uv pip install ({root}(?:\[[a-z,-]+\])?)((?: "[^"]+")*)`', _readme(root)
     )
     if not lines:
         return [], _documented_pip_target(root)
-    [(flags, target)] = lines
-    return flags.split(), target
+    [(target, requirements)] = lines
+    return re.findall(r'"([^"]+)"', requirements), target
 
 
 @pytest.fixture(scope="module")
@@ -282,13 +316,15 @@ def test_the_readmes_document_the_installs_the_clean_install_runs():
     assert _documented_pip_target("cogniverse-dashboard") == "cogniverse-dashboard"
     assert _documented_uv_install("cogniverse-agents") == ([], "cogniverse-agents")
     assert _documented_uv_install("cogniverse-runtime") == (
-        ["--prerelease=allow"],
+        ["graphql-core>=3.3.0a0"],
         "cogniverse-runtime[vespa]",
     )
     assert _documented_uv_install("cogniverse-dashboard") == (
-        ["--prerelease=allow"],
+        ["graphql-core>=3.3.0a0"],
         "cogniverse-dashboard",
     )
+    for root in ("cogniverse-runtime", "cogniverse-dashboard"):
+        assert "--prerelease" not in _readme(root), root
 
 
 _PLANTED_ENV = {
@@ -446,8 +482,15 @@ def _install(installer: str, root: str, python: Path, release: Path, work: Path,
         argv = [*_pip_install(python, env), "--find-links", str(release)]
         target = _documented_pip_target(root)
     else:
-        flags, target = _documented_uv_install(root)
-        argv = [*_uv_pip_install(python), "--find-links", str(release), *flags]
+        requirements, target = _documented_uv_install(root)
+        argv = [
+            *_uv_pip_install(python),
+            "--find-links",
+            str(release),
+            f"{target}=={VERSION}",
+            *requirements,
+        ]
+        return _run(argv, work, env)
     return _run([*argv, f"{target}=={VERSION}"], work, env)
 
 
@@ -476,6 +519,14 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
 
     installed = _install(installer, root, python, release, work, caches)
     assert installed.returncode == 0, installed.stderr
+
+    listed = _run([str(python), "-c", _DISTRIBUTIONS_PROBE], work, caches)
+    assert listed.returncode == 0, listed.stderr
+    documented = _documented_uv_install(root)[0] if installer == "uv" else []
+    prereleases, unrequested = _prereleases(json.loads(listed.stdout), documented)
+    assert unrequested == set(), sorted(unrequested)
+    if root != "cogniverse-agents":
+        assert "graphql-core" in prereleases, sorted(prereleases)
 
     site_packages = venv / "lib" / "python3.12" / "site-packages"
     for name in sorted(BASE_CLOSURES[root]):
