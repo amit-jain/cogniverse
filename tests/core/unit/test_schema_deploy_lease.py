@@ -166,7 +166,7 @@ def test_a_store_outage_at_release_is_logged_not_raised(caplog):
     assert [record.getMessage() for record in caplog.records] == [
         f"Vespa deployment lease held by {lease.holder} could not be released "
         f"(ConnectionError: config store unreachable); peers take it over after "
-        f"600s"
+        f"60s"
     ]
 
 
@@ -437,6 +437,16 @@ class _SwitchableStore(InMemoryConfigStore):
             self.failed.set()
             raise ConnectionError("config store unreachable")
         return super().compare_and_set_config(*args, **kwargs)
+
+
+def test_default_sizing_lets_one_wait_outlast_one_hold():
+    """A dead or partitioned holder leaves nothing a peer can probe; one wait
+    has to outlast its hold, which a heartbeat keeps short and safe."""
+    assert schema_deploy_lease.DEFAULT_WAIT_SECONDS > (
+        schema_deploy_lease.DEFAULT_LEASE_SECONDS
+    )
+    assert schema_deploy_lease.DEFAULT_LEASE_SECONDS == 60.0
+    assert schema_deploy_lease.DEFAULT_WAIT_SECONDS == 120.0
 
 
 def test_a_heartbeating_holder_is_never_taken_over_past_its_hold():

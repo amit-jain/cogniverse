@@ -267,6 +267,30 @@ def test_conflict_rebuild_preserves_exact_peer_schema_and_document(
     assert (victim_name in live) is (operation == "startup")
 
 
+def _partition_lease_store(manager):
+    """Cut this process off from the deployment lease record.
+
+    A live holder heartbeats, so only a holder that can no longer reach the
+    record may lose it; setting the returned event makes every lease read and
+    write this process issues fail as a partition would.
+    """
+    store = manager._schema_registry._config_manager.store
+    partitioned = threading.Event()
+    real_get, real_cas = store.get_config, store.compare_and_set_config
+
+    def guard(call):
+        def wrapper(*args, **kwargs):
+            if partitioned.is_set() and kwargs.get("service") == "schema_deploy_lease":
+                raise ConnectionError("config store unreachable")
+            return call(*args, **kwargs)
+
+        return wrapper
+
+    store.get_config = guard(real_get)
+    store.compare_and_set_config = guard(real_cas)
+    return partitioned
+
+
 def _lease_holder_until_killed(ports, entered):
     """Hold the deployment lease with a short expiry until this process dies.
 
@@ -288,8 +312,10 @@ def _lease_holder(ports, entered, release, result):
 
     schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
     manager = _backend(ports).schema_manager
+    partitioned = _partition_lease_store(manager)
     try:
         with manager.deployment_lease():
+            partitioned.set()
             entered.set()
             if release.wait(600):
                 manager.upload_metadata_schemas()
@@ -360,18 +386,20 @@ def _stalled_holder(ports, prepared, released, result):
 
     schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
     manager = _backend(ports).schema_manager
+    partitioned = _partition_lease_store(manager)
     real_post = manager._post_package
     statuses = []
-    stalled = []
+    fences = []
 
     def post(tenant_url, app_zip, fence=None):
         def pause():
             # Stall where the lease cannot help: the session is created and
-            # prepared, this holder's lease has already been taken over, and
-            # nothing re-checks it before the activate. Only the config
-            # server can refuse this activation.
-            if not stalled:
-                stalled.append(True)
+            # prepared, this holder is cut off from its lease record so a
+            # peer takes it over, and nothing re-checks it before the
+            # activate. Only the config server can refuse this activation.
+            fences.append(True)
+            if len(fences) == 2:
+                partitioned.set()
                 prepared.set()
                 released.wait(600)
 
@@ -425,3 +453,159 @@ def test_stalled_holder_cannot_activate_a_session_a_successor_outran(vespa_insta
             holder.kill()
             holder.join(timeout=30)
         result.close()
+
+
+def _delay_activation(seconds, paused):
+    """Hold every session activation in flight for ``seconds``."""
+    import requests as requests_module
+
+    real_put = requests_module.put
+
+    def put(url, *args, **kwargs):
+        if url.endswith("/active"):
+            paused.set()
+            time.sleep(seconds)
+        return real_put(url, *args, **kwargs)
+
+    requests_module.put = put
+
+
+def _slow_activation_holder(ports, paused, result):
+    """Deploy with a short hold whose activation outlasts that hold."""
+    from cogniverse_core.registries import schema_deploy_lease
+
+    schema_deploy_lease.DEFAULT_LEASE_SECONDS = LEASE_SECONDS
+    manager = _backend(ports).schema_manager
+    _delay_activation(LEASE_SECONDS * 3, paused)
+    try:
+        manager.upload_metadata_schemas()
+        result.put("activated")
+    except Exception as exc:
+        result.put(f"{type(exc).__name__}: {exc}")
+
+
+def test_a_heartbeating_holder_is_not_taken_over_during_a_long_activation(
+    vespa_instance,
+):
+    """A live holder whose activation runs longer than its hold keeps the
+    lease the whole time; a peer that waits two holds is refused."""
+    ctx = multiprocessing.get_context("spawn")
+    paused, result = ctx.Event(), ctx.Queue()
+    holder = ctx.Process(
+        target=_slow_activation_holder, args=(vespa_instance, paused, result)
+    )
+    holder.start()
+    try:
+        assert paused.wait(180) is True
+        registry = _backend(vespa_instance).schema_registry
+        peer = registry.deployment_lease(wait_seconds=LEASE_SECONDS * 2)
+        try:
+            with pytest.raises(TimeoutError):
+                peer.acquire()
+        finally:
+            peer.release()
+        assert result.get(timeout=300) == "activated"
+        holder.join(timeout=60)
+        assert holder.exitcode == 0
+    finally:
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=30)
+        result.close()
+
+
+def _remote_holder_dying_mid_activation(ports, paused):
+    """Deploy with the default hold from a node this host cannot probe, and
+    stall inside the activation until killed."""
+    import socket
+
+    socket.gethostname = lambda: "remote-deploy-node"
+    manager = _backend(ports).schema_manager
+    _delay_activation(600, paused)
+    manager.upload_metadata_schemas()
+
+
+def test_a_remote_holder_that_dies_mid_activation_is_taken_over_in_one_wait(
+    vespa_instance,
+):
+    """No pid probe reaches another node, so one default wait must outlast the
+    dead holder's default hold."""
+    from cogniverse_core.registries import schema_deploy_lease
+
+    ctx = multiprocessing.get_context("spawn")
+    paused = ctx.Event()
+    holder = ctx.Process(
+        target=_remote_holder_dying_mid_activation, args=(vespa_instance, paused)
+    )
+    holder.start()
+    try:
+        assert paused.wait(180) is True
+        holder.kill()
+        holder.join(timeout=30)
+        assert holder.exitcode == -9
+        registry = _backend(vespa_instance).schema_registry
+        lease = registry.deployment_lease()
+        started = time.monotonic()
+        assert lease.acquire() is lease
+        waited = time.monotonic() - started
+        lease.release()
+        assert schema_deploy_lease.DEFAULT_LEASE_SECONDS <= waited
+        assert waited < schema_deploy_lease.DEFAULT_WAIT_SECONDS
+    finally:
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=30)
+
+
+def test_a_holder_whose_renewal_is_refused_aborts_before_preparing(
+    vespa_instance, monkeypatch
+):
+    """Once the config store refuses the heartbeat's renewal the lease is
+    lost, and the deploy stops before its next mutating step."""
+    import requests as requests_module
+
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_LEASE_SECONDS", LEASE_SECONDS)
+    manager = _backend(vespa_instance).schema_manager
+    store = manager._schema_registry._config_manager.store
+    refusing = threading.Event()
+    refused = threading.Event()
+    real_cas = store.compare_and_set_config
+
+    def compare_and_set_config(*args, **kwargs):
+        if refusing.is_set() and kwargs.get("service") == "schema_deploy_lease":
+            refused.set()
+            return None
+        return real_cas(*args, **kwargs)
+
+    monkeypatch.setattr(store, "compare_and_set_config", compare_and_set_config)
+    real_post, real_put = requests_module.post, requests_module.put
+    steps = []
+
+    def post(url, *args, **kwargs):
+        response = real_post(url, *args, **kwargs)
+        if url.endswith("/session"):
+            steps.append("create")
+            refusing.set()
+            assert refused.wait(LEASE_SECONDS * 3) is True
+        return response
+
+    def put(url, *args, **kwargs):
+        steps.append(url.rsplit("/", 1)[-1])
+        return real_put(url, *args, **kwargs)
+
+    monkeypatch.setattr(requests_module, "post", post)
+    monkeypatch.setattr(requests_module, "put", put)
+
+    with pytest.raises(DeploymentLeaseLost) as caught:
+        manager.upload_metadata_schemas()
+
+    assert str(caught.value) == "Vespa deployment lease expired or was replaced"
+    assert steps == ["create"]
+    assert [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.name.startswith("deploy-lease-heartbeat:")
+    ] == []
