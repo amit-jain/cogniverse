@@ -1076,7 +1076,9 @@ class TestA2AStreamingClientServesFromTheSharedStore:
 class TestA2AStreamingFullStack:
     """Full A2A protocol streaming: message/stream → SSE with real services."""
 
-    def test_summarizer_streams_through_a2a(self, streaming_a2a_client):
+    def test_summarizer_streams_through_a2a(
+        self, streaming_a2a_client, tomoro_search_url
+    ):
         """Real summarization via the configured LM streams through A2A protocol."""
         raw_events = _send_a2a_stream(
             streaming_a2a_client,
@@ -1175,7 +1177,7 @@ class TestA2AStreamingErrorContract:
         )
 
     def test_stream_error_event_names_agent_and_exception(
-        self, streaming_a2a_client, monkeypatch
+        self, streaming_a2a_client, tomoro_search_url, monkeypatch
     ):
         """An exception inside the agent surfaces as a terminal error event
         naming the leaf exception type and the agent — the ExceptionGroup
