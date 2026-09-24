@@ -71,6 +71,9 @@ READINESS_ROWS = ({"query": "ready probe", "expected_videos": ["v1"]},)
 # optimization Workflow references.
 TEMPLATE = "cogniverse-optimization-runner"
 
+# The default video profile the fixture's tenant selected.
+SELECTED_PROFILE = "tenant_selected_frames"
+
 
 @pytest.fixture
 def patched(monkeypatch):
@@ -97,6 +100,9 @@ def patched(monkeypatch):
     )
     monkeypatch.setattr(
         qm, "_wait_for_runtime_search", lambda **kwargs: None, raising=False
+    )
+    monkeypatch.setattr(
+        qm, "_tenant_search_profile", lambda tenant_id: SELECTED_PROFILE
     )
     _StubMonitor.force_result = {"status": "ok"}
     _StubMonitor.run_exc = None
@@ -195,11 +201,66 @@ def test_main_waits_for_runtime_search_before_constructing_monitor(patched):
         {
             "runtime_url": "http://localhost:28000",
             "tenant_id": "acme:acme",
+            "search_profile": SELECTED_PROFILE,
             "golden_queries": expected_queries,
             "timeout_seconds": 300.0,
             "poll_interval_seconds": 2.0,
         }
     ]
+    assert _StubMonitor.instances[-1].kwargs["search_profile"] == SELECTED_PROFILE
+
+
+def test_a_tenant_without_a_default_video_profile_skips_the_probe_and_golden_eval(
+    patched, caplog
+):
+    """A CPU-only composition selects no video profile; the sidecar must not
+    wait on a search that can never succeed, nor search a profile it guessed."""
+    calls = []
+    patched.setattr(qm, "_tenant_search_profile", lambda tenant_id: None)
+    patched.setattr(
+        qm, "_wait_for_runtime_search", lambda **kwargs: calls.append(kwargs)
+    )
+
+    with caplog.at_level("WARNING", logger=qm.logger.name):
+        assert _main_exit(patched, [*_BASE, "--once"]) == 0
+
+    assert calls == []
+    assert _StubMonitor.instances[-1].kwargs["search_profile"] is None
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == qm.logger.name and record.levelname == "WARNING"
+    ] == [
+        "Tenant acme:acme has no default video profile selected; skipping the "
+        "search readiness probe and golden-set evaluation."
+    ]
+
+
+@pytest.mark.parametrize(
+    "backend,expected",
+    [
+        (
+            {"profiles": {}, "default_profiles": {"video": {"profile": "acme_frames"}}},
+            "acme_frames",
+        ),
+        ({"profiles": {}}, None),
+    ],
+)
+def test_the_tenant_search_profile_is_the_shared_resolvers_answer(
+    tmp_path, monkeypatch, backend, expected
+):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"backend": backend}))
+    monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+    store = InMemoryConfigStore()
+    store.initialize()
+
+    assert (
+        qm._tenant_search_profile("acme:acme", ConfigManager(store=store)) == expected
+    )
 
 
 def test_main_uses_env_phoenix_url_for_monitor_and_provider(patched, monkeypatch):
@@ -427,6 +488,7 @@ def test_runtime_search_readiness_uses_real_request_and_exact_payload(tmp_path):
         result = qm._wait_for_runtime_search(
             runtime_url=f"http://127.0.0.1:{server.server_port}",
             tenant_id="acme:production",
+            search_profile=SELECTED_PROFILE,
             golden_dataset_path=str(golden),
             timeout_seconds=2,
             poll_interval_seconds=0.001,
@@ -440,7 +502,7 @@ def test_runtime_search_readiness_uses_real_request_and_exact_payload(tmp_path):
         "path": "/search/",
         "body": {
             "query": "man lifting a barbell",
-            "profile": "video_colpali_smol500_mv_frame",
+            "profile": SELECTED_PROFILE,
             "top_k": 1,
             "tenant_id": "acme:production",
         },
@@ -477,6 +539,7 @@ def test_runtime_search_waiters_keep_independent_attempt_counts():
         return qm._wait_for_runtime_search(
             runtime_url="http://runtime",
             tenant_id="acme:production",
+            search_profile=SELECTED_PROFILE,
             golden_queries=[{"query": "probe"}],
             timeout_seconds=2,
             poll_interval_seconds=0,
@@ -512,6 +575,7 @@ def test_runtime_search_keeps_retrying_past_startup_timeout():
         observed["result"] = qm._wait_for_runtime_search(
             runtime_url="http://runtime",
             tenant_id="acme:production",
+            search_profile=SELECTED_PROFILE,
             golden_queries=[{"query": "probe"}],
             timeout_seconds=0,
             poll_interval_seconds=0,
