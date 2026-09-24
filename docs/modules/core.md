@@ -709,12 +709,15 @@ that released it, and by peers once they have watched it stand still.
 
 A deploy holder (`VespaSchemaManager.deployment_lease`) renews on a background
 heartbeat every third of its hold for as long as it holds the lease, so a live
-holder is never taken over however long its activation runs; the heartbeat
-stops at `release()`. A renewal the store refuses loses the lease, and the
-deploy re-checks ownership before each mutating step (session create, prepare,
-activate, and each backend prepare-and-activate attempt), so it stops before
-the next one. A step already in flight when the lease is lost cannot be
-recalled, because Vespa accepts no fencing token.
+holder is not taken over while its requests run longer than the hold; the
+heartbeat stops at `release()`. It also stops renewing once the lease has been
+held for `MAX_TOTAL_HOLD_SECONDS` (4800 s, the longest legitimate activation:
+five attempts of three 310 s requests plus backoff), so a holder stuck past
+that is taken over a hold later like a dead one. A renewal the store refuses
+loses the lease, and the deploy re-checks ownership before each mutating step
+(session create, prepare, activate, and each backend prepare-and-activate
+attempt), so it stops before the next one. A step already in flight when the
+lease is lost cannot be recalled, because Vespa accepts no fencing token.
 
 A record is also taken over at once when this node can *prove* its holder is
 gone. Holders are `host:pidns:pid:uuid`, where `pidns` names the PID

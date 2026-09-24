@@ -544,3 +544,159 @@ def test_an_abandoned_heartbeating_holder_is_still_taken_over_at_once():
         time.sleep(0.05)
     assert _heartbeat_threads() == []
     successor.release()
+
+
+def test_a_heartbeating_holder_stuck_past_the_total_hold_cap_is_taken_over(
+    monkeypatch,
+):
+    """The heartbeat proves the process is alive, not that its deploy is
+    moving; past the longest legitimate activation it stops renewing."""
+    monkeypatch.setattr(
+        schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 1.5, raising=False
+    )
+    store = InMemoryConfigStore()
+    holder = _lease(store, lease_seconds=0.6, wait_seconds=0, heartbeat=True)
+    started = time.monotonic()
+    holder.acquire()
+    try:
+        with pytest.raises(TimeoutError):
+            _lease(store, wait_seconds=0.9).acquire()
+        assert _lease_record(store).config_value["holder"] == holder.holder
+
+        successor = _lease(store, wait_seconds=5)
+        assert successor.acquire() is successor
+        taken_over_after = time.monotonic() - started
+        assert 1.5 <= taken_over_after < 1.5 + 0.6 + 1.0
+        with pytest.raises(DeploymentLeaseLost):
+            holder.ensure_owned(renew_after=1.0)
+        successor.release()
+    finally:
+        holder.release()
+    assert _heartbeat_threads() == []
+
+
+def test_heartbeats_are_scheduled_from_the_previous_beat_under_a_slow_store():
+    """A slow renewal must not stretch the gap between claims past a third
+    of the hold."""
+
+    class _SlowStore(InMemoryConfigStore):
+        def __init__(self):
+            super().__init__()
+            self.beats: list[float] = []
+
+        def compare_and_set_config(self, *args, **kwargs):
+            beating = threading.current_thread().name.startswith(
+                "deploy-lease-heartbeat:"
+            )
+            if beating:
+                time.sleep(0.3)
+            entry = super().compare_and_set_config(*args, **kwargs)
+            if beating and entry is not None:
+                self.beats.append(time.monotonic())
+            return entry
+
+    store = _SlowStore()
+    holder = _lease(store, lease_seconds=1.5, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    time.sleep(2.8)
+    holder.release()
+
+    gaps = [later - earlier for earlier, later in zip(store.beats, store.beats[1:])]
+    assert len(gaps) >= 3
+    assert max(gaps) < 0.65
+
+
+def test_release_does_not_hang_on_a_hung_heartbeat(caplog):
+    """A renewal stuck on the store must not stall release; the hung
+    heartbeat is reported instead."""
+
+    class _HangingStore(InMemoryConfigStore):
+        def __init__(self):
+            super().__init__()
+            self.hang = threading.Event()
+            self.entered = threading.Event()
+            self.unhang = threading.Event()
+
+        def compare_and_set_config(self, *args, **kwargs):
+            if self.hang.is_set() and threading.current_thread().name.startswith(
+                "deploy-lease-heartbeat:"
+            ):
+                self.entered.set()
+                self.unhang.wait(10)
+            return super().compare_and_set_config(*args, **kwargs)
+
+    store = _HangingStore()
+    holder = _lease(store, lease_seconds=0.6, wait_seconds=0, heartbeat=True)
+    holder.acquire()
+    store.hang.set()
+    assert store.entered.wait(5) is True
+    safety = threading.Timer(3.0, store.unhang.set)
+    safety.start()
+    try:
+        started = time.monotonic()
+        with caplog.at_level(logging.ERROR, logger=schema_deploy_lease.__name__):
+            assert holder.release() is None
+        released_after = time.monotonic() - started
+    finally:
+        store.unhang.set()
+        safety.cancel()
+
+    assert released_after < 0.6 + 0.5
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Vespa deployment lease heartbeat for {holder.holder} did not stop within "
+        f"0.6s; its renewal is hung on the config store"
+    ]
+    deadline = time.monotonic() + 5
+    while _heartbeat_threads() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _heartbeat_threads() == []
+
+
+def _dead_pid():
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait(timeout=10)
+    return child.pid
+
+
+def test_a_holder_naming_no_pid_namespace_is_never_pid_probed():
+    dead = _dead_pid()
+    here = schema_deploy_lease._pid_namespace()
+    host = socket.gethostname()
+    assert schema_deploy_lease._holder_is_gone(
+        f"{host}:{here}:{dead}:{uuid.uuid4().hex}"
+    )
+    assert not schema_deploy_lease._holder_is_gone(f"{host}::{dead}:{uuid.uuid4().hex}")
+
+
+def test_a_holder_in_the_pre_namespace_format_is_never_pid_probed():
+    dead = _dead_pid()
+    assert not schema_deploy_lease._holder_is_gone(
+        f"{socket.gethostname()}:{dead}:{uuid.uuid4().hex}"
+    )
+
+
+def test_a_reader_that_cannot_name_its_pid_namespace_never_pid_probes(monkeypatch):
+    dead = _dead_pid()
+    holder = ":".join(
+        (
+            socket.gethostname(),
+            schema_deploy_lease._pid_namespace(),
+            str(dead),
+            uuid.uuid4().hex,
+        )
+    )
+    assert schema_deploy_lease._holder_is_gone(holder)
+
+    real_stat = schema_deploy_lease.os.stat
+
+    def unreadable(path, *args, **kwargs):
+        if str(path) == "/proc/self/ns/pid":
+            raise PermissionError(path)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(schema_deploy_lease.os, "stat", unreadable)
+    assert schema_deploy_lease._pid_namespace() == ""
+    assert not schema_deploy_lease._holder_is_gone(holder)
+    assert not schema_deploy_lease._holder_is_gone(
+        f"{socket.gethostname()}::{dead}:{uuid.uuid4().hex}"
+    )
