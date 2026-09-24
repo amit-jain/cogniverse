@@ -69,10 +69,14 @@ print_header() {
     echo ""
 }
 
-# Build a single package into its own staging directory
+# Build a single package into its own staging directory: the backend's sdist
+# of the workspace source fixes the version, then the release wheel and sdist are
+# built from that sdist's source with internal requirements pinned to it.
 build_package() {
     local package=$1
     local package_dir="$LIBS_DIR/$package"
+    local probe_dir="$STAGE_DIR/probe/$package"
+    local source_dir="$STAGE_DIR/source/libs/$package"
     local out_dir="$STAGE_DIR/$package"
 
     log_info "Building package: $package"
@@ -82,11 +86,25 @@ build_package() {
         return 1
     fi
 
-    local uv_args=(build --no-sources "$package_dir" --out-dir "$out_dir")
+    local verbose_args=()
     if [ "$VERBOSE" = true ]; then
-        uv_args+=(--verbose)
+        verbose_args+=(--verbose)
     fi
-    if ! uv "${uv_args[@]}"; then
+    if ! TMPDIR="$STAGE_TMP" uv build --no-sources --sdist "$package_dir" --out-dir "$probe_dir" "${verbose_args[@]}"; then
+        log_error "  uv build failed for $package"
+        return 1
+    fi
+
+    local version
+    if ! version=$(uv run --no-sync python "$PROJECT_ROOT/scripts/release_manifest.py" stage \
+        --libs-dir "$LIBS_DIR" --probe-dir "$probe_dir" --source-dir "$source_dir"); then
+        log_error "  Failed to stage the source of $package"
+        return 1
+    fi
+    log_info "  Version: $version"
+
+    if ! SETUPTOOLS_SCM_PRETEND_VERSION="$version" TMPDIR="$STAGE_TMP" \
+        uv build --no-sources "$source_dir" --out-dir "$out_dir" "${verbose_args[@]}"; then
         log_error "  uv build failed for $package"
         return 1
     fi
@@ -169,6 +187,9 @@ main() {
 
     STAGE_DIR=$(mktemp -d)
     trap 'rm -rf "$STAGE_DIR"' EXIT
+    echo "Staging directory: $STAGE_DIR"
+    STAGE_TMP="$STAGE_DIR/tmp"
+    mkdir "$STAGE_TMP"
     if [ "$RUN_TESTS" = true ]; then
         TEST_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cogniverse-build-tests.XXXXXX")
         log_info "Test logs: $TEST_LOG_DIR"

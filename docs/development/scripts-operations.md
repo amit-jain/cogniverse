@@ -88,7 +88,7 @@ scripts/
 │   ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
 │   ├── manage_phoenix_data.py        # Phoenix data management
 │   ├── prune_config_metadata.py      # Config metadata pruning
-│   ├── release_manifest.py           # Validate built release artifacts, write dist/BUILD_MANIFEST.json
+│   ├── release_manifest.py           # Stage pinned release sources, validate builds, write dist/BUILD_MANIFEST.json, check publishability
 │   ├── start_phoenix.py              # Start Phoenix service
 │   └── version_bump.py               # Version management
 │

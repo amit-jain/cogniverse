@@ -428,9 +428,11 @@ dist/
 
 #### Build Process
 
-1. **Build:** `uv build --no-sources` builds each release package's sdist, then its wheel from that sdist, into a per-invocation staging directory.
-2. **Validation:** `scripts/release_manifest.py` (run with `uv run --no-sync`, so the project environment must be synced) reads `METADATA`/`PKG-INFO` from each wheel and sdist. Name and version must agree across the pyproject, both filenames and both metadata files; versions are PEP 440 (`packaging.version.Version`), so tag builds (`0.2.0`) and dev builds (`0.2.1.dev1+g<sha>`) are both valid. All packages must share one version, and every internal requirement must be built earlier in the release set.
-3. **Collection:** Only after every package validates are the artifacts copied into `dist/` and the manifest written. Existing files in `dist/` are left untouched; an existing file with the same name but different bytes fails the build. `--clean` removes `dist/` first.
+1. **Version:** `uv build --no-sources --sdist` builds each package's sdist from the workspace, so hatch-vcs computes the version from git. All work happens in a per-invocation staging directory (printed as `Staging directory:`), removed on exit, success or failure; the backend's temporary files go inside it.
+2. **Pinned source:** `scripts/release_manifest.py stage` unpacks that sdist into the staging directory and pins every internal requirement (base and extras) in its `pyproject.toml` to `==<version>`. The workspace `pyproject.toml` files and `uv.lock` are not modified.
+3. **Build:** `uv build --no-sources` builds the release sdist from the pinned source, then its wheel from that sdist, with `SETUPTOOLS_SCM_PRETEND_VERSION=<version>`. The published sdist carries the pinned `pyproject.toml`, so a wheel rebuilt from it has the same `Requires-Dist`.
+4. **Validation:** `scripts/release_manifest.py build` (run with `uv run --no-sync`, so the project environment must be synced) reads `METADATA`/`PKG-INFO` from each wheel and sdist. Name and version must agree across the pyproject, both filenames and both metadata files; versions are PEP 440 (`packaging.version.Version`), so tag builds (`0.2.0`) and dev builds (`0.2.1.dev1+g<sha>`) are both valid. All packages must share one version, wheel and sdist `Requires-Dist` must match, every internal requirement must be pinned to `==<version>`, and every internal requirement must be built earlier in the release set. An internal requirement that already has a version specifier in the workspace fails the build.
+5. **Collection:** Only after every package validates are the artifacts copied into `dist/` and the manifest written. Existing files in `dist/` are left untouched; an existing file with the same name but different bytes fails the build. `--clean` removes `dist/` first.
 
 Any failure exits nonzero and leaves no `BUILD_MANIFEST.json`.
 

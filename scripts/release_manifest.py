@@ -1,12 +1,15 @@
-"""Validate the wheel and sdist built for each release package and write the
-build manifest describing exactly those artifacts; check that the manifest's
-artifacts are publishable and that a package index serves them unchanged."""
+"""Stage each release package's source with its internal requirements pinned to
+the backend-computed release version; validate the wheel and sdist built from it
+and write the build manifest describing exactly those artifacts; check that the
+manifest's artifacts are publishable and that a package index serves them
+unchanged."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import tarfile
 import time
@@ -17,6 +20,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from packaging.metadata import InvalidMetadata, Metadata
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import (
     InvalidSdistFilename,
     InvalidWheelFilename,
@@ -120,6 +125,15 @@ def inspect_package(package_dir: Path, stage_dir: Path, workspace: set[str]) -> 
             f"{declared}: wheel Requires-Dist {wheel_requires} != sdist "
             f"Requires-Dist {sdist_requires}"
         )
+    for requirement in wheel_metadata.requires_dist or []:
+        if (
+            canonicalize_name(requirement.name) in workspace
+            and str(requirement.specifier) != f"=={wheel_version}"
+        ):
+            raise ReleaseArtifactError(
+                f"{declared}: internal requirement {requirement} is not pinned to "
+                f"=={wheel_version}"
+            )
 
     return {
         "name": declared,
@@ -136,12 +150,84 @@ def inspect_package(package_dir: Path, stage_dir: Path, workspace: set[str]) -> 
     }
 
 
-def build_manifest(libs_dir: Path, stage_root: Path, packages: list[str]) -> dict:
-    """Validate every staged release package and return the build manifest."""
-    workspace = {
+def _workspace_names(libs_dir: Path) -> set[str]:
+    return {
         canonicalize_name(tomllib.loads(path.read_text())["project"]["name"])
         for path in libs_dir.glob("*/pyproject.toml")
     }
+
+
+def pin_internal_requirements(text: str, workspace: set[str], version: str) -> str:
+    """Return pyproject ``text`` with every internal requirement in
+    ``[project]`` dependencies and optional dependencies pinned to ``==version``."""
+    document = tomllib.loads(text)
+    expected = tomllib.loads(text)
+    replacements: dict[str, str] = {}
+
+    def pin(line: str) -> str:
+        requirement = Requirement(line)
+        if canonicalize_name(requirement.name) not in workspace:
+            return line
+        if requirement.specifier:
+            raise ReleaseArtifactError(
+                f"internal requirement {line!r} already has a version specifier"
+            )
+        requirement.specifier = SpecifierSet(f"=={version}")
+        replacements[line] = str(requirement)
+        return replacements[line]
+
+    project = document["project"]
+    expected["project"]["dependencies"] = list(
+        map(pin, project.get("dependencies", []))
+    )
+    for extra, lines in project.get("optional-dependencies", {}).items():
+        expected["project"]["optional-dependencies"][extra] = list(map(pin, lines))
+
+    pinned = text
+    for line, replacement in replacements.items():
+        pinned = pinned.replace(json.dumps(line), json.dumps(replacement))
+    if tomllib.loads(pinned) != expected:
+        raise ReleaseArtifactError(
+            "could not pin internal requirements "
+            f"{sorted(replacements)} in pyproject.toml without other changes"
+        )
+    return pinned
+
+
+def stage_source(libs_dir: Path, probe_dir: Path, source_dir: Path) -> str:
+    """Unpack the backend's sdist from ``probe_dir`` into ``source_dir`` with its
+    internal requirements pinned, and return the version the backend computed."""
+    sdist = _single(probe_dir, "*.tar.gz")
+    try:
+        version = str(parse_sdist_filename(sdist.name)[1])
+    except InvalidSdistFilename as error:
+        raise ReleaseArtifactError(str(error))
+    stem = sdist.name.removesuffix(".tar.gz")
+    unpacked = probe_dir / "unpacked"
+    with tarfile.open(sdist) as archive:
+        archive.extractall(unpacked, filter="data")
+    if not (unpacked / stem / "pyproject.toml").is_file():
+        raise ReleaseArtifactError(f"{sdist.name}: missing {stem}/pyproject.toml")
+    source_dir.parent.mkdir(parents=True, exist_ok=True)
+    (unpacked / stem).rename(source_dir)
+
+    pkg_info = source_dir / "PKG-INFO"
+    if pkg_info.is_dir():
+        shutil.rmtree(pkg_info)
+    elif pkg_info.exists():
+        pkg_info.unlink()
+    pyproject = source_dir / "pyproject.toml"
+    pyproject.write_text(
+        pin_internal_requirements(
+            pyproject.read_text(), _workspace_names(libs_dir), version
+        )
+    )
+    return version
+
+
+def build_manifest(libs_dir: Path, stage_root: Path, packages: list[str]) -> dict:
+    """Validate every staged release package and return the build manifest."""
+    workspace = _workspace_names(libs_dir)
     records = [
         inspect_package(libs_dir / package, stage_root / package, workspace)
         for package in packages
@@ -280,6 +366,12 @@ def check_index(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    stage = commands.add_parser(
+        "stage", help="unpack the backend's sdist with pinned internal requirements"
+    )
+    stage.add_argument("--libs-dir", type=Path, required=True)
+    stage.add_argument("--probe-dir", type=Path, required=True)
+    stage.add_argument("--source-dir", type=Path, required=True)
     build = commands.add_parser("build", help="validate staged builds, write manifest")
     build.add_argument("--libs-dir", type=Path, required=True)
     build.add_argument("--stage-dir", type=Path, required=True)
@@ -297,7 +389,9 @@ def main(argv: list[str] | None = None) -> int:
     index.add_argument("--timeout", type=float, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "build":
+        if args.command == "stage":
+            print(stage_source(args.libs_dir, args.probe_dir, args.source_dir))
+        elif args.command == "build":
             manifest = build_manifest(args.libs_dir, args.stage_dir, args.packages)
             args.output.write_text(json.dumps(manifest, indent=2) + "\n")
         elif args.command == "publishable":
