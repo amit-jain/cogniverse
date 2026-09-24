@@ -406,10 +406,7 @@ class CogniverseAgentExecutor(AgentExecutor):
             final=True,
             status=TaskStatus(
                 state=TaskState.canceled,
-                message=new_agent_text_message(
-                    "Task cancellation acknowledged. Cogniverse does not support "
-                    "mid-execution cancellation — the task may have already completed."
-                ),
+                message=new_agent_text_message("Task canceled."),
             ),
         )
         await event_queue.enqueue_event(cancel_event)
