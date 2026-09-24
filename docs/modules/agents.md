@@ -2965,7 +2965,8 @@ class MemoryAwareMixin:
         Initialize memory for agent.
 
         Creates tenant-specific Mem0MemoryManager instance.
-        Raises ValueError if tenant_id is empty or None.
+        Raises ValueError if tenant_id is empty or None. A failed init returns
+        False and leaves the instance's memory state as it was.
         """
         ...  # Implementation in cogniverse_agents.memory_aware_mixin
 

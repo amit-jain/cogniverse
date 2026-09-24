@@ -359,3 +359,109 @@ class TestDispatchClearsRequestTenant:
         assert _MEMORY_TENANT_ID.get() is None, (
             "request tenant leaked past a failed dispatch"
         )
+
+
+class _SharedStreamAgent(MemoryAwareMixin):
+    """One cached agent instance serving every stream of a tenant."""
+
+    def __init__(self):
+        super().__init__()
+        self.a_waiting = None
+        self.b_failed = None
+
+    async def process(self, typed_input, stream=True):
+        async def events():
+            if typed_input == "a":
+                self.a_waiting.set()
+                await self.b_failed.wait()
+            yield {
+                "stream": typed_input,
+                "memory_enabled": self.is_memory_enabled(),
+                "manager": self.memory_manager,
+            }
+
+        return events()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestSharedAgentMemoryInitFailure:
+    @pytest.mark.asyncio
+    async def test_a_failed_init_in_one_stream_leaves_a_concurrent_stream_memory_on(
+        self, mock_dispatcher, monkeypatch
+    ):
+        """Two streams share one cached agent. Stream A initializes memory and
+        is mid-stream when stream B's memory init fails: A still has memory,
+        and the shared agent keeps A's manager, because a failed init does
+        not mutate the shared instance."""
+        import asyncio
+        import logging
+
+        import cogniverse_agents.memory_aware_mixin as mixin_module
+        from cogniverse_runtime.a2a_executor import stream_agent_events
+
+        manager_a = MagicMock(name="manager_a")
+        manager_a.memory = MagicMock()
+        manager_b = MagicMock(name="manager_b")
+        manager_b.memory = None
+        manager_b.initialize.side_effect = RuntimeError("vespa unreachable")
+        managers = iter([manager_a, manager_b])
+        monkeypatch.setattr(
+            mixin_module, "Mem0MemoryManager", lambda tenant_id: next(managers)
+        )
+        mock_dispatcher._config_manager.get_system_config.return_value.inference_service_urls = {
+            "denseon": "http://denseon:8000"
+        }
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **_kwargs: MagicMock(),
+        )
+
+        agent = _SharedStreamAgent()
+        agent.a_waiting = asyncio.Event()
+        agent.b_failed = asyncio.Event()
+
+        async def shared_agent(agent_name, query, tenant_id, context=None):
+            return agent, query
+
+        mock_dispatcher.create_streaming_agent = shared_agent
+        mock_dispatcher._bind_graph_manager = lambda _agent, _tenant: None
+
+        async def run(stream):
+            return [
+                event
+                async for event in stream_agent_events(
+                    mock_dispatcher, "search_agent", stream, "acme:prod"
+                )
+            ]
+
+        failures = []
+
+        class _Failures(logging.Handler):
+            def emit(self, record):
+                if record.getMessage().startswith("Failed to initialize memory"):
+                    failures.append(record.getMessage())
+
+        handler = _Failures()
+        logging.getLogger(mixin_module.__name__).addHandler(handler)
+        try:
+            stream_a = asyncio.create_task(run("a"))
+            await asyncio.wait_for(agent.a_waiting.wait(), timeout=5)
+            stream_b = await asyncio.wait_for(run("b"), timeout=5)
+            assert failures == [
+                "Failed to initialize memory for search_agent: vespa unreachable"
+            ]
+            agent.b_failed.set()
+            stream_a = await asyncio.wait_for(stream_a, timeout=5)
+        finally:
+            logging.getLogger(mixin_module.__name__).removeHandler(handler)
+
+        assert stream_a == [
+            {"stream": "a", "memory_enabled": True, "manager": manager_a}
+        ]
+        assert stream_b == [
+            {"stream": "b", "memory_enabled": True, "manager": manager_a}
+        ]
+        assert manager_b.initialize.call_count == 1
+        assert agent.is_memory_enabled() is True
+        assert agent.memory_manager is manager_a
