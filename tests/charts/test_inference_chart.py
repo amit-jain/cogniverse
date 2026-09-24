@@ -40,10 +40,7 @@ from cogniverse_cli.deploy import helm_install
 from cogniverse_cli.images import SIDECAR_BUILDS
 from fastapi import Body, FastAPI, HTTPException
 
-from cogniverse_core.registries.schema_deploy_lease import (
-    DEFAULT_WAIT_SECONDS,
-    MAX_TOTAL_HOLD_SECONDS,
-)
+from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
 from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
@@ -1200,67 +1197,113 @@ _SCHEMA_JOB_TENANTS = ("acme", "beta")
 _RUNTIME_URL_LINE = 'RUNTIME_URL="http://cogniverse-runtime:8000"'
 
 
-def _schema_deployment_script() -> str:
-    tenants = [
-        f"config.tenants[{index}].id={tenant}"
-        for index, tenant in enumerate(_SCHEMA_JOB_TENANTS)
-    ]
-    docs = _render(
-        *tenants,
+def _schema_deployment_docs(
+    *set_args: str, tenants: tuple[str, ...] = _SCHEMA_JOB_TENANTS
+) -> list[dict]:
+    return _render(
+        *(
+            f"config.tenants[{index}].id={tenant}"
+            for index, tenant in enumerate(tenants)
+        ),
+        *set_args,
         values=_cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
     )
+
+
+def _schema_deployment_job(docs: list[dict]) -> dict:
     (job,) = [
         d
         for d in docs
         if d.get("kind") == "Job"
         and d["metadata"]["name"] == "cogniverse-schema-deployment"
     ]
+    return job
+
+
+def _schema_deployment_script() -> str:
+    job = _schema_deployment_job(_schema_deployment_docs())
     return job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
 
 
-# The deploy route's longest legitimate answer: the lease wait for a live
-# holder, the heartbeat's cap on one legitimate lease body, and the
-# convergence wait after the lease.
-_LONGEST_DEPLOY_ANSWER_SECONDS = (
-    DEFAULT_WAIT_SECONDS + MAX_TOTAL_HOLD_SECONDS + SCHEMA_CONVERGENCE_TIMEOUT_S
+# One deploy attempt as the admin route answers it: the lease wait for a live
+# holder, one prepareandactivate request at its connect + read bound, the
+# convergence wait after the lease, and a margin for the reads around them.
+# A longer deploy is not lost: the Job retries, a retry meeting the live
+# holder answers "failed" within the lease wait, and ingestion deploys a
+# missing schema on first use.
+_ATTEMPT_MARGIN_SECONDS = 30
+_ATTEMPT_SECONDS = (
+    DEFAULT_WAIT_SECONDS
+    + sum(DEPLOY_REQUEST_TIMEOUT_S)
+    + SCHEMA_CONVERGENCE_TIMEOUT_S
+    + _ATTEMPT_MARGIN_SECONDS
 )
 
-# One deploy's Vespa requests at their bounds: five conflict attempts of at
-# most three requests (the schema manager's session create, prepare and
-# activate; the backend's prepareandactivate is one), the backoff between
-# attempts, and the schema listing before the package is built.
-_DEPLOY_ATTEMPTS = 5
-_REQUESTS_PER_ATTEMPT = 3
-_BACKOFF_SECONDS = 0.5 + 1 + 2 + 4
-_SCHEMA_LISTING_SECONDS = 20
+# Kubernetes delays each Job retry by at most six minutes.
+_MAX_RETRY_DELAY_SECONDS = 360
 
 
-def test_schema_deployment_request_outlasts_the_longest_deploy_answer():
-    """curl must not give up on a deploy the runtime is still legitimately
-    running: every deploy's --max-time is the longest answer the lease bounds
-    allow, which covers one deploy's own worst-case Vespa requests."""
-    script = _schema_deployment_script()
-    timeouts = re.findall(r"--max-time (\d+) -X POST \"\$RUNTIME_URL/admin/", script)
-
-    assert _LONGEST_DEPLOY_ANSWER_SECONDS == 9240
-    assert [float(value) for value in timeouts] == [
-        _LONGEST_DEPLOY_ANSWER_SECONDS
-    ] * len(_SCHEMA_JOB_TENANTS), script
-    assert MAX_TOTAL_HOLD_SECONDS >= (
-        _DEPLOY_ATTEMPTS * _REQUESTS_PER_ATTEMPT * sum(DEPLOY_REQUEST_TIMEOUT_S)
-        + _BACKOFF_SECONDS
-        + _SCHEMA_LISTING_SECONDS
+def _runtime_startup_budget(docs: list[dict]) -> int:
+    (runtime,) = [
+        d
+        for d in docs
+        if d.get("kind") == "Deployment"
+        and d["metadata"]["name"] == "cogniverse-runtime"
+    ]
+    probe = runtime["spec"]["template"]["spec"]["containers"][0]["startupProbe"]
+    return (
+        probe["initialDelaySeconds"]
+        + probe["periodSeconds"] * probe["failureThreshold"]
     )
 
 
-def test_the_cli_helm_timeout_governs_the_schema_deployment_hook():
-    """``cogniverse up`` waits helm's --timeout for the hook; it is the shorter
-    bound, so a slow schema deploy fails the install rather than being cut
-    off by curl."""
+def test_each_deploy_call_is_bounded_by_one_deploy_attempt():
+    script = _schema_deployment_script()
+    timeouts = re.findall(r"--max-time (\d+) -X POST \"\$RUNTIME_URL/admin/", script)
+
+    assert _ATTEMPT_SECONDS == 580
+    assert [int(value) for value in timeouts] == [_ATTEMPT_SECONDS] * len(
+        _SCHEMA_JOB_TENANTS
+    ), script
+
+
+@pytest.mark.parametrize(
+    ("set_args", "tenants"),
+    [
+        ((), _SCHEMA_JOB_TENANTS),
+        (("initJobs.schemaDeployment.backoffLimit=2",), ("acme", "beta", "gamma")),
+        (("runtime.startupProbe.failureThreshold=40",), ("acme",)),
+    ],
+    ids=["two-tenants", "three-tenants-two-retries", "shorter-runtime-start"],
+)
+def test_the_job_deadline_covers_runtime_start_every_attempt_and_retry_delays(
+    set_args: tuple[str, ...], tenants: tuple[str, ...]
+):
+    """The Job's absolute ceiling: the runtime's startup budget, every
+    attempt's deploy calls, and the retry delays between attempts."""
+    docs = _schema_deployment_docs(*set_args, tenants=tenants)
+    spec = _schema_deployment_job(docs)["spec"]
+    retries = spec["backoffLimit"]
+
+    assert spec["activeDeadlineSeconds"] == (
+        _runtime_startup_budget(docs)
+        + (retries + 1) * len(tenants) * _ATTEMPT_SECONDS
+        + retries * _MAX_RETRY_DELAY_SECONDS
+    )
+
+
+def test_the_cli_helm_timeout_sits_between_one_attempt_and_the_job_deadline():
+    """``cogniverse up`` waits helm's --timeout for the hook: long enough for
+    one deploy attempt on a healthy runtime, shorter than the Job's deadline,
+    so a Job still retrying fails the install while it keeps running."""
     default = inspect.signature(helm_install).parameters["timeout"].default
+    docs = _render(
+        values=_cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL)
+    )
+    deadline = _schema_deployment_job(docs)["spec"]["activeDeadlineSeconds"]
 
     assert default == "10m"
-    assert 10 * 60 < _LONGEST_DEPLOY_ANSWER_SECONDS
+    assert _ATTEMPT_SECONDS < 10 * 60 < deadline
 
 
 def test_chart_validation_fires_on_the_sources_the_schema_job_tests_import():

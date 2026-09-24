@@ -3,6 +3,11 @@
 {{- fail "initJobs.schemaDeployment.profiles is removed: the schema-deployment job deploys config.defaultProfiles.video" -}}
 {{- end -}}
 {{- if .Values.initJobs.schemaDeployment.enabled -}}
+{{- $attemptSeconds := 580 -}}
+{{- $retries := int .Values.initJobs.schemaDeployment.backoffLimit -}}
+{{- $probe := .Values.runtime.startupProbe | default dict -}}
+{{- $runtimeStart := add ($probe.initialDelaySeconds | default 0) (mul ($probe.periodSeconds | default 10) ($probe.failureThreshold | default 3)) -}}
+{{- $deadline := add $runtimeStart (mul (add $retries 1) (len .Values.config.tenants) $attemptSeconds) (mul $retries 360) -}}
 ---
 # Schema Deployment Job
 # Waits for runtime to be healthy, then deploys data schemas via runtime API.
@@ -20,6 +25,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   backoffLimit: {{ .Values.initJobs.schemaDeployment.backoffLimit }}
+  activeDeadlineSeconds: {{ $deadline }}
   template:
     metadata:
       labels:
@@ -53,7 +59,7 @@ spec:
             {{- range $tenant := $.Values.config.tenants }}
             echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
             echo "  Deploying profile: {{ $profile }}"
-            RESPONSE=$(curl -sSf --max-time 9240 -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
+            RESPONSE=$(curl -sSf --max-time {{ $attemptSeconds }} -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
               -H "Content-Type: application/json" \
               -d '{"tenant_id": "{{ $tenant.id }}", "force": false}')
             echo "  Response: $RESPONSE"
