@@ -231,3 +231,56 @@ def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
 
     assert writer.schema_registry.redeploy_drifted_schemas("provenance") == []
     assert deploys == []
+
+
+@pytest.mark.parametrize("peer_deletes", ["before_the_decision", "after_the_decision"])
+def test_the_migration_does_not_redeploy_a_schema_a_peer_deleted_meanwhile(
+    provenance_vespa, deploys, peer_deletes
+):
+    """The drifted list is read once and each redeploy takes minutes; a tenant
+    whose schema a peer deletes in between is not deployed and registered
+    again — whether the deletion lands before the redeploy reads the stored
+    row or after, while the package is being built."""
+    connect, store = provenance_vespa
+    tenant = f"provgone_{uuid4().hex[:10]}:acme"
+    legacy = connect(tenant, _PreDigestLoader(Path("configs/schemas")))
+    schema = legacy.schema_registry.deploy_schema(tenant, "provenance")
+    peer = connect(tenant)
+    writer = connect(tenant)
+    registry = writer.schema_registry
+    deploy = registry.deploy_schemas
+    activate = writer.deploy_schemas
+    for_tenant = {}
+
+    def peer_delete():
+        assert peer.schema_manager.delete_schema(tenant, "provenance") == schema
+
+    def deploy_for_tenant(tenant_id, base_schema_names, *args, **kwargs):
+        if tenant_id != tenant:
+            return deploy(tenant_id, base_schema_names, *args, **kwargs)
+        if peer_deletes == "before_the_decision":
+            peer_delete()
+        before = len(deploys)
+        try:
+            return deploy(tenant_id, base_schema_names, *args, **kwargs)
+        finally:
+            for_tenant["calls"] = deploys[before:]
+
+    def activate_after_a_peer_delete(schemas, *args, **kwargs):
+        if peer_deletes == "after_the_decision" and schema in {
+            definition["name"] for definition in schemas
+        }:
+            peer_delete()
+        return activate(schemas, *args, **kwargs)
+
+    registry.deploy_schemas = deploy_for_tenant
+    writer.deploy_schemas = activate_after_a_peer_delete
+
+    migrated = registry.redeploy_drifted_schemas("provenance")
+
+    assert schema not in migrated
+    assert for_tenant["calls"][0] == ("registry", tenant, ["provenance"])
+    if peer_deletes == "before_the_decision":
+        assert for_tenant["calls"] == [("registry", tenant, ["provenance"])]
+    assert _schema_row(store, tenant).config_value["deleted"] is True
+    assert schema not in set(peer.schema_manager.list_deployed_document_types(True))

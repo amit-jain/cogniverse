@@ -527,7 +527,9 @@ class SchemaRegistry:
         copy to whichever request first ensures it, which then redeploys the
         application package from the request path. Runs the normal deploy for
         each drifted tenant, so the redeploy is decided again from the stored
-        row under the deploy lock. Returns the full names found drifted.
+        row under the deploy lock, and only while that row is registered: a
+        tenant whose schema a peer deleted since the listing is skipped, not
+        deployed again. Returns the full names redeployed.
         """
         import json
 
@@ -539,13 +541,26 @@ class SchemaRegistry:
             shipped["name"] = info.full_schema_name
             if not _same_definition(info.schema_definition, json.dumps(shipped)):
                 drifted.append(info)
+        redeployed = []
         for info in drifted:
             logger.info(
                 f"Redeploying '{info.full_schema_name}' to the shipped "
                 f"'{base_schema_name}' definition"
             )
-            self.deploy_schemas(info.tenant_id, [base_schema_name])
-        return [info.full_schema_name for info in drifted]
+            try:
+                redeployed.extend(
+                    self.deploy_schemas(
+                        info.tenant_id, [base_schema_name], require_registered=True
+                    )
+                )
+            except SchemaRevisionConflictError as exc:
+                if exc.peer_revision != "tombstone" or exc.activated:
+                    raise
+                logger.info(
+                    f"'{info.full_schema_name}' was deleted by another process "
+                    f"before its redeploy activated; skipped"
+                )
+        return redeployed
 
     def deploy_schema(
         self,
@@ -563,10 +578,14 @@ class SchemaRegistry:
         base_schema_names: List[str],
         config: Optional[Dict[str, Any]] = None,
         force: bool = False,
+        require_registered: bool = False,
     ) -> List[str]:
         """Journal every new schema, activate once, then register the batch.
 
         Returns full names in request order, including already registered names.
+        With ``require_registered`` a schema whose stored row is absent or a
+        tombstone when read under the deploy lock is skipped and left out of
+        the result; a tombstone landing later is refused by the revision fence.
         A registered schema whose stored definition differs from the one the
         schema loader supplies is redeployed with the loaded definition.
         All intents stay pending until every registration succeeds. The backend
@@ -623,15 +642,29 @@ class SchemaRegistry:
             # peer may have redeployed under a definition this process last saw
             # an older version of, and a deploy decided from the stale copy
             # activates a package the store already holds.
+            skipped = {
+                base
+                for base in base_schema_names
+                if require_registered and self._stored_schema(tenant_id, base) is None
+            }
             requested = [
                 (base, name)
                 for base, name in zip(base_schema_names, names)
-                if needs_deploy(
+                if base not in skipped
+                and needs_deploy(
                     base, name, None if force else self._stored_schema(tenant_id, base)
                 )
             ]
+
+            def result():
+                return [
+                    name
+                    for base, name in zip(base_schema_names, names)
+                    if base not in skipped
+                ]
+
             if not requested:
-                return names
+                return result()
             # Every tenant's schema, read only once there is something to
             # deploy: it is the deployment package's other half. Ensuring an
             # already-deployed schema — memory init does it per tenant on a
@@ -647,9 +680,12 @@ class SchemaRegistry:
             requested = [
                 (base, name)
                 for base, name in zip(base_schema_names, names)
-                if (base, name) in requested
-                or needs_deploy(
-                    base, name, None if force else refreshed.get((tenant_id, base))
+                if base not in skipped
+                and (
+                    (base, name) in requested
+                    or needs_deploy(
+                        base, name, None if force else refreshed.get((tenant_id, base))
+                    )
                 )
             ]
             previous_schemas = [
@@ -693,6 +729,9 @@ class SchemaRegistry:
                     config_key=f"schema_{base}",
                 )
                 if stored is None or stored.config_value.get("deleted", False):
+                    if require_registered:
+                        skipped.add(base)
+                        continue
                     intent = self._deployment_intents.prepare(
                         registration,
                         grace_s=_SCHEMA_INTENT_GRACE_S,
@@ -703,6 +742,8 @@ class SchemaRegistry:
                 else:
                     decided_versions[name] = stored.version
                 registrations.append(registration)
+            if not registrations:
+                return result()
 
             replacing = {row["full_schema_name"] for row in registrations}
             # Carried schemas are this snapshot's view of every other schema;
@@ -796,7 +837,7 @@ class SchemaRegistry:
                     ) from exc
             for intent in intents.values():
                 self._deployment_intents.complete(intent)
-        return names
+        return result()
 
     def _peer_revision(self, tenant_id: str, base_schema_name: str) -> str:
         """``"tombstone"`` when the stored row is a deletion, else
