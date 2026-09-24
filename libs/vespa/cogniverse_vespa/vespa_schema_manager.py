@@ -524,11 +524,13 @@ class VespaSchemaManager:
             raise
 
     @staticmethod
-    def _fence_tombstones(lease, still_registered) -> None:
+    def _fence_tombstones(lease, still_registered, earlier_failures=()) -> None:
         """Refuse a registry tombstone once the deployment lease is lost.
 
         The schemas are already gone from Vespa by then while their registry
-        rows remain, so the refusal names them for the operator to finish.
+        rows remain, so the refusal names them for the operator to finish —
+        including any whose tombstone already failed earlier in the same
+        loop, with that failure.
         """
         if lease is None:
             return
@@ -539,10 +541,19 @@ class VespaSchemaManager:
         try:
             lease.ensure_owned()
         except DeploymentLeaseLost as exc:
+            failed_names = [name for name, _ in earlier_failures]
             exc.add_note(
                 f"Removed from Vespa but still registered: "
-                f"{sorted(still_registered)}. Re-run the delete to tombstone them."
+                f"{sorted([*failed_names, *still_registered])}. Re-run the delete "
+                f"to tombstone them."
             )
+            if earlier_failures:
+                exc.add_note(
+                    "Earlier tombstone failures: "
+                    + "; ".join(
+                        f"{name}: {error!r}" for name, error in earlier_failures
+                    )
+                )
             raise
 
     @contextmanager
@@ -1344,6 +1355,10 @@ class VespaSchemaManager:
                         self.get_tenant_schema_name(tenant_id, pending)
                         for pending in registry_base_names[index:]
                     ],
+                    [
+                        (self.get_tenant_schema_name(tenant_id, failed), error)
+                        for failed, error in tombstone_failures
+                    ],
                 )
                 try:
                     self._schema_registry.unregister_schema(tenant_id, base)
@@ -1437,7 +1452,14 @@ class VespaSchemaManager:
             ]
             for tid, bases in registry_bases_by_tenant.items():
                 for base in bases:
-                    self._fence_tombstones(lease, pending_tombstones)
+                    self._fence_tombstones(
+                        lease,
+                        pending_tombstones,
+                        [
+                            (self.get_tenant_schema_name(failed_tid, failed), error)
+                            for failed_tid, failed, error in tombstone_failures
+                        ],
+                    )
                     pending_tombstones.pop(0)
                     try:
                         self._schema_registry.unregister_schema(tid, base)
