@@ -1237,6 +1237,182 @@ class TestStreamingInputCarriesContext:
         assert typed_input.synthesis_depth == "exhaustive"
 
 
+class _RecordingSearchAgent:
+    """Stands in for SearchAgent; records every build and the deps it got."""
+
+    builds: list = []
+    build_delay_s = 0.0
+
+    def __init__(self, *, deps, schema_loader, config_manager):
+        time.sleep(self.build_delay_s)
+        self.deps = deps
+        type(self).builds.append((deps.tenant_id, deps.profile))
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestStreamingSearchResolvesTheSelectedProfile:
+    """Streaming and A2A search reach create_streaming_agent, which must pick
+    the profile the non-streaming search does: the requested one, else the
+    tenant's default through resolve_default_profile, else refuse. It built a
+    SearchAgent with no profile, which fell back to a hard-coded visual
+    profile on a composition that selects none."""
+
+    @pytest.fixture
+    def search_dispatcher(self, dispatcher, monkeypatch):
+        dispatcher._registry.get_agent.return_value = SimpleNamespace(
+            capabilities=["search"]
+        )
+        _RecordingSearchAgent.builds = []
+        _RecordingSearchAgent.build_delay_s = 0.0
+        monkeypatch.setattr(
+            "cogniverse_agents.search_agent.SearchAgent", _RecordingSearchAgent
+        )
+        return dispatcher
+
+    @staticmethod
+    def _tenant_config(monkeypatch, config):
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda tenant_id=None, config_manager=None: config,
+        )
+
+    async def test_no_selected_default_is_refused_before_any_agent_is_built(
+        self, search_dispatcher, monkeypatch
+    ):
+        self._tenant_config(
+            monkeypatch,
+            {
+                "backend": {
+                    "default_profiles": {},
+                    "profiles": {"video_colpali_smol500_mv_frame": {"type": "video"}},
+                }
+            },
+        )
+
+        with pytest.raises(ValueError) as refusal:
+            await search_dispatcher.create_streaming_agent(
+                "search_agent", "find the demo", "acme:acme"
+            )
+
+        assert str(refusal.value) == (
+            "No search profile for tenant 'acme:acme': the request named none "
+            "and no tenant default video profile is configured."
+        )
+        assert _RecordingSearchAgent.builds == []
+
+    async def test_the_a2a_stream_refuses_with_the_same_message(
+        self, search_dispatcher, monkeypatch
+    ):
+        from cogniverse_runtime.a2a_executor import stream_agent_events
+
+        self._tenant_config(monkeypatch, {"backend": {"default_profiles": {}}})
+
+        with pytest.raises(ValueError) as refusal:
+            async for _event in stream_agent_events(
+                search_dispatcher, "search_agent", "find the demo", "acme:acme"
+            ):
+                pass
+
+        assert str(refusal.value) == (
+            "No search profile for tenant 'acme:acme': the request named none "
+            "and no tenant default video profile is configured."
+        )
+        assert _RecordingSearchAgent.builds == []
+
+    async def test_the_tenant_selected_default_is_the_searched_profile(
+        self, search_dispatcher, monkeypatch
+    ):
+        self._tenant_config(
+            monkeypatch,
+            {
+                "backend": {
+                    "default_profiles": {
+                        "video": {"profile": "video_colqwen_omni_mv_chunk_30s"}
+                    }
+                },
+                "active_video_profile": "video_colpali_smol500_mv_frame",
+            },
+        )
+
+        agent, typed_input = await search_dispatcher.create_streaming_agent(
+            "search_agent", "find the demo", "acme:acme"
+        )
+
+        assert agent.deps.profile == "video_colqwen_omni_mv_chunk_30s"
+        assert _RecordingSearchAgent.builds == [
+            ("acme:acme", "video_colqwen_omni_mv_chunk_30s")
+        ]
+        assert typed_input.query == "find the demo"
+
+    async def test_a_requested_profile_wins_over_the_default(
+        self, search_dispatcher, monkeypatch
+    ):
+        self._tenant_config(
+            monkeypatch,
+            {"active_video_profile": "video_colpali_smol500_mv_frame"},
+        )
+
+        agent, typed_input = await search_dispatcher.create_streaming_agent(
+            "search_agent",
+            "find the demo",
+            "acme:acme",
+            context={"profiles": ["video_xclip_sv_chunk_6s"]},
+        )
+
+        assert agent.deps.profile == "video_xclip_sv_chunk_6s"
+        assert typed_input.profiles == ["video_xclip_sv_chunk_6s"]
+
+    async def test_concurrent_streams_share_one_agent_per_tenant_profile(
+        self, search_dispatcher, monkeypatch
+    ):
+        self._tenant_config(
+            monkeypatch,
+            {"active_video_profile": "video_colpali_smol500_mv_frame"},
+        )
+        _RecordingSearchAgent.build_delay_s = 0.05
+
+        results = await asyncio.gather(
+            *(
+                search_dispatcher.create_streaming_agent(
+                    "search_agent", f"q{i}", tenant
+                )
+                for i in range(8)
+                for tenant in ("acme:acme", "globex:globex")
+            )
+        )
+
+        agents = {
+            tenant: {
+                id(agent)
+                for (agent, typed_input) in results
+                if typed_input.tenant_id == tenant
+            }
+            for tenant in ("acme:acme", "globex:globex")
+        }
+        assert sorted(_RecordingSearchAgent.builds) == [
+            ("acme:acme", "video_colpali_smol500_mv_frame"),
+            ("globex:globex", "video_colpali_smol500_mv_frame"),
+        ]
+        assert [len(ids) for ids in agents.values()] == [1, 1]
+        assert agents["acme:acme"] != agents["globex:globex"]
+
+    async def test_a_config_outage_fails_the_stream_instead_of_guessing(
+        self, search_dispatcher, monkeypatch
+    ):
+        def _down(tenant_id=None, config_manager=None):
+            raise ConnectionError("config store unreachable")
+
+        monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", _down)
+
+        with pytest.raises(ConnectionError, match="^config store unreachable$"):
+            await search_dispatcher.create_streaming_agent(
+                "search_agent", "find the demo", "acme:acme"
+            )
+
+        assert _RecordingSearchAgent.builds == []
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 class TestRlmThreadsIntoTypedInputs:
@@ -2188,9 +2364,13 @@ class TestGroundingConfigReadsLeaveTheLoop:
 
         assert budget == _SHIPPED_GROUNDING_BUDGET_S
         assert plan.profiles == (_SHIPPED_ACTIVE_PROFILE,)
+        # resolve_default_profile reads backend.default_profiles, then
+        # active_video_profile, once for the plan and once for the search.
         assert [(key, ident == loop_thread) for key, ident in readers] == [
             (GROUNDING_SEARCH_TIMEOUT_KEY, False),
+            ("backend", False),
             ("active_video_profile", False),
+            ("backend", False),
             ("active_video_profile", False),
         ]
 

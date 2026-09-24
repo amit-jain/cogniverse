@@ -2414,23 +2414,12 @@ class AgentDispatcher:
             return agent, typed_input
 
         if capabilities & {"search", "video_search", "retrieval"}:
-            from cogniverse_agents.search_agent import (
-                SearchAgent,
-                SearchAgentDeps,
-                SearchInput,
-            )
+            from cogniverse_agents.search_agent import SearchInput
 
-            system_config = self._config_manager.get_system_config()
-            deps = SearchAgentDeps(
-                tenant_id=tenant_id,
-                backend_url=system_config.backend_url,
-                backend_port=system_config.backend_port,
+            profile = await self._resolve_search_profile(
+                (context or {}).get("profiles"), tenant_id
             )
-            agent = SearchAgent(
-                deps=deps,
-                schema_loader=self._schema_loader,
-                config_manager=self._config_manager,
-            )
+            agent = await asyncio.to_thread(self._get_search_agent, profile, tenant_id)
             typed_input = typed_input_from_context(
                 SearchInput, query=query, tenant_id=tenant_id, context=context
             )
@@ -2636,24 +2625,9 @@ class AgentDispatcher:
                 logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
         enrichment = enrichment or {}
-        requested_profiles = [
-            name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
-        ]
-
-        # The searched profile is the SearchAgent's own ``active_profile``
-        # (deps.profile), so a requested profile has to reach _get_search_agent:
-        # SearchInput.profiles alone changes only the reported name. Extra
-        # requested profiles fan out from there as an ensemble.
-        profile = (
-            requested_profiles[0]
-            if requested_profiles
-            else await asyncio.to_thread(self._tenant_default_video_profile, tenant_id)
+        profile = await self._resolve_search_profile(
+            enrichment.get("profiles"), tenant_id
         )
-        if not profile:
-            raise ValueError(
-                f"No search profile for tenant {tenant_id!r}: the request named "
-                "none and no tenant default video profile is configured."
-            )
 
         # _get_search_agent builds SearchAgent on a cache miss — a synchronous
         # get_system_config Vespa read + query-encoder init in __init__; offload
@@ -3029,6 +3003,30 @@ class AgentDispatcher:
             degraded_query_rewrite=rewrite_degraded,
             undeployed_profiles=plan.undeployed_profiles,
         )
+
+    async def _resolve_search_profile(
+        self, requested: Optional[List[Any]], tenant_id: str
+    ) -> str:
+        """The profile a search runs on: the first requested, else the tenant's
+        default video profile; refuses when there is neither.
+
+        The searched profile is the SearchAgent's own ``active_profile``
+        (deps.profile), so it has to reach _get_search_agent: SearchInput.
+        profiles alone changes only the reported name. Extra requested
+        profiles fan out from there as an ensemble.
+        """
+        names = [name for name in (requested or []) if isinstance(name, str)]
+        profile = (
+            names[0]
+            if names
+            else await asyncio.to_thread(self._tenant_default_video_profile, tenant_id)
+        )
+        if not profile:
+            raise ValueError(
+                f"No search profile for tenant {tenant_id!r}: the request named "
+                "none and no tenant default video profile is configured."
+            )
+        return profile
 
     def _tenant_default_video_profile(self, tenant_id: str) -> Optional[str]:
         """The tenant's default video profile, through the shared resolver.
