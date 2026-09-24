@@ -537,6 +537,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 **Prerequisites:**
 
 - Profile must exist
+- The profile resolves from the tenant's stored profiles first, otherwise from the tenant's merged catalog of shipped (config.json) profiles, which `GET /admin/profiles` and `GET /admin/profiles/{profile_name}` do not show
 
 - Schema template must exist in configured schema directory
 
