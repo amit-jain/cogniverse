@@ -9,6 +9,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from a2a.server.context import ServerCallContext
 from a2a.server.events import Event
@@ -84,6 +85,24 @@ class CancelCommand:
     request_id: str
     task_id: str
     reply_key: str
+
+
+def _redacted_redis_url(redis_url: str) -> str:
+    """``redis_url`` as scheme, host, port and database only.
+
+    Credentials ride in the userinfo or a ``password`` query parameter, so
+    both are dropped from anything logged or raised.
+    """
+    parts = urlsplit(redis_url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    netloc = f"{host}:{port}" if port is not None else host
+    return f"{parts.scheme}://{netloc}{parts.path}"
 
 
 _CALL_CONTEXT_LEASE_KEY = "cogniverse.a2a.task_lease"
@@ -387,12 +406,13 @@ class RedisTaskStore(TaskStore):
         """Connect to Redis and validate it before serving A2A requests."""
         if not redis_url.strip():
             raise ValueError("redis_url must be non-empty")
+        named = _redacted_redis_url(redis_url)
         client = Redis.from_url(redis_url, decode_responses=True)
         try:
             await client.ping()
         except RedisError as exc:
             await client.aclose()
-            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {redis_url}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {named}") from exc
         # Lease bookkeeping for ids that never become tasks expires per hash
         # field, so a server without HPEXPIRE must be refused here rather than
         # failing every new task's acquire. The probe key does not exist, so
@@ -409,24 +429,23 @@ class RedisTaskStore(TaskStore):
         except NoPermissionError as exc:
             await client.aclose()
             raise A2ATaskStoreError(
-                f"shared A2A task store cannot use {redis_url}: its Redis user is "
+                f"shared A2A task store cannot use {named}: its Redis user is "
                 "not permitted HPEXPIRE"
             ) from exc
         except ReadOnlyError as exc:
             await client.aclose()
             raise A2ATaskStoreError(
-                f"shared A2A task store cannot use {redis_url}: it is a read-only "
-                "replica"
+                f"shared A2A task store cannot use {named}: it is a read-only replica"
             ) from exc
         except ResponseError as exc:
             await client.aclose()
             raise A2ATaskStoreError(
                 "shared A2A task store requires Redis >= 7.4 (HPEXPIRE); "
-                f"{redis_url} does not support hash-field expiry"
+                f"{named} does not support hash-field expiry"
             ) from exc
         except RedisError as exc:
             await client.aclose()
-            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {redis_url}") from exc
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: connect to {named}") from exc
         return cls(
             client,
             max_tasks=max_tasks,
