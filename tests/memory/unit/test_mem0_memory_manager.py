@@ -1436,6 +1436,128 @@ class TestProvenanceWriteLeaseScope:
         assert set(fenced_from) == {"cited-writer"}
         assert self._lease_record(manager).config_value["holder"] is None
 
+    def test_restore_rereads_and_rewrites_the_primary_inside_the_lease(self):
+        """Restore rewrites data and metadata from its own read; outside the
+        lease that read can predate a leased update or archive it reverts."""
+        manager = self._manager("lease_restore_tenant")
+        manager.memory.get_all.return_value = {
+            "results": [
+                {
+                    "id": "m10",
+                    "memory": "archived text",
+                    "metadata": {
+                        "kind": "note",
+                        "archived": True,
+                        "archived_at": "2026-01-01T00:00:00+00:00",
+                    },
+                }
+            ]
+        }
+        held = {}
+
+        def record_hold(**kwargs):
+            held["holder"] = self._lease_record(manager).config_value["holder"]
+            held["payload"] = kwargs["payload"]
+
+        manager.memory.vector_store.update.side_effect = record_hold
+
+        assert manager.restore_archived_memory("m10") is True
+
+        assert held["holder"] is not None
+        assert held["payload"] == {
+            "data": "archived text",
+            "metadata": {"kind": "note"},
+        }
+        assert self._lease_record(manager).config_value["holder"] is None
+
+    def test_restore_waits_for_a_leased_update_and_restores_its_result(self):
+        import threading
+
+        manager = self._manager("lease_restore_update_tenant")
+        stored = {
+            "id": "m11",
+            "memory": "before",
+            "metadata": {
+                "kind": "note",
+                "archived": True,
+                "archived_at": "2026-01-01T00:00:00+00:00",
+            },
+        }
+        updating = threading.Event()
+        release = threading.Event()
+        listed = []
+        flipped = []
+
+        def update(memory_id, data, metadata):
+            updating.set()
+            assert release.wait(timeout=10)
+            stored["memory"] = data
+            stored["metadata"] = dict(metadata)
+
+        def get_all(**kwargs):
+            listed.append(stored["memory"])
+            return {"results": [dict(stored)]}
+
+        manager.memory.get.side_effect = lambda memory_id: dict(stored)
+        manager.memory.update.side_effect = update
+        manager.memory.get_all.side_effect = get_all
+        manager.memory.vector_store.update.side_effect = lambda **kwargs: (
+            flipped.append(kwargs["payload"])
+        )
+        outcomes = {}
+        updater = threading.Thread(
+            target=lambda: outcomes.setdefault(
+                "update",
+                manager.update_memory(
+                    memory_id="m11",
+                    content="after",
+                    tenant_id="lease_restore_update_tenant",
+                    agent_name="agent",
+                    metadata=stored["metadata"],
+                ),
+            )
+        )
+        restorer = threading.Thread(
+            target=lambda: outcomes.setdefault(
+                "restore", manager.restore_archived_memory("m11")
+            )
+        )
+        updater.start()
+        assert updating.wait(timeout=10)
+        restorer.start()
+        restorer.join(timeout=0.5)
+        listed_during_update = list(listed)
+        release.set()
+        updater.join(timeout=10)
+        restorer.join(timeout=10)
+
+        assert listed_during_update == []
+        assert outcomes == {"update": True, "restore": True}
+        assert listed == ["after"]
+        assert flipped == [{"data": "after", "metadata": {"kind": "note"}}]
+
+    def test_the_last_accessed_bump_skips_provenance_bearing_hits(self):
+        """The bump rewrites a hit from the search's snapshot outside the lease;
+        on a provenance-bearing row that can revert a leased update and leave
+        its indexed digest disagreeing with the primary."""
+        manager = self._manager("bump_skip_tenant")
+        plain = {"id": "p1", "memory": "plain", "metadata": {"kind": "note"}}
+        cited = {
+            "id": "c1",
+            "memory": "cited",
+            "metadata": self._provenance_metadata(),
+        }
+        manager.memory.search.return_value = {"results": [plain, cited]}
+
+        hits = manager.search_memory(
+            "query", tenant_id="bump_skip_tenant", agent_name="agent"
+        )
+
+        assert [hit["id"] for hit in hits] == ["p1", "c1"]
+        (bumped,) = manager.memory.vector_store.update_many.call_args.args
+        assert [vector_id for vector_id, _vector, _payload in bumped] == ["p1"]
+        manager.memory.vector_store.update.assert_not_called()
+
 
 class TestAddMemoryErrorPrecedence:
     """Malformed input reports the first contract it breaks, as before the
