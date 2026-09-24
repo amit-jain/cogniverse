@@ -15,7 +15,7 @@ from fastapi import FastAPI
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.lifecycle_scheduler import LifecycleScheduler
-from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.memory.pinning import PIN_AGENT_NAME, PinService
 from cogniverse_core.memory.schema import build_default_registry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -48,6 +48,7 @@ def memory_store(shared_vespa):
     with InterceptFaultProxy(shared_vespa["base_url"]) as proxy:
         endpoints = dict(shared_vespa, http_port=proxy.port)
         cm = make_config_manager(endpoints)
+        affirm_memory_profile(cm)
         managers = []
         for tid in ("stateclear:a", "stateclear:b"):
             deploy_tenant_schema(
