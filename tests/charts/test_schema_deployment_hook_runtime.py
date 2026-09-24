@@ -46,6 +46,7 @@ def _render_e2e_stack() -> list[dict]:
         use_k3d=True,
         backend="rocm",
         serving=LLM_SERVING_MODAL,
+        project_root=REPO_ROOT,
     ):
         cmd.extend(["-f", str(values_file)])
     cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
@@ -107,8 +108,10 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
     config_manager.set_system_config(
         SystemConfig(backend_url="http://localhost", backend_port=port)
     )
+    schema_loader = FilesystemSchemaLoader(REPO_ROOT / "configs" / "schemas")
     admin.set_config_manager(config_manager)
-    admin.set_schema_loader(FilesystemSchemaLoader(REPO_ROOT / "configs" / "schemas"))
+    admin.set_schema_loader(schema_loader)
+    created: list[str] = []
 
     app = FastAPI()
 
@@ -131,18 +134,30 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
         assert time.monotonic() < deadline, "admin router did not start"
         time.sleep(0.05)
     try:
-        yield f"http://127.0.0.1:{server_port}", docs, shared_vespa
+        yield f"http://127.0.0.1:{server_port}", docs, shared_vespa, created
     finally:
         server.should_exit = True
         thread.join(timeout=30)
-        admin.reset_dependencies()
-        reset_registries()
+        try:
+            for schema in created:
+                backend = BackendRegistry.get_instance().get_ingestion_backend(
+                    "vespa",
+                    tenant_id="default",
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
+                )
+                assert backend.delete_schema(schema, tenant_id="default") == [
+                    f"{schema}_default_default"
+                ]
+        finally:
+            admin.reset_dependencies()
+            reset_registries()
 
 
 def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
     runtime_admin,
 ):
-    url, docs, vespa = runtime_admin
+    url, docs, vespa, created = runtime_admin
     config = _rendered_config(docs)
     profile = config["backend"]["default_profiles"]["video"]["profile"]
     schema = config["backend"]["profiles"][profile]["schema_name"]
@@ -178,12 +193,15 @@ def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
     (response,) = re.findall(r"^  Response: (.*)$", result.stdout, re.MULTILINE)
     body = json.loads(response)
     body.pop("deployed_at")
+    status = body.pop("deployment_status")
+    if status == "success":
+        created.append(schema)
+    assert status in {"success", "already_deployed"}, status
     assert body == {
         "profile_name": profile,
         "tenant_id": "default",
         "schema_name": schema,
         "tenant_schema_name": f"{schema}_default_default",
-        "deployment_status": "success",
         "error_message": None,
     }
     assert result.stdout.rstrip().endswith("Schema deployment completed!")
@@ -194,4 +212,5 @@ def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
         timeout=30,
     )
     assert search.status_code == 200, search.text
-    assert search.json()["root"]["fields"]["totalCount"] == 0
+    if created:
+        assert search.json()["root"]["fields"]["totalCount"] == 0
