@@ -776,18 +776,38 @@ _VISUAL_SERVICES = {"vllm_colpali", "vllm_asr", "vllm_llm_student"}
 
 
 def _cli_values_stack(
-    backend: str | None, *, prod: bool, serving: str = LLM_SERVING_LOCAL
+    backend: str | None, *, use_k3d: bool, serving: str = LLM_SERVING_LOCAL
 ) -> tuple[str, ...]:
-    """The values files ``cogniverse up`` composes, in its order."""
-    files = [get_values_file(prod=prod)]
-    if backend is not None:
-        device = get_device_values_file(backend)
-        assert device is not None, backend
-        files.append(device)
-    serving_file = get_llm_serving_values_file(serving)
-    if serving_file is not None:
-        files.append(serving_file)
+    """The values files ``cogniverse up`` composes, in its order.
+
+    On an existing cluster it applies ``values.prod.yaml`` alone; on k3d it
+    layers the host's device overlay and the LLM serving overlay on
+    ``values.k3s.yaml``.
+    """
+    files = [get_values_file(prod=not use_k3d)]
+    if use_k3d:
+        device = get_device_values_file(backend) if backend is not None else None
+        if device is not None:
+            files.append(device)
+        serving_file = get_llm_serving_values_file(serving)
+        if serving_file is not None:
+            files.append(serving_file)
+    else:
+        assert (backend, serving) == (None, LLM_SERVING_LOCAL)
     return tuple(path.name for path in files)
+
+
+def test_cli_values_stacks_name_the_composed_files():
+    assert _cli_values_stack(None, use_k3d=False) == ("values.prod.yaml",)
+    assert _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL) == (
+        "values.k3s.yaml",
+        "values.rocm.yaml",
+        "values.modal-llm.yaml",
+    )
+    assert _cli_values_stack("cpu", use_k3d=True) == (
+        "values.k3s.yaml",
+        "values.cpu.yaml",
+    )
 
 
 def _composition_failure(values: tuple[str, ...], *set_args: str) -> str:
@@ -825,12 +845,20 @@ def _served_model_arg(deployment: dict) -> str:
     return tokens[tokens.index("serve") + 1]
 
 
-def test_rocm_composition_with_the_external_student_serves_its_selected_profile():
+@pytest.mark.parametrize(
+    "values",
+    [
+        _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
+        # Operator helm composition; the CLI never layers overlays on prod.
+        ("values.prod.yaml", "values.rocm.yaml", "values.modal-llm.yaml"),
+    ],
+    ids=["cli-k3d-rocm-modal", "operator-prod-rocm-modal"],
+)
+def test_rocm_composition_with_the_external_student_serves_its_selected_profile(
+    values: tuple[str, ...],
+):
     """The deployed composition: ROCm embedders in-cluster, student external."""
-    docs = _render(
-        *_PROD_SECRETS,
-        values=_cli_values_stack("rocm", prod=True, serving=LLM_SERVING_MODAL),
-    )
+    docs = _render(*_PROD_SECRETS, values=values)
     config = _chart_config(docs)
     deployments = _inference_deployments(docs)
     profile = config["backend"]["profiles"][_SELECTED_VIDEO_PROFILE]
@@ -857,9 +885,18 @@ def test_rocm_composition_with_the_external_student_serves_its_selected_profile(
     )
 
 
-@pytest.mark.parametrize("prod", [True, False], ids=["prod", "k3s"])
-def test_cpu_composition_omits_visual_ingestion(prod: bool):
-    docs = _render(*_PROD_SECRETS, values=_cli_values_stack("cpu", prod=prod))
+@pytest.mark.parametrize(
+    "values",
+    [
+        _cli_values_stack("cpu", use_k3d=True),
+        _cli_values_stack(None, use_k3d=False),
+        # Operator helm composition; the CLI never layers overlays on prod.
+        ("values.prod.yaml", "values.cpu.yaml"),
+    ],
+    ids=["cli-k3d-cpu", "cli-prod", "operator-prod-cpu"],
+)
+def test_cpu_composition_omits_visual_ingestion(values: tuple[str, ...]):
+    docs = _render(*_PROD_SECRETS, values=values)
     config = _chart_config(docs)
 
     assert config["backend"]["default_profiles"] == {}
@@ -869,8 +906,22 @@ def test_cpu_composition_omits_visual_ingestion(prod: bool):
     assert _VISUAL_SERVICES & set(_inference_deployments(docs)) == {"vllm_asr"}
 
 
-def test_cuda_composition_without_a_student_endpoint_is_refused():
-    stderr = _composition_failure(_cli_values_stack("cuda", prod=True), *_PROD_SECRETS)
+_CUDA_STACKS = pytest.mark.parametrize(
+    "values",
+    [
+        _cli_values_stack("cuda", use_k3d=True),
+        # Operator helm composition; the CLI never layers overlays on prod.
+        ("values.prod.yaml", "values.cuda.yaml"),
+    ],
+    ids=["cli-k3d-cuda", "operator-prod-cuda"],
+)
+
+
+@_CUDA_STACKS
+def test_cuda_composition_without_a_student_endpoint_is_refused(
+    values: tuple[str, ...],
+):
+    stderr = _composition_failure(values, *_PROD_SECRETS)
 
     assert stderr == (
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
@@ -879,11 +930,14 @@ def test_cuda_composition_without_a_student_endpoint_is_refused():
     ), stderr
 
 
-def test_cuda_composition_with_an_explicit_student_endpoint_renders():
+@_CUDA_STACKS
+def test_cuda_composition_with_an_explicit_student_endpoint_renders(
+    values: tuple[str, ...],
+):
     docs = _render(
         *_PROD_SECRETS,
         f"runtime.primaryLLM.apiBase={_STUDENT_API_BASE}",
-        values=_cli_values_stack("cuda", prod=True),
+        values=values,
     )
     config = _chart_config(docs)
     deployments = _inference_deployments(docs)
@@ -905,8 +959,9 @@ def test_cuda_composition_with_an_explicit_student_endpoint_renders():
 
 
 def test_fully_external_composition_renders_without_local_model_pods():
-    """Every selected key off-cluster plus the CLI's ``--llm external``
-    overrides: no local Deployment serves any of them."""
+    """The CLI's existing-cluster composition with every selected key
+    off-cluster and its ``--llm external`` overrides: no local Deployment
+    serves any of them."""
     docs = _render(
         *_PROD_SECRETS,
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE}",
@@ -918,7 +973,7 @@ def test_fully_external_composition_renders_without_local_model_pods():
         "llm.builtin.enabled=false",
         "llm.external.enabled=true",
         "llm.external.url=https://llm.example.com/v1",
-        values=_cli_values_stack(None, prod=True),
+        values=_cli_values_stack(None, use_k3d=False),
     )
     config = _chart_config(docs)
 
@@ -953,7 +1008,7 @@ def test_a_selected_profile_bound_to_an_undeployed_service_is_refused(
     set_args: tuple[str, ...], role: str, key: str
 ):
     stderr = _composition_failure(
-        _cli_values_stack(None, prod=True),
+        _cli_values_stack(None, use_k3d=False),
         *_PROD_SECRETS,
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE}",
         f"runtime.primaryLLM.apiBase={_STUDENT_API_BASE}",
