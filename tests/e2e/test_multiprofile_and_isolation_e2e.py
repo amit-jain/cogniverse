@@ -22,6 +22,7 @@ import httpx
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from tests.e2e.conftest import (
     DASHBOARD,
     GATEWAY_VIDEO_QUERIES,
@@ -34,7 +35,12 @@ from tests.e2e.conftest import (
     unique_id,
     wait_for_streamlit,
 )
-from tests.e2e.test_api_e2e import AUDIO_PROFILE, DOCUMENT_PROFILE, PROFILE
+from tests.e2e.test_api_e2e import (
+    AUDIO_PROFILE,
+    DOCUMENT_PROFILE,
+    PROFILE,
+    _served_document_windows,
+)
 
 SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 60_000
@@ -335,6 +341,9 @@ class TestMultiProfileIngestion:
         """Document profile ingests text via ColBERT embeddings."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             _deploy_schema(client, DOCUMENT_PROFILE, TENANT_ID)
+            windows, _ = _served_document_windows(
+                ProcessingStrategySet._extract_document_text(real_document_path)
+            )
 
             data = _upload_file(
                 client,
@@ -347,8 +356,8 @@ class TestMultiProfileIngestion:
             _assert_upload_completed(data)
             assert data["status"] == "success"
             assert data["existing"] is False, data
-            assert data["chunks_created"] == 1
-            assert data["documents_fed"] == 1
+            assert data["chunks_created"] == len(windows)
+            assert data["documents_fed"] == len(windows)
 
     def test_audio_profile(self, extracted_audio_path):
         """Audio profile ingests wav via CLAP + ColBERT embeddings."""
