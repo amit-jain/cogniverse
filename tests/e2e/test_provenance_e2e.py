@@ -127,7 +127,9 @@ def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            mm.provenance_store.attach(probe_id, probe_prov)
+            mm.provenance_store.attach(
+                probe_id, probe_prov, primary_digest="warmup-probe"
+            )
             # Read-back: schema is live for queries too.
             time.sleep(1.0)
             rec = mm.provenance_store.get(probe_id)
