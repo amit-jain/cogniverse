@@ -240,8 +240,8 @@ sequenceDiagram
 **Deployment path: Helm init job (profile schemas only)**
 
 The Helm init job at ``charts/cogniverse/templates/init-jobs.yaml`` (`schema-deployment`
-Job) loops `config.tenants` × `initJobs.schemaDeployment.profiles` and calls only
-`POST /admin/profiles/{profile}/deploy` — it does **not** call `POST /admin/tenants`,
+Job) deploys `config.defaultProfiles.video` (none when it is empty) for each
+`config.tenants` entry and calls only `POST /admin/profiles/{profile}/deploy` — it does **not** call `POST /admin/tenants`,
 so it never creates a `tenant_metadata` record; it just ensures each tenant's
 data (video/etc.) schema exists. Global metadata schemas (`organization_metadata`,
 `tenant_metadata`, `config_metadata`, `adapter_registry`) are deployed by the
@@ -265,7 +265,7 @@ sequenceDiagram
     Note over Runtime: At runtime startup (once, not per-tenant):<br/>upload_metadata_schemas() → organization_metadata, tenant_metadata,<br/>config_metadata, adapter_registry
 
     loop For each tenant in config.tenants
-        loop For each profile in initJobs.schemaDeployment.profiles
+        opt config.defaultProfiles.video is set
             InitJob->>Runtime: POST /admin/profiles/{profile}/deploy {"tenant_id": tenant.id, "force": false}
             Runtime->>Registry: deploy_schema(tenant_id, base_schema_name=profile, force)
             Registry->>Registry: Merge registry + live Vespa schemas (preserve peer tenants)
