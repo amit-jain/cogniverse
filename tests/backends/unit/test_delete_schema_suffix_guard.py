@@ -564,11 +564,15 @@ class TestTombstonesAreFencedAgainstATakeover:
         )
         mgr._deploy_package = stuck
 
-        with pytest.raises(DeploymentLeaseLost):
+        with pytest.raises(DeploymentLeaseLost) as caught:
             mgr.delete_schema("acme", "video_colpali")
 
         assert len(successors) == 1
         assert mgr._schema_registry.unregistered == []
+        assert caught.value.__notes__ == [
+            "Removed from Vespa but still registered: ['video_colpali_acme_acme']. "
+            "Re-run the delete to tombstone them."
+        ]
         successors[0].release()
 
     def test_delete_tenant_schemas_writes_no_tombstone_after_a_takeover(
@@ -587,11 +591,16 @@ class TestTombstonesAreFencedAgainstATakeover:
         stuck, successors = self._stuck_until_taken_over(monkeypatch, registry)
         mgr._redeploy_dropping = stuck
 
-        with pytest.raises(DeploymentLeaseLost):
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid}_{tid}"
+        with pytest.raises(DeploymentLeaseLost) as caught:
             mgr.delete_tenant_schemas("acme")
 
         assert len(successors) == 1
         assert registry.unregistered == []
+        assert caught.value.__notes__ == [
+            "Removed from Vespa but still registered: ['video_acme_acme']. "
+            "Re-run the delete to tombstone them."
+        ]
         successors[0].release()
 
     def test_bulk_delete_writes_no_tombstone_after_a_takeover(self, monkeypatch):
@@ -609,9 +618,14 @@ class TestTombstonesAreFencedAgainstATakeover:
         stuck, successors = self._stuck_until_taken_over(monkeypatch, registry)
         mgr._redeploy_dropping = stuck
 
-        with pytest.raises(DeploymentLeaseLost):
+        with pytest.raises(DeploymentLeaseLost) as caught:
             mgr.delete_tenant_schemas_bulk(["acme", "globex"])
 
         assert len(successors) == 1
         assert registry.unregistered == []
+        assert caught.value.__notes__ == [
+            "Removed from Vespa but still registered: "
+            "['video_acme_acme', 'wiki_globex_globex']. "
+            "Re-run the delete to tombstone them."
+        ]
         successors[0].release()

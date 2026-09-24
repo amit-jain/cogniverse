@@ -523,6 +523,28 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to upload content type schemas: {str(e)}")
             raise
 
+    @staticmethod
+    def _fence_tombstones(lease, still_registered) -> None:
+        """Refuse a registry tombstone once the deployment lease is lost.
+
+        The schemas are already gone from Vespa by then while their registry
+        rows remain, so the refusal names them for the operator to finish.
+        """
+        if lease is None:
+            return
+        from cogniverse_core.registries.schema_deploy_lease import (
+            DeploymentLeaseLost,
+        )
+
+        try:
+            lease.ensure_owned()
+        except DeploymentLeaseLost as exc:
+            exc.add_note(
+                f"Removed from Vespa but still registered: "
+                f"{sorted(still_registered)}. Re-run the delete to tombstone them."
+            )
+            raise
+
     @contextmanager
     def deployment_lease(self):
         """Hold the cross-process lease on the Vespa application package.
@@ -1114,8 +1136,7 @@ class VespaSchemaManager:
 
             # A holder stuck past its lease must not write the registry a
             # successor now owns.
-            if lease is not None:
-                lease.ensure_owned()
+            self._fence_tombstones(lease, [target])
             try:
                 self._schema_registry.unregister_schema(tenant_id, base_schema_name)
             except Exception as e:
@@ -1316,9 +1337,14 @@ class VespaSchemaManager:
                 )
 
             tombstone_failures = []
-            for base in registry_base_names:
-                if lease is not None:
-                    lease.ensure_owned()
+            for index, base in enumerate(registry_base_names):
+                self._fence_tombstones(
+                    lease,
+                    [
+                        self.get_tenant_schema_name(tenant_id, pending)
+                        for pending in registry_base_names[index:]
+                    ],
+                )
                 try:
                     self._schema_registry.unregister_schema(tenant_id, base)
                 except Exception as e:
@@ -1404,10 +1430,15 @@ class VespaSchemaManager:
                 )
 
             tombstone_failures = []
+            pending_tombstones = [
+                self.get_tenant_schema_name(tid, base)
+                for tid, bases in registry_bases_by_tenant.items()
+                for base in bases
+            ]
             for tid, bases in registry_bases_by_tenant.items():
                 for base in bases:
-                    if lease is not None:
-                        lease.ensure_owned()
+                    self._fence_tombstones(lease, pending_tombstones)
+                    pending_tombstones.pop(0)
                     try:
                         self._schema_registry.unregister_schema(tid, base)
                     except Exception as e:
