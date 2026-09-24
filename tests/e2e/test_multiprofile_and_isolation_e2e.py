@@ -344,6 +344,7 @@ class TestMultiProfileIngestion:
             windows, _ = _served_document_windows(
                 ProcessingStrategySet._extract_document_text(real_document_path)
             )
+            assert len(windows) > 1, windows
 
             data = _upload_file(
                 client,
