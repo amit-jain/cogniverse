@@ -141,8 +141,13 @@ directly rather than delegating to primaryLLMEndpoint, which falls back here.
 {{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
 {{- .Values.runtime.primaryLLM.apiBase -}}
 {{- else -}}
-{{- printf "http://%s-vllm-llm-student:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_student.service.port) -}}
+{{- include "cogniverse.llmStudentServiceUrl" . -}}
 {{- end -}}
+{{- end -}}
+
+{{/* The in-cluster vllm-llm-student Service's /v1 URL. */}}
+{{- define "cogniverse.llmStudentServiceUrl" -}}
+{{- printf "http://%s-vllm-llm-student:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_student.service.port) -}}
 {{- end -}}
 
 {{/*
@@ -545,8 +550,8 @@ point at Modal.
 Fails the render when config.defaultProfiles.video selects a profile this
 composition cannot serve. Reads the profile from the rendered config.json:
 every inference_services key it binds needs an enabled service or an
-externalUrl, and a VLMDescriptionStrategy needs the student endpoint, which
-is runtime.primaryLLM.apiBase or an enabled inference.vllm_llm_student.
+externalUrl, and a description vlm_endpoint on the in-cluster student
+Service needs inference.vllm_llm_student enabled.
 */}}
 {{- define "cogniverse.validateDefaultVideoProfile" -}}
 {{- $name := .Values.config.defaultProfiles.video -}}
@@ -565,12 +570,9 @@ is runtime.primaryLLM.apiBase or an enabled inference.vllm_llm_student.
 {{- fail (printf "config.defaultProfiles.video=%s binds inference_services.%s to %s: set inference.%s.enabled=true or inference.%s.externalUrl" $name $role $key $key $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if eq (dig "strategies" "description" "class" "" $profile) "VLMDescriptionStrategy" -}}
-{{- $apiBase := and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
-{{- $student := index .Values.inference "vllm_llm_student" | default dict -}}
-{{- if not (or $apiBase $student.enabled) -}}
-{{- fail (printf "config.defaultProfiles.video=%s describes frames with VLMDescriptionStrategy on the student endpoint: set runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true" $name) -}}
-{{- end -}}
+{{- $vlmEndpoint := dig "strategies" "description" "params" "vlm_endpoint" "" $profile -}}
+{{- if and (eq $vlmEndpoint (include "cogniverse.llmStudentServiceUrl" .)) (not .Values.inference.vllm_llm_student.enabled) -}}
+{{- fail (printf "config.defaultProfiles.video=%s describes frames with VLMDescriptionStrategy at %s, the in-cluster vllm_llm_student Service: set inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase at a served endpoint" $name $vlmEndpoint) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

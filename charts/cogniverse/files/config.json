@@ -1235,8 +1235,7 @@
     "default_profiles": {
 {{- with .Values.config.defaultProfiles.video }}
       "video": {
-        "profile": {{ . | quote }},
-        "strategy": "segmentation"
+        "profile": {{ . | quote }}
       }
 {{- end }}
     }
