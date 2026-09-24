@@ -617,6 +617,20 @@ class VespaBackend(Backend):
         )
         return target, document_namespace(target)
 
+    @staticmethod
+    def _names_unknown_document_type(exc: BaseException, target: str) -> bool:
+        """Whether Vespa refused the operation because ``target`` is not a
+        document type its content nodes hold (a removal still propagating)."""
+        pattern = re.compile(rf"Unknown document type {re.escape(target)}\b")
+        node: Optional[BaseException] = exc
+        for _ in range(5):
+            if node is None:
+                return False
+            if pattern.search(str(node)):
+                return True
+            node = node.__cause__ or node.__context__
+        return False
+
     def get_live_document(
         self, document_id: str, schema_name: str
     ) -> Optional[Document]:
@@ -624,16 +638,23 @@ class VespaBackend(Backend):
 
         The Document v1 read :meth:`get_document` does, minus the ingestion
         client whose cache miss deploys the schema; a read-before-delete must
-        not redeploy what it is about to delete from. None for a genuine 404.
+        not redeploy what it is about to delete from. None for a genuine 404,
+        and for Vespa's "Unknown document type" answer while a removal of this
+        schema reaches the content nodes: a type being removed holds no rows.
         """
         self._require_open()
         target, namespace = self._live_route(schema_name)
-        response = self._metadata_vespa_app().get_data(
-            schema=target,
-            data_id=document_id,
-            namespace=namespace,
-            raise_on_not_found=False,
-        )
+        try:
+            response = self._metadata_vespa_app().get_data(
+                schema=target,
+                data_id=document_id,
+                namespace=namespace,
+                raise_on_not_found=False,
+            )
+        except Exception as exc:
+            if self._names_unknown_document_type(exc, target):
+                return None
+            raise
         if getattr(response, "status_code", None) == 404:
             return None
         self._check_document_response(response, "get", document_id)
@@ -646,7 +667,9 @@ class VespaBackend(Backend):
         Goes straight to Document v1 instead of through the ingestion client,
         whose cache miss deploys the schema. Vespa answers a delete from a
         document type it does not have with success — such a schema holds no
-        documents — so that absence is idempotent; any refusal raises.
+        documents — so that absence is idempotent, as is its "Unknown document
+        type" answer while a removal of this schema propagates; any other
+        refusal raises.
         """
         self._require_open()
         target, namespace = self._live_route(schema_name)
@@ -656,6 +679,8 @@ class VespaBackend(Backend):
                 schema=target, data_id=document_id, namespace=namespace
             )
         except Exception as exc:
+            if self._names_unknown_document_type(exc, target):
+                return True
             raise RuntimeError(f"Failed to delete {route}: {exc}") from exc
         status = getattr(response, "status_code", None)
         if status in (200, 404):
