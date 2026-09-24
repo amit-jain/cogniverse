@@ -181,7 +181,16 @@ _CI_SELECTION_COMMANDS = [
     " tests/agents/integration -m ci_fast -v -p no:cacheprovider --tb=long",
     "uv run python -m pytest tests/charts -v -p no:cacheprovider --tb=long",
     "JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/cli/unit"
-    " tests/cli/integration -v -p no:cacheprovider --tb=long",
+    " tests/cli/integration"
+    " --ignore=tests/cli/integration/test_release_scripts.py"
+    " --ignore=tests/cli/integration/test_release_clean_install.py"
+    " --ignore=tests/cli/integration/test_image_model_provisioning.py"
+    " -v -p no:cacheprovider --tb=long",
+    "JAX_PLATFORM_NAME=cpu uv run python -m pytest"
+    " tests/cli/integration/test_release_scripts.py"
+    " tests/cli/integration/test_release_clean_install.py"
+    " tests/cli/integration/test_image_model_provisioning.py"
+    " -v -p no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
     " python -m pytest tests/common/unit -m 'unit or not integration' -v -p"
     " no:cacheprovider --tb=long",

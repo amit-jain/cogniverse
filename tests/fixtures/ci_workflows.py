@@ -159,7 +159,12 @@ def _parse_invocation(
         if "install" in tokens[:index]:
             return None  # ``pip install pytest ...``
         args = tokens[index + 1 :]
-        paths = tuple(a.rstrip("/") for a in args if a.startswith("tests/"))
+        ignore_values = {i + 1 for i, a in enumerate(args) if a == "--ignore"}
+        paths = tuple(
+            a.rstrip("/")
+            for i, a in enumerate(args)
+            if a.startswith("tests/") and i not in ignore_values
+        )
         marker_expr = None
         if "-m" in args:
             marker_index = args.index("-m")
