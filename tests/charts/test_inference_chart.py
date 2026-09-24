@@ -751,14 +751,15 @@ def test_base_values_select_no_video_profile():
 
 
 def test_rocm_overlay_selects_the_shipped_default_video_profile():
+    """The selection names the profile only. Search resolves the ranking from
+    the profile's schema when default_profiles carries no strategy."""
     config = _chart_config(_render(values="values.rocm.yaml"))
 
-    assert _shipped_default_video_selection() == {
-        "profile": "video_colpali_smol500_mv_frame",
-        "strategy": "segmentation",
-    }
+    assert _shipped_default_video_selection()["profile"] == (
+        "video_colpali_smol500_mv_frame"
+    )
     assert config["backend"]["default_profiles"] == {
-        "video": _shipped_default_video_selection()
+        "video": {"profile": "video_colpali_smol500_mv_frame"}
     }
     assert config["active_video_profile"] == "video_colpali_smol500_mv_frame"
     assert resolve_default_profile(config) == "video_colpali_smol500_mv_frame"
@@ -925,8 +926,10 @@ def test_cuda_composition_without_a_student_endpoint_is_refused(
 
     assert stderr == (
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
-        "with VLMDescriptionStrategy on the student endpoint: set "
-        "runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true"
+        "with VLMDescriptionStrategy at http://cogniverse-vllm-llm-student:8000/v1, "
+        "the in-cluster vllm_llm_student Service: set "
+        "inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase "
+        "at a served endpoint"
     ), stderr
 
 
@@ -1050,8 +1053,28 @@ def test_a_selected_vlm_profile_without_a_student_endpoint_is_refused():
 
     assert stderr == (
         f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
-        "with VLMDescriptionStrategy on the student endpoint: set "
-        "runtime.primaryLLM.apiBase or inference.vllm_llm_student.enabled=true"
+        "with VLMDescriptionStrategy at http://cogniverse-vllm-llm-student:8000/v1, "
+        "the in-cluster vllm_llm_student Service: set "
+        "inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase "
+        "at a served endpoint"
+    ), stderr
+
+
+def test_a_primary_llm_api_base_naming_the_undeployed_student_is_refused():
+    """An apiBase is not an endpoint by being set: one naming the in-cluster
+    student Service backs nothing while that service is disabled."""
+    stderr = _composition_failure(
+        ("values.rocm.yaml",),
+        "inference.vllm_llm_student.enabled=false",
+        "runtime.primaryLLM.apiBase=http://cogniverse-vllm-llm-student:8000/v1",
+    )
+
+    assert stderr == (
+        f"config.defaultProfiles.video={_SELECTED_VIDEO_PROFILE} describes frames "
+        "with VLMDescriptionStrategy at http://cogniverse-vllm-llm-student:8000/v1, "
+        "the in-cluster vllm_llm_student Service: set "
+        "inference.vllm_llm_student.enabled=true or point runtime.primaryLLM.apiBase "
+        "at a served endpoint"
     ), stderr
 
 

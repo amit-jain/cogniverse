@@ -477,14 +477,15 @@ and are overridden via `runtime.primaryLLM.apiBase`/`model`/`apiKey` instead.
 ### Selected video profile (`config.defaultProfiles.video`)
 
 `config.defaultProfiles.video` names the profile the chart writes to
-`backend.default_profiles.video` and `active_video_profile`. The base values
-select none; `values.rocm.yaml` and `values.cuda.yaml` select
-`video_colpali_smol500_mv_frame`. The render fails, naming the profile and
-key, unless every service in the selected profile's `inference_services` has
-`enabled: true` or an `externalUrl`, and, for a `VLMDescriptionStrategy`
-profile, the student endpoint comes from `runtime.primaryLLM.apiBase` or an
-enabled `inference.vllm_llm_student`. `values.cuda.yaml` deploys no student,
-so a CUDA composition sets `runtime.primaryLLM.apiBase` or composes
+`backend.default_profiles.video` (profile only; search takes the ranking from
+the profile's schema) and `active_video_profile`, and the one profile the
+schema-deployment job deploys. The base values select none; `values.rocm.yaml`
+and `values.cuda.yaml` select `video_colpali_smol500_mv_frame`. The render
+fails, naming the profile and key, unless every service in the selected
+profile's `inference_services` has `enabled: true` or an `externalUrl`, and
+unless a description `vlm_endpoint` on the in-cluster `vllm_llm_student`
+Service has that service enabled. `values.cuda.yaml` deploys no student, so a
+CUDA composition sets `runtime.primaryLLM.apiBase` or composes
 `values.modal-llm.yaml`.
 
 ---
