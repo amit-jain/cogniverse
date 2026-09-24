@@ -476,6 +476,10 @@ and are overridden via `runtime.primaryLLM.apiBase`/`model`/`apiKey` instead.
 
 ### Selected video profile (`config.defaultProfiles.video`)
 
+The reference deployment is `values.k3s.yaml` + `values.rocm.yaml` +
+`values.modal-llm.yaml` on an AMD Strix Halo host: ColPali and ASR in-cluster,
+the student and teacher LMs on external endpoints.
+
 `config.defaultProfiles.video` names the profile the chart writes to
 `backend.default_profiles.video` (profile only; search takes the ranking from
 the profile's schema) and `active_video_profile`, and the one profile the
