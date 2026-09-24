@@ -50,6 +50,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         exit 1; \
     fi && \
     uv sync --package cogniverse-dashboard --no-dev --frozen && \
+    uv sync --only-group runtime-models --inexact --frozen && \
     case "$TORCH_BACKEND" in \
         cpu) \
             uv pip install --reinstall \

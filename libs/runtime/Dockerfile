@@ -41,6 +41,7 @@ ARG SETUPTOOLS_SCM_PRETEND_VERSION
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
+    uv sync --only-group runtime-models --inexact --frozen && \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \
     uv pip install "arize-phoenix-evals<3" && \
