@@ -57,7 +57,7 @@ jobs:
 
       - name: Sync workspace dependencies
         run: |
-          uv sync
+          uv sync --frozen --extra cpu
 
       - name: Build packages
         run: |
@@ -79,7 +79,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-manifest
-          path: dist/BUILD_MANIFEST.txt
+          path: dist/BUILD_MANIFEST.json
           retention-days: 7
 
   # Run tests to verify packages
@@ -346,7 +346,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            BUILD_MANIFEST.txt
+            BUILD_MANIFEST.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
