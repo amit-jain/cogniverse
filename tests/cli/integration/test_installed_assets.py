@@ -214,11 +214,16 @@ def _sdist_asset_hashes(sdist: Path) -> dict[str, str]:
     }
 
 
-def _uv_build(source: Path, out_dir: Path, target: str) -> subprocess.CompletedProcess:
+def _uv_build(
+    source: Path, out_dir: Path, target: str | None, **env: str
+) -> subprocess.CompletedProcess:
+    """``uv build`` of one target, or with no target the documented path: the
+    sdist, then the wheel built from it."""
+    selection = [f"--{target}"] if target else []
     return subprocess.run(
-        ["uv", "build", f"--{target}", "--out-dir", str(out_dir), str(source)],
+        ["uv", "build", *selection, "--out-dir", str(out_dir), str(source)],
         cwd=source,
-        env=_clean_env(),
+        env={**_clean_env(), **env},
         capture_output=True,
         text=True,
         timeout=300,
@@ -482,21 +487,31 @@ def test_wheel_from_unpacked_sdist_carries_the_checkout_wheel_assets(
     checkout_wheel: Path, tmp_path: Path
 ) -> None:
     source = _disposable_checkout(tmp_path / "checkout")
+    # A tracked asset whose bytes exist only in this checkout: a build that read
+    # the workspace instead of the sdist would carry the workspace's bytes.
+    sentinel = "configs/config.json"
+    modified = (tmp_path / "checkout" / sentinel).read_bytes() + b"\n"
+    (tmp_path / "checkout" / sentinel).write_bytes(modified)
+    _git(tmp_path / "checkout", "commit", "-q", "-am", "sentinel")
+    expected = {**_canonical_asset_hashes(), sentinel: _sha256(modified)}
+    assert expected != _canonical_asset_hashes()
     sdist = _build(source, tmp_path / "sdist", "sdist")
+    disposable_checkout_wheel = _build(source, tmp_path / "checkout-wheel", "wheel")
     shutil.rmtree(tmp_path / "checkout")
 
     members = _sdist_members(sdist)
     assert members["hatch_build.py"] == (_CLI_ROOT / "hatch_build.py").read_bytes()
     assert members["pyproject.toml"] == (_CLI_ROOT / "pyproject.toml").read_bytes()
-    assert _sdist_asset_hashes(sdist) == _canonical_asset_hashes()
+    assert _sdist_asset_hashes(sdist) == expected
 
     project = _unpack_sdist(sdist, tmp_path / "unpacked")
     wheel = _build(project, tmp_path / "wheel", "wheel")
 
     wheel_from_sdist_asset_hashes = _wheel_asset_hashes(wheel)
-    wheel_from_checkout_asset_hashes = _wheel_asset_hashes(checkout_wheel)
-    assert wheel_from_checkout_asset_hashes == _canonical_asset_hashes()
+    wheel_from_checkout_asset_hashes = _wheel_asset_hashes(disposable_checkout_wheel)
+    assert wheel_from_checkout_asset_hashes == expected
     assert wheel_from_sdist_asset_hashes == wheel_from_checkout_asset_hashes
+    assert _wheel_asset_hashes(checkout_wheel) == _canonical_asset_hashes()
 
 
 @pytest.mark.integration
@@ -535,6 +550,26 @@ def test_sdist_build_fails_without_a_required_asset(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_build_outside_a_git_checkout_or_sdist_names_the_requirement(
+    tmp_path: Path,
+) -> None:
+    source = _disposable_checkout(tmp_path / "checkout")
+    shutil.rmtree(tmp_path / "checkout" / ".git")
+
+    build = _uv_build(
+        source, tmp_path / "out", "wheel", SETUPTOOLS_SCM_PRETEND_VERSION="1.2.3"
+    )
+
+    assert build.returncode == _BUILD_FAILURE_EXIT, build.stdout + build.stderr
+    assert (
+        "RuntimeError: cogniverse-cli builds its deployment assets from a git "
+        "checkout or an sdist; git rev-parse --show-toplevel failed in "
+        f"{source}: fatal: not a git repository"
+    ) in build.stderr
+    assert _artifacts(tmp_path / "out") == []
+
+
+@pytest.mark.integration
 def test_untracked_files_are_not_packaged(tmp_path: Path) -> None:
     source = _disposable_checkout(tmp_path / "checkout")
     for stray in (
@@ -562,15 +597,17 @@ def test_parallel_builds_share_no_writable_staging(tmp_path: Path) -> None:
         "checkout": _source_snapshot(tmp_path / "checkout"),
         "unpacked": _source_snapshot(project),
     }
-    jobs = [(source, tmp_path / f"checkout-{i}") for i in range(2)] + [
-        (project, tmp_path / f"unpacked-{i}") for i in range(2)
+    jobs = [
+        *((source, tmp_path / f"checkout-{i}", "wheel") for i in range(2)),
+        *((project, tmp_path / f"unpacked-{i}", "wheel") for i in range(2)),
+        *((source, tmp_path / f"sdist-then-wheel-{i}", None) for i in range(2)),
     ]
     start = threading.Barrier(len(jobs))
     results: list[subprocess.CompletedProcess | None] = [None] * len(jobs)
 
-    def build(index: int, job_source: Path, out_dir: Path) -> None:
+    def build(index: int, job_source: Path, out_dir: Path, target: str | None):
         start.wait()
-        results[index] = _uv_build(job_source, out_dir, "wheel")
+        results[index] = _uv_build(job_source, out_dir, target)
 
     threads = [
         threading.Thread(target=build, args=(index, *job))
@@ -585,8 +622,21 @@ def test_parallel_builds_share_no_writable_staging(tmp_path: Path) -> None:
         r.stderr for r in results
     ]
     assert [
-        _wheel_asset_hashes(next(out_dir.glob("*.whl"))) for _, out_dir in jobs
+        _wheel_asset_hashes(next(out_dir.glob("*.whl"))) for _, out_dir, _ in jobs
     ] == [_canonical_asset_hashes()] * len(jobs)
+    assert [
+        _sdist_asset_hashes(next(out_dir.glob("*.tar.gz")))
+        for _, out_dir, target in jobs
+        if target is None
+    ] == [_canonical_asset_hashes()] * 2
+    assert [len(_artifacts(out_dir)) for _, out_dir, target in jobs] == [
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+    ]
     assert {
         "checkout": _source_snapshot(tmp_path / "checkout"),
         "unpacked": _source_snapshot(project),
