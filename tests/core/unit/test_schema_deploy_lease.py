@@ -367,7 +367,14 @@ def test_a_holder_whose_process_was_killed_is_taken_over_at_once():
     store = InMemoryConfigStore()
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     dead = _lease(store, wait_seconds=0)
-    dead.holder = f"{socket.gethostname()}:{child.pid}:{uuid.uuid4().hex}"
+    dead.holder = ":".join(
+        (
+            socket.gethostname(),
+            schema_deploy_lease._pid_namespace(),
+            str(child.pid),
+            uuid.uuid4().hex,
+        )
+    )
     dead.acquire()
 
     with pytest.raises(TimeoutError):
@@ -389,7 +396,14 @@ def test_a_holder_on_another_host_is_not_taken_over_by_a_pid_probe():
     child.wait(timeout=10)
 
     foreign = _lease(store, wait_seconds=0)
-    foreign.holder = f"not-{socket.gethostname()}:{child.pid}:{uuid.uuid4().hex}"
+    foreign.holder = ":".join(
+        (
+            f"not-{socket.gethostname()}",
+            schema_deploy_lease._pid_namespace(),
+            str(child.pid),
+            uuid.uuid4().hex,
+        )
+    )
     foreign.acquire()
 
     with pytest.raises(TimeoutError):

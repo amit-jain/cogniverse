@@ -708,8 +708,10 @@ record the store did not confirm cleared is taken over at once by the process
 that released it, and by peers once they have watched it stand still.
 
 A record is also taken over at once when this node can *prove* its holder is
-gone. Holders are `host:pid:uuid`; the probe answers "gone" only for a holder
-on this host whose pid is no longer running, or one naming this very process
+gone. Holders are `host:pidns:pid:uuid`, where `pidns` names the PID
+namespace (kernel boot id and namespace inode); the probe answers "gone" only
+for a holder in this host's own PID namespace whose pid is no longer running,
+or one naming this very process
 that no live holder object owns any more — the state a thread that died, or a
 coroutine abandoned mid-deploy, leaves behind and the record itself cannot
 express. It never guesses about another node. Without that proof a leaked
