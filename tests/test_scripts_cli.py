@@ -1365,6 +1365,8 @@ def test_release_manifest_imports_only_root_declared_distributions():
         for spec in root["project"]["dependencies"]
     }
 
-    assert third_party == ["packaging"]
+    assert third_party == ["packaging", "requests"]
     assert {canonicalize_name(d) for d in providers["packaging"]} == {"packaging"}
+    assert {canonicalize_name(d) for d in providers["requests"]} == {"requests"}
     assert declared["packaging"] == "packaging==26.0"
+    assert declared["requests"] == "requests==2.33.1"
