@@ -721,9 +721,14 @@ results = search_service.search(
 
 `result_granularity` controls how hits are returned per profile. `source`
 returns one `SearchResult` per source content item, using the best-ranked
-document for that source. Each source result includes `matched_segments` with
-the retrieved documents for that source in relevance order and
-`segments_in_window` with the number of retrieved hits for that source.
+document for that source, for the best `top_k` sources by their best segment's
+score. Each source result includes `matched_segments` with that source's best
+segments (the profile's `source_collapse_oversample`, default 4) in relevance
+order and `segments_in_window` with the source's number of matched segments.
+The response also carries `source_search_incomplete`: `true` when a `source`
+search returned fewer than `top_k` sources because its nearest-neighbor
+candidate budget was full, so more matching sources may exist; `false`
+otherwise.
 `segment` returns every matching document and omits those fields. Video
 profiles default to `source`; non-video profiles default to `segment` unless
 their profile config says otherwise. A tenant's stored profile (for example
@@ -762,16 +767,14 @@ curl -X POST http://localhost:8000/search/ \
   }'
 ```
 
-The same `result_granularity` rules apply here: `source` collapses each source
-to its best-ranked document and returns `matched_segments` plus
-`segments_in_window` on each source-level result, while `segment` keeps every
-hit and omits those fields. Video profiles default to `source`; other profiles
-keep `segment` unless their config opts into a different default.
-
-The response, and the streamed `final` event's `data`, also carry
-`source_search_incomplete`: `true` when a `source` search returned fewer than
-`top_k` sources because its nearest-neighbor candidate budget was full, so more
-matching sources may exist; `false` otherwise.
+The same `result_granularity` rules apply here: `source` returns the best
+`top_k` sources, each collapsed to its best-ranked document with
+`matched_segments` (its best `source_collapse_oversample` segments, default 4)
+and `segments_in_window` (its number of matched segments); the response, and
+the streamed `final` event's `data`, carry `source_search_incomplete`.
+`segment` keeps every hit and omits those fields. Video profiles default to
+`source`; other profiles keep `segment` unless their config opts into a
+different default.
 
 **GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash
