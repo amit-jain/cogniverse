@@ -55,10 +55,12 @@ def _sdist_metadata(sdist: Path, stem: str) -> Metadata:
     member = f"{stem}/PKG-INFO"
     with tarfile.open(sdist) as archive:
         try:
-            raw = archive.extractfile(member).read()
+            info = archive.getmember(member)
         except KeyError:
             raise ReleaseArtifactError(f"{sdist.name}: missing {member}")
-        return _parse_metadata(sdist, member, raw)
+        if not info.isfile():
+            raise ReleaseArtifactError(f"{sdist.name}: {member} is not a regular file")
+        return _parse_metadata(sdist, member, archive.extractfile(info).read())
 
 
 def _sha256(path: Path) -> str:

@@ -93,10 +93,11 @@ build_package() {
 
     if [ "$RUN_TESTS" = true ]; then
         log_info "  Running tests for $package..."
-        if (cd "$PROJECT_ROOT" && JAX_PLATFORM_NAME=cpu timeout 300 uv run pytest "tests/${package}/" -v 2>&1 | tee "/tmp/build-test-${package}.log"); then
+        local test_log="$TEST_LOG_DIR/${package}.log"
+        if (cd "$PROJECT_ROOT" && JAX_PLATFORM_NAME=cpu timeout 300 uv run pytest "tests/${package}/" -v 2>&1 | tee "$test_log"); then
             log_success "  Tests passed for $package"
         else
-            log_warning "  Some tests failed for $package (see /tmp/build-test-${package}.log)"
+            log_warning "  Some tests failed for $package (see $test_log)"
             if [ "${STRICT:-false}" = true ]; then
                 return 1
             fi
@@ -111,7 +112,10 @@ build_package() {
 # Copy this invocation's artifacts into DIST_DIR without replacing different bytes
 collect_distributions() {
     log_info "Collecting distributions to $DIST_DIR..."
-    mkdir -p "$DIST_DIR"
+    if ! mkdir -p "$DIST_DIR"; then
+        log_error "Failed to create $DIST_DIR"
+        return 1
+    fi
 
     local artifacts=()
     local artifact
@@ -122,8 +126,11 @@ collect_distributions() {
     done
 
     local conflicts=0
+    local name
+    local target
+    local partial
     for artifact in "${artifacts[@]}"; do
-        local target="$DIST_DIR/$(basename "$artifact")"
+        target="$DIST_DIR/${artifact##*/}"
         if [ -e "$target" ] && ! cmp -s "$artifact" "$target"; then
             log_error "$target differs from the artifact built by this invocation"
             conflicts=$((conflicts + 1))
@@ -134,15 +141,19 @@ collect_distributions() {
         return 1
     fi
 
-    for artifact in "${artifacts[@]}"; do
-        local target="$DIST_DIR/$(basename "$artifact")"
-        if [ ! -e "$target" ]; then
-            cp "$artifact" "$target"
+    for artifact in "${artifacts[@]}" "$STAGE_DIR/$MANIFEST_NAME"; do
+        name="${artifact##*/}"
+        target="$DIST_DIR/$name"
+        if [ "$name" != "$MANIFEST_NAME" ] && [ -e "$target" ]; then
+            continue
+        fi
+        partial="$DIST_DIR/.$name.$$.partial"
+        if ! cp "$artifact" "$partial" || ! mv "$partial" "$target"; then
+            rm -f "$partial"
+            log_error "Failed to copy $name into $DIST_DIR"
+            return 1
         fi
     done
-
-    cp "$STAGE_DIR/$MANIFEST_NAME" "$DIST_DIR/.$MANIFEST_NAME.tmp"
-    mv "$DIST_DIR/.$MANIFEST_NAME.tmp" "$DIST_DIR/$MANIFEST_NAME"
     log_success "Collected ${#artifacts[@]} artifact(s) listed in $DIST_DIR/$MANIFEST_NAME"
 }
 
@@ -158,6 +169,10 @@ main() {
 
     STAGE_DIR=$(mktemp -d)
     trap 'rm -rf "$STAGE_DIR"' EXIT
+    if [ "$RUN_TESTS" = true ]; then
+        TEST_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cogniverse-build-tests.XXXXXX")
+        log_info "Test logs: $TEST_LOG_DIR"
+    fi
 
     cd "$PROJECT_ROOT"
 
