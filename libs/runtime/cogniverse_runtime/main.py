@@ -119,6 +119,11 @@ async def _build_shared_a2a_protocol(
     max_concurrent_cancels: int = 16,
 ) -> _SharedA2AProtocol:
     """Validate Redis and construct the replica-safe A2A protocol app."""
+    if max_concurrent_cancels < 1:
+        raise ValueError(
+            "A2A_MAX_CONCURRENT_CANCELS (max_concurrent_cancels) must be >= 1, "
+            f"got {max_concurrent_cancels}"
+        )
     from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
     from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
