@@ -202,3 +202,45 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
         app_name=application_name, allow_schema_removal=False
     )
     logger.info("Metadata schemas bootstrapped for fresh backend")
+
+
+def metadata_schemas_current(schema_manager) -> bool:
+    """Whether every metadata schema live in the backend is the one this
+    build deploys.
+
+    Reads each metadata schema file of the active application from the
+    config server and compares it with the definition
+    ``upload_metadata_schemas`` would deploy. A failed or missing read
+    answers False, so the caller deploys.
+    """
+    import re
+
+    import requests
+
+    from cogniverse_vespa.metadata_schemas import (
+        create_adapter_registry_schema,
+        create_config_metadata_schema,
+        create_organization_metadata_schema,
+        create_tenant_metadata_schema,
+    )
+
+    base_url = re.sub(r":\d+$", "", schema_manager.backend_endpoint)
+    schemas_url = (
+        f"{base_url}:{schema_manager.backend_port}"
+        "/application/v2/tenant/default/application/default/"
+        "environment/prod/region/default/instance/default/content/schemas/"
+    )
+    for schema in (
+        create_organization_metadata_schema(),
+        create_tenant_metadata_schema(),
+        create_config_metadata_schema(),
+        create_adapter_registry_schema(),
+    ):
+        try:
+            response = requests.get(f"{schemas_url}{schema.name}.sd", timeout=10)
+        except requests.RequestException as exc:
+            logger.info("Live metadata schema %s unreadable: %s", schema.name, exc)
+            return False
+        if response.status_code != 200 or response.text != schema.schema_to_text:
+            return False
+    return True
