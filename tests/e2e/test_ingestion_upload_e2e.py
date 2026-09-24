@@ -49,14 +49,18 @@ from pathlib import Path
 import httpx
 import pytest
 import requests
+import yaml
 
 from cogniverse_agents.graph.graph_schema import (
     node_id_from_doc_id,
     normalize_name,
 )
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.utils import resolve_default_profile
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_runtime.ingestion_worker.idempotency import DONE_KEY_PREFIX
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
+from cogniverse_vespa.ingestion_client import document_namespace
 from tests.e2e.conftest import (
     E2E_ARTIFACT_DIR,
     KUBECTL_CONTEXT,
@@ -919,3 +923,138 @@ def test_chunk_profile_upload_reclaims_its_scratch(real_video_path):
         "the restart rather than released by the run"
     )
     assert {pod: _scratch_snapshot(pod) for pod in pods} == before
+
+
+# --------------------------------------------------------------------- #
+# The deployed composition ingests through the profile it selects        #
+# --------------------------------------------------------------------- #
+
+CHART_ROOT = REPO_ROOT / "charts" / "cogniverse"
+
+# Runs inside the ingestor pod, so each model id comes from the endpoint the
+# worker itself calls, through the probe the worker's own code uses.
+_INGESTOR_MODEL_PROBE = """
+import json, os, sys
+from cogniverse_runtime.inference_health_check import probe_service_model
+from cogniverse_runtime.ingestion.processors.vlm_descriptor import VLMDescriptor
+bindings = json.loads(sys.argv[1])
+urls = json.loads(os.environ["INFERENCE_SERVICE_URLS"])
+served = {
+    role: probe_service_model(urls[key], timeout_seconds=30.0)
+    for role, key in bindings.items()
+}
+served["description"] = VLMDescriptor(vlm_endpoint=sys.argv[2])._resolve_openai_model()
+print(json.dumps(served, sort_keys=True))
+"""
+
+
+def _composed_default_video_profile() -> str:
+    """``config.defaultProfiles.video`` as the e2e deploy's values stack sets it."""
+    from tests.e2e.deployment.conftest import deployment_helm_inputs
+
+    inputs = deployment_helm_inputs(REPO_ROOT)
+    assert "config.defaultProfiles.video" not in inputs["helm_set_overrides"]
+    selected = ""
+    for values_file in [CHART_ROOT / "values.yaml", *inputs["helm_values"]]:
+        values = yaml.safe_load(Path(values_file).read_text()) or {}
+        defaults = (values.get("config") or {}).get("defaultProfiles") or {}
+        if "video" in defaults:
+            selected = defaults["video"]
+    return selected
+
+
+def _deployed_chart_config() -> dict:
+    configmap = json.loads(
+        _kubectl_out("get", "configmap", "cogniverse-config", "-o", "json")
+    )
+    return json.loads(configmap["data"]["config.json"])
+
+
+def _models_served_to_the_ingestor(bindings: dict, vlm_endpoint: str) -> dict:
+    return json.loads(
+        _kubectl_out(
+            "exec",
+            "deploy/cogniverse-ingestor",
+            "-c",
+            "ingestor",
+            "--",
+            "python",
+            "-c",
+            _INGESTOR_MODEL_PROBE,
+            json.dumps(bindings),
+            vlm_endpoint,
+            timeout=900,
+        )
+    )
+
+
+@pytest.mark.e2e
+def test_the_deployed_composition_ingests_through_its_selected_profile(
+    real_video_path,
+):
+    """An upload that names no profile runs on the profile the deployed values
+    stack selected, against the exact models that profile binds, to
+    ``complete`` with exactly the documents the profile produces."""
+    deployed = _deployed_chart_config()
+    profile_name = resolve_default_profile(deployed)
+
+    assert (profile_name or "") == _composed_default_video_profile()
+    assert profile_name, "the deployed composition selects no video profile"
+    assert deployed["active_video_profile"] == profile_name
+    profile = deployed["backend"]["profiles"][profile_name]
+    bindings = profile["inference_services"]
+    description = profile["strategies"]["description"]
+    assert description["class"] == "VLMDescriptionStrategy"
+
+    served = _models_served_to_the_ingestor(
+        bindings, description["params"]["vlm_endpoint"]
+    )
+    assert served == {
+        **{
+            role: get_inference_service_spec(key).model_id
+            for role, key in bindings.items()
+        },
+        "description": deployed["llm_config"]["primary"]["model"].removeprefix(
+            "openai/"
+        ),
+    }
+    assert served["embedding"] == profile["embedding_model"]
+
+    tenant_id = unique_id("prode2epipe")
+    register_tenant_and_wait(tenant_id, created_by="e2e-test")
+    expected_documents = _expected_sample_documents_fed(
+        real_video_path, profile_name, "video/mp4"
+    )
+
+    with open(real_video_path, "rb") as handle:
+        resp = requests.post(
+            f"{RUNTIME_URL}/ingestion/upload",
+            files={"file": (real_video_path.name, handle, "video/mp4")},
+            data={"tenant_id": tenant_id},
+            params={"force": "true"},
+            timeout=60,
+        )
+    assert resp.status_code == 200, (
+        f"upload failed: HTTP {resp.status_code} body={resp.text[:300]}"
+    )
+    upload = resp.json()
+    assert upload["state"] == "queued", upload
+
+    final = _wait_terminal(upload["ingest_id"], deadline_s=2400)
+    assert final["state"] == "complete", final
+    latest = final["latest"]
+    assert latest["state"] == "complete", latest
+    result = latest["result"]
+    assert result["documents_fed"] == expected_documents, result
+    assert result["chunks"] == expected_documents, result
+
+    schema = _tenant_schema_name(profile["schema_name"], canonical_tenant_id(tenant_id))
+    video_id = result["video_id"]
+    documents = _vespa_search(
+        f'select documentid from sources {schema} where video_id contains "{video_id}"'
+    )
+    namespace = document_namespace(schema)
+    assert sorted(d["documentid"] for d in documents) == sorted(
+        f"id:{namespace}:{schema}::{video_id}_seg_{index}"
+        for index in range(expected_documents)
+    )
