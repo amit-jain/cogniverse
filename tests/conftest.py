@@ -365,6 +365,9 @@ def cleanup_dspy_state():
             # Clear the LM
             if hasattr(dspy.settings, "lm"):
                 dspy.settings.lm = None
+                runtime_main = sys.modules.get("cogniverse_runtime.main")
+                if runtime_main is not None:
+                    runtime_main._DSPY_AMBIENT_CONFIGURED = False
 
             # Clear adapters if they exist
             if hasattr(dspy.settings, "adapter"):
