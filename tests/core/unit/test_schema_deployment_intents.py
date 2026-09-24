@@ -428,3 +428,124 @@ def test_reconcile_fences_each_write(journal, registration):
         fence=lambda: events.append("fence"),
     ) == [registration]
     assert events == ["fence", "fence", "register", "fence"]
+
+
+def _lost_on_call(number, before_raising=lambda: None):
+    """A fence that holds for ``number - 1`` checks and then refuses."""
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    calls = []
+
+    def fence():
+        calls.append(True)
+        if len(calls) == number:
+            before_raising()
+            raise DeploymentLeaseLost("Vespa deployment lease expired or was replaced")
+
+    return fence, calls
+
+
+def test_a_lease_lost_after_the_claim_does_not_consume_an_attempt(
+    journal, registration
+):
+    """Repeated takeovers between the claim and the registration must not
+    exhaust recovery: an attempt that never wrote the registration is
+    released."""
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+    for _ in range(4):
+        fence, calls = _lost_on_call(2)
+        with pytest.raises(DeploymentLeaseLost):
+            journal.reconcile(
+                {registration["full_schema_name"]},
+                {},
+                lambda row, _version: pytest.fail(f"registered {row}"),
+                fence=fence,
+            )
+        assert len(calls) == 2
+        assert journal.records()[0]["attempts"] == 0
+        assert journal.records()[0]["state"] == "pending"
+    written = []
+    assert journal.reconcile(
+        {registration["full_schema_name"]},
+        {},
+        lambda row, _version: written.append(row),
+    ) == [registration]
+    assert written == [registration]
+
+
+def test_releasing_a_lost_claim_never_overwrites_a_successor(journal, registration):
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+
+    def successor_completes():
+        journal.complete(journal.records()[0])
+
+    fence, _calls = _lost_on_call(2, before_raising=successor_completes)
+    with pytest.raises(DeploymentLeaseLost):
+        journal.reconcile(
+            {registration["full_schema_name"]},
+            {},
+            lambda row, _version: pytest.fail(f"registered {row}"),
+            fence=fence,
+        )
+    record = journal.records()[0]
+    assert (record["state"], record["attempts"]) == ("complete", 1)
+
+
+def test_completing_a_registered_intent_is_fenced(journal, registration):
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+    before = copy.deepcopy(journal._store.rows)
+    fence, calls = _lost_on_call(1)
+    with pytest.raises(DeploymentLeaseLost):
+        journal.reconcile(
+            {registration["full_schema_name"]},
+            {registration["full_schema_name"]: registration},
+            lambda row, _version: pytest.fail(f"registered {row}"),
+            fence=fence,
+        )
+    assert calls == [True]
+    assert journal._store.rows == before
+
+
+def test_retiring_an_absent_intent_is_fenced(journal, registration):
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+    before = copy.deepcopy(journal._store.rows)
+    fence, calls = _lost_on_call(1)
+    with pytest.raises(DeploymentLeaseLost):
+        journal.reconcile(
+            set(),
+            {},
+            lambda row, _version: pytest.fail(f"registered {row}"),
+            fence=fence,
+        )
+    assert calls == [True]
+    assert journal._store.rows == before
+
+
+def test_marking_recovery_failed_is_fenced(journal, registration):
+    """The last attempt's failed transition is a journal write too."""
+    from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
+
+    journal.prepare(registration, grace_s=0)
+
+    def unavailable(row, _version):
+        raise ConnectionError("registry boundary unavailable")
+
+    for _ in (1, 2):
+        with pytest.raises(RegistryStorageError):
+            journal.reconcile({registration["full_schema_name"]}, {}, unavailable)
+    fence, calls = _lost_on_call(3)
+    with pytest.raises(DeploymentLeaseLost):
+        journal.reconcile(
+            {registration["full_schema_name"]}, {}, unavailable, fence=fence
+        )
+    assert len(calls) == 3
+    record = journal.records()[0]
+    assert (record["state"], record["attempts"]) == ("pending", 3)

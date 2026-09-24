@@ -293,7 +293,19 @@ class SchemaDeploymentIntents:
                     f"Recovery of {name!r} failed on attempt {attempt['attempts']}/{_MAX_ATTEMPTS}: {exc}"
                 )
 
-            check()
+            try:
+                check()
+            except Exception as refused:
+                # The claim was never used: hand the attempt back so repeated
+                # takeovers cannot exhaust recovery. Conditional on the claim's
+                # own revision, so a successor's write since is never undone.
+                try:
+                    self._save({**attempt, "attempts": record["attempts"]})
+                except RegistryStorageError as release_exc:
+                    refused.add_note(
+                        f"The recovery attempt was not released: {release_exc}"
+                    )
+                raise
             try:
                 write_registration(copy.deepcopy(row), record["registry_version"])
             except Exception as exc:
