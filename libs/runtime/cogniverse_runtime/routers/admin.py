@@ -707,6 +707,9 @@ async def deploy_profile_schema(
     Deploy schema for a backend profile.
 
     Deploys the Vespa schema associated with the profile to the tenant's namespace.
+    The profile resolves from the tenant's stored profiles first, otherwise from
+    the tenant's merged catalog of shipped profiles, which the list/get routes
+    do not show.
 
     Args:
         profile_name: Profile name (path parameter)
