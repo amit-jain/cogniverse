@@ -1687,9 +1687,14 @@ uses the candidate budget `max(top_k, min(top_k * source_collapse_oversample,
 than `top_k` sources come back and the match count reached the budget, the
 returned `SearchResultBatch` has `source_search_incomplete=True`: sources beyond
 the budget may exist. `False` does not make the search exhaustive: approximate
-`nearestNeighbor` retrieval can still miss segments. `total_count` is the
-number of matched segments. A response with errors, degraded coverage or
-missing grouping raises `VespaError`.
+`nearestNeighbor` retrieval can still miss segments. `targetHits` applies per
+content node, so on a multi-node content cluster more segments than the budget
+can reach grouping and the flag can be `True` although no node's budget was
+full. `total_count` is the number of matched segments. `source_collapse_oversample`
+must be between 1 and 64, and a source search whose
+`top_k * (1 + source_collapse_oversample)` exceeds 10000 grouping rows raises
+`ValueError` without querying Vespa. A response with errors, degraded coverage
+or missing grouping raises `VespaError`.
 
 `export_embeddings()` defaults to the backend's configured schema; an explicit
 `schema` argument overrides it for that call. It walks Vespa's Document v1

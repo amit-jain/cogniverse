@@ -387,6 +387,10 @@ def test_source_collapse_fetch_limit_uses_bounded_multiplier(
             {"source_collapse_oversample": 1.5},
             "source_collapse_oversample must be an integer",
         ),
+        (
+            {"source_collapse_oversample": 65},
+            "source_collapse_oversample must be <= 64",
+        ),
     ],
 )
 def test_source_collapse_fetch_limit_rejects_invalid_oversample(

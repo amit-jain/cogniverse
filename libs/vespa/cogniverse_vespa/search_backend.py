@@ -93,6 +93,9 @@ _SEARCH_CONTENT_TYPES = {
 _SOURCE_COLLAPSE_OVERSAMPLE_KEY = "source_collapse_oversample"
 _SOURCE_COLLAPSE_OVERSAMPLE_DEFAULT = 4
 _SOURCE_COLLAPSE_FETCH_LIMIT_CEILING = 256
+_SOURCE_COLLAPSE_OVERSAMPLE_MAX = 64
+# Vespa's default grouping.globalMaxGroups: groups plus summaries per query.
+_SOURCE_GROUPING_MAX_ROWS = 10000
 
 
 def _schema_source_identity_field(
@@ -171,7 +174,24 @@ def _source_collapse_oversample(profile_config: Mapping[str, Any]) -> int:
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be an integer")
     if oversample < 1:
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be >= 1")
+    if oversample > _SOURCE_COLLAPSE_OVERSAMPLE_MAX:
+        raise ValueError(
+            f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be <= "
+            f"{_SOURCE_COLLAPSE_OVERSAMPLE_MAX}"
+        )
     return oversample
+
+
+def _source_grouping_rows(top_k: int, window: int) -> int:
+    """Groups plus summaries a source grouping may return, within the limit."""
+    rows = top_k * (1 + window)
+    if rows > _SOURCE_GROUPING_MAX_ROWS:
+        raise ValueError(
+            f"Source search for top_k={top_k} with {window} segments per source "
+            f"needs {rows} grouping rows, above the limit of "
+            f"{_SOURCE_GROUPING_MAX_ROWS}"
+        )
+    return rows
 
 
 def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
@@ -226,12 +246,12 @@ def _collapse_results_by_source(
     total_count: Optional[int],
     temporal_field_names: tuple[str, ...] = (),
     source_search_incomplete: bool = False,
-    segment_counts: Optional[Mapping[str, int]] = None,
+    segment_counts: Mapping[str, int],
 ) -> SearchResultBatch:
     """Keep the best hit per source identity in relevance order.
 
-    ``segment_counts`` maps a source to its matched-segment count; without it
-    ``segments_in_window`` counts the source's hits in ``results``.
+    ``segment_counts`` maps each source to its matched-segment count, which
+    becomes its ``segments_in_window``.
     """
     grouped_results: Dict[str, List[SearchResult]] = {}
     ordered_source_keys: List[str] = []
@@ -256,11 +276,7 @@ def _collapse_results_by_source(
                     _source_segment_row(result, temporal_field_names)
                     for result in source_results
                 ],
-                segments_in_window=(
-                    len(source_results)
-                    if segment_counts is None
-                    else segment_counts[source_key]
-                ),
+                segments_in_window=segment_counts[source_key],
             )
         )
 
@@ -1356,6 +1372,8 @@ class VespaSearchBackend(SearchBackend):
         fetch_limit = top_k
         if result_granularity == "source":
             fetch_limit = _source_collapse_fetch_limit(top_k, profile_config)
+            source_window = _source_collapse_oversample(profile_config)
+            source_grouping_rows = _source_grouping_rows(top_k, source_window)
         if result_granularity == "source" and self._schema_loader is None:
             raise ValueError(
                 f"Profile '{profile_name}' (schema "
@@ -1580,13 +1598,12 @@ class VespaSearchBackend(SearchBackend):
             if result_granularity == "source":
                 # Vespa groups every match by source; nearestNeighbor still
                 # caps the matches at targetHits == fetch_limit.
-                window = _source_collapse_oversample(profile_config)
                 grouped_query_params = dict(query_params, hits=0)
                 grouped_query_params["yql"] = (
                     f"{query_params['yql']} | "
-                    f"{_source_grouping(source_identity_field, top_k, window)}"
+                    f"{_source_grouping(source_identity_field, top_k, source_window)}"
                 )
-                grouped_query_params["grouping.globalMaxGroups"] = top_k * (1 + window)
+                grouped_query_params["grouping.globalMaxGroups"] = source_grouping_rows
                 response = _execute_query(grouped_query_params)
                 window_results, total_count, segment_counts = (
                     self._process_grouped_results(
@@ -1617,9 +1634,6 @@ class VespaSearchBackend(SearchBackend):
                     response,
                     correlation_id,
                     content_type,
-                    top_k=top_k,
-                    fetch_limit=fetch_limit,
-                    result_granularity=result_granularity,
                     source_identity_field=source_identity_field,
                 )
 
@@ -1957,13 +1971,9 @@ class VespaSearchBackend(SearchBackend):
         response: Any,
         correlation_id: str,
         content_type: str,
-        top_k: Optional[int] = None,
-        fetch_limit: Optional[int] = None,
-        result_granularity: str = "segment",
         source_identity_field: Optional[str] = None,
-        collapse_source_results: bool = True,
     ) -> SearchResultBatch:
-        """Process Vespa response into SearchResult objects.
+        """Process a segment-granularity Vespa response into SearchResults.
 
         Raises:
             VespaError: If the response is missing, carries ``root.errors``, or
@@ -2003,27 +2013,12 @@ class VespaSearchBackend(SearchBackend):
                 total_count = int(raw_total_count)
 
         collapsed_documents = 0
-        effective_result_granularity = result_granularity
-        if result_granularity == "source" and collapse_source_results:
-            if top_k is None:
-                top_k = len(results)
-            if fetch_limit is None:
-                fetch_limit = len(results)
-            results = _collapse_results_by_source(
-                results,
-                top_k=top_k,
-                fetch_limit=fetch_limit,
-                total_count=total_count,
-            )
-            collapsed_documents = results.num_collapsed_documents
-        elif result_granularity == "source":
-            effective_result_granularity = "segment"
-        elif total_count is not None:
+        if total_count is not None:
             collapsed_documents = max(total_count - len(results), 0)
 
         return SearchResultBatch(
             results,
-            result_granularity=effective_result_granularity,
+            result_granularity="segment",
             num_collapsed_documents=collapsed_documents,
             total_count=total_count,
         )

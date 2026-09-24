@@ -51,7 +51,8 @@ def test_collapse_keeps_best_document_per_source():
         results,
         top_k=3,
         fetch_limit=4,
-        total_count=4,
+        total_count=7,
+        segment_counts={"source-a": 5, "source-b": 1, "source-c": 1},
     )
 
     assert [result.document.id for result in collapsed] == [
@@ -68,14 +69,14 @@ def test_collapse_keeps_best_document_per_source():
         {"document_id": "doc-a-0", "score": 0.99},
         {"document_id": "doc-a-1", "score": 0.95},
     ]
-    assert collapsed[0].segments_in_window == 2
+    assert collapsed[0].segments_in_window == 5
     assert collapsed[1].matched_segments == [{"document_id": "doc-b-0", "score": 0.90}]
     assert collapsed[1].segments_in_window == 1
     assert collapsed[2].matched_segments == [{"document_id": "doc-c-0", "score": 0.85}]
     assert collapsed[2].segments_in_window == 1
     assert collapsed.result_granularity == "source"
-    assert collapsed.num_collapsed_documents == 1
-    assert collapsed.total_count == 4
+    assert collapsed.num_collapsed_documents == 4
+    assert collapsed.total_count == 7
 
 
 def test_collapse_returns_available_sources_when_window_is_insufficient():
@@ -91,6 +92,7 @@ def test_collapse_returns_available_sources_when_window_is_insufficient():
         top_k=3,
         fetch_limit=4,
         total_count=10,
+        segment_counts={"source-a": 10},
     )
 
     assert [result.document.id for result in collapsed] == ["doc-a-0"]
@@ -100,7 +102,7 @@ def test_collapse_returns_available_sources_when_window_is_insufficient():
         {"document_id": "doc-a-2", "score": 0.90},
         {"document_id": "doc-a-3", "score": 0.85},
     ]
-    assert collapsed[0].segments_in_window == 4
+    assert collapsed[0].segments_in_window == 10
     assert collapsed.result_granularity == "source"
     assert collapsed.num_collapsed_documents == 9
     assert collapsed.total_count == 10

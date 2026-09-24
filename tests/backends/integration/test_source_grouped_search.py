@@ -53,6 +53,8 @@ FAST_RETRY = RetryConfig(
 )
 
 BIG_OTHERS = [f"bigother{j}" for j in range(9)]
+# Fed in this order; ascending id order is the reverse.
+CUT_OFF_TIES = ["cut_x", "cut_q", "cut_m", "cut_d", "cut_b"]
 DOMINANT_WINDOWS = {
     "sourdough_guide": [
         "Feed the sourdough starter with equal weights of flour and water every morning.",
@@ -221,6 +223,14 @@ def mv_corpus(vespa_instance, config_manager):
                 ),
             )
             fed += 1
+    for source_id in CUT_OFF_TIES:
+        _feed(
+            port,
+            schema,
+            f"{source_id}_0",
+            _video_fields(source_id, "cutoffcorpus", 0, *_patch_tensors(0.7, 0.7, dim)),
+        )
+        fed += 1
     _wait_for_count(port, schema, fed)
     return schema
 
@@ -614,13 +624,13 @@ class TestGroupedSourcesWithoutAnn:
     def test_tied_sources_at_the_cut_off_are_kept_by_source_identity(self, counted):
         backend, _ = counted
 
-        results = backend.search(_mv_query(2, "tiecorpus"))
+        results = backend.search(_mv_query(2, "cutoffcorpus"))
 
         assert [
             (hit.document.metadata["source_id"], hit.document.id) for hit in results
-        ] == [("tie_a", "tie_a_0"), ("tie_b", "tie_b_0")]
-        assert results.total_count == 6
-        assert results.num_collapsed_documents == 4
+        ] == [("cut_b", "cut_b_0"), ("cut_d", "cut_d_0")]
+        assert results.total_count == 5
+        assert results.num_collapsed_documents == 3
 
     def test_no_match_is_an_empty_complete_batch(self, counted):
         backend, proxy = counted
@@ -721,6 +731,41 @@ class TestGroupedSourcesWithAnn:
         assert results.total_count == 401
         assert results.source_search_incomplete is True
 
+    def test_binary_hybrid_matches_saturating_the_budget_report_incomplete(
+        self, counted
+    ):
+        backend, _ = counted
+        query = _ann_query(
+            10, "bigcorpus", strategy="hybrid_binary_bm25", query="harbour"
+        )
+        # Positive in the two dimensions every dominant segment after the
+        # first sets, so their packed bits equal the query's.
+        query["query_embeddings"] = np.zeros(768, dtype=np.float32)
+        query["query_embeddings"][:2] = 1.0
+
+        results = backend.search(query)
+
+        assert [hit.document.metadata["source_id"] for hit in results] == ["bigdom"]
+        assert [hit.segments_in_window for hit in results] == [401]
+        assert results.total_count == 401
+        assert results.source_search_incomplete is True
+
+    def test_binary_hybrid_matches_within_the_budget_report_complete(self, counted):
+        backend, _ = counted
+        query = _ann_query(
+            10, "smallcorpus", strategy="hybrid_binary_bm25", query="harbour"
+        )
+
+        results = backend.search(query)
+
+        assert {hit.document.metadata["source_id"] for hit in results} == {
+            "smalldom",
+            "smallother",
+        }
+        assert results.total_count == 19
+        assert results.source_search_incomplete is False
+        _assert_matches_reference(results, _complete_segments(backend, query), 10)
+
     def test_hybrid_matches_within_the_budget_report_complete(self, counted):
         backend, _ = counted
         query = _ann_query(
@@ -736,6 +781,33 @@ class TestGroupedSourcesWithAnn:
         assert results.total_count == 19
         assert results.source_search_incomplete is False
         _assert_matches_reference(results, _complete_segments(backend, query), 10)
+
+    def test_a_grouping_above_the_row_ceiling_is_refused_before_vespa(self, counted):
+        backend, proxy = counted
+        before = _search_requests(proxy)
+
+        with pytest.raises(ValueError) as excinfo:
+            backend.search(_ann_query(1000, "bigcorpus", profile=ANN_WIDE_PROFILE))
+
+        assert str(excinfo.value) == (
+            "Source search for top_k=1000 with 10 segments per source needs "
+            "11000 grouping rows, above the limit of 10000"
+        )
+        assert _search_requests(proxy) - before == 0
+
+    def test_a_grouping_at_the_row_ceiling_runs(self, counted):
+        backend, proxy = counted
+        before = _search_requests(proxy)
+
+        results = backend.search(_ann_query(909, "bigcorpus", profile=ANN_WIDE_PROFILE))
+
+        assert _search_requests(proxy) - before == 1
+        assert [hit.document.metadata["source_id"] for hit in results] == [
+            "bigdom",
+            *BIG_OTHERS,
+        ]
+        assert results.total_count == 410
+        assert results.source_search_incomplete is False
 
     def test_filters_apply_before_the_candidate_budget(self, counted):
         backend, _ = counted
@@ -972,6 +1044,7 @@ class TestSelectedDefaultVideoProfileFromTheConfigStore:
     ):
         backend, proxy = counted
         stored = config_manager.get_backend_config(ANN_TENANT)
+        read_defaults = dict(stored.default_profiles)
         stored.default_profiles = {"video": {"profile": ANN_PROFILE}}
         config_manager.set_backend_config(stored, tenant_id=ANN_TENANT)
         query = _ann_query(10, "bigcorpus")
@@ -980,7 +1053,7 @@ class TestSelectedDefaultVideoProfileFromTheConfigStore:
         try:
             results = backend.search(query)
         finally:
-            stored.default_profiles = {}
+            stored.default_profiles = read_defaults
             config_manager.set_backend_config(stored, tenant_id=ANN_TENANT)
 
         assert self._restricted_schemas(proxy, before) == [ann_corpus]
@@ -1006,3 +1079,36 @@ class TestSelectedDefaultVideoProfileFromTheConfigStore:
             "bigdom",
             *BIG_OTHERS,
         ]
+
+
+@pytest.mark.asyncio
+class TestTheDispatchedSearchPath:
+    """top_k from dispatch context reaches the backend unbounded by REST."""
+
+    async def test_a_dispatched_search_above_the_row_ceiling_is_refused(
+        self, config_manager, text_corpus
+    ):
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+        dispatcher = AgentDispatcher(
+            agent_registry=AgentRegistry(
+                tenant_id=TEXT_TENANT, config_manager=config_manager
+            ),
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(SCHEMAS_DIR),
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            await dispatcher._execute_search_task(
+                "feeding a sourdough starter",
+                TEXT_TENANT,
+                top_k=2001,
+                enrichment={"profiles": [TEXT_PROFILE]},
+                query_rewrite_timeout_s=1.0,
+            )
+
+        assert str(excinfo.value) == (
+            "Source search for top_k=2001 with 4 segments per source needs "
+            "10005 grouping rows, above the limit of 10000"
+        )
