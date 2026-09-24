@@ -1609,3 +1609,64 @@ def test_a_failed_registry_read_inside_the_lease_refuses_instead_of_resurrecting
     assert victim_schema not in set(
         connect().schema_manager.list_deployed_document_types()
     )
+
+
+def test_a_rollback_honours_a_peer_delete_in_its_window(recovery_backend, monkeypatch):
+    """An existing schema's registration fails after activation and the deploy
+    rolls back; a peer deletes another schema before the rollback takes the
+    lease. The rollback redeploys the registry's view, so that schema stays
+    deleted instead of coming back from the deploy's snapshot."""
+    from cogniverse_core.registries.exceptions import RegistryStorageError
+
+    connect, store = recovery_backend
+    owner, deployer = connect(), connect()
+    victim = f"rollback_{uuid4().hex[:10]}:victim"
+    keeper = f"rollback_{uuid4().hex[:10]}:keeper"
+    victim_schema = owner.schema_registry.deploy_schema(victim, "wiki_pages")
+    keeper_schema = owner.schema_registry.deploy_schema(keeper, "wiki_pages")
+    keeper_row = _schema_row(store, keeper)
+    real_deploy = deployer.deploy_schemas
+    real_write = store.compare_and_set_config
+    deploys = []
+    peer_deleted = []
+    failed_writes = []
+
+    def fail_the_keeper_registration(**kwargs):
+        if (
+            kwargs["service"] == "schema_registry"
+            and kwargs["tenant_id"] == keeper
+            and not failed_writes
+        ):
+            failed_writes.append(kwargs["config_key"])
+            raise ConnectionError("config store unreachable")
+        return real_write(**kwargs)
+
+    def peer_deletes_before_the_rollback(schemas, *args, **kwargs):
+        deploys.append(sorted(schema["name"] for schema in schemas))
+        if len(deploys) == 2:
+            peer_deleted.append(
+                owner.schema_manager.delete_schema(victim, "wiki_pages")
+            )
+        return real_deploy(schemas, *args, **kwargs)
+
+    monkeypatch.setattr(store, "compare_and_set_config", fail_the_keeper_registration)
+    monkeypatch.setattr(deployer, "deploy_schemas", peer_deletes_before_the_rollback)
+    with pytest.raises(RegistryStorageError) as caught:
+        deployer.schema_registry.deploy_schema(keeper, "wiki_pages", force=True)
+
+    assert failed_writes == ["schema_wiki_pages"]
+    assert peer_deleted == [victim_schema]
+    assert len(deploys) == 2
+    assert {victim_schema, keeper_schema} <= set(deploys[1])
+    assert str(caught.value).endswith(
+        "Existing-schema deployment rollback was requested."
+    )
+    live = set(connect().schema_manager.list_deployed_document_types())
+    assert victim_schema not in live
+    assert keeper_schema in live
+    assert _schema_row(store, victim).config_value["deleted"] is True
+    assert _schema_row(store, keeper).version == keeper_row.version
+    assert connect().deploy_schemas([]) is True
+    assert victim_schema not in set(
+        connect().schema_manager.list_deployed_document_types()
+    )
