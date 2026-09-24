@@ -1941,6 +1941,7 @@ class Mem0MemoryManager:
         from cogniverse_core.memory.provenance_store import ProvenanceWriteError
         from cogniverse_core.registries.schema_deploy_lease import DeploymentLeaseLost
 
+        primary_written = False
         try:
             before = self.memory.get(memory_id)
             if not isinstance(before, dict):
@@ -1959,6 +1960,7 @@ class Mem0MemoryManager:
                 data=content,
                 metadata=effective_metadata,
             )
+            primary_written = True
 
             if provenance is not None:
                 primary = self.memory.get(memory_id)
@@ -2000,6 +2002,10 @@ class Mem0MemoryManager:
             raise
         except Exception as e:
             logger.error(f"Failed to update memory: {e}")
+            if primary_written:
+                raise ProvenanceWriteError(
+                    memory_id=memory_id, row_id=None, cause=e
+                ) from e
             return False
 
     def health_check(self) -> bool:

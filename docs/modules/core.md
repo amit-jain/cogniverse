@@ -1364,9 +1364,10 @@ but is briefly unreadable at the moment of the check also skips its indexed
 row, leaving an orphan for that memory rather than deleting it.
 
 `update_memory` returns `False` for an update that did not happen. Once the
-primary has been rewritten it can no longer say that truthfully, so a
-`ProvenanceWriteError` or `DeploymentLeaseLost` raised after that point
-propagates with its memory id instead of collapsing into `False`: the content
+primary has been rewritten it can no longer say that truthfully, so any
+failure after that point propagates instead of collapsing into `False` — a
+`DeploymentLeaseLost` as itself, anything else as a `ProvenanceWriteError`
+with the memory id and the failure as its cause: the content
 is changed and the index disagrees with it, which the caller has to see to
 retry or repair.
 
