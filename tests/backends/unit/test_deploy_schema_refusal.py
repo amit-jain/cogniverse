@@ -112,3 +112,51 @@ def test_registry_enumeration_failure_aborts_before_deploy(
 
     backend_with_orphan.schema_manager.list_deployed_document_types.assert_not_called()
     backend_with_orphan._deploy_package.assert_not_called()
+
+
+def test_intent_recovery_writes_nothing_after_the_lease_is_taken_over(
+    backend_with_orphan, monkeypatch
+):
+    """A deployer stuck in its enumeration past the heartbeat cap is taken
+    over; resuming, it must not recover intents into the successor's registry."""
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    monkeypatch.setattr(schema_deploy_lease, "MAX_TOTAL_HOLD_SECONDS", 0.6)
+    store = InMemoryConfigStore()
+    registry = backend_with_orphan.schema_registry
+    registry.deployment_lease = lambda **kwargs: SchemaDeployLease(
+        store, lease_seconds=0.3, **kwargs
+    )
+    successors = []
+
+    def enumerate_until_taken_over(*, raise_on_failure=False):
+        successor = SchemaDeployLease(store, wait_seconds=5)
+        assert successor.acquire() is successor
+        successors.append(successor)
+        return ["knowledge_graph_globex_globex"]
+
+    backend_with_orphan.schema_manager.list_deployed_document_types.side_effect = (
+        enumerate_until_taken_over
+    )
+    recovered = []
+
+    def reconcile(live_names, fence=None):
+        if fence is not None:
+            fence()
+        recovered.append(set(live_names))
+        return []
+
+    registry.reconcile_deployment_intents = reconcile
+    schema_defs = [
+        {"name": "video_acme_acme", "definition": {"name": "video_acme_acme"}}
+    ]
+
+    with pytest.raises(BackendDeploymentError, match="lease expired or was replaced"):
+        backend_with_orphan.deploy_schemas(schema_defs)
+
+    assert len(successors) == 1
+    assert recovered == []
+    backend_with_orphan._deploy_package.assert_not_called()
+    successors[0].release()

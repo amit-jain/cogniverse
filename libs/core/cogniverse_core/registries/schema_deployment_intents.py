@@ -246,12 +246,16 @@ class SchemaDeploymentIntents:
         live_names: set[str],
         registered: dict[str, dict[str, Any]],
         write_registration: Callable[[dict[str, Any], int], None],
+        fence: Callable[[], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Conditionally claim one of three attempts and complete only live schemas.
 
         The callback receives the exact payload and pre-activation registry
         version. A tombstone or newer registration must reject that version.
+        ``fence`` runs before every journal and registry write and raises to
+        stop a caller that no longer holds the deployment lease.
         """
+        check = fence if fence is not None else (lambda: None)
         recovered = []
         for record in self.records():
             row = record["registration"]
@@ -264,27 +268,40 @@ class SchemaDeploymentIntents:
                     raise RegistryStorageError(
                         f"Intent for {name!r} conflicts with registered ownership or payload"
                     )
+                check()
                 self.complete(record)
                 continue
             if name not in live_names:
                 if record["state"] == "pending":
+                    check()
                     self.retire(record)
                 continue
             if record["attempts"] == _MAX_ATTEMPTS:
                 raise RegistryStorageError(
                     f"Recovery of {name!r} exhausted {_MAX_ATTEMPTS} attempts"
                 )
+            check()
             attempt = self._save({**record, "attempts": record["attempts"] + 1})
             if attempt is None:
                 continue
+
+            def failed(exc: Exception) -> RegistryStorageError:
+                if attempt["attempts"] == _MAX_ATTEMPTS:
+                    check()
+                    self._transition({**attempt, "last_error": str(exc)}, "failed")
+                return RegistryStorageError(
+                    f"Recovery of {name!r} failed on attempt {attempt['attempts']}/{_MAX_ATTEMPTS}: {exc}"
+                )
+
+            check()
             try:
                 write_registration(copy.deepcopy(row), record["registry_version"])
+            except Exception as exc:
+                raise failed(exc) from exc
+            check()
+            try:
                 self.complete(attempt)
             except Exception as exc:
-                if attempt["attempts"] == _MAX_ATTEMPTS:
-                    self._transition({**attempt, "last_error": str(exc)}, "failed")
-                raise RegistryStorageError(
-                    f"Recovery of {name!r} failed on attempt {attempt['attempts']}/{_MAX_ATTEMPTS}: {exc}"
-                ) from exc
+                raise failed(exc) from exc
             recovered.append(row)
         return recovered
