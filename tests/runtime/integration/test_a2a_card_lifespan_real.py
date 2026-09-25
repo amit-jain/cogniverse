@@ -65,8 +65,9 @@ async def test_the_schema_migration_runs_after_startup_without_holding_it(
     release = asyncio.Event()
     migrated = []
 
-    async def migration_in_progress(schema_registry, base_schema_name):
-        migrated.append(base_schema_name)
+    async def migration_in_progress(resolve_registry, base_schema_name):
+        registry = await asyncio.to_thread(resolve_registry)
+        migrated.append((type(registry).__name__, base_schema_name))
         running.set()
         await release.wait()
 
@@ -81,6 +82,47 @@ async def test_the_schema_migration_runs_after_startup_without_holding_it(
             served = await client.get("/a2a/.well-known/agent-card.json")
         release.set()
 
-    assert migrated == ["provenance"]
+    assert migrated == [("SchemaRegistry", "provenance")]
     assert served.status_code == 200
     assert served.json()["name"] == "Cogniverse Runtime"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_the_background_deploys_before_its_drains(
+    monkeypatch, workflow_state_redis_url
+):
+    """No background deploy may start while shutdown drains: the migration is
+    cancelled before the first drain runs."""
+    import asyncio
+
+    import dspy
+
+    from cogniverse_runtime import main as runtime_main
+    from cogniverse_runtime.routers import admin as admin_router
+
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
+    monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
+    monkeypatch.setattr(dspy, "configure", lambda *a, **kw: None)
+    running = asyncio.Event()
+    order = []
+
+    async def migration_never_done(resolve_registry, base_schema_name):
+        running.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            order.append("migration cancelled")
+            raise
+
+    async def recording_blob_drain(timeout_s: float = 60.0) -> bool:
+        order.append("blob drain")
+        return True
+
+    monkeypatch.setattr(runtime_main, "_migrate_drifted_schemas", migration_never_done)
+    monkeypatch.setattr(admin_router, "drain_blob_writes", recording_blob_drain)
+
+    async with runtime_main.lifespan(FastAPI()):
+        await asyncio.wait_for(running.wait(), timeout=5)
+
+    assert order == ["migration cancelled", "blob drain"]

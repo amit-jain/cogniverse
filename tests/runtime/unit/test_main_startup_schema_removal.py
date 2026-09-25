@@ -281,7 +281,7 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
     monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
 
     with caplog.at_level("INFO", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(registry, "provenance")
+        await runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
 
     assert [base for base, _ in registry.calls] == ["provenance", "provenance"]
     assert all(thread != threading.get_ident() for _, thread in registry.calls)
@@ -321,7 +321,7 @@ async def test_a_failed_schema_migration_is_logged_not_raised(caplog, failure):
     registry = _MigratingRegistry([failure])
 
     with caplog.at_level("ERROR", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(registry, "provenance")
+        await runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
 
     assert len(registry.calls) == 1
     assert [
@@ -335,3 +335,126 @@ async def test_a_failed_schema_migration_is_logged_not_raised(caplog, failure):
             failure,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_registry_that_cannot_be_resolved_is_logged_not_raised(caplog):
+    """Resolving the system backend runs inside the background migration,
+    off the loop, so its failure never reaches startup."""
+    import threading
+
+    failure = RuntimeError("backend config store unreachable")
+    threads = []
+
+    def unresolvable():
+        threads.append(threading.get_ident())
+        raise failure
+
+    with caplog.at_level("ERROR", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(unresolvable, "provenance")
+
+    assert threads != [threading.get_ident()]
+    assert len(threads) == 1
+    assert [
+        (record.getMessage(), record.exc_info[1])
+        for record in caplog.records
+        if record.name == runtime_main.logger.name
+    ] == [
+        (
+            "Migration of drifted provenance schemas failed; the next runtime "
+            "start runs it again",
+            failure,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_background_retry_skips_a_deploy_a_peer_already_made(
+    monkeypatch, caplog
+):
+    import asyncio
+
+    manager = _ContendedSchemaManager([TimeoutError(_LEASE_HELD)])
+    checks = iter([False, True])
+    monkeypatch.setattr(
+        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        lambda _: next(checks),
+    )
+    monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
+
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        retry = await runtime_main._deploy_metadata_schemas_at_startup(
+            manager, "cogniverse"
+        )
+        await asyncio.wait_for(retry, timeout=5)
+
+    assert len(manager.calls) == 1
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == runtime_main.logger.name
+    ] == [
+        f"Metadata schema deploy did not get the deployment lease ({_LEASE_HELD}); "
+        "retrying every 0s in the background",
+        "Metadata schemas are live and current; background deploy skipped",
+    ]
+
+
+@pytest.mark.parametrize(
+    "variable,value,message",
+    [
+        ("A2A_MAX_TASKS", "0", "A2A_MAX_TASKS (max_tasks) must be >= 1, got 0"),
+        (
+            "A2A_TASK_LEASE_SECONDS",
+            "0",
+            "A2A_TASK_LEASE_SECONDS (lease_seconds) must be > 0, got 0.0",
+        ),
+        (
+            "A2A_CANCEL_TIMEOUT_SECONDS",
+            "-1",
+            "A2A_CANCEL_TIMEOUT_SECONDS (cancel_timeout_seconds) must be > 0, got -1.0",
+        ),
+        (
+            "A2A_DRAIN_TIMEOUT_SECONDS",
+            "nan",
+            "A2A_DRAIN_TIMEOUT_SECONDS (drain_timeout_seconds) must be > 0, got nan",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_bad_a2a_setting_stops_startup_before_any_side_effect(
+    monkeypatch, workflow_state_redis_url, variable, value, message
+):
+    recorded: dict = {}
+    side_effects: list = []
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: config_manager,
+    )
+    monkeypatch.setattr(
+        runtime_main.BackendRegistry,
+        "get_instance",
+        lambda: _FakeBackendRegistry(recorded),
+    )
+    monkeypatch.setattr(runtime_main, "get_config_loader", lambda: _FakeConfigLoader())
+    monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setenv(variable, value)
+    monkeypatch.setattr(
+        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        lambda _: side_effects.append("metadata-check") or False,
+    )
+    monkeypatch.setattr(
+        runtime_main,
+        "_probe_phoenix_reachability",
+        lambda: side_effects.append("phoenix-probe"),
+    )
+
+    with pytest.raises(ValueError) as refused:
+        async with runtime_main.lifespan(FastAPI()):
+            pass
+
+    assert str(refused.value) == message
+    assert recorded == {}
+    assert side_effects == []

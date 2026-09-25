@@ -140,13 +140,29 @@ def _a2a_settings_from_env(environ: Mapping[str, str]) -> dict[str, Any]:
 
 def _check_a2a_settings(
     *,
+    max_tasks: int,
+    lease_seconds: float,
+    cancel_timeout_seconds: float,
+    drain_timeout_seconds: float,
     max_concurrent_cancels: int,
     max_concurrent_resubscriptions: int,
     redis_timeout_seconds: float,
     redis_max_connections: int,
-    **_: Any,
 ) -> None:
     """Refuse A2A settings that cannot serve, before Redis is touched."""
+    if max_tasks < 1:
+        raise ValueError(f"A2A_MAX_TASKS (max_tasks) must be >= 1, got {max_tasks}")
+    for name, key, value in (
+        ("A2A_TASK_LEASE_SECONDS", "lease_seconds", lease_seconds),
+        (
+            "A2A_CANCEL_TIMEOUT_SECONDS",
+            "cancel_timeout_seconds",
+            cancel_timeout_seconds,
+        ),
+        ("A2A_DRAIN_TIMEOUT_SECONDS", "drain_timeout_seconds", drain_timeout_seconds),
+    ):
+        if not value > 0:
+            raise ValueError(f"{name} ({key}) must be > 0, got {value}")
     # A blocking read waits up to one second server-side.
     if redis_timeout_seconds <= 1:
         raise ValueError(
@@ -224,9 +240,17 @@ async def _deploy_metadata_schemas_at_startup(
 
 
 async def _retry_metadata_deploy(schema_manager: Any, application_name: str) -> None:
-    """Retry the startup metadata deploy until it gets the deployment lease."""
+    """Retry the startup metadata deploy until it gets the deployment lease,
+    unless a peer has deployed the same metadata schemas meanwhile."""
+    from cogniverse_runtime.backend_startup import metadata_schemas_current
+
     while True:
         await asyncio.sleep(METADATA_DEPLOY_RETRY_SECONDS)
+        if await asyncio.to_thread(metadata_schemas_current, schema_manager):
+            logger.info(
+                "Metadata schemas are live and current; background deploy skipped"
+            )
+            return
         try:
             await asyncio.to_thread(
                 schema_manager.upload_metadata_schemas,
@@ -243,16 +267,20 @@ async def _retry_metadata_deploy(schema_manager: Any, application_name: str) -> 
         return
 
 
-async def _migrate_drifted_schemas(schema_registry: Any, base_schema_name: str) -> None:
+async def _migrate_drifted_schemas(
+    resolve_registry: Callable[[], Any], base_schema_name: str
+) -> None:
     """Redeploy tenants' ``base_schema_name`` schemas registered with a
     definition other than the shipped one.
 
-    Runs in the background once startup completes. A deploy that finds the
-    deployment lease held is retried; any other failure is logged, and the
-    next runtime start runs the migration again.
+    Runs in the background once startup completes, resolving the schema
+    registry off the loop. A deploy that finds the deployment lease held is
+    retried; any other failure, resolving the registry included, is logged,
+    and the next runtime start runs the migration again.
     """
     while True:
         try:
+            schema_registry = await asyncio.to_thread(resolve_registry)
             drifted = await asyncio.to_thread(
                 schema_registry.redeploy_drifted_schemas, base_schema_name
             )
@@ -296,6 +324,10 @@ async def _build_shared_a2a_protocol(
 ) -> _SharedA2AProtocol:
     """Validate Redis and construct the replica-safe A2A protocol app."""
     _check_a2a_settings(
+        max_tasks=max_tasks,
+        lease_seconds=lease_seconds,
+        cancel_timeout_seconds=cancel_timeout_seconds,
+        drain_timeout_seconds=drain_timeout_seconds,
         max_concurrent_cancels=max_concurrent_cancels,
         max_concurrent_resubscriptions=max_concurrent_resubscriptions,
         redis_timeout_seconds=redis_timeout_seconds,
@@ -1673,7 +1705,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     schema_migration = asyncio.create_task(
         _migrate_drifted_schemas(
-            system_backend().schema_registry, PROVENANCE_BASE_SCHEMA
+            lambda: system_backend().schema_registry, PROVENANCE_BASE_SCHEMA
         ),
         name="provenance-schema-migration",
     )
@@ -1682,6 +1714,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
+    # No background deploy starts once shutdown has: one already running in a
+    # worker thread runs to its end, bounded by its own lease and requests.
+    for startup_deploy in (metadata_retry, schema_migration):
+        if startup_deploy is not None:
+            startup_deploy.cancel()
+            await asyncio.gather(startup_deploy, return_exceptions=True)
     # Accepted admin config-blob writes are write-behind; land them before
     # teardown so a PUT moments before SIGTERM is not lost.
     from cogniverse_runtime.routers.admin import drain_blob_writes
@@ -1692,10 +1730,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
-    for startup_deploy in (metadata_retry, schema_migration):
-        if startup_deploy is not None:
-            startup_deploy.cancel()
-            await asyncio.gather(startup_deploy, return_exceptions=True)
     try:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):
