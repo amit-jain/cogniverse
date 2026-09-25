@@ -3,6 +3,7 @@ provenance schemas registered before ``primary_digest`` are redeployed once."""
 
 import copy
 import json
+import threading
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -499,3 +500,54 @@ def test_a_deploy_lease_held_by_a_peer_stops_the_migration_with_its_timeout(
 
     assert set(schemas) <= set(retried.redeployed)
     assert [f for f in retried.failed if f.tenant_id in tenants] == []
+
+
+def test_a_stop_set_during_the_migration_starts_no_further_redeploy(
+    provenance_vespa, deploys
+):
+    """Shutdown sets the stop while one tenant's redeploy runs: that one
+    finishes, no later tenant's redeploy starts, and those are reported."""
+    connect, store = provenance_vespa
+    legacy = _PreDigestLoader(Path("configs/schemas"))
+    tenants = [f"provstop_{uuid4().hex[:10]}:{n}" for n in ("one", "two", "three")]
+    schemas = [
+        connect(tenant, legacy).schema_registry.deploy_schema(tenant, "provenance")
+        for tenant in tenants
+    ]
+    versions = {tenant: _schema_row(store, tenant).version for tenant in tenants}
+    registry = connect(tenants[0]).schema_registry
+    listing = registry._get_all_schemas
+
+    def ours_first(*args, **kwargs):
+        rows = listing(*args, **kwargs)
+        rank = {tenant: n for n, tenant in enumerate(tenants)}
+        mine = sorted(
+            (row for row in rows if row.tenant_id in rank),
+            key=lambda row: rank[row.tenant_id],
+        )
+        return mine + [row for row in rows if row.tenant_id not in rank]
+
+    registry._get_all_schemas = ours_first
+    deploy = registry.deploy_schemas
+    started = []
+    stop = threading.Event()
+
+    def stop_during_the_first(tenant_id, *args, **kwargs):
+        started.append(tenant_id)
+        stop.set()
+        return deploy(tenant_id, *args, **kwargs)
+
+    registry.deploy_schemas = stop_during_the_first
+    deploys.clear()
+
+    result = registry.redeploy_drifted_schemas("provenance", should_stop=stop.is_set)
+
+    assert started == [tenants[0]]
+    assert result.redeployed == [schemas[0]]
+    assert result.failed == []
+    assert result.skipped[:2] == schemas[1:]
+    for tenant in tenants[1:]:
+        assert _schema_row(store, tenant).version == versions[tenant]
+    assert "primary_digest" in _field_names(
+        _schema_row(store, tenants[0]).config_value["schema_definition"]
+    )

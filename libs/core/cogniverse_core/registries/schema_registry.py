@@ -10,7 +10,7 @@ import threading
 import time
 import weakref
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
@@ -78,6 +78,8 @@ class DriftedSchemaRedeploy:
 
     redeployed: List[str]
     failed: List[DriftedSchemaFailure]
+    # Drifted schemas left undeployed because the caller asked to stop.
+    skipped: List[str] = field(default_factory=list)
 
 
 def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[str]:
@@ -539,7 +541,11 @@ class SchemaRegistry:
                 f"Expected schemas: {[s['name'] for s in previous_schemas]}"
             )
 
-    def redeploy_drifted_schemas(self, base_schema_name: str) -> DriftedSchemaRedeploy:
+    def redeploy_drifted_schemas(
+        self,
+        base_schema_name: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> DriftedSchemaRedeploy:
         """Redeploy every tenant's ``base_schema_name`` registered with a
         definition other than the one the schema loader ships.
 
@@ -554,6 +560,9 @@ class SchemaRegistry:
         remaining tenants are still redeployed; any other error propagates,
         including the ``LeaseWaitTimeout`` of a deploy lease a peer held for
         the whole wait, which is nothing to record against a tenant.
+        ``should_stop`` is asked before each tenant's redeploy; once it
+        answers True no further redeploy starts, and the tenants left are
+        reported in ``skipped``.
         """
         import json
 
@@ -567,7 +576,16 @@ class SchemaRegistry:
                 drifted.append(info)
         redeployed: List[str] = []
         failed: List[DriftedSchemaFailure] = []
-        for info in drifted:
+        for position, info in enumerate(drifted):
+            if should_stop is not None and should_stop():
+                skipped = [left.full_schema_name for left in drifted[position:]]
+                logger.info(
+                    f"Stopped before redeploying {len(skipped)} drifted "
+                    f"'{base_schema_name}' schema(s): {skipped}"
+                )
+                return DriftedSchemaRedeploy(
+                    redeployed=redeployed, failed=failed, skipped=skipped
+                )
             logger.info(
                 f"Redeploying '{info.full_schema_name}' to the shipped "
                 f"'{base_schema_name}' definition"
@@ -589,7 +607,7 @@ class SchemaRegistry:
                         f"before its redeploy activated; skipped"
                     )
                     continue
-                logger.error(
+                logger.warning(
                     f"Redeploy of '{info.full_schema_name}' for tenant "
                     f"'{info.tenant_id}' failed; continuing with the remaining "
                     f"tenants: {exc}"
