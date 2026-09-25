@@ -621,7 +621,11 @@ class VespaBackend(Backend):
     @staticmethod
     def _names_unknown_document_type(exc: BaseException, target: str) -> bool:
         """Whether Vespa refused the operation because ``target`` is not a
-        document type its content nodes hold (a removal still propagating)."""
+        document type its content nodes hold (a removal still propagating).
+
+        Only the error and what it was raised from count: an unrelated error
+        raised while handling such an answer is its own failure.
+        """
         pattern = re.compile(rf"Unknown document type {re.escape(target)}\b")
         node: Optional[BaseException] = exc
         for _ in range(5):
@@ -629,7 +633,7 @@ class VespaBackend(Backend):
                 return False
             if pattern.search(str(node)):
                 return True
-            node = node.__cause__ or node.__context__
+            node = node.__cause__
         return False
 
     def get_live_document(
