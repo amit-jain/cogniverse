@@ -13,6 +13,8 @@ Reaping the schemas of deleted tenants belongs to
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 
@@ -277,7 +279,21 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
 ):
     import threading
 
-    registry = _MigratingRegistry([TimeoutError(_LEASE_HELD), ["provenance_acme_acme"]])
+    registry = _MigratingRegistry(
+        [
+            TimeoutError(_LEASE_HELD),
+            SimpleNamespace(
+                redeployed=["provenance_acme_acme"],
+                failed=[
+                    SimpleNamespace(
+                        tenant_id="globex:globex",
+                        schema_name="provenance_globex_globex",
+                        error="peer deleted provenance_globex_globex",
+                    )
+                ],
+            ),
+        ]
+    )
     monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
 
     with caplog.at_level("INFO", logger=runtime_main.logger.name):
@@ -286,13 +302,26 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
     assert [base for base, _ in registry.calls] == ["provenance", "provenance"]
     assert all(thread != threading.get_ident() for _, thread in registry.calls)
     assert [
-        record.getMessage()
+        (record.levelname, record.getMessage())
         for record in caplog.records
         if record.name == runtime_main.logger.name
     ] == [
-        "Migration of drifted provenance schemas did not get the deployment lease "
-        f"({_LEASE_HELD}); retrying in 0s",
-        "Migration of drifted provenance schemas redeployed ['provenance_acme_acme']",
+        (
+            "WARNING",
+            "Migration of drifted provenance schemas did not get the deployment "
+            f"lease ({_LEASE_HELD}); retrying in 0s",
+        ),
+        (
+            "INFO",
+            "Migration of drifted provenance schemas redeployed "
+            "['provenance_acme_acme']",
+        ),
+        (
+            "ERROR",
+            "Migration of drifted provenance schemas could not redeploy "
+            "provenance_globex_globex for tenant globex:globex: peer deleted "
+            "provenance_globex_globex",
+        ),
     ]
 
 

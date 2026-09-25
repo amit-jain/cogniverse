@@ -275,13 +275,14 @@ async def _migrate_drifted_schemas(
 
     Runs in the background once startup completes, resolving the schema
     registry off the loop. A deploy that finds the deployment lease held is
-    retried; any other failure, resolving the registry included, is logged,
-    and the next runtime start runs the migration again.
+    retried; each tenant whose redeploy was refused is logged by name; any
+    other failure, resolving the registry included, is logged, and the next
+    runtime start runs the migration again.
     """
     while True:
         try:
             schema_registry = await asyncio.to_thread(resolve_registry)
-            drifted = await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 schema_registry.redeploy_drifted_schemas, base_schema_name
             )
         except TimeoutError as exc:
@@ -302,8 +303,19 @@ async def _migrate_drifted_schemas(
             )
             return
         logger.info(
-            "Migration of drifted %s schemas redeployed %s", base_schema_name, drifted
+            "Migration of drifted %s schemas redeployed %s",
+            base_schema_name,
+            result.redeployed,
         )
+        for failure in result.failed:
+            logger.error(
+                "Migration of drifted %s schemas could not redeploy %s for tenant "
+                "%s: %s",
+                base_schema_name,
+                failure.schema_name,
+                failure.tenant_id,
+                failure.error,
+            )
         return
 
 
