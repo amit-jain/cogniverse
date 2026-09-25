@@ -49,7 +49,7 @@ cd cogniverse
 ```bash
 # Install uv (use the standalone installer; `pip install uv` is blocked
 # on Ubuntu 24.04+ / Debian 12+ / Fedora 38+ by PEP 668)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
 # Sync all workspace packages with the right PyTorch backend for this host.
@@ -91,7 +91,7 @@ wheel per machine," so we use opt-in extras + per-extra wheel-index sources:
 block in `pyproject.toml` makes the three extras mutually exclusive so you
 can't accidentally combine them.
 
-**Why not uv's `torch-backend = "auto"`?** uv 0.11.7 only honors the
+**Why not uv's `torch-backend = "auto"`?** uv 0.12.19 only honors the
 `torch-backend` setting on `uv pip install` (the legacy interface), not on
 `uv sync` / `uv lock`. Setting it in `[tool.uv]` is silently ignored during
 the project workflow we use. If a future uv release wires `torch-backend`
