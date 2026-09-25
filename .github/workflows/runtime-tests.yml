@@ -103,7 +103,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     - name: Free up disk space
       run: |
@@ -153,7 +153,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     - name: Install dependencies
       run: |
@@ -178,7 +178,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     - name: Install dependencies
       run: |
@@ -207,7 +207,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     # tests/runtime/integration/test_pi_agent_loop.py installs the pinned Pi
     # packages from clients/pi-cogniverse/package-lock.json, which declare
