@@ -82,12 +82,19 @@ def _retryable_conflict(exc: Exception) -> ServerError:
 
 
 class RedisRelayEventQueue(EventQueue):
-    """Local SDK queue that mirrors owner events into Redis."""
+    """Local SDK queue that mirrors owner events into Redis.
 
-    def __init__(self, task_id: str, task_store: RedisTaskStore) -> None:
+    Closing it ends the shared relay only while ``generation`` still owns the
+    task; a relay with no owning generation closes its local queue alone.
+    """
+
+    def __init__(
+        self, task_id: str, task_store: RedisTaskStore, generation: int | None = None
+    ) -> None:
         super().__init__()
         self._task_id = task_id
         self._task_store = task_store
+        self._generation = generation
         self._relay_closed = False
         self._relay_lock = asyncio.Lock()
         # open: events flow. pending: a cancel is taking its generation, so
@@ -104,6 +111,10 @@ class RedisRelayEventQueue(EventQueue):
         # Events a failed release could not publish and no marker names yet.
         self._unmarked_gap = 0
 
+    def bind_owner(self, generation: int) -> None:
+        """Close the shared relay as ``generation``, the task's owner."""
+        self._generation = generation
+
     def hold_for_cancel(self, hold_seconds: float) -> bool:
         """Hold producer events and the close while a cancel takes its generation.
 
@@ -119,13 +130,14 @@ class RedisRelayEventQueue(EventQueue):
         self._cancel_hold_seconds = hold_seconds
         return True
 
-    def commit_cancel(self) -> None:
-        """The cancel took its generation: what the producer emits is superseded.
+    def commit_cancel(self, generation: int) -> None:
+        """The cancel took ``generation``: what the producer emits is superseded.
 
         A non-cooperative producer keeps running through the cancel, so the
         relay refuses everything but the cancel's own events from here on and
-        ends with the cancel.
+        ends with the cancel, closing as the cancel's generation.
         """
+        self._generation = generation
         if self._held:
             logger.debug(
                 "A2A task %s: dropped %d events held while its cancel committed",
@@ -274,9 +286,20 @@ class RedisRelayEventQueue(EventQueue):
         async with self._relay_lock:
             if not self._relay_closed:
                 self._relay_closed = True
-                await self._task_store.close_event_stream(
-                    self._task_id, missing=self._unmarked_gap
+                closed = self._generation is not None and (
+                    await self._task_store.close_event_stream(
+                        self._task_id,
+                        generation=self._generation,
+                        missing=self._unmarked_gap,
+                    )
                 )
+                if not closed:
+                    logger.info(
+                        "A2A task %s: generation %s no longer owns its relay; "
+                        "closing the local queue only",
+                        self._task_id,
+                        self._generation,
+                    )
         await super().close(immediate)
 
 
@@ -488,6 +511,8 @@ class RedisRequestHandler(DefaultRequestHandler):
                 )
 
             queue = await self._queue_manager.create_or_tap(task_id)
+            if isinstance(queue, RedisRelayEventQueue):
+                queue.bind_owner(lease.generation)
             result_aggregator = ResultAggregator(task_manager)
             producer_task = asyncio.create_task(
                 self._run_producer(request_context, queue),
@@ -889,7 +914,7 @@ class RedisRequestHandler(DefaultRequestHandler):
                     )
             raise
         if committed:
-            relay.commit_cancel()
+            relay.commit_cancel(cancel_lease.generation)
         cancel_context = ServerCallContext()
         self.task_store.attach_execution(cancel_context, cancel_lease)
         try:
@@ -903,7 +928,9 @@ class RedisRequestHandler(DefaultRequestHandler):
             queue = (
                 EventQueue()
                 if live_queue is not None
-                else RedisRelayEventQueue(task.id, self.task_store)
+                else RedisRelayEventQueue(
+                    task.id, self.task_store, cancel_lease.generation
+                )
             )
             await self.agent_executor.cancel(
                 RequestContext(

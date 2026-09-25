@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import platform
 import socket
@@ -2214,7 +2215,8 @@ async def _handler_with_live_relay(redis_client, task_id: str):
     """A handler whose live relay for ``task_id`` has no consumer closing it.
 
     The relay stays open across cancels, the state a non-cooperative
-    producer keeps publishing into.
+    producer keeps publishing into. It belongs to the handler's execution
+    lease, as a served execution's relay does.
     """
     seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
@@ -2224,7 +2226,11 @@ async def _handler_with_live_relay(redis_client, task_id: str):
         task_store=store,
         replica_id="replica-a",
     )
+    lease = await store.acquire_execution(
+        task_id, replica_id="replica-a", lease_seconds=30
+    )
     relay = await handler._queue_manager.create_or_tap(task_id)
+    relay.bind_owner(lease.generation)
     await relay.enqueue_event(_status_event(task_id, TaskState.working))
     return store, handler, relay
 
@@ -2829,6 +2835,7 @@ async def _live_relay_on(client, redis_client, task_id: str):
         agent_executor=_CancellableExecutor(), task_store=store, replica_id="replica-a"
     )
     relay = await handler._queue_manager.create_or_tap(task_id)
+    relay.bind_owner(lease.generation)
     await relay.enqueue_event(_status_event(task_id, TaskState.working))
     return store, handler, relay, lease
 
@@ -3734,3 +3741,283 @@ async def test_a_lease_loss_inside_the_owners_cancel_leaves_the_canceled_result(
     assert canceled.status.state == TaskState.canceled
     assert (sent.id, sent.status.state) == (task_id, TaskState.canceled)
     assert (await store.get(task_id)).status.state == TaskState.canceled
+
+
+class _SilentTurnExecutor(AgentExecutor):
+    """A turn that runs until cancelled and emits nothing, so the stored task
+    keeps the state its previous turn left."""
+
+    def __init__(self) -> None:
+        self.running = asyncio.Event()
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        self.running.set()
+        await asyncio.Event().wait()
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise AssertionError("no cancellation is expected")
+
+
+class _SteppedExecutor(AgentExecutor):
+    """Emits ``b-0``, then ``b-1`` once ``step`` is set, then completes with
+    ``b-done`` once ``finish`` is set."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.step = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await event_queue.enqueue_event(
+            _status_event(context.task_id, TaskState.working, "b-0")
+        )
+        self.started.set()
+        await self.step.wait()
+        await event_queue.enqueue_event(
+            _status_event(context.task_id, TaskState.working, "b-1")
+        )
+        await self.finish.wait()
+        await event_queue.enqueue_event(
+            _status_event(context.task_id, TaskState.completed, "b-done")
+        )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise AssertionError("no cancellation is expected")
+
+
+def _turn_params(task_id: str, text: str):
+    """A continuation of ``task_id``, in the context its seeded task has."""
+    params = _send_params(text, task_id=task_id)
+    params.message.context_id = f"context-{task_id}"
+    return params
+
+
+async def _collect(stream, into: list) -> None:
+    async for event in stream:
+        into.append(event)
+
+
+def _marks(events) -> list:
+    return [
+        (event.status.state, (event.metadata or {}).get("mark")) for event in events
+    ]
+
+
+async def _run_out_lease(redis_client, store: RedisTaskStore, task_id: str):
+    """Record the task's lease as expired, as Redis sees a stalled owner's.
+
+    Only the expiry changes: the owner still holds its generation and its
+    execution keeps running, the state a node is in until it notices.
+    """
+    lease = await store.get_execution_lease(task_id)
+    await redis_client.hset(
+        "test:a2a:leases",
+        task_id,
+        json.dumps(
+            {
+                "replica_id": lease.replica_id,
+                "request_id": lease.request_id,
+                "generation": lease.generation,
+                "expires_at_ms": 0,
+            }
+        ),
+    )
+    return lease
+
+
+async def _two_nodes(redis_client, redis_url, task_id: str, *, drain_seconds: float):
+    """Node A running a silent turn on ``task_id`` with its lease run out, and
+    node B, on its own Redis client, ready to take the task over."""
+    await _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a").save(
+        _task(task_id, TaskState.input_required)
+    )
+    client_b = aioredis.from_url(redis_url, decode_responses=True)
+    silent = _SilentTurnExecutor()
+    node_a = RedisRequestHandler(
+        agent_executor=silent,
+        task_store=RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        replica_id="replica-a",
+        lease_seconds=30,
+        drain_timeout_seconds=drain_seconds,
+    )
+    stepped = _SteppedExecutor()
+    node_b = RedisRequestHandler(
+        agent_executor=stepped,
+        task_store=RedisTaskStore(client_b, max_tasks=10, key_prefix="test:a2a"),
+        replica_id="replica-b",
+        lease_seconds=30,
+    )
+    send_a = asyncio.create_task(
+        node_a.on_message_send(_turn_params(task_id, "turn-a"))
+    )
+    await asyncio.wait_for(silent.running.wait(), timeout=5)
+    await _run_out_lease(redis_client, node_a.task_store, task_id)
+    return SimpleNamespace(
+        node_a=node_a,
+        node_b=node_b,
+        stepped=stepped,
+        send_a=send_a,
+        client_b=client_b,
+        cleanup=[send_a],
+    )
+
+
+async def _end_nodes(nodes) -> None:
+    nodes.stepped.step.set()
+    nodes.stepped.finish.set()
+    for task in nodes.cleanup:
+        _end_if_hung(task)
+    await asyncio.gather(*nodes.cleanup, return_exceptions=True)
+    await nodes.node_a.close()
+    await nodes.node_b.close()
+    await nodes.client_b.aclose()
+
+
+async def _resubscribe_on_b(nodes, task_id: str, relayed: list) -> asyncio.Task:
+    """B's resubscriber, reading the relay from B's first stored event on."""
+    from a2a.types import TaskIdParams
+
+    async with asyncio.timeout(5):
+        while (await nodes.node_b.task_store.get(task_id)).status.state != (
+            TaskState.working
+        ):
+            await asyncio.sleep(0.01)
+    reader = asyncio.create_task(
+        _collect(nodes.node_b.on_resubscribe_to_task(TaskIdParams(id=task_id)), relayed)
+    )
+    nodes.cleanup.append(reader)
+    # The resubscription reads from its first XREAD on.
+    await asyncio.sleep(0.3)
+    return reader
+
+
+async def _finish_on_b(nodes, reader: asyncio.Task, relayed: list) -> None:
+    nodes.stepped.step.set()
+    async with asyncio.timeout(5):
+        while not relayed:
+            assert reader.done() is False, f"B's resubscriber ended with {relayed}"
+            await asyncio.sleep(0.01)
+    nodes.stepped.finish.set()
+    await asyncio.wait_for(reader, timeout=5)
+
+
+async def test_a_node_that_lost_the_task_cannot_close_the_new_owners_relay(
+    redis_client, redis_url
+):
+    """A's lease ran out and B took the task over; A's stopped turn then
+    closes its queue. B's resubscriber keeps reading, and B ends the relay."""
+    task_id = "task-taken"
+    nodes = await _two_nodes(redis_client, redis_url, task_id, drain_seconds=0.2)
+    relayed: list = []
+    b_events: list = []
+    try:
+        stream_b = asyncio.create_task(
+            _collect(
+                nodes.node_b.on_message_send_stream(_turn_params(task_id, "turn-b")),
+                b_events,
+            )
+        )
+        nodes.cleanup.append(stream_b)
+        await asyncio.wait_for(nodes.stepped.started.wait(), timeout=5)
+        reader = await _resubscribe_on_b(nodes, task_id, relayed)
+
+        # Shutdown stops A's turn at its drain deadline; its queue closes.
+        await asyncio.wait_for(nodes.node_a.close(), timeout=5)
+        await asyncio.sleep(0.3)
+        assert reader.done() is False, f"B's resubscriber ended with {relayed}"
+
+        await _finish_on_b(nodes, reader, relayed)
+        await asyncio.wait_for(stream_b, timeout=5)
+        entries = await redis_client.xrange(f"test:a2a:events:{task_id}")
+        ttl = await redis_client.ttl(f"test:a2a:events:{task_id}")
+        stored = await nodes.node_b.task_store.get(task_id)
+    finally:
+        await _end_nodes(nodes)
+
+    assert _marks(relayed) == [
+        (TaskState.working, "b-1"),
+        (TaskState.completed, "b-done"),
+    ]
+    assert _marks(b_events) == [
+        (TaskState.working, "b-0"),
+        (TaskState.working, "b-1"),
+        (TaskState.completed, "b-done"),
+    ]
+    assert _relay_states(entries) == [
+        TaskState.working,
+        TaskState.working,
+        TaskState.completed,
+        "closed",
+    ]
+    assert 0 < ttl <= 60
+    assert stored.status.state == TaskState.completed
+
+
+@pytest.mark.parametrize("takeover_after", [0.0, 0.03, 0.04, 0.045, 0.05, 0.07, 0.2])
+async def test_a_close_racing_a_takeover_never_ends_the_new_owners_relay(
+    redis_client, redis_url, takeover_after
+):
+    """A's drain stop (at 0.05 s) and B's takeover run at once, B starting
+    at a range of offsets around it.
+
+    Either A still owned the task when it stopped, and the task ends
+    interrupted with B refused, or B took it over, and then B's resubscriber
+    reads B's events up to B's own close whatever A's close did meanwhile.
+    """
+    task_id = f"task-race-{int(takeover_after * 1000)}"
+    nodes = await _two_nodes(redis_client, redis_url, task_id, drain_seconds=0.05)
+    relayed: list = []
+    b_events: list = []
+    try:
+        close_a = asyncio.create_task(nodes.node_a.close())
+        nodes.cleanup.append(close_a)
+        await asyncio.sleep(takeover_after)
+        stream_b = asyncio.create_task(
+            _collect(
+                nodes.node_b.on_message_send_stream(_turn_params(task_id, "turn-b")),
+                b_events,
+            )
+        )
+        nodes.cleanup.append(stream_b)
+        started = asyncio.create_task(nodes.stepped.started.wait())
+        nodes.cleanup.append(started)
+        await asyncio.wait(
+            {started, stream_b}, timeout=5, return_when="FIRST_COMPLETED"
+        )
+        taken_over = nodes.stepped.started.is_set()
+        if taken_over:
+            reader = await _resubscribe_on_b(nodes, task_id, relayed)
+            await asyncio.wait_for(close_a, timeout=5)
+            await _finish_on_b(nodes, reader, relayed)
+            await asyncio.wait_for(stream_b, timeout=5)
+        else:
+            await asyncio.wait_for(close_a, timeout=5)
+            refused = stream_b.exception()
+        entries = await redis_client.xrange(f"test:a2a:events:{task_id}")
+        stored = await nodes.node_b.task_store.get(task_id)
+    finally:
+        await _end_nodes(nodes)
+
+    if taken_over:
+        assert _marks(relayed) == [
+            (TaskState.working, "b-1"),
+            (TaskState.completed, "b-done"),
+        ]
+        # A close A made before B took the task over precedes B's events;
+        # none lands among them.
+        states = _relay_states(entries)
+        assert states[states.index(TaskState.working) :] == [
+            TaskState.working,
+            TaskState.working,
+            TaskState.completed,
+            "closed",
+        ]
+        assert stored.status.state == TaskState.completed
+    else:
+        assert isinstance(refused, ServerError)
+        assert refused.error.message == f"Task {task_id} is in terminal state: failed"
+        assert stored.status.state == TaskState.failed
+        assert stored.status.message.parts[0].root.text == (
+            "Execution interrupted because its owning runtime stopped before "
+            "completion."
+        )
