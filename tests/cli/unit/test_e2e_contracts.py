@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -426,11 +427,19 @@ def test_run_lock_takes_over_a_lock_whose_holder_is_dead(tmp_path):
 
 def test_run_lock_refuses_when_a_detached_e2e_pytest_is_already_running(tmp_path):
     token = f"lockprobe{uuid.uuid4().hex[:10]}"
+    ready = tmp_path / "ready"
     fake = tmp_path / "pytest"
-    fake.write_text("#!/usr/bin/env bash\nsleep 120\n")
+    fake.write_text(f"#!/usr/bin/env bash\n: > {str(ready)!r}\nsleep 120\n")
     fake.chmod(0o755)
 
     with _detached([str(fake), f"tests/e2e/{token}.py"]) as other:
+        # Popen returns before the kernel publishes the child's argv, so wait
+        # until the script is running and a scan can see its command line.
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            assert other.poll() is None, f"fake e2e run died: {other.returncode}"
+            assert time.monotonic() < deadline, "fake e2e run never started"
+            time.sleep(0.01)
         done = _run_lock(tmp_path / "e2e.lock", token)
 
     assert done.returncode == 3, f"expected refusal, got {done.returncode}: {done!r}"
