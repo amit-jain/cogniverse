@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -268,7 +269,9 @@ async def _retry_metadata_deploy(schema_manager: Any, application_name: str) -> 
 
 
 async def _migrate_drifted_schemas(
-    resolve_registry: Callable[[], Any], base_schema_name: str
+    resolve_registry: Callable[[], Any],
+    base_schema_name: str,
+    stop: threading.Event | None = None,
 ) -> None:
     """Redeploy tenants' ``base_schema_name`` schemas registered with a
     definition other than the shipped one.
@@ -277,13 +280,16 @@ async def _migrate_drifted_schemas(
     registry off the loop. A deploy that finds the deployment lease held is
     retried; each tenant whose redeploy was refused is logged by name; any
     other failure, resolving the registry included, is logged, and the next
-    runtime start runs the migration again.
+    runtime start runs the migration again. Once ``stop`` is set, no further
+    tenant's redeploy starts.
     """
     while True:
         try:
             schema_registry = await asyncio.to_thread(resolve_registry)
             result = await asyncio.to_thread(
-                schema_registry.redeploy_drifted_schemas, base_schema_name
+                schema_registry.redeploy_drifted_schemas,
+                base_schema_name,
+                should_stop=stop.is_set if stop is not None else None,
             )
         except TimeoutError as exc:
             logger.warning(
@@ -307,6 +313,13 @@ async def _migrate_drifted_schemas(
             base_schema_name,
             result.redeployed,
         )
+        if result.skipped:
+            logger.info(
+                "Migration of drifted %s schemas stopped before redeploying %s; "
+                "the next runtime start redeploys them",
+                base_schema_name,
+                result.skipped,
+            )
         for failure in result.failed:
             logger.error(
                 "Migration of drifted %s schemas could not redeploy %s for tenant "
@@ -1715,9 +1728,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # redeployed off the startup path: one package per drifted tenant.
     from cogniverse_core.memory.manager import PROVENANCE_BASE_SCHEMA
 
+    migration_stop = threading.Event()
     schema_migration = asyncio.create_task(
         _migrate_drifted_schemas(
-            lambda: system_backend().schema_registry, PROVENANCE_BASE_SCHEMA
+            lambda: system_backend().schema_registry,
+            PROVENANCE_BASE_SCHEMA,
+            migration_stop,
         ),
         name="provenance-schema-migration",
     )
@@ -1726,8 +1742,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
-    # No background deploy starts once shutdown has: one already running in a
-    # worker thread runs to its end, bounded by its own lease and requests.
+    # No background deploy starts once shutdown has: the migration is told to
+    # stop before its next tenant, and a deploy already running in a worker
+    # thread runs to its end, bounded by its own lease and requests.
+    migration_stop.set()
     for startup_deploy in (metadata_retry, schema_migration):
         if startup_deploy is not None:
             startup_deploy.cancel()
