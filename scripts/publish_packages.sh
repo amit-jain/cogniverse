@@ -109,7 +109,7 @@ print_header() {
 check_uv() {
     if ! command -v uv &> /dev/null; then
         log_error "uv is not installed"
-        log_error "Install with: pip install uv"
+        log_error "Install with: pip install uv==0.12.19"
         exit 1
     fi
 }

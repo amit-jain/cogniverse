@@ -63,7 +63,7 @@ check_deps() {
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "ERROR: Missing required tools: ${missing[*]}"
-        echo "       Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        echo "       Install uv: curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh"
         exit 1
     fi
 }
