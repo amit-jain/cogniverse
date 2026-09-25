@@ -672,8 +672,25 @@ then the lifespan drains in turn (admin blob writes 60 s, conversation saves
 teardown. The two fixed drains are the runtime's own budgets.
 */}}
 {{- define "cogniverse.runtime.terminationGracePeriodSeconds" -}}
-{{- $shutdown := .Values.runtime.shutdown -}}
-{{- $a2a := mulf 2 $shutdown.a2aDrainSeconds -}}
-{{- $total := addf $shutdown.uvicornGracefulSeconds 60 40 $a2a $shutdown.teardownSeconds -}}
+{{- $a2a := mulf 2 (include "cogniverse.runtime.shutdown.a2aDrainSeconds" . | float64) -}}
+{{- $uvicorn := include "cogniverse.runtime.shutdown.uvicornGracefulSeconds" . | float64 -}}
+{{- $teardown := dig "shutdown" "teardownSeconds" 15 .Values.runtime -}}
+{{- $total := addf $uvicorn 60 40 $a2a $teardown -}}
 {{- int (ceil $total) -}}
+{{- end -}}
+
+{{/*
+runtime.shutdown budgets, defaulted when a release predating the block
+reuses its values. uvicorn reads its graceful-shutdown timeout as an integer.
+*/}}
+{{- define "cogniverse.runtime.shutdown.uvicornGracefulSeconds" -}}
+{{- $seconds := dig "shutdown" "uvicornGracefulSeconds" 15 .Values.runtime -}}
+{{- if ne (float64 $seconds) (float64 (int $seconds)) -}}
+{{- fail (printf "runtime.shutdown.uvicornGracefulSeconds must be a whole number of seconds (uvicorn reads it as an integer), got %v" $seconds) -}}
+{{- end -}}
+{{- int $seconds -}}
+{{- end -}}
+
+{{- define "cogniverse.runtime.shutdown.a2aDrainSeconds" -}}
+{{- dig "shutdown" "a2aDrainSeconds" 30 .Values.runtime -}}
 {{- end -}}
