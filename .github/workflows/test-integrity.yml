@@ -27,7 +27,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     - name: Install dependencies
       run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
@@ -72,7 +72,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.12.19"
 
     - name: Install dependencies
       run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
@@ -103,5 +103,6 @@ jobs:
           tests/common/unit/test_schema_reference_guard.py \
           tests/common/unit/test_tenant_create_budget_guard.py \
           tests/common/unit/test_tenant_create_teardown_guard.py \
+          tests/common/unit/test_uv_version_pinned.py \
           tests/runtime/unit/test_marker_coverage.py \
           --tb=long -v
