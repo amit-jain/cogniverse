@@ -52,7 +52,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv
+          pip install uv==0.12.19
           uv --version
 
       - name: Sync workspace dependencies
@@ -114,7 +114,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv
+          pip install uv==0.12.19
           uv --version
 
       - name: Free up disk space
@@ -185,7 +185,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv
+          pip install uv==0.12.19
           uv --version
 
       - name: Download build artifacts
@@ -232,7 +232,7 @@ jobs:
 
       - name: Install uv
         run: |
-          pip install uv
+          pip install uv==0.12.19
           uv --version
 
       - name: Download build artifacts
