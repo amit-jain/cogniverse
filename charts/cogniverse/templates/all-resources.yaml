@@ -294,9 +294,9 @@ spec:
         # After this, uvicorn stops waiting on open connections (SSE streams
         # included) and the lifespan shutdown runs.
         - name: UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
-          value: {{ .Values.runtime.shutdown.uvicornGracefulSeconds | quote }}
+          value: {{ include "cogniverse.runtime.shutdown.uvicornGracefulSeconds" . | quote }}
         - name: A2A_DRAIN_TIMEOUT_SECONDS
-          value: {{ .Values.runtime.shutdown.a2aDrainSeconds | quote }}
+          value: {{ include "cogniverse.runtime.shutdown.a2aDrainSeconds" . | quote }}
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: VESPA_URL

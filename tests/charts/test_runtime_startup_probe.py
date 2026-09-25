@@ -260,3 +260,25 @@ def test_a_shutdown_budget_set_around_the_grace_period_is_refused(variable):
         f"{variable} is set from runtime.shutdown, which also sizes the pod's "
         "termination grace period; set it there"
     ) in str(refused.value)
+
+
+def test_a_release_without_the_shutdown_block_renders_the_default_grace():
+    """``helm upgrade --reuse-values`` from a release predating
+    ``runtime.shutdown`` carries no such block; the render takes the default
+    budgets instead of failing on a nil pointer."""
+    grace, budgets = _grace_and_budgets("runtime.shutdown=null")
+
+    assert grace == 190
+    assert budgets["uvicorn graceful shutdown"] == 15.0
+    assert budgets["A2A shutdown"] == 60.0
+
+
+def test_a_fractional_uvicorn_graceful_shutdown_is_refused():
+    """uvicorn reads --timeout-graceful-shutdown as an integer, so a
+    fractional value would render and then crashloop the pod."""
+    with pytest.raises(AssertionError) as refused:
+        _render_chart("runtime.shutdown.uvicornGracefulSeconds=15.5")
+    assert (
+        "runtime.shutdown.uvicornGracefulSeconds must be a whole number of "
+        "seconds (uvicorn reads it as an integer), got 15.5"
+    ) in str(refused.value)
