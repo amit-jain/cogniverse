@@ -1337,6 +1337,59 @@ class TestJobDeadline:
         pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
         assert pending["pending"] == 0
 
+    @pytest.mark.asyncio
+    async def test_a_deploy_lease_wait_inside_a_job_is_not_its_deadline(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A job whose schema deploy runs out its wait for the deploy lease
+        fails with that error, not as a job that hit its wall-clock deadline."""
+        from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        monkeypatch.setenv("INGEST_JOB_DEADLINE_SECONDS", "30")
+        from cogniverse_runtime.ingestion_worker import worker
+
+        config = worker.WorkerConfig()
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await queue.increment_active(redis, "acme:acme")
+        await idempotency.mark_inflight(
+            redis, "sha_lease", "ing_lease", ttl_seconds=600
+        )
+        await queue.submit(
+            redis,
+            ingest_id="ing_lease",
+            source_url="s3://b/l.mp4",
+            profile="video",
+            tenant_id="acme:acme",
+            sha="sha_lease",
+        )
+        jobs = await queue.claim(
+            redis, config.consumer_group, config.consumer_id, block_ms=1000
+        )
+        store = InMemoryConfigStore()
+        peer = SchemaDeployLease(store)
+        assert peer.acquire() is peer
+
+        async def waits_for_the_deploy_lease(job):
+            SchemaDeployLease(store, wait_seconds=0.5).acquire()
+
+        try:
+            await worker._process_job(
+                redis, jobs[0], config, processor=waits_for_the_deploy_lease
+            )
+        finally:
+            peer.release()
+
+        events = [e for _, e in await queue.read_status_since(redis, "ing_lease")]
+        terminal = events[-1]
+        assert terminal["state"] == "failed"
+        assert terminal["error_type"] == "LeaseWaitTimeout"
+        assert terminal["error"].startswith(
+            f"Vespa deployment lease still held by {peer.holder!r} after 0.5s"
+        )
+        assert await queue.get_active(redis, "acme:acme") == 0
+
 
 class TestMalformedEntryTolerance:
     @pytest.mark.asyncio

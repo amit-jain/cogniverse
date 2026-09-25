@@ -358,3 +358,85 @@ async def test_worker_retries_partial_graph_write_result(monkeypatch):
         "graph extraction left 1 failed writes for ingest ing-partial-graph"
     )
     assert marked == [("0-3", "ing-partial-graph")]
+
+
+def _held_deploy_lease_wait():
+    """Wait for the deploy lease a live peer holds, as a nested schema deploy
+    does, until the wait runs out."""
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    peer = SchemaDeployLease(store)
+    assert peer.acquire() is peer
+    try:
+        SchemaDeployLease(store, wait_seconds=0.5).acquire()
+    finally:
+        peer.release()
+
+
+@pytest.mark.asyncio
+async def test_a_deploy_lease_wait_in_the_graph_stage_is_not_read_as_its_deadline(
+    monkeypatch,
+):
+    class Pipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        async def process_video_async(self, path, source_uri=None):
+            return {
+                "status": "success",
+                "video_id": "video-graph-lease",
+                "results": {"video_id": "video-graph-lease"},
+            }
+
+    class Locator:
+        def __init__(self, tenant_id, config):
+            pass
+
+        def localize(self, url):
+            return "/tmp/video-graph-lease.mp4"
+
+    async def graph_waits_for_the_deploy_lease(**kwargs):
+        _held_deploy_lease_wait()
+
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline", Pipeline
+    )
+    monkeypatch.setattr("cogniverse_core.common.media.MediaLocator", Locator)
+    monkeypatch.setattr(
+        "cogniverse_runtime.routers.ingestion._extract_graph_per_segment",
+        graph_waits_for_the_deploy_lease,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_prepare_job_context",
+        lambda service_urls: (object(), object()),
+    )
+    job = queue.IngestJob(
+        message_id="0-2",
+        ingest_id="ing-graph-lease",
+        source_url="s3://media/video-graph-lease.mp4",
+        profile="video",
+        tenant_id="acme:graph",
+        sha="sha-graph-lease",
+    )
+
+    async def mark_graph_pending(pending_job):
+        return None
+
+    with pytest.raises(
+        worker.GraphStageIncomplete,
+        match="graph extraction failed for ingest ing-graph-lease",
+    ) as exc_info:
+        await worker._default_processor(
+            job,
+            service_urls=None,
+            mark_graph_pending=mark_graph_pending,
+            graph_deadline_s=30,
+        )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, TimeoutError)
+    assert type(cause).__name__ == "LeaseWaitTimeout"
+    assert "Vespa deployment lease still held by" in str(cause)
