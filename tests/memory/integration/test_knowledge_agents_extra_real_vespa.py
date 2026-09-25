@@ -36,6 +36,7 @@ from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_prof
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
+    Provenance,
     attach_to_metadata,
     make_provenance,
 )
@@ -376,15 +377,19 @@ async def test_temporal_reasoning_real_vespa(primary_mm):
         # The temporal agent buckets on metadata["provenance"]["written_at"]
         # — the shape attach_to_metadata writes — so seed the back-dated
         # stamp under the nested provenance payload.
+        prov = Provenance(
+            written_by="user:tenant_admin",
+            written_at=when.isoformat(),
+            derivation_kind=DerivationKind.USER_ASSERT,
+            confidence=1.0,
+        )
         mid = mm.add_memory(
             content=f"Policy revision {i}",
             tenant_id=TENANT,
             agent_name=AGENT,
-            metadata={
-                "kind": "tenant_instruction",
-                "subject_key": subject,
-                "provenance": {"written_at": when.isoformat()},
-            },
+            metadata=attach_to_metadata(
+                {"kind": "tenant_instruction", "subject_key": subject}, prov
+            ),
             infer=False,
         )
         assert mid
