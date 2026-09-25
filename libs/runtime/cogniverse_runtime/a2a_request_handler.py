@@ -22,14 +22,17 @@ from a2a.types import (
     TaskIdParams,
     TaskNotCancelableError,
     TaskNotFoundError,
+    TaskQueryParams,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
 from a2a.utils import new_agent_text_message
 from a2a.utils.errors import ServerError
+from a2a.utils.task import apply_history_length
 
 from cogniverse_runtime.a2a_task_store import (
+    INTERRUPTED_MESSAGE,
     A2ACancelCapacityError,
     A2ACancelTimeoutError,
     A2ATaskConflictError,
@@ -374,6 +377,8 @@ class RedisRequestHandler(DefaultRequestHandler):
         # Producers this handler cancels, with the failure their stream ends
         # on; None ends the stream without one.
         self._stop_reasons: dict[asyncio.Task, str | None] = {}
+        # Stopped producers whose task this replica records as ended.
+        self._recorded_stops: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Start the owner-addressed cancellation listener."""
@@ -390,9 +395,11 @@ class RedisRequestHandler(DefaultRequestHandler):
         Served producers and running cancels get ``drain_timeout_seconds`` to
         finish; whatever outlives that is cancelled rather than held onto,
         and its cleanup gets at most as long again, so close() ends within
-        twice the drain budget. A cancelled producer keeps its lease, left to
-        expire so a peer reports the task interrupted instead of re-running
-        it.
+        twice the drain budget. A producer cancelled at the deadline has its
+        task saved interrupted, fenced, and its lease released; a task another
+        owner took meanwhile is left to it. If the save cannot be made, the
+        lease is left to expire and the next reader reports the task
+        interrupted instead of anything re-running it.
         """
         loop = asyncio.get_running_loop()
         drained_by = loop.time() + self._drain_timeout_seconds
@@ -405,9 +412,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         if producers:
             _, pending = await asyncio.wait(producers, timeout=until(drained_by))
             for producer_task in pending:
-                # The lease is kept, so a peer reports the task interrupted:
-                # the stream ends without a terminal state of its own.
-                self._stop_producer(producer_task, None)
+                self._stop_producer(producer_task, INTERRUPTED_MESSAGE, record=True)
             if pending:
                 await asyncio.wait(pending, timeout=until(cleaned_by))
         # The SDK finishes a served turn in background tasks that still close
@@ -515,7 +520,7 @@ class RedisRequestHandler(DefaultRequestHandler):
                 queue.bind_owner(lease.generation)
             result_aggregator = ResultAggregator(task_manager)
             producer_task = asyncio.create_task(
-                self._run_producer(request_context, queue),
+                self._run_producer(request_context, queue, lease),
                 name=f"a2a-producer:{task_id}",
             )
             await self._register_producer(task_id, producer_task)
@@ -536,20 +541,28 @@ class RedisRequestHandler(DefaultRequestHandler):
                 await self.task_store.release_execution(lease)
             raise
 
-    def _stop_producer(self, producer_task: asyncio.Task, reason: str | None) -> None:
+    def _stop_producer(
+        self, producer_task: asyncio.Task, reason: str | None, *, record: bool = False
+    ) -> None:
         """Cancel a producer and record how its stream ends.
 
         The SDK closes a producer's queue only after ``execute`` returns, and
         its consumer ignores a cancelled producer, so without this a blocking
         send on the stopped execution waits for its client to go away.
-        A producer that has already finished needs neither.
+        With ``record``, the replica also saves that end as the task's state
+        and releases the lease. A producer that has already finished needs
+        none of it.
         """
         if producer_task.done():
             return
         self._stop_reasons[producer_task] = reason
+        if record:
+            self._recorded_stops.add(producer_task)
         producer_task.cancel()
 
-    async def _run_producer(self, request_context: RequestContext, queue) -> None:
+    async def _run_producer(
+        self, request_context: RequestContext, queue, lease: TaskLease
+    ) -> None:
         """Run the execution; end the stream of one this handler stopped."""
         producer_task = asyncio.current_task()
         try:
@@ -557,35 +570,49 @@ class RedisRequestHandler(DefaultRequestHandler):
         except asyncio.CancelledError:
             if producer_task in self._stop_reasons:
                 await self._end_stopped_stream(
-                    request_context, queue, self._stop_reasons[producer_task]
+                    request_context,
+                    queue,
+                    self._stop_reasons[producer_task],
+                    lease if producer_task in self._recorded_stops else None,
                 )
             raise
         finally:
             self._stop_reasons.pop(producer_task, None)
+            self._recorded_stops.discard(producer_task)
 
     async def _end_stopped_stream(
-        self, request_context: RequestContext, queue, reason: str | None
+        self,
+        request_context: RequestContext,
+        queue,
+        reason: str | None,
+        lease: TaskLease | None = None,
     ) -> None:
         """Hand local consumers a final ``failed`` event, then close the queue.
 
         The event reaches local consumers only: another replica may own the
         task's relay by now. Saving it is fenced like any write, so a node
-        that lost the task records nothing and its send fails instead. While
-        this replica's own cancel of the task is under way, the cancel's
-        events end the stream, so no ``failed`` event goes ahead of them.
+        that lost the task records nothing and its send fails instead. With
+        ``lease``, the same status is first saved directly, since no consumer
+        may be left to save it. While this replica's own cancel of the task
+        is under way, the cancel's events end the stream, so no ``failed``
+        event goes ahead of them.
         """
         cancelling = request_context.task_id in self._inflight_cancels or (
             isinstance(queue, RedisRelayEventQueue) and queue._cancel_state != "open"
         )
         if reason is not None and not cancelling:
+            status = TaskStatus(
+                state=TaskState.failed,
+                message=new_agent_text_message(reason),
+            )
+            if lease is not None:
+                # Stored before any consumer hears of it.
+                await self._record_stopped(lease, status)
             event = TaskStatusUpdateEvent(
                 task_id=request_context.task_id or "",
                 context_id=request_context.context_id or "",
                 final=True,
-                status=TaskStatus(
-                    state=TaskState.failed,
-                    message=new_agent_text_message(reason),
-                ),
+                status=status,
             )
             try:
                 await EventQueue.enqueue_event(queue, event)
@@ -612,6 +639,37 @@ class RedisRequestHandler(DefaultRequestHandler):
                 )
             except TimeoutError:
                 await EventQueue.close(queue, immediate=True)
+
+    async def _record_stopped(self, lease: TaskLease, status: TaskStatus) -> None:
+        """Save a stopped execution's end while ``lease`` owns it, then
+        release the lease; a task another owner took is left to it."""
+        try:
+            await self.task_store.interrupt_execution(lease, status)
+        except A2ATaskOwnershipLostError:
+            logger.info(
+                "A2A task %s: another owner took it before this replica stopped "
+                "it; nothing recorded",
+                lease.task_id,
+            )
+            return
+        except A2ATaskStoreError as exc:
+            logger.warning(
+                "A2A task %s: could not record its stopped execution; the lease "
+                "is left to expire, after which a reader reports it interrupted: "
+                "%s",
+                lease.task_id,
+                exc,
+            )
+            return
+        try:
+            await self.task_store.release_execution(lease)
+        except A2ATaskStoreError as exc:
+            logger.warning(
+                "A2A task %s: could not release its lease after recording its "
+                "stopped execution; it expires instead: %s",
+                lease.task_id,
+                exc,
+            )
 
     async def _acquire(self, task_id: str) -> TaskLease:
         try:
@@ -712,11 +770,35 @@ class RedisRequestHandler(DefaultRequestHandler):
             if renewal is not None:
                 renewal.cancel()
                 await asyncio.gather(renewal, return_exceptions=True)
-            # A cancelled producer keeps its lease: the task is still recorded
-            # active, and letting the lease expire is what makes a peer report
-            # it interrupted instead of silently re-executing its side effects.
+            # A cancelled producer's lease is not released here; a stop that
+            # recorded the task ended released it already. Otherwise letting
+            # the lease expire is what makes a peer report it interrupted
+            # instead of silently re-executing its side effects.
             if lease is not None and not producer_task.cancelled():
                 await self.task_store.release_execution(lease)
+
+    async def on_get_task(
+        self, params: TaskQueryParams, context: ServerCallContext | None = None
+    ) -> Task | None:
+        """Read a task, resolving one whose owner stopped without ending it.
+
+        A non-terminal task whose execution lease expired, judged against
+        Redis' clock, gets the interruption a peer's send or cancel records
+        (``mark_owner_lost``): atomic, at most once across readers, and never
+        applied while a live owner holds or renews the lease.
+        """
+        task = await self.task_store.get(params.id, context)
+        if task is not None and task.status.state not in _TERMINAL_STATES:
+            lease = await self.task_store.get_execution_lease(params.id)
+            if lease is not None and not await self.task_store.has_live_owner(
+                params.id
+            ):
+                await self.task_store.mark_owner_lost(params.id)
+                # Read again whichever reader's interruption landed.
+                task = await self.task_store.get(params.id, context)
+        if task is None:
+            raise ServerError(error=TaskNotFoundError())
+        return apply_history_length(task, params.history_length)
 
     async def on_cancel_task(
         self, params: TaskIdParams, context: ServerCallContext | None = None
