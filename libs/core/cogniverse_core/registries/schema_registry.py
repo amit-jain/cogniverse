@@ -23,7 +23,10 @@ from cogniverse_core.registries.exceptions import (
     SchemaRegistryInitializationError,
     SchemaRevisionConflictError,
 )
-from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+from cogniverse_core.registries.schema_deploy_lease import (
+    LeaseWaitTimeout,
+    SchemaDeployLease,
+)
 from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
 
 logger = logging.getLogger(__name__)
@@ -548,7 +551,9 @@ class SchemaRegistry:
         tenant whose schema a peer deleted since the listing is skipped, not
         deployed again. A tenant whose redeploy is refused (a revision conflict
         or a backend refusal) is logged and reported in ``failed``, and the
-        remaining tenants are still redeployed; any other error propagates.
+        remaining tenants are still redeployed; any other error propagates,
+        including the ``LeaseWaitTimeout`` of a deploy lease a peer held for
+        the whole wait, which is nothing to record against a tenant.
         """
         import json
 
@@ -816,7 +821,7 @@ class SchemaRegistry:
                 activated = isinstance(exc, SchemaConvergenceError)
                 deployment_error = (
                     exc
-                    if isinstance(exc, SchemaRevisionConflictError)
+                    if isinstance(exc, (SchemaRevisionConflictError, LeaseWaitTimeout))
                     else BackendDeploymentError(
                         f"Backend deployment failed for {subject}: {exc}. "
                         + (

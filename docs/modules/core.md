@@ -1422,7 +1422,10 @@ registered again. It returns a `DriftedSchemaRedeploy`: `redeployed` holds the
 full names it redeployed and `failed` one `DriftedSchemaFailure(tenant_id,
 schema_name, error)` per tenant whose redeploy was refused by a revision
 conflict or the backend. Those are logged and the remaining tenants are still
-redeployed; any other error, such as a deploy-lease `TimeoutError`, propagates.
+redeployed; any other error propagates. That includes a `LeaseWaitTimeout` (a
+`TimeoutError`) when a peer holds the deploy lease for the whole wait:
+`VespaBackend.deploy_schemas` and `SchemaRegistry.deploy_schemas` pass it
+through unwrapped instead of reporting a failed deploy, so the caller can retry.
 Concurrent external changes inside repair are retried up to the requested bound
 and then raise `ProvenanceRepairConflictError`.
 

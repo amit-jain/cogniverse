@@ -403,10 +403,35 @@ def test_the_migration_continues_past_a_tenant_whose_redeploy_fails(
     )
     refused_row = _schema_row(store, refused)
     writer = connect(first)
+    registry = writer.schema_registry
+    # The config store lists rows in document-id order, which is random here;
+    # the real listing is reordered so the refused tenant sits strictly
+    # between two that must still be redeployed after it.
+    listing = registry._get_all_schemas
+    rank = {first: 0, refused: 1, last: 2}
+
+    def refused_in_the_middle(*args, **kwargs):
+        rows = listing(*args, **kwargs)
+        ours = sorted(
+            (row for row in rows if row.tenant_id in rank),
+            key=lambda row: rank[row.tenant_id],
+        )
+        return [row for row in rows if row.tenant_id not in rank] + ours
+
+    registry._get_all_schemas = refused_in_the_middle
+    deploy = registry.deploy_schemas
+    visited = []
+
+    def record_visits(tenant_id, *args, **kwargs):
+        visited.append(tenant_id)
+        return deploy(tenant_id, *args, **kwargs)
+
+    registry.deploy_schemas = record_visits
     deploys.clear()
 
-    result = writer.schema_registry.redeploy_drifted_schemas("provenance")
+    result = registry.redeploy_drifted_schemas("provenance")
 
+    assert [tenant for tenant in visited if tenant in rank] == [first, refused, last]
     assert {first_schema, last_schema} <= set(result.redeployed)
     assert refused_schema not in result.redeployed
     failures = [f for f in result.failed if f.schema_name == refused_schema]
@@ -424,3 +449,53 @@ def test_the_migration_continues_past_a_tenant_whose_redeploy_fails(
     assert refused_owner.schema_manager.delete_schema(refused, "provenance") == (
         refused_schema
     )
+
+
+def test_a_deploy_lease_held_by_a_peer_stops_the_migration_with_its_timeout(
+    provenance_vespa, deploys, monkeypatch
+):
+    """A lease wait that runs out is not a tenant's failure: it escapes the
+    migration unwrapped, so the runtime's retry-on-TimeoutError runs, and no
+    tenant is recorded as failed or touched."""
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+
+    connect, store = provenance_vespa
+    legacy = _PreDigestLoader(Path("configs/schemas"))
+    tenants = [f"provwait_{uuid4().hex[:10]}:{n}" for n in ("one", "two")]
+    schemas = [
+        connect(tenant, legacy).schema_registry.deploy_schema(tenant, "provenance")
+        for tenant in tenants
+    ]
+    versions = {tenant: _schema_row(store, tenant).version for tenant in tenants}
+    writer = connect(tenants[0])
+    registry = writer.schema_registry
+    deploy = registry.deploy_schemas
+    attempts = []
+
+    def record_attempts(tenant_id, *args, **kwargs):
+        attempts.append(tenant_id)
+        return deploy(tenant_id, *args, **kwargs)
+
+    registry.deploy_schemas = record_attempts
+    peer = SchemaDeployLease(store, heartbeat=True)
+    assert peer.acquire() is peer
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 2.0)
+    try:
+        with pytest.raises(TimeoutError) as caught:
+            registry.redeploy_drifted_schemas("provenance")
+    finally:
+        peer.release()
+
+    assert str(caught.value).startswith(
+        f"Vespa deployment lease still held by {peer.holder!r} after 2.0s"
+    )
+    assert len(attempts) == 1
+    for tenant in tenants:
+        assert _schema_row(store, tenant).version == versions[tenant]
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 120.0)
+
+    retried = registry.redeploy_drifted_schemas("provenance")
+
+    assert set(schemas) <= set(retried.redeployed)
+    assert [f for f in retried.failed if f.tenant_id in tenants] == []
