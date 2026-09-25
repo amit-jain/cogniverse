@@ -36,6 +36,7 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
+from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
@@ -621,6 +622,12 @@ async def _ingest_and_extract_graph(
             ),
             timeout=graph_deadline_s,
         )
+    except LeaseWaitTimeout as exc:
+        # A nested schema deploy waited out a peer's deploy lease; that is a
+        # failed attempt, not this stage's deadline.
+        raise GraphStageIncomplete(
+            f"graph extraction failed for ingest {job.ingest_id}"
+        ) from exc
     except TimeoutError:
         raise GraphStageIncomplete(
             f"graph extraction exceeded the {graph_deadline_s:g}s deadline "
@@ -761,6 +768,11 @@ async def _process_job(
                         result = await asyncio.wait_for(
                             processor(job), timeout=config.job_deadline_s
                         )
+                    except LeaseWaitTimeout:
+                        # A schema deploy inside the job waited out a peer's
+                        # deploy lease; the job failed, it did not hit its
+                        # wall-clock deadline.
+                        raise
                     except TimeoutError:
                         raise JobDeadlineExceeded(
                             f"job exceeded the {config.job_deadline_s}s "
