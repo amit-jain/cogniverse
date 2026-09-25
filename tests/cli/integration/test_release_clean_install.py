@@ -637,8 +637,9 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
     refused = _run([*_pip_install(python, caches), tampered], work, caches)
     assert refused.returncode == 1
     assert "THESE PACKAGES DO NOT MATCH THE HASHES" in refused.stderr
-    assert f"Expected sha256 {'0' * 64}" in refused.stderr
-    assert f"Got        {SPACY_MODEL_SHA256}" in refused.stderr
+    words = f" {' '.join(refused.stderr.split())} "
+    assert f" Expected sha256 {'0' * 64} " in words
+    assert f" Got {SPACY_MODEL_SHA256} " in words
     still_missing = _run(probe, work, caches)
     assert still_missing.returncode == 0, still_missing.stderr
     assert json.loads(still_missing.stdout) == json.loads(before.stdout)
