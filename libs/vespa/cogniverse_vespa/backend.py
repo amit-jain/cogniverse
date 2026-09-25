@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
+from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
 from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
@@ -1234,13 +1235,15 @@ class VespaBackend(Backend):
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
 
-        except (BackendDeploymentError, SchemaRevisionConflictError):
+        except (BackendDeploymentError, SchemaRevisionConflictError, LeaseWaitTimeout):
             # A data-loss refusal (unregistered, unreconstructable schemas that
             # a redeploy would destroy) is NOT a transient failure — surface it
             # so the caller does not mistake it for a retryable False and force
             # the destructive deploy. A registry revision conflict names the
-            # peer revision the caller must see. Transient failures still
-            # return False.
+            # peer revision the caller must see. A peer holding the deploy
+            # lease for the whole wait deployed nothing here; it surfaces as
+            # itself so the caller can retry. Transient failures still return
+            # False.
             raise
         except Exception as e:
             logger.error(f"Failed to deploy schemas: {e}")

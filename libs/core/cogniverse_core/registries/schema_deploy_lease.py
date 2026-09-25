@@ -148,6 +148,14 @@ class DeploymentLeaseLost(RuntimeError):
     """The holder no longer owns the lease and must not activate a package."""
 
 
+class LeaseWaitTimeout(TimeoutError):
+    """A live peer held the lease for the whole wait; nothing was done.
+
+    Deploy paths let it through unwrapped: it says "try again later", not
+    that a deploy failed, and callers retry on ``TimeoutError``.
+    """
+
+
 class SchemaDeployLease:
     """One writer at a time for the whole Vespa application package.
 
@@ -286,12 +294,12 @@ class SchemaDeployLease:
                 return self
             if time.monotonic() >= deadline:
                 if self._purpose == "Vespa deployment":
-                    raise TimeoutError(
+                    raise LeaseWaitTimeout(
                         f"Vespa deployment lease still held by {current!r} after "
                         f"{self._wait_seconds}s; refusing to replace the application "
                         f"package concurrently with another deployer"
                     )
-                raise TimeoutError(
+                raise LeaseWaitTimeout(
                     f"{self._purpose} lease still held by {current!r} after "
                     f"{self._wait_seconds}s; refusing concurrent ownership"
                 )
