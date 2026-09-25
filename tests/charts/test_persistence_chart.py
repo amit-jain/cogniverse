@@ -689,7 +689,7 @@ def test_model_warm_script_extracts_tar_not_per_file_mirror():
 
 
 def test_backup_upload_uses_bash_and_no_awk():
-    """Regression: same image-content reason — minio/mc lacks ``awk``. The
+    """Regression: same image-content reason — pgsty/mc lacks ``awk``. The
     retention pruning must use bash + tail/sort, not awk, or the pruning
     pipeline silently fails (script still exits 0 because ``while read``
     consumes empty stdin) and snapshots accumulate forever."""
