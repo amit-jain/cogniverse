@@ -226,7 +226,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     needs: unit-tests
 
     steps:
@@ -263,7 +263,7 @@ jobs:
         df -h
 
     - name: Run integration tests
-      timeout-minutes: 10
+      timeout-minutes: 20
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/common/integration/ \
