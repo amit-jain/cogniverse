@@ -89,7 +89,7 @@ _e2e_lock_live_holder() {
 _e2e_foreign_run() {
   local mypgid
   mypgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')"
-  ps -eo pid=,pgid=,args= 2>/dev/null | awk -v skip="$mypgid" -v pat="$E2E_LOCK_SCAN_PATTERN" '
+  ps -ww -eo pid=,pgid=,args= 2>/dev/null | awk -v skip="$mypgid" -v pat="$E2E_LOCK_SCAN_PATTERN" '
     $2 == skip { next }
     $0 ~ pat { print $1; exit }
   '
