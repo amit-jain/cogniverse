@@ -362,7 +362,7 @@ def _e2e_cleanup_body() -> str:
     return match.group("body")
 
 
-def _run_lock(lock_file, scan_pattern, trailer='echo "ACQUIRED $$"'):
+def _run_lock(lock_file, scan_pattern, trailer='echo "ACQUIRED $$"', extra_env=None):
     script = "set -euo pipefail\n" + _e2e_run_lock_block() + "\n" + trailer + "\n"
     return subprocess.run(
         ["bash", "-c", script],
@@ -370,6 +370,7 @@ def _run_lock(lock_file, scan_pattern, trailer='echo "ACQUIRED $$"'):
             **os.environ,
             "E2E_LOCK_FILE": str(lock_file),
             "E2E_LOCK_SCAN_PATTERN": scan_pattern,
+            **(extra_env or {}),
         },
         capture_output=True,
         text=True,
@@ -425,8 +426,8 @@ def test_run_lock_takes_over_a_lock_whose_holder_is_dead(tmp_path):
     assert recorded == runner_pid != str(dead_pid), done.stdout
 
 
-def test_run_lock_refuses_when_a_detached_e2e_pytest_is_already_running(tmp_path):
-    token = f"lockprobe{uuid.uuid4().hex[:10]}"
+@contextmanager
+def _running_fake_e2e_pytest(tmp_path, token):
     ready = tmp_path / "ready"
     fake = tmp_path / "pytest"
     fake.write_text(f"#!/usr/bin/env bash\n: > {str(ready)!r}\nsleep 120\n")
@@ -440,11 +441,29 @@ def test_run_lock_refuses_when_a_detached_e2e_pytest_is_already_running(tmp_path
             assert other.poll() is None, f"fake e2e run died: {other.returncode}"
             assert time.monotonic() < deadline, "fake e2e run never started"
             time.sleep(0.01)
+        yield other
+
+
+def test_run_lock_refuses_when_a_detached_e2e_pytest_is_already_running(tmp_path):
+    token = f"lockprobe{uuid.uuid4().hex[:10]}"
+
+    with _running_fake_e2e_pytest(tmp_path, token) as other:
         done = _run_lock(tmp_path / "e2e.lock", token)
 
     assert done.returncode == 3, f"expected refusal, got {done.returncode}: {done!r}"
     assert f"pid {other.pid}" in done.stderr, done.stderr
     assert not (tmp_path / "e2e.lock").exists(), "refusal must not create a lock"
+
+
+def test_run_lock_sees_a_foreign_run_past_an_exported_terminal_width(tmp_path):
+    """ps cuts args at $COLUMNS, which would hide the pattern past that column."""
+    token = f"lockprobe{uuid.uuid4().hex[:10]}"
+
+    with _running_fake_e2e_pytest(tmp_path, token) as other:
+        done = _run_lock(tmp_path / "e2e.lock", token, extra_env={"COLUMNS": "40"})
+
+    assert done.returncode == 3, f"expected refusal, got {done.returncode}: {done!r}"
+    assert f"pid {other.pid}" in done.stderr, done.stderr
 
 
 def test_run_lock_ignores_a_matching_process_in_its_own_process_group(tmp_path):
