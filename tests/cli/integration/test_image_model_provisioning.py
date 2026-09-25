@@ -234,9 +234,11 @@ def test_a_model_wheel_that_does_not_match_the_lock_fails_the_sync(tmp_path):
     result = _run(model_sync, env_dir, cwd=workspace)
 
     assert result.returncode == 1
-    assert "Hash mismatch for `en-core-web-sm @" in result.stderr
-    assert f"Expected:\n        sha256:{'0' * 64}\n" in result.stderr
-    assert f"Computed:\n        sha256:{SPACY_MODEL_SHA256}\n" in result.stderr
+    words = f" {' '.join(result.stderr.split())} "
+    assert f" Hash mismatch for `en-core-web-sm @ {SPACY_MODEL_URL}` " in words
+    assert (
+        f" Expected: sha256:{'0' * 64} Computed: sha256:{SPACY_MODEL_SHA256} " in words
+    )
     site_packages = env_dir / "lib" / "python3.12" / "site-packages"
     assert site_packages.is_dir()
     assert list(site_packages.glob("en_core_web_sm*")) == []
@@ -253,4 +255,8 @@ def test_workspace_syncs_keep_the_model_through_the_default_group(selection, tmp
     result = _run(f"{selection} --dry-run", tmp_path / "env")
 
     assert result.returncode == 0, result.stderr
-    assert f"\n + en-core-web-sm==3.8.0 (from {SPACY_MODEL_URL})\n" in result.stderr
+    assert re.search(
+        rf"^\s*\+ en-core-web-sm==3\.8\.0 \(from {re.escape(SPACY_MODEL_URL)}\)$",
+        result.stderr,
+        re.MULTILINE,
+    ), result.stderr

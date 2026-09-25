@@ -468,7 +468,9 @@ def test_parent_installer_settings_do_not_reach_the_clean_installs(
         caches,
     )
     assert uv_dry_run.returncode == 0, uv_dry_run.stderr
-    assert " + packaging==26.0\n" in uv_dry_run.stderr
+    assert re.search(r"^\s*\+ packaging==26\.0$", uv_dry_run.stderr, re.MULTILINE), (
+        uv_dry_run.stderr
+    )
 
     pip_reads_config = _run(
         [
