@@ -1633,6 +1633,16 @@ _PACKAGE_FAILURE = (
         ("bulk_tenant_delete", 2, _STORAGE_FAILURE),
         ("orphan_delete", 1, _STORAGE_FAILURE),
     ],
+    ids=[
+        "startup_metadata_deploy-1",
+        "schema_delete-1",
+        "tenant_delete-1",
+        "tenant_delete-2",
+        "tenant_delete-3",
+        "bulk_tenant_delete-1",
+        "bulk_tenant_delete-2",
+        "orphan_delete-1",
+    ],
 )
 def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_package(
     recovery_backend, monkeypatch, operation, failing_listing, message
