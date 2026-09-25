@@ -13,11 +13,13 @@ Reaping the schemas of deleted tenants belongs to
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi import FastAPI
 
+from cogniverse_core.registries.schema_registry import (
+    DriftedSchemaFailure,
+    DriftedSchemaRedeploy,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime import main as runtime_main
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
@@ -282,10 +284,10 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
     registry = _MigratingRegistry(
         [
             TimeoutError(_LEASE_HELD),
-            SimpleNamespace(
+            DriftedSchemaRedeploy(
                 redeployed=["provenance_acme_acme"],
                 failed=[
-                    SimpleNamespace(
+                    DriftedSchemaFailure(
                         tenant_id="globex:globex",
                         schema_name="provenance_globex_globex",
                         error="peer deleted provenance_globex_globex",
