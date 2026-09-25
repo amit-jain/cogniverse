@@ -265,10 +265,11 @@ class _MigratingRegistry:
         self._outcomes = outcomes
         self.calls: list = []
 
-    def redeploy_drifted_schemas(self, base_schema_name: str):
+    def redeploy_drifted_schemas(self, base_schema_name: str, should_stop=None):
         import threading
 
         self.calls.append((base_schema_name, threading.get_ident()))
+        self.should_stop = should_stop
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -489,3 +490,35 @@ async def test_a_bad_a2a_setting_stops_startup_before_any_side_effect(
     assert str(refused.value) == message
     assert recorded == {}
     assert side_effects == []
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_migration_reports_the_schemas_it_left(caplog):
+    import threading
+
+    stop = threading.Event()
+    registry = _MigratingRegistry(
+        [
+            DriftedSchemaRedeploy(
+                redeployed=["provenance_acme_acme"],
+                failed=[],
+                skipped=["provenance_globex_globex"],
+            )
+        ]
+    )
+
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(
+            lambda: registry, "provenance", stop
+        )
+
+    assert registry.should_stop == stop.is_set
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == runtime_main.logger.name
+    ] == [
+        "Migration of drifted provenance schemas redeployed ['provenance_acme_acme']",
+        "Migration of drifted provenance schemas stopped before redeploying "
+        "['provenance_globex_globex']; the next runtime start redeploys them",
+    ]

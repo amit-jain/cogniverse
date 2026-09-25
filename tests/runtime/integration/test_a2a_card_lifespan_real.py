@@ -65,7 +65,7 @@ async def test_the_schema_migration_runs_after_startup_without_holding_it(
     release = asyncio.Event()
     migrated = []
 
-    async def migration_in_progress(resolve_registry, base_schema_name):
+    async def migration_in_progress(resolve_registry, base_schema_name, stop):
         registry = await asyncio.to_thread(resolve_registry)
         migrated.append((type(registry).__name__, base_schema_name))
         running.set()
@@ -107,12 +107,12 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
     running = asyncio.Event()
     order = []
 
-    async def migration_never_done(resolve_registry, base_schema_name):
+    async def migration_never_done(resolve_registry, base_schema_name, stop):
         running.set()
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            order.append("migration cancelled")
+            order.append(f"migration cancelled, stop set: {stop.is_set()}")
             raise
 
     async def recording_blob_drain(timeout_s: float = 60.0) -> bool:
@@ -125,4 +125,4 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
     async with runtime_main.lifespan(FastAPI()):
         await asyncio.wait_for(running.wait(), timeout=5)
 
-    assert order == ["migration cancelled", "blob drain"]
+    assert order == ["migration cancelled, stop set: True", "blob drain"]
