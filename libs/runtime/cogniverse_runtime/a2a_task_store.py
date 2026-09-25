@@ -365,6 +365,22 @@ redis.call('HDEL', KEYS[4], ARGV[1])
 return 1
 """
 
+_CLOSE_STREAM_SCRIPT = """
+-- Only the generation that owns the task may end its shared relay; one that
+-- was superseded would cut off the new owner's resubscribers.
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if not current or tonumber(current) ~= tonumber(ARGV[2]) then
+    return 0
+end
+if tonumber(ARGV[3]) > 0 then
+    redis.call('XADD', KEYS[2], '*', 'closed', '1', 'missing', ARGV[3])
+else
+    redis.call('XADD', KEYS[2], '*', 'closed', '1')
+end
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+return 1
+"""
+
 _ACTIVE_STATES = frozenset(
     {
         TaskState.submitted,
@@ -937,27 +953,32 @@ class RedisTaskStore(TaskStore):
                 f"{_UNAVAILABLE}: mark event stream incomplete for task {task_id}"
             ) from exc
 
-    async def close_event_stream(self, task_id: str, *, missing: int = 0) -> None:
+    async def close_event_stream(
+        self, task_id: str, *, generation: int, missing: int = 0
+    ) -> bool:
         """Close an active event relay while retaining a short drain window.
 
-        ``missing`` owner events that were never published are recorded on
-        the close marker.
+        Only ``generation`` still owning the task closes it, checked in the
+        same script that writes the close; a superseded generation leaves the
+        relay to its new owner and gets False. ``missing`` owner events that
+        were never published are recorded on the close marker.
         """
-        stream_key = self._event_stream_key(task_id)
         try:
-            pipeline = self._redis.pipeline(transaction=True)
-            pipeline.xadd(
-                stream_key,
-                {"closed": "1", "missing": str(missing)}
-                if missing
-                else {"closed": "1"},
+            closed = await self._redis.eval(
+                _CLOSE_STREAM_SCRIPT,
+                2,
+                self._generations_key,
+                self._event_stream_key(task_id),
+                task_id,
+                generation,
+                missing,
+                _EVENT_STREAM_DRAIN_SECONDS,
             )
-            pipeline.expire(stream_key, _EVENT_STREAM_DRAIN_SECONDS)
-            await pipeline.execute()
         except RedisError as exc:
             raise A2ATaskStoreError(
                 f"{_UNAVAILABLE}: close event stream for task {task_id}"
             ) from exc
+        return int(closed) == 1
 
     async def subscribe_events(self, task_id: str) -> AsyncIterator[Event]:
         """Yield future owner events from the shared relay until it closes.
