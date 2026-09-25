@@ -163,15 +163,35 @@ def test_phoenix_postgres_rejects_file_only_backups(mode):
     )
 
 
+class DockerError(subprocess.CalledProcessError):
+    def __str__(self):
+        return f"{super().__str__()}\nstderr: {(self.stderr or '').strip()}"
+
+
 def docker(*args, **kwargs):
-    return subprocess.run(
-        ["docker", *args],
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=90,
-        **kwargs,
-    ).stdout.strip()
+    try:
+        return subprocess.run(
+            ["docker", *args],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=90,
+            **kwargs,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as error:
+        raise DockerError(
+            error.returncode, error.cmd, error.output, error.stderr
+        ) from None
+
+
+def test_a_failed_docker_command_reports_what_docker_said():
+    missing = f"cogniverse-no-such-container-{uuid4().hex[:10]}"
+
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        docker("inspect", missing)
+
+    message = str(raised.value)
+    assert "no such object" in message.lower(), message
 
 
 class BackupServices:
