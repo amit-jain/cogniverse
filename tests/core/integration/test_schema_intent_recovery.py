@@ -1621,40 +1621,32 @@ _PACKAGE_FAILURE = (
 )
 
 
-@pytest.mark.parametrize(
-    "operation, failing_listing, message",
-    [
-        ("startup_metadata_deploy", 1, _PACKAGE_FAILURE),
-        ("schema_delete", 1, _PACKAGE_FAILURE),
-        ("tenant_delete", 1, _STORAGE_FAILURE),
-        ("tenant_delete", 2, _STORAGE_FAILURE),
-        ("tenant_delete", 3, _STORAGE_FAILURE),
-        ("bulk_tenant_delete", 1, _STORAGE_FAILURE),
-        ("bulk_tenant_delete", 2, _STORAGE_FAILURE),
-        ("orphan_delete", 1, _STORAGE_FAILURE),
-    ],
-    ids=[
-        "startup_metadata_deploy-1",
-        "schema_delete-1",
-        "tenant_delete-1",
-        "tenant_delete-2",
-        "tenant_delete-3",
-        "bulk_tenant_delete-1",
-        "bulk_tenant_delete-2",
-        "orphan_delete-1",
-    ],
-)
-def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_package(
-    recovery_backend, monkeypatch, operation, failing_listing, message
-):
-    """Every package and deletion set the schema manager builds inside the
-    lease (the startup metadata deploy, a schema delete's survivors, a tenant
-    or bulk delete's targets and survivors, an orphan delete's registered
-    guard) reads the registry strictly: a failed listing refuses instead of
-    answering from a cache that still holds a schema a peer deleted and lacks
-    one a peer registered since."""
-    connect, store = recovery_backend
-    owner, deployer = connect(), connect()
+_SCHEMA_MANAGER_PACKAGE_CASES = {
+    "startup_metadata_deploy-1": ("startup_metadata_deploy", 1, _PACKAGE_FAILURE),
+    "schema_delete-1": ("schema_delete", 1, _PACKAGE_FAILURE),
+    "tenant_delete-1": ("tenant_delete", 1, _STORAGE_FAILURE),
+    "tenant_delete-2": ("tenant_delete", 2, _STORAGE_FAILURE),
+    "tenant_delete-3": ("tenant_delete", 3, _STORAGE_FAILURE),
+    "bulk_tenant_delete-1": ("bulk_tenant_delete", 1, _STORAGE_FAILURE),
+    "bulk_tenant_delete-2": ("bulk_tenant_delete", 2, _STORAGE_FAILURE),
+    "orphan_delete-1": ("orphan_delete", 1, _STORAGE_FAILURE),
+}
+
+
+@pytest.fixture(scope="module")
+def schema_manager_package_world(seeded_config_vespa):
+    port = seeded_config_vespa["http_port"]
+    config_port = seeded_config_vespa["config_port"]
+    store = VespaConfigStore(backend_url="http://127.0.0.1", backend_port=port)
+    backends = []
+
+    def connect():
+        backend = _connect(port, config_port, store)
+        backends.append(backend)
+        return backend
+
+    owner = connect()
+    deployers = {case: connect() for case in _SCHEMA_MANAGER_PACKAGE_CASES}
     victim = f"strictsm_{uuid4().hex[:10]}:victim"
     keeper = f"strictsm_{uuid4().hex[:10]}:keeper"
     doomed = f"strictsm_{uuid4().hex[:10]}:doomed"
@@ -1663,12 +1655,58 @@ def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_packag
     keeper_schema = owner.schema_registry.deploy_schema(keeper, "wiki_pages")
     doomed_schema = owner.schema_registry.deploy_schema(doomed, "wiki_pages")
     cached = {
-        info.full_schema_name for info in deployer.schema_registry._get_all_schemas()
+        case: {
+            info.full_schema_name
+            for info in deployer.schema_registry._get_all_schemas()
+        }
+        for case, deployer in deployers.items()
     }
-    assert {victim_schema, keeper_schema, doomed_schema} <= cached
     assert owner.schema_manager.delete_schema(victim, "wiki_pages") == victim_schema
     fresh_schema = owner.schema_registry.deploy_schema(fresh, "wiki_pages")
-    assert fresh_schema not in cached
+    try:
+        yield {
+            "store": store,
+            "deployers": deployers,
+            "cached": cached,
+            "tenants": (victim, keeper, doomed, fresh),
+            "schemas": (victim_schema, keeper_schema, doomed_schema, fresh_schema),
+        }
+    finally:
+        for backend in backends:
+            backend.close()
+        store.close()
+
+
+def _assert_schema_manager_package_world(connect, store, world):
+    victim, _, doomed, fresh = world["tenants"]
+    victim_schema, keeper_schema, doomed_schema, fresh_schema = world["schemas"]
+    live = set(connect().schema_manager.list_deployed_document_types())
+    assert victim_schema not in live
+    assert {keeper_schema, doomed_schema, fresh_schema} <= live
+    assert _schema_row(store, victim).config_value["deleted"] is True
+    assert _schema_row(store, doomed).config_value.get("deleted", False) is False
+    assert _schema_row(store, fresh).config_value.get("deleted", False) is False
+
+
+@pytest.mark.parametrize("case", list(_SCHEMA_MANAGER_PACKAGE_CASES))
+def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_package(
+    recovery_backend, schema_manager_package_world, monkeypatch, case
+):
+    """Every package and deletion set the schema manager builds inside the
+    lease (the startup metadata deploy, a schema delete's survivors, a tenant
+    or bulk delete's targets and survivors, an orphan delete's registered
+    guard) reads the registry strictly: a failed listing refuses instead of
+    answering from a cache that still holds a schema a peer deleted and lacks
+    one a peer registered since."""
+    operation, failing_listing, message = _SCHEMA_MANAGER_PACKAGE_CASES[case]
+    connect, _ = recovery_backend
+    world = schema_manager_package_world
+    store = world["store"]
+    _, _, doomed, _ = world["tenants"]
+    victim_schema, keeper_schema, doomed_schema, fresh_schema = world["schemas"]
+    _assert_schema_manager_package_world(connect, store, world)
+    assert {victim_schema, keeper_schema, doomed_schema} <= world["cached"][case]
+    assert fresh_schema not in world["cached"][case]
     real_list = store.list_all_configs
     listings = []
 
@@ -1680,7 +1718,7 @@ def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_packag
         return real_list(*args, **kwargs)
 
     monkeypatch.setattr(store, "list_all_configs", fail_one_registry_listing)
-    manager = deployer.schema_manager
+    manager = world["deployers"][case].schema_manager
     with pytest.raises(Exception) as caught:
         if operation == "startup_metadata_deploy":
             manager.upload_metadata_schemas(app_name="cogniverse")
@@ -1696,12 +1734,7 @@ def test_a_failed_registry_read_inside_the_lease_refuses_a_schema_manager_packag
     assert len(listings) == failing_listing
     assert str(caught.value) == message
     monkeypatch.setattr(store, "list_all_configs", real_list)
-    live = set(connect().schema_manager.list_deployed_document_types())
-    assert victim_schema not in live
-    assert {keeper_schema, doomed_schema, fresh_schema} <= live
-    assert _schema_row(store, victim).config_value["deleted"] is True
-    assert _schema_row(store, doomed).config_value.get("deleted", False) is False
-    assert _schema_row(store, fresh).config_value.get("deleted", False) is False
+    _assert_schema_manager_package_world(connect, store, world)
 
 
 def test_a_rollback_honours_a_peer_delete_in_its_window(recovery_backend, monkeypatch):
