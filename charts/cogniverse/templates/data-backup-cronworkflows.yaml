@@ -343,7 +343,7 @@ spec:
       {{- end }}
     - name: upload
       container:
-        image: "{{ $.Values.minio.mcImage.repository }}:{{ $.Values.minio.mcImage.tag }}"
+        image: "{{ $.Values.minio.mcImage.repository }}:{{ $.Values.minio.mcImage.tag }}{{ with $.Values.minio.mcImage.digest }}@{{ . }}{{ end }}"
         imagePullPolicy: {{ $.Values.minio.mcImage.pullPolicy }}
         env:
         - name: MINIO_ENDPOINT
