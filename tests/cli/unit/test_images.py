@@ -2132,7 +2132,8 @@ class TestMinioImagesArePrePulled:
             skip_llm=True,
         )
 
-        assert [image for image in images if "minio" in image] == [
+        repositories = (minio["image"]["repository"], minio["mcImage"]["repository"])
+        assert [image for image in images if image.split(":")[0] in repositories] == [
             f"{minio['image']['repository']}:{minio['image']['tag']}",
             f"{minio['mcImage']['repository']}:{minio['mcImage']['tag']}",
         ]
@@ -2155,7 +2156,7 @@ class TestMinioImagesArePrePulled:
             f"{path.relative_to(self.REPO_ROOT)}:{number}: {line.strip()}"
             for path in (self.CHART / "templates").rglob("*.yaml")
             for number, line in enumerate(path.read_text().splitlines(), 1)
-            if re.search(r'image:\s*"?[\w./-]*minio/', line)
+            if re.search(r'image:\s*"?[\w./-]*(minio|pgsty)/', line)
         ]
 
         assert offenders == []
