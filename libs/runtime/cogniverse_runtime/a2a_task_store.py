@@ -49,6 +49,13 @@ _DEFAULT_REDIS_MAX_CONNECTIONS = 128
 # command timeout so a silent Redis is told apart from an empty wait.
 _BLOCK_SECONDS = 1
 _HEALTH_CHECK_INTERVAL_SECONDS = 30
+# Saves an interruption tries against a stored state that keeps changing.
+_INTERRUPT_ATTEMPTS = 5
+
+# What a task whose execution stopped before completing is failed with.
+INTERRUPTED_MESSAGE = (
+    "Execution interrupted because its owning runtime stopped before completion."
+)
 
 
 class A2ATaskStoreError(RuntimeError):
@@ -134,6 +141,7 @@ local generation = tonumber(ARGV[6])
 local events_prefix = ARGV[7]
 local state = ARGV[8]
 local canceled = ARGV[9]
+local expected = ARGV[10]
 -- Fence on the generation, not on the lease still being present: the SDK can
 -- persist an execution's last event after its lease was released, and that
 -- write is legitimate until some other owner takes the next generation.
@@ -153,6 +161,10 @@ if enforce_lease == '1' then
         end
         return {-1, ''}
     end
+end
+-- A save built from one stored state applies only while that state stands.
+if expected ~= '' and redis.call('HGET', tasks_key, task_id) ~= expected then
+    return {3, ''}
 end
 local existed = redis.call('HEXISTS', tasks_key, task_id)
 local evicted = ''
@@ -388,6 +400,14 @@ _ACTIVE_STATES = frozenset(
         TaskState.auth_required,
     }
 )
+_TERMINAL_STATES = frozenset(
+    {
+        TaskState.completed,
+        TaskState.canceled,
+        TaskState.failed,
+        TaskState.rejected,
+    }
+)
 
 
 class RedisTaskStore(TaskStore):
@@ -505,7 +525,15 @@ class RedisTaskStore(TaskStore):
 
     async def save(self, task: Task, context: ServerCallContext | None = None) -> None:
         """Atomically save a task and evict the inactive LRU when required."""
-        bound_lease = self._context_lease(context)
+        await self._save(task, self._context_lease(context))
+
+    async def _save(
+        self, task: Task, bound_lease: TaskLease | None, expected: str = ""
+    ) -> bool:
+        """The fenced save; with ``expected``, only over that stored payload.
+
+        Returns False when ``expected`` no longer is the stored payload.
+        """
         try:
             result: list[Any] = await self._redis.eval(
                 _SAVE_SCRIPT,
@@ -524,12 +552,15 @@ class RedisTaskStore(TaskStore):
                 self._event_stream_key(""),
                 task.status.state.value,
                 "1" if task.status.state == TaskState.canceled else "0",
+                expected,
             )
         except RedisError as exc:
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: save task {task.id}") from exc
         result_code = int(result[0])
+        if result_code == 3:
+            return False
         if result_code == 2:
-            return
+            return True
         if result_code == -1:
             generation = bound_lease.generation if bound_lease else 0
             raise A2ATaskOwnershipLostError(
@@ -540,6 +571,7 @@ class RedisTaskStore(TaskStore):
                 f"capacity {self._max_tasks} is full of active or leased tasks; "
                 f"rejected task {task.id}"
             )
+        return True
 
     async def get(
         self, task_id: str, context: ServerCallContext | None = None
@@ -761,6 +793,38 @@ class RedisTaskStore(TaskStore):
         now_ms = int(seconds) * 1000 + int(microseconds) // 1000
         return lease.expires_at_ms > now_ms
 
+    async def interrupt_execution(self, lease: TaskLease, status: TaskStatus) -> bool:
+        """End the task ``lease`` still owns with ``status``.
+
+        The write is the fenced save: once a newer generation owns the task
+        it raises ``A2ATaskOwnershipLostError`` and writes nothing. It applies
+        only over the stored state it was built from, so a state written
+        meanwhile is read again. A task that is gone or already terminal is
+        left as it is, and False returned.
+        """
+        for _ in range(_INTERRUPT_ATTEMPTS):
+            try:
+                stored = await self._redis.hget(self._tasks_key, lease.task_id)
+            except RedisError as exc:
+                raise A2ATaskStoreError(
+                    f"{_UNAVAILABLE}: get task {lease.task_id}"
+                ) from exc
+            if stored is None:
+                return False
+            try:
+                task = Task.model_validate_json(stored)
+            except (ValidationError, ValueError, TypeError) as exc:
+                raise A2ATaskStoreError(f"decode task {lease.task_id}") from exc
+            if task.status.state in _TERMINAL_STATES:
+                return False
+            ended = task.model_copy(deep=True)
+            ended.status = status
+            if await self._save(ended, lease, expected=stored):
+                return True
+        raise A2ATaskConflictError(
+            f"task {lease.task_id} kept changing while its interruption was saved"
+        )
+
     async def mark_owner_lost(self, task_id: str) -> bool:
         """Atomically persist interruption if an active task's owner expired."""
         task = await self.get(task_id)
@@ -769,10 +833,7 @@ class RedisTaskStore(TaskStore):
         interrupted = task.model_copy(deep=True)
         interrupted.status = TaskStatus(
             state=TaskState.failed,
-            message=new_agent_text_message(
-                "Execution interrupted because its owning runtime stopped before "
-                "completion."
-            ),
+            message=new_agent_text_message(INTERRUPTED_MESSAGE),
         )
         try:
             result = await self._redis.eval(

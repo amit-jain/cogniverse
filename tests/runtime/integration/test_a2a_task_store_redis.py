@@ -3420,6 +3420,11 @@ async def test_blocking_reads_share_the_bounded_pool_without_exceeding_it(
     assert 1.9 < elapsed < 3.5
 
 
+_INTERRUPTED = (
+    "Execution interrupted because its owning runtime stopped before completion."
+)
+
+
 def _end_if_hung(send: asyncio.Task) -> None:
     """Cancel a send the test already failed on for not ending, so a failing
     run reports instead of hanging in cleanup."""
@@ -3479,7 +3484,8 @@ async def test_a_transient_renewal_failure_is_retried_not_fatal(
             _end_if_hung(send)
             await store.close()
 
-    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
+    assert (sent.id, sent.status.state) == (task_id, TaskState.failed)
+    assert sent.status.message.parts[0].root.text == _INTERRUPTED
     assert running_after_outage is True
     assert (lease.replica_id, live) == ("replica-renew", True)
     renewal_logs = [
@@ -3632,9 +3638,9 @@ async def test_close_finishes_within_twice_its_drain_budget(redis_client):
 async def test_a_blocking_send_ends_when_close_cuts_its_producer_at_the_drain_deadline(
     redis_client,
 ):
-    """The execution outlives the drain budget; close() cancels it and the
-    blocking send answers with the task as stored, which keeps its lease so
-    a peer reports it interrupted."""
+    """The execution outlives the drain budget; close() cancels it while
+    this node still owns the task, records it interrupted, releases the
+    lease, and the blocking send answers with that failed task."""
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
     executor = _CancellableExecutor()
     handler, send, task_id, producer = await _renewing_execution(
@@ -3647,19 +3653,24 @@ async def test_a_blocking_send_ends_when_close_cuts_its_producer_at_the_drain_de
     finally:
         _end_if_hung(send)
     ended_after = time.monotonic() - started
+    stored = await store.get(task_id)
 
     assert producer.cancelled() is True
-    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
+    assert (sent.id, sent.status.state) == (task_id, TaskState.failed)
+    assert sent.status.message.parts[0].root.text == _INTERRUPTED
     assert ended_after < 2
-    assert (await store.get(task_id)).status.state == TaskState.working
-    assert (await store.get_execution_lease(task_id)).replica_id == "replica-renew"
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == _INTERRUPTED
+    assert await store.get_execution_lease(task_id) is None
 
 
 async def test_a_drain_stop_with_redis_silent_still_ends_the_blocking_send(
     redis_url, redis_client
 ):
     """The stopped stream's relay close cannot reach Redis; the local queue
-    closes anyway, so the send answers instead of waiting for process exit."""
+    closes anyway, so the send answers instead of waiting for process exit.
+    Saving the interrupted state meets the same silent Redis, so the send
+    answers with that error."""
     store = await RedisTaskStore.from_url(
         redis_url, key_prefix="test:a2a", timeout_seconds=1.2
     )
@@ -3672,7 +3683,8 @@ async def test_a_drain_stop_with_redis_silent_still_ends_the_blocking_send(
         started = time.monotonic()
         await asyncio.wait_for(handler.close(), timeout=10)
         try:
-            sent = await asyncio.wait_for(asyncio.shield(send), timeout=4)
+            with pytest.raises(A2ATaskStoreError) as ended:
+                await asyncio.wait_for(asyncio.shield(send), timeout=4)
         finally:
             _end_if_hung(send)
         ended_after = time.monotonic() - started
@@ -3682,7 +3694,9 @@ async def test_a_drain_stop_with_redis_silent_still_ends_the_blocking_send(
         await store.close()
 
     assert producer.cancelled() is True
-    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
+    assert str(ended.value) == (
+        f"shared A2A task store unavailable: save task {task_id}"
+    )
     assert ended_after < 5
 
 
@@ -4021,3 +4035,180 @@ async def test_a_close_racing_a_takeover_never_ends_the_new_owners_relay(
             "Execution interrupted because its owning runtime stopped before "
             "completion."
         )
+
+
+async def _get_task(handler: RedisRequestHandler, task_id: str) -> Task:
+    """``tasks/get`` for ``task_id`` as ``handler`` answers it."""
+    from a2a.types import TaskQueryParams
+
+    return await handler.on_get_task(TaskQueryParams(id=task_id))
+
+
+async def test_tasks_get_reports_a_turn_cut_at_the_drain_deadline_interrupted(
+    redis_client,
+):
+    """The server cut the request before the drain, so no consumer is left
+    to save the stopped turn's end; the stopping node records it anyway,
+    and a peer's ``tasks/get`` right after shutdown reads it terminal."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    peer = _cancel_handler(
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        "replica-peer",
+    )
+    # The request is cut, as uvicorn's graceful shutdown does first.
+    send.cancel()
+    try:
+        await asyncio.wait_for(handler.close(), timeout=5)
+        got = await _get_task(peer, task_id)
+        lease = await store.get_execution_lease(task_id)
+    finally:
+        await asyncio.wait_for(asyncio.gather(send, return_exceptions=True), timeout=10)
+
+    assert producer.cancelled() is True
+    assert (got.id, got.status.state) == (task_id, TaskState.failed)
+    assert got.status.message.parts[0].root.text == _INTERRUPTED
+    assert lease is None
+
+
+async def test_a_drain_after_the_task_was_lost_records_nothing(redis_client):
+    """A peer took the task over before this node's drain deadline: the
+    interrupted save is refused by the fence, so the peer's state stands."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    peer = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    try:
+        await _run_out_lease(redis_client, store, task_id)
+        with pytest.raises(A2ATaskOwnershipLostError):
+            await peer.acquire_execution(
+                task_id, replica_id="replica-peer", lease_seconds=30
+            )
+        assert await peer.mark_owner_lost(task_id) is True
+        peer_state = await redis_client.hget("test:a2a:tasks", task_id)
+        generations = await redis_client.hget("test:a2a:generations", task_id)
+
+        await asyncio.wait_for(handler.close(), timeout=5)
+        with pytest.raises(A2ATaskOwnershipLostError) as ended:
+            await asyncio.wait_for(asyncio.shield(send), timeout=5)
+    finally:
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+
+    assert producer.cancelled() is True
+    assert str(ended.value) == (
+        f"save task {task_id} with stale ownership generation 1"
+    )
+    assert await redis_client.hget("test:a2a:tasks", task_id) == peer_state
+    assert await redis_client.hget("test:a2a:generations", task_id) == generations
+    assert await store.get_execution_lease(task_id) is None
+
+
+async def test_tasks_get_reports_an_owner_that_died_without_draining_interrupted(
+    redis_client,
+):
+    """The owner was killed mid-execution: no drain ran, its lease simply
+    stops being renewed. Once it has expired a reader resolves the task."""
+    dead = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await dead.acquire_execution(
+        "task-killed", replica_id="replica-killed", lease_seconds=0.3
+    )
+    await dead.save(
+        _task("task-killed", TaskState.working), _owned_context(dead, lease)
+    )
+    reader = _cancel_handler(
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        "replica-reader",
+    )
+    before_expiry = await _get_task(reader, "task-killed")
+    await asyncio.sleep(0.4)
+
+    got = await _get_task(reader, "task-killed")
+
+    assert before_expiry.status.state == TaskState.working
+    assert got.status.state == TaskState.failed
+    assert got.status.message.parts[0].root.text == _INTERRUPTED
+    assert await dead.get("task-killed") == got
+    assert await dead.get_execution_lease("task-killed") is None
+
+
+async def test_tasks_get_never_touches_a_task_whose_owner_keeps_renewing(
+    redis_client,
+):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=0.6, drain_timeout_seconds=0.5
+    )
+    reader = _cancel_handler(
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        "replica-reader",
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        sequence = await redis_client.get("test:a2a:generation-seq")
+        owned = await store.get_execution_lease(task_id)
+        states = []
+        # Three lease lengths, each outlived only by renewing.
+        polled_until = loop.time() + 1.8
+        while loop.time() < polled_until:
+            states.append((await _get_task(reader, task_id)).status.state)
+            await asyncio.sleep(0.05)
+        renewed = await store.get_execution_lease(task_id)
+        sequence_after = await redis_client.get("test:a2a:generation-seq")
+        running = not producer.done()
+    finally:
+        await handler.close()
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+
+    assert running is True
+    assert len(states) >= 20
+    assert set(states) == {TaskState.working}
+    assert (renewed.request_id, renewed.generation) == (
+        owned.request_id,
+        owned.generation,
+    )
+    assert renewed.expires_at_ms > owned.expires_at_ms
+    assert sequence_after == sequence
+
+
+async def test_concurrent_readers_of_an_expired_owners_task_write_it_once(
+    redis_client, redis_url
+):
+    dead = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await dead.acquire_execution(
+        "task-read-twice", replica_id="replica-killed", lease_seconds=0.2
+    )
+    await dead.save(
+        _task("task-read-twice", TaskState.working), _owned_context(dead, lease)
+    )
+    clients = [aioredis.from_url(redis_url, decode_responses=True) for _ in range(2)]
+    readers = [
+        _cancel_handler(
+            RedisTaskStore(client, max_tasks=10, key_prefix="test:a2a"),
+            f"replica-reader-{index}",
+        )
+        for index, client in enumerate(clients)
+    ]
+    await asyncio.sleep(0.3)
+    sequence = int(await redis_client.get("test:a2a:generation-seq"))
+    try:
+        got = await asyncio.gather(
+            *(_get_task(reader, "task-read-twice") for reader in readers)
+        )
+    finally:
+        for client in clients:
+            await client.aclose()
+    sequence_after = int(await redis_client.get("test:a2a:generation-seq"))
+
+    assert [task.status.state for task in got] == [TaskState.failed] * 2
+    assert got[0].status.message.parts[0].root.text == _INTERRUPTED
+    # One interruption: one new generation, one stored message both read.
+    assert sequence_after == sequence + 1
+    assert got[0] == got[1] == await dead.get("task-read-twice")
