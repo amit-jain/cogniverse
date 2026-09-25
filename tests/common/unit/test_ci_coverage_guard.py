@@ -683,9 +683,9 @@ def test_marker_evaluation_agrees_with_a_real_pytest_run() -> None:
         text=True,
         timeout=900,
     )
-    from_pytest = sorted(
-        line for line in result.stdout.splitlines() if "::" in line and " " not in line
-    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    listing, _, _ = result.stdout.partition("\n\n")
+    from_pytest = sorted(line for line in listing.splitlines() if "::" in line)
     assert computed == from_pytest
 
 
