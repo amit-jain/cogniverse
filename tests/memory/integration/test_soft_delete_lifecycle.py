@@ -370,3 +370,36 @@ def test_flip_falls_back_to_memory_update_without_partial_store():
 
     assert mm._flip_metadata_no_reembed("m1", "text", {"archived": True}) is True
     assert mm.memory.update_calls == [("m1", "text", {"archived": True})]
+
+
+def test_archive_without_a_partial_update_store_falls_back_with_the_current_text():
+    """With no partial-update store, archive falls back to Memory.update, which
+    embeds its text: it must pass the text read inside the lease, never None."""
+
+    class _NoUpdateStore:
+        pass
+
+    class _FallbackMemory:
+        def __init__(self):
+            self.vector_store = _NoUpdateStore()
+            self.update_calls = []
+
+        def get(self, memory_id):
+            return {
+                "id": memory_id,
+                "memory": "the current fact",
+                "metadata": {"kind": "k"},
+            }
+
+        def update(self, memory_id=None, data=None, metadata=None):
+            self.update_calls.append((memory_id, data, metadata))
+
+    mm = _spy_mm()
+    mm.memory = _FallbackMemory()
+
+    assert mm._archive_memory("m1") is True
+
+    ((memory_id, data, metadata),) = mm.memory.update_calls
+    assert (memory_id, data) == ("m1", "the current fact")
+    assert metadata["kind"] == "k"
+    assert metadata["archived"] is True

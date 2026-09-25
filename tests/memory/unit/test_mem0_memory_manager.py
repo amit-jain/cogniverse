@@ -1689,6 +1689,98 @@ class TestProvenanceWriteLeaseScope:
         }
         assert isinstance(payload["metadata"]["archived_at"], str)
 
+    @staticmethod
+    def _archive_sweep(manager, reread):
+        """One memory past its TTL in the sweep's read; ``reread`` is what the
+        in-lease re-read returns."""
+        from datetime import datetime, timedelta, timezone
+
+        from cogniverse_core.memory.schema import (
+            KnowledgeRegistry,
+            KnowledgeSchema,
+            Retention,
+        )
+
+        manager.tenant_partition_schema_exists = lambda *args, **kwargs: True
+        created = (datetime.now(timezone.utc) - timedelta(days=1.5)).isoformat()
+        manager.memory.get_all.return_value = {
+            "results": [
+                {
+                    "id": "m14",
+                    "memory": "text",
+                    "created_at": created,
+                    "metadata": {"kind": "short_lived"},
+                }
+            ]
+        }
+        manager.memory.get.side_effect = (
+            reread if callable(reread) else lambda memory_id: reread
+        )
+        registry = KnowledgeRegistry()
+        registry.register(
+            KnowledgeSchema(
+                kind="short_lived",
+                retention=Retention.EPHEMERAL_DAYS,
+                retention_days=1,
+            )
+        )
+        return manager.cleanup_with_schema(registry)
+
+    @pytest.mark.parametrize(
+        "reread",
+        [
+            None,
+            {
+                "id": "m14",
+                "memory": "text",
+                "metadata": {"kind": "short_lived", "archived": True},
+            },
+        ],
+        ids=["gone", "already_archived"],
+    )
+    def test_a_row_the_in_lease_reread_skips_is_not_counted_as_archived(self, reread):
+        manager = self._manager("archive_count_tenant")
+
+        assert self._archive_sweep(manager, reread) == {}
+        manager.memory.vector_store.update.assert_not_called()
+
+    def test_a_failed_archive_write_is_not_counted_as_archived(self):
+        manager = self._manager("archive_failed_tenant")
+        manager.memory.vector_store.update.side_effect = ConnectionError("vespa down")
+        current = {"id": "m14", "memory": "text", "metadata": {"kind": "short_lived"}}
+
+        assert self._archive_sweep(manager, current) == {}
+        manager.memory.vector_store.update.assert_called_once()
+
+    def test_the_archive_is_fenced_after_its_reread_right_before_its_write(
+        self, monkeypatch
+    ):
+        """As restore does: a slow re-read must not let the write land after
+        the lease expired."""
+        from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+
+        manager = self._manager("archive_fence_tenant")
+        events = []
+        ensure_owned = SchemaDeployLease.ensure_owned
+
+        def record_fence(lease, *args, **kwargs):
+            events.append("fence")
+            return ensure_owned(lease, *args, **kwargs)
+
+        monkeypatch.setattr(SchemaDeployLease, "ensure_owned", record_fence)
+        current = {"id": "m14", "memory": "text", "metadata": {"kind": "short_lived"}}
+
+        def reread(memory_id):
+            events.append("read")
+            return current
+
+        manager.memory.vector_store.update.side_effect = lambda **kwargs: events.append(
+            "write"
+        )
+
+        assert self._archive_sweep(manager, reread) == {"short_lived:archived": 1}
+        assert events[events.index("read") :] == ["read", "fence", "write", "fence"]
+
 
 class TestAddMemoryErrorPrecedence:
     """Malformed input reports the first contract it breaks, as before the
