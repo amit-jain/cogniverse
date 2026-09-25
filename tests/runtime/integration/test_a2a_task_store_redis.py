@@ -3227,7 +3227,7 @@ async def test_a_routed_cancel_waits_its_full_timeout_in_bounded_reads(redis_url
     assert 3.4 < elapsed < 4.5
 
 
-def test_a2a_settings_default_to_production_and_refuse_non_numbers_by_name():
+async def test_a2a_settings_default_to_production_and_refuse_non_numbers_by_name():
     from cogniverse_runtime.main import _a2a_settings_from_env
 
     assert _a2a_settings_from_env({}) == {
@@ -3413,12 +3413,22 @@ async def test_blocking_reads_share_the_bounded_pool_without_exceeding_it(
     assert 1.9 < elapsed < 3.5
 
 
-async def _renewing_execution(store, executor, lease_seconds: float):
+def _end_if_hung(send: asyncio.Task) -> None:
+    """Cancel a send the test already failed on for not ending, so a failing
+    run reports instead of hanging in cleanup."""
+    if not send.done():
+        send.cancel()
+
+
+async def _renewing_execution(
+    store, executor, lease_seconds: float, drain_timeout_seconds: float = 30
+):
     handler = RedisRequestHandler(
         agent_executor=executor,
         task_store=store,
         replica_id="replica-renew",
         lease_seconds=lease_seconds,
+        drain_timeout_seconds=drain_timeout_seconds,
     )
     send = asyncio.create_task(handler.on_message_send(_send_params("renew")))
     await asyncio.wait_for(executor.working.wait(), timeout=5)
@@ -3442,7 +3452,7 @@ async def test_a_transient_renewal_failure_is_retried_not_fatal(
     )
     executor = _CancellableExecutor()
     handler, send, task_id, producer = await _renewing_execution(
-        store, executor, lease_seconds=6
+        store, executor, lease_seconds=6, drain_timeout_seconds=0.5
     )
     try:
         # The first renewal (at 2 s) meets a Redis that answers nothing for
@@ -3453,14 +3463,16 @@ async def test_a_transient_renewal_failure_is_retried_not_fatal(
         lease = await store.get_execution_lease(task_id)
         live = await store.has_live_owner(task_id)
     finally:
-        # A blocking send whose producer is cancelled never gets a final
-        # event, so the send is cancelled with it.
-        producer.cancel()
-        send.cancel()
-        await asyncio.gather(send, return_exceptions=True)
+        # Shutdown cuts the still-running execution at its drain deadline,
+        # which ends the blocking send.
         await handler.close()
-        await store.close()
+        try:
+            sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+        finally:
+            _end_if_hung(send)
+            await store.close()
 
+    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
     assert running_after_outage is True
     assert (lease.replica_id, live) == ("replica-renew", True)
     renewal_logs = [
@@ -3495,9 +3507,14 @@ async def test_renewal_that_cannot_reach_redis_cancels_only_once_the_lease_expir
         await redis_client.execute_command("CLIENT", "PAUSE", "8000", "WRITE")
         await asyncio.wait_for(asyncio.shield(asyncio.wait({producer})), timeout=15)
         cancelled_after = asyncio.get_running_loop().time() - started
+        # The send ends on its own: the failed event its stop enqueues is the
+        # final one, and saving it meets the same silent Redis.
+        with pytest.raises(A2ATaskStoreError) as ended:
+            await asyncio.wait_for(asyncio.shield(send), timeout=5)
+        ended_after = asyncio.get_running_loop().time() - started
     finally:
         await redis_client.execute_command("CLIENT", "UNPAUSE")
-        send.cancel()
+        _end_if_hung(send)
         await asyncio.gather(send, return_exceptions=True)
         await handler.close()
         await store.close()
@@ -3505,6 +3522,11 @@ async def test_renewal_that_cannot_reach_redis_cancels_only_once_the_lease_expir
     assert producer.cancelled() is True
     # The first renewal fails at about 2.2 s; the lease runs to 3 s.
     assert 3.0 <= cancelled_after < 6
+    assert str(ended.value) == (
+        f"shared A2A task store unavailable: save task {task_id}"
+    )
+    # One command timeout (1.2 s) after the stop, while Redis is still paused.
+    assert ended_after < cancelled_after + 3
     assert [
         record.getMessage()
         for record in caplog.records
@@ -3525,14 +3547,25 @@ async def test_renewal_that_lost_ownership_cancels_at_once(redis_client):
         await peer.begin_cancel(task_id, replica_id="replica-renew", lease_seconds=30)
         await asyncio.wait_for(asyncio.shield(asyncio.wait({producer})), timeout=10)
         cancelled_after = asyncio.get_running_loop().time() - started
+        # The send ends on its own, refused by the fence the peer's
+        # generation set: this node saves nothing after losing the task.
+        with pytest.raises(A2ATaskOwnershipLostError) as ended:
+            await asyncio.wait_for(asyncio.shield(send), timeout=2)
+        ended_after = asyncio.get_running_loop().time() - started
+        stored = await peer.get(task_id)
     finally:
-        send.cancel()
+        _end_if_hung(send)
         await asyncio.gather(send, return_exceptions=True)
         await handler.close()
 
     assert producer.cancelled() is True
     # At the first renewal (1 s), not at the lease's expiry (3 s).
     assert cancelled_after < 2
+    assert ended_after < cancelled_after + 1
+    assert str(ended.value) == (
+        f"save task {task_id} with stale ownership generation 1"
+    )
+    assert stored.status.state == TaskState.working
 
 
 class _StubbornExecutor(_CancellableExecutor):
@@ -3587,3 +3620,29 @@ async def test_close_finishes_within_twice_its_drain_budget(redis_client):
     )
     # One second to drain, at most one more for what it cancelled to stop.
     assert 1.9 < elapsed < 2.4
+
+
+async def test_a_blocking_send_ends_when_close_cuts_its_producer_at_the_drain_deadline(
+    redis_client,
+):
+    """The execution outlives the drain budget; close() cancels it and the
+    blocking send answers with the task as stored, which keeps its lease so
+    a peer reports it interrupted."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    started = time.monotonic()
+    await asyncio.wait_for(handler.close(), timeout=5)
+    try:
+        sent = await asyncio.wait_for(asyncio.shield(send), timeout=2)
+    finally:
+        _end_if_hung(send)
+    ended_after = time.monotonic() - started
+
+    assert producer.cancelled() is True
+    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
+    assert ended_after < 2
+    assert (await store.get(task_id)).status.state == TaskState.working
+    assert (await store.get_execution_lease(task_id)).replica_id == "replica-renew"
