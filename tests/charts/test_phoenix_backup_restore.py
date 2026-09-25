@@ -215,7 +215,10 @@ class BackupServices:
 
     @staticmethod
     def image(config):
-        return f"{config['repository']}:{config['tag']}"
+        digest = config.get("digest")
+        return f"{config['repository']}:{config['tag']}" + (
+            f"@{digest}" if digest else ""
+        )
 
     def start(self, name, image, *args, command=()):
         name = f"{self.network}-{name}"

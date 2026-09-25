@@ -32,7 +32,8 @@ def chart_minio_server_image() -> str:
     Tests run the version the cluster runs, from the registry that serves it.
     """
     image = yaml.safe_load(CHART_VALUES.read_text())["minio"]["image"]
-    return f"{image['repository']}:{image['tag']}"
+    digest = image.get("digest")
+    return f"{image['repository']}:{image['tag']}" + (f"@{digest}" if digest else "")
 
 
 def _free_port() -> int:

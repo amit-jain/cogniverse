@@ -444,6 +444,13 @@ def _mc_image() -> dict:
     return yaml.safe_load(CHART_VALUES.read_text())["minio"]["mcImage"]
 
 
+def _mc_image_ref(mc: dict) -> str:
+    """The reference the chart renders for *mc*: tag, plus digest when pinned."""
+    return f"{mc['repository']}:{mc['tag']}" + (
+        f"@{mc['digest']}" if mc.get("digest") else ""
+    )
+
+
 def _mc_probe_diagnosis(pod: str) -> str:
     """Container state and events for a probe pod that produced no output."""
     parts = []
@@ -503,7 +510,7 @@ def _mc_ls_names(prefix: str) -> list:
     the complete kubectl command.
     """
     mc = _mc_image()
-    image = f"{mc['repository']}:{mc['tag']}"
+    image = _mc_image_ref(mc)
     pod = f"mc-probe-{uuid.uuid4().hex[:8]}"
     command = [
         "kubectl",
@@ -775,7 +782,7 @@ def _restore_phoenix_snapshot(object_name: str, scratch_db: str) -> tuple[list, 
     neither half of the snapshot is re-created here.
     """
     mc = _mc_image()
-    mc_image = f"{mc['repository']}:{mc['tag']}"
+    mc_image = _mc_image_ref(mc)
     postgres = _phoenix_postgres()
     postgres_image = f"{postgres['image']['repository']}:{postgres['image']['tag']}"
     script = (
