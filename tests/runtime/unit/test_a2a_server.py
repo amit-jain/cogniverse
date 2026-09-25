@@ -1122,7 +1122,7 @@ class TestServedTaskStoreIsBounded:
     async def test_rejects_nonpositive_cap(self, workflow_state_redis_url):
         with pytest.raises(ValueError) as refused:
             await self._served(self._own_database(workflow_state_redis_url), 0)
-        assert str(refused.value) == "max_tasks must be >= 1, got 0"
+        assert str(refused.value) == "A2A_MAX_TASKS (max_tasks) must be >= 1, got 0"
 
     @pytest.mark.asyncio
     async def test_evicts_oldest_once_capped(self, workflow_state_redis_url):
