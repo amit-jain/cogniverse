@@ -1421,8 +1421,11 @@ schema a peer deleted after the listing is skipped rather than deployed and
 registered again. It returns a `DriftedSchemaRedeploy`: `redeployed` holds the
 full names it redeployed and `failed` one `DriftedSchemaFailure(tenant_id,
 schema_name, error)` per tenant whose redeploy was refused by a revision
-conflict or the backend. Those are logged and the remaining tenants are still
-redeployed; any other error propagates. That includes a `LeaseWaitTimeout` (a
+conflict or the backend. Those are logged at WARNING and the remaining tenants
+are still redeployed; any other error propagates. An optional `should_stop`
+callable is asked before each tenant's redeploy: once it answers True no
+further redeploy starts, and the drifted schemas left are returned in
+`skipped`. That includes a `LeaseWaitTimeout` (a
 `TimeoutError`) when a peer holds the deploy lease for the whole wait:
 `VespaBackend.deploy_schemas` and `SchemaRegistry.deploy_schemas` pass it
 through unwrapped instead of reporting a failed deploy, so the caller can retry.
