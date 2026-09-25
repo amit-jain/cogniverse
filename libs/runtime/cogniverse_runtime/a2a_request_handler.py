@@ -517,7 +517,10 @@ class RedisRequestHandler(DefaultRequestHandler):
         The SDK closes a producer's queue only after ``execute`` returns, and
         its consumer ignores a cancelled producer, so without this a blocking
         send on the stopped execution waits for its client to go away.
+        A producer that has already finished needs neither.
         """
+        if producer_task.done():
+            return
         self._stop_reasons[producer_task] = reason
         producer_task.cancel()
 
@@ -542,9 +545,14 @@ class RedisRequestHandler(DefaultRequestHandler):
 
         The event reaches local consumers only: another replica may own the
         task's relay by now. Saving it is fenced like any write, so a node
-        that lost the task records nothing and its send fails instead.
+        that lost the task records nothing and its send fails instead. While
+        this replica's own cancel of the task is under way, the cancel's
+        events end the stream, so no ``failed`` event goes ahead of them.
         """
-        if reason is not None:
+        cancelling = request_context.task_id in self._inflight_cancels or (
+            isinstance(queue, RedisRelayEventQueue) and queue._cancel_state != "open"
+        )
+        if reason is not None and not cancelling:
             event = TaskStatusUpdateEvent(
                 task_id=request_context.task_id or "",
                 context_id=request_context.context_id or "",
@@ -571,6 +579,14 @@ class RedisRequestHandler(DefaultRequestHandler):
                 request_context.task_id,
                 exc,
             )
+            # Close the local queue alone, letting consumers take what is
+            # left in it; the relay is already marked closed.
+            try:
+                await asyncio.wait_for(
+                    EventQueue.close(queue), _STOPPED_QUEUE_CLOSE_SECONDS
+                )
+            except TimeoutError:
+                await EventQueue.close(queue, immediate=True)
 
     async def _acquire(self, task_id: str) -> TaskLease:
         try:

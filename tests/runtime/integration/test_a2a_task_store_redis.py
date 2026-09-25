@@ -3646,3 +3646,91 @@ async def test_a_blocking_send_ends_when_close_cuts_its_producer_at_the_drain_de
     assert ended_after < 2
     assert (await store.get(task_id)).status.state == TaskState.working
     assert (await store.get_execution_lease(task_id)).replica_id == "replica-renew"
+
+
+async def test_a_drain_stop_with_redis_silent_still_ends_the_blocking_send(
+    redis_url, redis_client
+):
+    """The stopped stream's relay close cannot reach Redis; the local queue
+    closes anyway, so the send answers instead of waiting for process exit."""
+    store = await RedisTaskStore.from_url(
+        redis_url, key_prefix="test:a2a", timeout_seconds=1.2
+    )
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    try:
+        await redis_client.execute_command("CLIENT", "PAUSE", "6000", "WRITE")
+        started = time.monotonic()
+        await asyncio.wait_for(handler.close(), timeout=10)
+        try:
+            sent = await asyncio.wait_for(asyncio.shield(send), timeout=4)
+        finally:
+            _end_if_hung(send)
+        ended_after = time.monotonic() - started
+    finally:
+        await redis_client.execute_command("CLIENT", "UNPAUSE")
+        await asyncio.gather(send, return_exceptions=True)
+        await store.close()
+
+    assert producer.cancelled() is True
+    assert (sent.id, sent.status.state) == (task_id, TaskState.working)
+    assert ended_after < 5
+
+
+async def test_a_stop_on_a_finished_producer_records_nothing(redis_client):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    handler = _cancel_handler(store, "replica-a")
+    finished = asyncio.create_task(asyncio.sleep(0))
+    await finished
+
+    handler._stop_producer(finished, "lease lost")
+
+    assert handler._stop_reasons == {}
+    assert finished.cancelled() is False
+
+
+async def test_a_lease_loss_inside_the_owners_cancel_leaves_the_canceled_result(
+    redis_client,
+):
+    """The owner's own cancel takes the next generation, so a renewal inside
+    the cancel's window sees the lease lost; the sender still gets the
+    canceled task, not a failed event ahead of it."""
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    executor.wedge_every_cancel = True
+    handler = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-a",
+        lease_seconds=0.6,
+        cancel_timeout_seconds=10,
+    )
+    send, task_id = await _running_blocking_send(handler, store, executor)
+    producer = handler._running_agents[task_id]
+    cancel = asyncio.create_task(handler.on_cancel_task(TaskIdParams(id=task_id)))
+    try:
+        await asyncio.wait_for(executor.cancelling.wait(), timeout=5)
+        # Renewals run every 0.2 s; the first to meet the cancel's generation
+        # stops the producer while the cancel still holds its events.
+        async with asyncio.timeout(5):
+            while not producer.cancelling():
+                await asyncio.sleep(0.05)
+        executor.unwedge.set()
+        canceled = await asyncio.wait_for(cancel, timeout=5)
+        try:
+            sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+        finally:
+            _end_if_hung(send)
+    finally:
+        executor.unwedge.set()
+        await asyncio.gather(send, cancel, return_exceptions=True)
+        await handler.close()
+
+    assert producer.cancelled() is True
+    assert canceled.status.state == TaskState.canceled
+    assert (sent.id, sent.status.state) == (task_id, TaskState.canceled)
+    assert (await store.get(task_id)).status.state == TaskState.canceled
