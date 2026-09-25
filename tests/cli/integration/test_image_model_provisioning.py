@@ -236,9 +236,8 @@ def test_a_model_wheel_that_does_not_match_the_lock_fails_the_sync(tmp_path):
     assert result.returncode == 1
     words = f" {' '.join(result.stderr.split())} "
     assert f" Hash mismatch for `en-core-web-sm @ {SPACY_MODEL_URL}` " in words
-    assert (
-        f" Expected: sha256:{'0' * 64} Computed: sha256:{SPACY_MODEL_SHA256} " in words
-    )
+    assert f" Expected: sha256:{'0' * 64} " in words
+    assert f" Computed: sha256:{SPACY_MODEL_SHA256} " in words
     site_packages = env_dir / "lib" / "python3.12" / "site-packages"
     assert site_packages.is_dir()
     assert list(site_packages.glob("en_core_web_sm*")) == []
