@@ -2,6 +2,9 @@
 Unit tests for Mem0MemoryManager
 """
 
+import os
+import re
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1463,7 +1466,16 @@ class TestProvenanceWriteLeaseScope:
 
         assert manager.restore_archived_memory("m10") is True
 
-        assert held["holder"] is not None
+        # This process held the write lease while the primary was rewritten.
+        from cogniverse_core.registries.schema_deploy_lease import _pid_namespace
+
+        host, namespace, pid, token = held["holder"].rsplit(":", 3)
+        assert (host, namespace, pid) == (
+            socket.gethostname(),
+            _pid_namespace(),
+            str(os.getpid()),
+        )
+        assert re.fullmatch(r"[0-9a-f]{32}", token)[0] == token
         assert held["payload"] == {
             "data": "archived text",
             "metadata": {"kind": "note"},
