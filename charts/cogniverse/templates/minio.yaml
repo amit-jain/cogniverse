@@ -64,7 +64,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: minio
-        image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+        image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}{{ with .Values.minio.image.digest }}@{{ . }}{{ end }}"
         imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
         args:
           - "server"
@@ -154,7 +154,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: bucket-bootstrap
-        image: "{{ $.Values.minio.mcImage.repository }}:{{ $.Values.minio.mcImage.tag }}"
+        image: "{{ $.Values.minio.mcImage.repository }}:{{ $.Values.minio.mcImage.tag }}{{ with $.Values.minio.mcImage.digest }}@{{ . }}{{ end }}"
         imagePullPolicy: {{ $.Values.minio.mcImage.pullPolicy }}
         env:
         # MINIO_USER/PASS must come BEFORE MC_HOST_minio: kubelet's

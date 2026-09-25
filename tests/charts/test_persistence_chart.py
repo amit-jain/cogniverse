@@ -912,7 +912,8 @@ def test_vespa_backup_tolerates_live_file_changes_and_fails_on_tar_errors(
         assert "var/payload" in listing.stdout.split()
 
 
-_MC_OVERRIDE = "example.test/mc:pinned-by-values"
+_MC_OVERRIDE_DIGEST = "sha256:" + "0" * 64
+_MC_OVERRIDE = f"example.test/mc:pinned-by-values@{_MC_OVERRIDE_DIGEST}"
 
 
 def _steps_running(docs: list[dict], image: str) -> dict:
@@ -950,6 +951,7 @@ def test_every_mc_step_renders_the_values_pinned_image():
         "hostStorage.backup.existingSecret=cogniverse-minio",
         "minio.mcImage.repository=example.test/mc",
         "minio.mcImage.tag=pinned-by-values",
+        f"minio.mcImage.digest={_MC_OVERRIDE_DIGEST}",
     )
 
     assert _steps_running(docs, _MC_OVERRIDE) == {
