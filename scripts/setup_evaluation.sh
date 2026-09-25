@@ -39,7 +39,7 @@ fi
 
 if ! command_exists uv; then
     echo -e "${YELLOW}Warning: uv is not installed. Installing with pip...${NC}"
-    pip install uv
+    pip install uv==0.12.19
 fi
 
 echo -e "${GREEN}✓ Prerequisites checked${NC}"
