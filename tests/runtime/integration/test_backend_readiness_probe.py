@@ -19,6 +19,7 @@ import socket
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -374,3 +375,133 @@ def test_metadata_schemas_current_compares_the_live_definitions(
     after_drift = metadata_schemas_current(live)
 
     assert (current, unreachable, after_drift) == (True, False, False)
+
+
+@pytest.fixture
+def registry_vespa(seeded_config_vespa):
+    """``connect(tenant, loader)``: a VespaBackend wired to a real
+    SchemaRegistry over the shared Vespa's config store, as startup builds."""
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_vespa.backend import VespaBackend
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    ports = seeded_config_vespa
+    store = VespaConfigStore(
+        backend_url="http://127.0.0.1", backend_port=ports["http_port"]
+    )
+    backends = []
+
+    def connect(tenant_id, loader=None):
+        loader = loader or FilesystemSchemaLoader(Path("configs/schemas"))
+        manager = ConfigManager(store=store)
+        backend = VespaBackend(
+            BackendConfig(
+                backend_type="vespa",
+                url="http://127.0.0.1",
+                port=ports["http_port"],
+                tenant_id=tenant_id,
+            ),
+            schema_loader=loader,
+            config_manager=manager,
+        )
+        backend._initialize_backend({"config_port": ports["config_port"]})
+        backend.schema_registry = SchemaRegistry(manager, backend, loader)
+        backend.schema_manager._schema_registry = backend.schema_registry
+        backends.append(backend)
+        return backend
+
+    yield connect, store
+    for backend in backends:
+        backend.close()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_startup_migration_retries_a_held_lease_and_names_a_refused_tenant(
+    registry_vespa, monkeypatch, caplog
+):
+    """The runtime's startup caller over a real SchemaRegistry on real Vespa:
+    a peer's deployment lease makes the migration wait out and retry, and a
+    tenant whose redeploy Vespa refuses is logged by tenant and schema while
+    the other drifted tenant is redeployed."""
+    from uuid import uuid4
+
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from cogniverse_runtime import main as runtime_main
+    from tests.core.integration.test_provenance_schema_lifecycle import (
+        _IncompatiblePreDigestLoader,
+        _PreDigestLoader,
+    )
+
+    connect, store = registry_vespa
+    drifted = f"startupmig_{uuid4().hex[:10]}:drifted"
+    refused = f"startupmig_{uuid4().hex[:10]}:refused"
+    schema_dir = Path("configs/schemas")
+    drifted_schema = connect(
+        drifted, _PreDigestLoader(schema_dir)
+    ).schema_registry.deploy_schema(drifted, "provenance")
+    refused_owner = connect(refused, _IncompatiblePreDigestLoader(schema_dir))
+    refused_schema = refused_owner.schema_registry.deploy_schema(refused, "provenance")
+    registry = connect(drifted).schema_registry
+
+    peer = SchemaDeployLease(store, heartbeat=True)
+    assert peer.acquire() is peer
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 2.0)
+    monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 1.0)
+    caplog.set_level("INFO", logger=runtime_main.logger.name)
+
+    def ours(record) -> bool:
+        return record.name == runtime_main.logger.name
+
+    migration = asyncio.create_task(
+        runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
+    )
+    try:
+        async with asyncio.timeout(60):
+            while not any(
+                ours(record) and record.levelname == "WARNING"
+                for record in caplog.records
+            ):
+                await asyncio.sleep(0.1)
+    finally:
+        peer.release()
+    try:
+        await asyncio.wait_for(migration, timeout=600)
+    finally:
+        refused_owner.schema_manager.delete_schema(refused, "provenance")
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if ours(record) and record.levelname == "WARNING"
+    ]
+    assert warnings == [
+        "Migration of drifted provenance schemas did not get the deployment lease "
+        f"(Vespa deployment lease still held by {peer.holder!r} after 2.0s; "
+        "refusing to replace the application package concurrently with another "
+        "deployer); retrying in 1s"
+    ]
+    [redeployed] = [
+        record.args[1]
+        for record in caplog.records
+        if ours(record) and record.levelname == "INFO"
+    ]
+    assert drifted_schema in redeployed
+    assert refused_schema not in redeployed
+    refusals = [
+        record.getMessage()
+        for record in caplog.records
+        if ours(record)
+        and record.levelname == "ERROR"
+        and refused in record.getMessage()
+    ]
+    assert len(refusals) == 1
+    assert refusals[0].startswith(
+        f"Migration of drifted provenance schemas could not redeploy {refused_schema} "
+        f"for tenant {refused}: "
+    )
+    assert "Vespa refused the application package" in refusals[0]
