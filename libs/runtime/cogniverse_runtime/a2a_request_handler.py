@@ -1009,6 +1009,10 @@ class RedisRequestHandler(DefaultRequestHandler):
             raise
         if committed:
             relay.commit_cancel(cancel_lease.generation)
+        elif relay is not None:
+            # An earlier cancel still holds the relay (one abandoned at its
+            # deadline); this cancel's generation owns it now.
+            relay.bind_owner(cancel_lease.generation)
         cancel_context = ServerCallContext()
         self.task_store.attach_execution(cancel_context, cancel_lease)
         try:
