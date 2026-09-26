@@ -4370,3 +4370,35 @@ async def test_an_interruption_the_owner_keeps_changing_gives_up_unwritten(
     assert len(saved) == 5
     assert stored.status.state == TaskState.working
     assert stored.artifacts[-1].artifact_id == "artifact-late-4"
+
+
+@pytest.mark.parametrize("late_state", [TaskState.working, TaskState.completed])
+async def test_a_late_save_of_the_drained_generation_leaves_the_task_failed(
+    redis_client, late_state
+):
+    """A consumer of the stopped execution saves under its generation after
+    the drain recorded the task failed and released the lease; the failure
+    stands."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    lease = await store.get_execution_lease(task_id)
+    try:
+        await asyncio.wait_for(handler.close(), timeout=5)
+        sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+    finally:
+        _end_if_hung(send)
+    drained = await redis_client.hget("test:a2a:tasks", task_id)
+    late = _task(task_id, late_state)
+    late.context_id = sent.context_id
+
+    await store.save(late, _owned_context(store, lease))
+    stored = await store.get(task_id)
+
+    assert sent.status.state == TaskState.failed
+    assert await store.get_execution_lease(task_id) is None
+    assert await redis_client.hget("test:a2a:tasks", task_id) == drained
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == _INTERRUPTED

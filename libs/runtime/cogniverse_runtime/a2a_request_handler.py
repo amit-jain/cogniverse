@@ -33,6 +33,7 @@ from a2a.utils.task import apply_history_length
 
 from cogniverse_runtime.a2a_task_store import (
     INTERRUPTED_MESSAGE,
+    TERMINAL_STATES,
     A2ACancelCapacityError,
     A2ACancelTimeoutError,
     A2ATaskConflictError,
@@ -56,13 +57,6 @@ _MAX_CONCURRENT_RESUBSCRIPTIONS = 64
 # Producer events a relay holds while a cancel takes its generation; a
 # producer emitting more waits for the cancel to commit or abort.
 _MAX_HELD_EVENTS = 1000
-
-_TERMINAL_STATES = {
-    TaskState.completed,
-    TaskState.canceled,
-    TaskState.failed,
-    TaskState.rejected,
-}
 
 
 def max_concurrent_cancels_from_env(environ: Mapping[str, str] = os.environ) -> int:
@@ -473,7 +467,7 @@ class RedisRequestHandler(DefaultRequestHandler):
 
             task: Task | None = await task_manager.get_task()
             if task:
-                if task.status.state in _TERMINAL_STATES:
+                if task.status.state in TERMINAL_STATES:
                     raise ServerError(
                         error=InvalidParamsError(
                             message=(
@@ -797,7 +791,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         applied while a live owner holds or renews the lease.
         """
         task = await self.task_store.get(params.id, context)
-        if task is not None and task.status.state not in _TERMINAL_STATES:
+        if task is not None and task.status.state not in TERMINAL_STATES:
             lease = await self.task_store.get_execution_lease(params.id)
             if lease is not None and not await self.task_store.has_live_owner(
                 params.id
@@ -816,7 +810,7 @@ class RedisRequestHandler(DefaultRequestHandler):
         task = await self.task_store.get(params.id, context)
         if task is None:
             raise ServerError(error=TaskNotFoundError())
-        if task.status.state in _TERMINAL_STATES:
+        if task.status.state in TERMINAL_STATES:
             raise ServerError(
                 error=TaskNotCancelableError(
                     message=(
@@ -924,7 +918,7 @@ class RedisRequestHandler(DefaultRequestHandler):
             task = await self.task_store.get(params.id, context)
             if task is None:
                 raise ServerError(error=TaskNotFoundError())
-            if task.status.state in _TERMINAL_STATES:
+            if task.status.state in TERMINAL_STATES:
                 raise ServerError(
                     error=InvalidParamsError(
                         message=(
@@ -1012,7 +1006,7 @@ class RedisRequestHandler(DefaultRequestHandler):
             task = await self.task_store.get(task_id, cancel_context)
             if task is None:
                 raise ServerError(error=TaskNotFoundError())
-            if task.status.state in _TERMINAL_STATES:
+            if task.status.state in TERMINAL_STATES:
                 # Already ended, typically by a cancel that finished first:
                 # answer with it rather than cancelling and publishing again.
                 return task
