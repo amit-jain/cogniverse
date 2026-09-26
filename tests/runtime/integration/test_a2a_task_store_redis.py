@@ -2229,8 +2229,9 @@ async def _handler_with_live_relay(redis_client, task_id: str):
     lease = await store.acquire_execution(
         task_id, replica_id="replica-a", lease_seconds=30
     )
-    relay = await handler._queue_manager.create_or_tap(task_id)
-    relay.bind_owner(lease.generation)
+    relay = await handler._queue_manager.create_or_tap(
+        task_id, generation=lease.generation
+    )
     await relay.enqueue_event(_status_event(task_id, TaskState.working))
     return store, handler, relay
 
@@ -2834,8 +2835,9 @@ async def _live_relay_on(client, redis_client, task_id: str):
     handler = RedisRequestHandler(
         agent_executor=_CancellableExecutor(), task_store=store, replica_id="replica-a"
     )
-    relay = await handler._queue_manager.create_or_tap(task_id)
-    relay.bind_owner(lease.generation)
+    relay = await handler._queue_manager.create_or_tap(
+        task_id, generation=lease.generation
+    )
     await relay.enqueue_event(_status_event(task_id, TaskState.working))
     return store, handler, relay, lease
 
@@ -4402,3 +4404,30 @@ async def test_a_late_save_of_the_drained_generation_leaves_the_task_failed(
     assert await redis_client.hget("test:a2a:tasks", task_id) == drained
     assert stored.status.state == TaskState.failed
     assert stored.status.message.parts[0].root.text == _INTERRUPTED
+
+
+async def test_a_shared_relay_is_never_created_without_its_owning_generation(
+    redis_client,
+):
+    """A relay with no generation could never close the shared stream, so
+    creating one is refused; a served relay is bound as it is created."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.5
+    )
+    try:
+        with pytest.raises(ValueError) as refused:
+            await handler._queue_manager.create_or_tap("task-unowned")
+        lease = await store.get_execution_lease(task_id)
+        served = await handler._queue_manager.get(task_id)
+    finally:
+        await handler.close()
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+
+    assert str(refused.value) == (
+        "A2A task task-unowned: a shared relay needs its owning generation"
+    )
+    assert await handler._queue_manager.get("task-unowned") is None
+    assert served._generation == lease.generation
