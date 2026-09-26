@@ -139,6 +139,11 @@ def _seed_store(redis, **kwargs) -> RedisTaskStore:
     return RedisTaskStore(redis, enforce_leases=False, **kwargs)
 
 
+async def _generation(redis, task_id: str) -> int:
+    """The generation that owns ``task_id`` now."""
+    return int(await redis.hget("test:a2a:generations", task_id))
+
+
 async def _save_owned(store: RedisTaskStore, task: Task) -> None:
     """Save one task the way a served execution does: acquire, save, release."""
     lease = await store.acquire_execution(
@@ -502,12 +507,16 @@ async def test_retention_bookkeeping_is_dropped_with_the_task(redis_client):
         status=TaskStatus(state=TaskState.working),
     )
     await _save_owned(store, _task("deleted"))
-    await store.publish_event("deleted", working)
+    await store.publish_event(
+        "deleted", working, generation=await _generation(redis_client, "deleted")
+    )
     await store.delete("deleted")
 
     await _save_owned(store, _task("evicted"))
     await store.publish_event(
-        "evicted", working.model_copy(update={"task_id": "evicted"})
+        "evicted",
+        working.model_copy(update={"task_id": "evicted"}),
+        generation=await _generation(redis_client, "evicted"),
     )
     await _save_owned(store, _task("kept"))
     await _save_owned(store, _task("incoming"))
@@ -769,6 +778,7 @@ async def test_a_dead_owners_relay_expires_even_after_its_terminal_save(redis_cl
             final=False,
             status=TaskStatus(state=TaskState.working),
         ),
+        generation=owner.generation,
     )
     await store.save(_task("task-dead-owner", TaskState.input_required), owner_context)
 
@@ -2409,12 +2419,12 @@ async def _abort_whose_flush_fails_to_publish(store, handler, relay, task_id):
     real_publish = store.publish_event
     refusing = {"on": False}
 
-    async def publish_event(task, event):
+    async def publish_event(task, event, **kwargs):
         if refusing["on"]:
             raise A2ATaskStoreError(
                 f"shared A2A task store unavailable: publish event for task {task}"
             )
-        await real_publish(task, event)
+        await real_publish(task, event, **kwargs)
 
     store.publish_event = publish_event
     real_begin_cancel = store.begin_cancel
@@ -2704,12 +2714,12 @@ async def test_a_failed_flush_does_not_replace_the_cancels_own_conflict(
     real_publish = store.publish_event
     refusing = {"on": False}
 
-    async def publish_event(task, event):
+    async def publish_event(task, event, **kwargs):
         if refusing["on"]:
             raise A2ATaskStoreError(
                 f"shared A2A task store unavailable: publish event for task {task}"
             )
-        await real_publish(task, event)
+        await real_publish(task, event, **kwargs)
 
     async def producer_emits_then_begin_cancel_fails(task, **kwargs):
         await relay.enqueue_event(_status_event(task, TaskState.working, "held"))
@@ -3009,15 +3019,15 @@ async def test_a_gap_counts_each_unpublished_event_once(redis_client):
     real_publish, real_mark = store.publish_event, store.mark_event_stream_incomplete
     refusing = {"on": False}
 
-    async def publish_event(task, event):
+    async def publish_event(task, event, **kwargs):
         if refusing["on"]:
             raise A2ATaskStoreError(f"publish event for task {task} refused")
-        await real_publish(task, event)
+        await real_publish(task, event, **kwargs)
 
-    async def mark_event_stream_incomplete(task, *, missing):
+    async def mark_event_stream_incomplete(task, *, missing, **kwargs):
         if refusing["on"]:
             raise A2ATaskStoreError(f"mark event stream for task {task} refused")
-        await real_mark(task, missing=missing)
+        await real_mark(task, missing=missing, **kwargs)
 
     def emits_then_fails(count):
         async def begin_cancel(task, **kwargs):
@@ -3149,7 +3159,9 @@ async def test_every_store_call_on_a_black_holed_redis_fails_within_its_timeout(
             ),
             "renew": store.renew_execution(lease, lease_seconds=60),
             "publish": store.publish_event(
-                "bh-task", _status_event("bh-task", TaskState.working)
+                "bh-task",
+                _status_event("bh-task", TaskState.working),
+                generation=lease.generation,
             ),
             "listen": store.next_cancel(replica_id="replica-a"),
             "route": store.request_cancel(
@@ -3337,7 +3349,9 @@ async def test_resubscriptions_past_the_replica_cap_are_refused_until_one_ends(
     seed = _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a")
     store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
     await seed.save(_task("resub", TaskState.working))
-    await store.acquire_execution("resub", replica_id="replica-a", lease_seconds=30)
+    owner = await store.acquire_execution(
+        "resub", replica_id="replica-a", lease_seconds=30
+    )
     handler = RedisRequestHandler(
         agent_executor=_CancellableExecutor(),
         task_store=store,
@@ -3369,7 +3383,9 @@ async def test_resubscriptions_past_the_replica_cap_are_refused_until_one_ends(
         assert error is None
         admitted.append(waiting)
         await store.publish_event(
-            "resub", _status_event("resub", TaskState.working, "after-cap")
+            "resub",
+            _status_event("resub", TaskState.working, "after-cap"),
+            generation=owner.generation,
         )
         firsts = await asyncio.wait_for(
             asyncio.gather(*(first for _, first in admitted)), timeout=5
@@ -3841,17 +3857,26 @@ async def _run_out_lease(redis_client, store: RedisTaskStore, task_id: str):
     return lease
 
 
-async def _two_nodes(redis_client, redis_url, task_id: str, *, drain_seconds: float):
+async def _two_nodes(
+    redis_client,
+    redis_url,
+    task_id: str,
+    *,
+    drain_seconds: float,
+    executor_a=None,
+    store_a: RedisTaskStore | None = None,
+):
     """Node A running a silent turn on ``task_id`` with its lease run out, and
     node B, on its own Redis client, ready to take the task over."""
     await _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a").save(
         _task(task_id, TaskState.input_required)
     )
     client_b = aioredis.from_url(redis_url, decode_responses=True)
-    silent = _SilentTurnExecutor()
+    silent = executor_a or _SilentTurnExecutor()
     node_a = RedisRequestHandler(
         agent_executor=silent,
-        task_store=RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        task_store=store_a
+        or RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
         replica_id="replica-a",
         lease_seconds=30,
         drain_timeout_seconds=drain_seconds,
@@ -4472,3 +4497,109 @@ async def test_a_cancel_after_an_abandoned_one_ends_the_relay_it_publishes_on(
     assert (await store.get(sent.id)).status.state == TaskState.canceled
     assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
     assert 0 < ttl <= 60
+
+
+class _LateEmitterExecutor(_SilentTurnExecutor):
+    """A silent turn that emits ``a-late-<n>`` each time ``emit`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.emit = asyncio.Event()
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        self.running.set()
+        for index in range(10):
+            await self.emit.wait()
+            self.emit.clear()
+            await event_queue.enqueue_event(
+                _status_event(context.task_id, TaskState.working, f"a-late-{index}")
+            )
+        await asyncio.Event().wait()
+
+
+async def _leave_an_unmarked_gap(handler, store, relay, task_id: str) -> None:
+    """While Redis refuses writes, a cancel that never takes its generation
+    releases two held events it cannot publish and cannot mark as missing."""
+
+    async def refused(*args, **kwargs):
+        raise A2ATaskStoreError("shared A2A task store unavailable: refused")
+
+    async def emits_then_loses(task, **kwargs):
+        for mark in ("held-0", "held-1"):
+            await relay.enqueue_event(_status_event(task, TaskState.working, mark))
+        raise A2ATaskOwnershipLostError(f"cancel task {task} lost its owner")
+
+    real = (store.publish_event, store.mark_event_stream_incomplete, store.begin_cancel)
+    store.publish_event = refused
+    store.mark_event_stream_incomplete = refused
+    store.begin_cancel = emits_then_loses
+    try:
+        with pytest.raises(A2ATaskOwnershipLostError):
+            await handler._cancel_owned(task_id)
+    finally:
+        (
+            store.publish_event,
+            store.mark_event_stream_incomplete,
+            store.begin_cancel,
+        ) = real
+
+
+async def test_a_node_that_lost_the_task_publishes_to_its_local_queue_only(
+    redis_client, redis_url
+):
+    """A left a gap it could not mark while it owned the task; after B took
+    the task over, A's turn emits again. Neither the gap marker nor the event
+    reaches B's relay, so B's resubscriber reads B's turn to its end; A's
+    local queue still gets the event."""
+    task_id = "task-late-publisher"
+    emitter = _LateEmitterExecutor()
+    nodes = await _two_nodes(
+        redis_client, redis_url, task_id, drain_seconds=0.5, executor_a=emitter
+    )
+    relayed: list = []
+    # A's request was cut: its turn runs on with no consumer of its own.
+    nodes.send_a.cancel()
+    try:
+        relay_a = await nodes.node_a._queue_manager.get(task_id)
+        tap_a = relay_a.tap()
+        await _leave_an_unmarked_gap(
+            nodes.node_a, nodes.node_a.task_store, relay_a, task_id
+        )
+        stream_b = asyncio.create_task(
+            _collect(
+                nodes.node_b.on_message_send_stream(_turn_params(task_id, "turn-b")),
+                [],
+            )
+        )
+        nodes.cleanup.append(stream_b)
+        await asyncio.wait_for(nodes.stepped.started.wait(), timeout=5)
+        reader = await _resubscribe_on_b(nodes, task_id, relayed)
+
+        emitter.emit.set()
+        local = [
+            await asyncio.wait_for(tap_a.dequeue_event(), timeout=5) for _ in range(3)
+        ]
+        await asyncio.sleep(0.5)
+        await _finish_on_b(nodes, reader, relayed)
+        await asyncio.wait_for(stream_b, timeout=5)
+        entries = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    finally:
+        # Nothing consumes A's queue: its bounded drain stop closes it.
+        await asyncio.wait_for(nodes.node_a.close(), timeout=15)
+        await _end_nodes(nodes)
+
+    assert _marks(local) == [
+        (TaskState.working, "held-0"),
+        (TaskState.working, "held-1"),
+        (TaskState.working, "a-late-0"),
+    ]
+    assert _marks(relayed) == [
+        (TaskState.working, "b-1"),
+        (TaskState.completed, "b-done"),
+    ]
+    assert _relay_states(entries) == [
+        TaskState.working,
+        TaskState.working,
+        TaskState.completed,
+        "closed",
+    ]

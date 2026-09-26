@@ -393,6 +393,21 @@ redis.call('HDEL', KEYS[4], ARGV[1])
 return 1
 """
 
+_PUBLISH_SCRIPT = """
+-- Only the generation that owns the task writes to its shared relay; one
+-- that was superseded would put stale events or gap markers in front of
+-- the new owner's resubscribers.
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if not current or tonumber(current) ~= tonumber(ARGV[2]) then
+    return 0
+end
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[3], '*', ARGV[4], ARGV[5])
+-- A later turn reuses the stream key the previous turn's close left an
+-- expiry on; drop it so this relay cannot vanish mid-turn.
+redis.call('PERSIST', KEYS[2])
+return 1
+"""
+
 _CLOSE_STREAM_SCRIPT = """
 -- Only the generation that owns the task may end its shared relay; one that
 -- was superseded would cut off the new owner's resubscribers.
@@ -1014,40 +1029,56 @@ class RedisTaskStore(TaskStore):
     def _event_stream_key(self, task_id: str) -> str:
         return f"{self._key_prefix}:events:{task_id}"
 
-    async def publish_event(self, task_id: str, event: Event) -> None:
-        """Append an active task event for cross-replica resubscription."""
-        stream_key = self._event_stream_key(task_id)
+    async def _append_to_relay(
+        self, task_id: str, generation: int, field: str, value: str
+    ) -> bool:
+        """XADD one entry as ``generation``; False once it no longer owns
+        the task, with nothing written."""
+        appended = await self._redis.eval(
+            _PUBLISH_SCRIPT,
+            2,
+            self._generations_key,
+            self._event_stream_key(task_id),
+            task_id,
+            generation,
+            _RELAY_MAXLEN,
+            field,
+            value,
+        )
+        return int(appended) == 1
+
+    async def publish_event(
+        self, task_id: str, event: Event, *, generation: int
+    ) -> bool:
+        """Append an active task event for cross-replica resubscription.
+
+        Only ``generation`` still owning the task appends; a superseded one
+        gets False and writes nothing.
+        """
         try:
-            pipeline = self._redis.pipeline(transaction=True)
-            pipeline.xadd(
-                stream_key,
-                {"payload": _EVENT_ADAPTER.dump_json(event).decode()},
-                maxlen=_RELAY_MAXLEN,
-                approximate=True,
+            return await self._append_to_relay(
+                task_id,
+                generation,
+                "payload",
+                _EVENT_ADAPTER.dump_json(event).decode(),
             )
-            # A later turn reuses the stream key the previous turn's close
-            # left an expiry on; drop it so this relay cannot vanish mid-turn.
-            pipeline.persist(stream_key)
-            await pipeline.execute()
         except RedisError as exc:
             raise A2ATaskStoreError(
                 f"{_UNAVAILABLE}: publish event for task {task_id}"
             ) from exc
 
-    async def mark_event_stream_incomplete(self, task_id: str, *, missing: int) -> None:
+    async def mark_event_stream_incomplete(
+        self, task_id: str, *, missing: int, generation: int
+    ) -> bool:
         """Record on an active relay that ``missing`` owner events were not
-        published, so a resubscriber reading past them fails instead."""
-        stream_key = self._event_stream_key(task_id)
+        published, so a resubscriber reading past them fails instead.
+
+        Fenced like ``publish_event``: a superseded generation gets False.
+        """
         try:
-            pipeline = self._redis.pipeline(transaction=True)
-            pipeline.xadd(
-                stream_key,
-                {"missing": str(missing)},
-                maxlen=_RELAY_MAXLEN,
-                approximate=True,
+            return await self._append_to_relay(
+                task_id, generation, "missing", str(missing)
             )
-            pipeline.persist(stream_key)
-            await pipeline.execute()
         except RedisError as exc:
             raise A2ATaskStoreError(
                 f"{_UNAVAILABLE}: mark event stream incomplete for task {task_id}"
