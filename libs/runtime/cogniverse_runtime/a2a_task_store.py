@@ -142,6 +142,7 @@ local events_prefix = ARGV[7]
 local state = ARGV[8]
 local canceled = ARGV[9]
 local expected = ARGV[10]
+local terminal_states = ARGV[11]
 -- Fence on the generation, not on the lease still being present: the SDK can
 -- persist an execution's last event after its lease was released, and that
 -- write is legitimate until some other owner takes the next generation.
@@ -165,6 +166,17 @@ end
 -- A save built from one stored state applies only while that state stands.
 if expected ~= '' and redis.call('HGET', tasks_key, task_id) ~= expected then
     return {3, ''}
+end
+-- An ended task stays ended: a straggler of its own generation, such as a
+-- consumer still saving events queued before the stop, is acknowledged
+-- without replacing it. Saving the same terminal state again still lands.
+local ended = redis.call('HGET', tasks_key, task_id)
+if ended then
+    local ended_state = cjson.decode(ended).status.state
+    if ended_state ~= state
+        and string.find(terminal_states, ',' .. ended_state .. ',', 1, true) then
+        return {4, ''}
+    end
 end
 local existed = redis.call('HEXISTS', tasks_key, task_id)
 local evicted = ''
@@ -404,13 +416,17 @@ _ACTIVE_STATES = frozenset(
         TaskState.auth_required,
     }
 )
-_TERMINAL_STATES = frozenset(
+TERMINAL_STATES = frozenset(
     {
         TaskState.completed,
         TaskState.canceled,
         TaskState.failed,
         TaskState.rejected,
     }
+)
+# The terminal states as the save script matches them.
+_TERMINAL_STATE_LIST = (
+    "," + ",".join(sorted(state.value for state in TERMINAL_STATES)) + ","
 )
 
 
@@ -557,13 +573,14 @@ class RedisTaskStore(TaskStore):
                 task.status.state.value,
                 "1" if task.status.state == TaskState.canceled else "0",
                 expected,
+                _TERMINAL_STATE_LIST,
             )
         except RedisError as exc:
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: save task {task.id}") from exc
         result_code = int(result[0])
         if result_code == 3:
             return False
-        if result_code == 2:
+        if result_code in (2, 4):
             return True
         if result_code == -1:
             generation = bound_lease.generation if bound_lease else 0
@@ -819,7 +836,7 @@ class RedisTaskStore(TaskStore):
                 task = Task.model_validate_json(stored)
             except (ValidationError, ValueError, TypeError) as exc:
                 raise A2ATaskStoreError(f"decode task {lease.task_id}") from exc
-            if task.status.state in _TERMINAL_STATES:
+            if task.status.state in TERMINAL_STATES:
                 return False
             ended = task.model_copy(deep=True)
             ended.status = status
