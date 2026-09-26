@@ -368,6 +368,10 @@ redis.call('EXPIRE', KEYS[6], tonumber(ARGV[3]))
 if not raw_lease or redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 0 then
     return 0
 end
+-- The interruption was built from ARGV[4]; a save made since is kept.
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[4] then
+    return -2
+end
 local score = tonumber(now[1]) * 1000000 + tonumber(now[2])
 redis.call('HSET', KEYS[5], ARGV[1], redis.call('INCR', KEYS[7]))
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
@@ -826,35 +830,53 @@ class RedisTaskStore(TaskStore):
         )
 
     async def mark_owner_lost(self, task_id: str) -> bool:
-        """Atomically persist interruption if an active task's owner expired."""
-        task = await self.get(task_id)
-        if task is None:
-            return False
-        interrupted = task.model_copy(deep=True)
-        interrupted.status = TaskStatus(
-            state=TaskState.failed,
-            message=new_agent_text_message(INTERRUPTED_MESSAGE),
-        )
-        try:
-            result = await self._redis.eval(
-                _INTERRUPT_SCRIPT,
-                7,
-                self._tasks_key,
-                self._inactive_key,
-                self._active_key,
-                self._leases_key,
-                self._generations_key,
-                self._event_stream_key(task_id),
-                self._generation_sequence_key,
-                task_id,
-                interrupted.model_dump_json(by_alias=True),
-                _EVENT_STREAM_DRAIN_SECONDS,
+        """Atomically persist interruption if an active task's owner expired.
+
+        The interruption applies only over the stored state it was built
+        from; a save the expired owner made meanwhile is read again and kept.
+        """
+        for _ in range(_INTERRUPT_ATTEMPTS):
+            try:
+                stored = await self._redis.hget(self._tasks_key, task_id)
+            except RedisError as exc:
+                raise A2ATaskStoreError(f"{_UNAVAILABLE}: get task {task_id}") from exc
+            if stored is None:
+                return False
+            try:
+                interrupted = Task.model_validate_json(stored)
+            except (ValidationError, ValueError, TypeError) as exc:
+                raise A2ATaskStoreError(f"decode task {task_id}") from exc
+            interrupted.status = TaskStatus(
+                state=TaskState.failed,
+                message=new_agent_text_message(INTERRUPTED_MESSAGE),
             )
-        except RedisError as exc:
-            raise A2ATaskStoreError(
-                f"{_UNAVAILABLE}: mark task {task_id} owner lost"
-            ) from exc
-        return int(result) == 1
+            try:
+                result = int(
+                    await self._redis.eval(
+                        _INTERRUPT_SCRIPT,
+                        7,
+                        self._tasks_key,
+                        self._inactive_key,
+                        self._active_key,
+                        self._leases_key,
+                        self._generations_key,
+                        self._event_stream_key(task_id),
+                        self._generation_sequence_key,
+                        task_id,
+                        interrupted.model_dump_json(by_alias=True),
+                        _EVENT_STREAM_DRAIN_SECONDS,
+                        stored,
+                    )
+                )
+            except RedisError as exc:
+                raise A2ATaskStoreError(
+                    f"{_UNAVAILABLE}: mark task {task_id} owner lost"
+                ) from exc
+            if result != -2:
+                return result == 1
+        raise A2ATaskConflictError(
+            f"task {task_id} kept changing while its interruption was saved"
+        )
 
     async def request_cancel(
         self,
