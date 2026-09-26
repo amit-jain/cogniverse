@@ -39,6 +39,7 @@ from cogniverse_runtime.a2a_task_store import (
     A2ATaskConflictError,
     A2ATaskOwnershipLostError,
     A2ATaskStoreError,
+    A2ATaskTerminalError,
     CancelCommand,
     RedisTaskStore,
     TaskLease,
@@ -717,6 +718,17 @@ class RedisRequestHandler(DefaultRequestHandler):
             )
 
     async def _acquire(self, task_id: str) -> TaskLease:
+        try:
+            return await self._acquire_or_refuse(task_id)
+        except A2ATaskTerminalError as exc:
+            # The answer the SDK gives a continuation of an ended task.
+            raise ServerError(
+                error=InvalidParamsError(
+                    message=f"Task {task_id} is in terminal state: {exc.state.value}"
+                )
+            ) from exc
+
+    async def _acquire_or_refuse(self, task_id: str) -> TaskLease:
         try:
             return await self.task_store.acquire_execution(
                 task_id,

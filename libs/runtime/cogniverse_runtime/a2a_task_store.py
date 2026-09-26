@@ -74,6 +74,14 @@ class A2ATaskOwnershipLostError(A2ATaskStoreError):
     """Raised when an execution tries to write after losing ownership."""
 
 
+class A2ATaskTerminalError(A2ATaskStoreError):
+    """Raised when a task that has ended is acquired for execution."""
+
+    def __init__(self, task_id: str, state: TaskState) -> None:
+        super().__init__(f"task {task_id} is in terminal state {state.value}")
+        self.state = state
+
+
 class A2ACancelTimeoutError(A2ATaskStoreError):
     """Raised when a task owner does not acknowledge cancellation in time."""
 
@@ -259,6 +267,17 @@ local task_id = ARGV[1]
 local replica_id = ARGV[2]
 local request_id = ARGV[3]
 local ttl_ms = tonumber(ARGV[4])
+local terminal_states = ARGV[5]
+-- An ended task is never executed again, so refusing it takes no
+-- generation: one taken here would fence the owner that ended it out of
+-- closing its relay.
+local stored = redis.call('HGET', tasks_key, task_id)
+if stored then
+    local state = cjson.decode(stored).status.state
+    if string.find(terminal_states, ',' .. state .. ',', 1, true) then
+        return {'terminal', '', state, ''}
+    end
+end
 local now = redis.call('TIME')
 local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 local raw_lease = redis.call('HGET', leases_key, task_id)
@@ -403,8 +422,29 @@ if not current or tonumber(current) ~= tonumber(ARGV[2]) then
 end
 redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[3], '*', ARGV[4], ARGV[5])
 -- A later turn reuses the stream key the previous turn's close left an
--- expiry on; drop it so this relay cannot vanish mid-turn.
-redis.call('PERSIST', KEYS[2])
+-- expiry on; drop it so this relay cannot vanish mid-turn. Only a live
+-- owner of an unfinished task does: a stalled owner, or one whose task has
+-- ended, must not undo the drain window a close or a peer gave the relay.
+if redis.call('PTTL', KEYS[2]) > 0 then
+    local raw_lease = redis.call('HGET', KEYS[3], ARGV[1])
+    if not raw_lease then
+        return 1
+    end
+    local lease = cjson.decode(raw_lease)
+    local now = redis.call('TIME')
+    local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+    if tonumber(lease.generation) ~= tonumber(ARGV[2])
+        or tonumber(lease.expires_at_ms) <= now_ms then
+        return 1
+    end
+    local stored = redis.call('HGET', KEYS[4], ARGV[1])
+    if stored and string.find(
+        ARGV[6], ',' .. cjson.decode(stored).status.state .. ',', 1, true
+    ) then
+        return 1
+    end
+    redis.call('PERSIST', KEYS[2])
+end
 return 1
 """
 
@@ -413,6 +453,14 @@ _CLOSE_STREAM_SCRIPT = """
 -- was superseded would cut off the new owner's resubscribers.
 local current = redis.call('HGET', KEYS[1], ARGV[1])
 if not current or tonumber(current) ~= tonumber(ARGV[2]) then
+    -- With no live owner left to close the relay (the later generation gave
+    -- the task up), it still gets its drain window, without a close marker.
+    local raw_lease = redis.call('HGET', KEYS[3], ARGV[1])
+    local now = redis.call('TIME')
+    local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+    if not raw_lease or tonumber(cjson.decode(raw_lease).expires_at_ms) <= now_ms then
+        redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+    end
     return 0
 end
 if tonumber(ARGV[3]) > 0 then
@@ -684,11 +732,14 @@ class RedisTaskStore(TaskStore):
                 replica_id,
                 request_id,
                 ttl_ms,
+                _TERMINAL_STATE_LIST,
             )
         except RedisError as exc:
             raise A2ATaskStoreError(f"{_UNAVAILABLE}: acquire task {task_id}") from exc
         outcome = self._text(result[0])
         owner = self._text(result[1])
+        if outcome == "terminal":
+            raise A2ATaskTerminalError(task_id, TaskState(self._text(result[2])))
         if outcome == "conflict":
             retry_ms = int(self._text(result[2]))
             raise A2ATaskConflictError(
@@ -1036,14 +1087,17 @@ class RedisTaskStore(TaskStore):
         the task, with nothing written."""
         appended = await self._redis.eval(
             _PUBLISH_SCRIPT,
-            2,
+            4,
             self._generations_key,
             self._event_stream_key(task_id),
+            self._leases_key,
+            self._tasks_key,
             task_id,
             generation,
             _RELAY_MAXLEN,
             field,
             value,
+            _TERMINAL_STATE_LIST,
         )
         return int(appended) == 1
 
@@ -1097,9 +1151,10 @@ class RedisTaskStore(TaskStore):
         try:
             closed = await self._redis.eval(
                 _CLOSE_STREAM_SCRIPT,
-                2,
+                3,
                 self._generations_key,
                 self._event_stream_key(task_id),
+                self._leases_key,
                 task_id,
                 generation,
                 missing,
