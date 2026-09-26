@@ -4777,3 +4777,96 @@ async def test_a_later_turn_keeps_the_relay_its_previous_turn_closed(redis_clien
     assert 0 < expiring <= 60
     assert published is True
     assert await redis_client.ttl("test:a2a:events:task-next-turn") == -1
+
+
+def _counting_commands(client) -> list:
+    """The Redis commands ``client`` sends from now on, by name."""
+    sent = []
+    real = client.execute_command
+
+    async def execute_command(*args, **kwargs):
+        sent.append(str(args[0]).upper())
+        return await real(*args, **kwargs)
+
+    client.execute_command = execute_command
+    return sent
+
+
+async def _get_counted(redis_url, task_id: str):
+    """``tasks/get`` from a fresh replica, with the commands it sent."""
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    reader = _cancel_handler(
+        RedisTaskStore(client, max_tasks=10, key_prefix="test:a2a"), "replica-reader"
+    )
+    sent = _counting_commands(client)
+    try:
+        return await _get_task(reader, task_id), sent
+    finally:
+        await client.aclose()
+
+
+async def test_tasks_get_of_a_live_owners_task_is_one_read(redis_client, redis_url):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await store.acquire_execution(
+        "task-live-read", replica_id="replica-a", lease_seconds=30
+    )
+    await store.save(
+        _task("task-live-read", TaskState.working), _owned_context(store, lease)
+    )
+
+    got, sent = await _get_counted(redis_url, "task-live-read")
+
+    assert got.status.state == TaskState.working
+    assert sent == ["EVAL"]
+
+
+async def test_tasks_get_leaves_an_idle_tasks_stale_lease_and_relay_alone(
+    redis_client, redis_url
+):
+    """The owner answered its turn (input_required), closed its relay and
+    died before releasing its lease. Polling reads the task once and does
+    not restart the relay's drain window."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await store.acquire_execution(
+        "task-idle-stale", replica_id="replica-dead", lease_seconds=0.3
+    )
+    context = _owned_context(store, lease)
+    await store.save(_task("task-idle-stale", TaskState.working), context)
+    await store.publish_event(
+        "task-idle-stale",
+        _status_event("task-idle-stale", TaskState.working),
+        generation=lease.generation,
+    )
+    await store.save(_task("task-idle-stale", TaskState.input_required), context)
+    assert await store.close_event_stream(
+        "task-idle-stale", generation=lease.generation
+    )
+    await asyncio.sleep(1.2)
+    before = await redis_client.pttl("test:a2a:events:task-idle-stale")
+
+    got, sent = await _get_counted(redis_url, "task-idle-stale")
+    after = await redis_client.pttl("test:a2a:events:task-idle-stale")
+
+    assert got.status.state == TaskState.input_required
+    assert len(sent) == 1
+    assert 0 < after <= before < 59000
+
+
+async def test_tasks_get_of_an_orphaned_task_reads_interrupts_and_rereads(
+    redis_client, redis_url
+):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await store.acquire_execution(
+        "task-orphan-read", replica_id="replica-dead", lease_seconds=0.2
+    )
+    await store.save(
+        _task("task-orphan-read", TaskState.working), _owned_context(store, lease)
+    )
+    await asyncio.sleep(0.3)
+
+    got, sent = await _get_counted(redis_url, "task-orphan-read")
+
+    assert got.status.state == TaskState.failed
+    assert got.status.message.parts[0].root.text == _INTERRUPTED
+    # One read, the interruption's snapshot read and script, one re-read.
+    assert len(sent) == 4
