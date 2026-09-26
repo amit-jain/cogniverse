@@ -4431,3 +4431,44 @@ async def test_a_shared_relay_is_never_created_without_its_owning_generation(
     )
     assert await handler._queue_manager.get("task-unowned") is None
     assert served._generation == lease.generation
+
+
+async def test_a_cancel_after_an_abandoned_one_ends_the_relay_it_publishes_on(
+    redis_client,
+):
+    """The first cancel is abandoned while it holds the relay committed; the
+    second takes a newer generation and must own the relay from then on, so
+    its canceled event and the relay's close both land."""
+    from a2a.types import TaskIdParams
+
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    executor.wedge_every_cancel = True
+    executor.stubborn = True
+    handler = RedisRequestHandler(
+        agent_executor=executor,
+        task_store=store,
+        replica_id="replica-a",
+        cancel_timeout_seconds=1,
+        drain_timeout_seconds=1,
+    )
+    sent = await handler.on_message_send(_send_params("twice", blocking=False))
+    try:
+        with pytest.raises(ServerError):
+            await asyncio.wait_for(
+                handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=5
+            )
+        executor.wedge_every_cancel = False
+        canceled = await asyncio.wait_for(
+            handler.on_cancel_task(TaskIdParams(id=sent.id)), timeout=5
+        )
+        await asyncio.wait_for(handler.close(), timeout=10)
+    finally:
+        executor.unwedge.set()
+    relay = await redis_client.xrange(f"test:a2a:events:{sent.id}")
+    ttl = await redis_client.ttl(f"test:a2a:events:{sent.id}")
+
+    assert canceled.status.state == TaskState.canceled
+    assert (await store.get(sent.id)).status.state == TaskState.canceled
+    assert _relay_states(relay) == [TaskState.working, TaskState.canceled, "closed"]
+    assert 0 < ttl <= 60
