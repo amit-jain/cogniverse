@@ -4212,3 +4212,75 @@ async def test_concurrent_readers_of_an_expired_owners_task_write_it_once(
     # One interruption: one new generation, one stored message both read.
     assert sequence_after == sequence + 1
     assert got[0] == got[1] == await dead.get("task-read-twice")
+
+
+def _renewal_errors(caplog) -> list:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "ERROR" and "renewal" in record.getMessage()
+    ]
+
+
+async def test_a_renewal_after_the_drain_releases_the_lease_stays_quiet(
+    redis_client, caplog
+):
+    """The request was cut, so the stopped producer's queue close waits its
+    full bound; renewals every 0.3 s fall inside it, after the drain released
+    the lease. None may report a lost lease or stop the producer again."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=0.9, drain_timeout_seconds=0.2
+    )
+    send.cancel()
+    try:
+        await asyncio.wait_for(handler.close(), timeout=15)
+    finally:
+        await asyncio.wait_for(asyncio.gather(send, return_exceptions=True), 10)
+    stored = await store.get(task_id)
+
+    assert producer.cancelled() is True
+    assert producer.cancelling() == 1
+    assert _renewal_errors(caplog) == []
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == _INTERRUPTED
+    assert await store.get_execution_lease(task_id) is None
+
+
+async def test_a_renewal_landing_after_the_drain_release_leaves_the_send_failed(
+    redis_client, caplog
+):
+    """A renewal tick lands between the drain's lease release and the end of
+    the stopped stream; the blocking send still answers the stored failure."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=0.9, drain_timeout_seconds=0.2
+    )
+    real_release = store.release_execution
+    released = []
+
+    async def release_then_let_a_renewal_tick(lease):
+        released.append(await real_release(lease))
+        # Longer than one renewal interval (0.3 s).
+        await asyncio.sleep(0.45)
+        return released[-1]
+
+    store.release_execution = release_then_let_a_renewal_tick
+    try:
+        await asyncio.wait_for(handler.close(), timeout=15)
+        sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+    finally:
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+    stored = await store.get(task_id)
+
+    assert released[0] is True
+    assert producer.cancelled() is True
+    assert producer.cancelling() == 1
+    assert _renewal_errors(caplog) == []
+    assert (sent.id, sent.status.state) == (task_id, TaskState.failed)
+    assert sent.status.message.parts[0].root.text == _INTERRUPTED
+    assert stored.status.state == TaskState.failed
+    assert await store.get_execution_lease(task_id) is None

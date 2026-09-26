@@ -569,11 +569,16 @@ class RedisRequestHandler(DefaultRequestHandler):
             await self._run_event_stream(request_context, queue)
         except asyncio.CancelledError:
             if producer_task in self._stop_reasons:
+                recorded = producer_task in self._recorded_stops
+                if recorded:
+                    # The stop releases the lease; a renewal still running
+                    # would then find it gone and stop this producer again.
+                    await self._stop_renewal(producer_task)
                 await self._end_stopped_stream(
                     request_context,
                     queue,
                     self._stop_reasons[producer_task],
-                    lease if producer_task in self._recorded_stops else None,
+                    lease if recorded else None,
                 )
             raise
         finally:
@@ -639,6 +644,13 @@ class RedisRequestHandler(DefaultRequestHandler):
                 )
             except TimeoutError:
                 await EventQueue.close(queue, immediate=True)
+
+    async def _stop_renewal(self, producer_task: asyncio.Task) -> None:
+        """Stop renewing ``producer_task``'s lease and wait for it to stop."""
+        renewal = self._renewal_tasks.pop(producer_task, None)
+        if renewal is not None:
+            renewal.cancel()
+            await asyncio.gather(renewal, return_exceptions=True)
 
     async def _record_stopped(self, lease: TaskLease, status: TaskStatus) -> None:
         """Save a stopped execution's end while ``lease`` owns it, then
@@ -763,13 +775,10 @@ class RedisRequestHandler(DefaultRequestHandler):
         task_id: str,
     ) -> None:
         lease = self._producer_leases.pop(producer_task, None)
-        renewal = self._renewal_tasks.pop(producer_task, None)
         try:
             await super()._cleanup_producer(producer_task, task_id)
         finally:
-            if renewal is not None:
-                renewal.cancel()
-                await asyncio.gather(renewal, return_exceptions=True)
+            await self._stop_renewal(producer_task)
             # A cancelled producer's lease is not released here; a stop that
             # recorded the task ended released it already. Otherwise letting
             # the lease expire is what makes a peer report it interrupted
