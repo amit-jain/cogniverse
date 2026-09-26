@@ -46,6 +46,7 @@ from cogniverse_runtime.a2a_task_store import (
     A2ATaskConflictError,
     A2ATaskOwnershipLostError,
     A2ATaskStoreError,
+    A2ATaskTerminalError,
     RedisTaskStore,
 )
 from cogniverse_runtime.main import _a2a_settings_from_env, _build_shared_a2a_protocol
@@ -4603,3 +4604,176 @@ async def test_a_node_that_lost_the_task_publishes_to_its_local_queue_only(
         TaskState.completed,
         "closed",
     ]
+
+
+async def test_a_send_refused_on_a_terminal_task_leaves_the_owners_close_intact(
+    redis_client,
+):
+    """A peer's send reaches the task between the drain's lease release and
+    the owner's relay close. It is refused without taking a generation, so
+    the owner still ends its relay."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CancellableExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.2
+    )
+    peer = _cancel_handler(
+        RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a"),
+        "replica-peer",
+    )
+    real_release = store.release_execution
+    refusals = []
+
+    async def release_then_a_peer_sends(lease):
+        released = await real_release(lease)
+        sequence = await redis_client.get("test:a2a:generation-seq")
+        with pytest.raises(ServerError) as refused:
+            await peer.on_message_send(_send_params("again", task_id=task_id))
+        refusals.append(
+            (
+                refused.value.error.message,
+                await redis_client.get("test:a2a:generation-seq") == sequence,
+            )
+        )
+        return released
+
+    store.release_execution = release_then_a_peer_sends
+    try:
+        await asyncio.wait_for(handler.close(), timeout=10)
+        sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+    finally:
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+    entries = await redis_client.xrange(f"test:a2a:events:{task_id}")
+    ttl = await redis_client.ttl(f"test:a2a:events:{task_id}")
+
+    assert sent.status.state == TaskState.failed
+    assert refusals == [(f"Task {task_id} is in terminal state: failed", True)]
+    assert _relay_states(entries) == [TaskState.working, "closed"]
+    assert 0 < ttl <= 60
+
+
+async def test_acquiring_a_terminal_task_is_refused_without_a_generation(
+    redis_client,
+):
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await _save_owned(store, _task("task-ended", TaskState.completed))
+    generation = await _generation(redis_client, "task-ended")
+    sequence = await redis_client.get("test:a2a:generation-seq")
+
+    with pytest.raises(A2ATaskTerminalError) as refused:
+        await store.acquire_execution(
+            "task-ended", replica_id="replica-a", lease_seconds=30
+        )
+
+    assert str(refused.value) == "task task-ended is in terminal state completed"
+    assert refused.value.state == TaskState.completed
+    assert await redis_client.get("test:a2a:generation-seq") == sequence
+    assert await _generation(redis_client, "task-ended") == generation
+    assert await store.get_execution_lease("task-ended") is None
+
+
+async def _relay_owned_then_superseded(redis_client, task_id: str):
+    """A relay published by one generation, which a later generation then
+    took and gave up."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    await _seed_store(redis_client, max_tasks=10, key_prefix="test:a2a").save(
+        _task(task_id, TaskState.input_required)
+    )
+    first = await store.acquire_execution(
+        task_id, replica_id="replica-a", lease_seconds=30
+    )
+    await store.publish_event(
+        task_id,
+        _status_event(task_id, TaskState.working),
+        generation=first.generation,
+    )
+    await store.release_execution(first)
+    return store, first
+
+
+async def test_a_superseded_close_with_no_live_owner_still_expires_the_relay(
+    redis_client,
+):
+    store, first = await _relay_owned_then_superseded(redis_client, "task-gave-up")
+    later = await store.acquire_execution(
+        "task-gave-up", replica_id="replica-b", lease_seconds=30
+    )
+    await store.release_execution(later)
+
+    closed = await store.close_event_stream("task-gave-up", generation=first.generation)
+    entries = await redis_client.xrange("test:a2a:events:task-gave-up")
+    ttl = await redis_client.ttl("test:a2a:events:task-gave-up")
+
+    assert closed is False
+    assert _relay_states(entries) == [TaskState.working]
+    assert 0 < ttl <= 60
+
+
+async def test_a_superseded_close_leaves_a_live_owners_relay_unexpired(
+    redis_client,
+):
+    store, first = await _relay_owned_then_superseded(redis_client, "task-live")
+    await store.acquire_execution("task-live", replica_id="replica-b", lease_seconds=30)
+
+    closed = await store.close_event_stream("task-live", generation=first.generation)
+
+    assert closed is False
+    assert await redis_client.ttl("test:a2a:events:task-live") == -1
+
+
+async def test_a_stalled_owner_cannot_keep_an_ended_tasks_relay_from_expiring(
+    redis_client,
+):
+    """The owner saved its task completed and then stalled; its lease expired
+    and a peer gave the relay its drain window. The owner's late publish
+    must not remove that expiry."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    owner = await store.acquire_execution(
+        "task-stalled-ended", replica_id="replica-a", lease_seconds=0.3
+    )
+    context = _owned_context(store, owner)
+    await store.save(_task("task-stalled-ended", TaskState.working), context)
+    await store.publish_event(
+        "task-stalled-ended",
+        _status_event("task-stalled-ended", TaskState.working),
+        generation=owner.generation,
+    )
+    await store.save(_task("task-stalled-ended", TaskState.completed), context)
+    await asyncio.sleep(0.4)
+    assert await store.mark_owner_lost("task-stalled-ended") is False
+    expiring = await redis_client.ttl("test:a2a:events:task-stalled-ended")
+
+    published = await store.publish_event(
+        "task-stalled-ended",
+        _status_event("task-stalled-ended", TaskState.completed),
+        generation=owner.generation,
+    )
+
+    assert 0 < expiring <= 60
+    assert published is True
+    assert 0 < await redis_client.ttl("test:a2a:events:task-stalled-ended") <= 60
+
+
+async def test_a_later_turn_keeps_the_relay_its_previous_turn_closed(redis_client):
+    """The previous turn's close left the relay expiring; the next turn's
+    owner, holding a live lease, publishes and the relay stays."""
+    store, first = await _relay_owned_then_superseded(redis_client, "task-next-turn")
+    closed = await store.close_event_stream(
+        "task-next-turn", generation=first.generation
+    )
+    expiring = await redis_client.ttl("test:a2a:events:task-next-turn")
+    second = await store.acquire_execution(
+        "task-next-turn", replica_id="replica-a", lease_seconds=30
+    )
+
+    published = await store.publish_event(
+        "task-next-turn",
+        _status_event("task-next-turn", TaskState.working),
+        generation=second.generation,
+    )
+
+    assert closed is True
+    assert 0 < expiring <= 60
+    assert published is True
+    assert await redis_client.ttl("test:a2a:events:task-next-turn") == -1
