@@ -71,6 +71,18 @@ def max_concurrent_cancels_from_env(environ: Mapping[str, str] = os.environ) -> 
         ) from None
 
 
+def _ends_stream(event) -> bool:
+    """Whether ``event`` is one the SDK's consumer stops after."""
+    if isinstance(event, TaskStatusUpdateEvent):
+        return event.final
+    if isinstance(event, Task):
+        return event.status.state in TERMINAL_STATES or event.status.state in (
+            TaskState.input_required,
+            TaskState.unknown,
+        )
+    return isinstance(event, Message)
+
+
 def _retryable_conflict(exc: Exception) -> ServerError:
     """The retryable conflict a client gets for a cancel that could not run."""
     message = str(exc)
@@ -111,6 +123,8 @@ class RedisRelayEventQueue(EventQueue):
         # Set once the relay refused this generation: another owner took the
         # task, and what this queue still gets stays local.
         self._superseded = False
+        # Set once an event the consumer stops after reached the local queue.
+        self.carries_end = False
 
     def bind_owner(self, generation: int) -> None:
         """Write to the shared relay as ``generation``, the task's owner."""
@@ -183,7 +197,7 @@ class RedisRelayEventQueue(EventQueue):
                     event = self._held.pop(0)
                     if failure is not None:
                         skipped += 1
-                        await EventQueue.enqueue_event(self, event)
+                        await self._enqueue_locally(event)
                         continue
                     publishing = True
                     try:
@@ -265,10 +279,15 @@ class RedisRelayEventQueue(EventQueue):
     async def enqueue_cancel_event(self, event) -> None:
         await self._enqueue(event)
 
+    async def _enqueue_locally(self, event) -> None:
+        await EventQueue.enqueue_event(self, event)
+        if _ends_stream(event):
+            self.carries_end = True
+
     async def _enqueue(self, event) -> None:
         published = False
         try:
-            await super().enqueue_event(event)
+            await self._enqueue_locally(event)
             # An event after the close marker would also PERSIST the drained
             # stream, so nothing is published once the relay is closed.
             async with self._relay_lock:
@@ -603,7 +622,12 @@ class RedisRequestHandler(DefaultRequestHandler):
             await self._run_event_stream(request_context, queue)
         except asyncio.CancelledError:
             if producer_task in self._stop_reasons:
-                recorded = producer_task in self._recorded_stops
+                # A stream that already carries its end is left to it: the
+                # consumer saves that end, which a recorded failure would
+                # otherwise contradict.
+                recorded = producer_task in self._recorded_stops and not getattr(
+                    queue, "carries_end", False
+                )
                 if recorded:
                     # The stop releases the lease; a renewal still running
                     # would then find it gone and stop this producer again.
@@ -634,12 +658,14 @@ class RedisRequestHandler(DefaultRequestHandler):
         ``lease``, the same status is first saved directly, since no consumer
         may be left to save it. While this replica's own cancel of the task
         is under way, the cancel's events end the stream, so no ``failed``
-        event goes ahead of them.
+        event goes ahead of them; a stream whose producer already emitted its
+        final event gets none either.
         """
         cancelling = request_context.task_id in self._inflight_cancels or (
             isinstance(queue, RedisRelayEventQueue) and queue._cancel_state != "open"
         )
-        if reason is not None and not cancelling:
+        ended = getattr(queue, "carries_end", False)
+        if reason is not None and not cancelling and not ended:
             status = TaskStatus(
                 state=TaskState.failed,
                 message=new_agent_text_message(reason),

@@ -4036,6 +4036,7 @@ async def test_a_close_racing_a_takeover_never_ends_the_new_owners_relay(
             await asyncio.wait_for(close_a, timeout=5)
             refused = stream_b.exception()
         entries = await redis_client.xrange(f"test:a2a:events:{task_id}")
+        ttl = await redis_client.ttl(f"test:a2a:events:{task_id}")
         stored = await nodes.node_b.task_store.get(task_id)
     finally:
         await _end_nodes(nodes)
@@ -4045,15 +4046,14 @@ async def test_a_close_racing_a_takeover_never_ends_the_new_owners_relay(
             (TaskState.working, "b-1"),
             (TaskState.completed, "b-done"),
         ]
-        # A close A made before B took the task over precedes B's events;
-        # none lands among them.
-        states = _relay_states(entries)
-        assert states[states.index(TaskState.working) :] == [
+        # A lost the task before its close, so only B ended the relay.
+        assert _relay_states(entries) == [
             TaskState.working,
             TaskState.working,
             TaskState.completed,
             "closed",
         ]
+        assert 0 < ttl <= 60
         assert stored.status.state == TaskState.completed
     else:
         assert isinstance(refused, ServerError)
@@ -4063,6 +4063,10 @@ async def test_a_close_racing_a_takeover_never_ends_the_new_owners_relay(
             "Execution interrupted because its owning runtime stopped before "
             "completion."
         )
+        # A's silent turn published nothing; A still owned the relay and
+        # closed it, and B's refusal took no generation that would stop it.
+        assert _relay_states(entries) == ["closed"]
+        assert 0 < ttl <= 60
 
 
 async def _get_task(handler: RedisRequestHandler, task_id: str) -> Task:
@@ -4870,3 +4874,177 @@ async def test_tasks_get_of_an_orphaned_task_reads_interrupts_and_rereads(
     assert got.status.message.parts[0].root.text == _INTERRUPTED
     # One read, the interruption's snapshot read and script, one re-read.
     assert len(sent) == 4
+
+
+def _consumer_saves_before_each_drain_save(
+    client, consumer: RedisTaskStore, lease, task_id: str, count: int, state
+):
+    """Make a consumer of ``lease``'s execution, saving through ``consumer``,
+    save ``state`` with a new artifact right before each of the next
+    ``count`` drain saves ``client`` sends."""
+    from cogniverse_runtime.a2a_task_store import _SAVE_SCRIPT
+
+    real_eval = client.eval
+    saved = []
+
+    async def eval_after_a_consumer_save(script, *args):
+        # ARGV[10], the stored payload a drain save was built from.
+        if script == _SAVE_SCRIPT and args[15] != "" and len(saved) < count:
+            task = await consumer.get(task_id)
+            task.artifacts = [*(task.artifacts or []), _artifact(f"late-{len(saved)}")]
+            task.status = TaskStatus(state=state)
+            await consumer.save(task, _owned_context(consumer, lease))
+            saved.append(task.artifacts[-1].artifact_id)
+        return await real_eval(script, *args)
+
+    client.eval = eval_after_a_consumer_save
+    return saved
+
+
+async def _owned_working_task(redis_url, task_id: str):
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    store = RedisTaskStore(client, max_tasks=10, key_prefix="test:a2a")
+    lease = await store.acquire_execution(
+        task_id, replica_id="replica-a", lease_seconds=30
+    )
+    await store.save(_task(task_id, TaskState.working), _owned_context(store, lease))
+    return client, store, lease
+
+
+def _interrupted_status() -> TaskStatus:
+    from a2a.utils import new_agent_text_message
+
+    return TaskStatus(
+        state=TaskState.failed, message=new_agent_text_message(_INTERRUPTED)
+    )
+
+
+async def test_a_drain_save_rebuilds_on_a_consumer_save_that_raced_it(
+    redis_client, redis_url
+):
+    client, store, lease = await _owned_working_task(redis_url, "task-drain-race")
+    saved = _consumer_saves_before_each_drain_save(
+        client,
+        RedisTaskStore(redis_client, key_prefix="test:a2a"),
+        lease,
+        "task-drain-race",
+        1,
+        TaskState.working,
+    )
+    try:
+        interrupted = await store.interrupt_execution(lease, _interrupted_status())
+        stored = await store.get("task-drain-race")
+    finally:
+        await client.aclose()
+
+    assert saved == ["artifact-late-0"]
+    assert interrupted is True
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == _INTERRUPTED
+    assert [artifact.artifact_id for artifact in stored.artifacts] == [
+        "artifact-task-drain-race",
+        "artifact-late-0",
+    ]
+
+
+async def test_a_drain_save_the_task_keeps_changing_under_gives_up_unwritten(
+    redis_client, redis_url
+):
+    client, store, lease = await _owned_working_task(redis_url, "task-drain-busy")
+    saved = _consumer_saves_before_each_drain_save(
+        client,
+        RedisTaskStore(redis_client, key_prefix="test:a2a"),
+        lease,
+        "task-drain-busy",
+        99,
+        TaskState.working,
+    )
+    try:
+        with pytest.raises(A2ATaskConflictError) as refused:
+            await store.interrupt_execution(lease, _interrupted_status())
+        stored = await store.get("task-drain-busy")
+    finally:
+        await client.aclose()
+
+    assert str(refused.value) == (
+        "task task-drain-busy kept changing while its interruption was saved"
+    )
+    assert len(saved) == 5
+    assert stored.status.state == TaskState.working
+    assert stored.artifacts[-1].artifact_id == "artifact-late-4"
+
+
+async def test_a_completion_saved_before_the_drain_save_stands(redis_client, redis_url):
+    client, store, lease = await _owned_working_task(redis_url, "task-completes")
+    saved = _consumer_saves_before_each_drain_save(
+        client,
+        RedisTaskStore(redis_client, key_prefix="test:a2a"),
+        lease,
+        "task-completes",
+        1,
+        TaskState.completed,
+    )
+    try:
+        interrupted = await store.interrupt_execution(lease, _interrupted_status())
+        stored = await store.get("task-completes")
+    finally:
+        await client.aclose()
+
+    assert saved == ["artifact-late-0"]
+    assert interrupted is False
+    assert stored.status.state == TaskState.completed
+    assert stored.artifacts[-1].artifact_id == "artifact-late-0"
+
+
+class _CompletesThenLingersExecutor(_CancellableExecutor):
+    """Emits its completion, then keeps running until cancelled."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        for state in (TaskState.working, TaskState.completed):
+            if state == TaskState.completed:
+                await self.unwedge.wait()
+            await event_queue.enqueue_event(
+                TaskStatusUpdateEvent(
+                    task_id=context.task_id,
+                    context_id=context.context_id,
+                    final=state == TaskState.completed,
+                    status=TaskStatus(state=state),
+                )
+            )
+            self.working.set()
+        await asyncio.Event().wait()
+
+
+async def test_a_completion_the_drain_overtakes_is_what_the_send_and_store_report(
+    redis_client,
+):
+    """The execution emitted its completion; the consumer is still saving it
+    when the drain stops the lingering execution. The send's answer and the
+    stored task must agree, and the completion stands."""
+    store = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    executor = _CompletesThenLingersExecutor()
+    handler, send, task_id, producer = await _renewing_execution(
+        store, executor, lease_seconds=30, drain_timeout_seconds=0.3
+    )
+    real_save = store.save
+
+    async def slow_completed_save(task, context=None):
+        if task.status.state == TaskState.completed:
+            await asyncio.sleep(1.0)
+        await real_save(task, context)
+
+    store.save = slow_completed_save
+    executor.unwedge.set()
+    try:
+        await asyncio.wait_for(handler.close(), timeout=10)
+        sent = await asyncio.wait_for(asyncio.shield(send), timeout=5)
+    finally:
+        _end_if_hung(send)
+        await asyncio.gather(send, return_exceptions=True)
+    stored = await store.get(task_id)
+
+    assert producer.cancelled() is True
+    assert (sent.status.state, stored.status.state) == (
+        TaskState.completed,
+        TaskState.completed,
+    )
