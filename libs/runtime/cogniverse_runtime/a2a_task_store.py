@@ -247,6 +247,27 @@ end
 return payload
 """
 
+_READ_SCRIPT = """
+-- The task, and whether it is still recorded executing under a lease that
+-- has expired by Redis' clock: an owner that stopped without ending it.
+local payload = redis.call('HGET', KEYS[1], ARGV[1])
+if not payload then
+    return {}
+end
+local now = redis.call('TIME')
+if redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 0 then
+    local score = tonumber(now[1]) * 1000000 + tonumber(now[2])
+    redis.call('ZADD', KEYS[2], score, ARGV[1])
+    return {payload, 0}
+end
+local raw_lease = redis.call('HGET', KEYS[4], ARGV[1])
+local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+if raw_lease and tonumber(cjson.decode(raw_lease).expires_at_ms) <= now_ms then
+    return {payload, 1}
+end
+return {payload, 0}
+"""
+
 _DELETE_SCRIPT = """
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
@@ -679,6 +700,33 @@ class RedisTaskStore(TaskStore):
             return Task.model_validate_json(payload)
         except (ValidationError, ValueError, TypeError) as exc:
             raise A2ATaskStoreError(f"decode task {task_id}") from exc
+
+    async def read_task(self, task_id: str) -> tuple[Task | None, bool]:
+        """Load a task in one read, with whether its owner stopped.
+
+        The flag is set for a task still recorded executing whose lease
+        has expired by Redis' clock; nothing is written but the LRU touch
+        ``get`` also makes.
+        """
+        try:
+            result: list[Any] = await self._redis.eval(
+                _READ_SCRIPT,
+                4,
+                self._tasks_key,
+                self._inactive_key,
+                self._active_key,
+                self._leases_key,
+                task_id,
+            )
+        except RedisError as exc:
+            raise A2ATaskStoreError(f"{_UNAVAILABLE}: get task {task_id}") from exc
+        if not result:
+            return None, False
+        try:
+            task = Task.model_validate_json(result[0])
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise A2ATaskStoreError(f"decode task {task_id}") from exc
+        return task, int(result[1]) == 1
 
     async def delete(
         self, task_id: str, context: ServerCallContext | None = None

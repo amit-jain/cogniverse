@@ -836,20 +836,17 @@ class RedisRequestHandler(DefaultRequestHandler):
     ) -> Task | None:
         """Read a task, resolving one whose owner stopped without ending it.
 
-        A non-terminal task whose execution lease expired, judged against
-        Redis' clock, gets the interruption a peer's send or cancel records
-        (``mark_owner_lost``): atomic, at most once across readers, and never
-        applied while a live owner holds or renews the lease.
+        One read tells a task still recorded executing under a lease that
+        expired by Redis' clock; only that one gets the interruption a peer's
+        send or cancel records (``mark_owner_lost``): atomic, at most once
+        across readers, and never applied while a live owner holds or renews
+        the lease.
         """
-        task = await self.task_store.get(params.id, context)
-        if task is not None and task.status.state not in TERMINAL_STATES:
-            lease = await self.task_store.get_execution_lease(params.id)
-            if lease is not None and not await self.task_store.has_live_owner(
-                params.id
-            ):
-                await self.task_store.mark_owner_lost(params.id)
-                # Read again whichever reader's interruption landed.
-                task = await self.task_store.get(params.id, context)
+        task, orphaned = await self.task_store.read_task(params.id)
+        if orphaned:
+            await self.task_store.mark_owner_lost(params.id)
+            # Read again whichever reader's interruption landed.
+            task = await self.task_store.get(params.id, context)
         if task is None:
             raise ServerError(error=TaskNotFoundError())
         return apply_history_length(task, params.history_length)
