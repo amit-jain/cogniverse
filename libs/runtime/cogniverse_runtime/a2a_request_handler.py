@@ -82,11 +82,11 @@ class RedisRelayEventQueue(EventQueue):
     """Local SDK queue that mirrors owner events into Redis.
 
     Closing it ends the shared relay only while ``generation`` still owns the
-    task; a relay with no owning generation closes its local queue alone.
+    task; a superseded generation closes its local queue alone.
     """
 
     def __init__(
-        self, task_id: str, task_store: RedisTaskStore, generation: int | None = None
+        self, task_id: str, task_store: RedisTaskStore, generation: int
     ) -> None:
         super().__init__()
         self._task_id = task_id
@@ -283,12 +283,10 @@ class RedisRelayEventQueue(EventQueue):
         async with self._relay_lock:
             if not self._relay_closed:
                 self._relay_closed = True
-                closed = self._generation is not None and (
-                    await self._task_store.close_event_stream(
-                        self._task_id,
-                        generation=self._generation,
-                        missing=self._unmarked_gap,
-                    )
+                closed = await self._task_store.close_event_stream(
+                    self._task_id,
+                    generation=self._generation,
+                    missing=self._unmarked_gap,
                 )
                 if not closed:
                     logger.info(
@@ -307,10 +305,18 @@ class RedisRelayQueueManager(InMemoryQueueManager):
         super().__init__()
         self._task_store = task_store
 
-    async def create_or_tap(self, task_id: str) -> EventQueue:
+    async def create_or_tap(
+        self, task_id: str, *, generation: int | None = None
+    ) -> EventQueue:
+        """The task's relay, created bound to ``generation``, its owner."""
         async with self._lock:
             if task_id not in self._task_queue:
-                queue = RedisRelayEventQueue(task_id, self._task_store)
+                if generation is None:
+                    raise ValueError(
+                        f"A2A task {task_id}: a shared relay needs its owning "
+                        "generation"
+                    )
+                queue = RedisRelayEventQueue(task_id, self._task_store, generation)
                 self._task_queue[task_id] = queue
                 return queue
             return self._task_queue[task_id].tap()
@@ -509,9 +515,12 @@ class RedisRequestHandler(DefaultRequestHandler):
                     task_id, params.configuration.push_notification_config
                 )
 
-            queue = await self._queue_manager.create_or_tap(task_id)
-            if isinstance(queue, RedisRelayEventQueue):
-                queue.bind_owner(lease.generation)
+            if isinstance(self._queue_manager, RedisRelayQueueManager):
+                queue = await self._queue_manager.create_or_tap(
+                    task_id, generation=lease.generation
+                )
+            else:
+                queue = await self._queue_manager.create_or_tap(task_id)
             result_aggregator = ResultAggregator(task_manager)
             producer_task = asyncio.create_task(
                 self._run_producer(request_context, queue, lease),
