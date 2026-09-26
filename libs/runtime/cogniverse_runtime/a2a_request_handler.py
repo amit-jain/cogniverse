@@ -107,10 +107,27 @@ class RedisRelayEventQueue(EventQueue):
         self._cancel_hold_seconds = 0.0
         # Events a failed release could not publish and no marker names yet.
         self._unmarked_gap = 0
+        # Set once the relay refused this generation: another owner took the
+        # task, and what this queue still gets stays local.
+        self._superseded = False
 
     def bind_owner(self, generation: int) -> None:
-        """Close the shared relay as ``generation``, the task's owner."""
+        """Write to the shared relay as ``generation``, the task's owner."""
         self._generation = generation
+        self._superseded = False
+
+    def _supersede(self) -> None:
+        """Stop writing to a relay another generation owns now."""
+        if not self._superseded:
+            logger.info(
+                "A2A task %s: generation %s no longer owns its relay; its events "
+                "stay on the local queue",
+                self._task_id,
+                self._generation,
+            )
+        self._superseded = True
+        # The new owner's relay is not missing anything of this generation's.
+        self._unmarked_gap = 0
 
     def hold_for_cancel(self, hold_seconds: float) -> bool:
         """Hold producer events and the close while a cancel takes its generation.
@@ -134,7 +151,7 @@ class RedisRelayEventQueue(EventQueue):
         relay refuses everything but the cancel's own events from here on and
         ends with the cancel, closing as the cancel's generation.
         """
-        self._generation = generation
+        self.bind_owner(generation)
         if self._held:
             logger.debug(
                 "A2A task %s: dropped %d events held while its cancel committed",
@@ -201,11 +218,13 @@ class RedisRelayEventQueue(EventQueue):
     async def _mark_gap(self) -> None:
         """Record the unpublished events on the relay stream, once."""
         async with self._relay_lock:
-            if self._relay_closed or not self._unmarked_gap:
+            if self._relay_closed or self._superseded or not self._unmarked_gap:
                 return
             try:
-                await self._task_store.mark_event_stream_incomplete(
-                    self._task_id, missing=self._unmarked_gap
+                marked = await self._task_store.mark_event_stream_incomplete(
+                    self._task_id,
+                    missing=self._unmarked_gap,
+                    generation=self._generation,
                 )
             except Exception as exc:
                 logger.error(
@@ -215,6 +234,9 @@ class RedisRelayEventQueue(EventQueue):
                     self._unmarked_gap,
                     exc,
                 )
+                return
+            if not marked:
+                self._supersede()
                 return
             self._unmarked_gap = 0
 
@@ -249,15 +271,23 @@ class RedisRelayEventQueue(EventQueue):
             # An event after the close marker would also PERSIST the drained
             # stream, so nothing is published once the relay is closed.
             async with self._relay_lock:
-                if self._relay_closed:
+                if self._relay_closed or self._superseded:
                     published = True
                     return
                 if self._unmarked_gap:
-                    await self._task_store.mark_event_stream_incomplete(
-                        self._task_id, missing=self._unmarked_gap
-                    )
+                    if not await self._task_store.mark_event_stream_incomplete(
+                        self._task_id,
+                        missing=self._unmarked_gap,
+                        generation=self._generation,
+                    ):
+                        self._supersede()
+                        published = True
+                        return
                     self._unmarked_gap = 0
-                await self._task_store.publish_event(self._task_id, event)
+                if not await self._task_store.publish_event(
+                    self._task_id, event, generation=self._generation
+                ):
+                    self._supersede()
                 published = True
         finally:
             # Not on the relay, whether the publish failed or was cut short.
