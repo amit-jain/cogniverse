@@ -4284,3 +4284,89 @@ async def test_a_renewal_landing_after_the_drain_release_leaves_the_send_failed(
     assert sent.status.message.parts[0].root.text == _INTERRUPTED
     assert stored.status.state == TaskState.failed
     assert await store.get_execution_lease(task_id) is None
+
+
+def _artifact(name: str) -> Artifact:
+    return Artifact(
+        artifact_id=f"artifact-{name}",
+        name=name,
+        parts=[Part(root=TextPart(text=f"{name} text"))],
+    )
+
+
+async def _stalled_owner(redis_client, task_id: str):
+    """An owner whose lease expired while it still holds the task's current
+    generation, so its saves still land."""
+    owner = RedisTaskStore(redis_client, max_tasks=10, key_prefix="test:a2a")
+    lease = await owner.acquire_execution(
+        task_id, replica_id="replica-stalled", lease_seconds=0.2
+    )
+    context = _owned_context(owner, lease)
+    await owner.save(_task(task_id, TaskState.working), context)
+    await asyncio.sleep(0.3)
+    return owner, context
+
+
+def _saving_before_each_interrupt(client, owner, context, task_id: str, count: int):
+    """Make the stalled owner save a new artifact right before each of the
+    next ``count`` interruption scripts runs on ``client``."""
+    from cogniverse_runtime.a2a_task_store import _INTERRUPT_SCRIPT
+
+    real_eval = client.eval
+    saved = []
+
+    async def eval_after_an_owner_save(script, *args):
+        if script == _INTERRUPT_SCRIPT and len(saved) < count:
+            task = await owner.get(task_id)
+            task.artifacts = [*task.artifacts, _artifact(f"late-{len(saved)}")]
+            await owner.save(task, context)
+            saved.append(task.artifacts[-1].artifact_id)
+        return await real_eval(script, *args)
+
+    client.eval = eval_after_an_owner_save
+    return saved
+
+
+async def test_an_owner_save_racing_the_interruption_is_kept(redis_client, redis_url):
+    owner, context = await _stalled_owner(redis_client, "task-late-save")
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    reader = RedisTaskStore(client, max_tasks=10, key_prefix="test:a2a")
+    saved = _saving_before_each_interrupt(
+        client, owner, context, "task-late-save", count=1
+    )
+    try:
+        interrupted = await reader.mark_owner_lost("task-late-save")
+    finally:
+        await client.aclose()
+    stored = await owner.get("task-late-save")
+
+    assert saved == ["artifact-late-0"]
+    assert interrupted is True
+    assert stored.status.state == TaskState.failed
+    assert stored.status.message.parts[0].root.text == _INTERRUPTED
+    assert [artifact.artifact_id for artifact in stored.artifacts] == [
+        "artifact-task-late-save",
+        "artifact-late-0",
+    ]
+
+
+async def test_an_interruption_the_owner_keeps_changing_gives_up_unwritten(
+    redis_client, redis_url
+):
+    owner, context = await _stalled_owner(redis_client, "task-busy")
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    reader = RedisTaskStore(client, max_tasks=10, key_prefix="test:a2a")
+    saved = _saving_before_each_interrupt(client, owner, context, "task-busy", 99)
+    try:
+        with pytest.raises(A2ATaskConflictError) as refused:
+            await reader.mark_owner_lost("task-busy")
+    finally:
+        await client.aclose()
+    stored = await owner.get("task-busy")
+
+    assert str(refused.value) == (
+        "task task-busy kept changing while its interruption was saved"
+    )
+    assert len(saved) == 5
+    assert stored.status.state == TaskState.working
+    assert stored.artifacts[-1].artifact_id == "artifact-late-4"
