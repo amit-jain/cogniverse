@@ -18,15 +18,12 @@ listeners:
 
 providers:
   defaults:
-    default_model: basic-chat
-    default_reasoning_effort: low
-    reasoning_families:
-      qwen3:
-        type: chat_template_kwargs
-        parameter: enable_thinking
+    model: basic-chat
+    reasoning_effort: low
   models:
     - name: basic-chat
-      reasoning_family: qwen3
+      reasoning:
+        family: qwen3
       provider_model_id: {{ include "cogniverse.primaryLLMModelBare" . | quote }}
       api_format: openai
       backend_refs:
@@ -34,9 +31,9 @@ providers:
           endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
           protocol: {{ include "cogniverse.srUpstreamProtocol" . }}
           weight: 100
-          type: chat
     - name: pro-reasoning
-      reasoning_family: qwen3
+      reasoning:
+        family: qwen3
       provider_model_id: {{ include "cogniverse.srProModelBare" . | quote }}
       api_format: openai
       backend_refs:
@@ -44,12 +41,11 @@ providers:
           endpoint: {{ include "cogniverse.srTeacherHost" . }}:{{ int (include "cogniverse.srTeacherPort" .) }}
           protocol: {{ include "cogniverse.srTeacherProtocol" . }}
           weight: 100
-          type: chat
 
 routing:
   modelCards:
     - name: basic-chat
-      capabilities: [chat]
+      capabilities: [chat, image_input]
       modality: ar
     - name: pro-reasoning
       capabilities: [chat, reasoning]

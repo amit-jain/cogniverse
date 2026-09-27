@@ -1924,14 +1924,16 @@ semanticRouter:
   router:
     image:
       repository: ghcr.io/vllm-project/semantic-router/vllm-sr
-      tag: "nightly-20260907"
+      tag: "nightly-20260917"
       # Pinned by digest: upstream tags move. This multi-arch index digest is a
-      # build that marks the cache-only embedding runtime ready AND rebuilds
-      # `response_format` from the client bytes, so a `json_schema` survives the
-      # router's request re-serialization instead of reaching the backend as a
-      # type-only `{"type": "json_schema"}` the engine rejects with 400.
+      # build that rebuilds `response_format` from the client bytes, so a
+      # `json_schema` survives the router's request re-serialization instead of
+      # reaching the backend as a type-only `{"type": "json_schema"}` the engine
+      # rejects with 400, AND writes only the exact entry on a `mode: exact`
+      # miss. Earlier builds also embedded the whole prompt for a similarity
+      # entry nothing reads, before Envoy got the response back.
       # Clear `digest` to fall back to `tag`.
-      digest: "sha256:75df17439367894b378d972839746bcf10399e8d16c211887ded44098997ed8f"
+      digest: "sha256:dd85d2b0128bb53fae76b59465f7df35976bbe77eddb9dca8274645df314a596"
       pullPolicy: IfNotPresent
     grpcPort: 50051
     metricsPort: 9190

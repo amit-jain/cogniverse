@@ -8,15 +8,12 @@ listeners:
 
 providers:
   defaults:
-    default_model: basic-chat
-    default_reasoning_effort: low
-    reasoning_families:
-      qwen3:
-        type: chat_template_kwargs
-        parameter: enable_thinking
+    model: basic-chat
+    reasoning_effort: low
   models:
     - name: basic-chat
-      reasoning_family: qwen3
+      reasoning:
+        family: qwen3
       provider_model_id: basic-chat
       api_format: openai
       backend_refs:
@@ -24,9 +21,9 @@ providers:
           endpoint: stub-upstream:8000
           protocol: http
           weight: 100
-          type: chat
     - name: pro-reasoning
-      reasoning_family: qwen3
+      reasoning:
+        family: qwen3
       provider_model_id: pro-reasoning
       api_format: openai
       backend_refs:
@@ -34,12 +31,11 @@ providers:
           endpoint: stub-teacher:8000
           protocol: http
           weight: 100
-          type: chat
 
 routing:
   modelCards:
     - name: basic-chat
-      capabilities: [chat]
+      capabilities: [chat, image_input]
       modality: ar
     - name: pro-reasoning
       capabilities: [chat, reasoning]

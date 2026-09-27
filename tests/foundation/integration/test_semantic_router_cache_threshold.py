@@ -12,8 +12,11 @@ some threshold separates two populations:
 
 The router's own embedding endpoint scores both populations here, so the answer
 is measured against the model the cache would actually key on rather than
-assumed. When the populations overlap there is no admissible threshold and the
-shipped configuration keeps ``mode: exact`` - which is what these pin.
+assumed. The router prepares an embedding model only for a consumer that
+needs one, and the shipped exact-only cache needs none, so the stack here runs
+the chart's embedding catalog with one embedding signal to consume it. When
+the populations overlap there is no admissible threshold and the shipped
+configuration keeps ``mode: exact`` - which is what these pin.
 """
 
 from __future__ import annotations
@@ -29,6 +32,34 @@ import yaml
 from tests.utils.semantic_router_stack import render_router_config
 
 pytestmark = [pytest.mark.integration]
+
+_STACK_ROUTER_CONFIG = Path(__file__).parent / "_sr_stack" / "sr-config.yaml"
+
+
+def _embedding_consumer_config() -> str:
+    """The stack's router config with the chart's embedding catalog and one
+    embedding signal, so the router prepares the model the cache keys on."""
+    config = yaml.safe_load(_STACK_ROUTER_CONFIG.read_text())
+    config["global"]["model_catalog"]["embeddings"] = yaml.safe_load(
+        render_router_config()
+    )["global"]["model_catalog"]["embeddings"]
+    config["routing"]["signals"]["embeddings"] = [
+        {
+            "name": "embedding-probe",
+            "threshold": 0.99,
+            "aggregation_method": "max",
+            "candidates": ["embedding probe"],
+        }
+    ]
+    return yaml.safe_dump(config, sort_keys=False)
+
+
+_ON_THE_EMBEDDING_STACK = pytest.mark.parametrize(
+    "semantic_router_stack",
+    [{"router_config": _embedding_consumer_config()}],
+    indirect=True,
+    ids=["embedding-consumer"],
+)
 
 _REPO = Path(__file__).resolve().parents[3]
 _CORPUS = (
@@ -57,7 +88,7 @@ def _embed(container: str, texts: list[str]) -> list[list[float]]:
         "texts=json.load(sys.stdin)\n"
         "out=[]\n"
         "for i in range(0,len(texts),25):\n"
-        "    req=urllib.request.Request('http://127.0.0.1:8080/api/v1/embeddings',\n"
+        "    req=urllib.request.Request('http://127.0.0.1:8080/api/v1/diagnostics/embeddings',\n"
         "        data=json.dumps({'texts':texts[i:i+25]}).encode(),\n"
         "        headers={'Content-Type':'application/json'})\n"
         "    out+=[e['embedding'] for e in "
@@ -111,18 +142,21 @@ def scored(semantic_router_stack) -> dict:
 
 
 class TestNoThresholdSeparatesTheTwoPopulations:
+    @_ON_THE_EMBEDDING_STACK
     def test_the_corpus_supplies_the_pairs(self, scored):
         """Derived from the shipped corpus, not from a list written here."""
         assert scored["corpus_queries"] == 95
         assert len(scored["must_miss"]) == _NEAR_MISS_PAIRS + 1
         assert len(scored["must_hit"]) == _EQUIVALENT_QUERIES
 
+    @_ON_THE_EMBEDDING_STACK
     def test_the_incident_pair_would_hit_at_the_routers_default_threshold(self, scored):
         """0.5 is the value the router initialises its cache with when no
         threshold is configured, which is how 'topic 5' answered 'topic 2'."""
         assert round(scored["incident"], 3) == 0.738
         assert scored["incident"] > 0.5
 
+    @_ON_THE_EMBEDDING_STACK
     def test_the_closest_different_content_pair_outscores_every_equivalent_pair(
         self, scored
     ):

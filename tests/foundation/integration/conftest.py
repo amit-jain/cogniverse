@@ -205,6 +205,12 @@ def semantic_router_stack(tmp_path_factory, request):
         # its config from the CMD arg, defaulting to /app/config.yaml; mount
         # there (CONFIG_FILE env is not honored). Downloads its classifier
         # bundle on first run, hence the generous readiness deadline below.
+        # A module may run the router on its own config text instead.
+        parameters = getattr(request, "param", {})
+        router_config = _STACK_DIR / "sr-config.yaml"
+        if "router_config" in parameters:
+            router_config = tmp_path_factory.mktemp("sr-router") / "config.yaml"
+            router_config.write_text(parameters["router_config"])
         r = _docker(
             "run",
             "-d",
@@ -217,7 +223,7 @@ def semantic_router_stack(tmp_path_factory, request):
             "--network-alias",
             ROUTER_ALIAS,
             "-v",
-            f"{_STACK_DIR / 'sr-config.yaml'}:/app/config.yaml:ro",
+            f"{router_config}:/app/config.yaml:ro",
             "-v",
             f"{_SR_MODELS_VOLUME}:/app/models",
             "-v",
@@ -232,7 +238,6 @@ def semantic_router_stack(tmp_path_factory, request):
         # Envoy front proxy — the OpenAI-compatible entry point, running the
         # chart's data plane with the local peers substituted in.
         envoy_config = tmp_path_factory.mktemp("sr-envoy") / "envoy.yaml"
-        parameters = getattr(request, "param", {})
         envoy_config.write_text(
             render_envoy_config(teacher_port=parameters.get("teacher_port", 8000))
         )
