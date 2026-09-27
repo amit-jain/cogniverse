@@ -1339,8 +1339,10 @@ class OrchestratorAgent(
             # Only a plan every step of which answered is a success worth
             # recalling.
             if final_output["status"] == "success":
-                # remember_success runs Mem0's LLM fact-extraction add — offload it.
-                await asyncio.to_thread(self.remember_success, query, execution_summary)
+                # Mem0's LLM fact-extraction add runs after the response.
+                self.write_memory_in_background(
+                    self.remember_success, query, execution_summary
+                )
 
             execution_time = time.monotonic() - start_time
 

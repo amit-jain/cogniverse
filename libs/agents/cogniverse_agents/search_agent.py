@@ -1254,12 +1254,9 @@ class SearchAgent(
         fused_results = self._fuse_results_rrf(profile_results, k=rrf_k, top_k=top_k)
 
         # Store successful ensemble search in memory. remember_success runs
-        # Mem0's LLM fact-extraction add (a blocking chat-completion round
-        # trip); _search_ensemble is async, so offload it off the event loop
-        # like orchestrator_agent does — otherwise every concurrent request,
-        # including /health/live, stalls for the duration of the LLM call.
+        # Mem0's LLM fact-extraction add, so it runs after the response.
         if self.is_memory_enabled() and fused_results:
-            await asyncio.to_thread(
+            self.write_memory_in_background(
                 self.remember_success,
                 query=query,
                 result={
@@ -1275,7 +1272,7 @@ class SearchAgent(
                     "top_k": top_k,
                 },
             )
-            logger.debug("💾 Stored successful ensemble search in memory")
+            logger.debug("💾 Queued successful ensemble search for memory")
 
         return EnsembleOutcome(
             results=fused_results, searched=searched, degraded=degraded
@@ -1386,7 +1383,8 @@ class SearchAgent(
 
             # Store successful search in memory
             if self.is_memory_enabled() and results:
-                self.remember_success(
+                self.write_memory_in_background(
+                    self.remember_success,
                     query=query,
                     result={
                         "result_count": len(results),
@@ -1399,7 +1397,7 @@ class SearchAgent(
                         "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
-                logger.debug("💾 Stored successful text search in memory")
+                logger.debug("💾 Queued successful text search for memory")
 
             return results
 
@@ -1408,7 +1406,8 @@ class SearchAgent(
 
             # Store failure in memory
             if self.is_memory_enabled():
-                self.remember_failure(
+                self.write_memory_in_background(
+                    self.remember_failure,
                     query=query,
                     error=str(e),
                     metadata={
@@ -1417,7 +1416,7 @@ class SearchAgent(
                         "top_k": top_k,
                     },
                 )
-                logger.debug("💾 Stored search failure in memory")
+                logger.debug("💾 Queued search failure for memory")
 
             raise
 
@@ -1512,7 +1511,8 @@ class SearchAgent(
 
             # Store successful video search in memory
             if self.is_memory_enabled() and results:
-                self.remember_success(
+                self.write_memory_in_background(
+                    self.remember_success,
                     query=f"Video: {filename}",
                     result={
                         "result_count": len(results),
@@ -1526,7 +1526,7 @@ class SearchAgent(
                         "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
-                logger.debug("💾 Stored successful video search in memory")
+                logger.debug("💾 Queued successful video search for memory")
 
             return results
 
@@ -1535,7 +1535,8 @@ class SearchAgent(
 
             # Store failure in memory
             if self.is_memory_enabled():
-                self.remember_failure(
+                self.write_memory_in_background(
+                    self.remember_failure,
                     query=f"Video: {filename}",
                     error=str(e),
                     metadata={
@@ -1545,7 +1546,7 @@ class SearchAgent(
                         "top_k": top_k,
                     },
                 )
-                logger.debug("💾 Stored video search failure in memory")
+                logger.debug("💾 Queued video search failure for memory")
 
             raise
 
@@ -1614,7 +1615,8 @@ class SearchAgent(
 
             # Store successful image search in memory
             if self.is_memory_enabled() and results:
-                self.remember_success(
+                self.write_memory_in_background(
+                    self.remember_success,
                     query=f"Image: {filename}",
                     result={
                         "result_count": len(results),
@@ -1628,7 +1630,7 @@ class SearchAgent(
                         "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
-                logger.debug("💾 Stored successful image search in memory")
+                logger.debug("💾 Queued successful image search for memory")
 
             return results
 
@@ -1637,7 +1639,8 @@ class SearchAgent(
 
             # Store failure in memory
             if self.is_memory_enabled():
-                self.remember_failure(
+                self.write_memory_in_background(
+                    self.remember_failure,
                     query=f"Image: {filename}",
                     error=str(e),
                     metadata={
@@ -1647,7 +1650,7 @@ class SearchAgent(
                         "top_k": top_k,
                     },
                 )
-                logger.debug("💾 Stored image search failure in memory")
+                logger.debug("💾 Queued image search failure for memory")
 
             raise
 

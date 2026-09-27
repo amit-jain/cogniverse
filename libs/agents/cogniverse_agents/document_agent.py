@@ -333,7 +333,7 @@ class DocumentAgent(
 
             # Store successful search in memory
             if self.is_memory_enabled() and results:
-                await asyncio.to_thread(
+                self.write_memory_in_background(
                     self.remember_success,
                     query=query,
                     result={
@@ -346,7 +346,7 @@ class DocumentAgent(
                         "limit": limit,
                     },
                 )
-                logger.debug("💾 Stored successful document search in memory")
+                logger.debug("💾 Queued successful document search for memory")
 
             return results
 
@@ -355,13 +355,13 @@ class DocumentAgent(
 
             # Store failure in memory
             if self.is_memory_enabled():
-                await asyncio.to_thread(
+                self.write_memory_in_background(
                     self.remember_failure,
                     query=query,
                     error=str(e),
                     metadata={"search_strategy": strategy, "limit": limit},
                 )
-                logger.debug("💾 Stored document search failure in memory")
+                logger.debug("💾 Queued document search failure for memory")
 
             # Surface the failure (degraded Vespa, outage, encoder error) —
             # returning [] here made every backend failure read as "no results".
