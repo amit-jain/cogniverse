@@ -1195,6 +1195,7 @@ class OrchestratorAgent(
         # Lazy memory initialization for this tenant. First touch builds a Mem0
         # stack (embedder + Vespa vector store) — a multi-second sync build kept
         # off the loop; the lock inside makes concurrent first touches safe.
+        self.set_tenant_for_context(tenant_id)
         await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
 
         # Get relevant context from memory (cross-session). Mem0 search is a

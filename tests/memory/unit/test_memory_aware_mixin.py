@@ -467,6 +467,110 @@ class TestMemoryAwareMixin:
         assert call.kwargs["metadata"] == {"session_id": "session-a"}
         assert "test query" in call.kwargs["content"]
 
+    @staticmethod
+    def _per_tenant_managers(mock_manager_class):
+        """Mem0MemoryManager is one instance per tenant; so is this double."""
+        managers = {}
+
+        def manager_for(tenant_id):
+            if tenant_id not in managers:
+                manager = MagicMock(name=f"mem0[{tenant_id}]")
+                manager.memory = MagicMock()
+                manager.add_memory.return_value = f"mem-{tenant_id}"
+                managers[tenant_id] = manager
+            return managers[tenant_id]
+
+        mock_manager_class.side_effect = lambda tenant_id: manager_for(tenant_id)
+        return managers
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_a_request_writes_through_its_own_tenants_manager_after_a_rebind(
+        self, mock_manager_class, agent
+    ):
+        """A shared agent last bound to tenant B still writes tenant A's
+        request through A's manager."""
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        managers = self._per_tenant_managers(mock_manager_class)
+        agent.initialize_memory("test_agent", "tenant_a", **MEMORY_INIT_DEFAULTS)
+        agent.initialize_memory("test_agent", "tenant_b", **MEMORY_INIT_DEFAULTS)
+
+        _MEMORY_TENANT_ID.set("tenant_a")
+        written = agent.update_memory("a fact", infer=False)
+
+        assert written is True
+        assert managers["tenant_b"].add_memory.call_count == 0
+        assert managers["tenant_a"].add_memory.call_args.kwargs["tenant_id"] == (
+            "tenant_a"
+        )
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_a_request_for_an_unbound_tenant_gets_no_other_tenants_memory(
+        self, mock_manager_class, agent
+    ):
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        managers = self._per_tenant_managers(mock_manager_class)
+        agent.initialize_memory("test_agent", "tenant_a", **MEMORY_INIT_DEFAULTS)
+
+        _MEMORY_TENANT_ID.set("tenant_c")
+        enabled = agent.is_memory_enabled()
+        written = agent.update_memory("c fact", infer=False)
+
+        assert enabled is False
+        assert written is False
+        assert managers["tenant_a"].add_memory.call_count == 0
+
+    def test_a_directly_bound_manager_serves_a_request_for_its_tenant(self, agent):
+        """Callers that bind memory by assignment (the knowledge router) keep
+        working inside a request for that tenant."""
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        manager = MagicMock()
+        manager.add_memory.return_value = "mem-1"
+        agent.memory_manager = manager
+        agent._memory_tenant_id = "tenant_k"
+        agent._memory_agent_name = "knowledge_agent"
+        agent._memory_initialized = True
+
+        _MEMORY_TENANT_ID.set("tenant_k")
+        written = agent.update_memory("k fact", infer=False)
+
+        assert written is True
+        assert manager.add_memory.call_args.kwargs["tenant_id"] == "tenant_k"
+        assert manager.add_memory.call_args.kwargs["agent_name"] == "knowledge_agent"
+
+    @pytest.mark.asyncio
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    async def test_a_queued_write_keeps_its_tenants_manager_after_a_rebind(
+        self, mock_manager_class, agent
+    ):
+        import threading
+
+        from cogniverse_agents.background_memory_writes import (
+            MEMORY_WRITE_CONCURRENCY,
+            drain_background_memory_writes,
+            get_background_memory_writer,
+        )
+
+        managers = self._per_tenant_managers(mock_manager_class)
+        release = threading.Event()
+        agent.initialize_memory("test_agent", "tenant_a", **MEMORY_INIT_DEFAULTS)
+        for _ in range(MEMORY_WRITE_CONCURRENCY):
+            get_background_memory_writer().submit(
+                lambda: release.wait(5), tenant_id="other", agent_name="blocker"
+            )
+        queued = agent.write_memory_in_background(
+            agent.remember_success, "a query", "a result"
+        )
+        agent.initialize_memory("test_agent", "tenant_b", **MEMORY_INIT_DEFAULTS)
+        release.set()
+        assert await drain_background_memory_writes(5.0) is True
+
+        assert queued is True
+        assert managers["tenant_b"].add_memory.call_count == 0
+        assert "a query" in managers["tenant_a"].add_memory.call_args.kwargs["content"]
+
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_get_memory_summary(self, mock_manager_class, agent):
         """Test getting memory summary"""

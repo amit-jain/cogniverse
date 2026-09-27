@@ -8,13 +8,14 @@ Handles context retrieval, memory updates, and lifecycle management.
 import asyncio
 import logging
 from contextvars import ContextVar
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 from opentelemetry import trace as _otel_trace
 
 from cogniverse_agents.background_memory_writes import get_background_memory_writer
 from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,27 @@ _MEMORY_SESSION_ID: ContextVar[Optional[str]] = ContextVar(
 _MEMORY_TENANT_ID: ContextVar[Optional[str]] = ContextVar(
     "cogniverse_memory_tenant_id", default=None
 )
+
+
+class MemoryBinding(NamedTuple):
+    """The memory an agent reads and writes for one tenant."""
+
+    memory_manager: Optional[Mem0MemoryManager]
+    agent_name: Optional[str]
+    tenant_id: Optional[str]
+
+
+# A background write carries the binding its request resolved: (agent, binding).
+_PINNED_BINDING: ContextVar[Optional[tuple]] = ContextVar(
+    "cogniverse_pinned_memory_binding", default=None
+)
+
+
+def _tenant_key(tenant_id: str) -> str:
+    try:
+        return canonical_tenant_id(tenant_id)
+    except ValueError:
+        return tenant_id
 
 
 def clear_request_tenant() -> None:
@@ -89,11 +111,11 @@ class MemoryAwareMixin(ConfigManagerAware):
         """
         super().__init__(**kwargs)
 
-        self.memory_manager: Optional[Mem0MemoryManager] = None
-        self._memory_agent_name: Optional[str] = None
-        # Note: tenant_id is now a property in AgentBase from deps
-        # We store it separately for memory operations only if needed
-        self._memory_tenant_id: Optional[str] = None
+        # One binding per tenant this instance has initialized; a shared agent
+        # serves several, so reads resolve the request's tenant through
+        # _request_memory_binding rather than whichever tenant bound last.
+        self._memory_bindings: Dict[str, MemoryBinding] = {}
+        self._memory_default_binding = MemoryBinding(None, None, None)
         self._memory_initialized: bool = False
         # opt-in federated read. When set, get_relevant_context
         # pulls from both tenant and the org trunk and dedups by
@@ -116,7 +138,74 @@ class MemoryAwareMixin(ConfigManagerAware):
         it directly (the knowledge router, ``initialize_memory``, tests).
         """
         _MEMORY_TENANT_ID.set(tenant_id)
-        self._memory_tenant_id = tenant_id
+        default = self.__dict__.get(
+            "_memory_default_binding", MemoryBinding(None, None, None)
+        )
+        if default.tenant_id is None:
+            # A manager assigned without a tenant takes this one.
+            self._memory_default_binding = default._replace(tenant_id=tenant_id)
+        elif default.tenant_id != tenant_id:
+            self._memory_default_binding = self.__dict__.get(
+                "_memory_bindings", {}
+            ).get(
+                _tenant_key(tenant_id),
+                MemoryBinding(None, default.agent_name, tenant_id),
+            )
+
+    def _request_memory_binding(self) -> MemoryBinding:
+        """The memory binding for the current request.
+
+        A background write's pinned binding first; then, when a request tenant
+        is bound, the binding ``initialize_memory`` (or direct assignment) made
+        for that tenant, and no memory at all rather than another tenant's.
+        Without a request tenant, the most recent binding on the instance.
+        """
+        pinned = _PINNED_BINDING.get()
+        if pinned is not None and pinned[0] is self:
+            return pinned[1]
+        default = self.__dict__.get(
+            "_memory_default_binding", MemoryBinding(None, None, None)
+        )
+        tenant_id = _MEMORY_TENANT_ID.get()
+        if tenant_id is None:
+            return default
+        key = _tenant_key(tenant_id)
+        bound = self.__dict__.get("_memory_bindings", {}).get(key)
+        if bound is not None:
+            return bound
+        if default.tenant_id is None or _tenant_key(default.tenant_id) == key:
+            return default
+        return MemoryBinding(None, default.agent_name, tenant_id)
+
+    def _rebind_default(self, **fields: Any) -> None:
+        current = self.__dict__.get(
+            "_memory_default_binding", MemoryBinding(None, None, None)
+        )
+        self._memory_default_binding = current._replace(**fields)
+
+    @property
+    def memory_manager(self) -> Optional[Mem0MemoryManager]:
+        return self._request_memory_binding().memory_manager
+
+    @memory_manager.setter
+    def memory_manager(self, manager: Optional[Mem0MemoryManager]) -> None:
+        self._rebind_default(memory_manager=manager)
+
+    @property
+    def _memory_agent_name(self) -> Optional[str]:
+        return self._request_memory_binding().agent_name
+
+    @_memory_agent_name.setter
+    def _memory_agent_name(self, agent_name: Optional[str]) -> None:
+        self._rebind_default(agent_name=agent_name)
+
+    @property
+    def _memory_tenant_id(self) -> Optional[str]:
+        return self._request_memory_binding().tenant_id
+
+    @_memory_tenant_id.setter
+    def _memory_tenant_id(self, tenant_id: Optional[str]) -> None:
+        self._rebind_default(tenant_id=tenant_id)
 
     def _current_memory_tenant_id(self) -> Optional[str]:
         """Resolve the tenant for a memory/instruction read.
@@ -125,7 +214,10 @@ class MemoryAwareMixin(ConfigManagerAware):
         on the dispatch path); falls back to the instance attribute for callers
         that set it directly without a request scope.
         """
-        return _MEMORY_TENANT_ID.get() or getattr(self, "_memory_tenant_id", None)
+        pinned = _PINNED_BINDING.get()
+        if pinned is not None and pinned[0] is self:
+            return pinned[1].tenant_id
+        return _MEMORY_TENANT_ID.get() or self._memory_tenant_id
 
     def set_session_id(self, session_id: Optional[str]) -> None:
         """Set or clear the per-request session id.
@@ -232,13 +324,13 @@ class MemoryAwareMixin(ConfigManagerAware):
                     knowledge_registry=build_default_registry(),
                 )
 
-            self._memory_agent_name = agent_name
-            self._memory_tenant_id = tenant_id
-            self.memory_manager = memory_manager
-            self._memory_initialized = True
-            logger.info(
-                f"Memory initialized for {self._memory_agent_name} (tenant: {self._memory_tenant_id})"
+            binding = MemoryBinding(memory_manager, agent_name, tenant_id)
+            self.__dict__.setdefault("_memory_bindings", {})[_tenant_key(tenant_id)] = (
+                binding
             )
+            self._memory_default_binding = binding
+            self._memory_initialized = True
+            logger.info(f"Memory initialized for {agent_name} (tenant: {tenant_id})")
 
             return True
 
@@ -741,18 +833,21 @@ class MemoryAwareMixin(ConfigManagerAware):
         ``remember_success``. Returns False when the writer's queue is full
         and the write was dropped (logged).
         """
-        tenant_id = self._current_memory_tenant_id()
+        binding = self._request_memory_binding()._replace(
+            tenant_id=self._current_memory_tenant_id()
+        )
 
         def pinned_write() -> Any:
             # A shared agent may be rebound to another tenant by the time
-            # this runs; the write keeps the tenant that queued it.
-            _MEMORY_TENANT_ID.set(tenant_id)
+            # this runs; the write keeps the binding its request resolved.
+            _MEMORY_TENANT_ID.set(binding.tenant_id)
+            _PINNED_BINDING.set((self, binding))
             return write(*args, **kwargs)
 
         return get_background_memory_writer().submit(
             pinned_write,
-            tenant_id=tenant_id,
-            agent_name=getattr(self, "_memory_agent_name", None) or type(self).__name__,
+            tenant_id=binding.tenant_id,
+            agent_name=binding.agent_name or type(self).__name__,
         )
 
     def remember_success(

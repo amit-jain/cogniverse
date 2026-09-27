@@ -2183,6 +2183,68 @@ class TestOrchestrationTerminalOutcome:
         assert orchestrator_agent.remember_success.call_count == 0
 
     @pytest.mark.asyncio
+    async def test_a_shared_orchestrator_remembers_through_the_requests_tenant(
+        self, orchestrator_agent
+    ):
+        """One orchestrator that has served tenants A then B remembers A's
+        success through A's memory manager, not the last one bound."""
+        managers = {}
+
+        def manager_for(tenant_id):
+            if tenant_id not in managers:
+                manager = MagicMock(name=f"mem0[{tenant_id}]")
+                manager.memory = MagicMock()
+                manager.search_memory.return_value = []
+                manager.add_memory.return_value = f"mem-{tenant_id}"
+                managers[tenant_id] = manager
+            return managers[tenant_id]
+
+        init = {
+            "backend_host": "http://localhost",
+            "backend_port": 8080,
+            "llm_model": "test-llm",
+            "embedder_base_url": "http://localhost:8000",
+            "config_manager": MagicMock(),
+            "schema_loader": MagicMock(),
+        }
+        with patch(
+            "cogniverse_agents.memory_aware_mixin.Mem0MemoryManager",
+            side_effect=lambda tenant_id: manager_for(tenant_id),
+        ):
+            for tenant_id in ("prodfixagents:a", "prodfixagents:b"):
+                assert orchestrator_agent.initialize_memory(
+                    "orchestrator_agent", tenant_id, **init
+                )
+                orchestrator_agent._memory_initialized_tenants.add(tenant_id)
+        orchestrator_agent.workflow_intelligence = None
+        orchestrator_agent._create_plan = AsyncMock(
+            return_value=OrchestrationPlan(
+                query="find evidence",
+                steps=[AgentStep(agent_name="search_agent", reasoning="retrieve")],
+            )
+        )
+
+        async def answered_loop(**kwargs):
+            kwargs["agent_results_sink"]["search_agent"] = {
+                "status": "success",
+                "answer": "42",
+            }
+            return AccumulatedEvidence(iterations_executed=1, exit_reason="sufficient")
+
+        orchestrator_agent._iterative_retrieval_loop = answered_loop
+        output = await orchestrator_agent.process(
+            OrchestratorInput(query="find evidence", tenant_id="prodfixagents:a")
+        )
+        assert await drain_background_memory_writes(5.0) is True
+
+        assert output.final_output["status"] == "success"
+        assert managers["prodfixagents:b"].add_memory.call_count == 0
+        assert managers["prodfixagents:b"].search_memory.call_count == 0
+        written = managers["prodfixagents:a"].add_memory.call_args.kwargs
+        assert written["tenant_id"] == "prodfixagents:a"
+        assert "find evidence" in written["content"]
+
+    @pytest.mark.asyncio
     async def test_a_successful_plan_answers_before_its_success_memory_lands(
         self, orchestrator_agent
     ):
