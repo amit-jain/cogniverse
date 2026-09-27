@@ -668,14 +668,15 @@ runtime under two different prefixes has no single answer, so it fails.
 {{/*
 The runtime pod's termination grace period: uvicorn's graceful shutdown,
 then the lifespan drains in turn (admin blob writes 60 s, conversation saves
-40 s, and the A2A drain whose cancelled work gets as long again), plus
-teardown. The two fixed drains are the runtime's own budgets.
+40 s, the A2A drain whose cancelled work gets as long again, and background
+memory writes 30 s), plus teardown. The three fixed drains are the runtime's
+own budgets.
 */}}
 {{- define "cogniverse.runtime.terminationGracePeriodSeconds" -}}
 {{- $a2a := mulf 2 (include "cogniverse.runtime.shutdown.a2aDrainSeconds" . | float64) -}}
 {{- $uvicorn := include "cogniverse.runtime.shutdown.uvicornGracefulSeconds" . | float64 -}}
 {{- $teardown := dig "shutdown" "teardownSeconds" 15 .Values.runtime -}}
-{{- $total := addf $uvicorn 60 40 $a2a $teardown -}}
+{{- $total := addf $uvicorn 60 40 $a2a 30 $teardown -}}
 {{- int (ceil $total) -}}
 {{- end -}}
 

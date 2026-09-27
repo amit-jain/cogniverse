@@ -126,3 +126,58 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
         await asyncio.wait_for(running.wait(), timeout=5)
 
     assert order == ["migration cancelled, stop set: True", "blob drain"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_lands_pending_memory_writes_after_the_a2a_drain(
+    monkeypatch, workflow_state_redis_url
+):
+    """A2A executions finishing during their drain still queue memory writes,
+    so the memory-write drain runs after it, within its own budget, and waits
+    for a write still in flight."""
+    import threading
+
+    import dspy
+
+    from cogniverse_agents import background_memory_writes
+    from cogniverse_runtime import main as runtime_main
+
+    monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
+    monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
+    monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
+    monkeypatch.setattr(dspy, "configure", lambda *a, **kw: None)
+    order = []
+    release = threading.Event()
+
+    def held_write():
+        assert release.wait(10) is True
+        order.append("memory write landed")
+
+    real_close = runtime_main._SharedA2AProtocol.close
+    real_drain = background_memory_writes.drain_background_memory_writes
+
+    async def recording_close(self):
+        await real_close(self)
+        order.append("a2a drained")
+
+    async def recording_drain(timeout_s):
+        order.append(f"memory drain {timeout_s}")
+        threading.Timer(0.3, release.set).start()
+        return await real_drain(timeout_s)
+
+    monkeypatch.setattr(runtime_main._SharedA2AProtocol, "close", recording_close)
+    monkeypatch.setattr(
+        background_memory_writes, "drain_background_memory_writes", recording_drain
+    )
+
+    async with runtime_main.lifespan(FastAPI()):
+        queued = background_memory_writes.get_background_memory_writer().submit(
+            held_write, tenant_id="acme:acme", agent_name="orchestrator_agent"
+        )
+
+    assert queued is True
+    assert order == [
+        "a2a drained",
+        f"memory drain {background_memory_writes.MEMORY_WRITE_DRAIN_TIMEOUT_S}",
+        "memory write landed",
+    ]

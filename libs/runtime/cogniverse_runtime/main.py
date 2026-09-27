@@ -1760,6 +1760,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
+    # After the A2A drain: executions it let finish queue memory writes too.
+    from cogniverse_agents import background_memory_writes
+
+    await background_memory_writes.drain_background_memory_writes(
+        background_memory_writes.MEMORY_WRITE_DRAIN_TIMEOUT_S
+    )
     try:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):
