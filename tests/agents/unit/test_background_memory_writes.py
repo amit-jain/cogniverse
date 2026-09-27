@@ -10,6 +10,9 @@ import asyncio
 import contextvars
 import functools
 import logging
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 
@@ -272,3 +275,157 @@ def test_the_shared_writer_uses_the_shipped_bounds():
     assert writer is get_background_memory_writer()
     assert writer.concurrency == MEMORY_WRITE_CONCURRENCY
     assert writer.max_pending == MEMORY_WRITE_MAX_PENDING
+
+
+def test_the_shared_writer_caps_each_tenant_inside_the_global_bound():
+    from cogniverse_agents.background_memory_writes import (
+        MEMORY_WRITE_MAX_PENDING_PER_TENANT,
+    )
+
+    writer = get_background_memory_writer()
+
+    assert MEMORY_WRITE_MAX_PENDING_PER_TENANT == 4
+    assert writer.max_pending_per_tenant == MEMORY_WRITE_MAX_PENDING_PER_TENANT
+    assert writer.max_pending_per_tenant < writer.max_pending
+
+
+def _writer_logs(caplog) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "cogniverse_agents.background_memory_writes"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_tenant_cannot_take_the_other_tenants_queue_slots(caplog):
+    writer = BackgroundMemoryWriter(
+        concurrency=1, max_pending=6, max_pending_per_tenant=2
+    )
+    held = _HeldWrites()
+
+    def queue(tenant_id, name):
+        return writer.submit(
+            functools.partial(held.write, name), tenant_id=tenant_id, agent_name="a"
+        )
+
+    with caplog.at_level(logging.WARNING):
+        busy = [queue("acme:busy", f"busy{i}") for i in range(3)]
+        quiet = [queue("acme:quiet", f"quiet{i}") for i in range(2)]
+    held.release.set()
+    assert await writer.drain(5.0) is True
+
+    assert busy == [True, True, False]
+    assert quiet == [True, True]
+    assert sorted(held.finished) == ["busy0", "busy1", "quiet0", "quiet1"]
+    logged = _writer_logs(caplog)
+    assert len(logged) == 1
+    assert "acme:busy" in logged[0]
+    assert "tenant's share full" in logged[0]
+
+
+@pytest.mark.asyncio
+async def test_drops_are_counted_and_their_warning_is_rate_limited(caplog):
+    now = [1000.0]
+    writer = BackgroundMemoryWriter(concurrency=1, max_pending=1, clock=lambda: now[0])
+    held = _HeldWrites()
+    assert writer.submit(
+        functools.partial(held.write, "kept"), tenant_id="acme:a", agent_name="a"
+    )
+
+    def drop():
+        return writer.submit(lambda: None, tenant_id="acme:a", agent_name="search")
+
+    with caplog.at_level(logging.WARNING):
+        first_minute = [drop() for _ in range(5)]
+        now[0] += 61.0
+        next_minute = drop()
+    held.release.set()
+    assert await writer.drain(5.0) is True
+
+    assert first_minute == [False] * 5
+    assert next_minute is False
+    assert writer.dropped_counts() == {("acme:a", "search"): 6}
+    warnings = _writer_logs(caplog)
+    assert len(warnings) == 2
+    assert "acme:a" in warnings[0]
+    assert "1 memory write(s) dropped" in warnings[0]
+    assert "5 memory write(s) dropped" in warnings[1]
+
+
+@pytest.mark.asyncio
+async def test_cancel_tenant_cancels_only_that_tenants_queued_writes(caplog):
+    writer = BackgroundMemoryWriter(concurrency=1, max_pending=8)
+    held = _HeldWrites()
+    writer.submit(
+        functools.partial(held.write, "running"), tenant_id="acme:a", agent_name="a"
+    )
+    held.wait_running(1)
+    writer.submit(
+        functools.partial(held.write, "queued-a"), tenant_id="acme", agent_name="a"
+    )
+    writer.submit(
+        functools.partial(held.write, "queued-b"), tenant_id="acme:b", agent_name="b"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cancelled = writer.cancel_tenant("acme:acme")
+    held.release.set()
+    assert await writer.drain(5.0) is True
+
+    assert cancelled == 1
+    assert sorted(held.finished) == ["queued-b", "running"]
+    logged = _writer_logs(caplog)
+    assert len(logged) == 1
+    assert "acme" in logged[0]
+
+
+def test_a_write_still_running_after_the_drain_does_not_hold_process_exit():
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import threading
+
+        from cogniverse_agents.background_memory_writes import (
+            get_background_memory_writer,
+        )
+
+        writer = get_background_memory_writer()
+        writer.submit(threading.Event().wait, tenant_id="t", agent_name="a")
+        print("drained", asyncio.run(writer.drain(0.2)), flush=True)
+        """
+    )
+
+    started = time.monotonic()
+    finished = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    elapsed = time.monotonic() - started
+
+    assert finished.returncode == 0, finished.stderr
+    assert finished.stdout.strip() == "drained False"
+    assert elapsed < 20
+
+
+def test_a_write_counts_as_pending_before_any_worker_can_take_it():
+    """A drain between accepting a write and queueing it must still see it."""
+    writer = BackgroundMemoryWriter(concurrency=1, max_pending=2)
+    drained_mid_submit = []
+
+    class _ObservedQueue:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def put(self, item):
+            drained_mid_submit.append(asyncio.run(writer.drain(0.0)))
+            self._inner.put(item)
+
+        def get(self):
+            return self._inner.get()
+
+    writer._queue = _ObservedQueue(writer._queue)
+
+    queued = writer.submit(lambda: None, tenant_id="t", agent_name="a")
+
+    assert queued is True
+    assert drained_mid_submit == [False]
