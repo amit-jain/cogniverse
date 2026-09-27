@@ -572,6 +572,90 @@ class TestMemoryAwareMixin:
         assert "a query" in managers["tenant_a"].add_memory.call_args.kwargs["content"]
 
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_no_request_tenant_on_a_multi_tenant_agent_gets_no_memory(
+        self, mock_manager_class, agent, caplog
+    ):
+        """Without a request tenant, an agent that has bound two tenants cannot
+        tell whose memory a call means, so it uses neither and says so once."""
+        import logging
+
+        managers = self._per_tenant_managers(mock_manager_class)
+        agent.initialize_memory("test_agent", "acme:a", **MEMORY_INIT_DEFAULTS)
+        agent.initialize_memory("test_agent", "acme:b", **MEMORY_INIT_DEFAULTS)
+
+        with caplog.at_level(logging.WARNING):
+            first = agent.update_memory("a fact", infer=False)
+            second = agent.update_memory("another fact", infer=False)
+
+        assert first is False
+        assert second is False
+        assert managers["acme:a"].add_memory.call_count == 0
+        assert managers["acme:b"].add_memory.call_count == 0
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_agents.memory_aware_mixin"
+            and r.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert "test_agent" in warnings[0]
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_no_request_tenant_on_a_single_tenant_agent_keeps_its_memory(
+        self, mock_manager_class, agent
+    ):
+        managers = self._per_tenant_managers(mock_manager_class)
+        agent.initialize_memory("test_agent", "acme:a", **MEMORY_INIT_DEFAULTS)
+
+        written = agent.update_memory("a fact", infer=False)
+
+        assert written is True
+        assert managers["acme:a"].add_memory.call_args.kwargs["tenant_id"] == "acme:a"
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_one_write_reads_manager_agent_and_tenant_from_one_binding(
+        self, mock_manager_class, agent
+    ):
+        """A re-init for another tenant landing mid-write cannot pair this
+        write's manager with the other tenant's id."""
+        calls = []
+
+        class RebindingManager:
+            memory = MagicMock()
+
+            @property
+            def add_memory(self):
+                # Runs between the write's manager read and its tenant read.
+                agent.initialize_memory("test_agent", "acme:b", **MEMORY_INIT_DEFAULTS)
+                return lambda **kwargs: calls.append(kwargs) or "mem-a"
+
+        managers = {"acme:a": RebindingManager(), "acme:b": MagicMock()}
+        mock_manager_class.side_effect = lambda tenant_id: managers[tenant_id]
+        agent.initialize_memory("test_agent", "acme:a", **MEMORY_INIT_DEFAULTS)
+
+        written = agent.update_memory("a fact", infer=False)
+
+        assert written is True
+        assert [c["tenant_id"] for c in calls] == ["acme:a"]
+        assert managers["acme:b"].add_memory.call_count == 0
+
+    def test_binding_the_same_tenant_in_another_form_keeps_the_manager(self, agent):
+        from cogniverse_agents.memory_aware_mixin import clear_request_tenant
+
+        manager = MagicMock()
+        agent.memory_manager = manager
+        agent._memory_tenant_id = "acme"
+        agent._memory_agent_name = "knowledge_agent"
+        agent._memory_initialized = True
+
+        agent.set_tenant_for_context("acme:acme")
+        in_request = agent.memory_manager
+        clear_request_tenant()
+
+        assert in_request is manager
+        assert agent.memory_manager is manager
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_get_memory_summary(self, mock_manager_class, agent):
         """Test getting memory summary"""
         # Setup mock

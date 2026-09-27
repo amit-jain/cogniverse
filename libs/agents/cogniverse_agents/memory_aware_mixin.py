@@ -8,7 +8,7 @@ Handles context retrieval, memory updates, and lifecycle management.
 import asyncio
 import logging
 from contextvars import ContextVar
-from typing import Any, Callable, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from opentelemetry import trace as _otel_trace
 
@@ -52,8 +52,8 @@ class MemoryBinding(NamedTuple):
 
 
 # A background write carries the binding its request resolved: (agent, binding).
-_PINNED_BINDING: ContextVar[Optional[tuple]] = ContextVar(
-    "cogniverse_pinned_memory_binding", default=None
+_PINNED_BINDING: ContextVar[Optional[Tuple["MemoryAwareMixin", MemoryBinding]]] = (
+    ContextVar("cogniverse_pinned_memory_binding", default=None)
 )
 
 
@@ -144,7 +144,7 @@ class MemoryAwareMixin(ConfigManagerAware):
         if default.tenant_id is None:
             # A manager assigned without a tenant takes this one.
             self._memory_default_binding = default._replace(tenant_id=tenant_id)
-        elif default.tenant_id != tenant_id:
+        elif _tenant_key(default.tenant_id) != _tenant_key(tenant_id):
             self._memory_default_binding = self.__dict__.get(
                 "_memory_bindings", {}
             ).get(
@@ -153,12 +153,13 @@ class MemoryAwareMixin(ConfigManagerAware):
             )
 
     def _request_memory_binding(self) -> MemoryBinding:
-        """The memory binding for the current request.
+        """Manager, agent name and tenant for one memory operation, together.
 
-        A background write's pinned binding first; then, when a request tenant
-        is bound, the binding ``initialize_memory`` (or direct assignment) made
-        for that tenant, and no memory at all rather than another tenant's.
-        Without a request tenant, the most recent binding on the instance.
+        A background write's pinned binding first. With a request tenant, the
+        binding made for that tenant (by ``initialize_memory`` or assignment),
+        carrying the request's tenant id, and no memory rather than another
+        tenant's. Without one, the instance's only binding; an instance bound
+        to several tenants cannot tell whose memory is meant and gets none.
         """
         pinned = _PINNED_BINDING.get()
         if pinned is not None and pinned[0] is self:
@@ -168,14 +169,28 @@ class MemoryAwareMixin(ConfigManagerAware):
         )
         tenant_id = _MEMORY_TENANT_ID.get()
         if tenant_id is None:
+            if len(self.__dict__.get("_memory_bindings", {})) > 1:
+                self._warn_no_request_tenant(default.agent_name)
+                return MemoryBinding(None, default.agent_name, None)
             return default
         key = _tenant_key(tenant_id)
         bound = self.__dict__.get("_memory_bindings", {}).get(key)
         if bound is not None:
-            return bound
+            return bound._replace(tenant_id=tenant_id)
         if default.tenant_id is None or _tenant_key(default.tenant_id) == key:
-            return default
+            return default._replace(tenant_id=tenant_id)
         return MemoryBinding(None, default.agent_name, tenant_id)
+
+    def _warn_no_request_tenant(self, agent_name: Optional[str]) -> None:
+        if self.__dict__.get("_memory_ambiguity_warned"):
+            return
+        self._memory_ambiguity_warned = True
+        logger.warning(
+            "Memory for agent %s skipped: it is bound to tenants %s and the "
+            "call carries no request tenant",
+            agent_name or type(self).__name__,
+            sorted(self.__dict__.get("_memory_bindings", {})),
+        )
 
     def _rebind_default(self, **fields: Any) -> None:
         current = self.__dict__.get(
@@ -208,16 +223,8 @@ class MemoryAwareMixin(ConfigManagerAware):
         self._rebind_default(tenant_id=tenant_id)
 
     def _current_memory_tenant_id(self) -> Optional[str]:
-        """Resolve the tenant for a memory/instruction read.
-
-        Prefers the request-scoped ContextVar (set by ``set_tenant_for_context``
-        on the dispatch path); falls back to the instance attribute for callers
-        that set it directly without a request scope.
-        """
-        pinned = _PINNED_BINDING.get()
-        if pinned is not None and pinned[0] is self:
-            return pinned[1].tenant_id
-        return _MEMORY_TENANT_ID.get() or self._memory_tenant_id
+        """The tenant of the binding ``_request_memory_binding`` resolves."""
+        return self._request_memory_binding().tenant_id
 
     def set_session_id(self, session_id: Optional[str]) -> None:
         """Set or clear the per-request session id.
@@ -413,14 +420,15 @@ class MemoryAwareMixin(ConfigManagerAware):
         if not self.is_memory_enabled():
             return None
 
-        if not self._memory_agent_name or not self.memory_manager:
+        binding = self._request_memory_binding()
+        if not binding.agent_name or not binding.memory_manager:
             return None
 
         try:
-            results = self.memory_manager.search_memory(
+            results = binding.memory_manager.search_memory(
                 query=query,
-                tenant_id=self._current_memory_tenant_id(),
-                agent_name=self._memory_agent_name,
+                tenant_id=binding.tenant_id,
+                agent_name=binding.agent_name,
                 top_k=top_k,
             )
 
@@ -431,7 +439,9 @@ class MemoryAwareMixin(ConfigManagerAware):
             # corpus. Then dedup by subject_key with tenant winning, and
             # let _apply_trust_and_reconcile do its thing on the union.
             if getattr(self, "_memory_federation_enabled", False):
-                results = self._federate_with_org_trunk(query, results, top_k or 5)
+                results = self._federate_with_org_trunk(
+                    query, results, top_k or 5, binding
+                )
 
             if not results:
                 return None
@@ -440,7 +450,7 @@ class MemoryAwareMixin(ConfigManagerAware):
             # a knowledge registry is wired into the manager. Code
             # paths that don't set ``_knowledge_registry`` see no behaviour
             # change (the helpers no-op on missing trust/contradiction).
-            results = self._apply_trust_and_reconcile(results)
+            results = self._apply_trust_and_reconcile(results, binding)
 
             context_parts = []
             for i, result in enumerate(results, 1):
@@ -449,9 +459,7 @@ class MemoryAwareMixin(ConfigManagerAware):
 
             context = "\n\n".join(context_parts)
 
-            logger.info(
-                f"Retrieved {len(results)} memories for {self._memory_agent_name}"
-            )
+            logger.info(f"Retrieved {len(results)} memories for {binding.agent_name}")
 
             return context
 
@@ -460,7 +468,11 @@ class MemoryAwareMixin(ConfigManagerAware):
             raise
 
     def _federate_with_org_trunk(
-        self, query: str, tenant_results: List[Dict[str, Any]], top_k: int
+        self,
+        query: str,
+        tenant_results: List[Dict[str, Any]],
+        top_k: int,
+        binding: Optional[MemoryBinding] = None,
     ) -> List[Dict[str, Any]]:
         """Merge tenant search hits with org-trunk memories, tenant wins on subject.
 
@@ -470,7 +482,8 @@ class MemoryAwareMixin(ConfigManagerAware):
         org-trunk schema). When it isn't, the federation falls back to
         tenant-only — federation is opt-in, not load-bearing.
         """
-        registry = getattr(self.memory_manager, "_knowledge_registry", None)
+        binding = binding or self._request_memory_binding()
+        registry = getattr(binding.memory_manager, "_knowledge_registry", None)
         if registry is None:
             # Federation requires the schema layer (sensitivity gating,
             # reconciliation policies); without it we can't honor
@@ -485,7 +498,7 @@ class MemoryAwareMixin(ConfigManagerAware):
         )
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
-        trunk_tenant = org_trunk_tenant_id(self._current_memory_tenant_id())
+        trunk_tenant = org_trunk_tenant_id(binding.tenant_id)
         trunk_mm = Mem0MemoryManager(trunk_tenant)
         if not getattr(trunk_mm, "memory", None):
             # Org trunk not initialised in this deployment — silently
@@ -495,7 +508,7 @@ class MemoryAwareMixin(ConfigManagerAware):
         trunk_rows = trunk_mm.search_memory(
             query=query,
             tenant_id=trunk_tenant,
-            agent_name=self._memory_agent_name,
+            agent_name=binding.agent_name,
             top_k=top_k,
         )
 
@@ -525,7 +538,9 @@ class MemoryAwareMixin(ConfigManagerAware):
         return merged[: max(top_k, len(tenant_results))]
 
     def _apply_trust_and_reconcile(
-        self, results: List[Dict[str, Any]]
+        self,
+        results: List[Dict[str, Any]],
+        binding: Optional[MemoryBinding] = None,
     ) -> List[Dict[str, Any]]:
         """Re-rank by trust × confidence and reconcile per-schema.
 
@@ -544,7 +559,8 @@ class MemoryAwareMixin(ConfigManagerAware):
           * Hits with the same subject_key but distinct content → grouped
             into a ConflictSet and reconciled per the schema's policy.
         """
-        registry = getattr(self.memory_manager, "_knowledge_registry", None)
+        binding = binding or self._request_memory_binding()
+        registry = getattr(binding.memory_manager, "_knowledge_registry", None)
         if registry is None:
             return results
 
@@ -608,7 +624,8 @@ class MemoryAwareMixin(ConfigManagerAware):
         if not self.is_memory_enabled():
             return False
 
-        if not self._memory_agent_name or not self.memory_manager:
+        binding = self._request_memory_binding()
+        if not binding.agent_name or not binding.memory_manager:
             return False
 
         # Auto-stamp the per-request session id onto metadata when set,
@@ -620,18 +637,16 @@ class MemoryAwareMixin(ConfigManagerAware):
             metadata.setdefault("session_id", session_id)
 
         try:
-            memory_id = self.memory_manager.add_memory(
+            memory_id = binding.memory_manager.add_memory(
                 content=content,
-                tenant_id=self._current_memory_tenant_id(),
-                agent_name=self._memory_agent_name,
+                tenant_id=binding.tenant_id,
+                agent_name=binding.agent_name,
                 metadata=metadata,
                 infer=infer,
             )
 
             if memory_id:
-                logger.debug(
-                    f"Updated memory for {self._memory_agent_name}: {memory_id}"
-                )
+                logger.debug(f"Updated memory for {binding.agent_name}: {memory_id}")
                 return True
 
             return False
@@ -639,8 +654,8 @@ class MemoryAwareMixin(ConfigManagerAware):
         except Exception as e:
             logger.error(
                 "Failed to update memory for tenant %s agent %s: %s",
-                self._current_memory_tenant_id(),
-                self._memory_agent_name,
+                binding.tenant_id,
+                binding.agent_name,
                 e,
             )
             return False
@@ -655,13 +670,14 @@ class MemoryAwareMixin(ConfigManagerAware):
         if not self.is_memory_enabled():
             return None
 
-        if not self._memory_agent_name or not self.memory_manager:
+        binding = self._request_memory_binding()
+        if not binding.agent_name or not binding.memory_manager:
             return None
 
         try:
-            return self.memory_manager.get_memory_stats(
-                tenant_id=self._current_memory_tenant_id(),
-                agent_name=self._memory_agent_name,
+            return binding.memory_manager.get_memory_stats(
+                tenant_id=binding.tenant_id,
+                agent_name=binding.agent_name,
             )
 
         except Exception as e:
@@ -682,17 +698,18 @@ class MemoryAwareMixin(ConfigManagerAware):
         if not self.is_memory_enabled():
             return False
 
-        if not self._memory_agent_name or not self.memory_manager:
+        binding = self._request_memory_binding()
+        if not binding.agent_name or not binding.memory_manager:
             return False
 
         try:
-            success = self.memory_manager.clear_agent_memory(
-                tenant_id=self._current_memory_tenant_id(),
-                agent_name=self._memory_agent_name,
+            success = binding.memory_manager.clear_agent_memory(
+                tenant_id=binding.tenant_id,
+                agent_name=binding.agent_name,
             )
 
             if success:
-                logger.info(f"Cleared memory for {self._memory_agent_name}")
+                logger.info(f"Cleared memory for {binding.agent_name}")
 
             return success
 
@@ -718,13 +735,14 @@ class MemoryAwareMixin(ConfigManagerAware):
 
         from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
 
+        binding = self._request_memory_binding()
         learner = StrategyLearner(
-            memory_manager=self.memory_manager,
-            tenant_id=self._current_memory_tenant_id(),
+            memory_manager=binding.memory_manager,
+            tenant_id=binding.tenant_id,
         )
         strategies = learner.get_strategies_for_agent(
             query=query,
-            agent_name=self._memory_agent_name,
+            agent_name=binding.agent_name,
             top_k=top_k,
         )
         if strategies:
@@ -833,9 +851,7 @@ class MemoryAwareMixin(ConfigManagerAware):
         ``remember_success``. Returns False when the writer's queue is full
         and the write was dropped (logged).
         """
-        binding = self._request_memory_binding()._replace(
-            tenant_id=self._current_memory_tenant_id()
-        )
+        binding = self._request_memory_binding()
 
         def pinned_write() -> Any:
             # A shared agent may be rebound to another tenant by the time
@@ -917,10 +933,11 @@ class MemoryAwareMixin(ConfigManagerAware):
         Returns:
             Summary dictionary
         """
+        binding = self._request_memory_binding()
         summary = {
             "enabled": self.is_memory_enabled(),
-            "agent_name": self._memory_agent_name,
-            "tenant_id": self._memory_tenant_id,
+            "agent_name": binding.agent_name,
+            "tenant_id": binding.tenant_id,
             "initialized": self._memory_initialized,
         }
 
