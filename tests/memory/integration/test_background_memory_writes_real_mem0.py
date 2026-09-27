@@ -44,6 +44,7 @@ pytestmark = [pytest.mark.integration]
 # The search itself is one real memory read (DenseOn embed + Vespa query);
 # a write held at the model is held far longer than this.
 RESPONSE_BOUND_S = 20.0
+SHORT_MODEL_TIMEOUT_S = 3.0
 MODEL_HOLD_LIMIT_S = 120.0
 _TOKEN = re.compile(r"bgmem-[0-9a-f]{12}")
 
@@ -67,6 +68,7 @@ class _ControlledLLM:
         self.fail = False
         self.in_flight = 0
         self.max_in_flight = 0
+        self.requests = 0
         endpoint = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -81,6 +83,7 @@ class _ControlledLLM:
                     endpoint.max_in_flight = max(
                         endpoint.max_in_flight, endpoint.in_flight
                     )
+                    endpoint.requests += 1
                 try:
                     endpoint.released.wait(MODEL_HOLD_LIMIT_S)
                     if endpoint.fail:
@@ -152,6 +155,17 @@ class _ControlledLLM:
 
     def release(self) -> None:
         self.released.set()
+
+    def wait_requests(self, count: int, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.lock:
+                if self.requests >= count:
+                    return
+            time.sleep(0.02)
+        raise AssertionError(
+            f"{count} model call(s) never arrived ({self.requests} did)"
+        )
 
     def wait_in_flight(self, count: int, timeout: float = 30.0) -> None:
         deadline = time.monotonic() + timeout
@@ -250,6 +264,26 @@ def _document_agent(*, shared_memory_vespa, shared_denseon, llm, agent_name):
 
 @pytest.fixture
 async def memory_env(shared_memory_vespa, shared_denseon):
+    async for env in _memory_env(shared_memory_vespa, shared_denseon):
+        yield env
+
+
+@pytest.fixture
+async def memory_env_with_short_model_timeout(
+    shared_memory_vespa, shared_denseon, monkeypatch
+):
+    """``memory_env`` whose Mem0 model calls time out after
+    ``SHORT_MODEL_TIMEOUT_S`` instead of the shipped bound."""
+    from cogniverse_core.memory import manager as manager_module
+
+    monkeypatch.setattr(
+        manager_module, "MEM0_LLM_CALL_TIMEOUT_S", SHORT_MODEL_TIMEOUT_S, raising=False
+    )
+    async for env in _memory_env(shared_memory_vespa, shared_denseon):
+        yield env
+
+
+async def _memory_env(shared_memory_vespa, shared_denseon):
     assert await drain_background_memory_writes(MEMORY_WRITE_DRAIN_TIMEOUT_S) is True
     llm = _ControlledLLM()
     llm.thread.start()
@@ -298,6 +332,16 @@ def _queue_success(env, token: str) -> bool:
         env.agent.remember_success,
         query=f"filing {token}",
         result={"result_count": 1},
+    )
+
+
+def _queue_success_labelled(env, token: str, tenant_label: str) -> bool:
+    """Queue a real success write whose writer accounting names
+    ``tenant_label``; the write itself lands in the agent's own store."""
+    return get_background_memory_writer().submit(
+        lambda: env.agent.remember_success(f"filing {token}", {"result_count": 1}),
+        tenant_id=tenant_label,
+        agent_name=env.agent_name,
     )
 
 
@@ -363,14 +407,25 @@ async def test_a_failing_memory_write_is_logged_and_the_search_is_unaffected(
 async def test_background_writes_reach_the_model_at_the_bounded_concurrency(
     memory_env, caplog
 ):
+    from cogniverse_agents.background_memory_writes import (
+        MEMORY_WRITE_MAX_PENDING_PER_TENANT,
+    )
+
+    labels = [MEMORY_TENANT_ID, "bgmem:t1", "bgmem:t2", "bgmem:t3"]
+    assert len(labels) * MEMORY_WRITE_MAX_PENDING_PER_TENANT == MEMORY_WRITE_MAX_PENDING
     tokens = [_token() for _ in range(MEMORY_WRITE_MAX_PENDING)]
     overflow_token = _token()
     memory_env.llm.hold()
 
-    queued = [_queue_success(memory_env, token) for token in tokens]
+    queued = [
+        _queue_success_labelled(
+            memory_env, token, labels[i // MEMORY_WRITE_MAX_PENDING_PER_TENANT]
+        )
+        for i, token in enumerate(tokens)
+    ]
     memory_env.llm.wait_in_flight(MEMORY_WRITE_CONCURRENCY)
     with caplog.at_level(logging.WARNING):
-        overflow = _queue_success(memory_env, overflow_token)
+        overflow = _queue_success_labelled(memory_env, overflow_token, "bgmem:t4")
     # Every write is queued and the model is held: nothing more may start.
     time.sleep(1.0)
     in_flight_while_held = memory_env.llm.in_flight
@@ -387,12 +442,50 @@ async def test_background_writes_reach_the_model_at_the_bounded_concurrency(
         if r.name == "cogniverse_agents.background_memory_writes"
     ]
     assert len(dropped) == 1
-    assert MEMORY_TENANT_ID in dropped[0]
+    assert "bgmem:t4" in dropped[0]
     assert memory_env.agent_name in dropped[0]
     assert drained is True
     expected = sorted(f"{token} answered" for token in tokens)
     assert _stored_eventually(memory_env, tokens, expected) == expected
     assert _stored(memory_env, [overflow_token]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_hung_model_times_out_and_frees_the_writers_for_queued_writes(
+    memory_env_with_short_model_timeout, caplog
+):
+    """Both writers' calls hang at the model; each times out, is logged, and
+    frees its writer, so the write queued behind them reaches the model while
+    the hung calls are still open."""
+    env = memory_env_with_short_model_timeout
+    tokens = [_token() for _ in range(MEMORY_WRITE_CONCURRENCY + 1)]
+    env.llm.hold()
+
+    with caplog.at_level(logging.ERROR):
+        for token in tokens:
+            assert _queue_success(env, token) is True
+        try:
+            env.llm.wait_requests(
+                MEMORY_WRITE_CONCURRENCY + 1, timeout=10 * SHORT_MODEL_TIMEOUT_S
+            )
+        finally:
+            env.llm.release()
+        drained = await drain_background_memory_writes(MEMORY_WRITE_DRAIN_TIMEOUT_S)
+
+    assert drained is True
+    timed_out = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "cogniverse_agents.memory_aware_mixin"
+        and r.levelno >= logging.ERROR
+        and "timed out" in r.getMessage().lower()
+    ]
+    assert len(timed_out) == MEMORY_WRITE_CONCURRENCY
+    assert all(env.agent_name in message for message in timed_out)
+    assert _stored_eventually(env, [tokens[-1]], [f"{tokens[-1]} answered"]) == [
+        f"{tokens[-1]} answered"
+    ]
+    assert _stored(env, tokens[:-1]) == []
 
 
 @pytest.mark.asyncio

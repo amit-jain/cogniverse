@@ -49,6 +49,11 @@ PROVENANCE_LEASE_SECONDS = 60.0
 # wait itself is the only way to outlast a record it stopped renewing. A wait
 # shorter than the hold makes a leaked record permanently unrecoverable.
 PROVENANCE_WAIT_SECONDS = 75.0
+
+# Bound on each Mem0 LLM call, without retries. An inferred write makes two,
+# so a stalled model frees a background writer within a minute instead of the
+# client's 600 s per attempt with two retries.
+MEM0_LLM_CALL_TIMEOUT_S = 30.0
 """The schemas a memory-aware agent needs for a tenant. Tenant registration
 deploys them (``TENANT_BASE_SCHEMAS``) so no serving request ever has to."""
 
@@ -566,7 +571,11 @@ class Mem0MemoryManager:
         }
 
         # Initialize Memory
-        self.memory = Memory.from_config(self.config)
+        memory = Memory.from_config(self.config)
+        memory.llm.client = memory.llm.client.with_options(
+            timeout=MEM0_LLM_CALL_TIMEOUT_S, max_retries=0
+        )
+        self.memory = memory
         self._init_fingerprint = fingerprint
 
         # stash the optional knowledge registry. When set, add_memory
