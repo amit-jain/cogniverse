@@ -4,6 +4,7 @@ name: Test Integrity
 # .github/workflows/), so any filter would skip them on the commits that break
 # them. tests/common/unit/test_ci_coverage_guard.py enforces that.
 on:
+  workflow_dispatch:
   push:
     branches: [ main, develop, 'feature/*' ]
   pull_request:
