@@ -1123,6 +1123,12 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         # managers, artifact managers) so a deleted tenant releases its memory
         # now instead of lingering until LRU pressure evicts it.
         evict_tenant_from_registered_caches(canonical_tid)
+        # Queued memory writes would otherwise land after the delete.
+        from cogniverse_agents.background_memory_writes import (
+            get_background_memory_writer,
+        )
+
+        get_background_memory_writer().cancel_tenant(canonical_tid)
         tenant_full_id = canonical_tid  # for the logger.info + return below
 
         # Tenant create auto-creates the org; deleting the org's last tenant

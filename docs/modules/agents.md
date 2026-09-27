@@ -1639,7 +1639,8 @@ their entry in `results` but are never fused into `aggregated_content`. The
 dispatch envelope and `_dspy_to_a2a_output` carry this status through, and
 `harness_turn` treats `failed` as terminal (no answer text) while `partial`
 renders the answer the completed steps produced. Success memory is written
-only for `success`, in the background after the response returns.
+only for `success`, in the background after the response returns; a write
+still pending when the process is killed is lost.
 
 ```text
 def _aggregate_results(

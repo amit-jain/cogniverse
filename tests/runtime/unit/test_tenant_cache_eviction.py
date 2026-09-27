@@ -392,6 +392,61 @@ async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatc
     assert cache.get("delwire:b") == "gateway-agent-b"
 
 
+@pytest.mark.usefixtures("harness_key_config_store")
+@pytest.mark.asyncio
+async def test_delete_tenant_internal_cancels_the_tenants_queued_memory_writes(
+    monkeypatch,
+):
+    """A deleted tenant's queued background memory writes never run; another
+    tenant's still land."""
+    import threading
+
+    from cogniverse_agents.background_memory_writes import (
+        MEMORY_WRITE_CONCURRENCY,
+        drain_background_memory_writes,
+        get_background_memory_writer,
+    )
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.schema_manager.delete_tenant_schemas.return_value = []
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    async def _org(_org_id):
+        return None
+
+    async def _remaining(_org_id):
+        return [MagicMock()]
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+
+    writer = get_background_memory_writer()
+    release = threading.Event()
+    landed: list[str] = []
+    for _ in range(MEMORY_WRITE_CONCURRENCY):
+        writer.submit(lambda: release.wait(10), tenant_id="other", agent_name="x")
+    writer.submit(
+        lambda: landed.append("delwire:a"), tenant_id="delwire:a", agent_name="a"
+    )
+    writer.submit(
+        lambda: landed.append("delwire:b"), tenant_id="delwire:b", agent_name="b"
+    )
+
+    try:
+        result = await tm.delete_tenant_internal("delwire:a")
+    finally:
+        release.set()
+    assert await drain_background_memory_writes(10.0) is True
+
+    assert result["status"] == "deleted"
+    assert landed == ["delwire:b"]
+
+
 class TestGraphManagerSingleColdBuild:
     def _race_factory(self, build_factory):
         """Drive ``build_factory(resolver, config_manager) -> factory`` with 4
