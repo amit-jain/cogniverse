@@ -88,6 +88,7 @@ class TestSemanticRouterConfigFromEnv:
             "response_cache_max_entries": 1024,
             "classification_model": "openai/cogniverse-classification",
             "vision_model": "openai/cogniverse-vision",
+            "short_reasoning_model": "openai/cogniverse-short-reasoning",
         }
 
     def test_a_stale_tenant_tiers_env_changes_nothing(self, monkeypatch):

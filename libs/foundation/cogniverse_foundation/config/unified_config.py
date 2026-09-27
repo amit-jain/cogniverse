@@ -294,6 +294,11 @@ class SemanticRouterConfig:
     # serves the multimodal student for every tier: the teacher behind
     # pro-reasoning is a text-only model.
     vision_model: str = "openai/cogniverse-vision"
+    # Model name sent on a short free-form call. It names the router's
+    # `cogniverse-short-reasoning` entrypoint, whose recipe tests the tenant
+    # tier only and serves each tier the model and reasoning mode the auto
+    # alias chose for those calls, so the decision costs no classification.
+    short_reasoning_model: str = "openai/cogniverse-short-reasoning"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -306,6 +311,7 @@ class SemanticRouterConfig:
             "response_cache_max_entries": self.response_cache_max_entries,
             "classification_model": self.classification_model,
             "vision_model": self.vision_model,
+            "short_reasoning_model": self.short_reasoning_model,
         }
 
     @classmethod
@@ -326,6 +332,9 @@ class SemanticRouterConfig:
                 "classification_model", "openai/cogniverse-classification"
             ),
             vision_model=data.get("vision_model", "openai/cogniverse-vision"),
+            short_reasoning_model=data.get(
+                "short_reasoning_model", "openai/cogniverse-short-reasoning"
+            ),
         )
 
 

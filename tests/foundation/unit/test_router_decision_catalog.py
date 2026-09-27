@@ -26,6 +26,7 @@ import yaml
 from cogniverse_foundation.config.semantic_router import (
     CLASSIFICATION_CALL_SITES,
     FREE_FORM_CALL_SITES,
+    SHORT_REASONING_CALL_SITES,
     routed_model_for,
 )
 from cogniverse_foundation.config.unified_config import SemanticRouterConfig
@@ -97,9 +98,46 @@ class TestTheCatalogCoversTheShippedAgents:
         )
 
 
+class TestTheShortReasoningCallSites:
+    """Short free-form calls whose auto-alias decision was measured constant
+    per tier: they enter on the tier-only short-reasoning entrypoint, so the
+    router picks the same model and reasoning mode without classifying."""
+
+    def test_the_short_reasoning_call_sites_are_exactly_these(self):
+        assert SHORT_REASONING_CALL_SITES == frozenset(
+            {"deep_research_decomposition", "deep_research_evaluation"}
+        )
+
+    def test_a_short_reasoning_call_site_is_in_neither_other_set(self):
+        assert SHORT_REASONING_CALL_SITES & CLASSIFICATION_CALL_SITES == frozenset()
+        assert SHORT_REASONING_CALL_SITES & FREE_FORM_CALL_SITES == frozenset()
+
+    def test_deep_research_synthesis_stays_on_the_auto_alias(self):
+        assert "deep_research_agent" in FREE_FORM_CALL_SITES
+        assert (
+            routed_model_for(SemanticRouterConfig(), "deep_research_agent")
+            == "openai/auto"
+        )
+
+    @pytest.mark.parametrize(
+        "call_site", ["deep_research_decomposition", "deep_research_evaluation"]
+    )
+    def test_a_short_reasoning_call_site_takes_the_short_reasoning_entrypoint(
+        self, call_site
+    ):
+        assert (
+            routed_model_for(SemanticRouterConfig(), call_site)
+            == "openai/cogniverse-short-reasoning"
+        )
+
+
 class TestEveryCallSiteInLibsIsClassified:
     def test_every_literal_call_site_is_in_the_catalog(self):
-        classified = CLASSIFICATION_CALL_SITES | FREE_FORM_CALL_SITES
+        classified = (
+            CLASSIFICATION_CALL_SITES
+            | FREE_FORM_CALL_SITES
+            | SHORT_REASONING_CALL_SITES
+        )
         unknown = {
             value: where
             for value, where in _literal_call_sites().items()
@@ -168,4 +206,5 @@ class TestTheModelNameMatchesTheChart:
             "response_cache_max_entries": 1024,
             "classification_model": "openai/cogniverse-classification",
             "vision_model": "openai/cogniverse-vision",
+            "short_reasoning_model": "openai/cogniverse-short-reasoning",
         }

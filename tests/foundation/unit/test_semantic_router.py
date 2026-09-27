@@ -230,6 +230,7 @@ class TestSemanticRouterConfigSerialization:
             "response_cache_max_entries": 1024,
             "classification_model": "openai/cogniverse-classification",
             "vision_model": "openai/cogniverse-vision",
+            "short_reasoning_model": "openai/cogniverse-short-reasoning",
         }
 
     def test_response_cache_bounds_survive_a_round_trip(self):
@@ -253,6 +254,16 @@ class TestSemanticRouterConfigSerialization:
         )
         rt = SemanticRouterConfig.from_dict(cfg.to_dict())
         assert rt.classification_model == "openai/another-entrypoint"
+        assert rt == cfg
+
+    def test_a_configured_short_reasoning_model_round_trips(self):
+        cfg = SemanticRouterConfig(
+            enabled=True,
+            semantic_router_url=SR_URL,
+            short_reasoning_model="openai/another-short-entrypoint",
+        )
+        rt = SemanticRouterConfig.from_dict(cfg.to_dict())
+        assert rt.short_reasoning_model == "openai/another-short-entrypoint"
         assert rt == cfg
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
@@ -342,6 +353,75 @@ class TestCreateRoutedLM:
         )
         assert lm.kwargs["api_base"] == DIRECT
         assert "extra_headers" not in lm.kwargs
+
+
+class TestTheShortReasoningEntry:
+    """A short free-form call enters on the tier-only short-reasoning
+    entrypoint with the same tenant headers, and a pro call on it keeps the
+    student fallback the auto alias has."""
+
+    def _lm(self, tier):
+        return create_routed_lm(
+            endpoint=LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT),
+            config=_enabled_config(),
+            tenant_id="acme:prod",
+            tier=tier,
+            call_site="deep_research_decomposition",
+        )
+
+    def test_the_call_sends_the_short_reasoning_model_and_tenant_headers(self):
+        lm = self._lm("pro")
+        assert lm.model == "openai/cogniverse-short-reasoning"
+        assert lm.kwargs["api_base"] == SR_URL
+        assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-id": "acme:prod",
+            "x-authz-user-groups": "pro",
+        }
+
+    def test_a_pro_call_falls_back_to_the_student_entry(self):
+        student = self._lm("pro")._student
+        assert student.model == "openai/cogniverse-classification"
+        assert student.kwargs["extra_headers"] == {
+            "x-authz-user-id": "acme:prod",
+            "x-authz-user-groups": "pro",
+        }
+
+    @pytest.mark.parametrize("tier", ["free", "default"])
+    def test_a_student_tier_call_has_no_fallback(self, tier):
+        assert self._lm(tier)._student is None
+
+    def test_a_bounded_call_has_no_fallback(self):
+        lm = create_routed_lm(
+            endpoint=LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT),
+            config=_enabled_config(),
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="search_agent",
+        )
+        assert lm._student is None
+
+    def test_the_context_routes_a_sub_call_on_its_agents_endpoint(self, monkeypatch):
+        cfg = MagicMock()
+        cfg.get_semantic_router.return_value = _enabled_config()
+        cfg.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
+        cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+            model="openai/s", api_base=DIRECT, request_timeout=77.0
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+        with routed_lm_context_for(
+            MagicMock(),
+            "acme:prod",
+            "deep_research_agent",
+            call_site="deep_research_evaluation",
+        ):
+            lm = dspy.settings.lm
+        assert lm.model == "openai/cogniverse-short-reasoning"
+        assert lm.kwargs["timeout"] == 77.0
+        assert cfg.get_llm_config.return_value.resolve.call_args[0][0] == (
+            "deep_research_agent"
+        )
 
 
 class TestRoutedLMContextFor:

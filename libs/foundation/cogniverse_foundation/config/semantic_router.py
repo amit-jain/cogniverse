@@ -59,6 +59,17 @@ CLASSIFICATION_CALL_SITES: frozenset[str] = frozenset(
     }
 )
 
+# Short free-form calls made inside a free-form agent. The auto alias chose
+# the same model and reasoning mode for them on every measured request of a
+# tier, so they enter on the short-reasoning entrypoint, whose recipe serves
+# that choice from the tenant tier alone and runs no classifier.
+SHORT_REASONING_CALL_SITES: frozenset[str] = frozenset(
+    {
+        "deep_research_decomposition",
+        "deep_research_evaluation",
+    }
+)
+
 FREE_FORM_CALL_SITES: frozenset[str] = frozenset(
     {
         "audio_analysis_agent",
@@ -94,6 +105,8 @@ def routed_model_for(config: SemanticRouterConfig, call_site: str) -> str:
     """
     if call_site in CLASSIFICATION_CALL_SITES:
         return config.classification_model
+    if call_site in SHORT_REASONING_CALL_SITES:
+        return config.short_reasoning_model
     return config.routed_model
 
 
@@ -234,7 +247,9 @@ def create_routed_lm(
         tier=tier,
         vision_model=config.vision_model,
         student_model=(
-            config.classification_model if routed.model == config.routed_model else None
+            config.classification_model
+            if routed.model in (config.routed_model, config.short_reasoning_model)
+            else None
         ),
         **dspy_lm_kwargs(routed),
     )
@@ -261,6 +276,7 @@ def routed_lm_context_for(
     tenant_id: str,
     agent_name: str,
     endpoint: Optional[LLMEndpointConfig] = None,
+    call_site: Optional[str] = None,
 ):
     """Return a ``dspy.context`` binding the LM for a request, routed through
     the semantic router when ``semantic_router`` is enabled.
@@ -280,8 +296,11 @@ def routed_lm_context_for(
 
     When ``endpoint`` is omitted the endpoint is resolved from config for
     ``agent_name`` on the enabled path (``agent_name`` selects which endpoint,
-    not any routing signal). On the direct path, an ambient ``BodyBoundedLM``
-    is bound to the request tenant, sharing its response cache.
+    not any routing signal). ``call_site`` names the router entry when one
+    call inside the agent takes a different entry from the agent's own; it
+    defaults to ``agent_name``. On the direct path, an ambient
+    ``BodyBoundedLM`` is bound to the request tenant, sharing its response
+    cache.
     """
     from contextlib import nullcontext
 
@@ -316,7 +335,9 @@ def routed_lm_context_for(
     ep = endpoint if endpoint is not None else cfg.get_llm_config().resolve(agent_name)
     tier = resolve_tenant_tier(cfg, tenant_id)
     return dspy.context(
-        lm=create_routed_lm(ep, router, tenant_id, tier, call_site=agent_name)
+        lm=create_routed_lm(
+            ep, router, tenant_id, tier, call_site=call_site or agent_name
+        )
     )
 
 
@@ -325,6 +346,7 @@ async def routed_lm_context_for_async(
     tenant_id: str,
     agent_name: str,
     endpoint: Optional[LLMEndpointConfig] = None,
+    call_site: Optional[str] = None,
 ):
     """Build :func:`routed_lm_context_for`'s context off the event loop.
 
@@ -340,5 +362,10 @@ async def routed_lm_context_for_async(
     import asyncio
 
     return await asyncio.to_thread(
-        routed_lm_context_for, config_manager, tenant_id, agent_name, endpoint
+        routed_lm_context_for,
+        config_manager,
+        tenant_id,
+        agent_name,
+        endpoint,
+        call_site,
     )
