@@ -1852,9 +1852,9 @@ and names itself on `SearchOutput.degraded_query_rewrite` as
 `query_rewrite_failed` or `query_rewrite_timed_out` rather than raising. A
 dispatched search sets the bound to `dispatched_query_rewrite_budget_s` of the
 configured grounding search budget: the smaller of `QUERY_REWRITE_BUDGET_S`
-(the measured p95 of a rewrite through the semantic router plus the measured
-p95 of its routing decision) and what that budget leaves after the retrieval
-reserve. The current span carries
+(2.2 times the measured p95 of a rewrite through the semantic router's
+classification entry on a fresh upstream connection) and what that budget
+leaves after the retrieval reserve. The current span carries
 `enhancement.path`: `lm` when the rewrite served, `heuristic_fallback` when the
 search ran on the original query, and the failure log names the router model
 the call was bound to. A dispatched search reports both

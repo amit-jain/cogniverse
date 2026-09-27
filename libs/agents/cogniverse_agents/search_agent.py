@@ -385,19 +385,22 @@ QUERY_REWRITE_MAX_OUTPUT_TOKENS = 3 * _MEASURED_REWRITE_OUTPUT_TOKENS_MAX
 _MEASURED_REWRITE_P90_S = 0.652
 QUERY_REWRITE_P90_BUDGET_S = round(2.2 * _MEASURED_REWRITE_P90_S, 1)
 
-# Ceiling the served rewrite is held to when the call goes through the
-# semantic router, which is the deployed path. Measured on the deployed
-# cluster over the fixed evaluation queries, 30 cache-busting samples through
-# the router against the served endpoint: p50 1.328s, p90 1.784s, p95 1.798s,
-# max 1.807s. The second term is the routing decision the router bills before
-# it forwards: p95 of routing_latency_ms over 684 recorded decisions, 1.720s.
-# A rewrite past their sum is not slow, it is not coming, and the search is
-# better served un-rewritten than held.
-_MEASURED_ROUTED_REWRITE_P95_S = 1.798
-_MEASURED_ROUTING_DECISION_P95_S = 1.720
-QUERY_REWRITE_BUDGET_S = round(
-    _MEASURED_ROUTED_REWRITE_P95_S + _MEASURED_ROUTING_DECISION_P95_S, 1
-)
+# Ceiling the served rewrite is held to on the deployed path: Envoy, the
+# router's tier-only `cogniverse-classification` entry, the served student.
+# Measured on the deployed k3d cluster from the runtime pod, through
+# create_routed_lm(call_site="search_agent") and SearchOptimizationModule over
+# the fixed evaluation queries, one cache-busting tenant per sample, one at a
+# time. On a fresh Envoy connection to the student - every request after the
+# student closes an idle connection at 300s - n=60: p50 1.198s, p90 1.265s,
+# p95 1.277s, max 1.343s. On a reused connection, n=120 after warm-up: p50
+# 0.462s, p90 0.514s, p95 0.557s, max 0.624s. The routing decision on that
+# entry is billed inside those round trips: routing_latency_ms p95 1ms over
+# the same 180 decisions. The budget carries the same 2.2x margin over the
+# fresh-connection p95 as QUERY_REWRITE_P90_BUDGET_S does over its p90; a
+# rewrite past it is not slow, it is not coming, and the search is better
+# served un-rewritten than held.
+_MEASURED_ROUTED_REWRITE_P95_S = 1.277
+QUERY_REWRITE_BUDGET_S = round(2.2 * _MEASURED_ROUTED_REWRITE_P95_S, 1)
 
 # Per-stage wall-clock stamped on the SearchAgent.process span, in the order
 # the stages run. Named so this is read off a trace instead of re-measured.

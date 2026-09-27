@@ -2493,7 +2493,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
         # is the bound that applies.
         assert _SHIPPED_GROUNDING_BUDGET_S - GROUNDING_SEARCH_RESERVE_S == 10.0
         assert budgets == [QUERY_REWRITE_BUDGET_S]
-        assert budgets == [3.5]
+        assert budgets == [2.8]
         assert out.state == GROUNDING_SEARCHED
         assert out.degraded_query_rewrite is None
 

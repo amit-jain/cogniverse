@@ -753,7 +753,7 @@ def test_the_rewrite_budget_fires_before_the_ext_proc_message_timeout():
         if "message_timeout" in http_filter.get("typed_config", {})
     ]
     assert message_timeouts == ["30s"]
-    assert QUERY_REWRITE_BUDGET_S == 3.5
+    assert QUERY_REWRITE_BUDGET_S == 2.8
     assert QUERY_REWRITE_BUDGET_S < float(message_timeouts[0].rstrip("s"))
 
 

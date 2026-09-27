@@ -163,7 +163,7 @@ class TestEveryDispatchedSearchCarriesTheBound:
 
     async def test_the_bound_tracks_the_configured_budget(self):
         """Derived, not hardcoded: a different budget moves the bound with it."""
-        budget = GROUNDING_SEARCH_RESERVE_S + 3.25
+        budget = GROUNDING_SEARCH_RESERVE_S + 2.25
         dispatcher, captured, _, config_get = _dispatcher(budget)
 
         with (
@@ -173,7 +173,7 @@ class TestEveryDispatchedSearchCarriesTheBound:
             get_config.return_value = SimpleNamespace(get=config_get)
             await dispatcher._execute_search_task(_QUERY, _TENANT, top_k=3)
 
-        assert captured == [3.25]
+        assert captured == [2.25]
 
     async def test_an_explicit_bound_is_not_overridden(self):
         """The grounded path already computes its own; it stays as passed."""
@@ -252,15 +252,24 @@ class TestTheMeasuredBudgetCapsTheGroundingRemainder:
     seconds on a deployment whose measured p95 is under two, and every one of
     those seconds is spent before the search the caller asked for starts."""
 
-    async def test_the_budget_is_the_sum_of_its_two_measurements(self):
+    async def test_the_budget_is_the_measured_routed_rewrite_with_the_shared_margin(
+        self,
+    ):
+        """The rewrite enters on the tier-only classification entry, whose
+        routing decision is billed inside the measured round trip, so no
+        auto-alias classifier term is added on top of it."""
+        from cogniverse_agents import search_agent
         from cogniverse_agents.search_agent import (
+            _MEASURED_REWRITE_P90_S,
             _MEASURED_ROUTED_REWRITE_P95_S,
-            _MEASURED_ROUTING_DECISION_P95_S,
+            QUERY_REWRITE_P90_BUDGET_S,
         )
 
-        assert _MEASURED_ROUTED_REWRITE_P95_S == 1.798
-        assert _MEASURED_ROUTING_DECISION_P95_S == 1.720
-        assert QUERY_REWRITE_BUDGET_S == 3.5
+        assert _MEASURED_ROUTED_REWRITE_P95_S == 1.277
+        assert QUERY_REWRITE_BUDGET_S == round(2.2 * _MEASURED_ROUTED_REWRITE_P95_S, 1)
+        assert QUERY_REWRITE_P90_BUDGET_S == round(2.2 * _MEASURED_REWRITE_P90_S, 1)
+        assert not hasattr(search_agent, "_MEASURED_ROUTING_DECISION_P95_S")
+        assert QUERY_REWRITE_BUDGET_S == 2.8
 
     async def test_a_generous_remainder_is_capped_at_the_measured_budget(self):
         dispatcher, captured, _, config_get = _dispatcher(
