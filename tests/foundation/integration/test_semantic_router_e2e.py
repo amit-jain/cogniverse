@@ -28,6 +28,8 @@ signature to a server-enforced ``json_schema``, and a router that keeps only
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -56,7 +58,11 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_foundation.dspy.structured_json_adapter import signature_response_format
 from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
-from tests.utils.semantic_router_stack import TEACHER_CLUSTER, render_envoy_config
+from tests.utils.semantic_router_stack import (
+    CHART_VALUES,
+    TEACHER_CLUSTER,
+    render_envoy_config,
+)
 
 
 @pytest.fixture(scope="module")
@@ -643,6 +649,61 @@ class TestTheResponseCacheReusesOnlyAnIdenticalRequest:
         assert _reflected(fresh)["call_index"] == _reflected(stored)["call_index"]
         assert _served_from(aged) == "upstream"
         assert _reflected(aged)["call_index"] != _reflected(stored)["call_index"]
+
+    def test_a_miss_stores_only_the_exact_entry(self, semantic_router_stack):
+        """Exact mode never reads a similarity entry, so a miss must not write
+        one: writing it embeds the whole prompt before Envoy gets the response
+        back, which measured 18.5 s p50 at ~6k prompt tokens on a 2-CPU router
+        (docker, chart-rendered config, stub backend, n=20)."""
+        base_url = semantic_router_stack["base_url"]
+        router = semantic_router_stack["router_container"]
+        body = _chat_body("which districts reported the longest dry spell this year")
+
+        before = _cache_operation_counts(router)
+        response = _post(base_url, "free-tenant", body)
+        after = _cache_operation_counts(router)
+
+        assert _served_from(response) == "upstream"
+        assert after["store_exact"] - before.get("store_exact", 0) == 1
+        assert after.get("store_semantic", 0) - before.get("store_semantic", 0) == 0
+
+
+_CACHE_OPERATION_COUNT = re.compile(
+    r'^llm_response_cache_operation_duration_seconds_count\{[^}]*operation="(\w+)"'
+    r"[^}]*\} (\S+)$"
+)
+
+
+def _cache_operation_counts(router_container: str) -> dict[str, float]:
+    """The router's own response-cache operation counters, summed per operation.
+
+    Read from its metrics listener inside the container, on the port the chart
+    probes, so no port is published for it.
+    """
+    port = yaml.safe_load(CHART_VALUES.read_text())["semanticRouter"]["router"][
+        "metricsPort"
+    ]
+    scrape = subprocess.run(
+        [
+            "docker",
+            "exec",
+            router_container,
+            "python3",
+            "-c",
+            "import urllib.request; print(urllib.request.urlopen("
+            f"'http://127.0.0.1:{port}/metrics', timeout=10).read().decode())",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    ).stdout
+    counts: dict[str, float] = {}
+    for line in scrape.splitlines():
+        match = _CACHE_OPERATION_COUNT.match(line)
+        if match:
+            counts[match[1]] = counts.get(match[1], 0) + float(match[2])
+    return counts
 
 
 def _classification_config(base_url: str) -> SemanticRouterConfig:

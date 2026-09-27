@@ -523,6 +523,36 @@ def test_semantic_cache_embedding_runtime_configured():
     assert semantic["embedding_config"]["preload_embeddings"] is True
 
 
+def test_providers_are_declared_in_the_canonical_shape_the_router_loads():
+    """The pinned router refuses to start on the legacy provider keys
+    (``defaults.default_model``, ``defaults.reasoning_families``,
+    ``models[].reasoning_family``, ``backend_refs[].type``)."""
+    providers = _sr_config(_render("llm.engine=vllm"))["providers"]
+    assert providers["defaults"] == {"model": "basic-chat", "reasoning_effort": "low"}
+    assert [model["name"] for model in providers["models"]] == [
+        "basic-chat",
+        "pro-reasoning",
+    ]
+    assert [model["reasoning"] for model in providers["models"]] == [
+        {"family": "qwen3"},
+        {"family": "qwen3"},
+    ]
+    assert [
+        sorted(ref) for model in providers["models"] for ref in model["backend_refs"]
+    ] == [["endpoint", "name", "protocol", "weight"]] * 2
+
+
+def test_only_the_multimodal_student_declares_image_input():
+    """The pinned router refuses a request carrying an image part with 400
+    ``unsupported_capability`` unless the model it dispatches to declares
+    ``image_input``; the vision recipe serves every tier from basic-chat."""
+    cards = _sr_config(_render("llm.engine=vllm"))["routing"]["modelCards"]
+    assert {card["name"]: card["capabilities"] for card in cards} == {
+        "basic-chat": ["chat", "image_input"],
+        "pro-reasoning": ["chat", "reasoning"],
+    }
+
+
 def test_every_decision_caches_on_exact_request_identity_only():
     """The cache is gated per-decision: a decision without the plugin never
     caches, and a decision whose plugin omits ``mode`` falls back to similarity
