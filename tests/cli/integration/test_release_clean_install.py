@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -317,6 +318,17 @@ def _documented_model_requirement() -> str:
     return requirement
 
 
+def _declared_requirement(name: str) -> Requirement:
+    """The repository's own requirement on ``name`` from its root pyproject."""
+    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    [requirement] = [
+        Requirement(line)
+        for line in project["dependencies"]
+        if canonicalize_name(Requirement(line).name) == name
+    ]
+    return requirement
+
+
 def _readme(root: str) -> str:
     return (REPO / "libs" / root.removeprefix("cogniverse-") / "README.md").read_text()
 
@@ -600,12 +612,17 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
         extra_requirements, target = _documented_uv_install(root)
     else:
         extra_requirements, target = [], _documented_pip_target(root)
-    prereleases, unrequested = _prereleases(
-        json.loads(listed.stdout), [target, *extra_requirements]
-    )
+    distributions = json.loads(listed.stdout)
+    _, unrequested = _prereleases(distributions, [target, *extra_requirements])
     assert unrequested == set(), sorted(unrequested)
     if root != "cogniverse-agents":
-        assert "graphql-core" in prereleases, sorted(prereleases)
+        [graphql_core] = [
+            Version(version)
+            for name, version, _ in distributions
+            if canonicalize_name(name) == "graphql-core"
+        ]
+        declared = _declared_requirement("graphql-core")
+        assert graphql_core in declared.specifier, (str(graphql_core), str(declared))
 
     site_packages = venv / "lib" / "python3.12" / "site-packages"
     for name in sorted(BASE_CLOSURES[root]):
