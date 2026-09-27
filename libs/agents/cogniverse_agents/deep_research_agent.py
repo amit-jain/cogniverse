@@ -201,6 +201,7 @@ class DeepResearchAgent(
         # the REQUEST tenant's LM — semantic-routed when enabled, ambient
         # otherwise. Without this wrap the whole research run silently used
         # the process-global default LM regardless of tenant configuration.
+        # Decompose and evaluate rebind to their own router entry inside it.
         routed_lm = await routed_lm_context_for_async(
             self._config_manager, input.tenant_id, "deep_research_agent"
         )
@@ -220,7 +221,10 @@ class DeepResearchAgent(
 
         self.emit_progress("decompose", "Decomposing research query...")
 
-        sub_questions = await self._decompose(enriched_query)
+        with await self._short_call_lm(
+            input.tenant_id, call_site="deep_research_decomposition"
+        ):
+            sub_questions = await self._decompose(enriched_query)
 
         all_evidence: List[Dict[str, Any]] = []
         all_citations: List[Dict[str, str]] = []
@@ -241,9 +245,12 @@ class DeepResearchAgent(
             self.emit_progress(
                 "evaluate", f"Evaluating evidence (iteration {iteration})..."
             )
-            sufficient, gaps, confidence = await self._evaluate_evidence(
-                input.query, sub_questions, all_evidence
-            )
+            with await self._short_call_lm(
+                input.tenant_id, call_site="deep_research_evaluation"
+            ):
+                sufficient, gaps, confidence = await self._evaluate_evidence(
+                    input.query, sub_questions, all_evidence
+                )
 
             if sufficient:
                 break
@@ -309,6 +316,16 @@ class DeepResearchAgent(
             confidence=confidence,
             rlm_synthesis=rlm_synthesis,
             rlm_telemetry=rlm_telemetry,
+        )
+
+    async def _short_call_lm(self, tenant_id: str, *, call_site: str):
+        """The request tenant's LM for one short call, on the deep-research
+        endpoint but entering the router on ``call_site``'s entry."""
+        return await routed_lm_context_for_async(
+            self._config_manager,
+            tenant_id,
+            "deep_research_agent",
+            call_site=call_site,
         )
 
     async def _decompose(self, query: str) -> List[str]:

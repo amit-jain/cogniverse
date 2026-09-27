@@ -150,6 +150,8 @@ class TestEveryCallSiteInLibsIsClassified:
         edit here rather than a silent default onto the classifying alias."""
         assert set(_literal_call_sites()) == {
             "coding_agent",
+            "deep_research_decomposition",
+            "deep_research_evaluation",
             "dynamic_dspy_module",
             "rlm_inference",
             "vlm_interface",

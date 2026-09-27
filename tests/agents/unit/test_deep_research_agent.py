@@ -29,6 +29,7 @@ def _isolated_agent(search_fn, sub_questions=("q1", "q2")):
     """
     agent = object.__new__(DeepResearchAgent)
     agent._search_fn = search_fn
+    agent._config_manager = None
     agent.set_tenant_for_context = lambda t: None
     agent.emit_progress = lambda *a, **k: None
 
@@ -249,3 +250,122 @@ async def test_research_keeps_ambient_lm_without_config_manager():
 
     assert result == "OK"
     assert seen["lm"] is ambient_lm
+
+
+def _recording_agent(config_manager):
+    """A DeepResearchAgent whose three DSPy calls record the LM bound when
+    each one runs, with one research iteration that finds enough evidence."""
+    agent = object.__new__(DeepResearchAgent)
+    agent._config_manager = config_manager
+    agent.set_tenant_for_context = lambda t: None
+    agent.emit_progress = lambda *a, **k: None
+    agent.multimodal_generation_enabled = False
+    agent.should_use_rlm_for_query = lambda *a, **k: False
+    agent._decomposer = "decompose"
+    agent._evaluator = "evaluate"
+    agent._synthesizer = "synthesize"
+
+    async def _enrich(a, b):
+        return a
+
+    agent.inject_context_into_prompt_async = _enrich
+
+    async def _search(query, tenant_id):
+        return [{"id": query}]
+
+    agent._search_fn = _search
+    seen: list[tuple[str, object]] = []
+    outputs = {
+        "decompose": dspy.Prediction(sub_questions=["q1"]),
+        "evaluate": dspy.Prediction(
+            has_sufficient_evidence=True, gaps=[], confidence=0.9
+        ),
+        "synthesize": dspy.Prediction(summary="report"),
+    }
+
+    async def _call_dspy(module, output_field, **kwargs):
+        seen.append((module, dspy.settings.lm))
+        return outputs[module]
+
+    agent.call_dspy = _call_dspy
+    return agent, seen
+
+
+def _routed_config(monkeypatch, tier="pro"):
+    from cogniverse_foundation.config.unified_config import (
+        LLMEndpointConfig,
+        SemanticRouterConfig,
+    )
+
+    cfg = MagicMock()
+    cfg.get_semantic_router.return_value = SemanticRouterConfig(
+        enabled=True, semantic_router_url="http://router.test/v1"
+    )
+    cfg.config_manager = config_manager_with_tiers({"acme:acme": tier})
+    cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+        model="openai/deep-research", api_base="http://student.test/v1"
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: cfg,
+    )
+    return cfg
+
+
+@pytest.mark.asyncio
+async def test_decompose_and_evaluate_enter_on_the_short_reasoning_entry(monkeypatch):
+    """The two short calls take the tier-only entry; synthesis stays on the
+    classifying auto alias."""
+    _routed_config(monkeypatch)
+    agent, seen = _recording_agent(object())
+
+    await agent._process_impl(DeepResearchInput(query="q", tenant_id="acme:acme"))
+
+    assert [(module, lm.model) for module, lm in seen] == [
+        ("decompose", "openai/cogniverse-short-reasoning"),
+        ("evaluate", "openai/cogniverse-short-reasoning"),
+        ("synthesize", "openai/auto"),
+    ]
+    assert [lm.kwargs["extra_headers"] for _, lm in seen] == [
+        {"x-authz-user-id": "acme:acme", "x-authz-user-groups": "pro"}
+    ] * 3
+
+
+@pytest.mark.asyncio
+async def test_every_research_call_resolves_the_deep_research_endpoint(monkeypatch):
+    cfg = _routed_config(monkeypatch)
+    agent, seen = _recording_agent(object())
+
+    await agent._process_impl(DeepResearchInput(query="q", tenant_id="acme:acme"))
+
+    assert [
+        call.args[0] for call in cfg.get_llm_config.return_value.resolve.call_args_list
+    ] == ["deep_research_agent"] * 3
+    assert [lm.kwargs["api_base"] for _, lm in seen] == ["http://router.test/v1"] * 3
+
+
+@pytest.mark.asyncio
+async def test_a_pro_short_call_keeps_the_student_fallback(monkeypatch):
+    _routed_config(monkeypatch)
+    agent, seen = _recording_agent(object())
+
+    await agent._process_impl(DeepResearchInput(query="q", tenant_id="acme:acme"))
+
+    assert [lm._student.model for _, lm in seen[:2]] == [
+        "openai/cogniverse-classification"
+    ] * 2
+
+
+@pytest.mark.asyncio
+async def test_without_a_config_manager_every_call_keeps_the_ambient_lm():
+    agent, seen = _recording_agent(None)
+    ambient_lm = MagicMock(name="ambient_global_lm")
+
+    with dspy.context(lm=ambient_lm):
+        await agent._process_impl(DeepResearchInput(query="q", tenant_id="t:t"))
+
+    assert [(module, lm) for module, lm in seen] == [
+        ("decompose", ambient_lm),
+        ("evaluate", ambient_lm),
+        ("synthesize", ambient_lm),
+    ]
