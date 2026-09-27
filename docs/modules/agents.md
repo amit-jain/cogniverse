@@ -1639,7 +1639,7 @@ their entry in `results` but are never fused into `aggregated_content`. The
 dispatch envelope and `_dspy_to_a2a_output` carry this status through, and
 `harness_turn` treats `failed` as terminal (no answer text) while `partial`
 renders the answer the completed steps produced. Success memory is written
-only for `success`.
+only for `success`, in the background after the response returns.
 
 ```text
 def _aggregate_results(
@@ -2986,6 +2986,12 @@ class MemoryAwareMixin:
 
     def update_memory(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """Add content to agent's memory. Returns success status."""
+        ...
+
+    def write_memory_in_background(self, write: Callable[..., Any], /, *args: Any, **kwargs: Any) -> bool:
+        """Queue write(*args, **kwargs) on the shared background memory writer
+        (cogniverse_agents.background_memory_writes). False when its queue is
+        full and the write was dropped."""
         ...
 
     def remember_success(self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None) -> bool:
