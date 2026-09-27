@@ -341,8 +341,8 @@ def _documented_pip_target(root: str) -> str:
 
 
 def _documented_uv_install(root: str) -> tuple[list[str], str]:
-    """The extra requirements and target of the README's uv line; agents
-    documents none."""
+    """The extra requirements and target of the README's uv line; without
+    one, no extra requirements and the pip target."""
     lines = re.findall(
         rf'`uv pip install ({root}(?:\[[a-z,-]+\])?)((?: "[^"]+")*)`', _readme(root)
     )
@@ -400,11 +400,11 @@ def test_the_readmes_document_the_installs_the_clean_install_runs():
     assert _documented_pip_target("cogniverse-dashboard") == "cogniverse-dashboard"
     assert _documented_uv_install("cogniverse-agents") == ([], "cogniverse-agents")
     assert _documented_uv_install("cogniverse-runtime") == (
-        ["graphql-core>=3.3.0a0"],
+        [],
         "cogniverse-runtime[vespa]",
     )
     assert _documented_uv_install("cogniverse-dashboard") == (
-        ["graphql-core>=3.3.0a0"],
+        [],
         "cogniverse-dashboard",
     )
     for root in ("cogniverse-runtime", "cogniverse-dashboard"):

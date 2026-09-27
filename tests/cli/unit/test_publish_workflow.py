@@ -176,9 +176,9 @@ def test_dry_run_input_names_the_tag_ref_it_needs():
     assert "run from a v* tag ref" in dry_run["description"]
 
 
-def test_the_release_install_admits_only_the_graphql_core_pre_release():
-    """The wheel install names the one pre-release arize-phoenix needs, as the
-    runtime and dashboard READMEs do, instead of admitting every pre-release."""
+def test_the_release_install_names_only_the_wheels():
+    """The wheel install adds no pre-release flag or extra requirement, and the
+    runtime and dashboard READMEs document none for graphql-core."""
     steps = {step.get("name"): step for step in _workflow()["jobs"]["test"]["steps"]}
     [install] = [
         line.strip()
@@ -187,7 +187,7 @@ def test_the_release_install_admits_only_the_graphql_core_pre_release():
     ]
 
     assert "--prerelease" not in install
-    assert install.endswith('"${wheels[@]}" "graphql-core>=3.3.0a0"')
+    assert install.endswith('"${wheels[@]}"')
     for readme in ("runtime", "dashboard"):
         text = (WORKFLOW.parents[2] / "libs" / readme / "README.md").read_text()
-        assert '"graphql-core>=3.3.0a0"`' in text, readme
+        assert "graphql-core" not in text, readme
