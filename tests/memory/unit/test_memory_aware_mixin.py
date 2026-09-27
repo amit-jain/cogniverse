@@ -424,6 +424,49 @@ class TestMemoryAwareMixin:
         assert "FAILURE" in call_args[1]["content"]
         assert "test error" in call_args[1]["content"]
 
+    @pytest.mark.asyncio
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    async def test_a_background_write_keeps_the_tenant_and_session_that_queued_it(
+        self, mock_manager_class, agent
+    ):
+        """The write runs after the response, by when a shared agent instance
+        may be serving another tenant; it still lands in the tenant and
+        session of the request that queued it."""
+        import threading
+
+        from cogniverse_agents.background_memory_writes import (
+            MEMORY_WRITE_CONCURRENCY,
+            drain_background_memory_writes,
+            get_background_memory_writer,
+        )
+
+        release = threading.Event()
+        mock_manager = MagicMock()
+        mock_manager.memory = MagicMock()
+        mock_manager.add_memory.return_value = "mem_123"
+        mock_manager_class.return_value = mock_manager
+        agent.initialize_memory("test_agent", "tenant_a", **MEMORY_INIT_DEFAULTS)
+        agent.set_session_id("session-a")
+
+        # Occupy every writer thread so this write waits in the queue.
+        for _ in range(MEMORY_WRITE_CONCURRENCY):
+            get_background_memory_writer().submit(
+                lambda: release.wait(5), tenant_id="other", agent_name="blocker"
+            )
+        queued = agent.write_memory_in_background(
+            agent.remember_success, "test query", "test result"
+        )
+        agent._memory_tenant_id = "tenant_b"
+        agent.set_session_id(None)
+        release.set()
+        assert await drain_background_memory_writes(5.0) is True
+
+        assert queued is True
+        call = mock_manager.add_memory.call_args
+        assert call.kwargs["tenant_id"] == "tenant_a"
+        assert call.kwargs["metadata"] == {"session_id": "session-a"}
+        assert "test query" in call.kwargs["content"]
+
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_get_memory_summary(self, mock_manager_class, agent):
         """Test getting memory summary"""

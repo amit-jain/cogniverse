@@ -8,10 +8,11 @@ Handles context retrieval, memory updates, and lifecycle management.
 import asyncio
 import logging
 from contextvars import ContextVar
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from opentelemetry import trace as _otel_trace
 
+from cogniverse_agents.background_memory_writes import get_background_memory_writer
 from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
@@ -544,7 +545,12 @@ class MemoryAwareMixin(ConfigManagerAware):
             return False
 
         except Exception as e:
-            logger.error(f"Failed to update memory: {e}")
+            logger.error(
+                "Failed to update memory for tenant %s agent %s: %s",
+                self._current_memory_tenant_id(),
+                self._memory_agent_name,
+                e,
+            )
             return False
 
     def get_memory_state(self) -> Optional[Dict[str, Any]]:
@@ -725,6 +731,29 @@ class MemoryAwareMixin(ConfigManagerAware):
         state still resolves correctly inside the offloaded call.
         """
         return await asyncio.to_thread(self.inject_context_into_prompt, prompt, query)
+
+    def write_memory_in_background(
+        self, write: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> bool:
+        """Queue ``write(*args, **kwargs)`` on the shared background writer.
+
+        For memory writes the response does not need, such as
+        ``remember_success``. Returns False when the writer's queue is full
+        and the write was dropped (logged).
+        """
+        tenant_id = self._current_memory_tenant_id()
+
+        def pinned_write() -> Any:
+            # A shared agent may be rebound to another tenant by the time
+            # this runs; the write keeps the tenant that queued it.
+            _MEMORY_TENANT_ID.set(tenant_id)
+            return write(*args, **kwargs)
+
+        return get_background_memory_writer().submit(
+            pinned_write,
+            tenant_id=tenant_id,
+            agent_name=getattr(self, "_memory_agent_name", None) or type(self).__name__,
+        )
 
     def remember_success(
         self,
