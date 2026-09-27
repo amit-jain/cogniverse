@@ -179,11 +179,17 @@ routing:
 # A call carrying image parts enters on this virtual model name whatever its
 # call site: pro-reasoning is served by a text-only teacher, so the vision
 # recipe serves basic-chat - the multimodal student - for every tier.
+# Short free-form calls (deep-research decomposition and evidence evaluation)
+# enter on cogniverse-short-reasoning. Its recipe tests the tier only and
+# serves what the auto alias chose for those calls: pro-reasoning with
+# reasoning on for pro, basic-chat with reasoning off for free and base.
 entrypoints:
   - model_names: [cogniverse-classification]
     recipe: classification
   - model_names: [cogniverse-vision]
     recipe: vision
+  - model_names: [cogniverse-short-reasoning]
+    recipe: short-reasoning
 
 recipes:
   - name: classification
@@ -254,6 +260,48 @@ recipes:
               use_reasoning: false
           plugins: *exact_cache
         - name: vision-base
+          priority: 50
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: base_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+  - name: short-reasoning
+    description: Tier-gated routing for short free-form agent calls.
+    routing:
+      signals:
+        role_bindings: *role_bindings
+      decisions:
+        - name: short-reasoning-pro
+{{- if include "cogniverse.srTierDegraded" . }}
+          tier_degraded: pro_model_unavailable
+{{- end }}
+          priority: 200
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: pro_tier
+          modelRefs:
+            - model: pro-reasoning
+              use_reasoning: true
+          plugins: *exact_cache
+        - name: short-reasoning-free
+          priority: 100
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: free_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: short-reasoning-base
           priority: 50
           rules:
             operator: AND

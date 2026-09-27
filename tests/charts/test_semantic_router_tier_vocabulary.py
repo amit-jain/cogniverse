@@ -107,6 +107,26 @@ class TestEveryRuntimeTierReachesADecision:
             assert bound_roles == roles_with_decision
 
 
+class TestTheShortReasoningRecipeRunsNoClassifier:
+    """The short-reasoning entrypoint exists for the same reason: a classifying
+    condition in its recipe puts the domain classifier back on the request."""
+
+    def test_the_recipe_conditions_are_authz_only(self):
+        config = _load(_CHART_ROUTER_CONFIG)
+        recipe = next(r for r in config["recipes"] if r["name"] == "short-reasoning")
+        types = {
+            condition["type"]
+            for decision in recipe["routing"]["decisions"]
+            for condition in decision["rules"]["conditions"]
+        }
+        assert types == {"authz"}
+
+    def test_the_recipe_declares_no_classifying_signal(self):
+        config = _load(_CHART_ROUTER_CONFIG)
+        recipe = next(r for r in config["recipes"] if r["name"] == "short-reasoning")
+        assert sorted(recipe["routing"]["signals"]) == ["role_bindings"]
+
+
 class TestTheClassificationRecipeRunsNoClassifier:
     """The entrypoint exists to remove the domain classifier from the request.
     A condition of any classifying type inside the recipe puts it back."""
@@ -133,7 +153,11 @@ class TestTheClassificationRecipeRunsNoClassifier:
         served = {name for e in config["entrypoints"] for name in e["model_names"]}
         catalog = {model["name"] for model in config["providers"]["models"]}
         catalog |= {card["name"] for card in config["routing"]["modelCards"]}
-        assert served == {"cogniverse-classification", "cogniverse-vision"}
+        assert served == {
+            "cogniverse-classification",
+            "cogniverse-vision",
+            "cogniverse-short-reasoning",
+        }
         assert served & (catalog | {"auto", "vllm-sr/auto", "MoM"}) == set()
 
     def test_every_entrypoint_names_a_declared_recipe(self):

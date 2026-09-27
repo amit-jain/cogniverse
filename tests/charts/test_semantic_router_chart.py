@@ -241,6 +241,15 @@ class TestTheTeacherHasItsOwnEnvoyCluster:
             for ref in decision["modelRefs"]
         }
         assert pro_models == {header["string_match"]["exact"]}
+        (short_pro,) = [
+            decision
+            for recipe in cfg["recipes"]
+            for decision in recipe["routing"]["decisions"]
+            if decision["name"] == "short-reasoning-pro"
+        ]
+        assert [ref["model"] for ref in short_pro["modelRefs"]] == [
+            header["string_match"]["exact"]
+        ]
         assert header["string_match"]["exact"] in {
             m["name"] for m in cfg["providers"]["models"]
         }
@@ -360,6 +369,17 @@ class TestAnUnservedTeacherUsesTheStudentWithAWarning:
             "pro-default": "pro_model_unavailable",
         }
 
+    def test_an_unserved_teacher_marks_the_short_reasoning_pro_decision(self):
+        result = _helm_template(*self.UNSERVED)
+        assert result.returncode == 0, result.stderr
+        docs = list(filter(None, yaml.safe_load_all(result.stdout)))
+        assert {
+            decision["name"]: decision["tier_degraded"]
+            for recipe in _sr_config(docs)["recipes"]
+            for decision in recipe["routing"]["decisions"]
+            if "tier_degraded" in decision
+        } == {"short-reasoning-pro": "pro_model_unavailable"}
+
     @pytest.mark.parametrize(
         "teacher",
         [
@@ -378,6 +398,12 @@ class TestAnUnservedTeacherUsesTheStudentWithAWarning:
             for decision in _sr_config(docs)["routing"]["decisions"]
             if "tier_degraded" in decision
         } == {}
+        assert [
+            decision["name"]
+            for recipe in _sr_config(docs)["recipes"]
+            for decision in recipe["routing"]["decisions"]
+            if "tier_degraded" in decision
+        ] == []
 
     def test_router_off_renders_without_a_teacher(self):
         result = _helm_template(*self.UNSERVED, "semanticRouter.enabled=false")
@@ -589,10 +615,15 @@ def test_the_classification_entrypoint_selects_the_tier_only_recipe():
     assert cfg["entrypoints"] == [
         {"model_names": ["cogniverse-classification"], "recipe": "classification"},
         {"model_names": ["cogniverse-vision"], "recipe": "vision"},
+        {
+            "model_names": ["cogniverse-short-reasoning"],
+            "recipe": "short-reasoning",
+        },
     ]
     assert [recipe["name"] for recipe in cfg["recipes"]] == [
         "classification",
         "vision",
+        "short-reasoning",
     ]
     decisions = cfg["recipes"][0]["routing"]["decisions"]
     assert [decision["name"] for decision in decisions] == [
@@ -617,6 +648,54 @@ def test_the_classification_entrypoint_selects_the_tier_only_recipe():
         [("basic-chat", False)],
         [("basic-chat", False)],
     ]
+
+
+def test_the_short_reasoning_entrypoint_serves_each_tiers_auto_choice():
+    """A short free-form call enters on cogniverse-short-reasoning. Its recipe
+    tests the tier only and serves what the auto alias served every measured
+    short call on that tier: the teacher with reasoning on for pro, the
+    student with reasoning off for free and base."""
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    (entry,) = [e for e in cfg["entrypoints"] if e["recipe"] == "short-reasoning"]
+    assert entry == {
+        "model_names": ["cogniverse-short-reasoning"],
+        "recipe": "short-reasoning",
+    }
+    (recipe,) = [r for r in cfg["recipes"] if r["name"] == "short-reasoning"]
+    decisions = recipe["routing"]["decisions"]
+    assert [decision["name"] for decision in decisions] == [
+        "short-reasoning-pro",
+        "short-reasoning-free",
+        "short-reasoning-base",
+    ]
+    assert [decision["priority"] for decision in decisions] == [200, 100, 50]
+    assert [
+        [(cond["type"], cond["name"]) for cond in decision["rules"]["conditions"]]
+        for decision in decisions
+    ] == [
+        [("authz", "pro_tier")],
+        [("authz", "free_tier")],
+        [("authz", "base_tier")],
+    ]
+    assert [
+        [(ref["model"], ref["use_reasoning"]) for ref in decision["modelRefs"]]
+        for decision in decisions
+    ] == [
+        [("pro-reasoning", True)],
+        [("basic-chat", False)],
+        [("basic-chat", False)],
+    ]
+    assert sorted(recipe["routing"]["signals"]) == ["role_bindings"]
+
+
+def test_the_short_reasoning_recipe_caches_exactly_as_the_auto_alias_does():
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    (recipe,) = [r for r in cfg["recipes"] if r["name"] == "short-reasoning"]
+    auto_plugins = [d["plugins"] for d in cfg["routing"]["decisions"]]
+    assert [d["plugins"] for d in recipe["routing"]["decisions"]] == [
+        [_EXACT_CACHE_PLUGIN]
+    ] * 3
+    assert auto_plugins == [[_EXACT_CACHE_PLUGIN]] * len(auto_plugins)
 
 
 def test_the_classification_recipe_caches_on_exact_request_identity_only():
