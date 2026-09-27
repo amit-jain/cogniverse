@@ -27,6 +27,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
+from cogniverse_agents.background_memory_writes import drain_background_memory_writes
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -936,6 +937,7 @@ async def test_report_failure_is_an_unsuccessful_orchestrator_child(
         result = await orchestrator.process(
             OrchestratorInput(query=QUERY, tenant_id=FAILING_TENANT)
         )
+    assert await drain_background_memory_writes(10.0) is True
 
     child_error = (
         "HTTPStatusError: Server error '500 Internal Server Error' for url "

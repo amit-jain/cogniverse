@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import dspy
 import pytest
 
+from cogniverse_agents.background_memory_writes import drain_background_memory_writes
 from cogniverse_agents.gateway_agent import MODALITY_LABELS
 from cogniverse_agents.orchestrator_agent import (
     AccumulatedEvidence,
@@ -2177,7 +2179,56 @@ class TestOrchestrationTerminalOutcome:
             "status": "failed",
             "message": "Required orchestration step did not execute",
         }
+        assert await drain_background_memory_writes(5.0) is True
         assert orchestrator_agent.remember_success.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_a_successful_plan_answers_before_its_success_memory_lands(
+        self, orchestrator_agent
+    ):
+        release = threading.Event()
+        landed: list[tuple] = []
+
+        def remember_success(query, summary):
+            assert release.wait(5) is True
+            landed.append((query, summary))
+
+        orchestrator_agent._ensure_memory_for_tenant = lambda tenant: None
+        orchestrator_agent.get_relevant_context = lambda query: ""
+        orchestrator_agent.workflow_intelligence = None
+        orchestrator_agent.remember_success = remember_success
+        orchestrator_agent._create_plan = AsyncMock(
+            return_value=OrchestrationPlan(
+                query="find evidence",
+                steps=[AgentStep(agent_name="search_agent", reasoning="retrieve")],
+            )
+        )
+
+        async def answered_loop(**kwargs):
+            kwargs["agent_results_sink"]["search_agent"] = {
+                "status": "success",
+                "answer": "42",
+            }
+            return AccumulatedEvidence(iterations_executed=1, exit_reason="sufficient")
+
+        orchestrator_agent._iterative_retrieval_loop = answered_loop
+        try:
+            output = await asyncio.wait_for(
+                orchestrator_agent.process(
+                    OrchestratorInput(
+                        query="find evidence", tenant_id="prodfixagents:held"
+                    )
+                ),
+                timeout=10,
+            )
+            landed_when_answered = list(landed)
+        finally:
+            release.set()
+        assert await drain_background_memory_writes(5.0) is True
+
+        assert output.final_output["status"] == "success"
+        assert landed_when_answered == []
+        assert [query for query, _summary in landed] == ["find evidence"]
 
     @pytest.mark.parametrize("status", ["failed", "partial"])
     def test_standalone_a2a_preserves_canonical_status(

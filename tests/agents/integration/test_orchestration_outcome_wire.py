@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from contextlib import nullcontext
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 
+from cogniverse_agents.background_memory_writes import drain_background_memory_writes
 from cogniverse_agents.orchestrator_agent import (
     AccumulatedEvidence,
     AgentStep,
@@ -46,6 +48,8 @@ class _Runtime:
     def __init__(self):
         self.calls: list[tuple[str, str, str]] = []
         self.memory_writes: list[tuple[str, str]] = []
+        self.memory_release = threading.Event()
+        self.memory_release.set()
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.client: httpx.AsyncClient | None = None
@@ -113,6 +117,7 @@ async def runtime(monkeypatch):
             return ""
 
         def remember_success(self, query, summary):
+            assert state.memory_release.wait(10) is True
             state.memory_writes.append((query, summary))
 
         async def _semantic_router_lm_context(self, tenant_id):
@@ -163,7 +168,7 @@ async def runtime(monkeypatch):
             yield state
 
 
-async def _process(state: _Runtime, query: str, tenant: str = TENANT) -> dict:
+async def _post(state: _Runtime, query: str, tenant: str = TENANT) -> dict:
     response = await state.client.post(
         "/agents/orchestrator_agent/process",
         json={
@@ -174,6 +179,13 @@ async def _process(state: _Runtime, query: str, tenant: str = TENANT) -> dict:
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+async def _process(state: _Runtime, query: str, tenant: str = TENANT) -> dict:
+    """The response, once the memory writes it queued have landed."""
+    result = await _post(state, query, tenant)
+    assert await drain_background_memory_writes(10.0) is True
+    return result
 
 
 @pytest.mark.asyncio
@@ -228,6 +240,25 @@ async def test_every_step_succeeding_is_a_success_and_is_remembered(runtime):
 
 
 @pytest.mark.asyncio
+async def test_the_answer_returns_while_its_success_memory_is_still_being_written(
+    runtime,
+):
+    runtime.memory_release.clear()
+    try:
+        result = await asyncio.wait_for(_post(runtime, "fine"), 10)
+        writes_when_answered = list(runtime.memory_writes)
+    finally:
+        runtime.memory_release.set()
+    assert await drain_background_memory_writes(10.0) is True
+
+    assert result["status"] == "success"
+    assert writes_when_answered == []
+    assert runtime.memory_writes == [
+        ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_failing_request_does_not_take_a_concurrent_one_with_it(runtime):
     pending = asyncio.create_task(
         _process(runtime, "held-failure", "prodfixagents:held")
@@ -276,6 +307,7 @@ async def _a2a_final_event(runtime, query: str):
     event = await queue.dequeue_event()
     while not event.final:
         event = await queue.dequeue_event()
+    assert await drain_background_memory_writes(10.0) is True
     return event
 
 
