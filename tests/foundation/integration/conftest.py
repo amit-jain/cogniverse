@@ -312,6 +312,7 @@ def semantic_router_stack(tmp_path_factory, request):
             "router_container": router,
             "stub_container": stub,
             "teacher_container": teacher,
+            "envoy_container": envoy,
         }
     finally:
         for kind, name in reversed(created):

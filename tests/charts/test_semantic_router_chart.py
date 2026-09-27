@@ -987,6 +987,66 @@ class TestEnvoyUpstreamTls:
         assert "transport_socket" not in cluster
 
 
+class TestModalUpstreamsShareOneConnection:
+    """Modal's edge answers on six addresses and closes a connection idle for
+    300 s. Round-robin over the six gave every address a sixth of the traffic,
+    so a sparse caller found each one closed and paid a fresh TCP+TLS
+    handshake (~0.7 s) on most calls. One logical host and HTTP/2 keep the
+    traffic on one connection; nothing is sent to Modal between requests."""
+
+    MODAL_AUTO_HTTP = {
+        "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+            "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3"
+            ".HttpProtocolOptions",
+            "auto_config": {"http_protocol_options": {}, "http2_protocol_options": {}},
+        }
+    }
+
+    def test_a_modal_upstream_is_one_logical_host_negotiating_http2(self):
+        docs = _render_with_values("values.k3s.yaml", "values.modal-llm.yaml")
+        for name in ("llm_upstream", "llm_teacher"):
+            cluster = _envoy_cluster(docs, name)
+            assert cluster["type"] == "LOGICAL_DNS"
+            assert cluster["typed_extension_protocol_options"] == self.MODAL_AUTO_HTTP
+            assert sorted(cluster) == [
+                "lb_policy",
+                "load_assignment",
+                "name",
+                "transport_socket",
+                "type",
+                "typed_extension_protocol_options",
+            ]
+
+    def test_envoy_runs_one_worker_so_every_call_shares_one_pool(self):
+        """Envoy keeps a connection pool per worker and starts a worker per host
+        core whatever its CPU limit: the cluster's ran 32 workers, so calls on
+        different client connections each opened their own upstream one."""
+        docs = _render("llm.engine=vllm")
+        (deployment,) = [
+            doc
+            for doc in docs
+            if doc.get("kind") == "Deployment"
+            and doc["metadata"]["name"] == "cogniverse-semantic-router-envoy"
+        ]
+        (container,) = deployment["spec"]["template"]["spec"]["containers"]
+        assert container["args"] == [
+            "-c",
+            "/etc/envoy/envoy.yaml",
+            "--service-cluster",
+            "cogniverse-sr",
+            "--concurrency",
+            "1",
+        ]
+        assert container["resources"]["limits"]["cpu"] == "1"
+
+    def test_an_in_cluster_upstream_keeps_per_address_balancing_over_http1(self):
+        docs = _render("llm.engine=vllm")
+        for name in ("llm_upstream", "llm_teacher"):
+            cluster = _envoy_cluster(docs, name)
+            assert cluster["type"] == "STRICT_DNS"
+            assert sorted(cluster) == ["lb_policy", "load_assignment", "name", "type"]
+
+
 def _runtime_config(docs: list[dict]) -> dict:
     for d in docs:
         if (
