@@ -527,17 +527,18 @@ router_config = SemanticRouterConfig(
     routed_model="openai/auto",
     classification_model="openai/cogniverse-classification",
     vision_model="openai/cogniverse-vision",
+    short_reasoning_model="openai/cogniverse-short-reasoning",
 )
 ```
 
 When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to the router entry the call site takes (the router resolves models by its own catalog, aliases and entrypoints, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, the caller's resolved `RouterTier`). When disabled, the endpoint passes through unchanged. The tier is the tenant's stored attribute: `cogniverse_foundation.config.tenant_tiers` holds it in the config store under scope `ROUTING` / service `semantic_router` / key `tenant_tier`, `resolve_tenant_tier(config_accessor, tenant_id)` reads it through a 30 s per-tenant cache invalidated by every write in the process, an unset tenant is `DEFAULT_ROUTER_TIER`, and a store failure routes as `DEFAULT_ROUTER_TIER` with a WARNING. Claim extraction during ingestion keeps the direct primary endpoint.
 
-Each call site names its router entry. `CLASSIFICATION_CALL_SITES` (entity extraction, gateway, orchestrator, profile selection, query enhancement, search) produce a bounded output and send `classification_model`, which names the chart router's `cogniverse-classification` entrypoint: its recipe chooses the decision from the tenant tier alone, so no domain classifier runs; every tier's bounded call is served by `basic-chat` (it never crosses to the teacher), and the decision's exact response cache still applies. `FREE_FORM_CALL_SITES` send `routed_model` (the `auto` alias), where the router classifies the content and may promote the call to the reasoning model; a call site in neither set takes `auto`. Every decision in every routing profile caches with `mode: exact`: on the router's embedding model the closest different-content pair in the evaluation corpus scores higher than the weakest equivalent pair, so no similarity threshold is admissible.
+Each call site names its router entry. `CLASSIFICATION_CALL_SITES` (entity extraction, gateway, orchestrator, profile selection, query enhancement, search) produce a bounded output and send `classification_model`, which names the chart router's `cogniverse-classification` entrypoint: its recipe chooses the decision from the tenant tier alone, so no domain classifier runs; every tier's bounded call is served by `basic-chat` (it never crosses to the teacher), and the decision's exact response cache still applies. `SHORT_REASONING_CALL_SITES` (deep-research decomposition and evidence evaluation) send `short_reasoning_model`, which names the `cogniverse-short-reasoning` entrypoint: its recipe also tests the tier alone and serves `pro-reasoning` with reasoning on for pro and `basic-chat` with reasoning off for free and base, with the same exact response cache. `FREE_FORM_CALL_SITES` send `routed_model` (the `auto` alias), where the router classifies the content and may promote the call to the reasoning model; a call site in neither set takes `auto`. Every decision in every routing profile caches with `mode: exact`: on the router's embedding model the closest different-content pair in the evaluation corpus scores higher than the weakest equivalent pair, so no similarity threshold is admissible.
 
 When the router is enabled but `inference.vllm_llm_teacher` is neither enabled
 nor external, the chart serves `pro-reasoning` from the student's Envoy
 cluster and provider model. Helm NOTES and the rendered manifest name
-`pro_model_unavailable`; each pro decision carries
+`pro_model_unavailable`; each pro decision, including `short-reasoning-pro`, carries
 `tier_degraded: pro_model_unavailable`. A served teacher uses its own cluster
 and has neither warning nor degradation marker.
 
@@ -545,12 +546,12 @@ and has neither warning nor degradation marker.
 |----------|-------------|
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
 | `apply_semantic_routing(endpoint, config, tenant_id, tier, call_site)` | Return a routed copy of `endpoint`, or the original when disabled |
-| `routed_model_for(config, call_site)` | `classification_model` for a call site in `CLASSIFICATION_CALL_SITES`, `routed_model` otherwise |
+| `routed_model_for(config, call_site)` | `classification_model` for a call site in `CLASSIFICATION_CALL_SITES`, `short_reasoning_model` for one in `SHORT_REASONING_CALL_SITES`, `routed_model` otherwise |
 | `create_routed_lm(endpoint, config, tenant_id, tier, call_site)` | `apply_semantic_routing` + the shared LM construction; returns a `RoutedLM` (`cogniverse_foundation.config.routed_lm`), which sends a call carrying image parts on `vision_model` (the chart's `cogniverse-vision` entry, serving the multimodal student for every tier) and records the completion's `model` on the current span as `llm.served_model` (`LLM_SERVED_MODEL_ATTRIBUTE`) |
 | `record_served_model(response)` | Stamp a completion's `model` on the current span; a no-op outside any span |
 | `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
-| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents, tenant-bound either way — the entry point agents use |
-| `routed_lm_context_for_async(config_manager, tenant_id, agent_name, endpoint=None)` | Await the same context off the event loop — the entry point every coroutine uses, since the tier resolution behind it is a config-store read; the returned context manager is unentered so the caller binds it on its own task |
+| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None, call_site=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents, tenant-bound either way — the entry point agents use; `call_site` (default `agent_name`) names the router entry |
+| `routed_lm_context_for_async(config_manager, tenant_id, agent_name, endpoint=None, call_site=None)` | Await the same context off the event loop — the entry point every coroutine uses, since the tier resolution behind it is a config-store read; the returned context manager is unentered so the caller binds it on its own task |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |
 
 A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniverse_foundation.config.routed_lm`, chained from the litellm error and carrying `status`, `router_code` (the provider's error `code`), `tenant_id`, `tier` and `routed_model`. The router passes the upstream status through, so the class follows it:
@@ -566,7 +567,7 @@ A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniver
 
 A call made under a caller's deadline never outlives it. The caller binds an `LMCallDeadline` (`cogniverse_foundation.config.lm_deadline`, `bound_lm_call_deadline`); `BodyBoundedLM` sends nothing once the deadline has passed or the caller abandoned it and raises `LMCallDeadlineExceeded`, a `TimeoutError` naming the endpoint, the model and the deadline. An OpenAI-compatible request goes through `deadline_bound_openai_client(api_base, api_key)`, whose connects, writes and reads each wait at most the time left at that moment, and a caller joining an identical in-flight call waits no longer than its own deadline. `RoutedLM` starts no retry or student attempt past the deadline, and a failure under a deadline adds `endpoint=` and `deadline_s=` to its message.
 
-A pro free-form call whose teacher raises `UpstreamUnavailable` with status
+A pro free-form or short-reasoning call whose teacher raises `UpstreamUnavailable` with status
 502, 503, 504, a timeout (408), or a transport failure (500 or no status) gets
 one attempt on `classification_model`, which serves the student. The LM
 completion and current span carry `tier_degraded: pro_model_unavailable`,
