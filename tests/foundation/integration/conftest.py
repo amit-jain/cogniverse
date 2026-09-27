@@ -257,6 +257,12 @@ def semantic_router_stack(tmp_path_factory, request):
             _ENVOY_IMAGE,
             "-c",
             "/etc/envoy/envoy.yaml",
+            "--concurrency",
+            str(
+                yaml.safe_load(CHART_VALUES.read_text())["semanticRouter"]["envoy"][
+                    "concurrency"
+                ]
+            ),
         )
         if r.returncode != 0:
             pytest.fail(f"envoy failed to start: {r.stderr}")

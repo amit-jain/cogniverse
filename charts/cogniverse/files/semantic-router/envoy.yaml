@@ -102,7 +102,14 @@ static_resources:
 
   clusters:
     - name: llm_upstream
+{{- if eq (include "cogniverse.srUpstreamProtocol" .) "https" }}
+      # Modal's edge answers on several addresses and closes a connection idle
+      # for 300s: one logical host over HTTP/2 keeps calls on one connection
+      # instead of a fresh TLS handshake per address.
+      type: LOGICAL_DNS
+{{- else }}
       type: STRICT_DNS
+{{- end }}
       lb_policy: ROUND_ROBIN
       load_assignment:
         cluster_name: llm_upstream
@@ -120,9 +127,19 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
           sni: {{ include "cogniverse.srUpstreamHost" . }}
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          auto_config:
+            http_protocol_options: {}
+            http2_protocol_options: {}
 {{- end }}
     - name: llm_teacher
+{{- if eq (include "cogniverse.srTeacherProtocol" .) "https" }}
+      type: LOGICAL_DNS
+{{- else }}
       type: STRICT_DNS
+{{- end }}
       lb_policy: ROUND_ROBIN
       load_assignment:
         cluster_name: llm_teacher
@@ -137,6 +154,12 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
           sni: {{ include "cogniverse.srTeacherHost" . }}
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          auto_config:
+            http_protocol_options: {}
+            http2_protocol_options: {}
 {{- end }}
 
     - name: semantic_router

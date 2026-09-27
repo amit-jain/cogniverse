@@ -200,6 +200,8 @@ spec:
         - "/etc/envoy/envoy.yaml"
         - "--service-cluster"
         - "cogniverse-sr"
+        - "--concurrency"
+        - {{ .Values.semanticRouter.envoy.concurrency | quote }}
         ports:
         - name: http
           containerPort: {{ int .Values.semanticRouter.envoy.service.port }}

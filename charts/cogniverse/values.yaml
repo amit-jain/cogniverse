@@ -1906,6 +1906,9 @@ semanticRouter:
       digest: "sha256:caa5b411be1633b90023592a34a7e010c933d6e60206c758f631485e53006865"
       pullPolicy: IfNotPresent
     adminPort: 19000
+    # Envoy pools upstream connections per worker and otherwise starts one per
+    # host core; one worker matches the CPU limit and shares one pool.
+    concurrency: 1
     # Envoy buffers a whole request body for the ext_proc routing decision and
     # answers 413 above this. The answer agents bound the images they assemble
     # against the same number; raising it here without raising theirs only
