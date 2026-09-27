@@ -163,4 +163,7 @@ class TestNoThresholdSeparatesTheTwoPopulations:
             "vision/vision-pro": ["exact"],
             "vision/vision-free": ["exact"],
             "vision/vision-base": ["exact"],
+            "short-reasoning/short-reasoning-pro": ["exact"],
+            "short-reasoning/short-reasoning-free": ["exact"],
+            "short-reasoning/short-reasoning-base": ["exact"],
         }
