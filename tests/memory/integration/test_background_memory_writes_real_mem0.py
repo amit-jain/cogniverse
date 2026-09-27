@@ -28,14 +28,16 @@ from cogniverse_agents.background_memory_writes import (
     MEMORY_WRITE_DRAIN_TIMEOUT_S,
     MEMORY_WRITE_MAX_PENDING,
     drain_background_memory_writes,
+    get_background_memory_writer,
 )
 from cogniverse_agents.document_agent import DocumentAgent, DocumentResult
+from cogniverse_agents.search_agent import SearchAgent
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.utils.tenant_helpers import MEMORY_TENANT_ID
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID, MEMORY_TENANT_ID
 
 pytestmark = [pytest.mark.integration]
 
@@ -173,22 +175,7 @@ def _hit() -> DocumentResult:
     )
 
 
-def _document_agent(*, shared_memory_vespa, shared_denseon, llm, agent_name):
-    """A DocumentAgent whose memory is real Mem0 over real Vespa + DenseOn,
-    extracting with ``llm``; only its document backend is stubbed."""
-    agent = object.__new__(DocumentAgent)
-    agent.memory_manager = None
-    agent._memory_agent_name = None
-    agent._memory_tenant_id = None
-    agent._memory_initialized = False
-    agent._memory_federation_enabled = False
-
-    async def search_text(query, limit):
-        return [_hit()]
-
-    agent._search_text = search_text
-    agent._deployed_strategy = lambda strategy: strategy
-
+def _config_manager(shared_memory_vespa, shared_denseon) -> ConfigManager:
     config_manager = ConfigManager(
         store=VespaConfigStore(
             backend_url="http://localhost",
@@ -202,21 +189,59 @@ def _document_agent(*, shared_memory_vespa, shared_denseon, llm, agent_name):
             inference_service_urls={"denseon": shared_denseon},
         )
     )
+    return config_manager
+
+
+def _initialize(
+    agent, *, tenant_id, shared_memory_vespa, shared_denseon, llm, agent_name
+):
+    """What the dispatcher's ``_init_agent_memory`` does for one request."""
+    agent.set_tenant_for_context(tenant_id)
+    return agent.initialize_memory(
+        agent_name=agent_name,
+        tenant_id=tenant_id,
+        backend_host="http://localhost",
+        backend_port=shared_memory_vespa["http_port"],
+        backend_config_port=shared_memory_vespa["config_port"],
+        llm_model="bgmem-extractor",
+        llm_base_url=llm.url,
+        llm_api_key="bgmem-stub",
+        embedding_model="lightonai/DenseOn",
+        embedder_base_url=shared_denseon,
+        config_manager=_config_manager(shared_memory_vespa, shared_denseon),
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        auto_create_schema=False,
+    )
+
+
+def _memoryless(agent_cls):
+    agent = object.__new__(agent_cls)
+    agent.memory_manager = None
+    agent._memory_agent_name = None
+    agent._memory_tenant_id = None
+    agent._memory_initialized = False
+    agent._memory_federation_enabled = False
+    return agent
+
+
+def _document_agent(*, shared_memory_vespa, shared_denseon, llm, agent_name):
+    """A DocumentAgent whose memory is real Mem0 over real Vespa + DenseOn,
+    extracting with ``llm``; only its document backend is stubbed."""
+    agent = _memoryless(DocumentAgent)
+
+    async def search_text(query, limit):
+        return [_hit()]
+
+    agent._search_text = search_text
+    agent._deployed_strategy = lambda strategy: strategy
     assert (
-        agent.initialize_memory(
-            agent_name=agent_name,
+        _initialize(
+            agent,
             tenant_id=MEMORY_TENANT_ID,
-            backend_host="http://localhost",
-            backend_port=shared_memory_vespa["http_port"],
-            backend_config_port=shared_memory_vespa["config_port"],
-            llm_model="bgmem-extractor",
-            llm_base_url=llm.url,
-            llm_api_key="bgmem-stub",
-            embedding_model="lightonai/DenseOn",
-            embedder_base_url=shared_denseon,
-            config_manager=config_manager,
-            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
-            auto_create_schema=False,
+            shared_memory_vespa=shared_memory_vespa,
+            shared_denseon=shared_denseon,
+            llm=llm,
+            agent_name=agent_name,
         )
         is True
     )
@@ -404,3 +429,175 @@ async def test_shutdown_drain_logs_the_writes_still_pending_at_its_budget(
     # budget was cancelled and is named in the report instead.
     landed = sorted(f"{token} answered" for token in tokens[:MEMORY_WRITE_CONCURRENCY])
     assert _stored_eventually(memory_env, tokens, landed) == landed
+
+
+class _FakeHit:
+    def __init__(self, doc_id):
+        self.document = SimpleNamespace(id=doc_id, metadata={"title": doc_id})
+        self.score = 0.9
+
+
+@pytest.fixture
+async def shared_search_agent(shared_memory_vespa, shared_denseon):
+    """One SearchAgent instance serving two tenants, as a shared agent does:
+    each request binds its tenant's memory on it. Memory is real Mem0 over
+    real Vespa + DenseOn; only the video search backend is stubbed."""
+    assert await drain_background_memory_writes(MEMORY_WRITE_DRAIN_TIMEOUT_S) is True
+    llm = _ControlledLLM()
+    llm.thread.start()
+    Mem0MemoryManager._instances.clear()
+    agent_name = f"bg_shared_{uuid.uuid4().hex[:8]}"
+    agent = _memoryless(SearchAgent)
+    agent.active_profile = "p1"
+    agent.query_encoder = SimpleNamespace(encode=lambda q: [[0.0] * 4])
+    agent._build_date_filter = lambda *a, **k: None
+    agent._search_backend = lambda query_dict: [_FakeHit("d1")]
+
+    def bind(tenant_id):
+        return _initialize(
+            agent,
+            tenant_id=tenant_id,
+            shared_memory_vespa=shared_memory_vespa,
+            shared_denseon=shared_denseon,
+            llm=llm,
+            agent_name=agent_name,
+        )
+
+    try:
+        yield SimpleNamespace(agent=agent, agent_name=agent_name, bind=bind)
+    finally:
+        await drain_background_memory_writes(MEMORY_WRITE_DRAIN_TIMEOUT_S)
+        for tenant_id in (MEMORY_TENANT_ID, MEM0_ROUNDTRIP_TENANT_ID):
+            Mem0MemoryManager(tenant_id=tenant_id).clear_agent_memory(
+                tenant_id=tenant_id, agent_name=agent_name
+            )
+        llm.server.shutdown()
+        llm.server.server_close()
+        Mem0MemoryManager._instances.clear()
+
+
+def _store_rows(store_tenant, agent_name, token) -> list[tuple[str, str]]:
+    """``(partition, text)`` rows carrying ``token`` in ``store_tenant``'s
+    Mem0 store, read under either tenant's partition."""
+    manager = Mem0MemoryManager(tenant_id=store_tenant)
+    found = []
+    for partition in (MEMORY_TENANT_ID, MEM0_ROUNDTRIP_TENANT_ID):
+        for row in manager.get_all_memories(
+            tenant_id=partition, agent_name=agent_name, limit=None
+        ):
+            if token in row.get("memory", ""):
+                found.append((partition, row["memory"]))
+    return sorted(found)
+
+
+def _store_rows_eventually(store_tenant, agent_name, token, expected, timeout=30.0):
+    deadline = time.monotonic() + timeout
+    rows = _store_rows(store_tenant, agent_name, token)
+    while rows != expected and time.monotonic() < deadline:
+        time.sleep(0.5)
+        rows = _store_rows(store_tenant, agent_name, token)
+    return rows
+
+
+async def _recall(env, tenant_id, token) -> str:
+    """What a later request for ``tenant_id`` recalls about ``token``."""
+    env.agent.set_tenant_for_context(tenant_id)
+    return await asyncio.to_thread(env.agent.get_relevant_context, token, 10) or ""
+
+
+@pytest.mark.asyncio
+async def test_a_queued_write_lands_in_its_tenant_store_after_another_tenant_rebinds(
+    shared_search_agent,
+):
+    """Tenant A's search queues its success memory behind busy writers; tenant
+    B's request binds B's memory on the same agent before A's write runs. The
+    write still lands in A's store, findable by A, and B's store has none of
+    it."""
+    env = shared_search_agent
+    token = _token()
+    release_blockers = threading.Event()
+    for _ in range(MEMORY_WRITE_CONCURRENCY):
+        assert get_background_memory_writer().submit(
+            lambda: release_blockers.wait(30), tenant_id="other", agent_name="blocker"
+        )
+
+    # Each request binds its tenant on the loop, as SearchAgent._process_impl
+    # does, and its memory in a worker thread, as the dispatcher does.
+    async def request_a():
+        env.agent.set_tenant_for_context(MEMORY_TENANT_ID)
+        assert await asyncio.to_thread(env.bind, MEMORY_TENANT_ID) is True
+        return await asyncio.to_thread(
+            env.agent._search_by_text,
+            query=f"filing {token}",
+            tenant_id=MEMORY_TENANT_ID,
+            modality="video",
+            top_k=1,
+        )
+
+    async def request_b():
+        env.agent.set_tenant_for_context(MEM0_ROUNDTRIP_TENANT_ID)
+        assert await asyncio.to_thread(env.bind, MEM0_ROUNDTRIP_TENANT_ID) is True
+
+    try:
+        results = await asyncio.create_task(request_a())
+        await asyncio.create_task(request_b())
+    finally:
+        release_blockers.set()
+    assert await drain_background_memory_writes(MEMORY_WRITE_DRAIN_TIMEOUT_S) is True
+
+    expected = [(MEMORY_TENANT_ID, f"{token} answered")]
+    assert [r["id"] for r in results] == ["d1"]
+    assert (
+        _store_rows_eventually(MEMORY_TENANT_ID, env.agent_name, token, expected)
+        == expected
+    )
+    assert _store_rows(MEM0_ROUNDTRIP_TENANT_ID, env.agent_name, token) == []
+    assert token in await _recall(env, MEMORY_TENANT_ID, token)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_synchronous_writes_on_a_shared_agent_keep_their_tenants(
+    shared_search_agent,
+):
+    """Two requests bind their tenants' memory on one agent, A first, then
+    both write synchronously from worker threads at once. Each memory lands
+    in its own tenant's store."""
+    env = shared_search_agent
+    token_a, token_b = _token(), _token()
+    a_bound, b_bound = asyncio.Event(), asyncio.Event()
+
+    async def request(tenant_id, token, bound, wait_before_bind, wait_before_write):
+        await wait_before_bind()
+        env.agent.set_tenant_for_context(tenant_id)
+        assert await asyncio.to_thread(env.bind, tenant_id) is True
+        bound.set()
+        await wait_before_write()
+        return await asyncio.to_thread(
+            env.agent.remember_success, f"filing {token}", {"result_count": 1}
+        )
+
+    async def nothing():
+        return None
+
+    written = await asyncio.gather(
+        request(MEMORY_TENANT_ID, token_a, a_bound, nothing, b_bound.wait),
+        request(MEM0_ROUNDTRIP_TENANT_ID, token_b, b_bound, a_bound.wait, nothing),
+    )
+
+    assert written == [True, True]
+    expected_a = [(MEMORY_TENANT_ID, f"{token_a} answered")]
+    expected_b = [(MEM0_ROUNDTRIP_TENANT_ID, f"{token_b} answered")]
+    assert (
+        _store_rows_eventually(MEMORY_TENANT_ID, env.agent_name, token_a, expected_a)
+        == expected_a
+    )
+    assert (
+        _store_rows_eventually(
+            MEM0_ROUNDTRIP_TENANT_ID, env.agent_name, token_b, expected_b
+        )
+        == expected_b
+    )
+    assert _store_rows(MEM0_ROUNDTRIP_TENANT_ID, env.agent_name, token_a) == []
+    assert _store_rows(MEMORY_TENANT_ID, env.agent_name, token_b) == []
+    assert token_a in await _recall(env, MEMORY_TENANT_ID, token_a)
+    assert token_b in await _recall(env, MEM0_ROUNDTRIP_TENANT_ID, token_b)
