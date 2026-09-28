@@ -143,7 +143,7 @@ class TestFitAnswerImages:
     def test_attachments_are_kept_before_retrieved_frames(
         self, frame_image, frame_jpeg
     ):
-        attachment = dspy.Image(str(frame_jpeg))
+        attachment = dspy.Image.from_path(str(frame_jpeg))
         fitted = fit_answer_images(
             [attachment], [frame_image] * 4, max_images=2, max_total_bytes=10**9
         )

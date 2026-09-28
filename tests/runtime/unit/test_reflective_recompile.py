@@ -510,4 +510,4 @@ def test_reflective_compile_drives_the_metric_through_a_real_gepa_run(monkeypatc
     assert isinstance(compiled, SummarizationModule)
     # Every call GEPA made reached the metric; none raised TypeError, and GEPA
     # used both the evaluation shape and the five-argument feedback shape.
-    assert arities == [2, 2, 2, 3, 3, 3, 5, 5, 5, 2, 2, 2]
+    assert arities == [2, 2, 2, 3, 3, 3, 5, 5, 5, 3, 3, 3]

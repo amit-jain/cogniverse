@@ -64,7 +64,7 @@ def jpg_path(tmp_path):
 
 class FakeLocator:
     """Stands in for MediaLocator: records every localize() and returns a real
-    on-disk jpg so dspy.Image(path) produces a genuine image."""
+    on-disk jpg so dspy.Image.from_path(path) produces a genuine image."""
 
     def __init__(self, jpg, missing=(), errors=None):
         self._jpg = jpg
@@ -332,7 +332,7 @@ class TestReportModuleEmitsImageParts:
         lm = _CapturingLM()
         dspy.configure(lm=lm)
         module = ReportGenerationModule()
-        frames = [dspy.Image(jpg_path), dspy.Image(jpg_path)]
+        frames = [dspy.Image.from_path(jpg_path), dspy.Image.from_path(jpg_path)]
         module.forward(
             content="c", query="q", report_type="comprehensive", keyframes=frames
         )
@@ -445,7 +445,7 @@ class TestSummaryModuleEmitsImageParts:
             content="c",
             query="q",
             summary_type="brief",
-            keyframes=[dspy.Image(jpg_path), dspy.Image(jpg_path)],
+            keyframes=[dspy.Image.from_path(jpg_path), dspy.Image.from_path(jpg_path)],
         )
         assert _count_image_parts(lm.messages[-1]) == 2
 
@@ -527,7 +527,7 @@ class TestSummarizerRunForwardsFrames:
         self, summarizer_agent, jpg_path
     ):
         summarizer_agent.call_dspy = AsyncMock(return_value=Mock(summary="ok"))
-        frames = [dspy.Image(jpg_path)]
+        frames = [dspy.Image.from_path(jpg_path)]
         await summarizer_agent._run_summarization("c", "q", "brief", keyframes=frames)
         assert summarizer_agent.call_dspy.call_args.kwargs["keyframes"] == frames
 
@@ -542,7 +542,7 @@ class TestSynthesisModuleEmitsImageParts:
         dspy.ChainOfThought(SynthesisSignature)(
             query="q",
             evidence="e",
-            keyframes=[dspy.Image(jpg_path), dspy.Image(jpg_path)],
+            keyframes=[dspy.Image.from_path(jpg_path), dspy.Image.from_path(jpg_path)],
         )
         assert _count_image_parts(lm.messages[-1]) == 2
 
