@@ -126,7 +126,7 @@ description = "Cogniverse Foundation - Cross-cutting concerns and shared infrast
 requires-python = ">=3.12"
 dependencies = [
     "cogniverse-sdk",
-    "dspy-ai==3.1.3",
+    "dspy-ai==3.4.0",
     "opentelemetry-api==1.41.0",
     "opentelemetry-sdk==1.41.0",
     "pydantic==2.12.5",
