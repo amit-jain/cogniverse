@@ -12,7 +12,8 @@ authors = [
 dependencies = [
     "cogniverse-core",
     "cogniverse-evaluation",
-    "arize-phoenix==14.2.1",
+    "arize-phoenix-client==2.3.1",
+    "arize-phoenix-otel==0.15.0",
     "pandas==2.3.3",
 ]
 

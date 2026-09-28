@@ -19,7 +19,6 @@ import os
 import re
 import shutil
 import subprocess
-import tomllib
 import zipfile
 from pathlib import Path
 
@@ -186,6 +185,14 @@ MODEL = {
 }
 
 
+_PHOENIX_PROBE = (
+    "import importlib.util, json, phoenix.client, phoenix.otel; print(json.dumps(["
+    "phoenix.client.Client.__module__, phoenix.otel.register.__module__, "
+    "importlib.util.find_spec('phoenix.server') is None, "
+    "importlib.util.find_spec('phoenix.trace') is None]))"
+)
+PHOENIX_MODULES = ["phoenix.client.client", "phoenix.otel.otel", True, True]
+
 _DISTRIBUTIONS_PROBE = (
     "import importlib.metadata as md, json; print(json.dumps(["
     "[d.metadata['Name'], d.version, d.requires or []] for d in md.distributions()]))"
@@ -291,6 +298,21 @@ def test_only_an_applicable_pre_release_specifier_requests_a_pre_release():
     assert unrequested == {"aiohttp", "protobuf", "botocore", "y"}
 
 
+def test_requirers_are_the_distributions_that_unconditionally_require_a_name():
+    distributions = [
+        ["graphene", "3.4.3", ["graphql-core<3.3,>=3.1", "aniso8601<10,>=8"]],
+        ["graphql-relay", "3.2.0", ["graphql-core<3.3,>=3.2"]],
+        ["mlflow", "3.11.1", ["graphene<4"]],
+        ["extras-only", "1.0", ['graphql-core; extra == "graphql"']],
+        ["other-python", "1.0", ['graphql-core; python_version < "3"']],
+        ["graphql-core", "3.2.13", []],
+    ]
+
+    assert _requirers(distributions, "graphql-core") == {"graphene", "graphql-relay"}
+    assert _requirers(distributions, "graphene") == {"mlflow"}
+    assert _requirers(distributions, "strawberry-graphql") == set()
+
+
 _INHERITED_ENV = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}
 
 
@@ -318,15 +340,15 @@ def _documented_model_requirement() -> str:
     return requirement
 
 
-def _declared_requirement(name: str) -> Requirement:
-    """The repository's own requirement on ``name`` from its root pyproject."""
-    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
-    [requirement] = [
-        Requirement(line)
-        for line in project["dependencies"]
-        if canonicalize_name(Requirement(line).name) == name
-    ]
-    return requirement
+def _requirers(distributions, name: str) -> set[str]:
+    """Installed distributions whose unconditional requirements name ``name``."""
+    return {
+        canonicalize_name(requirer)
+        for requirer, _, lines in distributions
+        for requirement in map(Requirement, lines)
+        if canonicalize_name(requirement.name) == name
+        and (requirement.marker is None or requirement.marker.evaluate({"extra": ""}))
+    }
 
 
 def _readme(root: str) -> str:
@@ -616,13 +638,26 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
     _, unrequested = _prereleases(distributions, [target, *extra_requirements])
     assert unrequested == set(), sorted(unrequested)
     if root != "cogniverse-agents":
-        [graphql_core] = [
-            Version(version)
-            for name, version, _ in distributions
-            if canonicalize_name(name) == "graphql-core"
-        ]
-        declared = _declared_requirement("graphql-core")
-        assert graphql_core in declared.specifier, (str(graphql_core), str(declared))
+        versions = {
+            canonicalize_name(name): version for name, version, _ in distributions
+        }
+        phoenix_side = " ".join(
+            f"{name}=={version}"
+            for name, version in sorted(versions.items())
+            if name.startswith("arize-phoenix")
+            or name in {"strawberry-graphql", "graphql-core"}
+        )
+        imported = _run([str(python), "-c", _PHOENIX_PROBE], work, caches)
+        assert imported.returncode == 0, f"{phoenix_side}\n{imported.stderr}"
+        assert json.loads(imported.stdout) == PHOENIX_MODULES
+        assert "arize-phoenix" not in versions, phoenix_side
+        assert "strawberry-graphql" not in versions, phoenix_side
+        assert versions["arize-phoenix-client"] == "2.3.1"
+        assert versions["arize-phoenix-otel"] == "0.15.0"
+        assert _requirers(distributions, "graphql-core") == {
+            "graphene",
+            "graphql-relay",
+        }, phoenix_side
 
     site_packages = venv / "lib" / "python3.12" / "site-packages"
     for name in sorted(BASE_CLOSURES[root]):
