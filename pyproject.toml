@@ -56,7 +56,7 @@ dependencies = [
     "pyvespa==1.1.2",
     # Observability & Telemetry
     "arize-phoenix==14.2.1",
-    "graphql-core>=3.3.0a0",  # pre-release required by arize-phoenix 14.x
+    "graphql-core==3.3.0a12",  # pre-release required by arize-phoenix 14.x
     "arize-phoenix-evals==3.0.0",
     "opentelemetry-api==1.41.0",
     "opentelemetry-sdk==1.41.0",

@@ -865,7 +865,7 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.135.3" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "gliner", specifier = "==0.2.26" },
-    { name = "graphql-core", specifier = ">=3.3.0a0" },
+    { name = "graphql-core", specifier = "==3.3.0a12" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "inspect-ai", specifier = "==0.3.205" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
