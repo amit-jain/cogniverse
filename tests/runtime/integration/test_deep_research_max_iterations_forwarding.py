@@ -470,9 +470,9 @@ class TestRLMOptionsThroughTheDispatcher:
         assert result["status"] == "success", result
         research = result["result"]
         assert rlm_runs == [(query, LIVE_TENANT_ID)]
-        # Chat adapter, then the JSON adapter's structured-output and
-        # json_object modes, each sent once more by the endpoint's one retry.
-        assert rlm_model_calls == 6
+        # The chat adapter's request, sent once more by the endpoint's one
+        # retry; a provider error is not retried under another adapter.
+        assert rlm_model_calls == 2
         assert research["rlm_synthesis"] is None
         assert research["rlm_telemetry"] == {
             "rlm_enabled": False,
