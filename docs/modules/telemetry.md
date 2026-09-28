@@ -172,7 +172,8 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 
 **Phoenix Plugin** (`cogniverse-telemetry-phoenix`):
 
-- `arize-phoenix`: Phoenix observability platform
+- `arize-phoenix-client`: Phoenix client
+- `arize-phoenix-otel`: Phoenix OpenTelemetry setup
 - `pandas`: Data structures
 
 ---
