@@ -14,6 +14,7 @@ from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_SEARCH_RESERVE_S,
     GROUNDING_SEARCH_TIMEOUT_KEY,
@@ -528,7 +529,7 @@ async def test_coding_suspension_and_failed_step_envelopes(
 class UnavailableAnswerAgent(AgentBase[TurnInput, TurnOutput, AgentDeps]):
     def __init__(self):
         super().__init__(deps=AgentDeps())
-        self._dspy_lm = dspy.LM(
+        self._dspy_lm = BodyBoundedLM(
             "openai/workspace-test",
             api_base="http://127.0.0.1:29071/v1",
             api_key="test",

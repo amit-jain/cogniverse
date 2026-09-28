@@ -7,12 +7,12 @@ import json
 import os
 from contextlib import asynccontextmanager
 
-import dspy
 import pytest
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.acp.server import ACPServer, ClientConnection, serve
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
@@ -54,7 +54,7 @@ class PipeTurnAgent(AgentBase[PipeTurnInput, PipeTurnOutput, PipeTurnDeps]):
             if input.query == "wait":
                 await GATE.wait()
             if input.query == "lm failure":
-                lm = dspy.LM(
+                lm = BodyBoundedLM(
                     "openai/acp-unreachable",
                     api_base="http://127.0.0.1:29071/v1",
                     api_key="test",
@@ -378,7 +378,7 @@ async def test_answer_stream_flag_and_field_filter(
 
             dispatcher._query_rewriter = ConversationalQueryRewriteModule()
             dispatcher._query_rewriter.set_lm(
-                dspy.LM(
+                BodyBoundedLM(
                     "openai/acp-unreachable",
                     api_base="http://127.0.0.1:29071/v1",
                     api_key="test",
