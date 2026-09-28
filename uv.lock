@@ -399,18 +399,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncer"
-version = "0.0.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/67/7ea59c3e69eaeee42e7fc91a5be67ca5849c8979acac2b920249760c6af2/asyncer-0.0.8.tar.gz", hash = "sha256:a589d980f57e20efb07ed91d0dbe67f1d2fd343e7142c66d3a099f05c620739c", size = 18217, upload-time = "2024-08-24T23:15:36.449Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/04/15b6ca6b7842eda2748bda0a0af73f2d054e9344320f8bba01f994294bcb/asyncer-0.0.8-py3-none-any.whl", hash = "sha256:5920d48fc99c8f8f0f1576e1882f5022885589c5fcbc46ce4224ec3e53776eeb", size = 9209, upload-time = "2024-08-24T23:15:35.317Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -859,8 +847,8 @@ requires-dist = [
     { name = "cogniverse-telemetry-phoenix", editable = "libs/telemetry-phoenix" },
     { name = "cogniverse-vespa", editable = "libs/vespa" },
     { name = "colpali-engine", specifier = "==0.3.13" },
-    { name = "dspy", specifier = "==3.1.3" },
-    { name = "dspy-ai", specifier = "==3.1.3" },
+    { name = "dspy", specifier = "==3.4.0" },
+    { name = "dspy-ai", specifier = "==3.4.0" },
     { name = "embedding-atlas", specifier = "==0.20.0" },
     { name = "fastapi", specifier = "==0.135.3" },
     { name = "faster-whisper", specifier = "==1.2.1" },
@@ -871,7 +859,7 @@ requires-dist = [
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "langextract", specifier = "==1.2.1" },
     { name = "librosa", specifier = "==0.11.0" },
-    { name = "litellm", specifier = "==1.83.4" },
+    { name = "litellm", specifier = "==1.95.0" },
     { name = "mem0ai", specifier = "==1.0.11" },
     { name = "mlflow", specifier = "==3.11.1" },
     { name = "modal", specifier = "==1.4.1" },
@@ -1080,10 +1068,10 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = "==26.3.1" },
     { name = "cogniverse-foundation", editable = "libs/foundation" },
     { name = "cogniverse-sdk", editable = "libs/sdk" },
-    { name = "dspy", specifier = "==3.1.3" },
-    { name = "dspy-ai", specifier = "==3.1.3" },
+    { name = "dspy", specifier = "==3.4.0" },
+    { name = "dspy-ai", specifier = "==3.4.0" },
     { name = "fsspec", specifier = "==2025.9.0" },
-    { name = "litellm", specifier = "==1.83.4" },
+    { name = "litellm", specifier = "==1.95.0" },
     { name = "mem0ai", specifier = "==1.0.11" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.20.0" },
     { name = "opentelemetry-api", specifier = "==1.41.0" },
@@ -1228,7 +1216,7 @@ name = "cogniverse-foundation"
 source = { editable = "libs/foundation" }
 dependencies = [
     { name = "cogniverse-sdk" },
-    { name = "dspy" },
+    { name = "dspy", extra = ["optuna"] },
     { name = "dspy-ai" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1242,8 +1230,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cogniverse-sdk", editable = "libs/sdk" },
-    { name = "dspy", specifier = "==3.1.3" },
-    { name = "dspy-ai", specifier = "==3.1.3" },
+    { name = "dspy", extras = ["optuna"], specifier = "==3.4.0" },
+    { name = "dspy-ai", specifier = "==3.4.0" },
     { name = "fastapi", specifier = "==0.135.3" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "opentelemetry-api", specifier = "==1.41.0" },
@@ -1391,8 +1379,8 @@ requires-dist = [
     { name = "cogniverse-core", editable = "libs/core" },
     { name = "cogniverse-foundation", editable = "libs/foundation" },
     { name = "cogniverse-sdk", editable = "libs/sdk" },
-    { name = "dspy", specifier = "==3.1.3" },
-    { name = "dspy-ai", specifier = "==3.1.3" },
+    { name = "dspy", specifier = "==3.4.0" },
+    { name = "dspy-ai", specifier = "==3.4.0" },
     { name = "fastapi", specifier = "==0.135.3" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pydantic", specifier = "==2.12.5" },
@@ -1776,43 +1764,44 @@ wheels = [
 
 [[package]]
 name = "dspy"
-version = "3.1.3"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "asyncer" },
     { name = "cachetools" },
     { name = "cloudpickle" },
     { name = "diskcache" },
     { name = "gepa" },
     { name = "json-repair" },
     { name = "litellm" },
-    { name = "numpy" },
     { name = "openai" },
-    { name = "optuna" },
     { name = "orjson" },
     { name = "pydantic" },
     { name = "regex" },
     { name = "requests" },
     { name = "tenacity" },
     { name = "tqdm" },
-    { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/06/1b693d28a08e7a8b9ea17641259a73760de111ce0187cdcf030148a42ec1/dspy-3.1.3.tar.gz", hash = "sha256:e2fd9edc8678e0abcacd5d7b901f37b84a9f48a3c50718fc7fee95a492796019", size = 261178, upload-time = "2026-02-05T16:24:18.489Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/1b/5b1964b0f1299aaca2b98300d73d972046ab70edb53c47674d6ace3c1bf1/dspy-3.4.0.tar.gz", hash = "sha256:4dea089c6bd1f8d314e1095e7f64b4b4ff64bb8a09549efee026c0a609f08c16", size = 887770, upload-time = "2026-09-25T04:04:25.439Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/83/2432c2f987e738e4c15dfa3497daa5811a145facf4525bebcb9d240736db/dspy-3.1.3-py3-none-any.whl", hash = "sha256:26f983372ebb284324cc2162458f7bce509ef5ef7b48be4c9f490fa06ea73e37", size = 312353, upload-time = "2026-02-05T16:24:16.753Z" },
+    { url = "https://files.pythonhosted.org/packages/17/96/31628d4231b5dd7edbe9eaf5c975d1055f4b79b337062a1f957dca6dd931/dspy-3.4.0-py3-none-any.whl", hash = "sha256:36de329ecdaf18e31977e26c61b587caa470a34f574f2fe6cb7f4c82bcbf97cc", size = 987510, upload-time = "2026-09-25T04:04:23.915Z" },
+]
+
+[package.optional-dependencies]
+optuna = [
+    { name = "optuna" },
 ]
 
 [[package]]
 name = "dspy-ai"
-version = "3.1.3"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dspy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/56/fc26b51a10b360255e957e4af95286ec0677707e0bfed29dad1a0cc49d45/dspy_ai-3.1.3.tar.gz", hash = "sha256:ad414555bcd5a57b6d135736876256cfeb93ddf735455d173e5f3b875c1c00d0", size = 1113, upload-time = "2026-02-05T16:24:27.096Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/df/86d7c3efbf81528e5f385def06380d477263f3d9a64a01dc5a67eb3bc48d/dspy_ai-3.4.0.tar.gz", hash = "sha256:4250d439ef5c12475e04ce57eeff4f8379905a5fcbb9827f49a062adb4e12010", size = 1239, upload-time = "2026-09-25T04:04:31.489Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/d9/96671e96cae106ad7ecf4809be906925cd67401e7eee31b4f28bb4641fa4/dspy_ai-3.1.3-py3-none-any.whl", hash = "sha256:128ab0c0aef1386491a704f16823faf93da165674f9cf1fa7165f4f2d1ec9e67", size = 1096, upload-time = "2026-02-05T16:24:26.363Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/48/99b957c07f8a4a81931e34c7dfdb7930eaab82fefef748b02a02e9cc6f87/dspy_ai-3.4.0-py3-none-any.whl", hash = "sha256:74c8899a92db77fd3b57744e5fa36686e017f4bb43e748f40bf6b40b6c098b9f", size = 1170, upload-time = "2026-09-25T04:04:30.339Z" },
 ]
 
 [[package]]
@@ -2120,11 +2109,11 @@ http = [
 
 [[package]]
 name = "gepa"
-version = "0.0.26"
+version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ef/98/b8f1ccc8cc2a319f21433df45bcec8a8f7903ee08aacd0acfdc475f47c05/gepa-0.0.26.tar.gz", hash = "sha256:0119ca8022e93b6236bc154a57bb910bdb117485dc067d77777933dd3e9e9ad8", size = 141776, upload-time = "2026-01-24T18:11:18.362Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/56/925779e5690971f1b022f7d107caf015c33ec09560261273ec137e23a8f2/gepa-0.1.4.tar.gz", hash = "sha256:6dd153a676ae5481764860d19286a9c0e8ddb5ef70d7f13044faf24978bdb6b8", size = 351343, upload-time = "2026-07-15T14:53:59.929Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/6e/f1141b76398026ef77f0d52a17b37d26ceb7cd320e0ad3a72c59fe00b983/gepa-0.0.26-py3-none-any.whl", hash = "sha256:331e40d8693a4192de2eb3b2b4df10d410ead49173f748d50c32a035cf746e63", size = 139666, upload-time = "2026-01-24T18:11:16.836Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/77/5b3a281cfd9caaa9e68349b434cf27f1ca448003ee0067a1ae2184dc52d1/gepa-0.1.4-py3-none-any.whl", hash = "sha256:12b971039599625c156d2231f6d72a29c31a22e9c237689459b5f1a3c353f532", size = 290167, upload-time = "2026-07-15T14:53:58.422Z" },
 ]
 
 [[package]]
@@ -3522,7 +3511,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.83.4"
+version = "1.95.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -3538,9 +3527,10 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/c4/30469c06ae7437a4406bc11e3c433cfd380a6771068cca15ea918dcd158f/litellm-1.83.4.tar.gz", hash = "sha256:6458d2030a41229460b321adee00517a91dbd8e63213cc953d355cb41d16f2d4", size = 17733899, upload-time = "2026-04-07T04:33:47.445Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/96/8cdfb9aaf584b57af35a0423c111a1c1264a78b548cebbb5ed96defacdab/litellm-1.95.0.tar.gz", hash = "sha256:0ef126d52c7a559f8353e50d60fd0d5e7e6c8767ad54df25ddaf79b9edca1afc", size = 17513577, upload-time = "2026-08-02T02:52:49.465Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/bd/df19d3f8f6654535ee343a341fd921f81c411abf601a53e3eaef58129b02/litellm-1.83.4-py3-none-any.whl", hash = "sha256:17d7b4d48d47aca988ea4f762ddda5e7bd72cda3270192b22813d0330869d7b4", size = 16015555, upload-time = "2026-04-07T04:33:44.268Z" },
+    { url = "https://files.pythonhosted.org/packages/02/c1/4301aa8ef6d2fb0e4a2b8dec973d7c4499f680b26d2e1b77643864235a4b/litellm-1.95.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:1bdf7153557cc0851fa9477b137fde476c56d5de92a5778ecfc6c3a75439a4e1", size = 26300401, upload-time = "2026-08-02T02:52:19.501Z" },
+    { url = "https://files.pythonhosted.org/packages/55/48/06447e1125d7ae31bd24d34d2af2833b15aed79dc5f7e8b45862c1d06af8/litellm-1.95.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:cf014ff515825ad49937b4cdf95616270789311db7841d16702e0a5b1ac5b067", size = 26300935, upload-time = "2026-08-02T02:52:30.032Z" },
 ]
 
 [[package]]

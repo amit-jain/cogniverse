@@ -38,9 +38,9 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     # --- Pinned versions (supply chain safety) ---
     # LLM & AI Frameworks
-    "litellm==1.83.4",
-    "dspy-ai==3.1.3",
-    "dspy==3.1.3",
+    "litellm==1.95.0",
+    "dspy-ai==3.4.0",
+    "dspy==3.4.0",
     "openai-whisper==20250625",
     "ollama==0.6.1",
     "sentence-transformers==5.1.1",
