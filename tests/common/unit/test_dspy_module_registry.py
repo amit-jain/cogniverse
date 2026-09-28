@@ -89,6 +89,41 @@ class TestDSPyOptimizerRegistry:
         )
         assert optimizer_class == dspy.MIPROv2
 
+    def test_registered_mipro_v2_compiles(self):
+        """MIPROv2's search backend (optuna) is installed with dspy."""
+        from dspy.utils.dummies import DummyLM
+
+        optimizer_class = DSPyOptimizerRegistry.get_optimizer_class(
+            OptimizerType.MIPRO_V2
+        )
+        trainset = [
+            dspy.Example(question=f"{n}+{n}", answer=str(2 * n)).with_inputs("question")
+            for n in range(4)
+        ]
+        lm = DummyLM([{"answer": "4", "proposed_instruction": "Add."}] * 200)
+        optimizer = optimizer_class(
+            metric=lambda example, prediction, trace=None: float(
+                example.answer == prediction.answer
+            ),
+            prompt_model=lm,
+            task_model=lm,
+            auto=None,
+            num_candidates=1,
+            num_threads=1,
+            max_bootstrapped_demos=0,
+            max_labeled_demos=0,
+            verbose=False,
+        )
+        with dspy.context(lm=lm):
+            compiled = optimizer.compile(
+                dspy.Predict("question -> answer"),
+                trainset=trainset,
+                valset=trainset,
+                num_trials=1,
+                minibatch=False,
+            )
+        assert isinstance(compiled, dspy.Predict)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
