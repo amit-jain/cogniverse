@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -30,7 +31,10 @@ from cogniverse_agents.deep_research_agent import (
 from cogniverse_agents.inference.rlm_inference import RLMInference
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.registries.agent_registry import AgentEndpoint, AgentRegistry
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    LLMEndpointConfig,
+)
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import agents
 from tests.agents.integration.test_rlm_deadlines import scripted_model
@@ -57,6 +61,8 @@ SECOND_LIVE_TENANT_ID = "deep_research:second"
 # first completion past it, so the run stops at the deadline.
 RLM_TIMEOUT_SECONDS = 10
 RLM_MODEL_HOLD_SECONDS = 12.0
+# How long the RLM's LM client waits for a completion before retrying it.
+RLM_REQUEST_TIMEOUT_SECONDS = LLMEndpointConfig(model="openai/x").request_timeout
 
 
 @pytest.fixture(scope="module")
@@ -405,6 +411,11 @@ class TestRLMOptionsThroughTheDispatcher:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "research_skew_s",
+        [0.0, RLM_REQUEST_TIMEOUT_SECONDS + 5],
+        ids=["aligned", "research_skew_past_request_timeout"],
+    )
     async def test_concurrent_tenants_each_run_their_rlm_under_their_own_tenant(
         self,
         deep_research_dispatcher,
@@ -412,14 +423,28 @@ class TestRLMOptionsThroughTheDispatcher:
         second_live_corpus,
         dspy_lm_planning,
         rlm_runs,
+        monkeypatch,
+        research_skew_s,
     ):
         queries = {
             LIVE_TENANT_ID: "What visual patterns appear in outdoor activity videos?",
             SECOND_LIVE_TENANT_ID: "Which outdoor activities do the videos show?",
         }
         # Neither RLM's first completion is answered until both runs are in
-        # flight, so the two tenants' RLM runs overlap.
+        # flight, so the two tenants' RLM runs overlap. Both runs start once
+        # both research phases are done: a first completion held for the
+        # other tenant past the LM's request timeout is retried.
         both_in_flight = threading.Barrier(2)
+        both_researched = threading.Barrier(2)
+        run_rlm = RLMInference.process
+
+        def after_research(self, query, context, **kwargs):
+            if self._tenant_id == SECOND_LIVE_TENANT_ID:
+                time.sleep(research_skew_s)
+            both_researched.wait(timeout=300)
+            return run_rlm(self, query, context, **kwargs)
+
+        monkeypatch.setattr(RLMInference, "process", after_research)
         with scripted_model(RLM_MODEL_HOLD_SECONDS, arrivals=both_in_flight) as model:
             results = await asyncio.gather(
                 *(
@@ -433,6 +458,7 @@ class TestRLMOptionsThroughTheDispatcher:
             )
             rlm_model_calls = len(model["calls"])
 
+        assert both_researched.broken is False
         assert both_in_flight.broken is False
         # Two completions per run, as for a single tenant.
         assert rlm_model_calls == 4
