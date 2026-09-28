@@ -171,7 +171,7 @@ def test_expired_deadline_stops_further_iterations():
 
 def test_expired_deadline_stops_in_repl_model_calls():
     """A generated program cannot spend its sub-LLM budget past the deadline."""
-    hold = 2.0
+    hold = 4.0
     with scripted_model(hold, code=SUBCALL_CODE) as model:
         inference = _inference(model["api_base"], timeout_seconds=hold / 2)
         started = time.monotonic()
@@ -191,7 +191,7 @@ def test_expired_deadline_stops_in_repl_model_calls():
 
 def test_one_callers_deadline_does_not_truncate_another():
     """Two budgets on one module: neither caller sees the other's deadline."""
-    hold = 2.0
+    hold = 4.0
     with scripted_model(hold) as model:
         inference = _inference(model["api_base"], timeout_seconds=None)
         rlm = inference._get_rlm()
