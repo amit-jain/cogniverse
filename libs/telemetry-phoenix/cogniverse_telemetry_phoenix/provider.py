@@ -185,6 +185,68 @@ def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
     return client
 
 
+class _AttributeNode:
+    __slots__ = ("value", "children", "indices")
+
+    def __init__(self) -> None:
+        self.value: Any = None
+        self.children: Dict[Any, "_AttributeNode"] = {}
+        self.indices: set = set()
+
+    def child(self, segment: Any, *, as_index: bool) -> "_AttributeNode":
+        if not as_index:
+            self.indices.discard(segment)
+        elif self.value is None and segment not in self.children:
+            self.indices.add(segment)
+        return self.children.setdefault(segment, _AttributeNode())
+
+
+def _emit_attributes(node: _AttributeNode, path: str) -> Generator:
+    if node.value is not None:
+        yield path, node.value
+    elif path and node.indices:
+        yield (
+            path,
+            [
+                dict(_emit_attributes(node.children[index], ""))
+                for index in sorted(node.indices)
+            ],
+        )
+    elif node.indices:
+        for index in sorted(node.indices):
+            yield from _emit_attributes(node.children[index], str(index))
+    elif path:
+        yield path, dict(_emit_attributes(node, ""))
+        return
+    for segment, child in node.children.items():
+        if segment not in node.indices:
+            yield from _emit_attributes(
+                child, f"{path}.{segment}" if path else str(segment)
+            )
+
+
+def _unflatten_attributes(pairs: Any) -> Dict[str, Any]:
+    """Nest dotted span attributes as phoenix.trace.attributes.unflatten does."""
+    root = _AttributeNode()
+    for key, value in pairs:
+        if value is None:
+            continue
+        node = root
+        rest = key
+        while True:
+            segment, _, rest = rest.partition(".")
+            segment = segment.strip()
+            if segment.isdigit():
+                node = node.child(int(segment), as_index=bool(rest))
+            else:
+                node = node.child(segment, as_index=False)
+            if not rest:
+                break
+        node.value = value
+        node.indices.clear()
+    return dict(_emit_attributes(root, ""))
+
+
 def _normalize_span_page(
     spans: Sequence[Dict[str, Any]], *, project: str
 ) -> pd.DataFrame:
@@ -208,12 +270,10 @@ def _normalize_span_page(
                 f"ISO-8601 timestamp in {timestamp_column}: {exc}"
             ) from exc
 
-    from phoenix.trace.attributes import unflatten
-
     nested_columns: Dict[str, List[Any]] = {}
     for row_index, span in enumerate(spans):
         attributes = span.get("attributes") or {}
-        nested_attributes = unflatten(attributes.items())
+        nested_attributes = _unflatten_attributes(attributes.items())
         for attribute_name, value in nested_attributes.items():
             if not isinstance(value, (dict, list)):
                 continue
