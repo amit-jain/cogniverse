@@ -95,7 +95,9 @@ def test_deno_cache_dir_in_allow_read_even_when_probe_poisoned(monkeypatch):
     # --allow-read regardless of that probe's outcome.
     from dspy.primitives.python_interpreter import PythonInterpreter
 
-    monkeypatch.setattr(PythonInterpreter, "_get_deno_dir", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        PythonInterpreter, "_get_deno_dir", staticmethod(lambda deno_executable: None)
+    )
     monkeypatch.delenv("DENO_DIR", raising=False)
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
 

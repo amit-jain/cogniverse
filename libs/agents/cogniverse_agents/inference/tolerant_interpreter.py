@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 import dspy
-from dspy.primitives.code_interpreter import CodeInterpreter
 from dspy.primitives.python_interpreter import (
     CodeInterpreterError,
     PythonInterpreter,
@@ -54,6 +53,7 @@ class TolerantPythonInterpreter(PythonInterpreter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._request_id = 0
         deno_dir = _deno_cache_dir()
         for i, arg in enumerate(self.deno_command):
             if not arg.startswith("--allow-read="):
@@ -140,9 +140,16 @@ class TolerantRLM(dspy.RLM):
     instance.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, max_iterations: int | None = None, **kwargs):
+        if max_iterations is not None:
+            kwargs["max_iters"] = max_iterations
+        kwargs.setdefault("interpreter_factory", TolerantPythonInterpreter)
         super().__init__(*args, **kwargs)
         self._deadline_state = threading.local()
+
+    @property
+    def max_iterations(self) -> int:
+        return self.max_iters
 
     @contextmanager
     def deadline(self, timeout_seconds: float | None) -> Iterator[None]:
@@ -188,20 +195,3 @@ class TolerantRLM(dspy.RLM):
             return tool(*args, **kwargs)
 
         return bounded
-
-    @contextmanager
-    def _interpreter_context(
-        self, execution_tools: dict[str, Callable]
-    ) -> Iterator[CodeInterpreter]:
-        if self._interpreter is not None:
-            with super()._interpreter_context(execution_tools) as repl:
-                yield repl
-            return
-        repl = TolerantPythonInterpreter(
-            tools=execution_tools,
-            output_fields=self._get_output_fields_info(),
-        )
-        try:
-            yield repl
-        finally:
-            repl.shutdown()

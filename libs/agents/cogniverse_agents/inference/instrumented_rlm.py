@@ -26,6 +26,10 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, Optional
 
+from dspy.primitives.code_interpreter import (
+    CodeInterpreter,
+    resolve_interpreter_factory,
+)
 from dspy.primitives.prediction import Prediction
 from dspy.primitives.repl_types import REPLHistory
 
@@ -262,7 +266,12 @@ class InstrumentedRLM(TolerantRLM):
                 reason=reason,
             )
 
-    def forward(self, **input_args) -> Prediction:
+    def forward(
+        self,
+        *,
+        interpreter_factory: Callable[[], CodeInterpreter] | None = None,
+        **input_args,
+    ) -> Prediction:
         """Execute RLM with progress event emission.
 
         Overrides dspy.RLM.forward() to add event emission at each iteration.
@@ -279,6 +288,8 @@ class InstrumentedRLM(TolerantRLM):
             ValueError: If required input fields are missing
         """
         self._validate_inputs(input_args)
+        if interpreter_factory is None:
+            interpreter_factory = resolve_interpreter_factory(self._interpreter_factory)
 
         self._emit_sync(
             lambda: create_status_event(
@@ -294,8 +305,9 @@ class InstrumentedRLM(TolerantRLM):
         execution_tools = self._prepare_execution_tools()
         variables = self._build_variables(**input_args)
 
-        with self._interpreter_context(execution_tools) as repl:
-            history: REPLHistory = REPLHistory()
+        with self._interpreter_context(execution_tools, interpreter_factory) as repl:
+            regular_args = self._prepare_serializable_vars(input_args, repl)
+            history: REPLHistory = REPLHistory(max_output_chars=self.max_output_chars)
 
             for iteration in range(self.max_iterations):
                 self._check_cancelled()
@@ -315,7 +327,13 @@ class InstrumentedRLM(TolerantRLM):
                 )
 
                 result = self._execute_iteration(
-                    repl, variables, history, iteration, input_args, output_field_names
+                    repl,
+                    variables,
+                    history,
+                    iteration,
+                    regular_args,
+                    output_field_names,
+                    interpreter_factory,
                 )
 
                 if isinstance(result, Prediction):
