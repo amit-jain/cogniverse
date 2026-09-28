@@ -657,6 +657,7 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ensure_deno")
 async def test_rlm_promotion_emits_instrumented_rlm_child_span(
     captured_spans, dspy_lm, monkeypatch
 ):
