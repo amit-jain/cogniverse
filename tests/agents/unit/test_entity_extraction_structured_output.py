@@ -82,6 +82,10 @@ class _RecordingLM(dspy.BaseLM):
         self.completion = completion
         self.calls: list[dict[str, Any]] = []
 
+    @property
+    def supported_params(self) -> set[str]:
+        return {"response_format"}
+
     def __call__(self, prompt=None, messages=None, **kwargs):
         self.calls.append({"prompt": prompt, "messages": messages, "kwargs": kwargs})
         return [self.completion]

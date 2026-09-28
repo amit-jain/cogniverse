@@ -91,6 +91,30 @@ class LenientJSONAdapter(JSONAdapter):
         ("queries", "sub_questions"),
     )
 
+    def _call_postprocess(
+        self,
+        processed_signature: type[Signature],
+        original_signature: type[Signature],
+        outputs: list[dict[str, Any] | str],
+        lm: Any,
+        lm_kwargs: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        tool_call_field = self._get_tool_call_output_field_name(original_signature)
+        for output in outputs:
+            text = output.get("text") if isinstance(output, dict) else output
+            tool_calls = output.get("tool_calls") if isinstance(output, dict) else None
+            if not text and not (tool_calls and tool_call_field):
+                raise LMOutputIncomplete(
+                    adapter_name=type(self).__name__,
+                    signature=original_signature,
+                    lm_response=str(output),
+                    missing_fields=original_signature.output_fields,
+                    parsed_result={},
+                )
+        return super()._call_postprocess(
+            processed_signature, original_signature, outputs, lm, lm_kwargs
+        )
+
     def parse(self, signature: type[Signature], completion: str) -> dict[str, Any]:
         expected = set(signature.output_fields.keys())
         if not expected:

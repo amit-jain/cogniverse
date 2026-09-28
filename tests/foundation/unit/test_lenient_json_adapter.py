@@ -236,3 +236,23 @@ class TestRequiredTypes:
         assert set(
             error.value.signature.output_fields
         ) - error.value.parsed_result.keys() == {"summary"}
+
+
+class _BlankLM(dspy.BaseLM):
+    """Answers every request with an empty completion."""
+
+    def forward(self, prompt=None, messages=None, **kwargs):
+        return {
+            "model": self.model,
+            "choices": [{"message": {"role": "assistant", "content": ""}}],
+            "usage": {},
+        }
+
+
+class TestEmptyResponse:
+    def test_an_empty_response_is_incomplete_output(self, adapter):
+        with pytest.raises(LMOutputIncomplete) as error:
+            adapter(_BlankLM("blank/model"), {}, PlanSignature, [], {"query": "q"})
+        assert error.value.missing_fields == ("reasoning", "sub_questions")
+        assert error.value.parsed_result == {}
+        assert error.value.signature is PlanSignature

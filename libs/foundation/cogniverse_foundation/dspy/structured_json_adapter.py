@@ -127,13 +127,18 @@ class StructuredJSONAdapter(JSONAdapter):
     def parse(self, signature: type[Signature], completion: str) -> dict[str, Any]:
         try:
             return super().parse(signature, completion)
+        except AdapterParseError as exc:
+            if not isinstance(exc.__cause__, ValueError):
+                raise
+            invalid = exc.__cause__
         except ValueError as exc:
-            raise AdapterParseError(
-                adapter_name=type(self).__name__,
-                signature=signature,
-                lm_response=completion,
-                message=f"LM response violates the output schema: {exc}",
-            ) from exc
+            invalid = exc
+        raise AdapterParseError(
+            adapter_name=type(self).__name__,
+            signature=signature,
+            lm_response=completion,
+            message=f"LM response violates the output schema: {invalid}",
+        ) from invalid
 
     def _schema_kwargs(
         self, lm_kwargs: dict[str, Any], signature: type[Signature]
