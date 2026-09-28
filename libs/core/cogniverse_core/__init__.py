@@ -1,0 +1,3 @@
+from cogniverse_foundation.dspy_preload import load_dspy_dependencies
+
+load_dspy_dependencies()

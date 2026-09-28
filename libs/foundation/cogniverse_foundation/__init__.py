@@ -11,4 +11,8 @@ Modules:
 - registry: Component registry primitives
 """
 
+from cogniverse_foundation.dspy_preload import load_dspy_dependencies
+
+load_dspy_dependencies()
+
 __version__ = "0.1.0"
