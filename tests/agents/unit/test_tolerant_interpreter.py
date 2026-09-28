@@ -112,3 +112,21 @@ def test_deno_dir_env_wins(monkeypatch):
     interp = TolerantPythonInterpreter()
     allow_read = next(a for a in interp.deno_command if a.startswith("--allow-read="))
     assert "/custom/deno-cache" in allow_read.split("=", 1)[1].split(",")
+
+
+def test_deno_in_the_home_install_is_found_without_path(monkeypatch, tmp_path):
+    # ~/.deno/bin is where the Deno installer puts the binary; RLMInference's
+    # availability probe falls back to it. Every RLM interpreter must find it
+    # there too, since dspy resolves the executable when it is constructed.
+    home_bin = tmp_path / ".deno" / "bin"
+    home_bin.mkdir(parents=True)
+    deno = home_bin / "deno"
+    deno.write_text("#!/bin/sh\nexit 0\n")
+    deno.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("DENO_DIR", str(tmp_path / "deno-cache"))
+
+    interp = TolerantPythonInterpreter()
+
+    assert interp.deno_command[0] == str(deno)

@@ -28,6 +28,8 @@ from dspy.primitives.python_interpreter import (
     PythonInterpreter,
 )
 
+from cogniverse_agents.inference.deno_check import is_deno_available
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,7 @@ class TolerantPythonInterpreter(PythonInterpreter):
     """Skips stale channel messages instead of failing the request."""
 
     def __init__(self, *args, **kwargs):
+        is_deno_available()
         super().__init__(*args, **kwargs)
         self._request_id = 0
         deno_dir = _deno_cache_dir()
