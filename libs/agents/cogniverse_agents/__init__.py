@@ -4,6 +4,10 @@ Cogniverse Agents
 Agent implementations for the multi-agent system.
 """
 
+from cogniverse_foundation.dspy_preload import load_dspy_dependencies
+
+load_dspy_dependencies()
+
 from cogniverse_agents.adapter_loader import (
     AdapterAwareMixin,
     get_active_adapter_path,
