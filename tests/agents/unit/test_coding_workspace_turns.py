@@ -10,6 +10,7 @@ import dspy
 import pytest
 
 from cogniverse_agents import coding_agent as coding
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 
 
 def _memory_config_manager():
@@ -363,7 +364,7 @@ async def test_workspace_lm_connection_failure_is_not_completion():
         coding.CodingDeps(tenant_id="workspace:workspace"),
         config_manager=_memory_config_manager(),
     )
-    lm = dspy.LM(
+    lm = BodyBoundedLM(
         "openai/unavailable",
         api_base="http://127.0.0.1:29071/v1",
         api_key="unused",

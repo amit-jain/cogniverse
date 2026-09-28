@@ -31,6 +31,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
     SpaCyDependencyAnalyzer,
     SpaCyModelUnavailableError,
 )
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
 )
@@ -52,7 +53,7 @@ GLINER_TEST_MODEL = "urchade/gliner_small-v2.1"
 
 
 def _dead_lm() -> dspy.LM:
-    return dspy.LM(
+    return BodyBoundedLM(
         model="openai/dead",
         api_base=DEAD_LM_BASE,
         api_key="not-required",

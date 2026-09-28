@@ -6,6 +6,8 @@ import logging
 from typing import Any, Optional
 
 import dspy
+from dspy.lm15 import LM15Error
+from dspy.utils.exceptions import LMError
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.lm_deadline import (
@@ -28,6 +30,20 @@ from cogniverse_foundation.config.request_body import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def provider_exception(exc: BaseException) -> BaseException:
+    """The provider's own exception under dspy's ``LMError`` wrapping, else ``exc``.
+
+    dspy raises its ``LMError`` from an lm15 error raised from the exception
+    litellm raised; callers classify on the latter.
+    """
+    current = exc
+    while isinstance(current, (LMError, LM15Error)) and current.__cause__ is not None:
+        current = current.__cause__
+    if isinstance(current, (LMError, LM15Error)):
+        return exc
+    return current
 
 
 class BodyBoundedLM(dspy.LM):
@@ -53,6 +69,7 @@ class BodyBoundedLM(dspy.LM):
                     f"TenantScopedLMCache and DSPy's shared cache is off"
                 )
         kwargs["cache"] = False
+        kwargs.setdefault("engine", "litellm")
         super().__init__(model, **kwargs)
         # Plain attributes, never dspy kwargs: everything in self.kwargs is
         # forwarded to litellm as a request parameter.
@@ -147,7 +164,10 @@ class BodyBoundedLM(dspy.LM):
         try:
             return super().forward(messages=messages, **kwargs)
         except Exception as exc:
-            self._reraise(exc, detail)
+            original = provider_exception(exc)
+            self._reraise(original, detail)
+            if original is not exc:
+                raise original
             raise
 
     async def _aupstream(self, messages: list[dict[str, Any]], **kwargs):
@@ -157,7 +177,10 @@ class BodyBoundedLM(dspy.LM):
         try:
             return await super().aforward(messages=messages, **kwargs)
         except Exception as exc:
-            self._reraise(exc, detail)
+            original = provider_exception(exc)
+            self._reraise(original, detail)
+            if original is not exc:
+                raise original
             raise
 
     def forward(self, prompt=None, messages=None, **kwargs):

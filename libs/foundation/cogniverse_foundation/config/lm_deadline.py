@@ -9,6 +9,7 @@ abandoned, so an attempt that has not started yet never starts.
 
 from __future__ import annotations
 
+import functools
 import threading
 import time
 from contextlib import contextmanager
@@ -194,17 +195,28 @@ _DEADLINE_CLIENTS: dict[tuple[str, Optional[str]], "openai.OpenAI"] = {}
 _DEADLINE_CLIENTS_LOCK = threading.Lock()
 
 
+@functools.cache
+def _shared_openai_client_class() -> type:
+    import openai
+
+    class SharedOpenAI(openai.OpenAI):
+        """dspy deep-copies each request; a copy shares this client."""
+
+        def __deepcopy__(self, memo: dict) -> "SharedOpenAI":
+            return self
+
+    return SharedOpenAI
+
+
 def deadline_bound_openai_client(
     api_base: str, api_key: Optional[str]
 ) -> "openai.OpenAI":
     """The OpenAI-compatible client whose requests honour the bound deadline."""
-    import openai
-
     key = (api_base, api_key)
     with _DEADLINE_CLIENTS_LOCK:
         client = _DEADLINE_CLIENTS.get(key)
         if client is None:
-            client = openai.OpenAI(
+            client = _shared_openai_client_class()(
                 base_url=api_base,
                 api_key=api_key or "unset",
                 max_retries=0,
