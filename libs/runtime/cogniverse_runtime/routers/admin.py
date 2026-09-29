@@ -2551,3 +2551,48 @@ async def revoke_harness_key(
         return {"revoked": revoked, "key_hash": key_hash}
     except ConfigStoreUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/graph/merge-article-nodes")
+async def merge_article_nodes(
+    dry_run: bool = Query(True, description="Report the merges without writing."),
+    tenant_id: Optional[str] = Query(
+        None, min_length=1, description="Scope to one tenant; default every tenant."
+    ),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
+) -> Dict[str, Any]:
+    """Merge knowledge-graph nodes whose id is ``<the|a|an>_<id>`` into the
+    tenant's ``<id>`` node, re-pointing their edges and content back-refs.
+
+    See ``cogniverse_agents.graph.article_node_migration`` for the rule and
+    the merge semantics. 404 when ``tenant_id`` has no deployed graph.
+    """
+    from cogniverse_agents.graph import article_node_migration
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+    tenant_ids = None
+    if tenant_id is not None:
+        try:
+            tenant_ids = [canonical_tenant_id(tenant_id)]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def resolve_graph_backend():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            "vespa",
+            tenant_id=SYSTEM_TENANT_ID,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+    try:
+        reports = await asyncio.to_thread(
+            article_node_migration.merge_article_nodes,
+            resolve_graph_backend,
+            tenant_ids=tenant_ids,
+            apply=not dry_run,
+        )
+    except article_node_migration.UnknownGraphTenantError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"dry_run": dry_run, "tenants": [r.to_dict() for r in reports]}
