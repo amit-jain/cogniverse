@@ -22,6 +22,7 @@ libs/evaluation/cogniverse_evaluation/
 │   ├── ground_truth.py                  # Ground truth extraction
 │   ├── schema_analyzer.py               # Schema analysis framework
 │   ├── inspect_scorers.py               # Inspect AI scorer helpers
+│   ├── inspect_model.py                 # Inspect AI "cogniverse" model provider (litellm)
 │   ├── reranking.py                     # Reranking logic
 │   └── solver_output.py                 # Solver output formatting
 ├── evaluators/                          # Evaluator implementations
@@ -1542,6 +1543,33 @@ The Interactive Search tab in the dashboard provides unified session evaluation:
    - Click "Log Session Evaluation" to record
 
 **Note:** Session evaluation works for both single-turn and multi-turn conversations, providing a unified annotation mechanism.
+
+### Inspect AI Model Provider
+
+**File:** `libs/evaluation/cogniverse_evaluation/core/inspect_model.py`
+
+`inspect_model(endpoint)` gives Inspect AI a model on the `cogniverse`
+provider, which sends each call with litellm using the `LLMEndpointConfig`:
+the same api_base, key resolution, extra body, headers, sampling and timeout
+as `create_dspy_lm`.
+Inspect AI owns retries; litellm makes one attempt per call. Text and image
+messages are supported, tool calls are not.
+
+```python
+from inspect_ai import eval as inspect_eval
+
+from cogniverse_evaluation.core.inspect_model import inspect_model
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+model = inspect_model(
+    LLMEndpointConfig(model="openai/google/gemma-4-e4b-it", api_base=api_base)
+)
+logs = inspect_eval(task, model=model)
+```
+
+The provider is also registered as the `inspect_ai` entry point `cogniverse`,
+so `cogniverse/<litellm model>` names it wherever Inspect AI takes a model
+string.
 
 ---
 
