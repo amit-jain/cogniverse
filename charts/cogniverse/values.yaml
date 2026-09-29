@@ -655,9 +655,12 @@ dashboard:
 # ===========================================
 phoenix:
   enabled: true
+  # Pinned by tag and multi-arch index digest; clear `digest` to fall back to
+  # `tag`.
   image:
     repository: arizephoenix/phoenix
-    tag: "14.2.1"
+    tag: "20.3.0"
+    digest: "sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -710,6 +713,9 @@ phoenix:
     PHOENIX_WORKING_DIR: "/phoenix-data"
     PHOENIX_PORT: "6006"
     PHOENIX_HOST: "0.0.0.0"
+    # /mcp is unauthenticated while Phoenix auth is off.
+    PHOENIX_ENABLE_MCP_SERVER: "false"
+    PHOENIX_DISABLE_AGENT_ASSISTANT: "true"
 
   # Health checks
   livenessProbe:

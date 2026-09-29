@@ -968,7 +968,7 @@ spec:
       {{- end }}
       containers:
       - name: phoenix
-        image: "{{ .Values.phoenix.image.repository }}:{{ .Values.phoenix.image.tag }}"
+        image: "{{ .Values.phoenix.image.repository }}:{{ .Values.phoenix.image.tag }}{{ with .Values.phoenix.image.digest }}@{{ . }}{{ end }}"
         imagePullPolicy: {{ .Values.phoenix.image.pullPolicy }}
         ports:
         - name: http
