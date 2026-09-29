@@ -64,7 +64,7 @@ from cogniverse_foundation.config.utils import get_config  # Lazy import
 
 - `pyvespa==1.1.2`: Official Vespa Python client
 - `numpy==2.4.4`: Array operations
-- `pydantic==2.12.5`: Configuration models
+- `pydantic==2.13.5`: Configuration models
 - `requests==2.33.1`: Document API and deployment requests
 
 ---

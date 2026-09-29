@@ -154,7 +154,7 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 **External:**
 
-- `inspect-ai==0.3.205`: Evaluation framework
+- `inspect-ai==0.3.272`: Evaluation framework
 
 - `pandas==2.3.3`: Data analysis
 

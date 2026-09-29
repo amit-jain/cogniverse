@@ -1425,7 +1425,7 @@ All entries below are direct package dependencies in `libs/finetuning/pyproject.
 | Model training | `peft==0.17.1`, `transformers==4.56.2`, `datasets==4.8.4`, `accelerate==1.13.0`, `trl==1.1.0`, `torch==2.8.0`, `scipy==1.17.1` |
 | Embeddings | `sentence-transformers==5.1.1` |
 | Experiment dependency | `mlflow==3.11.1` |
-| Remote and storage | `modal==1.4.1`, `boto3==1.40.61`, `huggingface-hub>=0.28.0` |
+| Remote and storage | `modal==1.4.1`, `boto3==1.43.46`, `huggingface-hub>=0.28.0` |
 | Data processing | `pandas==2.3.3`, `pyarrow==23.0.1` |
 
 The package's operational experiment records use the telemetry provider and the

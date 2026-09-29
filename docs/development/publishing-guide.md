@@ -129,7 +129,7 @@ dependencies = [
     "dspy-ai==3.4.0",
     "opentelemetry-api==1.41.0",
     "opentelemetry-sdk==1.41.0",
-    "pydantic==2.12.5",
+    "pydantic==2.13.5",
     "sqlalchemy==2.0.49",
     "pandas==2.3.3",
 ]
@@ -161,8 +161,6 @@ dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
     "cogniverse-synthetic",
-    # Google Agent Development Kit for composing agents
-    "google-adk==1.14.1",
     # Optimization and ML (xgboost gate routing — small, no torch dep)
     "xgboost==3.2.0",
     "scikit-learn==1.8.0",
