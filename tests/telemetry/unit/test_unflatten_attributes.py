@@ -1,8 +1,8 @@
-"""The provider's span-attribute unflattening matches Phoenix 14.2.1's.
+"""The provider's span-attribute unflattening matches Phoenix 20.3.0's.
 
 ``_normalize_span_page`` nests dotted span attributes the way
 ``phoenix.trace.attributes.unflatten`` does, without importing the Phoenix
-server package. Each case pins the output Phoenix 14.2.1 gives and compares
+server package. Each case pins the output Phoenix 20.3.0 gives and compares
 against that function directly; a seeded batch of generated inputs is
 compared the same way.
 """

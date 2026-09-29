@@ -75,8 +75,8 @@ flowchart TB
 
 **External Dependencies:**
 - `dspy-ai==3.4.0` - DSPy framework for LLM programs
-- `pydantic==2.12.5` - Data validation and schemas
-- `fastapi==0.135.3` - REST API framework
+- `pydantic==2.13.5` - Data validation and schemas
+- `fastapi==0.141.1` - REST API framework
 - `httpx==0.28.1` - HTTP client
 
 ---

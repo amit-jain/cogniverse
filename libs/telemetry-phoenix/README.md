@@ -80,8 +80,8 @@ The foundation layer automatically discovers and loads the Phoenix provider with
 - `cogniverse-evaluation` (required) - `EvaluationProvider`/`TraceMetrics` interfaces that `PhoenixEvaluationProvider`/`PhoenixAnalytics` implement
 
 **External Dependencies:**
-- `arize-phoenix-client==2.3.1` - Phoenix client (`phoenix.client`)
-- `arize-phoenix-otel==0.15.0` - Phoenix OpenTelemetry setup (`phoenix.otel`)
+- `arize-phoenix-client==3.5.0` - Phoenix client (`phoenix.client`)
+- `arize-phoenix-otel==0.17.1` - Phoenix OpenTelemetry setup (`phoenix.otel`)
 - `pandas==2.3.3` - DataFrame operations for spans/annotations/datasets
 - `httpx` - Async HTTP client used internally by `AsyncClient`'s transport (pulled in transitively by `arize-phoenix-client`, not declared directly)
 
