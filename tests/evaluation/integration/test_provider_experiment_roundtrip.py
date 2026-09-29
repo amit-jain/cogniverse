@@ -73,6 +73,31 @@ class TestExperimentRoundTrip:
         assert float(evaluation["output"]["score"]) == 0.85
         assert evaluation["output"]["label"] == "good"
 
+    def test_create_dataset_refuses_an_existing_name(self, provider, phoenix_container):
+        import httpx
+        from phoenix.client import Client
+
+        name = f"eval-ds-{uuid.uuid4().hex[:8]}"
+        created = provider.create_dataset(
+            name, [{"query": "q1", "expected": "r1"}], description="first"
+        )
+
+        assert created.name == name
+        assert [ex["input"] for ex in created.examples] == [
+            {"query": "q1", "expected": "r1"}
+        ]
+
+        with pytest.raises(httpx.HTTPStatusError) as conflict:
+            provider.create_dataset(name, [{"query": "q2", "expected": "r2"}])
+
+        assert conflict.value.response.status_code == 409
+        kept = Client(base_url=phoenix_container["http_endpoint"]).datasets.get_dataset(
+            dataset=name
+        )
+        assert [ex["input"] for ex in kept.examples] == [
+            {"query": "q1", "expected": "r1"}
+        ]
+
     def test_log_evaluation_unknown_experiment_raises(self, provider):
         with pytest.raises(ValueError):
             provider.log_evaluation(

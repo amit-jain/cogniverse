@@ -218,6 +218,9 @@ class PhoenixEvaluationProvider(EvaluationProvider):
 
         Returns:
             Phoenix dataset object
+
+        Raises:
+            httpx.HTTPStatusError: A dataset named ``name`` exists (409).
         """
         if not self._initialized:
             raise RuntimeError("Provider not initialized. Call initialize() first.")
@@ -228,13 +231,17 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             import pandas as pd
             from phoenix.client import Client
 
-            df = pd.DataFrame(data)
+            from cogniverse_telemetry_phoenix.provider import upload_dataset_rows
 
-            sync_client = Client(base_url=self.http_endpoint)
-            dataset = sync_client.datasets.create_dataset(
+            dataset_id = upload_dataset_rows(
+                self.http_endpoint,
                 name=name,
-                dataframe=df,
-                dataset_description=description or f"Dataset: {name}",
+                data=pd.DataFrame(data),
+                action="create",
+                description=description or f"Dataset: {name}",
+            )
+            dataset = Client(base_url=self.http_endpoint).datasets.get_dataset(
+                dataset=dataset_id
             )
 
             logger.info(f"Created Phoenix dataset '{name}' with {len(data)} examples")
