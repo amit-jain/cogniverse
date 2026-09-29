@@ -61,7 +61,6 @@ TRAJECTORY_FIELDS = frozenset(
     }
 )
 BASELINE_FIELDS = frozenset({"correct_at_1", "delta_to_target", "note"})
-EDGE_SUMMARY_FIELDS = frozenset({"edge_count", "unique_edge_ids"})
 EDGE_FIELDS = frozenset(f.name for f in dataclasses.fields(Edge))
 
 EXTRACTION = kg._build_curie_extraction()
@@ -570,23 +569,14 @@ def check_bright(root: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Claim extractor: the recorded edge id is the one production derives.        #
+# Claim extractor: the recorded seg_3 claim is one the claim fixture states.  #
 # --------------------------------------------------------------------------- #
+
+CLAIM_ANCHOR = "per_segment_kg/edge_marie_curie_discovered_radium.json"
 
 
 def check_claim_extractor(root: Path) -> None:
-    summary = _load(root, "claim_extractor_long_doc_edge_summary.json")
-    assert frozenset(summary) == EDGE_SUMMARY_FIELDS, (
-        f"claim_extractor_long_doc_edge_summary.json: fields {sorted(summary)} "
-        f"!= {sorted(EDGE_SUMMARY_FIELDS)}"
-    )
-    assert summary["edge_count"] == len(summary["unique_edge_ids"]) == 1, summary
-
-    anchor = json.loads(
-        (
-            GOLDEN_ROOT / "per_segment_kg" / "edge_marie_curie_discovered_radium.json"
-        ).read_text()
-    )
+    anchor = _load(root, CLAIM_ANCHOR)
     assert anchor["tenant_id"] == claim.TENANT_ID, "per-segment anchor: tenant_id"
     assert anchor["source_doc_id"] == claim.VIDEO_ID, (
         "per-segment anchor: source_doc_id"
@@ -597,6 +587,20 @@ def check_claim_extractor(root: Path) -> None:
         claim.SEG_3_END,
     ), "per-segment anchor: segment anchor differs from the claim fixture"
     assert anchor["modality"] == TRANSCRIPT_MODALITY, "per-segment anchor: modality"
+    assert anchor["relation"] in claim.SEG_3_RELATIONS, (
+        f"per-segment anchor: relation {anchor['relation']!r} is not one the "
+        f"seg_3 sentence states ({claim.SEG_3_RELATIONS})"
+    )
+
+    named = {normalize_name(hint) for hint in claim.SEG_3_ENTITY_HINTS}
+    assert anchor["source_node_id"] in named, (
+        f"per-segment anchor: source {anchor['source_node_id']!r} is not an "
+        f"entity the seg_3 sentence names ({sorted(named)})"
+    )
+    assert anchor["target_node_id"] in named, (
+        f"per-segment anchor: target {anchor['target_node_id']!r} is not an "
+        f"entity the seg_3 sentence names ({sorted(named)})"
+    )
 
     rebuilt = Edge(
         tenant_id=anchor["tenant_id"],
@@ -609,11 +613,6 @@ def check_claim_extractor(root: Path) -> None:
         ts_end=anchor["ts_end"],
         modality=anchor["modality"],
         source_doc_id=anchor["source_doc_id"],
-    )
-    assert summary["unique_edge_ids"] == [rebuilt.edge_id], (
-        f"claim_extractor_long_doc_edge_summary.json: recorded edge id "
-        f"{summary['unique_edge_ids']} is not the id production derives for the "
-        f"seg_3 discovery claim ({rebuilt.edge_id})"
     )
     assert anchor["doc_id"] == rebuilt.doc_id, "per-segment anchor: doc_id"
 
@@ -941,20 +940,16 @@ MUTATIONS: list[tuple[str, str, Callable[[Path], None], str]] = [
         r"bright_q24.json: missing_aspects",
     ),
     (
-        "edge_summary_count_disagrees",
+        "claim_anchor_relation_not_stated",
         "claim_extractor",
-        _set("claim_extractor_long_doc_edge_summary.json", ("edge_count",), 2),
-        r"edge_count",
+        _set(CLAIM_ANCHOR, ("relation",), "won"),
+        r"is not one the seg_3 sentence states",
     ),
     (
-        "edge_summary_wrong_id",
+        "claim_anchor_target_not_named",
         "claim_extractor",
-        _set(
-            "claim_extractor_long_doc_edge_summary.json",
-            ("unique_edge_ids", 0),
-            "0000000000000000",
-        ),
-        r"is not the id production derives",
+        _set(CLAIM_ANCHOR, ("target_node_id",), "radium_in_1898"),
+        r"target 'radium_in_1898' is not an entity",
     ),
 ]
 
