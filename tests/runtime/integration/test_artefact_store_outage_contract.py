@@ -74,7 +74,7 @@ def owned_phoenix():
             f"{grpc_port}:4317",
             "-e",
             "PHOENIX_WORKING_DIR=/phoenix",
-            "arizephoenix/phoenix:14.2.1",
+            "arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75",
         ],
         check=True,
         capture_output=True,

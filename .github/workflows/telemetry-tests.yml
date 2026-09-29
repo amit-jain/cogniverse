@@ -166,11 +166,11 @@ jobs:
 
     - name: Start Phoenix Docker
       run: |
-        docker pull arizephoenix/phoenix:14.2.1
+        docker pull arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75
         docker run -d --name phoenix-test \
           -p 6006:6006 \
           -p 4317:4317 \
-          arizephoenix/phoenix:14.2.1
+          arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75
 
         echo "Waiting for Phoenix to be ready..."
         for i in {1..30}; do

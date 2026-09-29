@@ -100,7 +100,7 @@ def phoenix_test_server():
                 "PHOENIX_WORKING_DIR=/phoenix_data",
                 "-e",
                 "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
-                "arizephoenix/phoenix:14.2.1",
+                "arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75",
             ],
             check=True,
             capture_output=True,
