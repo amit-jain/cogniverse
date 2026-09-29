@@ -158,9 +158,10 @@ def test_rlm_module_builds_once_under_concurrent_first_touch(monkeypatch):
     builds: list[object] = []
     build_lock = threading.Lock()
 
-    def counting_factory(_signature, *, max_iterations, max_output_chars):
+    def counting_factory(_signature, *, max_iterations, max_output_chars, tools):
         assert max_iterations == RLM_TRANSCRIPT_TURNS
         assert max_output_chars == _expected_output_chars()
+        assert [tool.__name__ for tool in tools] == ["extract_claims"]
         with build_lock:
             builds.append(object())
         return object()

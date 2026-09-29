@@ -212,6 +212,24 @@ def _resolve_leading_pronoun(text: str, entity_hints: List[str]) -> str:
     return text[:leading_ws_len] + antecedent + stripped[len(stripped.split()[0]) :]
 
 
+# Articles an LM prefixes to an entity name ("the Sorbonne" for "Sorbonne").
+_LEADING_ARTICLES = ("the ", "a ", "an ")
+
+
+def _hinted_entity(name: str, entity_hints: List[str]) -> str:
+    """The entity hint ``name`` names once a leading article is dropped.
+
+    A name that carries no article, or whose remainder names no hint, is
+    returned unchanged.
+    """
+    lowered = name.lower()
+    for article in _LEADING_ARTICLES:
+        if lowered.startswith(article):
+            remainder = name[len(article) :].strip().lower()
+            return next((h for h in entity_hints if h.lower() == remainder), name)
+    return name
+
+
 def _normalize_predicate(raw: str) -> str:
     """Map LLM-emitted predicate variants to the locked vocabulary."""
     p = raw.strip().lower().replace(" ", "_").replace("-", "_")
@@ -226,6 +244,25 @@ def _normalize_predicate(raw: str) -> str:
                 return _PREDICATE_ALIASES[stripped]
             return stripped
     return p
+
+
+def _recursive_claim_signature() -> type[dspy.Signature]:
+    """ClaimExtractionSignature as the recursive path presents it.
+
+    dspy.RLM shows its output fields to the model by name and type only, so
+    the claims contract in the field description never reaches the REPL, and
+    claims the model asks llm_query for come back under whatever contract its
+    own prompt states. The recursive module gets its claims from the
+    ``extract_claims`` tool, which runs this signature itself.
+    """
+    return ClaimExtractionSignature.with_instructions(
+        f"{ClaimExtractionSignature.instructions}\n\n"
+        "Get claims only from extract_claims(text, entity_hints, modality_hint), "
+        "which extracts them under the claims contract; do not ask llm_query "
+        "for claims. Call it on the parts of text_segment that state claims, "
+        "keep what it returns in a variable, and SUBMIT at most four of those "
+        "claims from that variable, without duplicates and without retyping."
+    )
 
 
 class ClaimExtractor:
@@ -308,6 +345,7 @@ class ClaimExtractor:
             ) from exc
         return self._claims_to_edges(
             claims=claims,
+            entity_hints=entity_hints,
             segment_anchor=segment_anchor,
             tenant_id=tenant_id,
             source_doc_id=source_doc_id,
@@ -450,18 +488,24 @@ class ClaimExtractor:
             output_chars = self._rlm_output_chars(self._serving_token_budget())
             module = self._rlm_modules.get(output_chars)
             if module is None:
+                chain_of_thought = self._chain_of_thought(tenant_id)
                 with self._module_lock:
                     module = self._rlm_modules.get(output_chars)
                     if module is None:
                         module = InstrumentedRLM(
-                            ClaimExtractionSignature,
+                            _recursive_claim_signature(),
                             max_iterations=RLM_TRANSCRIPT_TURNS,
                             max_output_chars=output_chars,
+                            tools=[self._claims_tool(chain_of_thought)],
                         )
                         self._load_compiled_state(module, tenant_id)
                         self._rlm_modules[output_chars] = module
             return module
 
+        return self._chain_of_thought(tenant_id)
+
+    def _chain_of_thought(self, tenant_id: str) -> dspy.ChainOfThought:
+        """The single-prompt claim module, built once with its compiled state."""
         if self._cot_module is None:
             with self._module_lock:
                 if self._cot_module is None:
@@ -469,6 +513,23 @@ class ClaimExtractor:
                     self._load_compiled_state(module, tenant_id)
                     self._cot_module = module
         return self._cot_module
+
+    @classmethod
+    def _claims_tool(cls, chain_of_thought: dspy.ChainOfThought):
+        """The recursive path's claim tool: ``chain_of_thought`` on one passage."""
+
+        def extract_claims(
+            text: str, entity_hints: List[str], modality_hint: str
+        ) -> List[dict]:
+            """Claims that text states, as subject/predicate/object/evidence_span/confidence dicts."""
+            prediction = chain_of_thought(
+                text_segment=text,
+                entity_hints=list(entity_hints),
+                modality_hint=modality_hint,
+            )
+            return cls._coerce_claims(prediction)
+
+        return extract_claims
 
     def _load_compiled_state(self, module: dspy.Module, tenant_id: str) -> None:
         """Restore compiled DSPy state from the ArtifactManager if present.
@@ -572,6 +633,7 @@ class ClaimExtractor:
         self,
         *,
         claims: List[dict],
+        entity_hints: List[str],
         segment_anchor: Mention,
         tenant_id: str,
         source_doc_id: str,
@@ -579,9 +641,13 @@ class ClaimExtractor:
     ) -> List[Edge]:
         edges: List[Edge] = []
         for claim in claims:
-            subject = self._claim_field_text(claim.get("subject"))
+            subject = _hinted_entity(
+                self._claim_field_text(claim.get("subject")), entity_hints
+            )
             predicate_raw = self._claim_field_text(claim.get("predicate"))
-            obj = self._claim_field_text(claim.get("object"))
+            obj = _hinted_entity(
+                self._claim_field_text(claim.get("object")), entity_hints
+            )
             if not subject or not predicate_raw or not obj:
                 continue
             predicate = _normalize_predicate(predicate_raw)

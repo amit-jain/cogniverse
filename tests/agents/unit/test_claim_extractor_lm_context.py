@@ -442,3 +442,90 @@ def test_well_formed_completion_parses_to_exact_edges() -> None:
             "confidence": 0.93,
         },
     ]
+
+
+class _RecordingClaimsModule(_ClaimsModule):
+    """Returns fixed claims and records the inputs of each call."""
+
+    def __init__(self, claims: list[dict]) -> None:
+        super().__init__(claims)
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return super().__call__(**kwargs)
+
+
+def test_recursive_module_takes_claims_from_the_claim_signature() -> None:
+    """dspy.RLM shows a model the claims field by name and type only, so the
+    recursive module's claims come from a tool that runs the chain-of-thought
+    claim module on the passage it is given."""
+    from tests.agents.unit.test_claim_extractor_concurrency import _served_lm
+
+    claims = [
+        {
+            "subject": "Marie Curie",
+            "predicate": "discovered",
+            "object": "radium",
+            "evidence_span": "Marie Curie discovered radium",
+        }
+    ]
+    extractor = ClaimExtractor(llm_config=None, rlm_promotion_chars=10)
+    extractor._cot_module = _RecordingClaimsModule(claims)
+    with dspy.context(lm=_served_lm()):
+        module = extractor._select_module(text="x" * 50, tenant_id="t:t")
+
+    returned = module.tools["extract_claims"](
+        text="Marie Curie discovered radium.",
+        entity_hints=["Marie Curie", "radium"],
+        modality_hint="transcript",
+    )
+
+    assert returned == claims
+    assert extractor._cot_module.calls == [
+        {
+            "text_segment": "Marie Curie discovered radium.",
+            "entity_hints": ["Marie Curie", "radium"],
+            "modality_hint": "transcript",
+        }
+    ]
+    assert "extract_claims(" in module.generate_action.signature.instructions
+
+
+def test_an_endpoint_naming_a_hint_after_an_article_takes_the_hint() -> None:
+    """ "the Sorbonne" for the hinted "Sorbonne" names the hinted entity, so
+    the edge carries the hint and lands on that entity's node. An endpoint
+    that names no hint keeps its own text."""
+    text = "Marie Curie worked at the Sorbonne. The committee awarded a prize."
+    extractor = ClaimExtractor(llm_config=None)
+    extractor._cot_module = _ClaimsModule(
+        [
+            {
+                "subject": "Marie Curie",
+                "predicate": "worked_at",
+                "object": "the Sorbonne",
+                "evidence_span": "Marie Curie worked at the Sorbonne.",
+            },
+            {
+                "subject": "the committee",
+                "predicate": "won",
+                "object": "a prize",
+                "evidence_span": "The committee awarded a prize.",
+            },
+        ]
+    )
+
+    edges = extractor.extract(
+        text=text,
+        entity_hints=["Marie Curie", "Sorbonne"],
+        modality_hint="text",
+        segment_anchor=_anchor(),
+        tenant_id="acme:acme",
+        source_doc_id="doc1",
+    )
+
+    assert [(e.source, e.relation, e.target) for e in edges] == [
+        ("Marie Curie", "worked_at", "Sorbonne"),
+        ("the committee", "won", "a prize"),
+    ]
+    assert [e.target_node_id for e in edges] == ["sorbonne", "a_prize"]
