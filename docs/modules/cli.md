@@ -213,7 +213,7 @@ cogniverse admin reconcile-orphans --confirm --tenant-orphans
 
 # Report, then apply, merges of article-prefixed KG nodes into their twins
 cogniverse admin merge-article-nodes --tenant acme:acme
-cogniverse admin merge-article-nodes --tenant acme:acme --apply
+cogniverse admin merge-article-nodes --tenant acme:acme --apply --exclude the_who
 
 # Mint a messaging invite token for a tenant
 cogniverse admin invite acme:alice
