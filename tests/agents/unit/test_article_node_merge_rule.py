@@ -16,6 +16,7 @@ from cogniverse_agents.graph.article_node_migration import (
     carries_same_grounding,
     merge_edge_provenance,
     plan_article_merges,
+    validate_article_id,
 )
 from cogniverse_agents.graph.claim_extractor import _LEADING_ARTICLES
 from cogniverse_agents.graph.graph_manager import GraphManager
@@ -109,6 +110,58 @@ class TestPlanArticleMerges:
             endpoint_ids={"the_zoo", "a_bee"},
         )
         assert plan.skipped == ["a_bee", "an_owl", "the_zoo"]
+
+
+class TestExclusions:
+    def test_excluded_article_id_is_never_merged(self):
+        plan = plan_article_merges(
+            node_ids={"who", "the_who", "sorbonne", "the_sorbonne"},
+            endpoint_ids={"the_who"},
+            exclude={"the_who"},
+        )
+        assert plan.merges == {"the_sorbonne": "sorbonne"}
+        assert plan.skipped == []
+        assert plan.excluded == ["the_who"]
+
+    def test_excluding_the_middle_link_stops_the_chain_there(self):
+        plan = plan_article_merges(
+            node_ids={"team", "a_team", "the_a_team"},
+            endpoint_ids=set(),
+            exclude={"a_team"},
+        )
+        assert plan.merges == {"the_a_team": "a_team"}
+        assert plan.excluded == ["a_team"]
+
+    def test_excluded_id_without_a_twin_is_listed_as_excluded_not_skipped(self):
+        plan = plan_article_merges(
+            node_ids={"the_louvre", "the_zoo"},
+            endpoint_ids=set(),
+            exclude={"the_louvre"},
+        )
+        assert plan.merges == {}
+        assert plan.skipped == ["the_zoo"]
+        assert plan.excluded == ["the_louvre"]
+
+    def test_excluded_id_absent_from_the_graph_is_not_listed(self):
+        plan = plan_article_merges(
+            node_ids={"sorbonne", "the_sorbonne"},
+            endpoint_ids=set(),
+            exclude={"the_who"},
+        )
+        assert plan.merges == {"the_sorbonne": "sorbonne"}
+        assert plan.excluded == []
+
+    @pytest.mark.parametrize("article_id", ["the_who", "a_team", "an_apple_pie"])
+    def test_article_node_id_is_a_valid_exclusion(self, article_id):
+        assert validate_article_id(article_id) == article_id
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "The Who", "the who", "the__who", "_the_who", "the_", "who", "theatre"],
+    )
+    def test_anything_but_an_article_node_id_is_rejected(self, value):
+        with pytest.raises(ValueError, match="article node id"):
+            validate_article_id(value)
 
 
 class TestDuplicateEdgeMerge:

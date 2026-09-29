@@ -110,32 +110,52 @@ def article_twin_id(node_id: str) -> Optional[str]:
     return None
 
 
+def validate_article_id(value: str) -> str:
+    """Return ``value`` when it is an article node id as the report prints
+    it (``the_who``); raise ValueError otherwise."""
+    if normalize_name(value) != value or article_twin_id(value) is None:
+        raise ValueError(
+            f"{value!r} is not an article node id (<the|a|an>_<id>, as the "
+            "merge report prints it)"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class ArticleMergePlan:
     """``merges`` maps each article id to the node it folds into;
-    ``skipped`` lists article ids whose bare twin is not a node."""
+    ``skipped`` lists article ids whose bare twin is not a node;
+    ``excluded`` lists the graph's article ids the caller excluded."""
 
     merges: Dict[str, str]
     skipped: List[str]
+    excluded: List[str] = field(default_factory=list)
 
 
 def plan_article_merges(
-    node_ids: Iterable[str], endpoint_ids: Iterable[str]
+    node_ids: Iterable[str],
+    endpoint_ids: Iterable[str],
+    exclude: Iterable[str] = (),
 ) -> ArticleMergePlan:
     """Decide which article ids merge into which node, within one tenant.
 
     An article id (a node, or an edge endpoint with no node of its own)
     merges only into a bare twin that is a node. A twin that is itself an
     article id with a twin merges on, so every merge lands on its final node.
+    An excluded article id never merges, so a chain stops at it.
     """
     nodes = set(node_ids)
+    exclude = set(exclude)
     direct: Dict[str, str] = {}
     skipped = set()
+    excluded = set()
     for candidate in nodes | set(endpoint_ids):
         twin = article_twin_id(candidate)
         if twin is None:
             continue
-        if twin in nodes:
+        if candidate in exclude:
+            excluded.add(candidate)
+        elif twin in nodes:
             direct[candidate] = twin
         else:
             skipped.add(candidate)
@@ -145,7 +165,9 @@ def plan_article_merges(
             target = direct[target]
         merges[article_id] = target
     return ArticleMergePlan(
-        merges=dict(sorted(merges.items())), skipped=sorted(skipped)
+        merges=dict(sorted(merges.items())),
+        skipped=sorted(skipped),
+        excluded=sorted(excluded),
     )
 
 
@@ -212,6 +234,7 @@ class TenantArticleMergeReport:
     applied: bool
     merges: List[ArticleMerge] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
+    excluded: List[str] = field(default_factory=list)
     edges_repointed: int = 0
     edges_deduped: int = 0
     mentions_added: int = 0
@@ -223,6 +246,7 @@ class TenantArticleMergeReport:
             "applied": self.applied,
             "merges": [m.to_dict() for m in self.merges],
             "skipped": list(self.skipped),
+            "excluded": list(self.excluded),
             "edges_repointed": self.edges_repointed,
             "edges_deduped": self.edges_deduped,
             "mentions_added": self.mentions_added,
@@ -244,16 +268,21 @@ def merge_article_nodes(
     *,
     tenant_ids: Optional[List[str]] = None,
     apply: bool = False,
+    exclude: Optional[Iterable[str]] = None,
 ) -> List[TenantArticleMergeReport]:
     """Merge article-prefixed node ids into their twins, per tenant.
 
     ``tenant_ids`` scopes the run; None runs every tenant with a deployed
-    knowledge_graph schema. Without ``apply`` nothing is written and the
-    reports say what a run would do.
+    knowledge_graph schema. Article ids in ``exclude`` are never merged.
+    Without ``apply`` nothing is written and the reports say what a run
+    would do.
     """
+    excluded = {validate_article_id(article_id) for article_id in exclude or ()}
     targets = _graph_targets(backend_resolver, tenant_ids)
     return [
-        _TenantMigration(backend_resolver, tenant, graph_schema, content).run(apply)
+        _TenantMigration(backend_resolver, tenant, graph_schema, content).run(
+            apply, excluded
+        )
         for tenant, graph_schema, content in targets
     ]
 
@@ -342,7 +371,7 @@ class _TenantMigration:
         with leased_backend(backend_resolver) as backend:
             self._base = f"{backend._url}:{backend._port}"
 
-    def run(self, apply: bool) -> TenantArticleMergeReport:
+    def run(self, apply: bool, exclude: Iterable[str] = ()) -> TenantArticleMergeReport:
         nodes = {
             node_id_from_doc_id(doc_id, self._tenant): {**doc, "doc_id": doc_id}
             for doc_id, doc in self._read_graph("node", _NODE_FIELDS).items()
@@ -358,7 +387,7 @@ class _TenantMigration:
             for node_id in (edge.get("source_node_id"), edge.get("target_node_id"))
             if node_id
         }
-        plan = plan_article_merges(nodes, endpoints)
+        plan = plan_article_merges(nodes, endpoints, exclude)
         report = TenantArticleMergeReport(
             tenant_id=self._tenant,
             applied=apply,
@@ -367,6 +396,7 @@ class _TenantMigration:
                 for a, b in plan.merges.items()
             ],
             skipped=plan.skipped,
+            excluded=plan.excluded,
         )
         if not plan.merges:
             return report

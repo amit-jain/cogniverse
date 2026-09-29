@@ -314,6 +314,7 @@ _SORBONNE_REPORT = {
         }
     ],
     "skipped": [],
+    "excluded": [],
     "edges_repointed": 2,
     "edges_deduped": 0,
     "mentions_added": 1,
@@ -321,7 +322,9 @@ _SORBONNE_REPORT = {
 }
 
 
-def _assert_sorbonne_merged(vespa: _Vespa) -> None:
+def _assert_sorbonne_merged(
+    vespa: _Vespa, extra_nodes: Tuple[str, ...] = (), extra_edges: Tuple[str, ...] = ()
+) -> None:
     graph = vespa.graph(TENANT_A)
     studied = _edge(
         TENANT_A,
@@ -342,11 +345,14 @@ def _assert_sorbonne_merged(vespa: _Vespa) -> None:
         evidence=_LOCATED,
     )
 
-    assert sorted(_nodes(graph)) == [
-        "kg_node_kgmig_a_kgmig_a_marie_curie",
-        "kg_node_kgmig_a_kgmig_a_paris",
-        "kg_node_kgmig_a_kgmig_a_sorbonne",
-    ]
+    assert sorted(_nodes(graph)) == sorted(
+        [
+            "kg_node_kgmig_a_kgmig_a_marie_curie",
+            "kg_node_kgmig_a_kgmig_a_paris",
+            "kg_node_kgmig_a_kgmig_a_sorbonne",
+            *extra_nodes,
+        ]
+    )
     sorbonne = graph["kg_node_kgmig_a_kgmig_a_sorbonne"]
     assert sorbonne["name"] == "Sorbonne"
     assert sorbonne["label"] == "Organization"
@@ -356,7 +362,7 @@ def _assert_sorbonne_merged(vespa: _Vespa) -> None:
     ] == [("docA", "seg_1", _STUDIED), ("docA", "seg_2", _LOCATED)]
 
     edges = _edges(graph)
-    assert sorted(edges) == sorted([studied.doc_id, located.doc_id])
+    assert sorted(edges) == sorted([studied.doc_id, located.doc_id, *extra_edges])
     for expected in (studied, located):
         fields = edges[expected.doc_id]
         assert fields["doc_id"] == expected.doc_id
@@ -499,6 +505,7 @@ class TestArticleNodeMigration:
                     },
                 ],
                 "skipped": [],
+                "excluded": [],
                 "edges_repointed": 2,
                 "edges_deduped": 1,
                 "mentions_added": 0,
@@ -570,6 +577,7 @@ class TestArticleNodeMigration:
                 "applied": True,
                 "merges": [],
                 "skipped": ["the_louvre"],
+                "excluded": [],
                 "edges_repointed": 0,
                 "edges_deduped": 0,
                 "mentions_added": 0,
@@ -625,6 +633,60 @@ class TestArticleNodeMigration:
             "kg_node_kgmig_b_kgmig_b_seine",
         ]
 
+    def test_excluded_article_node_stays_while_its_neighbour_merges(
+        self, vespa, resolve_backend
+    ):
+        _seed_sorbonne(vespa)
+        vespa.put_node(TENANT_A, "WHO", [_mention("docW", "seg_0", "WHO said.")])
+        vespa.put_node(
+            TENANT_A, "The Who", [_mention("docW", "seg_1", "The Who played.")]
+        )
+        played = vespa.put_edge(
+            _edge(
+                TENANT_A,
+                "The Who",
+                "performed_in",
+                "Paris",
+                segment_id="seg_1",
+                source_doc_id="docW",
+                evidence="The Who played.",
+            )
+        )
+        who_before = {
+            doc_id: fields
+            for doc_id, fields in vespa.graph(TENANT_A).items()
+            if "who" in doc_id or doc_id == played.doc_id
+        }
+
+        reports = merge_article_nodes(
+            resolve_backend, tenant_ids=[TENANT_A], apply=True, exclude=["the_who"]
+        )
+
+        assert [r.to_dict() for r in reports] == [
+            {**_SORBONNE_REPORT, "excluded": ["the_who"], "applied": True}
+        ]
+        graph = vespa.graph(TENANT_A)
+        assert {
+            doc_id: fields
+            for doc_id, fields in graph.items()
+            if "who" in doc_id or doc_id == played.doc_id
+        } == who_before
+        assert sorted(who_before) == sorted(
+            [
+                "kg_node_kgmig_a_kgmig_a_who",
+                "kg_node_kgmig_a_kgmig_a_the_who",
+                played.doc_id,
+            ]
+        )
+        _assert_sorbonne_merged(
+            vespa,
+            extra_nodes=(
+                "kg_node_kgmig_a_kgmig_a_the_who",
+                "kg_node_kgmig_a_kgmig_a_who",
+            ),
+            extra_edges=(played.doc_id,),
+        )
+
     def test_second_run_changes_nothing(self, vespa, resolve_backend):
         _seed_sorbonne(vespa)
         merge_article_nodes(resolve_backend, tenant_ids=[TENANT_A], apply=True)
@@ -640,6 +702,7 @@ class TestArticleNodeMigration:
                 "applied": True,
                 "merges": [],
                 "skipped": [],
+                "excluded": [],
                 "edges_repointed": 0,
                 "edges_deduped": 0,
                 "mentions_added": 0,
