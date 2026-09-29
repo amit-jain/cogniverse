@@ -14,4 +14,4 @@ def test_fastapi_is_declared_as_direct_dependency():
         if dependency.startswith("fastapi")
     ]
 
-    assert fastapi_requirements == ["fastapi==0.135.3"]
+    assert fastapi_requirements == ["fastapi==0.141.1"]

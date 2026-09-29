@@ -26,6 +26,8 @@ dependencies = [
 
     # FastAPI and server
     "fastapi==0.141.1",
+    # FastAPI File/Form upload parameters.
+    "python-multipart==0.0.26",
     "uvicorn==0.44.0",
     "pyyaml==6.0.3",
 

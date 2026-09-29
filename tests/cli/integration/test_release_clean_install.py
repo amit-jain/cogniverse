@@ -652,8 +652,8 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
         assert json.loads(imported.stdout) == PHOENIX_MODULES
         assert "arize-phoenix" not in versions, phoenix_side
         assert "strawberry-graphql" not in versions, phoenix_side
-        assert versions["arize-phoenix-client"] == "2.3.1"
-        assert versions["arize-phoenix-otel"] == "0.15.0"
+        assert versions["arize-phoenix-client"] == "3.5.0"
+        assert versions["arize-phoenix-otel"] == "0.17.1"
         assert _requirers(distributions, "graphql-core") == {
             "graphene",
             "graphql-relay",
