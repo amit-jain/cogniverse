@@ -17,6 +17,7 @@ operator-triggered, never automatic.
 from __future__ import annotations
 
 import sys
+from typing import Optional
 
 import httpx
 from rich.console import Console
@@ -199,5 +200,86 @@ def cmd_create_invite(
 def run_invite(runtime_url: str, tenant_id: str, *, expires_in_hours: int) -> None:
     """Entry point used by the click command in main.py."""
     code = cmd_create_invite(runtime_url, tenant_id, expires_in_hours=expires_in_hours)
+    if code != 0:
+        sys.exit(code)
+
+
+def cmd_merge_article_nodes(
+    runtime_url: str, *, apply: bool, tenant: Optional[str] = None
+) -> int:
+    """Report (default) or apply the article-node merge per tenant.
+
+    Calls ``POST /admin/graph/merge-article-nodes``. Returns the process exit
+    code: 2 when the runtime is unreachable, 3 on a non-200 response.
+    """
+    url = f"{runtime_url.rstrip('/')}/admin/graph/merge-article-nodes"
+    params = {"dry_run": "false" if apply else "true"}
+    if tenant:
+        params["tenant_id"] = tenant
+    try:
+        with httpx.Client(timeout=3600.0) as client:
+            resp = client.post(url, params=params)
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Failed to reach runtime at {runtime_url}: {exc}[/red]")
+        return 2
+
+    if resp.status_code != 200:
+        console.print(
+            f"[red]merge-article-nodes returned {resp.status_code}: "
+            f"{resp.text[:500]}[/red]"
+        )
+        return 3
+
+    tenants = resp.json().get("tenants") or []
+    merged = 0
+    for report in tenants:
+        merges = report.get("merges") or []
+        skipped = report.get("skipped") or []
+        merged += len(merges)
+        if not merges and not skipped:
+            console.print(f"{report['tenant_id']}: no article nodes to merge")
+            continue
+        if merges:
+            table = Table(title=f"Article-node merges for {report['tenant_id']}")
+            table.add_column("From", style="cyan")
+            table.add_column("Into", style="green")
+            table.add_column("Node doc")
+            table.add_column("Edges re-pointed", justify="right")
+            table.add_column("Edges deduped", justify="right")
+            for merge in merges:
+                table.add_row(
+                    merge["from"],
+                    merge["into"],
+                    str(merge["node_doc"]),
+                    str(merge["edges_repointed"]),
+                    str(merge["edges_deduped"]),
+                )
+            console.print(table)
+            console.print(
+                f"Edges re-pointed: {report['edges_repointed']}, "
+                f"deduped: {report['edges_deduped']}; "
+                f"mentions added: {report['mentions_added']}; "
+                f"content docs updated: {report['content_docs_updated']}"
+            )
+        else:
+            console.print(f"{report['tenant_id']}: no article nodes to merge")
+        if skipped:
+            console.print(f"Skipped (no bare twin node): {', '.join(skipped)}")
+
+    if apply:
+        console.print(
+            f"[green]Merged {merged} article node(s) across "
+            f"{len(tenants)} tenant(s).[/green]"
+        )
+    elif merged:
+        console.print("[cyan]Dry run. Re-run with --apply to merge.[/cyan]")
+    return 0
+
+
+def run_merge_article_nodes(
+    runtime_url: str, *, apply: bool, tenant: Optional[str] = None
+) -> None:
+    """Entry point used by the click command in main.py."""
+    code = cmd_merge_article_nodes(runtime_url, apply=apply, tenant=tenant)
     if code != 0:
         sys.exit(code)

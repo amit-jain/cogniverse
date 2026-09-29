@@ -452,3 +452,178 @@ def test_reconcile_orphans_rejects_an_incomplete_inventory(
     assert capture_console.getvalue() == (
         "reconcile-orphans response is missing 'tenant_orphan_schemas'\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# admin merge-article-nodes
+# ---------------------------------------------------------------------------
+
+
+_MERGE_REPORT = {
+    "tenant_id": "acme:acme",
+    "merges": [
+        {
+            "from": "the_sorbonne",
+            "into": "sorbonne",
+            "node_doc": True,
+            "edges_repointed": 2,
+            "edges_deduped": 1,
+        }
+    ],
+    "skipped": ["the_louvre"],
+    "edges_repointed": 2,
+    "edges_deduped": 1,
+    "mentions_added": 1,
+    "content_docs_updated": 3,
+}
+
+
+def test_merge_article_nodes_dry_run_reports_every_tenant(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, dict(request.url.params)))
+        return httpx.Response(
+            200,
+            json={"dry_run": True, "tenants": [{**_MERGE_REPORT, "applied": False}]},
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test", apply=False, tenant=None
+    )
+
+    assert rc == 0
+    assert seen == [("POST", "/admin/graph/merge-article-nodes", {"dry_run": "true"})]
+    out = capture_console.getvalue()
+    assert "acme:acme" in out
+    assert "the_sorbonne" in out and "sorbonne" in out
+    assert "Skipped (no bare twin node): the_louvre" in out
+    assert (
+        "Edges re-pointed: 2, deduped: 1; mentions added: 1; "
+        "content docs updated: 3" in out
+    )
+    assert "Dry run. Re-run with --apply to merge." in out
+
+
+def test_merge_article_nodes_apply_scopes_to_the_tenant(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={"dry_run": False, "tenants": [{**_MERGE_REPORT, "applied": True}]},
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test", apply=True, tenant="acme:acme"
+    )
+
+    assert rc == 0
+    assert seen == [{"dry_run": "false", "tenant_id": "acme:acme"}]
+    out = capture_console.getvalue()
+    assert "Merged 1 article node(s) across 1 tenant(s)." in out
+    assert "Dry run" not in out
+
+
+def test_merge_article_nodes_nothing_to_merge(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    empty = {
+        **_MERGE_REPORT,
+        "merges": [],
+        "skipped": [],
+        "edges_repointed": 0,
+        "edges_deduped": 0,
+        "mentions_added": 0,
+        "content_docs_updated": 0,
+        "applied": False,
+    }
+    _mount_httpx(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"dry_run": True, "tenants": [empty]}),
+    )
+
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test", apply=False, tenant=None
+    )
+
+    assert rc == 0
+    assert "acme:acme: no article nodes to merge" in capture_console.getvalue()
+
+
+def test_merge_article_nodes_unknown_tenant_exits_3(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    _mount_httpx(
+        monkeypatch,
+        lambda request: httpx.Response(
+            404, json={"detail": "no deployed knowledge_graph schema"}
+        ),
+    )
+
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test", apply=False, tenant="ghost"
+    )
+
+    assert rc == 3
+    assert "merge-article-nodes returned 404" in capture_console.getvalue()
+
+
+def test_merge_article_nodes_unreachable_runtime_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _mount_httpx(monkeypatch, handler)
+
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test", apply=True, tenant=None
+    )
+
+    assert rc == 2
+    assert "Failed to reach runtime at http://runtime.test" in (
+        capture_console.getvalue()
+    )
+
+
+def test_merge_article_nodes_click_command_passes_flags(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    from click.testing import CliRunner
+    from cogniverse_cli.main import cli
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url.copy_with(query=None)), dict(request.url.params)))
+        return httpx.Response(404, json={"detail": "no graph"})
+
+    _mount_httpx(monkeypatch, handler)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "admin",
+            "merge-article-nodes",
+            "--tenant",
+            "acme",
+            "--apply",
+            "--runtime-url",
+            "http://runtime.test",
+        ],
+    )
+
+    assert result.exit_code == 3
+    assert seen == [
+        (
+            "http://runtime.test/admin/graph/merge-article-nodes",
+            {"dry_run": "false", "tenant_id": "acme"},
+        )
+    ]

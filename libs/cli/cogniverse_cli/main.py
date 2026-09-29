@@ -1011,6 +1011,39 @@ def admin_reconcile_orphans(
     run(runtime_url, confirm=confirm, tenant_orphans=tenant_orphans)
 
 
+@admin.command(name="merge-article-nodes")
+@click.option(
+    "--tenant",
+    default=None,
+    help="Scope to one tenant. Default is every tenant with a knowledge graph.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    default=False,
+    help="Perform the merges. Default is dry-run (report only).",
+)
+@click.option(
+    "--runtime-url",
+    default="http://localhost:28000",
+    show_default=True,
+    help="Runtime endpoint to call /admin/graph/merge-article-nodes on.",
+)
+def admin_merge_article_nodes(
+    tenant: str | None, apply: bool, runtime_url: str
+) -> None:
+    """Merge KG nodes whose id is an article-prefixed form of another node's.
+
+    Within a tenant, `the_<id>`, `a_<id>` and `an_<id>` merge into the node
+    `<id>` when it exists: edges and content back-refs are re-pointed and
+    the article node is deleted. Article ids without a twin are listed and
+    left alone.
+    """
+    from cogniverse_cli.admin import run_merge_article_nodes
+
+    run_merge_article_nodes(runtime_url, apply=apply, tenant=tenant)
+
+
 @admin.command(name="invite")
 @click.argument("tenant_id")
 @click.option(
