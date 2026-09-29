@@ -989,6 +989,10 @@ spec:
         - name: PHOENIX_SQL_DATABASE_URL
           value: "postgresql://{{ .Values.phoenix.postgres.auth.username }}:$(PHOENIX_POSTGRES_PASSWORD)@{{ $fullName }}-phoenix-postgres:5432/{{ .Values.phoenix.postgres.auth.database }}"
         {{- end }}
+        {{- with .Values.phoenix.startupProbe }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         livenessProbe:
           {{- toYaml .Values.phoenix.livenessProbe | nindent 10 }}
         readinessProbe:

@@ -717,6 +717,16 @@ phoenix:
     PHOENIX_ENABLE_MCP_SERVER: "false"
     PHOENIX_DISABLE_AGENT_ASSISTANT: "true"
 
+  # The first start after an upgrade runs schema migrations before /health
+  # answers; liveness is held off until this probe passes.
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 6006
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 60
+
   # Health checks
   livenessProbe:
     httpGet:

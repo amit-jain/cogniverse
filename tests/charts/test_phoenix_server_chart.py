@@ -68,9 +68,10 @@ def _env(container: dict) -> dict:
 
 
 def _window_seconds(probe: dict) -> int:
-    return probe.get("initialDelaySeconds", 0) + probe["periodSeconds"] * probe[
-        "failureThreshold"
-    ]
+    return (
+        probe.get("initialDelaySeconds", 0)
+        + probe["periodSeconds"] * probe["failureThreshold"]
+    )
 
 
 @pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
@@ -90,7 +91,30 @@ def test_cleared_digest_falls_back_to_the_tag():
 def test_mcp_server_and_agent_assistant_are_off(stack):
     env = _env(_phoenix_container(overlays=OVERLAY_STACKS[stack]))
 
-    assert (env["PHOENIX_ENABLE_MCP_SERVER"], env["PHOENIX_DISABLE_AGENT_ASSISTANT"]) == (
+    assert (
+        env["PHOENIX_ENABLE_MCP_SERVER"],
+        env["PHOENIX_DISABLE_AGENT_ASSISTANT"],
+    ) == (
         "false",
         "true",
     )
+
+
+@pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
+def test_startup_probe_holds_liveness_off_through_migrations(stack):
+    container = _phoenix_container(overlays=OVERLAY_STACKS[stack])
+
+    assert container["startupProbe"] == {
+        "httpGet": {"path": "/health", "port": 6006},
+        "periodSeconds": 10,
+        "timeoutSeconds": 5,
+        "failureThreshold": 60,
+    }
+    assert _window_seconds(container["startupProbe"]) == 600
+    assert container["livenessProbe"] == {
+        "httpGet": {"path": "/health", "port": 6006},
+        "initialDelaySeconds": 30,
+        "periodSeconds": 30,
+        "timeoutSeconds": 10,
+        "failureThreshold": 3,
+    }
