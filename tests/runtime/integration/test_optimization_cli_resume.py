@@ -112,6 +112,24 @@ async def test_resume_skips_already_compiled_agents(
     monkeypatch.setattr("cogniverse_core.memory.manager.Mem0MemoryManager", _boom)
     monkeypatch.setattr("cogniverse_evaluation.quality_monitor.QualityMonitor", _boom)
 
+    # The compile is stubbed, so the teacher it would bootstrap from is not
+    # reached either: the readiness probe records the endpoint it was handed.
+    from cogniverse_foundation.config.utils import get_config
+
+    teacher_api_base = (
+        get_config(tenant_id=tenant, config_manager=config_manager)
+        .get_llm_config()
+        .resolve_teacher()
+        .api_base
+    )
+    probed: list[str] = []
+
+    def _probe(endpoint, **_kw):
+        probed.append(endpoint.api_base)
+        return endpoint.model
+
+    monkeypatch.setattr(optimization_cli, "probe_teacher_endpoint", _probe)
+
     async def _kwargs_call(recorder, fail_agent, prefix, *, agent_name, **_kw):
         recorder.append(agent_name)
         if agent_name == fail_agent:
@@ -141,6 +159,7 @@ async def test_resume_skips_already_compiled_agents(
     assert result1["detailed_report"]["status"] == "success"
     assert result1["summarizer"]["status"] == "failed"
     assert run1_calls == ["search", "detailed_report", "summarizer"]
+    assert probed == [teacher_api_base] * 3
 
     # The checkpoint records the two successful agents (not the crashed one).
     latest = await _await_checkpoint(
@@ -171,6 +190,7 @@ async def test_resume_skips_already_compiled_agents(
     assert run2_calls == ["summarizer"], (
         f"expected only summarizer recompiled on resume, got {run2_calls}"
     )
+    assert probed == [teacher_api_base] * 4
     # search/detailed_report results come from the run-1 checkpoint; summarizer
     # is freshly compiled in run 2.
     assert result2["search"]["artifact_id"] == "artifact_search"
