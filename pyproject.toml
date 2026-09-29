@@ -1,7 +1,5 @@
 [tool.uv]
 required-version = "==0.12.19"
-# Only allow pre-releases for graphql-core (required by arize-phoenix 14.x)
-prerelease = "if-necessary"
 default-groups = ["dev", "runtime-models"]
 
 # PyTorch backend extras — pick exactly one with `uv sync --extra <name>`.
@@ -55,18 +53,17 @@ dependencies = [
     # Search & Retrieval
     "pyvespa==1.1.2",
     # Observability & Telemetry
-    "arize-phoenix==14.2.1",
-    "graphql-core==3.3.0a12",  # pre-release required by arize-phoenix 14.x
-    "arize-phoenix-evals==3.0.0",
+    "arize-phoenix==20.3.0",
+    "arize-phoenix-evals==3.9.0",
     "opentelemetry-api==1.41.0",
     "opentelemetry-sdk==1.41.0",
     "opentelemetry-instrumentation==0.62b0",
     "mlflow==3.11.1",
     # Evaluation
-    "inspect-ai==0.3.205",
+    "inspect-ai==0.3.272",
     "ragas==0.4.3",
     # Web & API
-    "fastapi==0.135.3",
+    "fastapi==0.141.1",
     "uvicorn==0.44.0",
     "httpx==0.28.1",
     "a2a-sdk[http-server]==0.3.26",
@@ -75,7 +72,7 @@ dependencies = [
     "numpy==2.4.4",
     "scipy==1.17.1",
     "pyarrow==23.0.1",
-    "pydantic==2.12.5",
+    "pydantic==2.13.5",
     # Computer Vision & Audio
     "opencv-python==4.13.0.92",
     "pillow==12.2.0",

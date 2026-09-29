@@ -22,9 +22,9 @@ dependencies = [
     "plotly==6.7.0",
 
     # Phoenix and evaluation
-    "arize-phoenix-client==2.3.1",
-    "arize-phoenix-otel==0.15.0",
-    "inspect-ai==0.3.205",
+    "arize-phoenix-client==3.5.0",
+    "arize-phoenix-otel==0.17.1",
+    "inspect-ai==0.3.272",
     "ragas==0.4.3",
 
     # Visualization

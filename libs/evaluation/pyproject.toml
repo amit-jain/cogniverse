@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cogniverse-foundation",
     "cogniverse-sdk",
-    "inspect-ai==0.3.205",
+    "inspect-ai==0.3.272",
     "numpy==2.4.4",
     "pandas==2.3.3",
     "scikit-learn==1.8.0",

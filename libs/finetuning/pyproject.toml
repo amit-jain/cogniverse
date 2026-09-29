@@ -37,7 +37,7 @@ dependencies = [
 
     # Cloud infrastructure
     "modal==1.4.1",          # Modal GPU jobs
-    "boto3==1.40.61",          # S3 for model storage
+    "boto3==1.43.46",          # S3 for model storage
     "huggingface-hub>=0.28.0", # HF Hub integration
 
     # Data processing
