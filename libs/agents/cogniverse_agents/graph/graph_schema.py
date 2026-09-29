@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 
 def _utcnow_iso() -> str:
@@ -74,6 +74,26 @@ class Mention:
     ts_end: float
     modality: str
     evidence_span: str
+
+
+def merge_mentions(target: List[Mention], incoming: Iterable[Mention]) -> int:
+    """Append to ``target`` each incoming Mention it lacks; return how many.
+
+    Mentions are the same when they share ``(source_doc_id, segment_id,
+    ts_start, ts_end, modality)``.
+    """
+
+    def key(m: Mention) -> tuple:
+        return (m.source_doc_id, m.segment_id, m.ts_start, m.ts_end, m.modality)
+
+    seen = {key(m) for m in target}
+    added = 0
+    for m in incoming:
+        if key(m) not in seen:
+            target.append(m)
+            seen.add(key(m))
+            added += 1
+    return added
 
 
 @dataclass(frozen=True)

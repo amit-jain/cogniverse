@@ -35,6 +35,7 @@ from cogniverse_agents.graph.graph_schema import (
     ExtractionResult,
     Node,
     _safe_tenant,
+    merge_mentions,
     normalize_name,
 )
 from cogniverse_agents.search.vespa_query import vespa_search_children
@@ -321,22 +322,7 @@ class GraphManager:
         for node in nodes:
             key = normalize_name(node.name)
             if key in merged:
-                existing = merged[key]
-                existing_keys = {
-                    (m.source_doc_id, m.segment_id, m.ts_start, m.ts_end, m.modality)
-                    for m in existing.mentions
-                }
-                for m in node.mentions:
-                    m_key = (
-                        m.source_doc_id,
-                        m.segment_id,
-                        m.ts_start,
-                        m.ts_end,
-                        m.modality,
-                    )
-                    if m_key not in existing_keys:
-                        existing.mentions.append(m)
-                        existing_keys.add(m_key)
+                merge_mentions(merged[key].mentions, node.mentions)
             else:
                 merged[key] = node
         return list(merged.values())
