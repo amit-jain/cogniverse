@@ -471,6 +471,7 @@ _MERGE_REPORT = {
         }
     ],
     "skipped": ["the_louvre"],
+    "excluded": [],
     "edges_repointed": 2,
     "edges_deduped": 1,
     "mentions_added": 1,
@@ -626,4 +627,85 @@ def test_merge_article_nodes_click_command_passes_flags(
             "http://runtime.test/admin/graph/merge-article-nodes",
             {"dry_run": "false", "tenant_id": "acme"},
         )
+    ]
+
+
+def test_merge_article_nodes_sends_each_exclusion_and_lists_them(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.multi_items())
+        return httpx.Response(
+            200,
+            json={
+                "dry_run": True,
+                "tenants": [
+                    {
+                        **_MERGE_REPORT,
+                        "excluded": ["a_team", "the_who"],
+                        "applied": False,
+                    },
+                    {
+                        **_MERGE_REPORT,
+                        "tenant_id": "beta:beta",
+                        "merges": [],
+                        "skipped": [],
+                        "excluded": ["the_who"],
+                        "applied": False,
+                    },
+                ],
+            },
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_merge_article_nodes(
+        "http://runtime.test",
+        apply=False,
+        tenant=None,
+        exclude=("the_who", "a_team"),
+    )
+
+    assert rc == 0
+    assert seen == [
+        [("dry_run", "true"), ("exclude", "the_who"), ("exclude", "a_team")]
+    ]
+    out = capture_console.getvalue()
+    assert "Skipped (no bare twin node): the_louvre" in out
+    assert "Excluded (never merged): a_team, the_who" in out
+    assert "beta:beta: no article nodes to merge" in out
+    assert "Excluded (never merged): the_who" in out
+
+
+def test_merge_article_nodes_click_command_passes_each_exclude(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    from click.testing import CliRunner
+    from cogniverse_cli.main import cli
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.multi_items())
+        return httpx.Response(404, json={"detail": "no graph"})
+
+    _mount_httpx(monkeypatch, handler)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "admin",
+            "merge-article-nodes",
+            "--exclude",
+            "the_who",
+            "--exclude",
+            "a_team",
+            "--runtime-url",
+            "http://runtime.test",
+        ],
+    )
+
+    assert result.exit_code == 3
+    assert seen == [
+        [("dry_run", "true"), ("exclude", "the_who"), ("exclude", "a_team")]
     ]

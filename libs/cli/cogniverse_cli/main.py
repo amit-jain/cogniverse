@@ -1024,13 +1024,20 @@ def admin_reconcile_orphans(
     help="Perform the merges. Default is dry-run (report only).",
 )
 @click.option(
+    "--exclude",
+    "exclude",
+    multiple=True,
+    metavar="ID",
+    help="Article node id never to merge, as the report prints it. Repeatable.",
+)
+@click.option(
     "--runtime-url",
     default="http://localhost:28000",
     show_default=True,
     help="Runtime endpoint to call /admin/graph/merge-article-nodes on.",
 )
 def admin_merge_article_nodes(
-    tenant: str | None, apply: bool, runtime_url: str
+    tenant: str | None, apply: bool, exclude: tuple[str, ...], runtime_url: str
 ) -> None:
     """Merge KG nodes whose id is an article-prefixed form of another node's.
 
@@ -1041,7 +1048,7 @@ def admin_merge_article_nodes(
     """
     from cogniverse_cli.admin import run_merge_article_nodes
 
-    run_merge_article_nodes(runtime_url, apply=apply, tenant=tenant)
+    run_merge_article_nodes(runtime_url, apply=apply, tenant=tenant, exclude=exclude)
 
 
 @admin.command(name="invite")

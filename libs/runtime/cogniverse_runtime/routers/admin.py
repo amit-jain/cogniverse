@@ -2559,6 +2559,10 @@ async def merge_article_nodes(
     tenant_id: Optional[str] = Query(
         None, min_length=1, description="Scope to one tenant; default every tenant."
     ),
+    exclude: Optional[List[str]] = Query(
+        None,
+        description="Article node ids never to merge; repeatable or comma-separated.",
+    ),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
@@ -2566,7 +2570,8 @@ async def merge_article_nodes(
     tenant's ``<id>`` node, re-pointing their edges and content back-refs.
 
     See ``cogniverse_agents.graph.article_node_migration`` for the rule and
-    the merge semantics. 404 when ``tenant_id`` has no deployed graph.
+    the merge semantics. 400 when an ``exclude`` entry is not an article node
+    id; 404 when ``tenant_id`` has no deployed graph.
     """
     from cogniverse_agents.graph import article_node_migration
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -2577,6 +2582,16 @@ async def merge_article_nodes(
             tenant_ids = [canonical_tenant_id(tenant_id)]
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    excluded: List[str] = []
+    for entry in exclude or []:
+        for article_id in (part.strip() for part in entry.split(",")):
+            if not article_id or article_id in excluded:
+                continue
+            try:
+                excluded.append(article_node_migration.validate_article_id(article_id))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def resolve_graph_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -2592,6 +2607,7 @@ async def merge_article_nodes(
             resolve_graph_backend,
             tenant_ids=tenant_ids,
             apply=not dry_run,
+            exclude=excluded,
         )
     except article_node_migration.UnknownGraphTenantError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

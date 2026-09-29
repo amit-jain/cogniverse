@@ -17,7 +17,7 @@ operator-triggered, never automatic.
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Optional, Sequence
 
 import httpx
 from rich.console import Console
@@ -205,7 +205,11 @@ def run_invite(runtime_url: str, tenant_id: str, *, expires_in_hours: int) -> No
 
 
 def cmd_merge_article_nodes(
-    runtime_url: str, *, apply: bool, tenant: Optional[str] = None
+    runtime_url: str,
+    *,
+    apply: bool,
+    tenant: Optional[str] = None,
+    exclude: Sequence[str] = (),
 ) -> int:
     """Report (default) or apply the article-node merge per tenant.
 
@@ -213,9 +217,10 @@ def cmd_merge_article_nodes(
     code: 2 when the runtime is unreachable, 3 on a non-200 response.
     """
     url = f"{runtime_url.rstrip('/')}/admin/graph/merge-article-nodes"
-    params = {"dry_run": "false" if apply else "true"}
+    params = [("dry_run", "false" if apply else "true")]
     if tenant:
-        params["tenant_id"] = tenant
+        params.append(("tenant_id", tenant))
+    params.extend(("exclude", article_id) for article_id in exclude)
     try:
         with httpx.Client(timeout=3600.0) as client:
             resp = client.post(url, params=params)
@@ -235,10 +240,8 @@ def cmd_merge_article_nodes(
     for report in tenants:
         merges = report.get("merges") or []
         skipped = report.get("skipped") or []
+        excluded = report.get("excluded") or []
         merged += len(merges)
-        if not merges and not skipped:
-            console.print(f"{report['tenant_id']}: no article nodes to merge")
-            continue
         if merges:
             table = Table(title=f"Article-node merges for {report['tenant_id']}")
             table.add_column("From", style="cyan")
@@ -265,6 +268,8 @@ def cmd_merge_article_nodes(
             console.print(f"{report['tenant_id']}: no article nodes to merge")
         if skipped:
             console.print(f"Skipped (no bare twin node): {', '.join(skipped)}")
+        if excluded:
+            console.print(f"Excluded (never merged): {', '.join(excluded)}")
 
     if apply:
         console.print(
@@ -277,9 +282,15 @@ def cmd_merge_article_nodes(
 
 
 def run_merge_article_nodes(
-    runtime_url: str, *, apply: bool, tenant: Optional[str] = None
+    runtime_url: str,
+    *,
+    apply: bool,
+    tenant: Optional[str] = None,
+    exclude: Sequence[str] = (),
 ) -> None:
     """Entry point used by the click command in main.py."""
-    code = cmd_merge_article_nodes(runtime_url, apply=apply, tenant=tenant)
+    code = cmd_merge_article_nodes(
+        runtime_url, apply=apply, tenant=tenant, exclude=exclude
+    )
     if code != 0:
         sys.exit(code)

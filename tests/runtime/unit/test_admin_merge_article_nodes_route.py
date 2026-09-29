@@ -43,9 +43,14 @@ def route(monkeypatch):
     calls = []
     registry = _Registry()
 
-    def fake_merge(backend_resolver, *, tenant_ids=None, apply=False):
+    def fake_merge(backend_resolver, *, tenant_ids=None, apply=False, exclude=None):
         calls.append(
-            {"backend": backend_resolver(), "tenant_ids": tenant_ids, "apply": apply}
+            {
+                "backend": backend_resolver(),
+                "tenant_ids": tenant_ids,
+                "apply": apply,
+                "exclude": exclude,
+            }
         )
         if tenant_ids == ["ghost:ghost"]:
             raise UnknownGraphTenantError("no deployed knowledge_graph schema")
@@ -63,6 +68,7 @@ def route(monkeypatch):
                     )
                 ],
                 skipped=["the_louvre"],
+                excluded=list(exclude or []),
                 edges_repointed=2,
                 edges_deduped=1,
                 mentions_added=1,
@@ -94,6 +100,7 @@ _REPORT = {
         }
     ],
     "skipped": ["the_louvre"],
+    "excluded": [],
     "edges_repointed": 2,
     "edges_deduped": 1,
     "mentions_added": 1,
@@ -111,7 +118,9 @@ def test_defaults_to_a_dry_run_over_every_tenant(route):
         "dry_run": True,
         "tenants": [{**_REPORT, "applied": False}],
     }
-    assert calls == [{"backend": _BACKEND, "tenant_ids": None, "apply": False}]
+    assert calls == [
+        {"backend": _BACKEND, "tenant_ids": None, "apply": False, "exclude": []}
+    ]
     assert registry.requests == [
         (
             "vespa",
@@ -134,7 +143,9 @@ def test_apply_with_a_simple_form_tenant_runs_its_canonical_graph(route):
 
     assert resp.status_code == 200
     assert resp.json() == {"dry_run": False, "tenants": [{**_REPORT, "applied": True}]}
-    assert calls == [{"backend": _BACKEND, "tenant_ids": ["acme:acme"], "apply": True}]
+    assert calls == [
+        {"backend": _BACKEND, "tenant_ids": ["acme:acme"], "apply": True, "exclude": []}
+    ]
 
 
 def test_tenant_without_a_graph_is_404(route):
@@ -157,4 +168,43 @@ def test_malformed_tenant_is_400_before_any_migration(route):
     )
 
     assert resp.status_code == 400
+    assert calls == []
+
+
+def test_exclude_accepts_repeated_and_comma_separated_ids(route):
+    client, calls, _ = route
+
+    resp = client.post(
+        "/admin/graph/merge-article-nodes",
+        params=[
+            ("exclude", "the_who"),
+            ("exclude", "a_team, an_apple_pie"),
+            ("exclude", "the_who"),
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert calls == [
+        {
+            "backend": _BACKEND,
+            "tenant_ids": None,
+            "apply": False,
+            "exclude": ["the_who", "a_team", "an_apple_pie"],
+        }
+    ]
+    assert resp.json()["tenants"][0]["excluded"] == [
+        "the_who",
+        "a_team",
+        "an_apple_pie",
+    ]
+
+
+@pytest.mark.parametrize("value", ["The Who", "who", "the_", "the__who"])
+def test_exclude_that_is_not_an_article_node_id_is_400(route, value):
+    client, calls, _ = route
+
+    resp = client.post("/admin/graph/merge-article-nodes", params={"exclude": value})
+
+    assert resp.status_code == 400
+    assert "article node id" in resp.json()["detail"]
     assert calls == []
