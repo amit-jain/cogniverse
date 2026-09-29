@@ -1,12 +1,12 @@
 """PhoenixDatasetStore async methods must run their sync HTTP off the loop.
 
-create_dataset / get_dataset / append_to_dataset use the synchronous phoenix
-Client. Called directly on the event loop, a slow (remote or large) dataset
-upload blocks the whole runtime; they must offload via ``asyncio.to_thread``.
+create_dataset / get_dataset / append_to_dataset make synchronous HTTP calls.
+Called directly on the event loop, a slow (remote or large) dataset upload
+blocks the whole runtime; they must offload via ``asyncio.to_thread``.
 
-This drives a REAL upload into a real Phoenix, and spies the real phoenix
-``create_dataset`` (delegating to it) to record which thread it ran on — the
-offload means a worker thread, not the event-loop thread.
+This drives a REAL upload into a real Phoenix, and spies the real
+``upload_dataset_rows`` (delegating to it) to record which thread it ran on —
+the offload means a worker thread, not the event-loop thread.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import threading
 import pandas as pd
 import pytest
 
+from cogniverse_telemetry_phoenix import provider as phoenix_provider
 from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
 pytestmark = [
@@ -29,20 +30,18 @@ pytestmark = [
 async def test_create_dataset_runs_off_event_loop_thread(
     phoenix_container, monkeypatch
 ):
-    from phoenix.client.resources.datasets import Datasets
-
     store = PhoenixDatasetStore(phoenix_container["http_endpoint"])
 
     loop_thread = threading.get_ident()
     observed: dict[str, int] = {}
-    real_create = Datasets.create_dataset
+    real_upload = phoenix_provider.upload_dataset_rows
 
-    def spy(self, *args, **kwargs):
-        # Record the running thread, then delegate to the REAL phoenix call.
+    def spy(*args, **kwargs):
+        # Record the running thread, then delegate to the REAL upload.
         observed["thread"] = threading.get_ident()
-        return real_create(self, *args, **kwargs)
+        return real_upload(*args, **kwargs)
 
-    monkeypatch.setattr(Datasets, "create_dataset", spy)
+    monkeypatch.setattr(phoenix_provider, "upload_dataset_rows", spy)
 
     df = pd.DataFrame({"question": ["q1", "q2"], "answer": ["a1", "a2"]})
     dsid = await store.create_dataset(
@@ -54,9 +53,9 @@ async def test_create_dataset_runs_off_event_loop_thread(
 
     # The sync phoenix HTTP must have run on a worker thread (to_thread), never
     # the event-loop thread — otherwise a slow upload stalls the whole runtime.
-    assert "thread" in observed, "phoenix create_dataset was never called"
+    assert "thread" in observed, "upload_dataset_rows was never called"
     assert observed["thread"] != loop_thread, (
-        "phoenix create_dataset ran on the event-loop thread — the sync HTTP "
+        "the dataset upload ran on the event-loop thread — the sync HTTP "
         "is not offloaded via asyncio.to_thread"
     )
 
@@ -74,8 +73,6 @@ async def test_append_to_dataset_round_trips_and_offloads(
     full appended history."""
     import uuid
 
-    from phoenix.client.resources.datasets import Datasets
-
     store = PhoenixDatasetStore(phoenix_container["http_endpoint"])
     name = f"append-rt-{uuid.uuid4().hex[:6]}"
     meta = {"input_keys": ["question"], "output_keys": ["answer"]}
@@ -87,13 +84,13 @@ async def test_append_to_dataset_round_trips_and_offloads(
 
     loop_thread = threading.get_ident()
     observed: dict[str, int] = {}
-    real_append = Datasets.add_examples_to_dataset
+    real_upload = phoenix_provider.upload_dataset_rows
 
-    def spy(self, *args, **kwargs):
+    def spy(*args, **kwargs):
         observed["thread"] = threading.get_ident()
-        return real_append(self, *args, **kwargs)
+        return real_upload(*args, **kwargs)
 
-    monkeypatch.setattr(Datasets, "add_examples_to_dataset", spy)
+    monkeypatch.setattr(phoenix_provider, "upload_dataset_rows", spy)
 
     await store.append_to_dataset(
         name, pd.DataFrame({"question": ["q2"], "answer": ["a2"]}), metadata=meta

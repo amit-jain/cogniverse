@@ -114,35 +114,81 @@ class TestAppendToDataset:
                 await _store().append_to_dataset("ds1", pd.DataFrame([{"a": 1}]))
 
 
+def _upload_response(status: int, **kwargs) -> httpx.Response:
+    request = httpx.Request("POST", f"{_ENDPOINT}/v1/datasets/upload")
+    return httpx.Response(status, request=request, **kwargs)
+
+
+def _posted(post) -> list[dict]:
+    return [call.kwargs["json"] for call in post.call_args_list]
+
+
 class TestCreateDataset:
     @pytest.mark.asyncio
     async def test_409_conflict_appends_new_version(self):
-        from phoenix.client.resources.datasets import DatasetUploadError
-
-        client = MagicMock()
-        conflict = DatasetUploadError("Dataset upload failed: already exists")
-        conflict.__cause__ = _http_error(409)
-        client.datasets.create_dataset.side_effect = conflict
-        client.datasets.add_examples_to_dataset.return_value = MagicMock(id="ds1")
-        with patch("phoenix.client.Client", return_value=client):
+        created = {"data": {"dataset_id": "ds1", "version_id": "v2"}}
+        with patch(
+            "cogniverse_telemetry_phoenix.provider.httpx.post",
+            side_effect=[
+                _upload_response(409, text="already exists"),
+                _upload_response(200, json=created),
+            ],
+        ) as post:
             result = await _store().create_dataset("ds1", pd.DataFrame([{"a": 1}]))
         assert result == "ds1"
-        client.datasets.add_examples_to_dataset.assert_called_once()
+        assert [body["action"] for body in _posted(post)] == ["create", "append"]
 
     @pytest.mark.asyncio
     async def test_500_with_already_exists_body_is_not_appended(self):
         """A non-conflict 500 whose body text merely contains 'already exists'
         must fail loudly, never be silently rerouted to append."""
-        from phoenix.client.resources.datasets import DatasetUploadError
-
-        client = MagicMock()
-        err = DatasetUploadError("Dataset upload failed: WAL says already exists")
-        err.__cause__ = _http_error(500)
-        client.datasets.create_dataset.side_effect = err
-        with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(DatasetUploadError):
+        with patch(
+            "cogniverse_telemetry_phoenix.provider.httpx.post",
+            side_effect=[_upload_response(500, text="WAL says already exists")],
+        ) as post:
+            with pytest.raises(httpx.HTTPStatusError) as excinfo:
                 await _store().create_dataset("ds1", pd.DataFrame([{"a": 1}]))
-        client.datasets.add_examples_to_dataset.assert_not_called()
+        assert excinfo.value.response.status_code == 500
+        assert [body["action"] for body in _posted(post)] == ["create"]
+
+    @pytest.mark.asyncio
+    async def test_append_failure_after_conflict_raises(self):
+        """The name exists, and the append that follows fails: the failure
+        surfaces instead of reading as a created dataset."""
+        with patch(
+            "cogniverse_telemetry_phoenix.provider.httpx.post",
+            side_effect=[
+                _upload_response(409, text="already exists"),
+                _upload_response(503, text="unavailable"),
+            ],
+        ) as post:
+            with pytest.raises(httpx.HTTPStatusError) as excinfo:
+                await _store().create_dataset("ds1", pd.DataFrame([{"a": 1}]))
+        assert excinfo.value.response.status_code == 503
+        assert [body["action"] for body in _posted(post)] == ["create", "append"]
+
+    @pytest.mark.asyncio
+    async def test_keys_split_at_the_first_output_named_column(self):
+        """Without explicit keys, columns before the first output-named one
+        are inputs, it is the output, and the rest are metadata — every value
+        sent as its CSV text."""
+        created = {"data": {"dataset_id": "ds1", "version_id": "v1"}}
+        frame = pd.DataFrame(
+            [{"question": "q", "turns": 2, "answer": "a", "source": "", "ok": True}]
+        )
+        with patch(
+            "cogniverse_telemetry_phoenix.provider.httpx.post",
+            side_effect=[_upload_response(200, json=created)],
+        ) as post:
+            await _store().create_dataset("ds1", frame)
+        [body] = _posted(post)
+        assert (body["inputs"], body["outputs"], body["metadata"]) == (
+            [{"question": "q", "turns": "2"}],
+            [{"answer": "a"}],
+            [{"source": "", "ok": "True"}],
+        )
+        assert len(body["example_ids"]) == 1
+        assert len(body["example_ids"][0]) == 32
 
 
 class TestDeleteDataset:

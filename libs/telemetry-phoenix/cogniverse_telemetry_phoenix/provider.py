@@ -5,12 +5,17 @@ Implements all store interfaces using Phoenix AsyncClient.
 """
 
 import asyncio
+import csv
+import io
 import logging
+import re
+import uuid
 import weakref
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
+import httpx
 import pandas as pd
 from opentelemetry.context import (
     _SUPPRESS_INSTRUMENTATION_KEY,
@@ -129,6 +134,84 @@ def _http_status(exc: BaseException) -> Optional[int]:
         if resp is not None:
             return getattr(resp, "status_code", None)
     return None
+
+
+_OUTPUT_COLUMN = re.compile(r"(?i)(response|answer|output)s?$")
+
+
+def _dataset_keys(
+    data: pd.DataFrame,
+    input_keys: Sequence[str],
+    output_keys: Sequence[str],
+    metadata_keys: Sequence[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """The columns that fill each example's input, output and metadata.
+
+    Without explicit keys, the first column named like an output
+    (``response``/``answer``/``output``, optionally plural) is the output,
+    the columns before it are inputs and those after it metadata.
+    """
+    if input_keys or output_keys or metadata_keys:
+        return list(input_keys), list(output_keys), list(metadata_keys)
+    columns = list(data.columns)
+    for position, column in enumerate(columns):
+        if _OUTPUT_COLUMN.search(str(column)):
+            return columns[:position], [column], columns[position + 1 :]
+    return columns, [], []
+
+
+def upload_dataset_rows(
+    http_endpoint: str,
+    *,
+    name: str,
+    data: pd.DataFrame,
+    action: str,
+    input_keys: Sequence[str] = (),
+    output_keys: Sequence[str] = (),
+    metadata_keys: Sequence[str] = (),
+    description: Optional[str] = None,
+) -> str:
+    """Upload every row of ``data`` as a new example of dataset ``name``.
+
+    ``action`` is Phoenix's upload action: ``create`` answers HTTP 409 when
+    the name exists, ``append`` adds to the dataset. Each value is stored as
+    the string a CSV rendering of ``data`` holds, empty cells included, and
+    each row carries a fresh example id so Phoenix adds it even when an
+    identical row is already stored.
+
+    Returns:
+        The dataset id.
+
+    Raises:
+        ValueError: ``data`` has no rows or lacks a named key column.
+        httpx.HTTPStatusError: Phoenix rejected the upload.
+    """
+    if data.empty:
+        raise ValueError(f"Dataset {name!r} upload has no rows")
+    inputs, outputs, metadata = _dataset_keys(
+        data, input_keys, output_keys, metadata_keys
+    )
+    missing = [key for key in (*inputs, *outputs, *metadata) if key not in data.columns]
+    if missing:
+        raise ValueError(f"Dataset {name!r} upload has no columns {missing}")
+    columns = list(dict.fromkeys((*inputs, *outputs, *metadata)))
+    rows = list(csv.DictReader(io.StringIO(data[columns].to_csv(index=False))))
+    response = httpx.post(
+        f"{http_endpoint.rstrip('/')}/v1/datasets/upload",
+        params={"sync": "true"},
+        json={
+            "action": action,
+            "name": name,
+            "description": description or "",
+            "inputs": [{key: row[str(key)] for key in inputs} for row in rows],
+            "outputs": [{key: row[str(key)] for key in outputs} for row in rows],
+            "metadata": [{key: row[str(key)] for key in metadata} for row in rows],
+            "example_ids": [uuid.uuid4().hex for _ in rows],
+        },
+        timeout=_DATASET_OP_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    return response.json()["data"]["dataset_id"]
 
 
 def _is_dataset_not_found(exc: BaseException) -> bool:
@@ -996,44 +1079,38 @@ class PhoenixDatasetStore(DatasetStore):
             metadata_keys = metadata.get("metadata_keys", [])
             description = metadata.get("description", "")
 
-            from phoenix.client import Client
+            def _upload(action: str) -> str:
+                return upload_dataset_rows(
+                    self.http_endpoint,
+                    name=name,
+                    data=data,
+                    action=action,
+                    input_keys=input_keys,
+                    output_keys=output_keys,
+                    metadata_keys=metadata_keys,
+                    description=description,
+                )
 
-            def _create() -> Any:
-                sync_client = Client(base_url=self.http_endpoint)
+            def _create() -> str:
                 try:
-                    return sync_client.datasets.create_dataset(
-                        name=name,
-                        dataframe=data,
-                        input_keys=input_keys if input_keys else (),
-                        output_keys=output_keys if output_keys else (),
-                        metadata_keys=metadata_keys if metadata_keys else (),
-                        dataset_description=description if description else None,
-                        timeout=_DATASET_OP_TIMEOUT_S,
-                    )
-                except Exception as create_err:
+                    return _upload("create")
+                except httpx.HTTPStatusError as create_err:
                     # 409 = genuine duplicate-name conflict → append a version.
                     # Any other failure (500/503/body that merely mentions
                     # "already exists") must surface, not silently append.
                     if _http_status(create_err) == 409:
-                        return sync_client.datasets.add_examples_to_dataset(
-                            dataset=name,
-                            dataframe=data,
-                            input_keys=input_keys if input_keys else (),
-                            output_keys=output_keys if output_keys else (),
-                            metadata_keys=metadata_keys if metadata_keys else (),
-                            timeout=_DATASET_OP_TIMEOUT_S,
-                        )
+                        return _upload("append")
                     raise
 
             # Sync Phoenix HTTP off the event loop so a large upload doesn't
             # stall the whole runtime (mirrors log_evaluations).
-            dataset = await asyncio.to_thread(_create)
+            dataset_id = await asyncio.to_thread(_create)
 
             logger.info(
                 f"Created dataset '{name}' with {len(data)} records "
                 f"(inputs={input_keys}, outputs={output_keys})"
             )
-            return dataset.id
+            return dataset_id
 
         except Exception as e:
             logger.error(f"Failed to create dataset '{name}': {e}")
@@ -1121,9 +1198,9 @@ class PhoenixDatasetStore(DatasetStore):
         """
         Append records to an existing dataset as a new version.
 
-        Phoenix appends natively via ``add_examples_to_dataset`` — the
+        Phoenix appends natively via its ``append`` upload action — the
         dataset keeps its identity and ``get_dataset`` returns the full
-        appended history.
+        appended history, including rows identical to earlier ones.
 
         Args:
             name: Dataset name
@@ -1161,13 +1238,14 @@ class PhoenixDatasetStore(DatasetStore):
                             f"Dataset not found: {name}"
                         ) from lookup_exc
                     raise
-                sync_client.datasets.add_examples_to_dataset(
-                    dataset=name,
-                    dataframe=data,
-                    input_keys=input_keys if input_keys else (),
-                    output_keys=output_keys if output_keys else (),
-                    metadata_keys=metadata_keys if metadata_keys else (),
-                    timeout=_DATASET_OP_TIMEOUT_S,
+                upload_dataset_rows(
+                    self.http_endpoint,
+                    name=name,
+                    data=data,
+                    action="append",
+                    input_keys=input_keys,
+                    output_keys=output_keys,
+                    metadata_keys=metadata_keys,
                 )
 
             await asyncio.to_thread(_append)
@@ -1267,7 +1345,7 @@ class PhoenixProvider(TelemetryProvider):
                 export_timeout_millis / schedule_delay_millis. Applied to
                 the batch processor only (SimpleSpanProcessor has no
                 queue). phoenix.otel's own BatchSpanProcessor wrapper
-                (arize-phoenix 14.2.1) accepts no queue knobs, so the
+                (arize-phoenix-otel 0.17.1) accepts no queue knobs, so the
                 default processor register() attaches is replaced with an
                 SDK BatchSpanProcessor wrapping a Phoenix GRPCSpanExporter.
             resource_attributes: Optional extra OTel resource attributes
