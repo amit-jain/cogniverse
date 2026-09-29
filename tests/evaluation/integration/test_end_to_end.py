@@ -43,13 +43,13 @@ class TestEndToEnd:
 
     @pytest.mark.integration
     def test_experiment_mode_e2e(
-        self, search_evaluator_provider, eval_search_client, llm_endpoint
+        self, search_evaluator_provider, eval_search_client, inspect_llm
     ):
         """Test complete experiment mode with real search.
 
         Uses real ColPali encoder + real Vespa with seeded documents, real
         Phoenix for dataset loading, and the LLM endpoint resolved by the
-        ``llm_endpoint`` fixture (configurable per environment). The solver's
+        ``inspect_llm`` fixture (configurable per environment). The solver's
         httpx.post calls are routed through the TestClient to the real
         search router.
         """
@@ -69,7 +69,7 @@ class TestEndToEnd:
                 },
             )
 
-            results = inspect_eval(task, model=llm_endpoint["provider_uri"])
+            results = inspect_eval(task, model=inspect_llm)
 
             assert results is not None
             assert isinstance(results, list)
@@ -172,7 +172,7 @@ class TestEndToEnd:
         )
 
     @pytest.mark.integration
-    def test_batch_mode_e2e(self, search_evaluator_provider, llm_endpoint):
+    def test_batch_mode_e2e(self, search_evaluator_provider, inspect_llm):
         """Test complete batch mode workflow.
 
         Batch mode loads existing traces from real Phoenix.
@@ -185,7 +185,7 @@ class TestEndToEnd:
             config={"use_ragas": True, "ragas_metrics": ["context_relevancy"]},
         )
 
-        results = inspect_eval(task, model=llm_endpoint["provider_uri"])
+        results = inspect_eval(task, model=inspect_llm)
 
         assert results is not None
         assert isinstance(results, list)
@@ -434,7 +434,7 @@ class TestEndToEnd:
 
     @pytest.mark.integration
     def test_multiple_profiles_e2e(
-        self, search_evaluator_provider, eval_search_client, llm_endpoint
+        self, search_evaluator_provider, eval_search_client, inspect_llm
     ):
         """Test evaluation with real search profile.
 
@@ -456,7 +456,7 @@ class TestEndToEnd:
                 },
             )
 
-            results = inspect_eval(task, model=llm_endpoint["provider_uri"])
+            results = inspect_eval(task, model=inspect_llm)
 
             assert results is not None
             assert isinstance(results, list)

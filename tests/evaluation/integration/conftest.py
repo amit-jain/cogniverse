@@ -143,6 +143,20 @@ def llm_endpoint(monkeypatch_module, ensure_host_ollama):
 
 
 @pytest.fixture(scope="module")
+def inspect_llm(llm_endpoint):
+    """The resolved endpoint as an Inspect AI model on the ``cogniverse``
+    provider, which calls it through litellm with the shared key resolution."""
+    from cogniverse_evaluation.core.inspect_model import inspect_model
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    return inspect_model(
+        LLMEndpointConfig(
+            model=llm_endpoint["provider_uri"], api_base=llm_endpoint["base_url"]
+        )
+    )
+
+
+@pytest.fixture(scope="module")
 def monkeypatch_module():
     """Module-scoped monkeypatch (pytest's built-in is function-scoped)."""
     from _pytest.monkeypatch import MonkeyPatch
