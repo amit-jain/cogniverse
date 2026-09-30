@@ -289,7 +289,7 @@ class TestGroundTruthIsNotIngested:
         assert len(queries) == 50, len(queries)
         # Every row carries a query. A blank one silently drops that row from the
         # quality monitor's golden set, which is how sweep25's sidecar crash-loop
-        # started (charts copy, fixed in dc018b18).
+        # started (charts copy, fixed in a61f64c8).
         assert [i for i, row in enumerate(rows) if not str(row["query"]).strip()] == []
 
         offenders = {}
