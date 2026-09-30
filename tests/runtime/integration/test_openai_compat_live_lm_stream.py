@@ -114,7 +114,7 @@ RUN = uuid.uuid4().hex[:12]
 DEAD_PORT_BUDGET_SECONDS = 10.0
 DISCONNECT_BUDGET_SECONDS = 5.0
 # Measured with the same 5 ms ticker as the admin routes
-# (tests/runtime/integration/test_admin_harness_keys.py:210-235), less the time
+# (tests/runtime/integration/test_admin_harness_keys.py:216-246), less the time
 # a garbage collection (which stops every thread) spent inside each gap. Eight
 # live streams keep the LM threads busy, and at the largest gaps a stack
 # sampler finds the loop idle in select, waiting for the GIL: 31-110 ms over

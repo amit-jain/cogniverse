@@ -25,6 +25,12 @@ from tests.utils.vespa_docker import VespaDockerManager
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
+# Measured with the 5 ms ticker below, 30 runs each: max gap 17.5 ms on an idle
+# host, 18.4 ms with the process pinned to a third of one core (the share at
+# which the unwarmed route build reproduced CI's 51 ms). One revoke run on the
+# loop instead of a worker thread measured 20 s; the budget sits far below it.
+LOOP_GAP_BUDGET_SECONDS = 0.05
+
 
 @pytest.fixture(scope="module")
 def key_vespa():
@@ -218,21 +224,26 @@ async def test_concurrent_revokes_keep_loop_responsive(store, monkeypatch):
             gaps.append(now - previous)
             previous = now
 
-    ticking = asyncio.create_task(ticker())
-    try:
-        async with client_for(store) as client:
+    async with client_for(store) as client:
+        # FastAPI builds an included router's routes on the first request it
+        # matches, not in include_router; serve that request before ticking so
+        # the gaps time the revokes, not the new app's route build.
+        warm = await client.delete("/admin/harness/keys/not-a-hash")
+        assert warm.status_code == 422
+        ticking = asyncio.create_task(ticker())
+        try:
             responses = await asyncio.gather(
                 *(
                     client.delete(f"/admin/harness/keys/{r['key_hash']}")
                     for r in records
                 )
             )
-    finally:
-        stopped.set()
-        await ticking
+        finally:
+            stopped.set()
+            await ticking
     assert [r.status_code for r in responses] == [200] * 20
     print(f"LOOP_MAX_GAP_MS={max(gaps) * 1000:.3f}")
-    assert max(gaps) < 0.05
+    assert max(gaps) < LOOP_GAP_BUDGET_SECONDS
     for record in records:
         with pytest.raises(
             importlib.import_module(
