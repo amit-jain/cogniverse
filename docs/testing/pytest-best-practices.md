@@ -974,7 +974,7 @@ For telemetry and evaluation tests:
 The `phoenix_container` fixture is defined in `tests/conftest.py` (module-scoped).
 Key details:
 
-- **Image**: `arizephoenix/phoenix:20.3.0` pinned by digest (never `:latest`)
+- **Image**: `arizephoenix/phoenix:20.16.0` pinned by digest (never `:latest`)
 - **Ports**: HTTP 16006 + per-process offset (→ 6006), gRPC 14317 + per-process offset (→ 4317) —
   `port_offset = (os.getpid() % 1000) * 10` so concurrent pytest sweeps don't collide
 - **Env var**: Sets `TELEMETRY_OTLP_ENDPOINT` (not `OTLP_ENDPOINT`) and `TELEMETRY_SYNC_EXPORT`

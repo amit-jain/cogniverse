@@ -1052,7 +1052,7 @@ local Phoenix instances and with other concurrent pytest sweeps:
 where `port_offset = (os.getpid() % 1000) * 10`, giving each process a
 distinct 10-port-spaced slot in a ~1000-process range.
 
-Image: `arizephoenix/phoenix:20.3.0` pinned by digest (never `:latest`).
+Image: `arizephoenix/phoenix:20.16.0` pinned by digest (never `:latest`).
 
 Containers are named `phoenix_test_pid<pid>_<timestamp>` and tagged with the
 owning pid; on startup the fixture only kills leftover containers matching
