@@ -659,8 +659,8 @@ phoenix:
   # `tag`.
   image:
     repository: arizephoenix/phoenix
-    tag: "20.3.0"
-    digest: "sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75"
+    tag: "20.16.0"
+    digest: "sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -716,6 +716,7 @@ phoenix:
     # /mcp is unauthenticated while Phoenix auth is off.
     PHOENIX_ENABLE_MCP_SERVER: "false"
     PHOENIX_DISABLE_AGENT_ASSISTANT: "true"
+    PHOENIX_AGENTS_DISABLE_GITHUB: "true"
 
   # The first start after an upgrade runs schema migrations before /health
   # answers; liveness is held off until this probe passes.

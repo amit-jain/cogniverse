@@ -1,9 +1,10 @@
 """The Phoenix server container: pinned image, disabled surfaces, startup budget.
 
 The image is pinned by tag and multi-arch index digest. The unauthenticated
-MCP endpoint and the in-app agent assistant are off. The first start after an
-upgrade runs Phoenix's schema migrations before /health answers, so a
-startupProbe holds liveness off for longer than a migration takes.
+MCP endpoint, the in-app agent assistant and the assistant's GitHub tools are
+off. The first start after an upgrade runs Phoenix's schema migrations before
+/health answers, so a startupProbe holds liveness off for longer than a
+migration takes.
 """
 
 import shutil
@@ -17,8 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
 
 PHOENIX_IMAGE = (
-    "arizephoenix/phoenix:20.3.0"
-    "@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75"
+    "arizephoenix/phoenix:20.16.0"
+    "@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6"
 )
 
 OVERLAY_STACKS = {
@@ -84,7 +85,7 @@ def test_image_is_pinned_by_tag_and_digest(stack):
 def test_cleared_digest_falls_back_to_the_tag():
     container = _phoenix_container("phoenix.image.digest=")
 
-    assert container["image"] == "arizephoenix/phoenix:20.3.0"
+    assert container["image"] == "arizephoenix/phoenix:20.16.0"
 
 
 @pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
@@ -94,8 +95,10 @@ def test_mcp_server_and_agent_assistant_are_off(stack):
     assert (
         env["PHOENIX_ENABLE_MCP_SERVER"],
         env["PHOENIX_DISABLE_AGENT_ASSISTANT"],
+        env["PHOENIX_AGENTS_DISABLE_GITHUB"],
     ) == (
         "false",
+        "true",
         "true",
     )
 
