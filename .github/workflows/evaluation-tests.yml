@@ -142,12 +142,12 @@ jobs:
     - name: Start Phoenix
       run: |
         echo "Starting Phoenix in Docker..."
-        docker pull arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75
+        docker pull arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6
         docker run -d --name phoenix-ci \
           -p 6006:6006 \
           -p 4317:4317 \
           -e PHOENIX_WORKING_DIR=/tmp/phoenix-data \
-          arizephoenix/phoenix:20.3.0@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75
+          arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6
 
         # Wait for Phoenix to be ready
         echo "Waiting for Phoenix to be ready..."
