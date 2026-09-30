@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from typing import Any, AsyncIterator, Callable, Mapping
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import iter_route_contexts
 
 from cogniverse_core.common.media.config import MediaConfig
 from cogniverse_core.common.media.locator import (
@@ -982,6 +984,15 @@ def _dispatcher_profile_labeler(dispatcher):
     return label_profile
 
 
+def build_included_routes(app: FastAPI) -> int:
+    """Build every included router's routes now and return the route count.
+
+    fastapi builds an included router's routes on the first request that
+    matches against it; resolving the route contexts builds and caches them.
+    """
+    return sum(1 for _ in iter_route_contexts(app.routes))
+
+
 # dspy.configure grants ambient-binding ownership to the first async task
 # that calls it; the ambient LM is process-wide, so it is bound exactly once
 # per process (tests boot several lifespans in one process). Per-tenant and
@@ -1720,6 +1731,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "A2A server mounted at /a2a with %d skills on replica %s",
         len(a2a_protocol.skill_ids),
         replica_id,
+    )
+
+    route_build_started = time.perf_counter()
+    route_count = build_included_routes(app)
+    logger.info(
+        "Built %d routes in %.1f ms",
+        route_count,
+        (time.perf_counter() - route_build_started) * 1000,
     )
 
     logger.info("Cogniverse Runtime started successfully")
