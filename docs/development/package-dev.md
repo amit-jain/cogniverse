@@ -573,7 +573,7 @@ name = "cogniverse-evaluation"
 version = "0.2.0"
 dependencies = [
     "cogniverse-foundation>=0.2.0",  # Update minimum version
-    "arize-phoenix>=4.0.0",
+    "arize-phoenix-client>=3.5.0",
 ]
 ```
 

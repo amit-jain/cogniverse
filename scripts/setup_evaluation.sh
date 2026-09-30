@@ -52,7 +52,7 @@ if [ -f "pyproject.toml" ]; then
     uv sync
 else
     echo "Installing individual packages..."
-    uv pip install inspect-ai arize-phoenix phoenix-evals opentelemetry-api opentelemetry-sdk
+    uv pip install inspect-ai arize-phoenix-client arize-phoenix-otel opentelemetry-api opentelemetry-sdk
 fi
 
 echo -e "${GREEN}✓ Dependencies installed${NC}"

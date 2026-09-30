@@ -218,7 +218,7 @@ uv sync
 
 - `gliner`: Relationship extraction
 
-- `arize-phoenix`: Telemetry
+- `arize-phoenix-client`, `arize-phoenix-otel`: Telemetry
 
 **Prevention:**
 
