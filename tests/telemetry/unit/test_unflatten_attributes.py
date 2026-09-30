@@ -3,14 +3,16 @@
 ``_normalize_span_page`` nests dotted span attributes the way
 ``phoenix.trace.attributes.unflatten`` does, without importing the Phoenix
 server package. Each case pins the output Phoenix 20.3.0 gives and compares
-against that function directly; a seeded batch of generated inputs is
-compared the same way.
+against that function's output recorded in
+``fixtures/phoenix_20_3_0_unflatten.json``; a seeded batch of generated
+inputs is compared the same way.
 """
 
+import json
 import random
+from pathlib import Path
 
 import pytest
-from phoenix.trace.attributes import unflatten as phoenix_unflatten
 
 from cogniverse_telemetry_phoenix.provider import _unflatten_attributes
 
@@ -58,26 +60,47 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize(("pairs", "expected"), CASES)
-def test_unflatten_matches_phoenix_on_documented_cases(pairs, expected):
-    assert phoenix_unflatten(pairs) == expected
+_SEGMENTS = ["a", "b", "x", "0", "1", "2", "00", " c ", "-1", "0a"]
+_VALUES = [1, "s", None, {"k": 1}, [1, 2], [{"k": 2}], 0, False, ""]
+
+
+def _restore_values(node):
+    """Map a recorded ``{"$value": i}`` back to the very ``_VALUES[i]`` object.
+
+    Phoenix passes a list or dict attribute value through as the same
+    object, so the recording marks those by index and loading restores
+    their identity.
+    """
+    if set(node) == {"$value"}:
+        return _VALUES[node["$value"]]
+    return node
+
+
+_PHOENIX = json.loads(
+    (Path(__file__).parent / "fixtures" / "phoenix_20_3_0_unflatten.json").read_text(
+        encoding="utf-8"
+    ),
+    object_hook=_restore_values,
+)
+
+
+@pytest.mark.parametrize(
+    ("index", "pairs", "expected"),
+    [(index, pairs, expected) for index, (pairs, expected) in enumerate(CASES)],
+)
+def test_unflatten_matches_phoenix_on_documented_cases(index, pairs, expected):
+    assert _PHOENIX["cases"][index] == expected
     assert _unflatten_attributes(pairs) == expected
 
 
 def test_unflatten_rejects_a_non_decimal_digit_segment_as_phoenix_does():
     pairs = [("a.²", 1)]
 
-    with pytest.raises(ValueError) as phoenix_error:
-        phoenix_unflatten(pairs)
     with pytest.raises(ValueError) as ours:
         _unflatten_attributes(pairs)
 
-    assert str(ours.value) == str(phoenix_error.value)
+    assert str(ours.value) == _PHOENIX["non_decimal_digit_error"]
     assert str(ours.value) == "invalid literal for int() with base 10: '²'"
-
-
-_SEGMENTS = ["a", "b", "x", "0", "1", "2", "00", " c ", "-1", "0a"]
-_VALUES = [1, "s", None, {"k": 1}, [1, 2], [{"k": 2}], 0, False, ""]
 
 
 def _generated_pairs(rng: random.Random) -> list[tuple[str, object]]:
@@ -103,13 +126,13 @@ def _nodes(value):
 def test_unflatten_matches_phoenix_on_generated_inputs():
     rng = random.Random(20260928)
     inputs = [_generated_pairs(rng) for _ in range(5000)]
-    expected = [phoenix_unflatten(pairs) for pairs in inputs]
+    expected = _PHOENIX["generated"]
 
     actual = [_unflatten_attributes(pairs) for pairs in inputs]
 
     assert [
         (pairs, ours, theirs)
-        for pairs, ours, theirs in zip(inputs, actual, expected)
+        for pairs, ours, theirs in zip(inputs, actual, expected, strict=True)
         if ours != theirs
     ] == []
     built_lists = [
