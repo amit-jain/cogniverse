@@ -101,6 +101,7 @@ jobs:
           tests/common/unit/test_inpod_telemetry_prelude_guard.py \
           tests/common/unit/test_kubectl_context_contract_e2e.py \
           tests/common/unit/test_package_layering.py \
+          tests/common/unit/test_phoenix_image_pin_guard.py \
           tests/common/unit/test_schema_reference_guard.py \
           tests/common/unit/test_tenant_create_budget_guard.py \
           tests/common/unit/test_tenant_create_teardown_guard.py \

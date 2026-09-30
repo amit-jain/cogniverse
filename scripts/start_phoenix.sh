@@ -14,7 +14,7 @@ CONTAINER_NAME="${PHOENIX_CONTAINER_NAME:-phoenix-server}"
 PORT="${PHOENIX_PORT:-6006}"
 OTLP_PORT="${PHOENIX_OTLP_PORT:-4317}"
 DATA_DIR="${PHOENIX_DATA_DIR:-./data/cogniverse/phoenix}"
-IMAGE="${PHOENIX_IMAGE:-arizephoenix/phoenix:latest}"
+IMAGE="${PHOENIX_IMAGE:-arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6}"
 CID_FILE="$DATA_DIR/phoenix.cid"
 
 LABEL_ARGS=()
@@ -152,7 +152,7 @@ case "$1" in
         echo "  PHOENIX_OTLP_PORT      - OTLP gRPC port to expose (default: 4317)"
         echo "  PHOENIX_DATA_DIR       - Data directory (default: ./data/cogniverse/phoenix)"
         echo "  PHOENIX_CONTAINER_NAME - Container name (default: phoenix-server)"
-        echo "  PHOENIX_IMAGE          - Image (default: arizephoenix/phoenix:latest)"
+        echo "  PHOENIX_IMAGE          - Image (default: arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6)"
         echo "  PHOENIX_LABELS         - Space-separated key=value container labels"
         echo ""
         echo "Examples:"
