@@ -308,6 +308,12 @@ def pytest_runtest_setup(item):
     enforce_lm_gate(item)
 
 
+def pytest_collection_finish(session):
+    """Keep the collected session heap out of each test's ``gc.collect``."""
+    gc.collect()
+    gc.freeze()
+
+
 def cleanup_background_threads():
     """
     Clean up background threads from tqdm (transformers) and posthog (mem0ai).
