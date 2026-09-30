@@ -373,6 +373,116 @@ def test_load_capture_empty_raises_with_path(tmp_path):
     assert str(path) in str(excinfo.value)
 
 
+def _rest_span_record(**overrides: object) -> dict[str, object]:
+    """A span as Phoenix's REST API returns it: an ``id``, no ``conversation``."""
+    record: dict[str, object] = {
+        "id": "U3BhbjoxMjM=",
+        "name": "cogniverse.gateway",
+        "context": {"trace_id": "trace-rest", "span_id": "span-rest"},
+        "span_kind": "UNKNOWN",
+        "parent_id": None,
+        "start_time": "2026-09-05T02:30:10.900938+00:00",
+        "end_time": "2026-09-05T02:30:10.901028+00:00",
+        "status_code": "UNSET",
+        "status_message": "",
+        "attributes": {"input.value": "seeded"},
+        "events": [],
+    }
+    record.update(overrides)
+    return record
+
+
+@pytest.mark.parametrize(
+    ("record", "cause"),
+    [
+        (
+            {
+                **_span_record(
+                    name="cogniverse.gateway",
+                    trace_id="trace-legacy",
+                    span_id="span-legacy",
+                    start_time="2026-08-24T10:00:00Z",
+                    end_time="2026-08-24T10:00:01Z",
+                    attributes={"input.value": "seeded"},
+                ),
+                "start_time": "yesterday",
+            },
+            "Invalid isoformat string: 'yesterday'",
+        ),
+        (
+            _rest_span_record(status_code="BROKEN"),
+            "'BROKEN' is not a valid span status code",
+        ),
+        (
+            _rest_span_record(context={"span_id": "span-rest"}),
+            "span context is missing trace_id",
+        ),
+        (
+            _rest_span_record(end_time="soon"),
+            "Invalid isoformat string: 'soon'",
+        ),
+        (
+            _rest_span_record(events=[{"name": "checkpoint"}]),
+            "span event 'checkpoint' is missing its timestamp",
+        ),
+        (
+            _rest_span_record(attributes=["input.value"]),
+            "span attributes should be a mapping, got list",
+        ),
+        (
+            _rest_span_record(conversation={"session": "s"}),
+            "span conversation carries ['session'], expected ['conversation_id']",
+        ),
+    ],
+    ids=[
+        "legacy-start-time",
+        "rest-status-code",
+        "rest-trace-id",
+        "rest-end-time",
+        "rest-event-timestamp",
+        "rest-attributes",
+        "rest-conversation",
+    ],
+)
+def test_load_capture_rejects_a_malformed_span_record(tmp_path, record, cause):
+    path = tmp_path / "capture.json"
+    path.write_text(json.dumps([record]), encoding="utf-8")
+
+    with pytest.raises(SpanCaptureFileError) as excinfo:
+        load_capture_json(path)
+
+    assert str(excinfo.value) == f"capture file is invalid: {path}"
+    assert str(excinfo.value.__cause__) == cause
+
+
+def test_load_capture_accepts_both_span_record_shapes(tmp_path):
+    path = tmp_path / "capture.json"
+    records = [
+        _rest_span_record(
+            status_code="ok",
+            events=[
+                {
+                    "name": "exception",
+                    "timestamp": "2026-09-05T02:30:10.900990+00:00",
+                    "attributes": {"exception.message": "boom"},
+                }
+            ],
+        ),
+        _span_record(
+            name="cogniverse.profile_selection",
+            trace_id="trace-legacy",
+            span_id="span-legacy",
+            start_time="2026-08-24T10:00:05Z",
+            end_time="2026-08-24T10:00:06Z",
+            attributes={"input.value": "seeded", "input.mime_type": "text/x-odd"},
+            conversation_id="11111111-1111-1111-1111-111111111111",
+        ),
+    ]
+    path.write_text(json.dumps(records), encoding="utf-8")
+
+    assert load_capture_json(path) == records
+
+
 def test_replay_refuses_a_record_whose_attributes_are_not_a_mapping():
     """A span with no usable attributes must raise, never replay empty.
 

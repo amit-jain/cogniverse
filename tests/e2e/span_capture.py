@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -21,7 +20,6 @@ from opentelemetry.trace import SpanKind as OTelSpanKind
 from opentelemetry.trace import Status, StatusCode
 from phoenix.client import Client
 from phoenix.client.types.spans import SpanQuery
-from phoenix.trace.span_json_decoder import json_to_span
 
 SpanRecord = dict[str, Any]
 
@@ -98,9 +96,50 @@ def _span_sort_key(record: SpanRecord, position: int) -> tuple[datetime, datetim
     return start_time, end_time, position
 
 
+_SPAN_STATUS_CODES = frozenset({"UNSET", "OK", "ERROR"})
+
+
+def _check_span_record(record: SpanRecord) -> None:
+    """Reject a span record Phoenix's span decoder would refuse.
+
+    Applies to both shapes a capture holds: Phoenix's REST span (with ``id``,
+    without ``conversation``) and the legacy decoder shape.
+    """
+    context = record["context"]
+    if not isinstance(context, dict):
+        raise ValueError(f"span context should be a mapping, got {context!r}")
+    for key in ("trace_id", "span_id"):
+        if key not in context:
+            raise ValueError(f"span context is missing {key}")
+    attributes = record.get("attributes")
+    if attributes is not None and not isinstance(attributes, dict):
+        raise ValueError(
+            f"span attributes should be a mapping, got {type(attributes).__name__}"
+        )
+    datetime.fromisoformat(record["start_time"])
+    if end_time := record.get("end_time"):
+        datetime.fromisoformat(end_time)
+    status_code = record.get("status_code")
+    if status_code and str(status_code).upper() not in _SPAN_STATUS_CODES:
+        raise ValueError(f"{status_code!r} is not a valid span status code")
+    events = record.get("events") or []
+    if isinstance(events, str):
+        events = json.loads(events)
+    for event in events:
+        if "timestamp" not in event:
+            raise ValueError(f"span event {event['name']!r} is missing its timestamp")
+        datetime.fromisoformat(event["timestamp"])
+    conversation = record.get("conversation")
+    if conversation is not None and set(conversation) != {"conversation_id"}:
+        raise ValueError(
+            f"span conversation carries {sorted(conversation)}, "
+            "expected ['conversation_id']"
+        )
+
+
 def _validate_record(record: SpanRecord, *, path: Path | None = None) -> None:
     try:
-        json_to_span(copy.deepcopy(record))
+        _check_span_record(record)
     except Exception as exc:  # noqa: BLE001
         if path is None:
             raise SpanCaptureError("invalid captured span record") from exc
