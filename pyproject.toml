@@ -53,8 +53,6 @@ dependencies = [
     # Search & Retrieval
     "pyvespa==1.1.2",
     # Observability & Telemetry
-    "arize-phoenix==20.3.0",
-    "arize-phoenix-evals==3.9.0",
     "opentelemetry-api==1.41.0",
     "opentelemetry-sdk==1.41.0",
     "opentelemetry-instrumentation==0.62b0",
@@ -328,6 +326,7 @@ dev = [
     # and future finetuning tool; production serves these models via vLLM
     # through Remote*Loader and never imports pylate at runtime.
     "pylate==1.4.0",
+    "prometheus-client==0.25.0",
 ]
 runtime-models = ["en-core-web-sm==3.8.0"]
 docs = [
