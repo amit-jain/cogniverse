@@ -3,15 +3,14 @@
 Start Phoenix server with proper configuration and data persistence
 
 This script ensures Phoenix runs with persistent storage and proper configuration
-for the Cogniverse evaluation framework. Uses Docker as the primary method for
-running Phoenix as a standalone service.
+for the Cogniverse evaluation framework. Phoenix runs as a standalone Docker
+container on the image the Helm chart pins.
 """
 
 import argparse
 import atexit
 import json
 import logging
-import os
 import re
 import signal
 import subprocess
@@ -28,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 
+PHOENIX_IMAGE = (
+    "arizephoenix/phoenix:20.3.0"
+    "@sha256:22358dc39de9aa02d47afdd6ce659747f511bc887ebf927d74d695e34ec52c75"
+)
+
 
 class PhoenixServer:
     """Manage Phoenix server lifecycle using Docker"""
@@ -37,15 +41,13 @@ class PhoenixServer:
         data_dir: str,
         port: int = 6006,
         host: str = "0.0.0.0",
-        use_docker: bool = True,
         container_name: str = "phoenix-server",
-        image: str = "arizephoenix/phoenix:latest",
+        image: str = PHOENIX_IMAGE,
         labels: Optional[Dict[str, str]] = None,
     ):
         self.data_dir = Path(data_dir).absolute()
         self.port = port
         self.host = host
-        self.use_docker = use_docker
         self.container_name = container_name
         self.image = image
         self.labels = dict(labels or {})
@@ -63,11 +65,8 @@ class PhoenixServer:
 
         logger.info(f"Phoenix data directory: {self.data_dir}")
 
-        # Check Docker availability if using Docker
-        if self.use_docker and not self._check_docker():
-            logger.error(
-                "Docker is not available. Install Docker or use --no-docker flag"
-            )
+        if not self._check_docker():
+            logger.error("Docker is not available. Install Docker to run Phoenix")
             sys.exit(1)
 
     def _check_docker(self) -> bool:
@@ -88,10 +87,7 @@ class PhoenixServer:
             logger.warning("Phoenix server is already running")
             return
 
-        if self.use_docker:
-            self._start_docker(background)
-        else:
-            self._start_python(background)
+        self._start_docker(background)
 
     def _start_docker(self, background: bool = False):
         """Start Phoenix using Docker.
@@ -169,97 +165,9 @@ class PhoenixServer:
             logger.info("Shutting down Phoenix server...")
             self.stop()
 
-    def _start_python(self, background: bool = False):
-        """Start Phoenix using Python (fallback method)"""
-        # Set environment variables
-        env = os.environ.copy()
-        env.update(
-            {
-                "PHOENIX_WORKING_DIR": str(self.data_dir),
-                "PHOENIX_PORT": str(self.port),
-                "PHOENIX_HOST": self.host,
-                "PHOENIX_ENABLE_PROMETHEUS": "true",
-                "PHOENIX_ENABLE_CORS": "true",
-                "PHOENIX_MAX_TRACES": "100000",
-                "PHOENIX_ENABLE_DATASET_VERSIONING": "true",
-                "PHOENIX_LOG_LEVEL": "INFO",
-            }
-        )
-
-        # Build command - try to use uv if available
-        if subprocess.run(["which", "uv"], capture_output=True).returncode == 0:
-            cmd = [
-                "uv",
-                "run",
-                "phoenix",
-                "serve",
-                "--port",
-                str(self.port),
-                "--host",
-                self.host,
-            ]
-        else:
-            cmd = [
-                sys.executable,
-                "-m",
-                "phoenix.server.main",
-                "serve",
-                "--port",
-                str(self.port),
-                "--host",
-                self.host,
-            ]
-
-        logger.info(f"Starting Phoenix server on {self.host}:{self.port}")
-        logger.info(f"Data directory: {self.data_dir}")
-
-        if background:
-            # Start in background
-            log_file = self.data_dir / "phoenix.log"
-            with open(log_file, "a") as log:
-                self.process = subprocess.Popen(
-                    cmd,
-                    env=env,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    preexec_fn=os.setsid if sys.platform != "win32" else None,
-                )
-
-            # Save PID
-            with open(self.pid_file, "w") as f:
-                f.write(str(self.process.pid))
-
-            logger.info(f"Phoenix started in background (PID: {self.process.pid})")
-            logger.info(f"Logs: {log_file}")
-
-            # Wait for server to be ready
-            self._wait_for_server()
-
-        else:
-            # Start in foreground
-            try:
-                self.process = subprocess.Popen(cmd, env=env)
-
-                # Register cleanup
-                atexit.register(self.stop)
-                signal.signal(signal.SIGINT, self._signal_handler)
-                signal.signal(signal.SIGTERM, self._signal_handler)
-
-                logger.info("Phoenix server started. Press Ctrl+C to stop.")
-
-                # Wait for process to complete
-                self.process.wait()
-
-            except KeyboardInterrupt:
-                logger.info("Shutting down Phoenix server...")
-                self.stop()
-
     def stop(self):
         """Stop Phoenix server"""
-        if self.use_docker:
-            self._stop_docker()
-        else:
-            self._stop_python()
+        self._stop_docker()
 
     def _recorded_container_id(self) -> Optional[str]:
         """The id of the container this data directory's start launched."""
@@ -316,48 +224,6 @@ class PhoenixServer:
         self.pid_file.unlink()
         logger.info("Phoenix Docker container stopped")
 
-    def _stop_python(self):
-        """Stop Phoenix Python process"""
-        if self.process:
-            logger.info("Stopping Phoenix server...")
-
-            if sys.platform == "win32":
-                self.process.terminate()
-            else:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-
-            self.process.wait(timeout=10)
-            self.process = None
-
-            # Remove PID file
-            if self.pid_file.exists():
-                self.pid_file.unlink()
-
-            logger.info("Phoenix server stopped")
-
-        elif self.pid_file.exists():
-            # Try to stop using PID file
-            try:
-                with open(self.pid_file, "r") as f:
-                    pid = int(f.read())
-
-                os.kill(pid, signal.SIGTERM)
-                time.sleep(2)
-
-                # Check if really stopped
-                try:
-                    os.kill(pid, 0)
-                    # Still running, force kill
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-
-                self.pid_file.unlink()
-                logger.info(f"Stopped Phoenix server (PID: {pid})")
-
-            except Exception as e:
-                logger.error(f"Failed to stop Phoenix: {e}")
-
     def restart(self):
         """Restart Phoenix server"""
         logger.info("Restarting Phoenix server...")
@@ -411,29 +277,27 @@ class PhoenixServer:
 
             status = {
                 "status": "running",
-                "method": "docker" if self.use_docker else "python",
                 "url": f"http://localhost:{self.port}",
                 "data_dir": str(self.data_dir),
             }
 
-            if self.use_docker:
-                # Get container info
-                try:
-                    result = subprocess.run(
-                        [
-                            "docker",
-                            "inspect",
-                            self.container_name,
-                            "--format",
-                            "{{.State.Status}}",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                    )
-                    status["container_status"] = result.stdout.strip()
-                except subprocess.CalledProcessError:
-                    pass
+            # Get container info
+            try:
+                result = subprocess.run(
+                    [
+                        "docker",
+                        "inspect",
+                        self.container_name,
+                        "--format",
+                        "{{.State.Status}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                status["container_status"] = result.stdout.strip()
+            except subprocess.CalledProcessError:
+                pass
 
             try:
                 # Get server info
@@ -459,7 +323,6 @@ class PhoenixServer:
         else:
             status = {
                 "status": "stopped",
-                "method": "docker" if self.use_docker else "python",
                 "data_dir": str(self.data_dir),
             }
 
@@ -505,11 +368,6 @@ def main():
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host for Phoenix server (default: 0.0.0.0)"
     )
-    parser.add_argument(
-        "--no-docker",
-        action="store_true",
-        help="Use Python method instead of Docker (default: use Docker)",
-    )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -535,7 +393,6 @@ def main():
         data_dir=args.data_dir,
         port=args.port,
         host=args.host,
-        use_docker=not args.no_docker,
     )
 
     # Initialize data directory

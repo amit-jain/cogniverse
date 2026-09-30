@@ -11,6 +11,7 @@ in-process tests with those boundaries stubbed.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import logging
 import os
 import re
@@ -1049,6 +1050,37 @@ def _sleeping_container(*name: str) -> str:
         _TINY_IMAGE,
         "sleep",
         "300",
+    )
+
+
+def _chart_phoenix_image() -> str:
+    values = yaml.safe_load(
+        (_SCRIPTS.parent / "charts" / "cogniverse" / "values.yaml").read_text()
+    )
+    image = values["phoenix"]["image"]
+    return f"{image['repository']}:{image['tag']}@{image['digest']}"
+
+
+def test_start_phoenix_runs_the_image_the_chart_pins():
+    mod = _load("start_phoenix")
+
+    default = inspect.signature(mod.PhoenixServer).parameters["image"].default
+
+    assert default == _chart_phoenix_image()
+
+
+def test_start_phoenix_has_no_in_process_server_mode(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPTS / "start_phoenix.py"), "--no-docker", "status"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 2
+    assert proc.stderr.splitlines()[-1] == (
+        "start_phoenix.py: error: unrecognized arguments: --no-docker"
     )
 
 
