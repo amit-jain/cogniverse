@@ -44,7 +44,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --only-group runtime-models --inexact --frozen && \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \
-    uv pip install "arize-phoenix-evals<3" && \
     uv pip install -e ./libs/telemetry-phoenix && \
     rm -rf /root/.cache/pip
 
