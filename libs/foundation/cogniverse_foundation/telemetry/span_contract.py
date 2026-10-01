@@ -35,6 +35,13 @@ LLM_UPSTREAM_STATUS_ATTRIBUTE = "upstream_status"
 LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE = "upstream_exception_type"
 PRO_MODEL_UNAVAILABLE = "pro_model_unavailable"
 
+# Stamped on the span of an LM call whose endpoint answered 404
+# (``LMEndpointNotServing``): the state, whether the call was refused without
+# being sent, and the seconds until one call rechecks the endpoint.
+LLM_ENDPOINT_STATE_ATTRIBUTE = "llm.endpoint.state"
+LLM_ENDPOINT_FAILED_FAST_ATTRIBUTE = "llm.endpoint.failed_fast"
+LLM_ENDPOINT_RECHECK_IN_S_ATTRIBUTE = "llm.endpoint.recheck_in_s"
+
 # Query enhancement path marker — every query_enhancement span sets this so
 # served rows stay machine-readable even when the LM falls back.
 QUERY_ENHANCEMENT_PATH_ATTRIBUTE = "enhancement.path"

@@ -41,6 +41,16 @@ is exercised against one running stack:
 The sentinel travels in the request body, so it survives the router's request
 re-serialization without depending on any header being forwarded.
 
+Two files under ``STUB_STATE_DIR`` stand for the deployment state of a Modal
+app, written from outside the container with ``docker exec``:
+
+  - ``undeployed``   — every request gets what Modal's edge answers for an app
+                       that is not deployed: 404, ``text/plain``,
+                       ``modal-http: invalid function call``
+  - ``cold_start_s`` — the next request waits that many seconds before it is
+                       served, as the first request to a scaled-to-zero app
+                       does; the file is consumed by that request
+
 Pure standard library — the container needs only ``python:3.12-slim`` with
 this file mounted; no pip install, nothing to break on first run.
 """
@@ -67,6 +77,29 @@ _REQUESTS: list[dict] = []
 
 
 _FAULT_PREFIX = "FAULT:"
+
+STATE_DIR = os.environ.get("STUB_STATE_DIR", "/tmp/stub-state")
+# Byte-for-byte what Modal's edge answers for an undeployed app.
+UNDEPLOYED_BODY = b"modal-http: invalid function call\n"
+_COLD_START_LOCK = threading.Lock()
+
+
+def _undeployed() -> bool:
+    return os.path.exists(os.path.join(STATE_DIR, "undeployed"))
+
+
+def _take_cold_start() -> float:
+    """Seconds the next request waits, consumed by the request that takes it."""
+    path = os.path.join(STATE_DIR, "cold_start_s")
+    with _COLD_START_LOCK:
+        try:
+            with open(path) as handle:
+                seconds = float(handle.read())
+        except FileNotFoundError:
+            return 0.0
+        os.remove(path)
+    return seconds
+
 
 # The error body shape a real OpenAI-compatible provider sends on a refusal:
 # a single ``error`` object carrying message/type/code. The per-status values
@@ -140,13 +173,22 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_undeployed(self) -> None:
+        self.send_response(404)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(UNDEPLOYED_BODY)))
+        self.end_headers()
+        self.wfile.write(UNDEPLOYED_BODY)
+
     def do_GET(self):  # noqa: N802 (http.server API)
-        if self.path.rstrip("/") in ("/health", "/healthz", ""):
-            self._send_json(200, {"status": "ok", "backend_tag": BACKEND_TAG})
-        elif self.path.rstrip("/") == "/requests":
+        if self.path.rstrip("/") == "/requests":
             with _CALLS_LOCK:
                 records = list(_REQUESTS)
             self._send_json(200, {"requests": records})
+        elif _undeployed():
+            self._send_undeployed()
+        elif self.path.rstrip("/") in ("/health", "/healthz", ""):
+            self._send_json(200, {"status": "ok", "backend_tag": BACKEND_TAG})
         elif self.path.rstrip("/").endswith("/models"):
             self._send_json(
                 200,
@@ -171,6 +213,13 @@ class _Handler(BaseHTTPRequestHandler):
         prompt = _last_user_message(body)
         with _CALLS_LOCK:
             _REQUESTS.append({"prompt": prompt, "model": body.get("model")})
+        if _undeployed():
+            _next_call_index()
+            self._send_undeployed()
+            return
+        cold_start_s = _take_cold_start()
+        if cold_start_s:
+            time.sleep(cold_start_s)
         fault = parse_fault(prompt)
         if BACKEND_TAG == "teacher" and prompt.startswith("TEACHER_FAULT:"):
             fault = parse_fault(prompt.removeprefix("TEACHER_").split("|", 1)[0])

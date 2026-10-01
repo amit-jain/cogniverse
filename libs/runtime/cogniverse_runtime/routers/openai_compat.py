@@ -49,6 +49,7 @@ from cogniverse_runtime.harness_turn import (
     is_answer_field,
     to_openai_tool_calls,
 )
+from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 
 __all__ = ["derive_request_seed", "extract_answer_text", "to_openai_tool_calls"]
@@ -1359,6 +1360,18 @@ async def chat_completions(
             502, str(exc), "upstream_no_answer", err_type="server_error"
         )
     except Exception as exc:
+        llm_failure = llm_dependency_failure(exc)
+        if llm_failure is not None:
+            logger.warning("chat.completions turn failed on the chat LLM: %s", exc)
+            return _error_response(
+                llm_failure.http_status,
+                llm_failure.message(agent_name),
+                llm_failure.error,
+                err_type="server_error",
+                headers=llm_failure.headers(),
+                agent=agent_name,
+                error_type=llm_failure.failure,
+            )
         # Message validation already returned 400 above; anything raised inside
         # the dispatch turn (including a ValueError from agent-input
         # validation) is a server-side failure, not a bad model name.

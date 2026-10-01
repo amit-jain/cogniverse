@@ -480,6 +480,16 @@ The reference deployment is `values.k3s.yaml` + `values.rocm.yaml` +
 `values.modal-llm.yaml` on an AMD Strix Halo host: ColPali and ASR in-cluster,
 the student and teacher LMs on external endpoints.
 
+With the Modal LLM apps undeployed the runtime stays ready and search keeps
+serving. Each worker's first LM call gets Modal's 404; after it, calls to that
+endpoint fail fast and one call rechecks it every 30s
+([LM endpoint availability](../modules/foundation.md#lm-endpoint-availability)).
+Searches report `query_rewrite.degraded: query_rewrite_lm_not_serving`,
+orchestrated queries answer 503 `llm_unavailable` with `Retry-After`, and
+`/health` answers `degraded`, naming the endpoint under `dependencies.llm`. A
+redeployed app is used again from the next recheck; its first request waits
+out the cold start.
+
 `config.defaultProfiles.video` names the profile the chart writes to
 `backend.default_profiles.video` (profile only; search takes the ranking from
 the profile's schema) and `active_video_profile`, and the one profile the

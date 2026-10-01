@@ -6,8 +6,10 @@ import logging
 from typing import Any, Optional
 
 import dspy
+import openai
 from dspy.lm15 import LM15Error
 from dspy.utils.exceptions import LMError
+from opentelemetry import trace
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.lm_deadline import (
@@ -15,6 +17,12 @@ from cogniverse_foundation.config.lm_deadline import (
     LMCallDeadlineExceeded,
     current_lm_call_deadline,
     deadline_bound_openai_client,
+)
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    NOT_SERVING_STATUS,
+    LMEndpoint,
+    LMEndpointNotServing,
+    lm_endpoint_availability,
 )
 from cogniverse_foundation.config.lm_output_budget import budgeted_call_kwargs
 from cogniverse_foundation.config.lm_response_cache import (
@@ -46,10 +54,19 @@ def provider_exception(exc: BaseException) -> BaseException:
     return current
 
 
+def _stamp_not_serving(error: LMEndpointNotServing) -> LMEndpointNotServing:
+    """Record a not-serving endpoint on the span the call ran under."""
+    trace.get_current_span().set_attributes(error.span_attributes())
+    return error
+
+
 class BodyBoundedLM(dspy.LM):
     """Measure requests and cache responses under the bound canonical tenant.
 
-    DSPy's caches are disabled. An unbound LM reaches the provider each time.
+    DSPy's caches are disabled. An unbound LM reaches the provider each time,
+    unless the endpoint answered 404 inside the recheck window
+    (``lm_endpoint_availability``): then the call raises
+    ``LMEndpointNotServing`` without being sent.
     """
 
     def __init__(
@@ -157,31 +174,80 @@ class BodyBoundedLM(dspy.LM):
             api_base, self.kwargs.get("api_key")
         )
 
+    def availability_endpoint(self) -> LMEndpoint:
+        """The endpoint this LM's calls are tracked under."""
+        return LMEndpoint(api_base=self.kwargs.get("api_base"), model=self.model)
+
+    def _admit(self, endpoint: LMEndpoint) -> Optional[object]:
+        try:
+            return lm_endpoint_availability().admit(endpoint)
+        except LMEndpointNotServing as refused:
+            raise _stamp_not_serving(refused) from None
+
+    def _observe_failure(
+        self, endpoint: LMEndpoint, original: BaseException
+    ) -> Optional[LMEndpointNotServing]:
+        """Record what a failed call says about the endpoint; the error to
+        raise instead when it says nothing is deployed there."""
+        status = http_status_of(original)
+        if isinstance(original, openai.APIStatusError):
+            if status == NOT_SERVING_STATUS:
+                return _stamp_not_serving(
+                    lm_endpoint_availability().not_serving(endpoint, status)
+                )
+            if status is not None and status >= 500:
+                lm_endpoint_availability().failed(
+                    endpoint, status=status, failure=type(original).__name__
+                )
+        elif isinstance(original, openai.APIConnectionError):
+            lm_endpoint_availability().failed(
+                endpoint, status=None, failure=type(original).__name__
+            )
+        return None
+
     def _upstream(self, messages: list[dict[str, Any]], **kwargs):
         detail = self._report(messages)
         kwargs["cache"] = False
         self._within_deadline(kwargs)
+        endpoint = self.availability_endpoint()
+        probe = self._admit(endpoint)
         try:
-            return super().forward(messages=messages, **kwargs)
+            response = super().forward(messages=messages, **kwargs)
         except Exception as exc:
             original = provider_exception(exc)
+            not_serving = self._observe_failure(endpoint, original)
+            if not_serving is not None:
+                raise not_serving from original
             self._reraise(original, detail)
             if original is not exc:
                 raise original
             raise
+        finally:
+            lm_endpoint_availability().release(endpoint, probe)
+        lm_endpoint_availability().answered(endpoint)
+        return response
 
     async def _aupstream(self, messages: list[dict[str, Any]], **kwargs):
         detail = self._report(messages)
         kwargs["cache"] = False
         self._refuse_past_deadline()
+        endpoint = self.availability_endpoint()
+        probe = self._admit(endpoint)
         try:
-            return await super().aforward(messages=messages, **kwargs)
+            response = await super().aforward(messages=messages, **kwargs)
         except Exception as exc:
             original = provider_exception(exc)
+            not_serving = self._observe_failure(endpoint, original)
+            if not_serving is not None:
+                raise not_serving from original
             self._reraise(original, detail)
             if original is not exc:
                 raise original
             raise
+        finally:
+            lm_endpoint_availability().release(endpoint, probe)
+        lm_endpoint_availability().answered(endpoint)
+        return response
 
     def forward(self, prompt=None, messages=None, **kwargs):
         assembled = messages_from(prompt, messages)

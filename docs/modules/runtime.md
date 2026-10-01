@@ -63,6 +63,7 @@ cogniverse_runtime/
 ├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
 ├── harness_turn.py                  # Answer text, request seed, tool-call shape for a turn
 ├── harness_keys.py                  # Hashed harness credentials and revocations
+├── llm_dependency.py                # HTTP answer for a request that failed on the chat LLM
 ├── job_executor.py                  # Background-job executor
 ├── a2a_executor.py                  # Agent-to-agent protocol executor
 ├── memory_init.py                   # Mem0 client + per-tenant memory setup
@@ -933,7 +934,7 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 
 `context.max_output_tokens`, when set, caps the completion every LM call of the dispatch may produce; the endpoint's configured `max_tokens` still applies when smaller. A value that is not a positive integer returns 400 before any generation.
 
-Error mapping: `VespaSearchDegraded` returns 503; `InferenceServiceUnavailableError` returns 503 naming the unavailable service — either an unconfigured service missing its in-process backend (an audio query with no `clap_embed` sidecar) or a configured sidecar that is unreachable (ColBERT pooling when the `colbert-pylate` pod is down); `ValueError` returns 404, 501 or 400 by message. Any other failure returns 500 with a JSON `detail` naming the agent, the exception type and the `request_id` — the traceback and the exception text stay in the runtime log, since backend URLs there can carry credentials.
+Error mapping: `VespaSearchDegraded` returns 503; `InferenceServiceUnavailableError` returns 503 naming the unavailable service — either an unconfigured service missing its in-process backend (an audio query with no `clap_embed` sidecar) or a configured sidecar that is unreachable (ColBERT pooling when the `colbert-pylate` pod is down); `ValueError` returns 404, 501 or 400 by message. A failure on the chat LLM (`llm_dependency_failure` in `cogniverse_runtime/llm_dependency.py`: a `RoutedLMCallFailed`, an `LMEndpointNotServing` or a litellm provider error, the raised exception itself or its `__cause__` chain) returns 503 when the LLM is unavailable — nothing deployed (`UpstreamNotServing`, `LMEndpointNotServing`), not answering, overloaded, rate-limited — and 502 when it rejected the request (`UpstreamAuthRejected`, `RouterDecodeFailed`, another 4xx). Its `detail` is `{error: "llm_unavailable" | "llm_request_rejected", dependency: "llm", agent, failure, upstream_status, model, retry_after_s, request_id, message}`, built from the failure's typed fields; a not-serving endpoint also answers `Retry-After` with the seconds until it is rechecked. A complex query whose orchestrator cannot plan because the LLM is undeployed therefore gets a 503 within milliseconds once the first 404 has been seen. Any other failure returns 500 with a JSON `detail` naming the agent, the exception type and the `request_id` — the traceback and the exception text stay in the runtime log, since backend URLs there can carry credentials.
 
 **POST /agents/{agent_name}/message** - Enqueue an inbound message for a running agent session (202 on success)
 ```bash
@@ -1063,7 +1064,8 @@ the rewrite and leaves the retrieval it feeds that reserve, so the rewrite runs
 for one profile and for a fan-out alike and a rewrite that never answers cannot
 consume the search's time. A rewrite that fails or overruns its share searches
 the original query; `degraded_query_rewrite` then names it
-(`query_rewrite_failed` / `query_rewrite_timed_out`) and the state becomes
+(`query_rewrite_failed` / `query_rewrite_timed_out` /
+`query_rewrite_lm_not_serving`) and the state becomes
 `searched_servable_profiles_degraded`, so a degraded rewrite still returns hits
 and is never treated as a failed retrieval.
 
@@ -1072,7 +1074,7 @@ A dispatched search's envelope carries `status`, `agent`, `message`,
 `search_mode` and `query_rewrite`. The rewrite reports under `query_rewrite`
 and nowhere else: `enhanced_query` is the query the search ran (`null` when no
 rewrite applied) and `degraded` names why one did not (`query_rewrite_failed` /
-`query_rewrite_timed_out`, `null` otherwise). The gateway surfaces the
+`query_rewrite_timed_out` / `query_rewrite_lm_not_serving`, `null` otherwise). The gateway surfaces the
 downstream agent's envelope as its own response, so the enhancement stays
 nested there rather than being a top-level field of the routing response.
 
@@ -1331,8 +1333,8 @@ Runtime diagnostics gated behind `COGNIVERSE_DEBUG_MEM` (`libs/runtime/cognivers
 
 ### Health Endpoints
 
-**GET /health** - Health check. 503 `unhealthy` when the system status cannot be assembled OR the configured backend is unreachable (pings `/ApplicationStatus`); 200 `healthy` otherwise.
-**GET /health/ready** - Readiness probe. 503 `not_ready` until a backend is registered AND its container node answers `/ApplicationStatus` — registration alone is not enough because the Vespa backend class self-registers at import. Gates k8s traffic on real backend connectivity. The backend probe result is cached for a short TTL (one upstream ping serves every `/health*` hit in the window), and after a successful probe readiness keeps reporting ready (with `backend_degraded: true`) through a 30s grace window — a backend tail-latency blip must not fail readiness on every replica at once and empty the Service; a genuine outage outlasts the grace and flips the pod not-ready. Cold starts get no grace, and `/health` stays strict (goes red immediately) for monitoring.
+**GET /health** - Health check. 503 `unhealthy` when the system status cannot be assembled OR the configured backend is unreachable (pings `/ApplicationStatus`); otherwise 200 with `healthy`, or `degraded` when the chat LLM is `not_serving` or `failing` — search still serves without it. `dependencies.llm` (`routers/health.py`, `llm_dependency_status()`) carries `status` — `not_called` until this worker process has made an LM call, else `not_serving` / `failing` / `serving`, worst first — and `endpoints`, the `lm_endpoint_availability` snapshot: per endpoint (router address, routed model, tier) its `state`, `upstream_status`, `failure`, `reason`, `observed_at` and `recheck_in_s`. It is observed from the calls requests made, never probed: a probe would boot a scaled-to-zero Modal GPU container. Each uvicorn worker reports its own observations.
+**GET /health/ready** - Readiness probe. 503 `not_ready` until a backend is registered AND its container node answers `/ApplicationStatus` — registration alone is not enough because the Vespa backend class self-registers at import. Gates k8s traffic on real backend connectivity. The chat LLM is never consulted: an undeployed LLM leaves the pod ready, so search keeps serving. The backend probe result is cached for a short TTL (one upstream ping serves every `/health*` hit in the window), and after a successful probe readiness keeps reporting ready (with `backend_degraded: true`) through a 30s grace window — a backend tail-latency blip must not fail readiness on every replica at once and empty the Service; a genuine outage outlasts the grace and flips the pod not-ready. Cold starts get no grace, and `/health` stays strict (goes red immediately) for monitoring.
 **GET /health/live** - Liveness probe. Always 200 while the process runs; never pings the backend, so a backend outage does not trigger a pod restart.
 
 ### OpenAI-Compatible Endpoints (`/v1`)
@@ -1361,12 +1363,16 @@ failed and carries the backend URL it was talking to. Request-shape errors
 (400, 404) keep the three OpenAI keys and their own text, which describes the
 caller's request.
 
-A raised detailed-report model failure takes the 500 branch with
-`error.code="internal_error"`; it is not the 502 `upstream_no_answer` branch,
-which is reserved for a returned envelope from which no answer can be
-extracted. In a live-token response, the same report failure is one SSE error
-frame with `code="internal_error"`, followed by `[DONE]`, and no answer or stop
-chunk.
+A non-streamed turn that failed on the chat LLM answers as the agents route
+does (`llm_dependency_failure`): 503 with `error.code="llm_unavailable"` when
+the LLM is unavailable, 502 with `"llm_request_rejected"` when it rejected the
+request, `error_type` naming the failure and `Retry-After` for a not-serving
+endpoint. A raised detailed-report model failure (a 503, a reset, a timeout
+from the report LM) is a 503 `llm_unavailable`; it is not the 502
+`upstream_no_answer` branch, which is reserved for a returned envelope from
+which no answer can be extracted. In a live-token response, the same report
+failure is one SSE error frame with `code="internal_error"`, followed by
+`[DONE]`, and no answer or stop chunk.
 
 A streamed turn carries `usage` only when the request sends
 `stream_options: {"include_usage": true}`: one last chunk before `[DONE]`

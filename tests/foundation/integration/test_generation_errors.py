@@ -424,12 +424,23 @@ async def test_provider_failure_is_not_answered_with_fabricated_output(
         "/agents/summarizer_agent/process", json=task("valid")
     )
     assert provider.cases == ["valid"]
-    assert response.status_code == 500, response.text
+    assert response.status_code == 503, response.text
     assert response.json() == {
-        "detail": (
-            "Agent 'summarizer_agent' failed with ServiceUnavailableError "
-            "(request_id=request-valid). See runtime logs for detail."
-        )
+        "detail": {
+            "error": "llm_unavailable",
+            "dependency": "llm",
+            "agent": "summarizer_agent",
+            "failure": "ServiceUnavailableError",
+            "upstream_status": 503,
+            # The model as litellm sent it, without its provider prefix.
+            "model": MODEL.removeprefix("openai/"),
+            "retry_after_s": None,
+            "request_id": "request-valid",
+            "message": (
+                "Agent 'summarizer_agent' could not complete: the chat LLM is "
+                "unavailable (ServiceUnavailableError, upstream HTTP 503)."
+            ),
+        }
     }
     provider.failures = set()
     recovered = await summary_route.post(
