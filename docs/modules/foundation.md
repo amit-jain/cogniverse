@@ -69,6 +69,7 @@ flowchart TB
         InferenceAuth["<span style='color:#000'>inference_auth.py<br/>inference_headers</span>"]
         SemanticRouterFile["<span style='color:#000'>semantic_router.py<br/>apply_semantic_routing, create_routed_lm</span>"]
         LmResponseCache["<span style='color:#000'>lm_response_cache.py<br/>TenantScopedLMCache</span>"]
+        LmEndpointAvailability["<span style='color:#000'>lm_endpoint_availability.py<br/>LMEndpointAvailability, LMEndpointNotServing</span>"]
         Utils["<span style='color:#000'>utils.py<br/>ConfigUtils, create_default_config_manager</span>"]
         ApiMixin["<span style='color:#000'>api_mixin.py<br/>ConfigAPIMixin (FastAPI endpoints)</span>"]
         Bootstrap["<span style='color:#000'>bootstrap.py<br/>BootstrapConfig</span>"]
@@ -561,15 +562,31 @@ A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniver
 | 401, 403 | `UpstreamAuthRejected` | never |
 | 429 | `UpstreamRateLimited` | up to `num_retries` |
 | 5xx, reset, timeout | `UpstreamUnavailable` | up to `num_retries` |
+| 404 | `UpstreamNotServing` (an `UpstreamUnavailable`) | never |
 | any other 4xx | `RouterDecodeFailed` | never |
 
-`RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
+`RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable` other than `UpstreamNotServing`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
+
+A 404 means the upstream has nothing deployed for the routed model: an undeployed Modal app answers `modal-http: invalid function call`, and the router passes the status through (`x-vsr-response-path: upstream`). `UpstreamNotServing` carries `failed_fast` and `recheck_in_s` (below).
+
+#### LM endpoint availability
+
+`cogniverse_foundation.config.lm_endpoint_availability` records, per process, the last outcome of every LM endpoint called — keyed by `LMEndpoint(api_base, model, route)`, where `route` is the router tier on the routed path. `BodyBoundedLM`, which every LM (`RoutedLM`, `BudgetedLM`, `create_dspy_lm`) sends through, consults it on each call that misses the response cache:
+
+| Last outcome | State | Next call |
+|--------------|-------|-----------|
+| a completion | `serving` | sent |
+| HTTP 404 | `not_serving` | refused without being sent for `NOT_SERVING_RECHECK_S` (30s), raising `LMEndpointNotServing(failed_fast=True)`; then one call is sent as the recheck while the others keep failing fast, and its outcome replaces the state |
+| a 5xx, a timeout, a refused connection | `failing` | sent — a scaled-to-zero endpoint answers after its cold start, so only a 404 fails fast |
+
+A recheck still unanswered after `PROBE_VERDICT_S` (5s, five times the slowest measured 404 from an undeployed Modal app) is a cold start, and the calls behind it are sent too. A recheck that ends without an outcome (cancelled, past its caller's deadline) hands the recheck to the next call. The direct path raises `LMEndpointNotServing` (chained from the litellm `NotFoundError` on the call that got the 404); `RoutedLM` raises `UpstreamNotServing` chained from it. `not_serving_cause(exc)` finds either through `__cause__`, and `refusal(endpoint)` answers the fast failure a call would get without admitting one, for a caller deciding whether to prepare the call at all. Each not-serving call stamps `llm.endpoint.state`, `llm.endpoint.failed_fast` and `llm.endpoint.recheck_in_s` on its span (`LLM_ENDPOINT_*_ATTRIBUTE`). `lm_endpoint_availability().snapshot()` lists every endpoint's `state`, `upstream_status`, `failure`, `reason`, `observed_at` and `recheck_in_s` (credentials in the address stripped); the runtime's `/health` serves it. Nothing is probed in the background: any request to a deployed Modal endpoint boots a GPU container. At most `MAX_TRACKED_ENDPOINTS` (64) endpoints are tracked, least recently observed evicted first.
 
 A call made under a caller's deadline never outlives it. The caller binds an `LMCallDeadline` (`cogniverse_foundation.config.lm_deadline`, `bound_lm_call_deadline`); `BodyBoundedLM` sends nothing once the deadline has passed or the caller abandoned it and raises `LMCallDeadlineExceeded`, a `TimeoutError` naming the endpoint, the model and the deadline. An OpenAI-compatible request goes through `deadline_bound_openai_client(api_base, api_key)`, whose connects, writes and reads each wait at most the time left at that moment, and a caller joining an identical in-flight call waits no longer than its own deadline. `RoutedLM` starts no retry or student attempt past the deadline, and a failure under a deadline adds `endpoint=` and `deadline_s=` to its message.
 
 A pro free-form or short-reasoning call whose teacher raises `UpstreamUnavailable` with status
-502, 503, 504, a timeout (408), or a transport failure (500 or no status) gets
-one attempt on `classification_model`, which serves the student. The LM
+502, 503, 504, a timeout (408), a transport failure (500 or no status), or
+`UpstreamNotServing` (nothing deployed) gets one attempt on
+`classification_model`, which serves the student. The LM
 completion and current span carry `tier_degraded: pro_model_unavailable`,
 `upstream_status`, and `upstream_exception_type`. The exception type and its
 status determine eligibility; message text never does. A permanent refusal

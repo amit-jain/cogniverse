@@ -1,8 +1,9 @@
 """Typed failures for a chat completion sent through the semantic router.
 
-The router preserves the upstream's HTTP status and error body, so the status
-is the contract: 401/403 is a credential or tenant refusal, 429 a quota, 5xx an
-outage, and any other 4xx the router refusing the request cogniverse built.
+The router preserves the upstream's HTTP status, so the status is the
+contract: 401/403 is a credential or tenant refusal, 429 a quota, 5xx an
+outage, 404 an upstream with nothing deployed for the routed model, and any
+other 4xx the router refusing the request cogniverse built.
 litellm collapses several of those onto one exception class -- a 403 from the
 upstream and a 400 from the router both arrive as ``BadRequestError`` -- so a
 caller reading the litellm class alone cannot tell "this tenant may not use
@@ -12,7 +13,10 @@ this model" from "cogniverse sent something the router would not accept".
 provider sent, both read from the exception's typed fields, and raises one of
 the classes below chained from the original. Every one names the tenant, the
 tier and the routed model alias the call was made for. A timeout or a refused
-connection answers no status at all and is an ``UpstreamUnavailable``.
+connection answers no status at all and is an ``UpstreamUnavailable``. A 404
+is an ``UpstreamNotServing``, and the calls after it fail fast with the same
+class until the endpoint is rechecked
+(``cogniverse_foundation.config.lm_endpoint_availability``).
 
 The router does not report which decision it selected on a failed call (the
 ``x-vsr-selected-decision`` header is present only on an answered request, and
@@ -33,6 +37,10 @@ from opentelemetry import trace
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.lm_deadline import current_lm_call_deadline
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    LMEndpoint,
+    LMEndpointNotServing,
+)
 from cogniverse_foundation.config.request_body import (
     http_status_of,
     messages_from,
@@ -98,6 +106,25 @@ class UpstreamUnavailable(RoutedLMCallFailed):
     """The model endpoint did not answer: 5xx, a reset, or a timeout."""
 
 
+class UpstreamNotServing(UpstreamUnavailable):
+    """Nothing is deployed at the model endpoint for the routed model (404).
+
+    ``failed_fast`` is True when the call was refused without being sent,
+    because an earlier call already got the 404; ``recheck_in_s`` is how long
+    until one call rechecks the endpoint.
+    """
+
+    def __init__(
+        self, summary: str, *, failed_fast: bool, recheck_in_s: float, **fields: Any
+    ) -> None:
+        super().__init__(summary, **fields)
+        self.args = (
+            f"{self.args[0]} failed_fast={failed_fast} recheck_in_s={recheck_in_s:.1f}",
+        )
+        self.failed_fast = failed_fast
+        self.recheck_in_s = recheck_in_s
+
+
 class RouterDecodeFailed(RoutedLMCallFailed):
     """The router would not accept the request cogniverse sent (other 4xx)."""
 
@@ -106,6 +133,7 @@ _SUMMARIES = {
     UpstreamAuthRejected: "the model endpoint rejected the credentials or the tenant",
     UpstreamRateLimited: "the model endpoint refused the request for quota",
     UpstreamUnavailable: "the model endpoint did not answer",
+    UpstreamNotServing: "the model endpoint has nothing deployed for the routed model",
     RouterDecodeFailed: "the semantic router would not accept the request",
 }
 
@@ -143,6 +171,19 @@ def classify_routed_failure(
     own assembly, a cancellation -- returns ``None`` so it propagates as
     itself instead of being reported as an endpoint fault.
     """
+    if isinstance(exc, LMEndpointNotServing):
+        return UpstreamNotServing(
+            _SUMMARIES[UpstreamNotServing],
+            failed_fast=exc.failed_fast,
+            recheck_in_s=exc.recheck_in_s,
+            status=exc.status,
+            router_code=None,
+            tenant_id=tenant_id,
+            tier=tier,
+            routed_model=routed_model,
+            endpoint=endpoint,
+            deadline_s=deadline_s,
+        )
     if not isinstance(exc, openai.APIError):
         return None
     status = http_status_of(exc)
@@ -173,9 +214,15 @@ def classify_routed_failure(
 
 
 # Failures a second attempt can plausibly answer. A refused credential, a
-# forbidden tenant and a request the router will not accept answer the same way
-# every time, so retrying one only doubles the latency and the load.
+# forbidden tenant, a request the router will not accept and an endpoint with
+# nothing deployed answer the same way every time, so retrying one only doubles
+# the latency and the load: ``UpstreamNotServing`` is never retried.
 RETRYABLE = (UpstreamRateLimited, UpstreamUnavailable)
+
+# Teacher failures a pro call answers from the student instead: an outage the
+# status names, a timeout (408), a transport failure (500 or no status), and a
+# teacher with nothing deployed (``UpstreamNotServing``).
+_STUDENT_ELIGIBLE_STATUSES = (None, 408, 500, 502, 503, 504)
 
 
 _request_degradation: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -254,6 +301,13 @@ class RoutedLM(BodyBoundedLM):
                 vision_model, tenant_id=tenant_id, tier=tier, **kwargs
             )
 
+    def availability_endpoint(self) -> LMEndpoint:
+        """The router address and routed model, per tier: each tier may
+        resolve the model to a different upstream."""
+        return LMEndpoint(
+            api_base=self.kwargs.get("api_base"), model=self.model, route=self.tier
+        )
+
     def _carrier(self, prompt, messages):
         if self._vision is None:
             return self
@@ -271,7 +325,9 @@ class RoutedLM(BodyBoundedLM):
             endpoint=self.kwargs.get("api_base"),
             deadline_s=None if deadline is None else deadline.budget_s,
         )
-        if failure is not None:
+        if isinstance(failure, UpstreamNotServing) and failure.failed_fast:
+            logger.warning("routed LM call not sent: %s", failure)
+        elif failure is not None:
             logger.error("routed LM call failed: %s", failure)
         return failure
 
@@ -285,11 +341,18 @@ class RoutedLM(BodyBoundedLM):
         return (
             self._student is not None
             and isinstance(failure, UpstreamUnavailable)
-            and failure.status in (None, 408, 500, 502, 503, 504)
+            and (
+                isinstance(failure, UpstreamNotServing)
+                or failure.status in _STUDENT_ELIGIBLE_STATUSES
+            )
         )
 
     def _retryable(self, failure: RoutedLMCallFailed, attempt: int) -> bool:
-        return isinstance(failure, RETRYABLE) and attempt < self.call_attempts
+        return (
+            isinstance(failure, RETRYABLE)
+            and not isinstance(failure, UpstreamNotServing)
+            and attempt < self.call_attempts
+        )
 
     def forward(self, prompt=None, messages=None, **kwargs):
         carrier = self._carrier(prompt, messages)

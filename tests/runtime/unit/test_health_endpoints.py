@@ -175,7 +175,16 @@ class TestHealthCheckFull:
 
         resp = health_client.get("/health")
         data = resp.json()
-        assert set(data.keys()) == {"status", "service", "backends", "agents"}
+        assert set(data.keys()) == {
+            "status",
+            "service",
+            "backends",
+            "agents",
+            "dependencies",
+        }
+        assert data["dependencies"] == {
+            "llm": {"status": "not_called", "endpoints": []}
+        }
         assert "registered" in data["backends"]
         assert "backends" in data["backends"]
         assert "registered" in data["agents"]

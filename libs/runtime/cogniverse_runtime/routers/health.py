@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    FAILING,
+    NOT_SERVING,
+    SERVING,
+    lm_endpoint_availability,
+)
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 logger = logging.getLogger(__name__)
@@ -116,6 +122,32 @@ def _resolve_agent_registry() -> AgentRegistry:
         return _get_agent_registry()
 
 
+# The chat LLM's status as /health reports it: ``not_called`` before this
+# process made any LM call, otherwise the worst last outcome across the
+# endpoints it called.
+LLM_NOT_CALLED = "not_called"
+
+
+def llm_dependency_status() -> Dict[str, Any]:
+    """What this process last observed of each chat-LLM endpoint it called.
+
+    Observed from the calls requests made, never probed: a probe would boot a
+    scaled-to-zero GPU endpoint. Each uvicorn worker is its own process and
+    reports its own observations.
+    """
+    endpoints = lm_endpoint_availability().snapshot()
+    states = {endpoint["state"] for endpoint in endpoints}
+    if not endpoints:
+        status = LLM_NOT_CALLED
+    elif NOT_SERVING in states:
+        status = NOT_SERVING
+    elif FAILING in states:
+        status = FAILING
+    else:
+        status = SERVING
+    return {"status": status, "endpoints": endpoints}
+
+
 @router.get("/health")
 async def health_check(request: Request) -> Any:
     """Health check endpoint with system status.
@@ -125,6 +157,10 @@ async def health_check(request: Request) -> Any:
     monitoring probe should read this as unhealthy, not as a server crash.
     Also 503 when the backend is registered but unreachable, so monitoring
     goes red during a backend outage instead of showing green.
+
+    A chat LLM that is not serving or failing leaves it 200 with status
+    ``degraded``: search serves without the LLM. ``dependencies.llm`` names
+    each endpoint's state and reason either way.
     """
     try:
         # Reused across probes; backends/agents are still queried live below.
@@ -145,6 +181,7 @@ async def health_check(request: Request) -> Any:
 
     base_url = getattr(request.app.state, "backend_base_url", None)
     reachable, reason = await _backend_reachable_cached(base_url)
+    llm = llm_dependency_status()
     if not reachable:
         return JSONResponse(
             status_code=503,
@@ -152,11 +189,14 @@ async def health_check(request: Request) -> Any:
                 "status": "unhealthy",
                 "service": "cogniverse-runtime",
                 "reason": reason,
+                "dependencies": {"llm": llm},
             },
         )
 
     return {
-        "status": "healthy",
+        "status": (
+            "degraded" if llm["status"] in (NOT_SERVING, FAILING) else "healthy"
+        ),
         "service": "cogniverse-runtime",
         "backends": {
             "registered": len(backends),
@@ -166,6 +206,7 @@ async def health_check(request: Request) -> Any:
             "registered": len(agents),
             "agents": agents,
         },
+        "dependencies": {"llm": llm},
     }
 
 
@@ -184,6 +225,9 @@ async def readiness_probe(request: Request) -> Any:
     until the backend is registered AND reachable. Registration alone is not
     enough: the Vespa backend class self-registers at import, so a
     registration-only check reports ready with Vespa completely down.
+
+    The chat LLM is not consulted: search serves without it, so an LLM that
+    is down must not take the pod out of the Service.
     """
     backend_registry = BackendRegistry.get_instance()
     backends = backend_registry.list_backends()

@@ -20,6 +20,7 @@ from cogniverse_foundation.config.inference_service import (
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_runtime.messaging import (
     InboundMessage,
     QueueClosedError,
@@ -598,11 +599,24 @@ async def process_agent_task(
             raise HTTPException(status_code=501, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
     except Exception as e:
-        # Everything unmapped reached the caller as a bodyless plain-text
-        # 500. Log the traceback server-side and return a JSON body naming
-        # the agent, the error type and the request id; the exception text
-        # can carry backend URLs with credentials, so it stays out.
         request_id = dispatch_context["request_id"]
+        llm_failure = llm_dependency_failure(e)
+        if llm_failure is not None:
+            # The chat LLM failed: a 503/502 naming it, never an opaque 500.
+            logger.warning(
+                "Agent '%s' dispatch failed on the chat LLM (request_id=%s): %s",
+                agent_name,
+                request_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=llm_failure.http_status,
+                detail=llm_failure.body(agent=agent_name, request_id=request_id),
+                headers=llm_failure.headers(),
+            )
+        # Anything else is a 500 whose JSON body names the agent, the error
+        # type and the request id; the traceback stays in the log, since the
+        # exception text can carry backend URLs with credentials.
         logger.exception(
             "Agent '%s' dispatch failed (request_id=%s)", agent_name, request_id
         )

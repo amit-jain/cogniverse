@@ -32,6 +32,7 @@ from dspy.utils.dummies import DummyLM
 from cogniverse_agents.search_agent import (
     QUERY_REWRITE_BUDGET_S,
     QUERY_REWRITE_FAILED,
+    QUERY_REWRITE_LM_NOT_SERVING,
     QUERY_REWRITE_TIMED_OUT,
     SearchAgent,
     SearchAgentDeps,
@@ -48,6 +49,8 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
 )
 from cogniverse_foundation.telemetry.span_contract import (
+    LLM_ENDPOINT_FAILED_FAST_ATTRIBUTE,
+    LLM_ENDPOINT_STATE_ATTRIBUTE,
     QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
     QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
     QUERY_ENHANCEMENT_PATH_LM,
@@ -930,3 +933,119 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
         )
         assert arrivals_when_joined_stopped == 1
         assert len(upstream.arrivals) == 1
+
+
+class TestAnUndeployedEndpointSkipsTheRewrite:
+    """The fault contract for an LM endpoint with nothing deployed. The router
+    passes the upstream's 404 through; the first search pays that round trip
+    and names why it searched the original query, and every search after it
+    skips the rewrite without a request until the endpoint is rechecked."""
+
+    async def test_one_request_then_every_search_skips_the_rewrite(self, caplog):
+        queries = [_unique(f"undeployed {i}") for i in range(3)]
+        tracer, exporter = _span_recorder("rewrite-not-serving")
+        with _ScriptedUpstream([(0.0, 404)]) as upstream:
+            with (
+                _shipped_dispatch(_routed_rewrite_lm(upstream.api_base)) as (
+                    dispatcher,
+                    _,
+                    searched,
+                ),
+                caplog.at_level("WARNING", logger="cogniverse_agents.search_agent"),
+            ):
+                agent = dispatcher._get_search_agent(None, _TENANT)
+                injected: list[str] = []
+                inject = agent.inject_context_into_prompt_async
+
+                async def counting_inject(prompt, query):
+                    injected.append(query)
+                    return await inject(prompt, query)
+
+                agent.inject_context_into_prompt_async = counting_inject
+                responses = []
+                for query in queries:
+                    with tracer.start_as_current_span(query):
+                        responses.append(
+                            await dispatcher._execute_search_task(
+                                query, _TENANT, top_k=3
+                            )
+                        )
+
+        assert [r["query_rewrite"] for r in responses] == [
+            {"enhanced_query": None, "degraded": QUERY_REWRITE_LM_NOT_SERVING}
+        ] * 3
+        assert [r["results"] for r in responses] == [[_HIT]] * 3
+        assert searched == queries
+        assert len(upstream.arrivals) == 1
+        assert injected == queries[:1], "a skipped rewrite injects no context"
+        spans = {span.name: span.attributes for span in exporter.get_finished_spans()}
+        assert [
+            (
+                spans[query][QUERY_ENHANCEMENT_PATH_ATTRIBUTE],
+                spans[query][LLM_ENDPOINT_STATE_ATTRIBUTE],
+                spans[query][LLM_ENDPOINT_FAILED_FAST_ATTRIBUTE],
+            )
+            for query in queries
+        ] == [
+            (QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK, "not_serving", False),
+            (QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK, "not_serving", True),
+            (QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK, "not_serving", True),
+        ]
+        skipped = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_agents.search_agent"
+            and "skipped, its endpoint is not serving" in record.getMessage()
+        ]
+        assert len(skipped) == 3
+        assert f"Query rewrite on {_REWRITE_MODEL} skipped" in skipped[0]
+        assert "status=404" in skipped[0] and "failed_fast=False" in skipped[0]
+        assert all(
+            "answered HTTP 404; failing fast, next recheck in" in message
+            for message in skipped[1:]
+        )
+
+    async def test_concurrent_searches_behind_a_404_send_nothing(self):
+        queries = [_unique(f"concurrent {i}") for i in range(8)]
+        with _ScriptedUpstream([(0.0, 404)]) as upstream:
+            with _shipped_dispatch(_routed_rewrite_lm(upstream.api_base)) as (
+                dispatcher,
+                _,
+                searched,
+            ):
+                first = await dispatcher._execute_search_task(
+                    _unique("first"), _TENANT, top_k=3
+                )
+                responses = await asyncio.gather(
+                    *(
+                        dispatcher._execute_search_task(query, _TENANT, top_k=3)
+                        for query in queries
+                    )
+                )
+
+        assert first["query_rewrite"]["degraded"] == QUERY_REWRITE_LM_NOT_SERVING
+        assert [r["query_rewrite"]["degraded"] for r in responses] == [
+            QUERY_REWRITE_LM_NOT_SERVING
+        ] * len(queries)
+        assert sorted(searched[1:]) == sorted(queries)
+        assert len(upstream.arrivals) == 1
+
+    async def test_another_failure_is_still_a_failed_rewrite(self):
+        """Only a 404 is a skipped rewrite: an endpoint that answers 503 is
+        sent every search's rewrite, as a cold start must be."""
+        queries = [_unique(f"503 {i}") for i in range(2)]
+        with _ScriptedUpstream([(0.0, 503)]) as upstream:
+            with _shipped_dispatch(_routed_rewrite_lm(upstream.api_base)) as (
+                dispatcher,
+                _,
+                _,
+            ):
+                responses = [
+                    await dispatcher._execute_search_task(query, _TENANT, top_k=3)
+                    for query in queries
+                ]
+
+        assert [r["query_rewrite"]["degraded"] for r in responses] == [
+            QUERY_REWRITE_FAILED
+        ] * 2
+        assert len(upstream.arrivals) == 2 * (_ENDPOINT_RETRIES + 1)

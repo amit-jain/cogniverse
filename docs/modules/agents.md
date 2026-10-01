@@ -1850,6 +1850,13 @@ deadline its LM call carries, so no request reaches the router after the search
 has moved on; a rewrite that fails or overruns it searches the original query
 and names itself on `SearchOutput.degraded_query_rewrite` as
 `query_rewrite_failed` or `query_rewrite_timed_out` rather than raising. A
+rewrite whose LM endpoint answered 404 (nothing deployed) is
+`query_rewrite_lm_not_serving`: until the endpoint is rechecked
+(`lm_endpoint_availability`), every later search skips the rewrite step,
+context injection included, without a round trip, so an undeployed LLM costs
+one 404 per recheck window instead of one per search. The search span carries
+`llm.endpoint.state`, `llm.endpoint.failed_fast` and
+`llm.endpoint.recheck_in_s`, and the warning names the endpoint. A
 dispatched search sets the bound to `dispatched_query_rewrite_budget_s` of the
 configured grounding search budget: the smaller of `QUERY_REWRITE_BUDGET_S`
 (2.2 times the measured p95 of a rewrite through the semantic router's

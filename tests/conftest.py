@@ -358,6 +358,20 @@ def _reset_circuit_breakers():
 
 
 @pytest.fixture(autouse=True, scope="function")
+def _forget_lm_endpoint_outcomes():
+    """What this process observed of each LM endpoint is process-wide; forget
+    it between tests so a 404 in one test can't refuse calls in the next or
+    turn the next test's /health degraded."""
+    from cogniverse_foundation.config.lm_endpoint_availability import (
+        lm_endpoint_availability,
+    )
+
+    lm_endpoint_availability().clear()
+    yield
+    lm_endpoint_availability().clear()
+
+
+@pytest.fixture(autouse=True, scope="function")
 def cleanup_dspy_state():
     """Clean up DSPy state between tests to prevent isolation issues"""
     yield
