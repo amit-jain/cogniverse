@@ -74,8 +74,15 @@ class TestRetrievalSolver:
             request_body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
             assert request_body["query"] == "test query 1"
             assert request_body["profile"] == "profile1"
-            assert request_body["ranking_strategy"] == "strategy1"
+            assert request_body["strategy"] == "strategy1"
             assert request_body["top_k"] == 5
+            assert request_body == {
+                "query": "test query 1",
+                "profile": "profile1",
+                "top_k": 5,
+                "strategy": "strategy1",
+                "tenant_id": "flywheel_org:production",
+            }
 
     @pytest.mark.unit
     @pytest.mark.asyncio

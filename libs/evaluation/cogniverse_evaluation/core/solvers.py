@@ -195,7 +195,7 @@ def create_retrieval_solver(
                             "query": query_str,
                             "profile": profile,
                             "top_k": config.get("top_k", 10),
-                            "ranking_strategy": strategy,
+                            "strategy": strategy,
                             "tenant_id": tenant_id,
                         },
                         timeout=30.0,
