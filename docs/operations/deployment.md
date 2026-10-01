@@ -330,13 +330,13 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
    ```bash
    modal secret create cogniverse-inference-api-key \
      COGNIVERSE_INFERENCE_API_KEY=$(cat ~/.env/COGNIVERSE_INFERENCE_API_KEY.env)
-   modal secret create hf-token HF_TOKEN=<token>   # vllm_llm_student only
+   modal secret create hf-token HF_TOKEN=<token>   # vllm_llm_student and vllm_llm_teacher only
    ```
 
 3. Deploy and warm the Modal services (canonical names: `vllm_colpali`,
    `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`,
-   `video_embed`, `vllm_llm_student`, `vllm_asr`, `clap_embed`,
-   `face_embed`):
+   `video_embed`, `vllm_llm_student`, `vllm_llm_teacher`, `vllm_asr`,
+   `clap_embed`, `face_embed`):
 
    ```bash
    cogniverse inference modal deploy denseon colbert_pylate

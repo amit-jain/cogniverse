@@ -6,9 +6,9 @@ Get started with Cogniverse in 5 minutes.
 
 ## Prerequisites
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
-- Docker (for Vespa and Phoenix)
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/) 0.12.19
+- Docker, kubectl, helm, and k3d (`cogniverse up` checks for them and offers to install missing ones)
 - [Deno](https://deno.land/) 2.0+ (required for RLM sandboxed code execution: `curl -fsSL https://deno.land/install.sh | sh`)
 
 ---
