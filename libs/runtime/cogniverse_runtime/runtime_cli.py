@@ -1,21 +1,32 @@
-"""Wait for the backend before starting the runtime's uvicorn process."""
+"""Wait for the backend, then serve the runtime from its uvicorn workers."""
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+from uvicorn.supervisors.multiprocess import Multiprocess
 
 from cogniverse_runtime.startup_wait import (
     DependencyWaitAborted,
     wait_for_startup_dependency,
 )
 
+if TYPE_CHECKING:
+    import uvicorn
+
 logger = logging.getLogger("cogniverse_runtime.runtime_cli")
+
+APP = "cogniverse_runtime.main:app"
 
 
 def main() -> int:
@@ -85,10 +96,110 @@ def main() -> int:
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
 
+    return serve(sys.argv[1:])
+
+
+def serve(args: Sequence[str]) -> int:
+    """Serve the runtime with uvicorn's command-line arguments and UVICORN_* env.
+
+    One worker, or ``--reload``, runs uvicorn as its own command line does;
+    more workers run under ``RuntimeWorkerSupervisor``.
+    """
     import uvicorn
 
-    uvicorn.main(args=["cogniverse_runtime.main:app", *sys.argv[1:]])
-    return 0
+    config = uvicorn_config(args)
+    if config.workers == 1 or config.should_reload:
+        uvicorn.main(args=[APP, *args])
+        return 0
+    supervisor = RuntimeWorkerSupervisor(config)
+    supervisor.run()
+    return supervisor.exit_code
+
+
+def uvicorn_config(args: Sequence[str]) -> uvicorn.Config:
+    """The Config uvicorn's command line builds for the runtime app."""
+    import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+    from uvicorn.main import main as uvicorn_cli
+
+    params = uvicorn_cli.make_context(uvicorn_cli.name, [APP, *args]).params
+    sys.path.insert(0, params.pop("app_dir"))
+    if params["log_config"] is None:
+        params["log_config"] = LOGGING_CONFIG
+    for key in ("reload_dirs", "reload_includes", "reload_excludes"):
+        params[key] = params[key] or None
+    params["headers"] = [header.split(":", 1) for header in params["headers"]]
+    return uvicorn.Config(**params)
+
+
+class RuntimeWorkerSupervisor(Multiprocess):
+    """uvicorn's worker supervisor, run as the runtime container's main process.
+
+    Each worker opens its own ``SO_REUSEPORT`` listener once its lifespan has
+    started, so the kernel spreads connections across workers and the port
+    accepts only while a worker serves. SIGUSR1 (configuration hot-reload)
+    reaches every worker. A worker that exits stops the runtime with status
+    1, so the container restarts as it does when a single process exits.
+    """
+
+    def __init__(self, config: uvicorn.Config) -> None:
+        if config.uds is not None or config.fd is not None:
+            raise ValueError(
+                "Runtime workers each listen on --host/--port; --uds and --fd "
+                "serve one process"
+            )
+        super().__init__(
+            config, target=functools.partial(_serve_worker, config), sockets=[]
+        )
+        self.exit_code = 0
+
+    def run(self) -> None:
+        logger.info(
+            "Starting %d runtime worker processes on %s:%d",
+            self.processes_num,
+            self.config.host,
+            self.config.port,
+        )
+        super().run()
+
+    def handle_usr1(self) -> None:
+        for process in self.processes:
+            if process.process.exitcode is None:
+                os.kill(process.pid, signal.SIGUSR1)
+
+    def keep_subprocess_alive(self) -> None:
+        if self.should_exit.is_set():
+            return
+        for process in self.processes:
+            exit_code = process.process.exitcode
+            if exit_code is not None:
+                logger.error(
+                    "Runtime worker %d exited with code %d; stopping the runtime",
+                    process.pid,
+                    exit_code,
+                )
+                self.exit_code = 1
+                self.should_exit.set()
+                return
+
+
+def _serve_worker(config: uvicorn.Config, _inherited: list[socket.socket]) -> None:
+    """Serve one worker on its own listener; uvicorn hands it no sockets."""
+    import uvicorn
+    from uvicorn.main import STARTUP_FAILURE
+
+    # A reload request arriving before the lifespan installs its handler must
+    # not terminate the worker; the lifespan reads configuration afresh.
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+    family = socket.AF_INET6 if ":" in config.host else socket.AF_INET
+    listener = socket.socket(family, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    listener.bind((config.host, config.port))
+    server = uvicorn.Server(config)
+    server.run(sockets=[listener])
+    if not server.started:
+        sys.exit(STARTUP_FAILURE)
 
 
 if __name__ == "__main__":

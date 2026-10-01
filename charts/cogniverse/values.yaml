@@ -376,6 +376,10 @@ runtime:
 
   replicaCount: 2
 
+  # uvicorn worker processes per pod (UVICORN_WORKERS). Each runs the full
+  # runtime with its own in-memory state, so the memory limit must hold all.
+  workers: 1
+
   # Iterative-retrieval budgets (ITER_RETRIEVAL_* env overrides read at
   # runtime startup). The library's 30s wall-clock default assumes a fast
   # LM; the in-cluster LLM generates ~12 tok/s, so multi-iteration loops

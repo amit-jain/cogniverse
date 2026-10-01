@@ -698,6 +698,18 @@ reuses its values. uvicorn reads its graceful-shutdown timeout as an integer.
 {{- int $seconds -}}
 {{- end -}}
 
+{{/*
+The runtime's uvicorn worker-process count, one when a release predating
+runtime.workers reuses its values.
+*/}}
+{{- define "cogniverse.runtime.workers" -}}
+{{- $workers := dig "workers" 1 .Values.runtime -}}
+{{- if or (ne (float64 $workers) (float64 (int $workers))) (lt (int $workers) 1) -}}
+{{- fail (printf "runtime.workers must be a whole number of at least 1, got %v" $workers) -}}
+{{- end -}}
+{{- int $workers -}}
+{{- end -}}
+
 {{- define "cogniverse.runtime.shutdown.a2aDrainSeconds" -}}
 {{- dig "shutdown" "a2aDrainSeconds" 30 .Values.runtime -}}
 {{- end -}}

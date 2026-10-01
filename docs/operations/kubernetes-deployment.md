@@ -1022,7 +1022,18 @@ helm upgrade cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --set runtime.replicaCount=5 \
   --reuse-values
+
+# uvicorn worker processes per runtime pod; each is a full copy of the
+# runtime, so runtime.resources memory must hold all of them
+helm upgrade cogniverse ./charts/cogniverse \
+  --namespace cogniverse \
+  --set runtime.workers=2 \
+  --reuse-values
 ```
+
+Every replica and every worker holds its own in-process state; the runtime
+module guide's Deployment section lists what a follow-up request on another
+process does not see.
 
 ### Backup & Restore
 
