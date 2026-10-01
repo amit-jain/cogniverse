@@ -169,8 +169,8 @@ pip install cogniverse-runtime[vespa]
 # Development mode with auto-reload
 uv run uvicorn cogniverse_runtime.main:app --reload --port 8000
 
-# Production mode
-uv run uvicorn cogniverse_runtime.main:app --host 0.0.0.0 --port 8000 --workers 4
+# Production mode (the image's command: waits for the backend, then serves)
+uv run python -m cogniverse_runtime.runtime_cli --host 0.0.0.0 --port 8000
 
 # With environment variables
 export BACKEND_URL="http://localhost"
@@ -544,12 +544,12 @@ logger.info("Video ingestion started", extra={
 ### Concurrency
 
 ```bash
-# Adjust worker count based on CPU cores
-uv run uvicorn cogniverse_runtime.main:app --workers 4
-
-# Enable async workers
-uv run uvicorn cogniverse_runtime.main:app --workers 4 --loop uvloop
+# Worker processes (chart value runtime.workers, default 1)
+UVICORN_WORKERS=4 uv run python -m cogniverse_runtime.runtime_cli --host 0.0.0.0 --port 8000
 ```
+
+Each worker is a separate process running the full lifespan, with its own
+memory and in-process state; see the runtime module guide's Deployment section.
 
 ### Caching
 

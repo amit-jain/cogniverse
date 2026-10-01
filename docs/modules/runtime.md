@@ -47,6 +47,7 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 ## Package Structure
 
 The runtime entry surfaces are `cogniverse_runtime/main.py`,
+`cogniverse_runtime/runtime_cli.py` (the image's command),
 `cogniverse_runtime/agent_dispatcher.py`,
 `cogniverse_runtime/inference_services.py`,
 `cogniverse_runtime/startup_wait.py`,
@@ -57,7 +58,7 @@ The runtime entry surfaces are `cogniverse_runtime/main.py`,
 cogniverse_runtime/
 ├── main.py                          # FastAPI app + lifespan setup
 ├── backend_startup.py               # Backend probes and metadata bootstrap
-├── runtime_cli.py                   # Backend wait before uvicorn
+├── runtime_cli.py                   # Backend wait, then uvicorn and its workers
 ├── provision_tenant.py              # Tenant schemas, memory, telemetry, tier
 ├── config_loader.py                 # Dynamic backend/agent loading
 ├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
@@ -330,7 +331,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 **Startup Sequence:**
 
-1. Before uvicorn starts, `python -m cogniverse_runtime.runtime_cli` polls the Vespa data plane and config server through `startup_wait.wait_for_startup_dependency`. `BACKEND_STARTUP_WAIT_BUDGET_S` is a logging grace (64 minutes by default, overridable with `RUNTIME_STARTUP_GRACE_SECONDS`): expiry logs one ERROR and the process keeps retrying. SIGTERM sets the helper's abort flag and exits with code 0 and a named abort log. Each attempt probes with `BACKEND_STARTUP_PROBE_TIMEOUT_S`; failed attempts sleep for `BACKEND_STARTUP_RETRY_INTERVAL_S`. A fresh backend receives metadata schemas and then waits for its feed endpoint. The chart's startupProbe owns restart timing and exceeds the grace plus probe and fresh-install allowances. Uvicorn starts once the feed endpoint is ready; lifespan initializes the application.
+1. Before uvicorn starts, `python -m cogniverse_runtime.runtime_cli` polls the Vespa data plane and config server through `startup_wait.wait_for_startup_dependency`. `BACKEND_STARTUP_WAIT_BUDGET_S` is a logging grace (64 minutes by default, overridable with `RUNTIME_STARTUP_GRACE_SECONDS`): expiry logs one ERROR and the process keeps retrying. SIGTERM sets the helper's abort flag and exits with code 0 and a named abort log. Each attempt probes with `BACKEND_STARTUP_PROBE_TIMEOUT_S`; failed attempts sleep for `BACKEND_STARTUP_RETRY_INTERVAL_S`. A fresh backend receives metadata schemas and then waits for its feed endpoint. The chart's startupProbe owns restart timing and exceeds the grace plus probe and fresh-install allowances. Uvicorn starts once the feed endpoint is ready, so the wait and any metadata bootstrap run once per pod; the lifespan then initializes the application in every worker (see [Deployment](#deployment)).
 2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
@@ -1622,19 +1623,33 @@ open http://localhost:8000/docs
 ### Production
 
 ```bash
-# Multiple workers
-uv run python -m cogniverse_runtime.runtime_cli \
+# The image's command; UVICORN_WORKERS sets the worker-process count
+UVICORN_WORKERS=4 uv run python -m cogniverse_runtime.runtime_cli \
     --host 0.0.0.0 \
-    --port 8000 \
-    --workers 4 \
-    --loop uvloop
-
-# With Gunicorn
-uv run gunicorn cogniverse_runtime.main:app \
-    -w 4 \
-    -k uvicorn.workers.UvicornWorker \
-    --bind 0.0.0.0:8000
+    --port 8000
 ```
+
+`runtime_cli` takes uvicorn's own flags and `UVICORN_*` variables
+(`uvicorn_config`). The chart renders `UVICORN_WORKERS` from
+`runtime.workers` (default 1, a whole number of at least 1); setting
+`UVICORN_WORKERS` or `WEB_CONCURRENCY` through `runtime.env` fails the render.
+One worker, or `--reload`, runs uvicorn as its command line does. More workers
+run under `RuntimeWorkerSupervisor`:
+
+- each worker runs the full lifespan and opens its own `SO_REUSEPORT` listener
+  on `--host`/`--port` once started, so connections spread across workers and
+  the port accepts only while a worker serves; `--uds` and `--fd` are refused;
+- SIGUSR1 to the `runtime_cli` process reaches every worker's hot-reload;
+  SIGTERM stops every worker through its lifespan in parallel, so the
+  pod's termination grace period covers them as it covers one process;
+- a worker that exits, including one whose lifespan fails, stops the runtime
+  with status 1 after the other workers shut down, so the container restarts.
+
+Each worker is a separate process with its own memory and in-process state:
+caches, the agent registry, the annotation queue, `/ingestion/start` job
+status, admin write-behind blobs, conversation-save ordering and `/v1`
+continuations. A follow-up request that reaches another worker does not see
+them.
 
 ### Docker
 
