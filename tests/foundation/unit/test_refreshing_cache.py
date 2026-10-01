@@ -423,6 +423,7 @@ def test_entries_are_bounded_least_recently_used_first():
     cache.get("d", source.reader("d"))
 
     assert cache.keys() == ["c", "a", "d"]
+    assert cache.items() == [("c", "c-1"), ("a", "a-1"), ("d", "d-1")]
     assert len(cache) == 3
 
 
@@ -436,3 +437,70 @@ def test_zero_max_staleness_reads_on_every_call():
     assert cache.get("acme", source.reader("acme")) == "acme-2"
     assert cache.get("acme", source.reader("acme")) == "acme-2"
     assert source.calls == [("acme", threading.current_thread().name)] * 3
+
+
+def test_a_held_value_the_caller_rejects_is_read_again_and_the_read_is_shared():
+    clock = _Clock()
+    source = _Source({"acme": frozenset({"a"})})
+    cache = _cache(clock)
+    cache.get("acme", source.reader("acme"))
+    source.values["acme"] = frozenset({"a", "b"})
+
+    def wants(name):
+        return lambda held: name in held
+
+    assert cache.get("acme", source.reader("acme"), accept=wants("a")) == frozenset(
+        {"a"}
+    )
+    assert len(source.calls) == 1
+    source.hold()
+    releaser = threading.Thread(
+        target=lambda: source.started.wait(timeout=10) and source.released.set()
+    )
+    releaser.start()
+    ready = threading.Barrier(8)
+    answers: list = []
+    lock = threading.Lock()
+
+    def ask() -> None:
+        ready.wait(timeout=10)
+        value = cache.get("acme", source.reader("acme"), accept=wants("b"))
+        with lock:
+            answers.append(value)
+
+    askers = [threading.Thread(target=ask, name=f"asker-{i}") for i in range(8)]
+    for thread in askers:
+        thread.start()
+    for thread in askers:
+        thread.join(timeout=10)
+        assert thread.is_alive() is False
+    releaser.join(timeout=10)
+
+    assert answers == [frozenset({"a", "b"})] * 8
+    assert len(source.calls) == 2
+    assert source.calls[1][1] in {thread.name for thread in askers}
+    assert cache.get("acme", source.reader("acme"), accept=wants("b")) == frozenset(
+        {"a", "b"}
+    )
+    assert len(source.calls) == 2
+
+
+def test_a_value_keep_rejects_is_returned_unheld_and_drops_the_entry():
+    clock = _Clock()
+    source = _Source({"acme": frozenset({"a"})})
+    cache = _cache(clock, keep=bool)
+    assert cache.get("acme", source.reader("acme")) == frozenset({"a"})
+    source.values["acme"] = frozenset()
+    clock.now = 10.0
+
+    assert cache.get("acme", source.reader("acme")) == frozenset({"a"})
+    _join_refreshes()
+    assert cache.items() == []
+    assert cache.get("acme", source.reader("acme")) == frozenset()
+    assert cache.items() == []
+    caller = threading.current_thread().name
+    assert source.calls == [
+        ("acme", caller),
+        ("acme", f"{NAME}-refresh"),
+        ("acme", caller),
+    ]

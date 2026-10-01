@@ -1043,7 +1043,8 @@ to linger.
 
 `cogniverse_foundation.caching.RefreshingCache` holds values read from a slow
 backing store and keeps the read off the caller's thread once a value is held.
-`ConfigManager` keeps its per-tenant scoped configs in one.
+`ConfigManager` keeps its per-tenant scoped configs in one, and
+`DeployedSchemaNames` (core module) its per-tenant deployed schema names.
 
 ```python
 from cogniverse_foundation.caching import RefreshingCache
@@ -1075,6 +1076,13 @@ found while all are busy is returned, and its refresh starts on a later call.
 flight, whose results are never cached. `max_entries` bounds the cache, evicting
 least recently used first. Setting both bounds to 0 reads on every call. The
 `clock` argument (default `time.monotonic`) sets the time source.
+
+`get(key, read, accept=...)` lets one call refuse a held value: when
+`accept(held)` is False the call reads as if nothing were held. It runs under the
+cache lock and must not call back into the cache. The constructor's
+`keep(value)` decides which read results are held; a result it rejects is
+returned to its callers and drops the key's entry. `keys()` and `items()`
+snapshot the held entries, least recently used first.
 
 ---
 

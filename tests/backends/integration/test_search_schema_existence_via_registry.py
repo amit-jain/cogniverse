@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
+import re
 import subprocess
 import sys
 import threading
@@ -43,11 +45,13 @@ from cogniverse_core.registries.schema_deployment_intents import (
     SchemaDeploymentIntents,
 )
 from cogniverse_core.registries.schema_registry import (
-    DEPLOYED_SCHEMAS_TTL_S,
+    DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+    DEPLOYED_SCHEMAS_REFRESH_S,
     SCHEMA_REGISTRY_SERVICE,
     DeployedSchemaNames,
 )
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.caching import refreshing_cache as refreshing_cache_module
 from cogniverse_sdk.interfaces.backend import SchemaNotDeployedError
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 
@@ -341,14 +345,14 @@ def _row_owners(rows):
 
 
 def _counted_manager(env):
-    """A ConfigManager over the corpus store with nothing cached yet, holding
-    tenant scoped configs as long as a deployed-schema entry lives."""
+    """A ConfigManager over the corpus store with nothing cached yet, refreshing
+    tenant scoped configs on the deployed-schema schedule."""
     from cogniverse_foundation.config.manager import ConfigManager
 
     return ConfigManager(
         store=env["config_manager"].store,
-        scoped_config_refresh_s=DEPLOYED_SCHEMAS_TTL_S,
-        scoped_config_max_staleness_s=DEPLOYED_SCHEMAS_TTL_S,
+        scoped_config_refresh_s=DEPLOYED_SCHEMAS_REFRESH_S,
+        scoped_config_max_staleness_s=DEPLOYED_SCHEMAS_MAX_STALENESS_S,
     )
 
 
@@ -513,15 +517,15 @@ class TestConcurrentTenantsGetTheirOwnAnswer:
         reads_during_searches = Counter(store_reads)
         lookups_during_searches = list(lookups)
         reader = backend._vespa_search_backend._is_schema_deployed
-        entries = {tenant: names for tenant, (names, _) in reader._entries.items()}
+        entries = dict(reader._names.items())
         lookups.clear()
         afterwards = {tenant: reader(tenant, BASE_SCHEMA) for tenant in tenants}
         canonical = {tenant: canonical_tenant_id(tenant) for tenant in tenants}
 
         assert [thread.is_alive() for thread in threads] == [False] * len(threads)
-        assert elapsed < DEPLOYED_SCHEMAS_TTL_S, (
-            f"64 searches took {elapsed:.1f}s, past the {DEPLOYED_SCHEMAS_TTL_S}s "
-            "entry lifetime this pin counts reads within"
+        assert elapsed < DEPLOYED_SCHEMAS_REFRESH_S, (
+            f"64 searches took {elapsed:.1f}s, past the {DEPLOYED_SCHEMAS_REFRESH_S}s "
+            "refresh age this pin counts reads within"
         )
         # Every deployed tenant's four searches share one read or hit its
         # entry; an undeployed tenant re-reads on each refusal that finds no
@@ -724,16 +728,102 @@ class TestWarmSearchesReadNothing:
         elapsed = time.monotonic() - began
 
         assert type(reader) is DeployedSchemaNames
-        assert reader.ttl_s == DEPLOYED_SCHEMAS_TTL_S
+        assert (reader.refresh_after_s, reader.max_staleness_s) == (
+            DEPLOYED_SCHEMAS_REFRESH_S,
+            DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+        )
         assert reader.config_manager is manager
-        assert elapsed < DEPLOYED_SCHEMAS_TTL_S, (
+        assert elapsed < DEPLOYED_SCHEMAS_REFRESH_S, (
             f"{WARM_SEARCHES + 1} searches took {elapsed:.1f}s, past the "
-            f"{DEPLOYED_SCHEMAS_TTL_S}s entry lifetime"
+            f"{DEPLOYED_SCHEMAS_REFRESH_S}s refresh age"
         )
         assert first == env["seeded"][tenant]["ids"]
         assert miss_reads == FIRST_SEARCH_READS
         assert warm == [env["seeded"][tenant]["ids"]] * WARM_SEARCHES
         assert store_reads == Counter()
+
+
+class TestStaleEntryAnswersWhileOneLookupRuns:
+    def test_concurrent_searches_past_the_refresh_age_never_wait_on_the_lookup(
+        self, corpus, monkeypatch
+    ):
+        env = corpus
+        tenants = env["deployed"][:2]
+        reader = DeployedSchemaNames(
+            env["config_manager"], refresh_after_s=1.0, max_staleness_s=30.0
+        )
+        backend = _direct_backend(env, reader)
+        queries = {
+            tenant: _query(env, tenant, env["seeded"][tenant]["vector"])
+            for tenant in tenants
+        }
+        store = env["config_manager"].store
+        rows = store.list_configs
+        lookups: list = []
+        lookups_lock = threading.Lock()
+        released = threading.Event()
+
+        def held_rows(*args, **kwargs):
+            with lookups_lock:
+                lookups.append(
+                    (kwargs.get("tenant_id"), threading.current_thread().name)
+                )
+            result = rows(*args, **kwargs)
+            assert released.wait(timeout=60)
+            return result
+
+        try:
+            warm = {
+                tenant: [h.document.id for h in backend.search(queries[tenant])]
+                for tenant in tenants
+            }
+            time.sleep(1.05)
+            monkeypatch.setattr(store, "list_configs", held_rows)
+            searches = [tenant for tenant in tenants for _ in range(6)]
+            start = threading.Barrier(len(searches))
+            outcome: list = []
+            lock = threading.Lock()
+
+            def search(tenant):
+                start.wait(timeout=60)
+                hits = [h.document.id for h in backend.search(queries[tenant])]
+                with lock:
+                    outcome.append((tenant, hits))
+
+            threads = [
+                threading.Thread(target=search, args=(tenant,), name=f"search-{i}")
+                for i, tenant in enumerate(searches)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+            # Every search finished while both lookups were held at the store.
+            searches_done_while_held = not released.is_set() and not any(
+                thread.is_alive() for thread in threads
+            )
+            released.set()
+            for thread in threading.enumerate():
+                if thread.name == "deployed-schemas-refresh":
+                    thread.join(timeout=60)
+        finally:
+            released.set()
+            backend.close()
+
+        expected = {tenant: env["seeded"][tenant]["ids"] for tenant in tenants}
+        assert warm == expected
+        assert searches_done_while_held is True
+        assert sorted(outcome) == sorted(
+            (tenant, expected[tenant]) for tenant in searches
+        )
+        assert sorted(lookups) == sorted(
+            (canonical_tenant_id(tenant), "deployed-schemas-refresh")
+            for tenant in tenants
+        )
+        assert sorted(reader._names.items()) == sorted(
+            (canonical_tenant_id(tenant), frozenset({BASE_SCHEMA}))
+            for tenant in tenants
+        )
 
 
 class TestUndeployedSchemaIsReadEverySearch:
@@ -759,7 +849,7 @@ class TestUndeployedSchemaIsReadEverySearch:
         assert store_reads == FIRST_SEARCH_READS + Counter(
             {key: REFUSED_SEARCHES - 1 for key in ONE_LOOKUP}
         )
-        assert reader._entries == {}
+        assert reader._names.items() == []
 
 
 class TestInProcessDeployAndDelete:
@@ -769,7 +859,12 @@ class TestInProcessDeployAndDelete:
         env = corpus
         tenant = _profiled_tenant(env, "inproc")
         # An hour-long entry: only invalidation can make the deletion visible.
-        backend = _direct_backend(env, DeployedSchemaNames(env["config_manager"], 3600))
+        backend = _direct_backend(
+            env,
+            DeployedSchemaNames(
+                env["config_manager"], refresh_after_s=3600, max_staleness_s=3600
+            ),
+        )
         probe = _query(env, tenant, np.ones(768, dtype=np.float32))
         try:
             store_reads.clear()
@@ -843,8 +938,8 @@ print("done", flush=True)
 """
 
 # Long enough to cover the other process's delete (a redeploy plus its
-# convergence); the before-TTL check fails loudly if it ever is not.
-CROSS_PROCESS_TTL_S = 60.0
+# convergence); the within-bound check fails loudly if it ever is not.
+CROSS_PROCESS_STALENESS_S = 60.0
 
 
 def _other_process(env, action, tenant, payload):
@@ -895,8 +990,8 @@ def _vespa_refusal(exc):
     ]
 
 
-class TestOtherProcessDeleteIsSeenAfterTheTtl:
-    def test_deleted_by_another_process_reaches_vespa_until_the_ttl(
+class TestOtherProcessDeleteIsSeenAfterTheStalenessBound:
+    def test_deleted_by_another_process_reaches_vespa_until_the_bound(
         self, corpus, store_reads
     ):
         env = corpus
@@ -907,7 +1002,12 @@ class TestOtherProcessDeleteIsSeenAfterTheTtl:
         BackendRegistry.get_instance().clear_instances()
         other = _other_process(env, "delete", tenant, {"base_schema_name": BASE_SCHEMA})
         backend = _direct_backend(
-            env, DeployedSchemaNames(env["config_manager"], CROSS_PROCESS_TTL_S)
+            env,
+            DeployedSchemaNames(
+                env["config_manager"],
+                refresh_after_s=CROSS_PROCESS_STALENESS_S,
+                max_staleness_s=CROSS_PROCESS_STALENESS_S,
+            ),
         )
         query = _query(env, tenant, vector)
         try:
@@ -919,25 +1019,27 @@ class TestOtherProcessDeleteIsSeenAfterTheTtl:
             store_reads.clear()
             with pytest.raises(VespaError) as from_vespa:
                 backend.search(query)
-            reads_within_ttl = Counter(store_reads)
+            reads_within_bound = Counter(store_reads)
             checked_after = time.monotonic() - filled
 
-            time.sleep(max(0.0, filled + CROSS_PROCESS_TTL_S + 1.0 - time.monotonic()))
+            time.sleep(
+                max(0.0, filled + CROSS_PROCESS_STALENESS_S + 1.0 - time.monotonic())
+            )
             store_reads.clear()
-            with pytest.raises(SchemaNotDeployedError) as after_ttl:
+            with pytest.raises(SchemaNotDeployedError) as after_bound:
                 backend.search(query)
-            reads_after_ttl = Counter(store_reads)
+            reads_after_bound = Counter(store_reads)
         finally:
             backend.close()
             other.kill()
             other.wait(timeout=30)
 
-        assert checked_after < CROSS_PROCESS_TTL_S, (
-            f"the within-TTL search ran {checked_after:.1f}s after the fill, past "
-            f"the {CROSS_PROCESS_TTL_S}s entry lifetime"
+        assert checked_after < CROSS_PROCESS_STALENESS_S, (
+            f"the within-bound search ran {checked_after:.1f}s after the fill, past "
+            f"the {CROSS_PROCESS_STALENESS_S}s staleness bound"
         )
         assert warm == ids
-        assert reads_within_ttl == Counter()
+        assert reads_within_bound == Counter()
         assert type(from_vespa.value) is VespaError
         assert _vespa_refusal(from_vespa.value) == [
             (
@@ -946,8 +1048,8 @@ class TestOtherProcessDeleteIsSeenAfterTheTtl:
                 f"Could not resolve source ref '{tenant_schema}'",
             )
         ]
-        assert str(after_ttl.value) == _not_deployed_message(env, tenant)
-        assert reads_after_ttl == ONE_LOOKUP
+        assert str(after_bound.value) == _not_deployed_message(env, tenant)
+        assert reads_after_bound == ONE_LOOKUP
 
 
 class TestOtherProcessRegistrationIsSeenAtOnce:
@@ -986,7 +1088,9 @@ class TestOtherProcessRegistrationIsSeenAtOnce:
         )
         BackendRegistry.get_instance().clear_instances()
         other = _other_process(env, "register", tenant, row)
-        reader = DeployedSchemaNames(env["config_manager"], 3600)
+        reader = DeployedSchemaNames(
+            env["config_manager"], refresh_after_s=3600, max_staleness_s=3600
+        )
         backend = _direct_backend(env, reader)
         query = _query(env, tenant, vector)
         try:
@@ -995,7 +1099,7 @@ class TestOtherProcessRegistrationIsSeenAtOnce:
             other_cached = reader(tenant, other_base)
             with pytest.raises(SchemaNotDeployedError) as before:
                 backend.search(query)
-            entry_before = reader._entries[canonical_tenant_id(tenant)][0]
+            entry_before = dict(reader._names.items())[canonical_tenant_id(tenant)]
             reads_before = Counter(store_reads)
             _run(other)
             store_reads.clear()
@@ -1021,50 +1125,80 @@ class TestOtherProcessRegistrationIsSeenAtOnce:
 
 
 class TestReaderFaultContract:
-    def test_the_store_down_raises_on_every_read_and_never_serves_stale(
-        self, corpus, monkeypatch
+    def test_the_store_down_serves_held_names_until_the_bound_then_raises(
+        self, corpus, monkeypatch, caplog
     ):
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         env = corpus
         tenant = env["deployed"][0]
-        ttl = 1.0
-        reader = DeployedSchemaNames(env["config_manager"], ttl)
-        warm = reader(tenant, BASE_SCHEMA)
+        refresh, bound = 1.0, 3.0
+        reader = DeployedSchemaNames(
+            env["config_manager"], refresh_after_s=refresh, max_staleness_s=bound
+        )
         filled = time.monotonic()
+        warm = reader(tenant, BASE_SCHEMA)
         store = env["config_manager"].store
         failed_reads: list = []
 
         def store_down(*args, **kwargs):
-            failed_reads.append(kwargs.get("service"))
+            failed_reads.append(
+                (kwargs.get("service"), threading.current_thread().name)
+            )
             raise ConfigStoreUnavailableError(
                 f"store paused for tenant rows under {ConfigScope.SCHEMA.value}"
             )
 
         monkeypatch.setattr(store, "list_configs", store_down)
-        within_ttl = reader(tenant, BASE_SCHEMA)
-        reads_within_ttl = list(failed_reads)
+        within_refresh = reader(tenant, BASE_SCHEMA)
+        reads_within_refresh = list(failed_reads)
         with pytest.raises(RegistryStorageError) as absent_name:
             reader(tenant, "wiki_pages")
-        time.sleep(max(0.0, filled + ttl + 0.2 - time.monotonic()))
+        time.sleep(max(0.0, filled + refresh + 0.5 - time.monotonic()))
+        with caplog.at_level(logging.ERROR, logger=refreshing_cache_module.__name__):
+            served_while_refreshing = reader(tenant, BASE_SCHEMA)
+            for thread in threading.enumerate():
+                if thread.name == "deployed-schemas-refresh":
+                    thread.join(timeout=30)
+        logged = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == refreshing_cache_module.__name__
+        ]
+        time.sleep(max(0.0, filled + bound + 0.1 - time.monotonic()))
         with pytest.raises(RegistryStorageError) as expired:
             reader(tenant, BASE_SCHEMA)
         with pytest.raises(RegistryStorageError) as retried:
             reader(tenant, BASE_SCHEMA)
 
+        canonical = canonical_tenant_id(tenant)
         message = (
-            f"Cannot read deployed schemas for tenant '{canonical_tenant_id(tenant)}'"
+            f"Cannot read deployed schemas for tenant '{canonical}'"
             ": ConfigStoreUnavailableError: store paused for tenant rows under "
             f"{ConfigScope.SCHEMA.value}"
         )
+        caller = threading.current_thread().name
         assert warm is True
-        assert within_ttl is True
-        assert reads_within_ttl == []
+        assert within_refresh is True
+        assert reads_within_refresh == []
         assert str(absent_name.value) == message
+        assert served_while_refreshing is True
+        assert len(logged) == 1
+        assert re.fullmatch(
+            rf"deployed-schemas: refreshing '{re.escape(canonical)}' failed with "
+            rf"RegistryStorageError: {re.escape(message)}; serving the value read "
+            r"\d\.\ds ago until it is 3\.0s old",
+            logged[0],
+        )
         assert str(expired.value) == message
         assert type(expired.value.__cause__) is ConfigStoreUnavailableError
         assert str(retried.value) == message
-        assert failed_reads == [SCHEMA_REGISTRY_SERVICE] * 3
+        assert failed_reads == [
+            (SCHEMA_REGISTRY_SERVICE, caller),
+            (SCHEMA_REGISTRY_SERVICE, "deployed-schemas-refresh"),
+            (SCHEMA_REGISTRY_SERVICE, caller),
+            (SCHEMA_REGISTRY_SERVICE, caller),
+        ]
 
 
 class TestDeleteDuringAReadIsNotCached:
@@ -1083,7 +1217,9 @@ class TestDeleteDuringAReadIsNotCached:
                 {**env["schema_loader"].load_schema(BASE_SCHEMA), "name": full_name}
             ),
         )
-        reader = DeployedSchemaNames(env["config_manager"], 3600)
+        reader = DeployedSchemaNames(
+            env["config_manager"], refresh_after_s=3600, max_staleness_s=3600
+        )
         store = env["config_manager"].store
         rows_read = threading.Event()
         unregistered = threading.Event()
@@ -1244,7 +1380,7 @@ class TestALookupCarriesOnlyThisTenantsRows:
     """The deployed-name lookup reads this tenant's rows and no other's.
 
     It runs on the serving path — every memory read and every search asks it,
-    and its per-tenant entry expires every ``DEPLOYED_SCHEMAS_TTL_S`` — so a
+    and its per-tenant entry is re-read every ``DEPLOYED_SCHEMAS_REFRESH_S`` — so a
     read that carries every tenant's registry rows and the whole deployment
     journal back to filter them in Python makes each request pay for the
     cluster's entire schema history, on a worker thread whose parsing starves

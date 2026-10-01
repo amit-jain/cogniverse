@@ -587,7 +587,8 @@ def test_failed_ingestion_first_touch_is_not_cached(monkeypatch):
 
 def test_concurrent_search_first_touch_builds_one_backend(monkeypatch):
     from cogniverse_core.registries.schema_registry import (
-        DEPLOYED_SCHEMAS_TTL_S,
+        DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+        DEPLOYED_SCHEMAS_REFRESH_S,
         DeployedSchemaNames,
     )
     from cogniverse_vespa import backend as backend_module
@@ -630,10 +631,16 @@ def test_concurrent_search_first_touch_builds_one_backend(monkeypatch):
     assert backend._vespa_search_backend is search_backend
     assert search_backend.search.call_count == 12
     lookup = built[0].pop("is_schema_deployed")
-    assert (type(lookup), lookup.config_manager, lookup.ttl_s) == (
+    assert (
+        type(lookup),
+        lookup.config_manager,
+        lookup.refresh_after_s,
+        lookup.max_staleness_s,
+    ) == (
         DeployedSchemaNames,
         config_manager,
-        DEPLOYED_SCHEMAS_TTL_S,
+        DEPLOYED_SCHEMAS_REFRESH_S,
+        DEPLOYED_SCHEMAS_MAX_STALENESS_S,
     )
     assert built == [
         {

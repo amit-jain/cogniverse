@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, Dict, Generic, Hashable, List, Optional, TypeVar
+from typing import Callable, Dict, Generic, Hashable, List, Optional, Tuple, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,8 @@ class RefreshingCache(Generic[K, V]):
     ``invalidate`` drops matching entries and detaches their reads in flight:
     a detached read's result reaches the callers already waiting on it and is
     never cached. Entries beyond ``max_entries`` are evicted least recently
-    used first.
+    used first. A read whose value ``keep`` rejects is returned to its callers
+    and drops the key's entry instead of replacing it.
     """
 
     def __init__(
@@ -60,6 +61,7 @@ class RefreshingCache(Generic[K, V]):
         max_staleness_s: float,
         max_entries: int,
         max_background_reads: int = 4,
+        keep: Callable[[V], bool] = lambda value: True,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if refresh_after_s < 0:
@@ -80,6 +82,7 @@ class RefreshingCache(Generic[K, V]):
         self._max_staleness_s = max_staleness_s
         self._max_entries = max_entries
         self._max_background_reads = max_background_reads
+        self._keep = keep
         self._clock = clock
         self._lock = threading.Lock()
         self._entries: "OrderedDict[K, _Entry[V]]" = OrderedDict()
@@ -99,18 +102,35 @@ class RefreshingCache(Generic[K, V]):
             return len(self._entries)
 
     def keys(self) -> List[K]:
-        """Cached keys, least recently used first."""
+        """Held keys, least recently used first."""
         with self._lock:
             return list(self._entries)
 
-    def get(self, key: K, read: Callable[[], V]) -> V:
-        """Answer ``key`` from memory when allowed, else from ``read``."""
+    def items(self) -> List[Tuple[K, V]]:
+        """Held ``(key, value)`` pairs, least recently used first."""
+        with self._lock:
+            return [(key, entry.value) for key, entry in self._entries.items()]
+
+    def get(
+        self,
+        key: K,
+        read: Callable[[], V],
+        accept: Optional[Callable[[V], bool]] = None,
+    ) -> V:
+        """Answer ``key`` from memory when allowed, else from ``read``.
+
+        ``accept(held)``, when given, decides whether a held value may answer
+        this call; a value it rejects is read again as if nothing were held.
+        It runs under the cache lock and must not call back into the cache.
+        """
         refresh: Optional[Future] = None
         with self._lock:
             now = self._clock()
             entry = self._entries.get(key)
             answerable = (
-                entry is not None and now - entry.read_at < self._max_staleness_s
+                entry is not None
+                and now - entry.read_at < self._max_staleness_s
+                and (accept is None or accept(entry.value))
             )
             if answerable:
                 self._entries.move_to_end(key)
@@ -187,7 +207,9 @@ class RefreshingCache(Generic[K, V]):
                 self._background_reads -= 1
             if self._reads.get(key) is pending:
                 del self._reads[key]
-                if error is None:
+                if error is None and not self._keep(value):
+                    self._entries.pop(key, None)
+                elif error is None:
                     self._entries[key] = _Entry(
                         value, started, started + self._refresh_after_s
                     )

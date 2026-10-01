@@ -634,22 +634,30 @@ storage read failure raises `RegistryStorageError` naming the tenant rather
 than answering with a smaller set — an outage must never read as "nothing is
 deployed".
 
-`DeployedSchemaNames(config_manager, ttl_s=DEPLOYED_SCHEMAS_TTL_S)` answers
-`reader(tenant_id, base_schema_name) -> bool` from that read, caching each
-canonical tenant's deployed names; `VespaBackend` hands one to its
-`VespaSearchBackend`, which asks it before every query (see the backends
-module). A name in the tenant's entry answers True with no read until `ttl_s`
-after the read that produced it began. A name missing from it re-reads the
-store before answering False, so a deployment by any process is visible to the
-next call and a refusal is never served from memory; the fresh deployed names
-replace the entry, and a tenant with none keeps no entry. Every schema-registry
-row write (`register_schema`, `unregister_schema`, so deploy and delete) and
-every deployment-intent transition (`prepare`, `retire`, `complete`, recovery)
-calls `invalidate_deployed_schema_names(tenant_id)`, which drops that tenant's
-entry from every reader in the process, so `DEPLOYED_SCHEMAS_TTL_S` (30 s)
-bounds only how long another process's deletion keeps answering True.
-Concurrent reads for one tenant share one store read; a failed read raises
-`RegistryStorageError` to each caller and caches nothing.
+`DeployedSchemaNames(config_manager, refresh_after_s=DEPLOYED_SCHEMAS_REFRESH_S,
+max_staleness_s=DEPLOYED_SCHEMAS_MAX_STALENESS_S)` answers
+`reader(tenant_id, base_schema_name) -> bool` from that read, holding each
+canonical tenant's deployed names in a `RefreshingCache` (foundation module);
+`VespaBackend` hands one to its `VespaSearchBackend`, which asks it before every
+query (see the backends module). A name in the tenant's entry answers True with
+no read until `refresh_after_s` (15 s) after the read that produced it began.
+Until `max_staleness_s` (30 s) it still answers True while one background
+thread (`deployed-schemas-refresh`) re-reads the tenant, so a search never waits
+on that read. Past `max_staleness_s` the caller reads the store itself. A name
+missing from the entry re-reads the store before answering False, so a
+deployment by any process is visible to the next call and a refusal is never
+served from memory. The fresh deployed names replace the entry, and a tenant
+with none keeps no entry. Every schema-registry row write (`register_schema`,
+`unregister_schema`, so deploy and delete) and every deployment-intent
+transition (`prepare`, `retire`, `complete`, recovery) calls
+`invalidate_deployed_schema_names(tenant_id)`, which drops that tenant's entry
+from every reader in the process and detaches its read in flight. So
+`DEPLOYED_SCHEMAS_MAX_STALENESS_S` bounds only how long another process's
+deletion keeps answering True, and for a tenant searched continuously it is
+seen about `DEPLOYED_SCHEMAS_REFRESH_S` after it lands. Concurrent reads for one
+tenant share one store read; a failed read raises `RegistryStorageError` to each
+caller and caches nothing. A failed background read is logged and the entry
+keeps answering until `max_staleness_s`, after which the next call raises.
 
 ```python
 from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
