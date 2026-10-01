@@ -5,9 +5,9 @@
 # 8e2e3f2e / 34195f75); routing all GLiNER inference through this
 # sidecar keeps that constraint intact.
 #
-# CPU-only torch keeps the image small (~1.5 GB). The model
-# (urchade/gliner_large-v2.1, ~450 MB) downloads on first request
-# into HF_HOME (mounted from the chart's hf-cache PVC).
+# The image carries the pinned checkpoint exported to ONNX and serves it on
+# ONNX Runtime's CPU provider, which needs no model download at run time.
+# CPU-only torch is present for the export.
 FROM python:3.12-slim
 
 # Bound pip network behaviour: the PyTorch/PyPI CDNs stall intermittently and
@@ -26,11 +26,17 @@ WORKDIR /app
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
         torch==2.5.1
 
+# transformers and onnxruntime are pinned because the exported graph traces
+# transformers' DeBERTa code and is executed by onnxruntime; onnx is needed
+# only by the export below.
 RUN pip install --no-cache-dir \
         fastapi==0.120.1 \
         "uvicorn[standard]==0.44.0" \
         pydantic==2.13.0 \
         gliner==0.2.26 \
+        transformers==5.1.0 \
+        onnxruntime==1.30.0 \
+        onnx==1.17.0 \
         numpy
 
 # The canonical server lives in the CLI modal-inference package. Build from
@@ -45,9 +51,16 @@ ENV MODEL_NAME=urchade/gliner_large-v2.1 \
     PORT=8080 \
     HF_HOME=/root/.cache/huggingface
 
+# Export with the server's own pins, which it checks again on load. The
+# checkpoint download stays out of the image; only the export is kept.
+RUN HF_HOME=/tmp/export-hf python -c \
+        "from pathlib import Path; import server; server.export_onnx(Path('/opt/gliner-onnx'))" \
+    && rm -rf /tmp/export-hf
+ENV ONNX_MODEL_DIR=/opt/gliner-onnx
+
 EXPOSE 8080
 
-# GLiNER cold-load takes ~30s; allow 180s for first-request download.
+# The ONNX session loads in under 10 s; the start period covers a slow disk.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=10 \
     CMD curl -fsS http://localhost:8080/health || exit 1
 

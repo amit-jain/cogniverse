@@ -377,7 +377,10 @@ socket, so a model load fault cannot create a Kubernetes restart loop.
 | Model | `urchade/gliner_large-v2.1` at revision `abd49a1f1ebc12af1be84d06f6848221cf96dcad` (pinned; other request model IDs are rejected) |
 | Image | `cogniverse/gliner` (CUSTOM, `deploy/gliner/Dockerfile` + `cogniverse_cli.modal_inference.servers.gliner`) |
 | Endpoint | `POST /predict_entities` (mirrors the in-process `model.predict_entities(text, labels, threshold)` shape) |
-| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "default_model": "urchade/gliner_large-v2.1", "model_revision": "abd49a1f1ebc12af1be84d06f6848221cf96dcad", "loaded_models": ["urchade/gliner_large-v2.1"]}` |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "urchade/gliner_large-v2.1", "model_revision": "abd49a1f1ebc12af1be84d06f6848221cf96dcad", "loaded_models": ["urchade/gliner_large-v2.1"]}` |
+| Inference (cluster image) | ONNX Runtime CPU provider on the export the image build writes to `/opt/gliner-onnx` (`ONNX_MODEL_DIR`); no model download at run time |
+| Inference (Modal) | PyTorch on the GPU (`DEVICE=cuda`) |
+| Threads | Sized to the container's cgroup v2 CPU quota (`/sys/fs/cgroup/cpu.max`, rounded up); the library default when there is no quota |
 | Kubernetes probes | HTTP `GET /health` readiness on port 8080; TCP liveness on port 8080 |
 | NodePort | 29007 |
 | Default state | enabled |
@@ -391,6 +394,17 @@ the optional request `model` field must match that identifier exactly.
 GLiNER loader transparently. A pinned-model load failure returns HTTP 503; its
 `detail` matches
 `gliner: model urchade/gliner_large-v2.1 load failed (<ExceptionType>): <cause>`.
+
+The export is DeBERTa-v3-large as an ONNX graph. ONNX Runtime's optimizer
+folds the relative-position projections that PyTorch recomputes in every
+layer of every request; they depend only on the weights and are more than
+half of the forward pass for a gateway-length query. The export writes
+`source.json` naming the checkpoint, and the server refuses to load an
+export of any other model or revision. `transformers` and `onnxruntime` are
+pinned in the Dockerfile because the graph traces one and runs on the other.
+`tests/cli/integration/test_gliner_image_serving.py` builds the image, runs
+it under the chart's CPU and memory limits, and checks its entities against
+the PyTorch checkpoint's.
 
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
