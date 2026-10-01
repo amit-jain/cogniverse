@@ -528,16 +528,22 @@ Services on the pylate engine are excluded: their server faults the GPU
 (exit 139) while TunableOp benchmarks an untuned GEMM shape, and real
 traffic supplies a new shape on nearly every request. An individual
 service overrides the engine-derived default with `tunableOp`.
+
+`tunableOpTuning: false` keeps the tuned results in use but stops tuning
+shapes the file does not hold; those run the default kernel instead of
+stalling the request that first meets them.
 */}}
 {{- define "cogniverse.tunableOpEnv" -}}
 {{- $svc := (index .root.Values.inference .name) | default dict -}}
 {{- $enabled := ne ($svc.engine | default "") "pylate" -}}
 {{- if hasKey $svc "tunableOp" -}}{{- $enabled = $svc.tunableOp -}}{{- end -}}
+{{- $tuning := true -}}
+{{- if hasKey $svc "tunableOpTuning" -}}{{- $tuning = $svc.tunableOpTuning -}}{{- end -}}
 {{- if and (eq .device "rocm") .root.Values.runtime.tunableOp $enabled }}
 - name: PYTORCH_TUNABLEOP_ENABLED
   value: "1"
 - name: PYTORCH_TUNABLEOP_TUNING
-  value: "1"
+  value: {{ ternary "1" "0" $tuning | quote }}
 - name: PYTORCH_TUNABLEOP_FILENAME
   value: /root/.cache/huggingface/tunableop_{{ .name | kebabcase }}_%d.csv
 {{- end }}

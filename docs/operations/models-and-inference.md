@@ -225,6 +225,7 @@ chart key.
 | Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
 | Default state | Disabled in base and k3d-only composition; the ROCm and CUDA overlays enable it |
+| Batching (ROCm) | `--max-num-seqs 16`: up to sixteen concurrent queries share one forward pass. `--max-num-batched-tokens 1536` and `--max-model-len 1536` keep the vision encoder at one 1024-patch image per step |
 
 The k3s overlay changes neither this service's image nor its enabled state, so
 a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
@@ -518,9 +519,20 @@ bounded `--gpu-memory-utilization` fractions. The Tomoro pooling service uses
 an explicit 1 GiB KV cache because its transient image-profile allocation is
 larger than its steady-state cache budget; it also caps preprocessing at
 1,048,576 pixels, matching the 1,024-patch Vespa document contract. See
-`values.rocm.yaml` for the complete per-service allocation. Its accompanying
-0.45 utilization value is retained only for vLLM's initial free-memory guard;
-the explicit byte value controls the actual cache reservation.
+`values.rocm.yaml` for the complete per-service allocation. Its 0.18
+utilization value is vLLM's initial free-memory guard; the explicit byte value
+controls the actual cache reservation.
+
+vLLM sizes the vision batch from the step's token budget, as
+`--max-num-batched-tokens // 1024` maximum-size images, both when it profiles
+memory at startup and when it schedules concurrent image requests. The ROCm
+overlay sets that budget to 1,536 tokens, so concurrent ingestion still
+encodes one image per step while sixteen text queries share a step. Chunked
+prefill is unsupported for this CLS-pooled model, so `--max-model-len` equals
+the budget; the largest request, one 1,024-patch image, is 1,031 tokens.
+`--max-cudagraph-capture-size 512` pads every step of up to 512 tokens to one
+of 51 captured sizes, so query traffic runs a fixed set of GEMM shapes.
+`tests/charts/test_rocm_startup_budget.py` pins these relations.
 
 Inference readiness probes begin immediately. A failed readiness probe only
 keeps the Service endpoint out of rotation; it does not restart the container.
@@ -551,6 +563,14 @@ The results file lives in the persistent `model-cache` volume, so tuning
 survives pod restarts and rollouts — a shape is benchmarked once over the
 file's lifetime. The first request hitting a not-yet-tuned shape pays a
 one-time tuning latency; the persisted file means later pods skip it.
+
+`inference.<service>.tunableOpTuning: false` renders
+`PYTORCH_TUNABLEOP_TUNING=0`: tuned shapes from the results file still apply,
+and a shape the file lacks runs the default kernel instead of being tuned on
+the request path. `vllm_colpali` sets it on the ROCm overlay. Its batched step
+lengths vary with the mix of concurrent queries and images, and tuning one new
+length stalls every queued request (31 s for a new 1,031-token image length,
+against 0.76 s once tuned).
 
 ---
 
