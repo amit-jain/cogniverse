@@ -369,4 +369,4 @@ python -c "import cogniverse_core; print('OK')"
 
 - [Full Documentation](./index.md)
 - [Troubleshooting Guide](./TROUBLESHOOTING.md)
-- [GitHub Issues](https://github.com/your-org/cogniverse/issues)
+- [GitHub Issues](https://github.com/amit-jain/cogniverse/issues)

@@ -4,7 +4,7 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 
 ## Features
 
-- **Self-optimizing**: Argo CronWorkflows read production spans from Phoenix and compile each agent's DSPy module; agents load the resulting artifacts at startup. An agent with only failing examples is recompiled with GEPA reflective prompt evolution
+- **Self-optimizing**: Argo CronWorkflows compile the entity-extraction, query-enhancement, and profile-selection DSPy modules, tune the gateway's routing thresholds, and build orchestrator workflow templates from Phoenix spans and tenant ground truth. When the search, summarizer, or detailed-report agent's quality drops, the quality monitor submits an Argo workflow that recompiles it, using GEPA reflective prompt evolution when it has only failing examples. Agents load the resulting artifacts
 - **Multi-modal**: Ingestion and search profiles for video, images, audio, documents, code, and wiki pages
 - **Multi-agent orchestration**: DSPy 3.4 agents coordinated over the A2A protocol
 - **Cross-modal fusion**: The orchestrator combines results from agents working on different modalities
@@ -74,6 +74,11 @@ scripts/download_test_data.sh --test-only
 
 # Host-side scripts read the Vespa location from the environment
 export BACKEND_URL=http://localhost BACKEND_PORT=8080
+
+# Register the tenant the examples below use
+curl -X POST http://localhost:28000/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "default", "created_by": "admin"}'
 
 # Ingest videos into the frame-level visual profile
 uv run python scripts/run_ingestion.py \
@@ -283,7 +288,7 @@ flowchart TD
 
     classDef gatewayStyle fill:#a5d6a7,stroke:#388e3c,color:#000
     classDef orchStyle fill:#ce93d8,stroke:#7b1fa2,color:#000
-    classDef adminStyle fill:#e0e0e0,stroke:#616161,color:#000
+    classDef adminStyle fill:#81c784,stroke:#388e3c,color:#000
     classDef saStyle fill:#90caf9,stroke:#1565c0,color:#000
     classDef grStyle fill:#ba68c8,stroke:#7b1fa2,color:#000
     classDef rcStyle fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -328,7 +333,7 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 | `query_enhancement_agent` | 8000\* | enabled | Expands and rewrites queries with synonyms, context, and RRF variants using DSPy. |
 | `entity_extraction_agent` | 8000\* | enabled | Extracts entities with DSPy, falling back to GLiNER + SpaCy when the LM call fails. |
 
-\* `gateway_agent` and the agents marked \* carry the runtime's own port (`8000`) in `configs/config.json`. Every agent runs in-process in the runtime, dispatched by `AgentDispatcher` behind `POST /agents/{agent_name}/process`.
+\* `gateway_agent` and the agents marked \* carry the runtime's own port (`8000`) in `configs/config.json`. Every agent runs in-process in the runtime. Enabled agents are dispatched by `AgentDispatcher` behind `POST /agents/{agent_name}/process`; the knowledge-graph and federation agents are also served, enabled or not, by the `/admin/tenants/{tenant_id}/knowledge/*` routes.
 
 **Research & Coding Agents**
 
@@ -371,8 +376,9 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 3. **binary_binary** - Binary embeddings only
 4. **float_binary** - Float query with binary document embeddings
 5. **phased** - Two-phase ranking: binary first, float reranking
-6. **hybrid_float_bm25** - BM25 + dense float embeddings
-7. **hybrid_binary_bm25** - BM25 + binary embeddings
+6. **default** - Used when a request names no strategy; ranks like `phased` in the video schemas
+7. **hybrid_float_bm25** - BM25 + dense float embeddings
+8. **hybrid_binary_bm25** - BM25 + binary embeddings
 
 ## Configuration
 
