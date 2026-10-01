@@ -8,13 +8,22 @@ so the runtime stays slim.
 One endpoint, ``POST /predict_entities``, mirroring the in-process
 ``model.predict_entities(text, labels, threshold)`` shape so
 ``RemoteGlinerClient`` can replace the local loader transparently.
+
+With ``ONNX_MODEL_DIR`` set (the CPU image exports the pinned model there at
+build time), inference runs on ONNX Runtime, whose graph optimizer folds the
+input-independent relative-position projections DeBERTa otherwise recomputes
+in every layer of every request. Otherwise the PyTorch model loads on
+``DEVICE``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
 import threading
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -69,6 +78,85 @@ if configured_model := os.environ.get("MODEL_NAME"):
 _DEVICE = os.environ.get("DEVICE", "cpu")
 if _DEVICE not in {"cpu", "cuda"}:
     raise RuntimeError("DEVICE must equal cpu or cuda")
+_ONNX_MODEL_DIR = os.environ.get("ONNX_MODEL_DIR") or None
+if _ONNX_MODEL_DIR is not None and _DEVICE != "cpu":
+    raise RuntimeError(
+        "ONNX_MODEL_DIR is served on the ONNX Runtime CPU provider; "
+        "DEVICE must equal cpu"
+    )
+_CGROUP_CPU_MAX = Path("/sys/fs/cgroup/cpu.max")
+# Written next to the exported graph; names the checkpoint it came from.
+ONNX_SOURCE_FILE = "source.json"
+
+
+def cpu_quota_threads(cpu_max: Path) -> int | None:
+    """Whole CPUs the cgroup v2 quota grants this process; None without one.
+
+    PyTorch and ONNX Runtime size their thread pools from the host's cores,
+    not from the container's quota. Sixteen threads sharing a four-CPU quota
+    use it up in a quarter of each period and wait out the rest throttled.
+    """
+    try:
+        quota, period = cpu_max.read_text().split()
+    except FileNotFoundError:
+        return None
+    if quota == "max":
+        return None
+    return max(1, math.ceil(int(quota) / int(period)))
+
+
+def export_onnx(model_dir: Path) -> None:
+    """Export the pinned checkpoint for ONNX Runtime serving (image build step)."""
+    from gliner import GLiNER
+
+    model = GLiNER.from_pretrained(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        map_location="cpu",
+    )
+    model.export_to_onnx(model_dir)
+    (model_dir / ONNX_SOURCE_FILE).write_text(
+        json.dumps({"model": MODEL_ID, "revision": MODEL_REVISION})
+    )
+
+
+def _load_onnx(model_dir: Path, threads: int | None) -> Any:
+    source = json.loads((model_dir / ONNX_SOURCE_FILE).read_text())
+    if source != {"model": MODEL_ID, "revision": MODEL_REVISION}:
+        raise ValueError(
+            f"ONNX artifact in {model_dir} was exported from "
+            f"{source.get('model')}@{source.get('revision')}, not "
+            f"{MODEL_ID}@{MODEL_REVISION}"
+        )
+    import onnxruntime as ort
+    from gliner import GLiNER
+
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    options.inter_op_num_threads = 1
+    if threads is not None:
+        options.intra_op_num_threads = threads
+    return GLiNER.from_pretrained(
+        str(model_dir),
+        load_onnx_model=True,
+        load_tokenizer=True,
+        local_files_only=True,
+        session_options=options,
+    )
+
+
+def _load_torch(name: str, threads: int | None) -> Any:
+    if threads is not None:
+        import torch
+
+        torch.set_num_threads(threads)
+    from gliner import GLiNER
+
+    return GLiNER.from_pretrained(
+        name,
+        revision=MODEL_REVISION,
+        map_location=_DEVICE,
+    )
 
 
 def _get_model(name: str) -> Any:
@@ -81,16 +169,21 @@ def _get_model(name: str) -> Any:
         cached = _models.get(name)
         if cached is not None:
             return cached
-        from gliner import GLiNER
-
-        logger.info("Loading GLiNER model=%s", name)
-        instance = GLiNER.from_pretrained(
-            name,
-            revision=MODEL_REVISION,
-            map_location=_DEVICE,
-        )
+        threads = cpu_quota_threads(_CGROUP_CPU_MAX)
+        backend = "onnxruntime" if _ONNX_MODEL_DIR is not None else "torch"
+        logger.info("Loading GLiNER model=%s backend=%s", name, backend)
+        if _ONNX_MODEL_DIR is not None:
+            instance = _load_onnx(Path(_ONNX_MODEL_DIR), threads)
+        else:
+            instance = _load_torch(name, threads)
         _models[name] = instance
-        logger.info("GLiNER loaded: %s", name)
+        logger.info(
+            "GLiNER loaded: %s backend=%s device=%s threads=%s",
+            name,
+            backend,
+            _DEVICE,
+            threads if threads is not None else "default",
+        )
         return instance
 
 

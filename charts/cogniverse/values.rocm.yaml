@@ -29,8 +29,11 @@ inference:
     imagesByDevice: *vllmRocmImage
     engine: vllm_token_embed
     extraArgs:
+      # Equal to --max-num-batched-tokens below: chunked prefill is off for
+      # this CLS-pooled model, so vLLM refuses a context longer than a step.
+      # The largest request, one 1024-token image, is 1031 tokens.
       - "--max-model-len"
-      - "4096"
+      - "1536"
       - "--runner"
       - "pooling"
       - "--convert"
@@ -49,12 +52,28 @@ inference:
       # cache size is present, although the fraction no longer sizes the
       # cache. Keep the guard below the steady-state free-memory floor.
       # 0.18 = 17.3 GiB of the 96 GiB pool: 8 GiB of bf16 weights for a 4B
-      # model, the 1 GiB cache pinned above, and the vision encoder's
-      # activation workspace at 1024 visual patches.
+      # model, the 1 GiB cache pinned above, and one step's activation
+      # workspace: one 1024-patch image through the vision encoder and at
+      # most 1536 tokens through the decoder.
       - "--gpu-memory-utilization"
       - "0.18"
+      # Sixteen concurrent queries share one forward pass. The step budget
+      # also sizes the vision batch, at startup profiling and at run time,
+      # as budget // 1024 images; 1536 keeps that at one image.
       - "--max-num-seqs"
-      - "1"
+      - "16"
+      - "--max-num-batched-tokens"
+      - "1536"
+      # A step of up to 512 tokens (sixteen 32-token queries) pads to a
+      # captured graph size, so query traffic runs a fixed set of GEMM
+      # shapes that the TunableOp results file already holds.
+      - "--max-cudagraph-capture-size"
+      - "512"
+    # Batched step lengths vary with the mix of queries and images, and
+    # tuning a shape the results file lacks stalls the engine (31 s for one
+    # new image length). Tuned shapes still apply; new ones run the default
+    # kernel.
+    tunableOpTuning: false
     kvCacheGiB: null
     image: null
     resources:

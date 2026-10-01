@@ -603,25 +603,29 @@ well under 1.0. Summing them to ~1.0 leaves the host with no eviction
 headroom: allocation pressure then drives `svm_range_restore` churn that
 starves the compositor.
 
-The budget after reserving for the non-GPU workloads — cluster services
-(25.4 GiB of memory requests), desktop and daemons, the e2e suite's own
-containers, the pylate pods that allocate from the pool without declaring a
-fraction, and page-cache slack — leaves 57.06 GiB, so the enabled fractions
-are capped at **0.59** (56.64 GiB).
+The budget after reserving 77.5 GiB for the non-GPU workloads — cluster
+services (31.5 GiB of memory limits), desktop and daemons, the e2e suite's
+own containers, the pylate pods that allocate from the pool without
+declaring a fraction, GLiNER, and page-cache slack — leaves 45.96 GiB, so the
+enabled fractions are capped at **0.47** (45.12 GiB). The deployed
+configuration, with both chat models on Modal, sums to 0.27.
 
 Size each fraction from need, not from habit: the weights at their served
 precision plus a KV allowance for the configured `--max-model-len` x
 `--max-num-seqs`. A fraction above that need does not make the model faster,
-it only denies the memory to everything else.
+it only denies the memory to everything else. The Tomoro pooling encoder pins
+its cache in bytes, so its fraction is vLLM's startup free-memory guard,
+sized for the weights, that cache and one step's activations, which
+`--max-num-batched-tokens` bounds.
 
 `tests/charts/test_gpu_memory_budget.py` renders the overlay, sums the
 enabled fractions and fails when they exceed the cap. It also fails if a
 service's rendered form escapes its parser, so a service cannot drop out of
 the budget silently.
 
-The 27B distillation teacher does not fit alongside the serving set and is
-not resident by default on this overlay. Enable it for a distillation run,
-scaling down the serving models the run does not need.
+With the student and the distillation teacher both resident the fractions sum
+to 0.69, over the cap, which is why this host serves them from Modal
+(`values.modal-llm.yaml`).
 
 #### Pods that allocate without a fraction
 
