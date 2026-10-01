@@ -516,7 +516,18 @@ See [docs/operations/deployment.md](docs/operations/deployment.md) (Unified Depl
 
 ## Performance
 
-<!-- PERF_RESULTS -->
+Measured 2026-10-01 on the reference host (AMD Ryzen AI Max+ 395, gfx1151, 123 GiB RAM, ROCm, k3d, one replica of each service) with the 125 golden-set queries through `POST /search/`, one warm client. The corpus is small: 10 sample videos (11.7 min) giving 361 frame documents, 34 30-second chunks and 81 text documents. The default strategies score every document, so Vespa time grows with corpus size.
+
+| Profile | Strategy | P50 | P95 | Query encoding (P50) | Vespa (P50) |
+|---|---|---|---|---|---|
+| `video_colpali_smol500_mv_frame` | `default` | 101 ms | 124 ms | 63 ms | 31 ms |
+| `video_colpali_smol500_mv_frame` | `bm25_only` | 12 ms | 15 ms | n/a | 6 ms |
+| `video_colqwen_omni_mv_chunk_30s` | `default` | 88 ms | 101 ms | 63 ms | 17 ms |
+| `document_text_semantic` | `default` | 28 ms | 33 ms | 15 ms | 5 ms |
+
+Throughput on the default video profile levels off at about 17 requests/s from 4 concurrent clients up, with no errors in 3,980 requests. The ColQwen3 query encoder (`--max-num-seqs 1`) is the limit; Vespa P50 stays under 45 ms. P95 doubles between 2 and 4 clients (159 ms to 343 ms).
+
+Not yet measured: ingestion throughput, LLM token throughput, and orchestrated multi-agent latency.
 
 ## Contributing
 
