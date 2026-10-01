@@ -41,9 +41,9 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 - An AMD (ROCm) or NVIDIA (CUDA) GPU for the in-cluster visual embedding model; the CPU overlay deploys none
 - PyTorch backend extra: `rocm`, `cuda`, or `cpu` on Linux x86_64; none on Apple Silicon (MPS)
 
-The reference deployment runs end to end on one AMD Ryzen AI Max+ 395 (Strix Halo, gfx1151) machine: ROCm, k3d, and `charts/cogniverse/values.rocm.yaml`,
-which serves ColQwen3, Whisper, DenseOn, and both chat LLMs (`google/gemma-4-e4b-it`, `Qwen/Qwen3-14B-AWQ`) with vLLM.
-`values.cuda.yaml` and `values.cpu.yaml` cover NVIDIA and CPU-only hosts; `values.modal-llm.yaml` (`COGNIVERSE_LLM_SERVING=modal`) moves only the two chat LLMs to Modal.
+The reference deployment is `values.k3s.yaml` + `values.rocm.yaml` + `values.modal-llm.yaml` (`COGNIVERSE_LLM_SERVING=modal`) on one AMD Ryzen AI Max+ 395 (Strix Halo, gfx1151) machine:
+k3d runs Vespa, Phoenix, the runtime and the ColQwen3, Whisper and DenseOn vLLM services on ROCm, and the two chat LLMs (`google/gemma-4-e4b-it`, `Qwen/Qwen3-14B-AWQ`) run on Modal.
+Without the Modal overlay, `values.rocm.yaml` serves both chat LLMs locally with vLLM; `values.cuda.yaml` and `values.cpu.yaml` cover NVIDIA and CPU-only hosts.
 
 ### Installation
 
