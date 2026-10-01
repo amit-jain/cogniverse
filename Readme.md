@@ -55,6 +55,8 @@ cd cogniverse
 # Install dependencies with the PyTorch extra for this host
 scripts/install_with_gpu.sh
 source .venv/bin/activate
+# Linux + ROCm: stop `uv run` from re-syncing away the ROCm torch wheels
+export UV_NO_SYNC=1
 
 # Create a k3d cluster and deploy the Helm chart: Vespa, Phoenix, runtime,
 # dashboard, Argo Workflows, and the LLM and inference pods for this host
@@ -394,7 +396,7 @@ from pathlib import Path
 config = SystemConfig(
     backend_url="http://localhost",
     backend_port=8080,
-    telemetry_url="http://localhost:6006",
+    telemetry_url="http://localhost:26006",
 )
 
 # Create agent — tenant-agnostic at construction; tenant_id arrives per-request

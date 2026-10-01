@@ -20,8 +20,11 @@ Get started with Cogniverse in 5 minutes.
 git clone https://github.com/amit-jain/cogniverse.git
 cd cogniverse
 
-# Install dependencies with uv
-uv sync
+# Install dependencies with the PyTorch extra for this host
+scripts/install_with_gpu.sh
+source .venv/bin/activate
+# Linux + ROCm: stop `uv run` from re-syncing away the ROCm torch wheels
+export UV_NO_SYNC=1
 ```
 
 ---

@@ -168,12 +168,12 @@ expose a standalone dev-mode FastAPI server.
 
 ```bash
 # Clone repository
-git clone <repo-url>
+git clone https://github.com/amit-jain/cogniverse.git
 cd cogniverse
 
-# Install dependencies
-pip install uv
-uv sync
+# Install uv 0.12.19, then dependencies with the PyTorch extra for this host
+curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
+scripts/install_with_gpu.sh
 
 # Start Vespa
 docker run -d --name vespa \
@@ -379,7 +379,7 @@ lifecycle (`deploy` / `warm` / `release` / `status` / `qualify` /
 `undeploy`), authenticated with `COGNIVERSE_INFERENCE_API_KEY`. Setup,
 service names, and the per-service `inference.<svc>.externalUrl` chart
 override are covered in
-[Unified Deployment — Strategy B](#strategy-b--local-cluster--modal-hosted-inference)
+[Unified Deployment — Strategy B](#strategy-b-local-cluster-modal-hosted-inference)
 and [Models and Inference](models-and-inference.md#modal-hosted-services-inferencesvcexternalurl).
 
 ---
