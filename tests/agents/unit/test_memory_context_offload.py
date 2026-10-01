@@ -99,11 +99,11 @@ def test_get_tenant_instructions_reuses_injected_config_manager(monkeypatch):
     assert obj._get_tenant_instructions() == ("be concise", "loaded")
 
 
-def test_get_tenant_instructions_served_from_manager_ttl_cache():
-    """Repeated enriching dispatches within the TTL must cost ONE store read.
+def test_get_tenant_instructions_served_from_manager_scoped_cache():
+    """Repeated enriching dispatches within the refresh age cost ONE store read.
 
     The mixin previously called cm.store.get_config directly on every
-    dispatch, bypassing the manager's scoped TTL cache that sibling config
+    dispatch, bypassing the manager's scoped-config cache that sibling config
     scopes (routing, telemetry, agent) already route through."""
     cm, store = _real_config_manager_with_instructions("be concise")
     calls = {"get": 0}
@@ -122,7 +122,7 @@ def test_get_tenant_instructions_served_from_manager_ttl_cache():
     assert [obj._get_tenant_instructions() for _ in range(3)] == [
         ("be concise", "loaded")
     ] * 3
-    assert calls["get"] == 1, "repeat reads within the TTL must hit the cache"
+    assert calls["get"] == 1, "repeat reads within the refresh age must hit the cache"
 
 
 def _config_manager_with_per_tenant_instructions(tenants):

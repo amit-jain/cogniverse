@@ -254,10 +254,10 @@ class TestTenantInstructions:
                 )
 
             # The agent reads instructions through a ConfigManager whose
-            # scoped-config cache is TTL-bounded, and the admin write lands on
-            # a different manager instance, so the update becomes visible
-            # within the TTL rather than on the very next request. Poll for
-            # convergence instead of asserting an immediate-visibility
+            # scoped-config cache is staleness-bounded, and the admin write
+            # lands on a different manager instance, so the update becomes
+            # visible within that bound rather than on the very next request.
+            # Poll for convergence instead of asserting an immediate-visibility
             # contract the config layer does not offer; the assertion below is
             # unchanged, so instructions that never take effect still fail.
             instructed_text = _analysis_text(instructed_resp)

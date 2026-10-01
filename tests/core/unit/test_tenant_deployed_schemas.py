@@ -5,6 +5,8 @@ tenant schema was never deployed (or was reconciled away) must not be reported
 as deployed, and a storage outage must never read as "nothing is deployed".
 """
 
+import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -18,11 +20,14 @@ from cogniverse_core.registries.schema_deployment_intents import (
     SchemaDeploymentIntents,
 )
 from cogniverse_core.registries.schema_registry import (
+    DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+    DEPLOYED_SCHEMAS_REFRESH_S,
     SCHEMA_REGISTRY_SERVICE,
     DeployedSchemaNames,
     SchemaRegistry,
     tenant_deployed_schema_names,
 )
+from cogniverse_foundation.caching import refreshing_cache as refreshing_cache_module
 from cogniverse_foundation.config.manager import ConfigManager
 from tests.utils.memory_store import (
     InMemoryConfigStore,
@@ -233,8 +238,12 @@ def test_every_registry_write_drops_the_tenant_entry_in_every_reader():
     registry.register_schema(**_registration("wiki_pages", OTHER_TENANT))
     reads = _count_reads(config_manager)
     readers = [
-        DeployedSchemaNames(config_manager, ttl_s=3600),
-        DeployedSchemaNames(ConfigManager(store=config_manager.store), ttl_s=3600),
+        DeployedSchemaNames(config_manager, refresh_after_s=3600, max_staleness_s=3600),
+        DeployedSchemaNames(
+            ConfigManager(store=config_manager.store),
+            refresh_after_s=3600,
+            max_staleness_s=3600,
+        ),
     ]
     steps: list = []
 
@@ -277,52 +286,221 @@ def test_every_registry_write_drops_the_tenant_entry_in_every_reader():
     )
 
 
-def test_another_process_deletion_is_seen_after_the_ttl_and_registration_at_once():
+REFRESH_THREAD = "deployed-schemas-refresh"
+
+
+def _out_of_band(config_manager, tenant, base, **fields):
+    """A registry row written by another process: no in-process invalidation."""
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
+    config_manager.store.set_config(
+        tenant_id=canonical_tenant_id(tenant),
+        scope=ConfigScope.SCHEMA,
+        service=SCHEMA_REGISTRY_SERVICE,
+        config_key=f"schema_{base}",
+        config_value={**_registration(base, tenant), **fields},
+    )
+
+
+def _registry_reads_by_thread(config_manager) -> list:
+    """Record each tenant registry-row read with the thread that made it."""
+    reads: list = []
+    lock = threading.Lock()
+    original = config_manager.store.list_configs
+
+    def recording(**kwargs):
+        with lock:
+            reads.append((kwargs["tenant_id"], threading.current_thread().name))
+        return original(**kwargs)
+
+    config_manager.store.list_configs = recording
+    return reads
+
+
+def _join_refreshes() -> None:
+    for thread in threading.enumerate():
+        if thread.name == REFRESH_THREAD:
+            thread.join(timeout=30)
+            assert thread.is_alive() is False
+
+
+def test_defaults_refresh_off_the_request_thread_within_the_deletion_bound():
+    reader = DeployedSchemaNames(_config_manager())
+
+    assert (reader.refresh_after_s, reader.max_staleness_s) == (
+        DEPLOYED_SCHEMAS_REFRESH_S,
+        DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+    )
+    assert (DEPLOYED_SCHEMAS_REFRESH_S, DEPLOYED_SCHEMAS_MAX_STALENESS_S) == (
+        15.0,
+        30.0,
+    )
+
+
+def test_another_process_deletion_is_seen_after_one_background_refresh():
     config_manager = _config_manager()
     registry = _registry(config_manager)
     registry.register_schema(**_registration("document_text"))
     registry.register_schema(**_registration("wiki_pages", OTHER_TENANT))
-    reads = _count_reads(config_manager)
-    ttl = 0.3
-    reader = DeployedSchemaNames(config_manager, ttl_s=ttl)
-
-    def out_of_band(tenant, base, **fields):
-        config_manager.store.set_config(
-            tenant_id=canonical_tenant_id(tenant),
-            scope=ConfigScope.SCHEMA,
-            service=SCHEMA_REGISTRY_SERVICE,
-            config_key=f"schema_{base}",
-            config_value={**_registration(base, tenant), **fields},
-        )
+    reads = _registry_reads_by_thread(config_manager)
+    refresh = 0.3
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=refresh, max_staleness_s=30.0
+    )
+    caller = threading.current_thread().name
+    tenant, other = canonical_tenant_id(TENANT), canonical_tenant_id(OTHER_TENANT)
 
     warm = (reader(TENANT, "document_text"), reader(OTHER_TENANT, "wiki_pages"))
     filled = time.monotonic()
-    out_of_band(TENANT, "document_text", deleted=True)
-    within_ttl = reader(TENANT, "document_text")
+    _out_of_band(config_manager, TENANT, "document_text", deleted=True)
+    within_refresh = reader(TENANT, "document_text")
     checked_after = time.monotonic() - filled
-    reads_within_ttl = Counter(reads)
-    out_of_band(OTHER_TENANT, "lateon_mv")
+    reads_within_refresh = list(reads)
+    _out_of_band(config_manager, OTHER_TENANT, "lateon_mv")
     registered = reader(OTHER_TENANT, "lateon_mv")
-    reads_after_registration = Counter(reads)
-    time.sleep(max(0.0, filled + ttl + 0.05 - time.monotonic()))
-    after_ttl = reader(TENANT, "document_text")
+    time.sleep(max(0.0, filled + refresh + 0.05 - time.monotonic()))
+    served_while_refreshing = reader(TENANT, "document_text")
+    _join_refreshes()
+    after_refresh = reader(TENANT, "document_text")
 
-    assert checked_after < ttl
+    assert checked_after < refresh
     assert warm == (True, True)
-    assert within_ttl is True
-    assert reads_within_ttl == Counter(
-        {SCHEMA_REGISTRY_SERVICE: 2, "schema_deployment_intents": 2}
-    )
+    assert within_refresh is True
+    assert reads_within_refresh == [(tenant, caller), (other, caller)]
     assert registered is True
-    assert reads_after_registration == Counter(
-        {SCHEMA_REGISTRY_SERVICE: 3, "schema_deployment_intents": 3}
+    assert served_while_refreshing is True
+    assert after_refresh is False
+    assert reads == [
+        (tenant, caller),
+        (other, caller),
+        (other, caller),
+        (tenant, REFRESH_THREAD),
+        (tenant, caller),
+    ]
+
+
+def test_an_entry_at_max_staleness_is_read_on_the_callers_thread():
+    config_manager = _config_manager()
+    _registry(config_manager).register_schema(**_registration("document_text"))
+    reads = _registry_reads_by_thread(config_manager)
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=0.2, max_staleness_s=0.4
     )
-    assert after_ttl is False
-    assert reads == Counter(
-        {SCHEMA_REGISTRY_SERVICE: 4, "schema_deployment_intents": 4}
+    caller = threading.current_thread().name
+
+    assert reader(TENANT, "document_text") is True
+    filled = time.monotonic()
+    _out_of_band(config_manager, TENANT, "document_text", deleted=True)
+    time.sleep(max(0.0, filled + 0.45 - time.monotonic()))
+
+    assert reader(TENANT, "document_text") is False
+    assert reads == [(canonical_tenant_id(TENANT), caller)] * 2
+
+
+def test_stale_entries_answer_concurrent_searches_while_one_lookup_per_tenant_runs():
+    config_manager = _config_manager()
+    registry = _registry(config_manager)
+    registry.register_schema(**_registration("document_text"))
+    registry.register_schema(**_registration("wiki_pages", OTHER_TENANT))
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=0.5, max_staleness_s=30.0
     )
+    assert reader(TENANT, "document_text") is True
+    assert reader(OTHER_TENANT, "wiki_pages") is True
+    reads = _registry_reads_by_thread(config_manager)
+    held = threading.Event()
+    rows = config_manager.store.list_configs
+
+    def held_rows(**kwargs):
+        result = rows(**kwargs)
+        assert held.wait(timeout=30)
+        return result
+
+    config_manager.store.list_configs = held_rows
+    time.sleep(0.55)
+    questions = [(TENANT, "document_text"), (OTHER_TENANT, "wiki_pages")] * 8
+    barrier = threading.Barrier(len(questions), timeout=30)
+    answers: list = []
+    lock = threading.Lock()
+
+    def ask(question) -> None:
+        barrier.wait()
+        answer = reader(*question)
+        with lock:
+            answers.append((question[0], answer))
+
+    threads = [
+        threading.Thread(target=ask, args=(question,), name=f"search-{index}")
+        for index, question in enumerate(questions)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert thread.is_alive() is False
+    # Every search answered while both lookups were still held.
+    assert held.is_set() is False
+    held.set()
+    _join_refreshes()
+
+    assert Counter(answers) == Counter({(TENANT, True): 8, (OTHER_TENANT, True): 8})
+    assert sorted(reads) == sorted(
+        [
+            (canonical_tenant_id(TENANT), REFRESH_THREAD),
+            (canonical_tenant_id(OTHER_TENANT), REFRESH_THREAD),
+        ]
+    )
+
+
+def test_a_failed_background_lookup_keeps_answering_until_max_staleness_then_raises(
+    caplog,
+):
+    config_manager = _config_manager()
+    _registry(config_manager).register_schema(**_registration("document_text"))
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=0.2, max_staleness_s=1.0
+    )
+    filled = time.monotonic()
+    assert reader(TENANT, "document_text") is True
+    rows = config_manager.store.list_configs
+    failed: list = []
+
+    def store_down(**kwargs):
+        failed.append(threading.current_thread().name)
+        raise ConnectionError("config store unreachable")
+
+    config_manager.store.list_configs = store_down
+    time.sleep(0.25)
+    with caplog.at_level(logging.ERROR, logger=refreshing_cache_module.__name__):
+        served = reader(TENANT, "document_text")
+        _join_refreshes()
+    logged = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == refreshing_cache_module.__name__
+    ]
+    time.sleep(max(0.0, filled + 1.05 - time.monotonic()))
+    with pytest.raises(RegistryStorageError) as expired:
+        reader(TENANT, "document_text")
+    config_manager.store.list_configs = rows
+    recovered = reader(TENANT, "document_text")
+
+    tenant = canonical_tenant_id(TENANT)
+    message = (
+        f"Cannot read deployed schemas for tenant {tenant!r}: "
+        "ConnectionError: config store unreachable"
+    )
+    assert served is True
+    assert len(logged) == 1
+    assert re.fullmatch(
+        rf"deployed-schemas: refreshing {re.escape(repr(tenant))} failed with "
+        rf"RegistryStorageError: {re.escape(message)}; serving the value read "
+        r"0\.\ds ago until it is 1\.0s old",
+        logged[0],
+    )
+    assert str(expired.value) == message
+    assert failed == [REFRESH_THREAD, threading.current_thread().name]
+    assert recovered is True
 
 
 def test_an_undeployed_schema_reads_on_every_call_and_concurrent_calls_share_it():
@@ -350,7 +528,9 @@ def test_an_undeployed_schema_reads_on_every_call_and_concurrent_calls_share_it(
             method,
             _parked_first_read(getattr(config_manager.store, method)),
         )
-    reader = DeployedSchemaNames(config_manager, ttl_s=3600)
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=3600, max_staleness_s=3600
+    )
     callers = 8
     barrier = threading.Barrier(callers, timeout=30)
     answers: list = []
@@ -382,15 +562,21 @@ def test_an_undeployed_schema_reads_on_every_call_and_concurrent_calls_share_it(
     assert calls == [SCHEMA_REGISTRY_SERVICE, "schema_deployment_intents"] * 4
 
 
-def test_ttl_must_be_positive():
-    config_manager = _config_manager()
-    with pytest.raises(ValueError) as zero:
-        DeployedSchemaNames(config_manager, ttl_s=0)
-    with pytest.raises(ValueError) as negative:
-        DeployedSchemaNames(config_manager, ttl_s=-1.5)
+@pytest.mark.parametrize(
+    ("bounds", "message"),
+    [
+        ({"refresh_after_s": -1.5}, "refresh_after_s must be >= 0, got -1.5"),
+        (
+            {"refresh_after_s": 31.0},
+            "max_staleness_s (30.0) must be >= refresh_after_s (31.0)",
+        ),
+    ],
+)
+def test_inconsistent_bounds_raise(bounds, message):
+    with pytest.raises(ValueError) as caught:
+        DeployedSchemaNames(_config_manager(), **bounds)
 
-    assert str(zero.value) == "ttl_s must be positive, got 0"
-    assert str(negative.value) == "ttl_s must be positive, got -1.5"
+    assert str(caught.value) == message
 
 
 def test_concurrent_misses_share_one_failed_read_and_cache_nothing():
@@ -408,7 +594,9 @@ def test_concurrent_misses_share_one_failed_read_and_cache_nothing():
         raise ConnectionError("config store unreachable")
 
     config_manager.store.list_configs = _slow_outage
-    reader = DeployedSchemaNames(config_manager, ttl_s=3600)
+    reader = DeployedSchemaNames(
+        config_manager, refresh_after_s=3600, max_staleness_s=3600
+    )
     callers = 8
     barrier = threading.Barrier(callers, timeout=30)
     outcomes: list = []

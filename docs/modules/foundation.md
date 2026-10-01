@@ -53,7 +53,7 @@ flowchart TB
         ConfigDir["<span style='color:#000'><b>config/</b><br/>Configuration system</span>"]
         TelemetryDir["<span style='color:#000'><b>telemetry/</b><br/>Telemetry system</span>"]
         RegistryDir["<span style='color:#000'><b>registry/</b><br/>Generic entry-point plugin registry</span>"]
-        CachingDir["<span style='color:#000'><b>caching/</b><br/>Tenant-scoped LRU cache</span>"]
+        CachingDir["<span style='color:#000'><b>caching/</b><br/>Tenant-scoped LRU and refreshing caches</span>"]
         DspyDir["<span style='color:#000'><b>dspy/</b><br/>DSPy adapters &amp; model-format helpers</span>"]
         CommonDir["<span style='color:#000'><b>common/</b><br/>Tenant identity, DSPy registry &amp; Argo client helpers</span>"]
         ConfidencePy["<span style='color:#000'>confidence.py<br/>parse_confidence()</span>"]
@@ -86,6 +86,7 @@ flowchart TB
 
     subgraph CachingFiles["<span style='color:#000'><b>caching/ files</b></span>"]
         TenantLru["<span style='color:#000'>tenant_lru.py<br/>TenantLRUCache</span>"]
+        RefreshingCacheFile["<span style='color:#000'>refreshing_cache.py<br/>RefreshingCache</span>"]
     end
 
     subgraph DspyFiles["<span style='color:#000'><b>dspy/ files</b></span>"]
@@ -174,12 +175,21 @@ flowchart TB
 - Multi-tenant configuration with tenant isolation
 - Version history tracking for all configurations
 - In-process caching: the system config is cached until `set_system_config`
-  writes; per-tenant scoped configs (routing/telemetry/backend) are served
-  from a short-TTL cache (`scoped_config_cache_ttl_s`, default 5s). Setters
-  on the same manager invalidate immediately — the TTL only bounds staleness
-  for writes made by another process. Concurrent cold reads for the same
-  tenant and scope share one store fetch, and a completed setter cannot be
-  overwritten by an older in-flight cache fill.
+  writes. Per-tenant scoped configs (routing, telemetry, backend, agent,
+  durable execution, tenant instructions) are held in a `RefreshingCache`
+  (see Tenant-Scoped Caching below). A value older than
+  `scoped_config_refresh_s` (default 5s) is still served while one background
+  thread re-reads it, so a request never waits on that store read. A value
+  that reaches `scoped_config_max_staleness_s` (default 60s) is never served:
+  the caller reads the store itself, and a failed read raises rather than
+  answering with defaults. A failed background refresh is logged and leaves
+  the last value in place up to that bound. Setters on the same manager
+  invalidate immediately. A write made by another process is served within
+  60s, and within about 5s plus one store read for a key read continuously.
+  Concurrent reads of one key share one store read, and a completed setter
+  cannot be overwritten by an older in-flight read. Profile add, update and
+  delete read the stored backend config, not the held copy, so they never
+  write back over another process's profile change.
 - `ConfigUtils` parses a discovered `config.json` once per file modification
   across concurrent callers and returns an isolated copy to each instance.
   Invalid JSON and file-access failures propagate with the file path instead
@@ -1045,6 +1055,51 @@ cache (keyed `(tenant, agent_name)`; both capacity 64) in
 `evict_tenant_from_registered_caches` from `delete_tenant_internal` so a
 deleted tenant's cached state is released as part of the delete, not left
 to linger.
+
+### Refreshing values off the request thread
+
+`cogniverse_foundation.caching.RefreshingCache` holds values read from a slow
+backing store and keeps the read off the caller's thread once a value is held.
+`ConfigManager` keeps its per-tenant scoped configs in one, and
+`DeployedSchemaNames` (core module) its per-tenant deployed schema names.
+
+```python
+from cogniverse_foundation.caching import RefreshingCache
+
+cache = RefreshingCache[tuple, dict](
+    name="scoped-config",
+    refresh_after_s=5.0,
+    max_staleness_s=60.0,
+    max_entries=512,
+)
+value = cache.get(key, lambda: store.read(key))
+cache.invalidate(lambda k: k[1] == tenant_id)   # after this process writes
+```
+
+| Age of the held value | `get(key, read)` |
+|---|---|
+| none held | runs `read` on the caller's thread; concurrent callers share it; a failure raises to each and caches nothing |
+| below `refresh_after_s` | returns it, no read |
+| `refresh_after_s` to below `max_staleness_s` | returns it and starts one background `read` (daemon thread `<name>-refresh`); concurrent callers share that read and none waits for it |
+| `max_staleness_s` or more | runs `read` on the caller's thread, or waits on the read already in flight; a failure raises |
+
+Age counts from when the producing read began, so no value is returned
+`max_staleness_s` or more after its read started. A failed background read is
+logged at ERROR with the key and the age of the value still being served. The
+entry stays, and the key is not refreshed again for `refresh_after_s`. At most
+`max_background_reads` (default 4) background reads run at once. A stale entry
+found while all are busy is returned, and its refresh starts on a later call.
+`invalidate(matches)` drops matching entries and detaches their reads in
+flight, whose results are never cached. `max_entries` bounds the cache, evicting
+least recently used first. Setting both bounds to 0 reads on every call. The
+`clock` argument (default `time.monotonic`) sets the time source.
+
+`get(key, read, accept=...)` lets one call refuse a held value: when
+`accept(held)` is False the call reads as if nothing were held. It runs under the
+cache lock and must not call back into the cache. The constructor's
+`keep(value)` decides which read results are held; a result it rejects is
+returned to its callers and drops the key's entry. `keys()` and `items()`
+snapshot the held entries, least recently used first.
 
 ---
 

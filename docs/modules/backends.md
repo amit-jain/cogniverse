@@ -1622,10 +1622,10 @@ an outage never reads as "not deployed". `VespaBackend` passes a
 rows plus pending deployment intents that decide whether a profile is
 servable — so a search through the registry builds no other backend to answer
 it. The reader caches deployed names only: a warm search of a deployed schema
-reads nothing, a schema missing from the cache is re-read before the search is
-refused (a deployment by any process is visible to the next search), and a
-deletion by another process is seen within `DEPLOYED_SCHEMAS_TTL_S` (see the
-core module).
+reads nothing on the request thread, a schema missing from the cache is re-read
+before the search is refused (a deployment by any process is visible to the
+next search), and a deletion by another process is seen within
+`DEPLOYED_SCHEMAS_MAX_STALENESS_S` (see the core module).
 
 A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", *, is_schema_deployed, **kwargs)`
 factory function is also available; it builds a `VespaSearchBackend` from the
