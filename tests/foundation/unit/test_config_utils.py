@@ -189,11 +189,11 @@ def test_empty_primary_api_base_falls_back():
 
 
 class TestScopedConfigCache:
-    """ConfigManager must serve per-tenant scoped configs from its TTL cache
-    — the ensure cascade previously paid one store round-trip (a YQL query
+    """ConfigManager must serve per-tenant scoped configs from memory — the
+    ensure cascade previously paid one store round-trip (a document visit
     against Vespa) per config group per request."""
 
-    def _manager(self, ttl: float = 5.0):
+    def _manager(self, refresh_s: float = 5.0, max_staleness_s: float = 60.0):
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import BackendConfig
 
@@ -205,7 +205,11 @@ class TestScopedConfigCache:
         ).to_dict()
         store.get_config.return_value = entry
         return (
-            ConfigManager(store=store, scoped_config_cache_ttl_s=ttl),
+            ConfigManager(
+                store=store,
+                scoped_config_refresh_s=refresh_s,
+                scoped_config_max_staleness_s=max_staleness_s,
+            ),
             store,
         )
 
@@ -226,8 +230,8 @@ class TestScopedConfigCache:
         manager.get_backend_config(tenant_id="acme:acme")
         assert store.get_config.call_count == 2
 
-    def test_ttl_expiry_reconsults_the_store(self):
-        manager, store = self._manager(ttl=0.0)
+    def test_zero_max_staleness_reconsults_the_store(self):
+        manager, store = self._manager(refresh_s=0.0, max_staleness_s=0.0)
         manager.get_backend_config(tenant_id="acme:acme")
         manager.get_backend_config(tenant_id="acme:acme")
         assert store.get_config.call_count == 2
@@ -250,7 +254,7 @@ class TestScopedConfigCache:
 
         store = MagicMock()
         store.get_config.return_value = None
-        manager = ConfigManager(store=store, scoped_config_cache_ttl_s=5.0)
+        manager = ConfigManager(store=store)
         for _ in range(3):
             cfg = manager.get_routing_config(tenant_id="acme:acme")
             assert cfg.tenant_id == "acme:acme"

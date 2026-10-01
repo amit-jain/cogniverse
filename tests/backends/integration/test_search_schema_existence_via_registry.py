@@ -68,7 +68,7 @@ ONE_LOOKUP = Counter(
     }
 )
 # A tenant's first search also reads its scoped configs, which ConfigManager
-# caches for its scoped_config_cache_ttl_s.
+# then serves from memory for its scoped_config_refresh_s.
 FIRST_SEARCH_READS = ONE_LOOKUP + Counter(
     {
         ("get_config", "backend"): 1,
@@ -347,7 +347,8 @@ def _counted_manager(env):
 
     return ConfigManager(
         store=env["config_manager"].store,
-        scoped_config_cache_ttl_s=DEPLOYED_SCHEMAS_TTL_S,
+        scoped_config_refresh_s=DEPLOYED_SCHEMAS_TTL_S,
+        scoped_config_max_staleness_s=DEPLOYED_SCHEMAS_TTL_S,
     )
 
 

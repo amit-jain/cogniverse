@@ -138,7 +138,7 @@ if __name__ == "__main__":
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestAgentConfigManagerCaching:
-    """get_agent_config serves repeat reads from the manager's scoped TTL
+    """get_agent_config serves repeat reads from the manager's scoped-config
     cache — it sits on the per-dispatch answer path (behavior toggles for
     every summarizer/report dispatch), so an uncached read cost one
     synchronous Vespa query per dispatch while sibling scopes (routing,

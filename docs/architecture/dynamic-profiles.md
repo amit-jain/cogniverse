@@ -110,7 +110,8 @@ class ConfigManager:
         self,
         store: ConfigStore,
         profile_change_listener: Optional[ProfileChangeListener] = None,
-        scoped_config_cache_ttl_s: float = 5.0,
+        scoped_config_refresh_s: float = 5.0,
+        scoped_config_max_staleness_s: float = 60.0,
     ):
         if store is None:
             raise ValueError("store is required")
@@ -123,7 +124,7 @@ class ConfigManager:
         tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
         with self._profile_change_lock:
             with self._backend_lock:  # Atomic read-modify-write
-                backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+                backend_config = self._stored_backend_config(tenant_id, service)
                 backend_config.add_profile(profile)
                 self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
             # _backend_lock is released before listener work; the outer lock
@@ -151,6 +152,10 @@ The `_backend_lock` ensures:
 4. Thread 2 acquires lock (sees profiles A, B, C)
 5. Thread 2 reads, modifies, writes (profiles: A, B, C, D)
 6. Both profiles persist correctly
+
+The read inside the lock goes to the store, not the scoped-config cache. A held
+copy can predate a write made by another process (another worker or pod), and
+writing a change back over it would drop that write.
 
 The outer `_profile_change_lock` covers add, partial update, and delete. It
 keeps each persisted change adjacent to its live-backend notification, so an

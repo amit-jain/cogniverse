@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import threading
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from cogniverse_foundation.caching import refreshing_cache as refreshing_cache_module
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
     RoutingConfigUnified,
     SystemConfig,
 )
@@ -26,19 +31,29 @@ class _CoordinatedConfigStore(InMemoryConfigStore):
         self.delay_s = 0.0
         self.block_next_get = False
         self.fail_next_get = False
+        self.fail_every_get = False
         self.read_captured = threading.Event()
         self.release_read = threading.Event()
         self.set_completed = threading.Event()
+        # Cleared to hold every read after it has captured its value.
+        self.gate = threading.Event()
+        self.gate.set()
+        self.reads: list[tuple[str, str]] = []
         self._count_lock = threading.Lock()
 
     def get_config(self, *args, **kwargs):
+        tenant_id = kwargs.get("tenant_id", args[0] if args else None)
         with self._count_lock:
             self.get_calls += 1
-        if self.fail_next_get:
+            self.reads.append((tenant_id, threading.current_thread().name))
+        if self.fail_next_get or self.fail_every_get:
             self.fail_next_get = False
             raise ConnectionError("configuration store unavailable")
 
         entry = super().get_config(*args, **kwargs)
+        self.read_captured.set()
+        if not self.gate.wait(timeout=10):
+            raise TimeoutError("test did not open the read gate")
         if self.block_next_get:
             self.block_next_get = False
             self.read_captured.set()
@@ -65,18 +80,37 @@ def _seed_system(store: _CoordinatedConfigStore, model: str) -> None:
     store.set_completed.clear()
 
 
-def _seed_routing(store: _CoordinatedConfigStore, mode: str) -> None:
+def _seed_routing(
+    store: _CoordinatedConfigStore, mode: str, tenant_id: str = "acme:acme"
+) -> None:
     store.set_config(
-        tenant_id="acme:acme",
+        tenant_id=tenant_id,
         scope=ConfigScope.ROUTING,
         service="gateway_agent",
         config_key="routing_config",
         config_value=RoutingConfigUnified(
-            tenant_id="acme:acme",
+            tenant_id=tenant_id,
             routing_mode=mode,
         ).to_dict(),
     )
     store.set_completed.clear()
+
+
+def _refreshing_manager(
+    store, refresh_s: float, max_staleness_s: float = 30.0
+) -> ConfigManager:
+    return ConfigManager(
+        store=store,
+        scoped_config_refresh_s=refresh_s,
+        scoped_config_max_staleness_s=max_staleness_s,
+    )
+
+
+def _join_scoped_refreshes() -> None:
+    for thread in threading.enumerate():
+        if thread.name == "scoped-config-refresh":
+            thread.join(timeout=10)
+            assert thread.is_alive() is False
 
 
 def test_concurrent_system_cache_miss_reads_store_once():
@@ -288,3 +322,158 @@ def test_a_pinned_manager_raises_when_the_store_cannot_answer():
         "persisted-model",
         {"denseon": "http://explicit-denseon:8000"},
     )
+
+
+def test_stale_scoped_configs_are_served_while_one_refresh_per_tenant_runs():
+    store = _CoordinatedConfigStore()
+    _seed_routing(store, "tiered", tenant_id="acme:acme")
+    _seed_routing(store, "direct", tenant_id="globex:globex")
+    manager = _refreshing_manager(store, refresh_s=1.0)
+    assert manager.get_routing_config("acme").routing_mode == "tiered"
+    assert manager.get_routing_config("globex").routing_mode == "direct"
+    _seed_routing(store, "ensemble", tenant_id="acme:acme")
+    _seed_routing(store, "hybrid", tenant_id="globex:globex")
+    time.sleep(1.05)
+    store.gate.clear()
+    store.reads.clear()
+    tenants = ["acme", "globex"] * 8
+    ready = threading.Barrier(len(tenants))
+
+    def read_mode(tenant: str) -> tuple[str, str, str]:
+        ready.wait(timeout=10)
+        mode = manager.get_routing_config(tenant).routing_mode
+        return tenant, mode, threading.current_thread().name
+
+    with ThreadPoolExecutor(
+        max_workers=len(tenants), thread_name_prefix="request"
+    ) as pool:
+        answers = list(pool.map(read_mode, tenants))
+
+    # Every request returned while both refreshes were held at the store.
+    assert store.gate.is_set() is False
+    assert Counter((tenant, mode) for tenant, mode, _ in answers) == Counter(
+        {("acme", "tiered"): 8, ("globex", "direct"): 8}
+    )
+    store.gate.set()
+    _join_scoped_refreshes()
+    assert sorted(store.reads) == [
+        ("acme:acme", "scoped-config-refresh"),
+        ("globex:globex", "scoped-config-refresh"),
+    ]
+    assert manager.get_routing_config("acme").routing_mode == "ensemble"
+    assert manager.get_routing_config("globex").routing_mode == "hybrid"
+    assert store.get_calls == 4
+
+
+def test_scoped_refresh_failure_serves_last_known_good_then_raises(caplog):
+    store = _CoordinatedConfigStore()
+    _seed_routing(store, "tiered")
+    manager = _refreshing_manager(store, refresh_s=0.2, max_staleness_s=1.5)
+    filled_at = time.monotonic()
+    assert manager.get_routing_config("acme").routing_mode == "tiered"
+    store.fail_every_get = True
+    time.sleep(0.25)
+
+    with caplog.at_level(logging.ERROR, logger=refreshing_cache_module.__name__):
+        assert manager.get_routing_config("acme").routing_mode == "tiered"
+        _join_scoped_refreshes()
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == refreshing_cache_module.__name__
+    ]
+    assert len(messages) == 1
+    assert re.fullmatch(
+        r"scoped-config: refreshing \(<ConfigScope\.ROUTING: 'routing'>, "
+        r"'acme:acme', 'gateway_agent', 'routing_config'\) failed with "
+        r"ConnectionError: configuration store unavailable; serving the value "
+        r"read 0\.\d+s ago until it is 1\.5s old",
+        messages[0],
+    )
+    assert manager.get_routing_config("acme").routing_mode == "tiered"
+
+    time.sleep(max(0.0, filled_at + 1.55 - time.monotonic()))
+    store.reads.clear()
+    for _ in range(2):
+        with pytest.raises(ConnectionError) as caught:
+            manager.get_routing_config("acme")
+        assert str(caught.value) == "configuration store unavailable"
+    caller = threading.current_thread().name
+    assert store.reads == [("acme:acme", caller), ("acme:acme", caller)]
+
+    store.fail_every_get = False
+    _seed_routing(store, "ensemble")
+    assert manager.get_routing_config("acme").routing_mode == "ensemble"
+
+
+def test_scoped_write_during_a_background_refresh_is_never_overwritten():
+    store = _CoordinatedConfigStore()
+    _seed_routing(store, "tiered")
+    manager = _refreshing_manager(store, refresh_s=0.2)
+    assert manager.get_routing_config("acme").routing_mode == "tiered"
+    time.sleep(0.25)
+    store.read_captured.clear()
+    store.gate.clear()
+
+    assert manager.get_routing_config("acme").routing_mode == "tiered"
+    assert store.read_captured.wait(timeout=5)
+    manager.set_routing_config(
+        RoutingConfigUnified(tenant_id="acme", routing_mode="ensemble")
+    )
+    store.gate.set()
+    _join_scoped_refreshes()
+
+    assert manager.get_routing_config("acme").routing_mode == "ensemble"
+    assert manager.get_routing_config("acme").routing_mode == "ensemble"
+    assert store.get_calls == 3
+
+
+def _profile(name: str) -> BackendProfileConfig:
+    return BackendProfileConfig.from_dict(
+        name, {"type": "document", "schema_name": f"{name}_schema"}
+    )
+
+
+def test_profile_read_modify_write_never_drops_another_managers_write():
+    store = InMemoryConfigStore()
+    worker_a = ConfigManager(store=store)
+    worker_b = ConfigManager(store=store)
+    assert worker_b.list_backend_profiles("acme") == {}
+
+    worker_a.add_backend_profile(_profile("written_by_a"), tenant_id="acme")
+    worker_b.add_backend_profile(_profile("written_by_b"), tenant_id="acme")
+    worker_a.add_backend_profile(_profile("second_by_a"), tenant_id="acme")
+    assert worker_b.delete_backend_profile("written_by_b", tenant_id="acme") is True
+    worker_a.add_backend_profile(_profile("base"), tenant_id="globex")
+    worker_b.update_backend_profile(
+        "base",
+        {"embedding_model": "tenant-model"},
+        base_tenant_id="globex",
+        target_tenant_id="acme",
+    )
+
+    stored = ConfigManager(store=store).get_backend_config("acme")
+    assert sorted(stored.profiles) == ["base", "second_by_a", "written_by_a"]
+    assert stored.profiles["base"].embedding_model == "tenant-model"
+    assert sorted(worker_b.list_backend_profiles("acme")) == [
+        "base",
+        "second_by_a",
+        "written_by_a",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("refresh_s", "max_staleness_s", "message"),
+    [
+        (-1.0, 60.0, "refresh_after_s must be >= 0, got -1.0"),
+        (5.0, 1.0, "max_staleness_s (1.0) must be >= refresh_after_s (5.0)"),
+    ],
+)
+def test_inconsistent_scoped_config_bounds_raise(refresh_s, max_staleness_s, message):
+    with pytest.raises(ValueError) as caught:
+        _refreshing_manager(
+            InMemoryConfigStore(),
+            refresh_s=refresh_s,
+            max_staleness_s=max_staleness_s,
+        )
+    assert str(caught.value) == message
