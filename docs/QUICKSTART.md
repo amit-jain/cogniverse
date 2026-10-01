@@ -17,7 +17,7 @@ Get started with Cogniverse in 5 minutes.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/cogniverse.git
+git clone https://github.com/amit-jain/cogniverse.git
 cd cogniverse
 
 # Install dependencies with uv
@@ -29,7 +29,9 @@ uv sync
 ## 2. Start Services
 
 ```bash
-# Deploy the full stack (Vespa, Phoenix, Ollama, Runtime, Dashboard) via k3d
+# Deploy the full stack (Vespa, Phoenix, LLM, Runtime, Dashboard) via k3d.
+# By default the LLM is vLLM gemma-4-e4b-it on ROCm hosts, Ollama gemma3:4b on
+# CPU and CUDA hosts.
 cogniverse up
 
 # Wait for services to be ready (~30 seconds). k3d's loadbalancer publishes

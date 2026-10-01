@@ -5,8 +5,7 @@
 ## Prerequisites
 
 ### System Requirements
-- **Python**: 3.12+ (required for compatibility)
-- **Memory**: 16GB RAM minimum (32GB recommended)
+- **Python**: 3.12
 - **Storage**: 20GB+ disk space
 - **GPU**: optional but recommended for video processing. Supported:
   - NVIDIA CUDA (Linux/x86_64) — torch+cu128 wheels
@@ -17,7 +16,7 @@
   target (the workspace's `[tool.uv] environments` excludes win32).
 
 ### Required Software
-- **Docker**: For Vespa, Phoenix, and Ollama containers
+- **Docker, kubectl, helm, k3d**: `cogniverse up` checks for them and offers to install missing ones
 - **Git**: For repository management
 - **uv**: Python package manager (required for workspace support)
 - **`rocminfo`** (AMD ROCm hosts only): used by both
@@ -40,7 +39,7 @@
 ### 1. Clone Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/amit-jain/cogniverse.git
 cd cogniverse
 ```
 

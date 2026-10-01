@@ -351,8 +351,9 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
    and its local pod, Service, model-cache PVC, and image build are
    skipped — see
    [Models and Inference](models-and-inference.md#modal-hosted-services-inferencesvcexternalurl).
-   `externalUrl` is rejected on `vllm_llm_student` / `vllm_llm_teacher`;
-   the LLM endpoint is overridden via `runtime.primaryLLM` instead.
+   `externalUrl` is rejected on `vllm_llm_student`, whose endpoint is
+   overridden via `runtime.primaryLLM.apiBase` instead; `vllm_llm_teacher`
+   accepts `externalUrl`.
 
 5. `cogniverse up`. The sync places the key in
    `cogniverse-inference-api-key`; the runtime and ingestor resolve the

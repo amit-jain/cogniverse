@@ -1,6 +1,6 @@
 # Multi-Agent RAG System
 
-Video content analysis and search over configurable pipelines. 11-package UV
+Video content analysis and search over configurable pipelines. 13-package UV
 workspace (Foundation → Core → Implementation → Application). Production ready.
 
 - **Routing Agent** — query routing with orchestration handoff (DSPy)
