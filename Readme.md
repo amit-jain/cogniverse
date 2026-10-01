@@ -1,64 +1,64 @@
-# Cogniverse - Self-Optimizing Content Intelligence Platform
+# Cogniverse
 
-**Experience-Guided Multi-Agent System for Multi-Modal Understanding**
+Multi-agent platform for search and analysis over video, audio, image, and document content. Content is embedded with ColQwen3 (ColPali-style), X-CLIP, LateOn, DenseOn, and CLAP models and retrieved from Vespa. Agents use DSPy for reasoning and coordinate over the A2A protocol, with streaming responses and Phoenix tracing. 13-package uv workspace with multi-tenant isolation.
 
+## Features
 
-Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, X-CLIP, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 13-package UV workspace with multi-tenant isolation.
+- **Self-optimizing**: Argo CronWorkflows read production spans from Phoenix and compile each agent's DSPy module; agents load the resulting artifacts at startup. An agent with only failing examples is recompiled with GEPA reflective prompt evolution
+- **Multi-modal**: Ingestion and search profiles for video, images, audio, documents, code, and wiki pages
+- **Multi-agent orchestration**: DSPy 3.4 agents coordinated over the A2A protocol
+- **Cross-modal fusion**: The orchestrator combines results from agents working on different modalities
+- **Embedding models**: ColQwen3 (`TomoroAI/tomoro-colqwen3-embed-4b`) for video frames, images, and visual documents; X-CLIP for video clips; LateOn, LateOn-Code, and DenseOn for text and code; CLAP for audio
+- **Multi-tenant**: Schema-per-tenant Vespa isolation, per-tenant Phoenix projects, and per-tenant memory
+- **Observability**: Phoenix traces and experiments, plus a Streamlit dashboard
+- **Evaluation**: Provider-agnostic reference-free, visual LLM, and classical retrieval metrics
+- **Layered workspace**: 13 packages (Foundation → Core → Implementation → Application)
 
-## 🎯 What Makes Cogniverse Different
-
-- **🧠 Self-Optimizing**: Learns from every interaction using GEPA (Genetic-Pareto reflective prompt evolution) - routing strategies improve continuously from real usage
-- **🎭 Multi-Modal Intelligence**: Process any content type (video, audio, images, documents, text, dataframes) with unified understanding
-- **🤖 Multi-Agent Orchestration**: DSPy 3.1 A2A protocol-based coordination of specialized agents working together
-- **🔀 Cross-Modal Fusion**: Intelligent combination of insights across different modalities for richer understanding
-- **⚡ Production Performance**: <500ms P95 latency at 500+ concurrent users with 7 Vespa ranking strategies
-- **🎯 Multiple SOTA Models**: ColPali (frame-level), X-CLIP (temporal video), ColQwen (multi-modal fusion)
-- **🏢 Multi-Tenant Ready**: Complete schema-per-tenant isolation with independent Phoenix projects and memory
-- **📊 Full Observability**: Comprehensive Phoenix telemetry with traces, experiments, and real-time dashboards
-- **🧪 Evaluation Framework**: Provider-agnostic metrics with reference-free, visual LLM, and classical evaluators
-- **🏗️ Professional Architecture**: 13-package layered structure (Foundation → Core → Implementation → Application)
-
-## 🎬 Use Cases
+## Use Cases
 
 **For Individual Developers:**
-- Build intelligent content search applications across any modality
-- Experiment with multiple state-of-the-art embedding models
-- Learn multi-agent AI architectures with production-quality code
-- Use locally with Ollama (no API costs)
+- Build content search across video, images, audio, and documents
+- Compare embedding models and ranking strategies
+- Study a multi-agent A2A/DSPy architecture
+- Run the full stack locally, with no hosted-API costs
 
 **For Researchers:**
 - Run experiments with different embedding strategies and evaluate results
 - Optimize routing agents with synthetic data generation
-- Track all experiments with comprehensive Phoenix telemetry
-- Publish reproducible results with full observability
+- Track experiments in Phoenix
 
 **For Teams & Organizations:**
-- Deploy multi-tenant SaaS applications with complete data isolation
-- Achieve production-scale performance (<500ms P95 at 500+ users)
-- Monitor and optimize with comprehensive dashboards
-- Scale from prototype to production with professional architecture
+- Deploy multi-tenant applications with per-tenant schemas, telemetry projects, and memory
+- Monitor and optimize from the Phoenix UI and the Streamlit dashboard
+- Deploy with Helm on k3d or on an existing Kubernetes cluster
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Python 3.12+
-- 16GB+ RAM
-- CUDA-capable GPU (recommended for embedding models)
-- Docker for Vespa and Phoenix
-- uv package manager: `pip install uv`
+- Python 3.12
+- uv 0.12.19: `curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh`
+- Docker, kubectl, helm, and k3d (`cogniverse up` checks for them and offers to install missing ones)
+- An AMD (ROCm) or NVIDIA (CUDA) GPU for the in-cluster visual embedding model; the CPU overlay deploys none
+- PyTorch backend extra: `rocm`, `cuda`, or `cpu` on Linux x86_64; none on Apple Silicon (MPS)
+
+The reference deployment runs end to end on one AMD Ryzen AI Max+ 395 (Strix Halo, gfx1151) machine: ROCm, k3d, and `charts/cogniverse/values.rocm.yaml`,
+which serves ColQwen3, Whisper, DenseOn, and both chat LLMs (`google/gemma-4-e4b-it`, `Qwen/Qwen3-14B-AWQ`) with vLLM.
+`values.cuda.yaml` and `values.cpu.yaml` cover NVIDIA and CPU-only hosts; `values.modal-llm.yaml` (`COGNIVERSE_LLM_SERVING=modal`) moves only the two chat LLMs to Modal.
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone <repo>
+git clone https://github.com/amit-jain/cogniverse.git
 cd cogniverse
 
-# Install dependencies
-uv sync
+# Install dependencies with the PyTorch extra for this host
+scripts/install_with_gpu.sh
+source .venv/bin/activate
 
-# Start infrastructure
-cogniverse up  # Starts Vespa, Phoenix, Ollama via k3d
+# Create a k3d cluster and deploy the Helm chart: Vespa, Phoenix, runtime,
+# dashboard, Argo Workflows, and the LLM and inference pods for this host
+cogniverse up
 
 # Verify services
 curl -s http://localhost:8080/ApplicationStatus  # Vespa
@@ -67,15 +67,21 @@ curl -s http://localhost:26006/health           # Phoenix
 
 ### Basic Operations
 
-#### 1. Content Ingestion (All Modalities)
+#### 1. Content Ingestion
 ```bash
-# Ingest videos with ColPali embeddings
+# Download the sample videos into data/testset/evaluation/sample_videos
+scripts/download_test_data.sh --test-only
+
+# Host-side scripts read the Vespa location from the environment
+export BACKEND_URL=http://localhost BACKEND_PORT=8080
+
+# Ingest videos into the frame-level visual profile
 uv run python scripts/run_ingestion.py \
     --tenant-id default \
     --video_dir data/testset/evaluation/sample_videos \
     --profile video_colpali_smol500_mv_frame
 
-# Multi-modal multi-profile ingestion (video, audio, images, documents)
+# Several profiles in one run (--content-type selects video, image, audio, or document)
 uv run python scripts/run_ingestion.py \
     --tenant-id default \
     --content-dir data/testset/evaluation/sample_videos \
@@ -86,10 +92,10 @@ uv run python scripts/run_ingestion.py \
 
 #### 2. Multi-Modal Search
 ```bash
-# Multi-agent intelligent search across all content
-uv run python tests/comprehensive_video_query_test_v2.py \
-    --profiles video_colpali_smol500_mv_frame \
-    --test-multiple-strategies
+# Multi-agent query through the gateway agent
+curl -X POST http://localhost:28000/agents/gateway_agent/process \
+  -H "Content-Type: application/json" \
+  -d '{"agent_name": "gateway_agent", "query": "machine learning tutorial", "context": {"tenant_id": "default"}}'
 
 # Direct API query
 curl -X POST http://localhost:28000/search/ \
@@ -101,17 +107,18 @@ curl -X POST http://localhost:28000/search/ \
 ```bash
 # Run Phoenix experiments
 uv run python scripts/run_experiments_with_visualization.py \
+    --tenant-id default \
     --dataset-name golden_eval_v1 \
     --profiles video_colpali_smol500_mv_frame \
-    --test-multiple-strategies \
+    --all-strategies \
     --quality-evaluators
 
-# Launch Phoenix dashboard
+# Streamlit dashboard: deployed by `cogniverse up` at http://localhost:28501,
+# or run locally at http://localhost:8501
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-# Open http://localhost:8501
 ```
 
-## 📁 UV Workspace Structure
+## UV Workspace Structure
 
 ```text
 cogniverse/
@@ -142,7 +149,7 @@ cogniverse/
 │   │   └── cogniverse_agents/
 │   │       ├── routing/          # DSPy routing & optimization
 │   │       ├── search/           # Multi-modal search & reranking
-│   │       └── mixins/           # RLM/memory-aware mixins
+│   │       └── mixins/           # RLM-aware mixin
 │   ├── vespa/                    # cogniverse_vespa (Implementation Layer)
 │   │   └── cogniverse_vespa/
 │   │       ├── config/           # Backend config
@@ -161,7 +168,7 @@ cogniverse/
 │   │   └── cogniverse_runtime/
 │   │       ├── main.py           # FastAPI app + entrypoint
 │   │       ├── routers/          # API route modules
-│   │       ├── ingestion/        # Video processing pipeline
+│   │       ├── ingestion/        # Content ingestion pipeline
 │   │       └── ingestion_worker/ # Async ingestion worker
 │   ├── dashboard/                # cogniverse_dashboard (Application Layer)
 │   │   └── cogniverse_dashboard/
@@ -174,7 +181,7 @@ cogniverse/
 │       └── cogniverse_messaging/
 │           ├── telegram_handler.py  # Telegram bot integration
 │           └── gateway.py           # Messaging gateway
-├── docs/                         # Comprehensive documentation
+├── docs/                         # Documentation
 │   ├── architecture/             # System architecture
 │   ├── modules/                  # Module documentation
 │   ├── operations/               # Deployment & configuration
@@ -196,24 +203,24 @@ Foundation Layer:
   cogniverse_foundation (depends on sdk)
 
 Core Layer:
-  cogniverse_core (depends on sdk, foundation, evaluation)
+  cogniverse_core (depends on sdk, foundation)
   cogniverse_evaluation (depends on sdk, foundation)
   cogniverse_telemetry_phoenix (plugin - depends on core, evaluation)
 
 Implementation Layer:
-  cogniverse_agents (depends on sdk, core, synthetic)
-  cogniverse_vespa (depends on sdk, core)
-  cogniverse_synthetic (depends on sdk, foundation)
+  cogniverse_agents (depends on sdk, foundation, core, synthetic, vespa)
+  cogniverse_vespa (depends on sdk, foundation, core)
+  cogniverse_synthetic (depends on sdk, foundation, core)
   cogniverse_finetuning (depends on sdk, core, agents, synthetic, foundation)
 
 Application Layer:
-  cogniverse_runtime (depends on sdk, core; agents and vespa are optional extras)
+  cogniverse_runtime (depends on sdk, foundation, core, synthetic, agents, telemetry_phoenix; vespa is an optional extra)
   cogniverse_dashboard (depends on sdk, core, agents, evaluation, vespa, telemetry_phoenix)
-  cogniverse_cli (no internal package dependencies)
+  cogniverse_cli (depends on foundation)
   cogniverse_messaging (no internal package dependencies)
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ### Multi-Agent Orchestration
 
@@ -222,15 +229,16 @@ flowchart TD
     User(("<span style='color:#000'>User Query</span>"))
     Gateway["<span style='color:#000'><b>Gateway Agent</b><br/>:8000 · GLiNER classification<br/>A2A entry point</span>"]
     Orchestrator["<span style='color:#000'><b>Orchestrator Agent</b><br/>:8013 · DSPy-based planner</span>"]
+    Admin["<span style='color:#000'><b>Knowledge REST routes</b><br/>/admin/tenants/.../knowledge/*</span>"]
 
     User --> Gateway
     Gateway -->|"simple query"| SA
     Gateway -.->|"complex query"| Orchestrator
-    Orchestrator -->|"A2A HTTP"| SA
-    Orchestrator -->|"A2A HTTP"| GR
-    Orchestrator -->|"A2A HTTP"| RC
-    Orchestrator -.->|"/admin/tenants/.../knowledge"| KG
-    Orchestrator -.->|"federation reads"| MT
+    Orchestrator -->|"HTTP"| SA
+    Orchestrator -->|"HTTP"| GR
+    Orchestrator -->|"HTTP"| RC
+    Admin -.-> KG
+    Admin -.-> MT
 
     subgraph SA["<span style='color:#000'>Search &amp; Analysis Agents</span>"]
         direction LR
@@ -275,6 +283,7 @@ flowchart TD
 
     classDef gatewayStyle fill:#a5d6a7,stroke:#388e3c,color:#000
     classDef orchStyle fill:#ce93d8,stroke:#7b1fa2,color:#000
+    classDef adminStyle fill:#e0e0e0,stroke:#616161,color:#000
     classDef saStyle fill:#90caf9,stroke:#1565c0,color:#000
     classDef grStyle fill:#ba68c8,stroke:#7b1fa2,color:#000
     classDef rcStyle fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -283,6 +292,7 @@ flowchart TD
 
     class Gateway gatewayStyle
     class Orchestrator orchStyle
+    class Admin adminStyle
     class sa1,sa2,sa3,sa4,sa5 saStyle
     class gr1,gr2,gr3,gr4,gr5 grStyle
     class rc1,rc2 rcStyle
@@ -290,7 +300,7 @@ flowchart TD
     class mt1,mt2 mtStyle
 ```
 
-The Gateway Agent classifies each query with GLiNER zero-shot NER and either routes it directly to the appropriate specialized agent (fast path) or hands it to the Orchestrator Agent for complex, multi-step handling. Memory is provided via `MemoryAwareMixin` composed into individual agents, not a standalone memory agent. Dashed arrows above mark paths that are conditional (complex-query handoff) or reached through a REST layer rather than a direct A2A call.
+The Gateway Agent classifies each query with GLiNER zero-shot NER and either routes it directly to the appropriate specialized agent (fast path) or hands it to the Orchestrator Agent for complex, multi-step handling. Memory is provided via `MemoryAwareMixin` composed into individual agents, not a standalone memory agent. Dashed arrows above mark the conditional complex-query handoff and the knowledge-graph and federation agents, which are reached through REST routes rather than the main orchestration path.
 
 ### The 23 Agents
 
@@ -303,22 +313,22 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 | `search_agent` | 8002 | enabled | Multi-modal retrieval across video/image/text/audio/document via Vespa, with DSPy query rewriting and RRF ensemble fusion across profiles. |
 | `image_search_agent` | 8006 | enabled | ColPali multi-vector image similarity search (semantic or BM25+ColPali hybrid) plus image-to-image lookup. |
 | `document_agent` | 8008 | enabled | Dual-strategy document search: ColPali visual (page-as-image), ColBERT/BM25 text, or hybrid, with keyword-based auto strategy selection. |
-| `text_analysis_agent` | 8003 | enabled | Runtime-configurable DSPy text analysis (sentiment/summary/entities) with per-tenant persisted config and a `/analyze` endpoint. |
-| `audio_analysis_agent` | 8007 | enabled | Whisper transcription + Vespa audio search supporting transcript (BM25), acoustic (CLAP nearest-neighbor), and hybrid modes. |
+| `text_analysis_agent` | 8003 | enabled | Runtime-configurable DSPy text analysis (sentiment/summary/entities) with per-tenant persisted config. |
+| `audio_analysis_agent` | 8007 | enabled | Vespa audio search in transcript (BM25), semantic (ColBERT, default), acoustic (CLAP nearest-neighbor), or hybrid (ColBERT + BM25) mode; Whisper transcription for audio-to-audio similarity. |
 
 **Generation & Routing Agents**
 
 | Agent | Port | Status | What it does |
 |---|---|---|---|
 | `gateway_agent` | 8000 | enabled | LLM-free A2A entry point; classifies queries via GLiNER and routes simple ones directly, complex ones to the orchestrator. |
-| `orchestrator_agent` | 8013 | enabled | Plans a multi-agent workflow with DSPy, then executes it by calling sub-agents over A2A HTTP, with checkpoint/resume and cross-modal fusion. |
+| `orchestrator_agent` | 8013 | enabled | Plans a multi-agent workflow with DSPy, runs it through an iterative retrieval loop that calls sub-agents over HTTP, and fuses results across modalities. |
 | `summarizer_agent` | 8004 | enabled | Turns search results into structured summaries with a thinking phase and VLM visual analysis. |
-| `detailed_report_agent` | 8005 | enabled | Generates comprehensive reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis. |
-| `profile_selection_agent` | 8000\* | enabled | Uses DSPy reasoning to pick the optimal backend search profile for a query, with a heuristic fallback. |
+| `detailed_report_agent` | 8005 | enabled | Generates reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis. |
+| `profile_selection_agent` | 8000\* | enabled | Picks a backend search profile for a query with DSPy, with a heuristic fallback. |
 | `query_enhancement_agent` | 8000\* | enabled | Expands and rewrites queries with synonyms, context, and RRF variants using DSPy. |
-| `entity_extraction_agent` | 8000\* | enabled | Tiered NER: fast GLiNER + SpaCy path (no LLM) with a DSPy fallback. |
+| `entity_extraction_agent` | 8000\* | enabled | Extracts entities with DSPy, falling back to GLiNER + SpaCy when the LM call fails. |
 
-\* `gateway_agent`, `profile_selection_agent`, `query_enhancement_agent`, and `entity_extraction_agent` share the config port `8000` — they run as in-process helpers invoked by the `AgentDispatcher` rather than standalone A2A servers.
+\* `gateway_agent` and the agents marked \* carry the runtime's own port (`8000`) in `configs/config.json`. Every agent runs in-process in the runtime, dispatched by `AgentDispatcher` behind `POST /agents/{agent_name}/process`.
 
 **Research & Coding Agents**
 
@@ -331,7 +341,7 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 
 | Agent | Port | Status | What it does |
 |---|---|---|---|
-| `audit_explanation_agent` | 8027 | enabled | Explains why an answer memory was produced — its derivation chain, per-source trust, and active contradictions. |
+| `audit_explanation_agent` | 8027 | enabled | Explains an answer memory: walks its provenance chain, reports decayed trust per source, and flags contradictions among those sources. |
 | `citation_tracing_agent` | 8019 | disabled | Walks a memory's provenance chain back to its primary sources. |
 | `contradiction_reconciliation_agent` | 8020 | disabled | Resolves conflict sets by applying a knowledge schema's contradiction policy over member memories. |
 | `multi_document_synthesis_agent` | 8021 | disabled | Synthesizes a coherent answer across N source documents while preserving the citation graph. |
@@ -343,16 +353,16 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 
 | Agent | Port | Status | What it does |
 |---|---|---|---|
-| `cross_tenant_comparison_agent` | 8023 | disabled | Compares per-tenant views of one subject across all tenants in an org via the federation read path. |
-| `federated_query_agent` | 8024 | disabled | Answers a free-text query by aggregating federated reads across multiple tenants in the same org, with an optional RLM summariser. |
+| `cross_tenant_comparison_agent` | 8023 | disabled | Compares one subject across a caller-supplied list of same-org tenants via federated reads; admin-only. |
+| `federated_query_agent` | 8024 | disabled | Substring-matches a query against the federated memories of listed same-org tenants and merges the hits, with an optional RLM summary; admin-only. |
 
 ### Embedding Models
 
-| Model | Type | Dimensions | Use Case |
-|-------|------|------------|----------|
-| **ColPali** | Frame-level | 320 (patch vector) | Visual document search |
-| **X-CLIP Large** | Temporal video | 768 | Text-to-video clip retrieval |
-| **ColQwen3 Omni** (TomoroAI/tomoro-colqwen3-embed-4b) | Multi-modal | 320 (patch vector) | Text+visual fusion |
+| Video profile | Model | Segments | Dimensions |
+|---------------|-------|----------|------------|
+| `video_colpali_smol500_mv_frame` | ColQwen3 (TomoroAI/tomoro-colqwen3-embed-4b) | Keyframes at 0.5 fps | 320 (patch vector) |
+| `video_colqwen_omni_mv_chunk_30s` | ColQwen3 (TomoroAI/tomoro-colqwen3-embed-4b) | 30 s chunks | 320 (patch vector) |
+| `video_xclip_sv_chunk_6s` | X-CLIP Large (microsoft/xclip-large-patch14) | 6 s chunks | 768 |
 
 ### Vespa Ranking Strategies
 
@@ -361,10 +371,10 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 3. **binary_binary** - Binary embeddings only
 4. **float_binary** - Float query with binary document embeddings
 5. **phased** - Two-phase ranking: binary first, float reranking
-6. **hybrid_float_bm25** - BM25 + dense float embeddings (recommended)
+6. **hybrid_float_bm25** - BM25 + dense float embeddings
 7. **hybrid_binary_bm25** - BM25 + binary embeddings
 
-## 🔧 Configuration
+## Configuration
 
 ### Multi-Tenant Setup
 ```python
@@ -392,7 +402,7 @@ agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=confi
 result = await agent.process(
     SearchInput(
         query="machine learning tutorial",
-        tenant_id="acme_corp",
+        tenant_id="acme:corp",
         profiles=["video_colpali_smol500_mv_frame"],
         top_k=10,
     )
@@ -405,35 +415,34 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 # Configure per-tenant routing and DSPy auto-optimization behavior
 routing_config = RoutingConfigUnified(
-    tenant_id="acme_corp",
-    dspy_enabled=True,
+    tenant_id="acme:corp",
     enable_auto_optimization=True,
     optimization_interval_seconds=3600,
     min_samples_for_optimization=100,
 )
 ```
 
-## 📊 Monitoring & Evaluation
+## Monitoring & Evaluation
 
-### Phoenix Dashboard
-Access comprehensive telemetry at http://localhost:8501:
-- **Traces**: Request flow visualization
-- **Experiments**: A/B testing results
-- **Metrics**: Performance analytics
-- **Memory**: Context tracking
-- **Configuration**: Live config management
+### Dashboard
+The Streamlit dashboard runs at http://localhost:28501 and the Phoenix UI at http://localhost:26006. Dashboard tabs include:
+- **Analytics**: Phoenix traces for the active tenant
+- **Evaluation**: Phoenix experiment results
+- **Profile Routing Metrics**: Per-modality profile-selection metrics from Phoenix spans
+- **Memory**: View, search, add, and delete agent memories
+- **Configuration**: Per-tenant configuration with version history
 
 ### Evaluation Metrics
-- **Reference-Free**: Quality, Diversity, Distribution scores
+- **Reference-Free**: Query-result relevance, result diversity, temporal coverage
 - **Visual LLM**: Pluggable OpenAI-compatible vision judge (ConfigurableVisualJudge)
 - **Classical**: MRR, NDCG, Precision@k, Recall@k
 - **Phoenix Experiments**: Automatic tracking and comparison
 
-## 🧪 Testing
+## Testing
 
 ```bash
-# Run full test suite (30 min timeout for integration tests)
-JAX_PLATFORM_NAME=cpu uv run pytest --timeout=1800
+# Run full test suite
+JAX_PLATFORM_NAME=cpu uv run pytest
 
 # Unit tests only (per package: tests/<package>/unit/)
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/
@@ -445,12 +454,14 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 ```
 
-## 📚 Documentation
+## Documentation
+
+Published at https://amit-jain.github.io/cogniverse/.
 
 ### Architecture
 - [Architecture Overview](docs/architecture/overview.md) - System design and multi-tenant architecture
 - [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 13-package layered architecture
-- [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Complete tenant isolation patterns
+- [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Tenant isolation patterns
 - [System Flows](docs/architecture/system-flows.md) - 20+ architectural diagrams
 
 ### Operations & Deployment
@@ -467,7 +478,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 ### Module Documentation
 - [Agents](docs/modules/agents.md) - Agent implementations
 - [Routing](docs/modules/routing.md) - Query routing and optimization
-- [Ingestion](docs/modules/ingestion.md) - Video processing pipeline
+- [Ingestion](docs/modules/ingestion.md) - Content ingestion pipeline
 - [Search & Reranking](docs/modules/search-reranking.md) - Multi-modal search
 - [Telemetry](docs/modules/telemetry.md) - Phoenix integration
 - [Evaluation](docs/modules/evaluation.md) - Experiment tracking
@@ -478,7 +489,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 - [SDK Architecture Diagrams](docs/diagrams/sdk-architecture-diagrams.md)
 - [Multi-Tenant Diagrams](docs/diagrams/multi-tenant-diagrams.md)
 
-## 🚀 Production Deployment
+## Deployment
 
 ### Unified Deployment
 ```bash
@@ -497,23 +508,17 @@ cogniverse inference modal warm denseon colbert_pylate
 ```
 See [docs/operations/deployment.md](docs/operations/deployment.md) (Unified Deployment, Strategy B) — Modal serves individual inference services called by the cluster, not the whole application.
 
-## 🔐 Security
+## Security
 
 - **Multi-tenant isolation**: Schema-per-tenant data separation
 - **Rate limiting**: Per-workflow limits (e.g., deep-research synthesis)
 - **Observability**: Operations traced via Phoenix telemetry
 
-## 🎯 Performance Targets
+## Performance
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| **Query Latency P95** | < 500ms | 450ms |
-| **Ingestion Speed** | 10 videos/min | 12 videos/min |
-| **Concurrent Users** | 500 | 600 |
-| **Cache Hit Rate** | > 40% | 45% |
-| **Routing Accuracy** | > 90% | 92% |
+<!-- PERF_RESULTS -->
 
-## 🤝 Contributing
+## Contributing
 
 See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for detailed contribution guidelines.
 
@@ -536,14 +541,14 @@ See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for detailed contribution gui
 - Update documentation for significant changes
 - Never commit failing tests or skip markers
 
-## 📝 License
+## License
 
-[License information here]
+MIT. See [LICENSE](LICENSE).
 
-## 🆘 Support
+## Support
 
-- GitHub Issues: [Report bugs](https://github.com/org/cogniverse/issues)
-- Documentation: [Read the docs](docs/)
-- Phoenix Dashboard: http://localhost:8501
+- GitHub Issues: [Report bugs](https://github.com/amit-jain/cogniverse/issues)
+- Documentation: [Read the docs](https://amit-jain.github.io/cogniverse/)
+- Dashboard: http://localhost:28501 (Phoenix UI: http://localhost:26006)
 
 ---
