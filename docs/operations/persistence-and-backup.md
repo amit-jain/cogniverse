@@ -62,7 +62,7 @@ Each stateful component has its own `<name>.persistence` block in
 | Phoenix | `phoenix.persistence` | 50 Gi | Working directory only; traces, datasets and annotations live in `phoenix-postgres`. Backed up in `mode: postgres`: a `pg_dump` custom-format archive of that database plus a tar of the read-only mounted working directory, in one `<service>-<timestamp>.tar`. |
 | MinIO | `minio.persistence` | 100 Gi | Default backup destination on dev. See [MinIO durability](#minio-durability-load-bearing-for-dev) below. |
 | HF model cache (per pod) | `hfCache.persistence` | 50 Gi each | Off by default (`enabled: false`). When enabled, one PVC per inference svc + runtime + ingestor, pre-warmed via init container. |
-| Redis | `redis.persistence` | 10 Gi | Job queue + status-stream state (AOF on). Lose it = re-ingest in-flight jobs. |
+| Redis | `redis.persistence` | 10 Gi | Ingestion job queue and status streams, A2A task state, agent-session message queues, conversation turn order and suspended `/v1` turns, approval and workflow locks (AOF on). One instance, never Redis Cluster (see [Scaling](kubernetes-deployment.md#scaling)). Lose it = re-ingest in-flight jobs; in-flight A2A tasks, queued session messages and suspended `/v1` turns are lost. |
 | LLM (builtin) | `llm.ollama.persistence` (`llm.engine: ollama`) or `llm.vllm.persistence` (`llm.engine: vllm`) | 100 Gi | Model files for the in-cluster LLM. Only the PVC matching the selected `llm.engine` renders. |
 | Semantic router | `semanticRouter.router.persistence` | 10 Gi | Classifier bundle cache (~GB) for the `vllm-sr` sidecar so it isn't re-downloaded on every restart/rollout. `emptyDir` when disabled. |
 
