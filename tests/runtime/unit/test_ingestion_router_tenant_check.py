@@ -17,6 +17,7 @@ correctly.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from types import SimpleNamespace
@@ -499,10 +500,11 @@ class TestStartIngestionSuccess:
         }
 
     def test_start_without_a_job_store_is_503_and_runs_nothing(
-        self, monkeypatch, tmp_path, unreachable_job_store
+        self, monkeypatch, tmp_path, unreachable_job_store, caplog
     ):
         """A job that cannot be recorded is not started: no status request
         on any process could ever find it."""
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         app, _cm, _sl, _registry, recorded = self._build_app(monkeypatch, tmp_path)
         with TestClient(app) as client:
             resp = client.post(
@@ -517,9 +519,27 @@ class TestStartIngestionSuccess:
             client.portal.call(unreachable_job_store._redis.aclose)
 
         assert resp.status_code == 503
-        assert resp.json()["detail"].startswith(
+        [logged] = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ]
+        cause = (
+            "ingestion_job_store_unavailable: IngestionJobStoreUnavailableError: "
             "ingestion job store unavailable: create job "
         )
+        assert logged.startswith(cause), logged
+        job_id = logged[len(cause) :]
+        assert str(uuid.UUID(job_id)) == job_id
+        assert resp.json() == {
+            "detail": {
+                "error": "ingestion_job_store_unavailable",
+                "message": "The ingestion job store did not answer, so the job "
+                "was not started; retry.",
+                "failure": "IngestionJobStoreUnavailableError",
+                "job_id": job_id,
+            }
+        }
         assert recorded == {}
 
     def test_start_combines_org_id_with_simple_tenant(
@@ -594,7 +614,8 @@ class TestIngestionStatusEndpoint:
             "errors": ["bad.mp4: schema mismatch"],
         }
 
-    def test_status_without_a_job_store_is_503(self, unreachable_job_store):
+    def test_status_without_a_job_store_is_503(self, unreachable_job_store, caplog):
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         app = FastAPI()
         app.include_router(ingestion_router.router, prefix="/ingestion")
         with TestClient(app) as client:
@@ -602,8 +623,23 @@ class TestIngestionStatusEndpoint:
             client.portal.call(unreachable_job_store._redis.aclose)
         assert (resp.status_code, resp.json()) == (
             503,
-            {"detail": "ingestion job store unavailable: read job job-status-x"},
+            {
+                "detail": {
+                    "error": "ingestion_job_store_unavailable",
+                    "message": "The ingestion job store did not answer; retry.",
+                    "failure": "IngestionJobStoreUnavailableError",
+                    "job_id": "job-status-x",
+                }
+            },
         )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "ingestion_job_store_unavailable: IngestionJobStoreUnavailableError: "
+            "ingestion job store unavailable: read job job-status-x"
+        ]
 
 
 @pytest.mark.asyncio

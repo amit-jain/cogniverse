@@ -219,6 +219,14 @@ def get_schema_loader_dependency() -> SchemaLoader:
     )
 
 
+def _job_store_unavailable(
+    exc: IngestionJobStoreUnavailableError, job_id: str, message: str
+):
+    return failure_response(
+        503, "ingestion_job_store_unavailable", message, exc, job_id=job_id
+    )
+
+
 def _upload_profile_unavailable(exc: Exception, tenant_id: str):
     return failure_response(
         503,
@@ -281,7 +289,12 @@ async def start_ingestion(
         try:
             await job_store.create(job_id)
         except IngestionJobStoreUnavailableError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _job_store_unavailable(
+                exc,
+                job_id,
+                "The ingestion job store did not answer, so the job was not "
+                "started; retry.",
+            ) from exc
 
         # Run ingestion in background
         background_tasks.add_task(
@@ -316,7 +329,9 @@ async def get_ingestion_status(job_id: str) -> IngestionStatus:
     try:
         record = await get_job_store().get(job_id)
     except IngestionJobStoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _job_store_unavailable(
+            exc, job_id, "The ingestion job store did not answer; retry."
+        ) from exc
     if record is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     return IngestionStatus(**record)

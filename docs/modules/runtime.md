@@ -796,18 +796,21 @@ backend URL, plus `failure` when an exception caused it.
 Codes by router: search `search_failed`, `search_degraded`,
 `invalid_search_request`, `invalid_tenant_id`, `query_encoder_not_configured`,
 `query_encoder_unavailable`, `rerank_failed`; agents `search_degraded`,
-`inference_service_unavailable`, `no_execution_path`; admin
+`inference_service_unavailable`, `no_execution_path`,
+`agent_registry_unavailable`, `annotation_queue_unavailable`; admin
 `stats_unavailable`, `profile_create_failed`, `profile_list_failed`,
 `profile_read_failed`, `profile_update_failed`, `profile_delete_failed`,
 `schema_deploy_failed`, `registration_unavailable`, `resolve_unavailable`,
-`memory_unavailable`, `store_unavailable`, `harness_key_store_unavailable`;
+`memory_unavailable`, `store_unavailable`, `harness_key_store_unavailable`,
+`schema_drift_unavailable`;
 tenant management `organization_create_failed`, `organization_list_failed`,
 `organization_delete_failed`, `tenant_create_failed`, `tenant_list_failed`,
 `tenant_delete_failed`, `reconcile_unavailable`; ingestion
 `ingestion_start_failed`, `upload_profile_unavailable`,
 `upload_profile_unusable`, `object_store_unconfigured`,
 `object_store_unavailable`, `ingest_queue_unavailable`,
-`ingest_status_unknown`, `ingest_status_store_unavailable`; tenant jobs and
+`ingest_status_unknown`, `ingest_status_store_unavailable`,
+`ingestion_job_store_unavailable`; tenant jobs and
 optimization `argo_unavailable`, `argo_rejected`, `argo_no_workflow_name`;
 wiki `wiki_delete_failed`; synthetic `profile_selection_timeout`.
 
@@ -925,13 +928,13 @@ Response always includes `ingest_id`, `sha`, `state` (the status stream's newest
 ```bash
 curl http://localhost:8000/ingestion/status/job-123
 ```
-The job runs in the runtime process that accepted `POST /ingestion/start`; its status record lives in Redis (`IngestionJobStore`, `cogniverse_runtime/ingestion_jobs.py`), written before `/ingestion/start` answers, so every process and replica answers this route for it. The record is `{job_id, status, videos_processed, videos_total, errors}`; `status` moves from `started` to `processing` to a finished value (`completed`, `completed_with_errors`, `cancelled`, `failed`), after which no write changes it. While the job runs its process renews a 30-second lease every 10 seconds; a job still `started` or `processing` whose lease lapsed reads as `failed`, with `the runtime process running this job stopped before it finished` appended to `errors`. A record expires 24 hours after its last write or lease renewal; 404 for an unknown or expired job. When the job store's Redis cannot be reached, `/ingestion/start` answers 503 without starting the job and this route answers 503.
+The job runs in the runtime process that accepted `POST /ingestion/start`; its status record lives in Redis (`IngestionJobStore`, `cogniverse_runtime/ingestion_jobs.py`), written before `/ingestion/start` answers, so every process and replica answers this route for it. The record is `{job_id, status, videos_processed, videos_total, errors}`; `status` moves from `started` to `processing` to a finished value (`completed`, `completed_with_errors`, `cancelled`, `failed`), after which no write changes it. While the job runs its process renews a 30-second lease every 10 seconds; a job still `started` or `processing` whose lease lapsed reads as `failed`, with `the runtime process running this job stopped before it finished` appended to `errors`. A record expires 24 hours after its last write or lease renewal; 404 for an unknown or expired job. When the job store's Redis cannot be reached, `/ingestion/start` answers 503 without starting the job and this route answers 503, both `ingestion_job_store_unavailable` with `job_id`.
 
 ### Agents Endpoints
 
 The agents router provides A2A (Agent-to-Agent) registry endpoints for agent discovery and management.
 
-Configured agents are registered in every runtime process at startup. Registrations and unregistrations made over these routes are kept in Redis (`RedisAgentRegistryStore`, `cogniverse_runtime/agent_registry_store.py`), and every request that reads the registry — these routes, `/agents/{name}/process`, A2A, `/v1/chat/completions` and `/health` — first applies the store's current contents, so a change made through any process or replica is served by the next request on all of them. A registration under a configured agent's name replaces it; unregistering a configured agent hides it until it is registered again. When the store cannot be reached, these routes and `/agents/{name}/process` answer 503 with `shared agent registry unavailable: ...`, `/v1/chat/completions` answers 503 naming the agent registry, `/health` answers 503 `unhealthy`, and an A2A task (`cogniverse_runtime/a2a_executor.py`) fails with `error_type` `AgentRegistryUnavailableError`. The A2A agent card lists the configured agents.
+Configured agents are registered in every runtime process at startup. Registrations and unregistrations made over these routes are kept in Redis (`RedisAgentRegistryStore`, `cogniverse_runtime/agent_registry_store.py`), and every request that reads the registry — these routes, `/agents/{name}/process`, A2A, `/v1/chat/completions` and `/health` — first applies the store's current contents, so a change made through any process or replica is served by the next request on all of them. A registration under a configured agent's name replaces it; unregistering a configured agent hides it until it is registered again. When the store cannot be reached, these routes and `/agents/{name}/process` answer 503 `agent_registry_unavailable` (see Failure Bodies), `/v1/chat/completions` answers 503 naming the agent registry, `/health` answers 503 `unhealthy`, and an A2A task (`cogniverse_runtime/a2a_executor.py`) fails with `error_type` `AgentRegistryUnavailableError`. The A2A agent card lists the configured agents.
 
 **POST /agents/register** - Register an agent (A2A self-registration pattern)
 ```bash
@@ -957,7 +960,7 @@ curl http://localhost:8000/agents/
 curl http://localhost:8000/agents/stats
 ```
 
-The annotation queue lives in Redis (`AnnotationQueue`, `cogniverse_agents/routing/annotation_queue.py`), so every runtime process and replica serves the same requests; when that Redis cannot be reached every queue route answers 503 with `annotation queue unavailable: ...`.
+The annotation queue lives in Redis (`AnnotationQueue`, `cogniverse_agents/routing/annotation_queue.py`), so every runtime process and replica serves the same requests; when that Redis cannot be reached every queue route answers 503 `annotation_queue_unavailable`, with `span_id` on the routes for one request.
 
 **GET /agents/annotations/queue** - Annotation-queue statistics and the first 50 requests of each list (routing feedback loop): `pending` by priority then timestamp, `assigned` by SLA deadline, `expired` most recently expired first. Assigned requests past their deadline turn `expired` on this read; completed and expired requests are removed seven days after they finished.
 ```bash
@@ -1212,7 +1215,7 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **PUT /admin/profiles/{profile_name}** - Update profile
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile
-**GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. 503 when the registry or the recorded refusals cannot be read.
+**GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. 503 `schema_drift_unavailable` when the registry or the recorded refusals cannot be read; `failure` is `SchemaRegistryInitializationError` for the registry and `RegistryStorageError` for the refusals.
 
 **Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 

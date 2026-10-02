@@ -9,6 +9,7 @@ process registers them from configuration at startup.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -485,8 +486,9 @@ class TestRoutes:
         assert configured_info.status_code == 404
 
     async def test_an_unreachable_store_answers_503_on_every_registry_route(
-        self, dead_redis_url, prefix, config_manager
+        self, dead_redis_url, prefix, config_manager, caplog
     ):
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         client = Redis.from_url(
             dead_redis_url, decode_responses=True, socket_connect_timeout=1
         )
@@ -513,20 +515,34 @@ class TestRoutes:
         finally:
             await client.aclose()
 
-        detail = {
-            "register": "register agent external_agent",
-            "unregister": "unregister agent search_agent",
-        }
+        agent = {"register": "external_agent", "unregister": "search_agent"}
         assert {name: (r.status_code, r.json()) for name, r in answers.items()} == {
             name: (
                 503,
                 {
-                    "detail": "shared agent registry unavailable: "
-                    + detail.get(name, "read version")
+                    "detail": {
+                        "error": "agent_registry_unavailable",
+                        "message": "The shared agent registry did not answer; retry.",
+                        "failure": "AgentRegistryUnavailableError",
+                        **({"agent": agent[name]} if name in agent else {}),
+                    }
                 },
             )
             for name in answers
         }
+        operation = {
+            "register": "register agent external_agent",
+            "unregister": "unregister agent search_agent",
+        }
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "agent_registry_unavailable: AgentRegistryUnavailableError: "
+            "shared agent registry unavailable: " + operation.get(name, "read version")
+            for name in answers
+        ]
 
 
 class TestRequestPathsReadTheSharedRegistry:
@@ -562,9 +578,11 @@ class TestRequestPathsReadTheSharedRegistry:
         )
 
     async def test_process_on_an_unreachable_store_is_503(
-        self, dead_redis_url, prefix, config_manager, restore_agents_router
+        self, dead_redis_url, prefix, config_manager, restore_agents_router, caplog
     ):
         from cogniverse_runtime.routers import agents as agents_router
+
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
 
         client = Redis.from_url(
             dead_redis_url, decode_responses=True, socket_connect_timeout=1
@@ -586,7 +604,7 @@ class TestRequestPathsReadTheSharedRegistry:
                     json={
                         "agent_name": "search_agent",
                         "query": "find clips",
-                        "context": {"tenant_id": "acme:acme"},
+                        "context": {"tenant_id": "acme:acme", "request_id": "req-7"},
                     },
                 )
         finally:
@@ -595,8 +613,24 @@ class TestRequestPathsReadTheSharedRegistry:
 
         assert (answer.status_code, answer.json()) == (
             503,
-            {"detail": "shared agent registry unavailable: read version"},
+            {
+                "detail": {
+                    "error": "agent_registry_unavailable",
+                    "message": "The shared agent registry did not answer; retry.",
+                    "failure": "AgentRegistryUnavailableError",
+                    "agent": "search_agent",
+                    "request_id": "req-7",
+                }
+            },
         )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "agent_registry_unavailable: AgentRegistryUnavailableError: "
+            "shared agent registry unavailable: read version"
+        ]
 
     async def test_v1_chat_on_an_unreachable_store_is_503(
         self, dead_redis_url, prefix, config_manager

@@ -1090,11 +1090,13 @@ async def test_a_refusal_that_cannot_be_recorded_is_retried_until_it_is(
 @pytest.mark.parametrize("unreadable", ["registry", "refusals"])
 @pytest.mark.asyncio
 async def test_the_drift_listing_answers_503_when_its_store_cannot_be_read(
-    migration_vespa, unreadable
+    migration_vespa, unreadable, caplog
 ):
-    """A store that cannot be read answers 503 naming what failed, never an
-    empty listing that reads as every tenant being current."""
+    """A store that cannot be read answers a typed 503 naming the failure's
+    type, never an empty listing that reads as every tenant being current.
+    The cause goes to the runtime log, not the body."""
     _connect, _manager, ports = migration_vespa
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
 
     def refuse(method, path, body):
         if method == "GET" and path.startswith("/document/v1/"):
@@ -1111,12 +1113,30 @@ async def test_the_drift_listing_answers_503_when_its_store_cannot_be_read(
         finally:
             proxied.store.close()
 
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    expected = {
-        "registry": "Schema registry unavailable: Cannot initialize SchemaRegistry: "
-        "failed to read schema storage: ",
-        "refusals": "Schema registry unavailable: Cannot read schema migration "
-        "refusals: ",
+    failure, cause = {
+        "registry": (
+            "SchemaRegistryInitializationError",
+            "Cannot initialize SchemaRegistry: failed to read schema storage: ",
+        ),
+        "refusals": (
+            "RegistryStorageError",
+            "Cannot read schema migration refusals: ",
+        ),
     }[unreadable]
-    assert detail.startswith(expected), detail
+    assert (response.status_code, response.json()) == (
+        503,
+        {
+            "detail": {
+                "error": "schema_drift_unavailable",
+                "message": "The schema registry or the recorded migration "
+                "refusals could not be read; retry.",
+                "failure": failure,
+            }
+        },
+    )
+    [logged] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ]
+    assert logged.startswith(f"schema_drift_unavailable: {failure}: {cause}"), logged

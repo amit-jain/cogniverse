@@ -810,11 +810,52 @@ class TestSharedStateOutage:
             up = [send("GET", "/agents/annotations/queue")[0] for send in senders]
 
         unavailable = (
-            (503, {"detail": "shared agent registry unavailable: read version"}),
-            (503, {"detail": "annotation queue unavailable: read queue"}),
-            (503, {"detail": "ingestion job store unavailable: read job any-job"}),
+            (
+                503,
+                {
+                    "detail": {
+                        "error": "agent_registry_unavailable",
+                        "message": "The shared agent registry did not answer; retry.",
+                        "failure": "AgentRegistryUnavailableError",
+                    }
+                },
+            ),
+            (
+                503,
+                {
+                    "detail": {
+                        "error": "annotation_queue_unavailable",
+                        "message": "The annotation queue did not answer; retry.",
+                        "failure": "AnnotationQueueUnavailableError",
+                    }
+                },
+            ),
+            (
+                503,
+                {
+                    "detail": {
+                        "error": "ingestion_job_store_unavailable",
+                        "message": "The ingestion job store did not answer; retry.",
+                        "failure": "IngestionJobStoreUnavailableError",
+                        "job_id": "any-job",
+                    }
+                },
+            ),
         )
         assert down == [unavailable] * WORKERS
+        assert sorted(
+            _records(log, "cogniverse_runtime.http_errors", "ERROR")
+        ) == sorted(
+            [
+                "agent_registry_unavailable: AgentRegistryUnavailableError: "
+                "shared agent registry unavailable: read version",
+                "annotation_queue_unavailable: AnnotationQueueUnavailableError: "
+                "annotation queue unavailable: read queue",
+                "ingestion_job_store_unavailable: IngestionJobStoreUnavailableError: "
+                "ingestion job store unavailable: read job any-job",
+            ]
+            * WORKERS
+        )
         # Six requests, each bounded by the shared-state client's command timeout.
         assert elapsed < 6 * SHARED_STATE_REDIS_TIMEOUT_SECONDS + 10, elapsed
         assert up == [200] * WORKERS

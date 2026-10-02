@@ -250,10 +250,11 @@ class TestHealthCheckFull:
 
     @patch("cogniverse_runtime.routers.health.BackendRegistry")
     def test_health_is_503_when_the_shared_agent_registry_is_unreachable(
-        self, mock_backend_cls, health_client
+        self, mock_backend_cls, health_client, caplog
     ):
         """A registry whose shared store cannot be read leaves /health
-        unhealthy with the store's error as the reason."""
+        unhealthy naming the failure's type; the store's error goes to the
+        log."""
         from cogniverse_core.registries.agent_registry import (
             AgentRegistryUnavailableError,
         )
@@ -269,6 +270,7 @@ class TestHealthCheckFull:
                     "shared agent registry unavailable: read version"
                 )
 
+        caplog.set_level(logging.WARNING, logger="cogniverse_runtime.http_errors")
         saved = (agents_router._agent_registry, agents_router._dispatcher)
         agents_router.set_agent_registry(_UnreachableRegistry())
         try:
@@ -281,9 +283,18 @@ class TestHealthCheckFull:
             {
                 "status": "unhealthy",
                 "service": "cogniverse-runtime",
-                "reason": "shared agent registry unavailable: read version",
+                "reason": "system status could not be assembled",
+                "failure": "AgentRegistryUnavailableError",
             },
         )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "system_status_unavailable: AgentRegistryUnavailableError: "
+            "shared agent registry unavailable: read version"
+        ]
 
     @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_returns_503_not_500_on_config_error(

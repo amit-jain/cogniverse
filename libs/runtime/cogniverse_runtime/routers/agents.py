@@ -192,8 +192,21 @@ async def _current_registry() -> AgentRegistry:
     try:
         await registry.refresh()
     except AgentRegistryUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _registry_unavailable(exc) from exc
     return registry
+
+
+def _registry_unavailable(
+    exc: AgentRegistryUnavailableError, **fields: Any
+) -> HTTPException:
+    """503 for a shared agent registry operation that did not complete."""
+    return failure_response(
+        503,
+        "agent_registry_unavailable",
+        "The shared agent registry did not answer; retry.",
+        exc,
+        **fields,
+    )
 
 
 def get_dispatcher() -> AgentDispatcher:
@@ -277,7 +290,7 @@ async def register_agent(data: AgentRegistrationData) -> Dict[str, Any]:
             status_code=400, detail=f"Failed to register agent '{data.name}'"
         )
     except AgentRegistryUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _registry_unavailable(exc, agent=data.name) from exc
 
     return {
         "status": "registered",
@@ -342,8 +355,17 @@ class EnqueueBatchRequest(BaseModel):
     requests: List[Dict[str, Any]]
 
 
-def _queue_unavailable(exc: AnnotationQueueUnavailableError) -> HTTPException:
-    return HTTPException(status_code=503, detail=str(exc))
+def _queue_unavailable(
+    exc: AnnotationQueueUnavailableError, **fields: Any
+) -> HTTPException:
+    """503 for an annotation queue operation that did not complete."""
+    return failure_response(
+        503,
+        "annotation_queue_unavailable",
+        "The annotation queue did not answer; retry.",
+        exc,
+        **fields,
+    )
 
 
 @router.get("/annotations/queue")
@@ -371,7 +393,7 @@ async def get_annotation_request(span_id: str) -> Dict[str, Any]:
     try:
         request = await get_annotation_queue().get(span_id)
     except AnnotationQueueUnavailableError as exc:
-        raise _queue_unavailable(exc) from exc
+        raise _queue_unavailable(exc, span_id=span_id) from exc
     if request is None:
         raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
     return request.to_dict()
@@ -391,7 +413,7 @@ async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except AnnotationQueueUnavailableError as exc:
-        raise _queue_unavailable(exc) from exc
+        raise _queue_unavailable(exc, span_id=span_id) from exc
 
 
 @router.post("/annotations/queue/enqueue")
@@ -446,7 +468,7 @@ async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, 
     except AnnotationCompletionInProgressError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AnnotationQueueUnavailableError as exc:
-        raise _queue_unavailable(exc) from exc
+        raise _queue_unavailable(exc, span_id=span_id) from exc
 
     try:
         persisted = await _persist_label(claim.request, span_id, body)
@@ -459,7 +481,7 @@ async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, 
     except AnnotationCompletionInProgressError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AnnotationQueueUnavailableError as exc:
-        raise _queue_unavailable(exc) from exc
+        raise _queue_unavailable(exc, span_id=span_id) from exc
     return {
         "status": "completed",
         "persisted": persisted,
@@ -591,7 +613,7 @@ async def unregister_agent(agent_name: str) -> Dict[str, Any]:
     try:
         success = await registry.remove_registration(agent_name)
     except AgentRegistryUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _registry_unavailable(exc, agent=agent_name) from exc
 
     if not success:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
@@ -700,7 +722,9 @@ async def process_agent_task(
             request_id=dispatch_context["request_id"],
         )
     except AgentRegistryUnavailableError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise _registry_unavailable(
+            e, agent=agent_name, request_id=dispatch_context["request_id"]
+        )
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this
         # deployment, or is unreachable. 503 names the service to configure;

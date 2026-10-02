@@ -894,10 +894,13 @@ async def list_schema_drift(
             drifted_schemas, config_manager, schema_loader
         )
     except (RegistryStorageError, SchemaRegistryInitializationError) as exc:
-        logger.error(f"Schema drift listing failed: {exc}")
-        raise HTTPException(
-            status_code=503, detail=f"Schema registry unavailable: {exc}"
-        )
+        raise failure_response(
+            503,
+            "schema_drift_unavailable",
+            "The schema registry or the recorded migration refusals could not "
+            "be read; retry.",
+            exc,
+        ) from exc
     return SchemaDriftResponse(
         drifted=[
             DriftedSchemaInfo(

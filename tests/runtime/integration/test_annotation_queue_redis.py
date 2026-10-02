@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -787,11 +788,12 @@ class TestCompleteRoute:
         assert storage.writes == [("acme:acme", "span-1", "wrong", "human")]
 
     async def test_a_queue_outage_after_the_label_write_is_503_until_the_claim_lapses(
-        self, own_redis, prefix, route, storage
+        self, own_redis, prefix, route, storage, caplog
     ):
         """Redis stops answering between the label write and the completion:
         the route answers 503 and the request stays claimed; once the claim
         lapses a retry completes it, writing the same label again."""
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         url, pause, resume = own_redis
         claim_seconds = 10
         client = await connect_shared_state_redis(url, timeout_seconds=1.5)
@@ -821,8 +823,23 @@ class TestCompleteRoute:
 
         assert (down.status_code, down.json()) == (
             503,
-            {"detail": "annotation queue unavailable: complete span span-1"},
+            {
+                "detail": {
+                    "error": "annotation_queue_unavailable",
+                    "message": "The annotation queue did not answer; retry.",
+                    "failure": "AnnotationQueueUnavailableError",
+                    "span_id": "span-1",
+                }
+            },
         )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "annotation_queue_unavailable: AnnotationQueueUnavailableError: "
+            "annotation queue unavailable: complete span span-1"
+        ]
         assert held_after < claim_seconds, held_after
         assert (held.status_code, held.json()) == (
             409,
