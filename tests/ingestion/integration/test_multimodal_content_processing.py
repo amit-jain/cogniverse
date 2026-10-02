@@ -38,13 +38,10 @@ from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.system.vespa_test_manager import VespaTestManager
-from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.vespa_test_helpers import (
     IngestionBackendAdapter,
     make_ingestion_client,
 )
-
-MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
 COLBERT_MODEL_NAME = "lightonai/LateOn"
 
@@ -126,11 +123,7 @@ def audio_wav_files(tmp_path_factory):
 @pytest.fixture(scope="module")
 def vespa_with_schemas():
     """Module-scoped Vespa instance with schemas loaded from JSON and deployed."""
-    manager = VespaTestManager(
-        app_name="test-multimodal",
-        http_port=MULTIMODAL_HTTP_PORT,
-        config_port=MULTIMODAL_CONFIG_PORT,
-    )
+    manager = VespaTestManager(app_name="test-multimodal")
 
     if not manager.setup_application_directory():
         raise RuntimeError(

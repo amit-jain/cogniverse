@@ -48,6 +48,8 @@ import requests
 from fastapi import FastAPI
 
 from tests.system.minio_test_manager import chart_minio_server_image
+from tests.utils.docker_utils import start_docker_container_with_port_retry
+from tests.utils.vllm_sidecar import OWNER_LABEL
 
 TENANT_ID = "test_upload_queue"
 PROFILE = "video_colqwen_omni_mv_chunk_30s"
@@ -57,7 +59,6 @@ EXPECTED_CHUNKS = 3
 
 REDIS_CONTAINER = "redis-upload-real-stack"
 MINIO_CONTAINER = "minio-upload-real-stack"
-VESPA_CONTAINER = "vespa-upload-real-stack"
 
 
 def _set_test_vespa_disk_limit(app_package) -> None:
@@ -197,32 +198,6 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def _paired_free_ports() -> int:
-    """Return a free `http_port` such that `http_port + 10991` is also free.
-
-    The Vespa runtime computes config_port = http_port + (19071-8080) and
-    talks to the config server there. Picking unrelated random ports
-    breaks deploys; this keeps the canonical offset intact."""
-    import random
-
-    offset = 19071 - 8080
-    # Stay in the user/registered range so http_port + 10991 fits under
-    # 65535. The OS may still hand the port to someone else between bind
-    # and docker run; the Vespa fixture retries on docker failure anyway.
-    for _ in range(200):
-        candidate = random.randint(20000, 30000)
-        config = candidate + offset
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as h:
-                h.bind(("127.0.0.1", candidate))
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c:
-                c.bind(("127.0.0.1", config))
-        except OSError:
-            continue
-        return candidate
-    raise RuntimeError("Could not find a paired (http, config) free port pair")
 
 
 def _docker_platform() -> str:
@@ -443,38 +418,23 @@ def vespa_backend():
     ApplicationPackage path the production runtime uses."""
     # The runtime computes config_port from http_port via
     # `calculate_config_port`, which assumes the standard 19071-8080=10991
-    # offset. Pick http_port such that http_port + 10991 is also free, so
-    # the worker's deploy URL matches the container's actual config port.
-    http_port = _paired_free_ports()
-    config_port = http_port + (19071 - 8080)
-    docker_platform = _docker_platform()
-
-    subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            VESPA_CONTAINER,
+    # offset; the allocator keeps it, so the worker's deploy URL matches the
+    # container's actual config port.
+    vespa_container, http_port, config_port = start_docker_container_with_port_retry(
+        __name__,
+        name_prefix="vespa-upload-real-stack",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=[
             "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
+            f"{OWNER_LABEL}={os.getpid()}",
             "--platform",
-            docker_platform,
-            "vespaengine/vespa:8.668.5",
+            _docker_platform(),
         ],
-        capture_output=True,
-        text=True,
     )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start Vespa: {result.stderr}")
 
     if not _wait_for_config_port(config_port):
-        subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", vespa_container], capture_output=True)
         pytest.fail("Vespa config port not ready within 180s")
 
     time.sleep(10)
@@ -482,24 +442,24 @@ def vespa_backend():
     try:
         _deploy_metadata_schemas(config_port)
     except Exception as exc:
-        subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", vespa_container], capture_output=True)
         pytest.fail(f"Metadata schema deploy failed: {exc}")
 
     if not _wait_for_data_port(http_port):
-        subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", vespa_container], capture_output=True)
         pytest.fail("Vespa data port not ready within 180s after deploy")
 
     # Wait for one of the metadata schemas to be ready — confirms Vespa
     # has converged. The video profile schema is deployed lazily by the
     # worker on first ingest.
     if not _wait_for_schema_ready(http_port, "tenant_metadata"):
-        subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", vespa_container], capture_output=True)
         pytest.fail("tenant_metadata schema not ready within 120s")
 
     try:
         yield {"http_port": http_port, "config_port": config_port}
     finally:
-        subprocess.run(["docker", "rm", "-f", VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", vespa_container], capture_output=True)
 
 
 @pytest_asyncio.fixture

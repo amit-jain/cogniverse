@@ -19,12 +19,7 @@ from tests.utils.vespa_docker import VespaDockerManager
 class VespaTestManager:
     """Manages isolated Vespa test instances for integration testing"""
 
-    def __init__(
-        self,
-        app_name: str = "test-video-search",
-        http_port: int = 8081,
-        config_port: int = None,
-    ):
+    def __init__(self, app_name: str = "test-video-search"):
         self.app_name = app_name
 
         # System test resources directory (organized like Java test resources)
@@ -32,13 +27,9 @@ class VespaTestManager:
         self.test_videos_resource_dir = self.resources_dir / "videos"
         self.test_configs_resource_dir = self.resources_dir / "configs"
         self.test_schemas_resource_dir = self.resources_dir / "schemas"
-        self.http_port = http_port
-
-        # Calculate config port if not provided (standard Vespa offset)
-        if config_port is None:
-            self.config_port = http_port + 10991
-        else:
-            self.config_port = config_port
+        # Allocated when the container starts (deploy_test_application).
+        self.http_port = None
+        self.config_port = None
 
         self.temp_dir = None
         self.app_dir = None
@@ -127,15 +118,10 @@ class VespaTestManager:
     def deploy_test_application(self) -> bool:
         """Deploy completely isolated Vespa Docker instance"""
         try:
-            print(
-                f"Starting isolated Vespa Docker container on port {self.http_port}..."
-            )
+            print("Starting isolated Vespa Docker container...")
 
-            # Use VespaDockerManager to start container with configured ports
             container_info = self.docker_manager.start_container(
-                module_name="system_test",
-                http_port=self.http_port,  # Use port from VespaTestManager init
-                config_port=self.config_port,
+                module_name=self.app_name
             )
 
             # Update instance variables from container info
@@ -823,7 +809,7 @@ class VespaTestManager:
 
     def full_setup(self) -> bool:
         """Complete setup: create app directory, deploy, and ingest test data"""
-        print(f"🚀 Setting up isolated Vespa test instance on port {self.http_port}...")
+        print("🚀 Setting up isolated Vespa test instance...")
 
         try:
             # Step 1: Create application directory

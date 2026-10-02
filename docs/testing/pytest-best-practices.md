@@ -1002,43 +1002,26 @@ Companion fixtures also defined in `tests/conftest.py`:
 
 ### Port Management
 
-To avoid port conflicts when running tests in parallel:
+Vespa test containers get their host ports when they start, in
+`tests/utils/docker_utils.py`:
 
-Located in `tests/utils/docker_utils.py`:
+- `start_docker_container_with_port_retry(module_name, name_prefix=..., image=..., container_ports=(8080, 19071), ...)`
+  picks a free `(http_port, config_port)` pair with `generate_unique_ports`
+  (`config_port` is always `http_port + 10991`, the offset the runtime
+  re-derives), runs the container under a name unique to the process, thread
+  and port, and removes the container a failed start created. Docker's
+  bind-conflict errors (`address already in use`, `port is already allocated`)
+  are retried on a fresh pair; other failures raise with Docker's stderr, and
+  exhausted retries raise `Docker container allocation failed after N
+  attempts`.
+- `VespaDockerManager.start_container(module_name)` in
+  `tests/utils/vespa_docker.py` (and `VespaTestManager`, which uses it) starts
+  the Vespa image that way and returns the ports it got.
 
-```python
-def generate_unique_ports(
-    module_name: str, base_http_port: int = 40000
-) -> Tuple[int, int]:
-    """
-    Return a free (http_port, config_port) pair for a Vespa test container.
-
-    config_port is always http_port + 10991 (the standard Vespa offset),
-    and both ports are probed as actually-bindable before being returned —
-    so a leftover container from a crashed prior run or a concurrent
-    session can't cause an "address already in use" bind failure.
-    http_port stays in [base_http_port, 54544] so config_port stays
-    under 65535.
-
-    Falls back to a deterministic module_name+PID hash if no free pair
-    is found after 200 random probes (e.g. a sandbox where bind probing
-    is unreliable).
-    """
-    import os
-    import random
-
-    for _ in range(200):
-        http_port = random.randint(base_http_port, 54544)
-        config_port = http_port + 10991
-        if _port_is_free(http_port) and _port_is_free(config_port):
-            return http_port, config_port
-
-    # Fallback: deterministic hash when probing fails.
-    seed = f"{module_name}:{os.getpid()}"
-    port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
-    http_port = base_http_port + (port_hash % 14544)
-    return http_port, http_port + 10991
-```
+`generate_unique_ports` only probes: another process can take a probed port
+before Docker binds it. Never compute ports at import time or pass a
+pre-chosen pair to a container start; read the ports from the started
+container.
 
 ### CI Disk Space Requirements
 

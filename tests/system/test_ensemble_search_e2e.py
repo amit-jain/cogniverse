@@ -46,14 +46,6 @@ def ensemble_system_setup():
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
     from tests.system.vespa_test_manager import VespaTestManager
-    from tests.utils.docker_utils import generate_unique_ports
-
-    # Generate unique ports
-    ensemble_http_port, ensemble_config_port = generate_unique_ports("ensemble_e2e")
-
-    logger.info(
-        f"🚀 Ensemble E2E test using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)"
-    )
 
     # Clear singletons
     registry = get_backend_registry()
@@ -63,9 +55,7 @@ def ensemble_system_setup():
         ConfigManager._instance = None
 
     # Create manager
-    manager = VespaTestManager(
-        http_port=ensemble_http_port, config_port=ensemble_config_port
-    )
+    manager = VespaTestManager(app_name="ensemble-e2e")
 
     try:
         # Setup Vespa
@@ -77,6 +67,8 @@ def ensemble_system_setup():
                 "or video ingestion, which needs the profile's embedding "
                 "inference service reachable)"
             )
+        ensemble_http_port = manager.http_port
+        ensemble_config_port = manager.config_port
 
         logger.info(f"✅ Vespa ready at http://localhost:{ensemble_http_port}")
 

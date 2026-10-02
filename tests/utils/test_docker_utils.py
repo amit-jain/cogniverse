@@ -1,4 +1,4 @@
-"""Unit tests for the Vespa test-port allocator.
+"""Tests for the Vespa test-port allocator and container starters.
 
 ``generate_unique_ports`` must hand back a pair that is actually bindable so a
 leftover container from a crashed prior run (or a concurrent session) can't
@@ -7,6 +7,7 @@ container — the CI flake this allocator was hardened to prevent.
 """
 
 import json
+import re
 import socket
 import subprocess
 import threading
@@ -15,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from tests.utils import docker_utils
+from tests.utils import docker_utils, vespa_docker
 from tests.utils.docker_utils import _port_is_free, generate_unique_ports
 
 
@@ -218,3 +219,250 @@ def test_container_start_surfaces_non_allocation_failure():
             container_command=["sleep", "60"],
             max_attempts=3,
         )
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_container_start_removes_the_container_its_failed_start_created():
+    """Docker creates the container before a start-time failure (here a
+    missing device); the starter removes it before raising, so the failed
+    start leaves nothing behind."""
+    run_id = uuid.uuid4().hex[:10]
+    name_prefix = f"port-created-{run_id}"
+    missing_device = f"/dev/cogniverse-missing-{run_id}"
+
+    with pytest.raises(RuntimeError) as excinfo:
+        docker_utils.start_docker_container_with_port_retry(
+            "tests.docker.created",
+            name_prefix=name_prefix,
+            image="busybox:latest",
+            container_ports=(8080, 19071),
+            extra_run_args=["--device", missing_device],
+            container_command=["sleep", "60"],
+            max_attempts=3,
+        )
+
+    assert re.fullmatch(
+        rf"Docker container {name_prefix}-\d+-\d+-\d+ failed on attempt 1/3: "
+        r"docker: Error response from daemon: error gathering device "
+        rf'information while adding custom device "{missing_device}": no such '
+        r"file or directory Run 'docker run --help' for more information",
+        str(excinfo.value),
+    )
+    leftovers = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"name={name_prefix}",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
+    )
+    assert leftovers.stdout.split() == []
+
+
+def _running_containers(field: str = "{{.Names}}") -> set[str]:
+    result = subprocess.run(
+        ["docker", "ps", "--no-trunc", "--format", field],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
+    )
+    return set(result.stdout.split())
+
+
+def _allocator_returning(monkeypatch, *pairs):
+    """Make the port allocator hand out ``pairs`` in order, wherever the
+    container starter looks it up."""
+    candidates = iter(pairs)
+    monkeypatch.setattr(
+        docker_utils, "generate_unique_ports", lambda _module_name: next(candidates)
+    )
+    monkeypatch.setattr(
+        vespa_docker,
+        "generate_unique_ports",
+        lambda _module_name: next(candidates),
+        raising=False,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_vespa_container_moves_off_a_port_another_socket_holds(monkeypatch):
+    """A port taken between allocation and ``docker run`` (here: a listening
+    socket) is retried on a fresh pair rather than failing the fixture."""
+    held_http, held_config = generate_unique_ports("tests.vespa.held")
+    fresh_http, fresh_config = generate_unique_ports("tests.vespa.fresh")
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("0.0.0.0", held_http))
+    holder.listen()
+    _allocator_returning(
+        monkeypatch, (held_http, held_config), (fresh_http, fresh_config)
+    )
+    manager = vespa_docker.VespaDockerManager()
+    info = None
+    try:
+        info = manager.start_container("tests.vespa.held")
+
+        assert (info["http_port"], info["config_port"]) == (fresh_http, fresh_config)
+        assert info["base_url"] == f"http://localhost:{fresh_http}"
+        assert info["container_name"] in _running_containers()
+        _assert_exact_bindings(info["container_name"], fresh_http, fresh_config)
+        assert holder.getsockname()[1] == held_http
+    finally:
+        holder.close()
+        if info is not None:
+            _remove_container(info["container_name"])
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_vespa_container_start_leaves_another_live_container_running(monkeypatch):
+    """Another session's test container holding the first candidate keeps
+    running, and the new container takes a fresh pair."""
+    taken_http, taken_config = generate_unique_ports("tests.vespa.taken")
+    fresh_http, fresh_config = generate_unique_ports("tests.vespa.fresh")
+    other = f"vespa-test-{taken_http}"
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            other,
+            "-p",
+            f"{taken_http}:8080",
+            "-p",
+            f"{taken_config}:19071",
+            "busybox:latest",
+            "sleep",
+            "120",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    other_id = result.stdout.strip()
+    _allocator_returning(
+        monkeypatch, (taken_http, taken_config), (fresh_http, fresh_config)
+    )
+    manager = vespa_docker.VespaDockerManager()
+    info = None
+    try:
+        info = manager.start_container("tests.vespa.taken")
+
+        assert other_id in _running_containers("{{.ID}}")
+        _assert_exact_bindings(other_id, taken_http, taken_config)
+        assert (info["http_port"], info["config_port"]) == (fresh_http, fresh_config)
+        assert info["container_name"] != other
+        _assert_exact_bindings(info["container_name"], fresh_http, fresh_config)
+    finally:
+        if info is not None:
+            _remove_container(info["container_name"])
+        _remove_container(other)
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_concurrent_vespa_containers_from_one_candidate_get_distinct_ports(
+    monkeypatch,
+):
+    """Two managers released together onto the same candidate pair both
+    start, on distinct ports, and neither removes the other's container."""
+    shared_pair = generate_unique_ports("tests.vespa.concurrent.shared")
+    original_generate = docker_utils.generate_unique_ports
+    calls = 0
+    calls_lock = threading.Lock()
+    barrier = threading.Barrier(2, timeout=15)
+
+    def colliding_generate(module_name):
+        nonlocal calls
+        with calls_lock:
+            call_number = calls
+            calls += 1
+        if call_number < 2:
+            barrier.wait()
+            return shared_pair
+        return original_generate(module_name)
+
+    monkeypatch.setattr(docker_utils, "generate_unique_ports", colliding_generate)
+    monkeypatch.setattr(
+        vespa_docker, "generate_unique_ports", colliding_generate, raising=False
+    )
+
+    def start(worker_id):
+        try:
+            return vespa_docker.VespaDockerManager().start_container(
+                f"tests.vespa.concurrent.{worker_id}"
+            )
+        except RuntimeError as exc:
+            return exc
+
+    started = []
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            started = list(executor.map(start, range(2)))
+
+        assert [type(info) for info in started] == [dict, dict]
+        assert len({(i["http_port"], i["config_port"]) for i in started}) == 2
+        assert shared_pair in {(i["http_port"], i["config_port"]) for i in started}
+        running = _running_containers()
+        for info in started:
+            assert info["container_name"] in running
+            _assert_exact_bindings(
+                info["container_name"], info["http_port"], info["config_port"]
+            )
+    finally:
+        for info in started:
+            if isinstance(info, dict):
+                _remove_container(info["container_name"])
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_vespa_container_start_raises_when_every_candidate_is_taken(monkeypatch):
+    """Exhausted retries raise with Docker's bind error, leaving no container."""
+    held_http, held_config = generate_unique_ports("tests.vespa.exhausted")
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("0.0.0.0", held_http))
+    holder.listen()
+    _allocator_returning(monkeypatch, *[(held_http, held_config)] * 5)
+    try:
+        with pytest.raises(RuntimeError) as excinfo:
+            vespa_docker.VespaDockerManager().start_container("tests.vespa.exhausted")
+    finally:
+        holder.close()
+
+    message = str(excinfo.value)
+    assert message.startswith(
+        "Failed to start Vespa container: "
+        "Docker container allocation failed after 5 attempts: "
+    )
+    assert f"0.0.0.0:{held_http}" in message
+    assert "address already in use" in message
+    leftovers = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "name=vespa-test-",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
+    )
+    assert [
+        name for name in leftovers.stdout.split() if name.endswith(f"-{held_http}")
+    ] == []

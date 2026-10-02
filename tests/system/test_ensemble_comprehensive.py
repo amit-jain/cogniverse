@@ -83,14 +83,6 @@ def comprehensive_ensemble_setup():
     )
     from tests.system.vespa_test_manager import VespaTestManager
     from tests.utils.async_polling import wait_for_vespa_indexing
-    from tests.utils.docker_utils import generate_unique_ports
-
-    # Generate unique ports
-    http_port, config_port = generate_unique_ports("comprehensive_ensemble")
-
-    logger.info(
-        f"🚀 Comprehensive Ensemble test using ports: {http_port} (http), {config_port} (config)"
-    )
 
     # Clear singletons
     registry = get_backend_registry()
@@ -100,7 +92,7 @@ def comprehensive_ensemble_setup():
         ConfigManager._instance = None
 
     # Create manager
-    manager = VespaTestManager(http_port=http_port, config_port=config_port)
+    manager = VespaTestManager(app_name="comprehensive-ensemble")
 
     try:
         # Setup Vespa
@@ -112,6 +104,7 @@ def comprehensive_ensemble_setup():
                 "or video ingestion, which needs the profile's embedding "
                 "inference service reachable)"
             )
+        http_port, config_port = manager.http_port, manager.config_port
 
         logger.info(f"✅ Vespa ready at http://localhost:{http_port}")
 
