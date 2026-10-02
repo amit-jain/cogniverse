@@ -25,12 +25,11 @@ from tests.e2e.conftest import (
     active_tab_panel,
     click_sub_tab,
     click_top_tab,
-    register_tenant_and_wait,
     set_tenant,
-    unique_id,
     wait_for_script_idle,
     wait_for_streamlit,
 )
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 
 pytestmark = pytest.mark.e2e
 

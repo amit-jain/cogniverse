@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from tests.e2e.conftest import (
+from tests.e2e.cron_guard import (
     _restore_cronworkflows,
     _suspend_cronworkflows_for_session,
 )
@@ -34,7 +34,7 @@ def _use_test_owned_cluster(ephemeral_k8s_cluster, monkeypatch):
     """Point kubectl — ours and the suspend/restore helpers' — at the
     session's own API server, never a developer's cluster. The helpers name
     a context explicitly, so the kubeconfig alone does not redirect them."""
-    from tests.e2e import conftest as e2e_conftest
+    from tests.e2e import cluster
 
     kubeconfig = str(ephemeral_k8s_cluster["kubeconfig"])
     monkeypatch.setenv("KUBECONFIG", kubeconfig)
@@ -44,7 +44,7 @@ def _use_test_owned_cluster(ephemeral_k8s_cluster, monkeypatch):
         text=True,
         check=True,
     ).stdout.strip()
-    monkeypatch.setattr(e2e_conftest, "KUBECTL_CONTEXT", context)
+    monkeypatch.setattr(cluster, "KUBECTL_CONTEXT", context)
 
 
 def _apply_cronworkflow(name: str, suspend: bool) -> None:

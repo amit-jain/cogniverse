@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-import tests.e2e.conftest as e2e_conftest
+from tests.e2e import cluster
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 E2E_ROOT = REPO_ROOT / "tests" / "e2e"
@@ -77,13 +77,13 @@ def _kubectl_context_violations() -> list[tuple[Path, int, str]]:
                     "KUBECTL" in name and "CONTEXT" in name for name in target_names
                 ):
                     continue
-                if path.name != "conftest.py":
+                if path != E2E_ROOT / "cluster.py":
                     violations.append(
                         (
                             path,
                             node.lineno,
                             "defines its own kubectl context; import it from "
-                            "tests.e2e.conftest",
+                            "tests.e2e.cluster",
                         )
                     )
                     continue
@@ -187,4 +187,4 @@ def test_e2e_kubectl_invocations_use_shared_context():
 
 
 def test_shared_kubectl_context_matches_provisioned_cluster():
-    assert e2e_conftest.KUBECTL_CONTEXT == f"k3d-{e2e_conftest.E2E_CLUSTER_NAME}"
+    assert cluster.KUBECTL_CONTEXT == f"k3d-{cluster.E2E_CLUSTER_NAME}"

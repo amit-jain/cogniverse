@@ -15,12 +15,8 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import (
-    KUBECTL_CONTEXT,
-    RUNTIME,
-    TENANT_ID,
-    assert_telegram_chunks,
-)
+from tests.e2e.cluster import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import assert_telegram_chunks
 
 pytestmark = [pytest.mark.e2e, pytest.mark.requires_telegram_bot]
 

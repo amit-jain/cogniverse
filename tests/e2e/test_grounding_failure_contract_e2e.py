@@ -24,16 +24,13 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_SEARCHED,
     AnswerGroundingUnavailable,
 )
-from tests.e2e.conftest import (
-    RUNTIME,
-    SAMPLE_DOCUMENT_TITLES,
-    TENANT_DEPLOY_TIMEOUT_S,
+from tests.e2e.cluster import RUNTIME, TENANT_DEPLOY_TIMEOUT_S, runtime_available
+from tests.e2e.conftest import SAMPLE_DOCUMENT_TITLES, _ingest_sample_documents
+from tests.e2e.tenants import (
     _deployed_schema_names_strict,
-    _ingest_sample_documents,
     _tenant_schema_name,
     _tenant_schema_names_in_vespa,
     register_tenant_and_wait,
-    runtime_available,
     unique_id,
 )
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE, _deploy_profile_for_tenant

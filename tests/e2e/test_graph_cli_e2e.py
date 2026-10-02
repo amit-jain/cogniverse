@@ -13,12 +13,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.e2e.conftest import (
-    GLINER_URL,
-    RUNTIME,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.cluster import GLINER_URL, RUNTIME
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE
 
 GRAPH_STATS_URL = f"{RUNTIME}/graph/stats"

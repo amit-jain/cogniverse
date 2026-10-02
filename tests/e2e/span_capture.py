@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
+from math import ceil
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -550,3 +551,75 @@ def replay_spans(
         return replayed
     finally:
         provider.shutdown()
+
+
+def wait_for_span(
+    phoenix_client,
+    project: str,
+    span_name: str,
+    start_time: datetime,
+    attribute_predicate=None,
+    timeout_s: float = 30.0,
+    poll_interval_s: float = 2.0,
+):
+    """Poll Phoenix for an exact span name within a bounded time window.
+
+    Returns the first matching pandas Series row or None when the exact span
+    never appears before the deadline. If Phoenix read attempts fail during
+    polling, raises with the last read error so outage and not-found stay
+    distinguishable.
+
+    `attribute_predicate`, if given, is `(attrs_dict) -> bool` evaluated on
+    each matching span's attributes column. The first row that satisfies the
+    predicate is returned.
+    """
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+
+    from phoenix.client.types.spans import SpanQuery
+
+    def _esc(value: object) -> str:
+        # Backslash first, then quote — quoting first would let a trailing
+        # backslash re-escape the closing quote.
+        return str(value).replace("\\", "\\\\").replace("'", "\\'")
+
+    predicate = f"name == '{_esc(span_name)}'"
+    query = SpanQuery().where(predicate)
+    deadline = time.monotonic() + timeout_s
+    query_timeout_s = max(1, ceil(timeout_s))
+    last_error = None
+
+    while time.monotonic() < deadline:
+        try:
+            spans_df = phoenix_client.spans.get_spans_dataframe(
+                project_identifier=project,
+                query=query,
+                start_time=start_time,
+                timeout=query_timeout_s,
+            )
+            last_error = None
+            if spans_df is not None and not spans_df.empty:
+                if attribute_predicate is None:
+                    return spans_df.iloc[0]
+                for _, row in spans_df.iterrows():
+                    attrs = row.get("attributes")
+                    if attrs is None:
+                        continue
+                    # Phoenix returns attributes as a dict-like; coerce.
+                    attrs_dict = dict(attrs) if not isinstance(attrs, dict) else attrs
+                    if attribute_predicate(attrs_dict):
+                        return row
+        except Exception as exc:
+            # Phoenix can transiently 5xx during heavy ingest; keep polling
+            # until the deadline. If every read fails, raise with context.
+            last_error = exc
+        time.sleep(poll_interval_s)
+
+    if last_error is not None:
+        raise RuntimeError(
+            "wait_for_span read failed while polling Phoenix: "
+            f"project={project!r} span_name={span_name!r} "
+            f"start_time={start_time.isoformat()} timeout_s={timeout_s:g} "
+            f"poll_interval_s={poll_interval_s:g} last_error={last_error!r}"
+        ) from last_error
+    return None

@@ -21,16 +21,10 @@ from inspect_ai._util.registry import registry_unqualified_name
 from cogniverse_evaluation.core.inspect_scorers import get_configured_scorers
 from cogniverse_evaluation.data.datasets import INPUT_KEYS, OUTPUT_KEYS, DatasetManager
 from cogniverse_sdk.document import result_source_title_key
-from tests.e2e.conftest import (
-    KUBECTL_CONTEXT,
-    PHOENIX_URL,
-    RUNTIME,
-    TENANT_ID,
-    _active_video_profile_name,
-    _evaluation_query_rows,
-    run_async,
-    unique_id,
-)
+from tests.e2e.cluster import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import PHOENIX_URL, _active_video_profile_name, run_async
+from tests.e2e.sample_corpus import _evaluation_query_rows
+from tests.e2e.tenants import unique_id
 
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"

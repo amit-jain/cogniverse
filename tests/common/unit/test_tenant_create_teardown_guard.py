@@ -3,11 +3,11 @@
 A tenant is created either explicitly (``POST /admin/tenants``) or by the
 first request that touches a minted id, so ownership is bound at the mint
 (``unique_id``) and at the one explicit create helper
-(``register_tenant_and_wait``), both in ``tests/e2e/conftest.py``. This guard
+(``register_tenant_and_wait``), both in ``tests/e2e/tenants.py``. This guard
 walks ``tests/e2e`` and fails any other create site: a direct post to
-``/admin/tenants`` (literal or f-string URL) outside the two allowed conftest
-functions, or an org/tenant id built from ``uuid4`` in a scope that then
-creates an org or tenant with it.
+``/admin/tenants`` (literal or f-string URL) outside that helper and the
+conftest's seeded-tenant bootstrap, or an org/tenant id built from ``uuid4``
+in a scope that then creates an org or tenant with it.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _CREATE_PATH = "/admin/tenants"
 _ORG_PATH = "/admin/organizations"
 _CREATE_HELPER = "register_tenant_and_wait"
 _ALLOWED_POST_SITES = {
-    ("conftest.py", "register_tenant_and_wait"),
+    ("tenants.py", "register_tenant_and_wait"),
     ("conftest.py", "_bootstrap_tenant_and_schemas"),
 }
 
@@ -101,7 +101,7 @@ def _e2e_sources() -> list[tuple[str, str]]:
     return [(p.name, p.read_text()) for p in sorted(_E2E_DIR.glob("*.py"))]
 
 
-def test_the_only_tenant_create_posts_are_the_conftest_helper_and_the_seeded_tenant():
+def test_the_only_tenant_create_posts_are_the_tenants_helper_and_the_seeded_tenant():
     sites = [s for name, src in _e2e_sources() for s in tenant_create_posts(src, name)]
     assert sorted(sites) == sorted(_ALLOWED_POST_SITES)
 

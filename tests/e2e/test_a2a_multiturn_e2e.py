@@ -25,13 +25,9 @@ from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_SAVE_TIMEOUT_S,
     AnswerGroundingUnavailable,
 )
-from tests.e2e.conftest import (
-    SAMPLE_DOCUMENT_TITLES,
-    TENANT_DEPLOY_TIMEOUT_S,
-    _ingest_sample_documents,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.cluster import TENANT_DEPLOY_TIMEOUT_S
+from tests.e2e.conftest import SAMPLE_DOCUMENT_TITLES, _ingest_sample_documents
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE, _deploy_profile_for_tenant
 
 RUNTIME = "http://localhost:33000"

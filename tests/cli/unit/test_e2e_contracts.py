@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import ast
 import importlib
-import inspect
 import os
 import re
 import subprocess
@@ -14,10 +14,38 @@ from types import SimpleNamespace
 
 import pytest
 
-import tests.e2e.test_manual_optimization_e2e as manual_optimization
-import tests.e2e.test_messaging_e2e as messaging
-import tests.e2e.test_quality_monitor_e2e as quality_monitor
-from tests.e2e.conftest import KUBECTL_CONTEXT, _telegram_real_flow_deselections
+from tests.e2e.cluster import KUBECTL_CONTEXT
+from tests.e2e.collection import _telegram_real_flow_deselections
+
+_E2E_DIR = Path(__file__).resolve().parents[2] / "e2e"
+
+
+def _e2e_source(filename: str) -> str:
+    """Source of ``tests/e2e/<filename>``, read without importing the module."""
+    return (_E2E_DIR / filename).read_text()
+
+
+def _e2e_function_source(filename: str, name: str) -> str:
+    """Source of top-level function ``name`` in ``tests/e2e/<filename>``."""
+    source = _e2e_source(filename)
+    for node in ast.parse(source).body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            return ast.get_source_segment(source, node)
+    raise AssertionError(f"tests/e2e/{filename} defines no function {name!r}")
+
+
+def _e2e_module_constant(filename: str, name: str):
+    """Literal value ``tests/e2e/<filename>`` assigns to ``name`` at top level."""
+    for node in ast.parse(_e2e_source(filename)).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"tests/e2e/{filename} assigns no {name}")
 
 
 class _FakeItem:
@@ -49,87 +77,87 @@ def test_telegram_real_flow_is_deselected_without_required_env(monkeypatch, tmp_
 
 
 def test_e2e_vespa_ports_pin_the_33xxx_host_mapping():
-    module_specs = {
-        "tests.e2e.test_knowledge_summarization_agent_e2e": (
+    module_constants = {
+        "test_knowledge_summarization_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_multi_document_synthesis_agent_e2e": (
+        "test_multi_document_synthesis_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_federation_e2e": (
+        "test_federation_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_pinning_quotas_e2e": (
+        "test_pinning_quotas_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_contradiction_detection_e2e": (
+        "test_contradiction_detection_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_temporal_reasoning_agent_e2e": (
+        "test_temporal_reasoning_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_citation_and_audit_agents_e2e": (
+        "test_citation_and_audit_agents_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_trust_ranking_e2e": (
+        "test_trust_ranking_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_provenance_e2e": (
+        "test_provenance_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_contradiction_reconciliation_agent_e2e": (
+        "test_contradiction_reconciliation_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_cross_tenant_comparison_agent_e2e": (
+        "test_cross_tenant_comparison_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_kg_traversal_agent_e2e": (
+        "test_kg_traversal_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_federated_query_agent_e2e": (
+        "test_federated_query_agent_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
             33071,
         ),
-        "tests.e2e.test_annotation_feedback_e2e": ("VESPA_PORT", 33080, None, None),
-        "tests.e2e.test_deep_synthesis_workflow_e2e": (
+        "test_annotation_feedback_e2e.py": ("VESPA_PORT", 33080, None, None),
+        "test_deep_synthesis_workflow_e2e.py": (
             "VESPA_HTTP_PORT",
             33080,
             "VESPA_CONFIG_PORT",
@@ -137,30 +165,30 @@ def test_e2e_vespa_ports_pin_the_33xxx_host_mapping():
         ),
     }
 
-    for module_name, spec in module_specs.items():
-        module = importlib.import_module(module_name)
+    for filename, spec in module_constants.items():
         http_attr, http_expected, config_attr, config_expected = spec
-        assert getattr(module, http_attr) == http_expected, module_name
+        assert _e2e_module_constant(filename, http_attr) == http_expected, filename
         if config_attr is not None:
-            assert getattr(module, config_attr) == config_expected, module_name
+            assert _e2e_module_constant(filename, config_attr) == config_expected, (
+                filename
+            )
 
 
 def test_telegram_module_uses_collection_deselection_and_not_runtime_asserts():
-    module_src = inspect.getsource(messaging._assert_bot_ready)
+    module_src = _e2e_function_source("test_messaging_e2e.py", "_assert_bot_ready")
 
     assert "pytest.fail(" in module_src
     assert "assert BOT_TOKEN" not in module_src
     assert "assert TEST_CHAT_ID" not in module_src
-    assert "requires_telegram_bot" in inspect.getsource(messaging)
+    assert "requires_telegram_bot" in _e2e_source("test_messaging_e2e.py")
 
 
 def test_argo_probe_call_sites_use_authoritative_namespace_and_helper():
-    for module in (quality_monitor, manual_optimization):
-        source = inspect.getsource(
-            module.require_kubectl_cluster
-            if module is quality_monitor
-            else module.require_argo_workflows
-        )
+    for filename, function in (
+        ("test_quality_monitor_e2e.py", "require_kubectl_cluster"),
+        ("test_manual_optimization_e2e.py", "require_argo_workflows"),
+    ):
+        source = _e2e_function_source(filename, function)
         # property, not byte-layout: the formatter may wrap this call
         assert "argo_workflow_controller_probe_command(" in source
         assert "ARGO_NAMESPACE" in source
@@ -251,7 +279,7 @@ def test_loader_tolerates_a_key_file_written_as_key_equals_value(tmp_path):
 def test_expected_initial_trust_pins_every_kind_and_derivation_pair():
     """The e2e trust expectation, written out so drift is visible in review."""
     from cogniverse_core.memory.provenance import DerivationKind
-    from tests.e2e.conftest import expected_initial_trust
+    from tests.e2e.trust import expected_initial_trust
 
     pairs = {
         ("entity_fact", DerivationKind.DIRECT_INGEST): 0.60,
@@ -271,7 +299,7 @@ def test_expected_initial_trust_pins_every_kind_and_derivation_pair():
 
 def test_expected_initial_trust_rejects_an_unknown_schema_kind():
     from cogniverse_core.memory.provenance import DerivationKind
-    from tests.e2e.conftest import expected_initial_trust
+    from tests.e2e.trust import expected_initial_trust
 
     with pytest.raises(KeyError):
         expected_initial_trust("not_a_schema_kind", DerivationKind.DIRECT_INGEST)
@@ -886,8 +914,7 @@ def test_e2e_run_lock_release_leaves_a_foreign_lock_intact(tmp_path):
 
 
 def test_e2e_stack_fixture_acquires_the_run_lock_before_touching_the_cluster():
-    e2e_conftest = importlib.import_module("tests.e2e.conftest")
-    source = inspect.getsource(e2e_conftest.e2e_stack.__wrapped__)
+    source = _e2e_function_source("conftest.py", "e2e_stack")
     acquire_at = source.index("run_lock.acquire(")
     assert acquire_at < source.index("_ensure_host_sandbox_gateway(")
     assert acquire_at < source.index("_e2e_cluster_state(")
@@ -915,7 +942,7 @@ def _liveness_samples(count, *, slow_at=None, slow_s=0.0, pause_at=None, pause_s
 def test_loop_probe_bound_is_the_readiness_share_of_the_probe_interval():
     import yaml
 
-    from tests.e2e.conftest import K3S_VALUES
+    from tests.e2e.cluster import K3S_VALUES
     from tests.e2e.loop_probe import (
         BASE_VALUES,
         POLL_INTERVAL_S,
@@ -1034,7 +1061,7 @@ def test_the_served_tokenizer_uses_the_pinned_e2e_cache(monkeypatch):
     from transformers import AutoTokenizer
 
     from cogniverse_foundation.inference_specs import get_inference_service_spec
-    from tests.e2e.test_api_e2e import E2E_HF_HUB_CACHE, _served_document_tokens
+    from tests.e2e.served_tokenizer import E2E_HF_HUB_CACHE, _served_document_tokens
 
     loaded = {}
 
@@ -1063,7 +1090,7 @@ def test_the_served_tokenizer_uses_the_pinned_e2e_cache(monkeypatch):
 def test_a_tokenizer_missing_from_the_cache_fails_at_once(monkeypatch, tmp_path):
     import time
 
-    from tests.e2e.test_api_e2e import _served_document_tokens
+    from tests.e2e.served_tokenizer import _served_document_tokens
 
     monkeypatch.setenv("HF_ENDPOINT", "http://127.0.0.1:9")
     started = time.monotonic()

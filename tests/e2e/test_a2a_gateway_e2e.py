@@ -29,20 +29,18 @@ from cogniverse_runtime.harness_turn import (
     TERMINAL_FAILURE_STATUSES,
     NoAnswerError,
 )
+from tests.e2e.cluster import RUNTIME, TENANT_ID
 from tests.e2e.conftest import (
-    DATA_ROOT,
     PHOENIX_URL,
-    RUNTIME,
-    TENANT_ID,
     _ensure_sample_content_ingested,
     _ingest_sample_documents,
     assert_orchestrated,
     expected_gateway_routing,
-    register_tenant_and_wait,
     sample_audio_content_id,
-    unique_id,
 )
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
+from tests.e2e.sample_corpus import DATA_ROOT
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import (
     DOCUMENT_PROFILE,
     PROFILE,

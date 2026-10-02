@@ -23,7 +23,7 @@ from typing import List, Tuple
 import httpx
 import yaml
 
-from tests.e2e.conftest import K3S_VALUES, RUNTIME
+from tests.e2e.cluster import K3S_VALUES, RUNTIME
 
 BASE_VALUES = Path(__file__).resolve().parents[2] / "charts/cogniverse/values.yaml"
 

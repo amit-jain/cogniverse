@@ -32,7 +32,7 @@ from uuid import uuid4
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
-from tests.e2e.conftest import KUBECTL_CONTEXT
+from tests.e2e.cluster import KUBECTL_CONTEXT
 from tests.e2e.test_api_e2e import PROFILE
 
 NAMESPACE = "cogniverse"
@@ -207,7 +207,7 @@ def _provision_run_tenant() -> None:
     """
     import httpx
 
-    from tests.e2e.conftest import register_tenant_and_wait
+    from tests.e2e.tenants import register_tenant_and_wait
 
     tenant_row = register_tenant_and_wait(
         CANONICAL_TENANT, created_by="annotation-feedback-e2e"

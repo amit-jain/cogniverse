@@ -26,7 +26,8 @@ from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import _ensure_host_sandbox_gateway, unique_id
+from tests.e2e.conftest import _ensure_host_sandbox_gateway
+from tests.e2e.tenants import unique_id
 
 
 def _free_local_port() -> int:

@@ -31,14 +31,9 @@ import yaml
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import TelemetryConfig
-from tests.e2e.conftest import (
-    GATEWAY_VIDEO_QUERIES,
-    IN_POD_TELEMETRY_PRELUDE,
-    KUBECTL_CONTEXT,
-    expected_gateway_calibration,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.cluster import IN_POD_TELEMETRY_PRELUDE, KUBECTL_CONTEXT
+from tests.e2e.conftest import GATEWAY_VIDEO_QUERIES, expected_gateway_calibration
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 
 NAMESPACE = "cogniverse"
@@ -46,7 +41,7 @@ CHART_VALUES = (
     Path(__file__).resolve().parents[2] / "charts" / "cogniverse" / "values.yaml"
 )
 RUNTIME = (
-    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/cluster.py
 )
 SUBMISSION_TIMEOUT_S = 600.0
 

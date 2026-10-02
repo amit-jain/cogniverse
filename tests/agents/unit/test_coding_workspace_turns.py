@@ -479,7 +479,7 @@ async def test_latest_results_must_agree_with_recorded_round(monkeypatch):
 
 
 def test_sandbox_output_shape_matches_e2e_contract():
-    from tests.e2e.test_coding_cli_e2e import _assert_coding_output_shape
+    from tests.e2e.coding_contract import _assert_coding_output_shape
 
     result = coding.CodingOutput().model_dump()
     _assert_coding_output_shape(result)

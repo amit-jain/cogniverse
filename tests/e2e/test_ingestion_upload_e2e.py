@@ -61,16 +61,11 @@ from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_runtime.ingestion_worker.idempotency import DONE_KEY_PREFIX
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
 from cogniverse_vespa.ingestion_client import document_namespace
-from tests.e2e.conftest import (
-    E2E_ARTIFACT_DIR,
-    KUBECTL_CONTEXT,
-    _atomic_artifact,
-    _expected_sample_documents_fed,
-    _profile_selection_video_profiles,
-    _tenant_schema_name,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.artifacts import _atomic_artifact
+from tests.e2e.cluster import KUBECTL_CONTEXT
+from tests.e2e.conftest import E2E_ARTIFACT_DIR, _profile_selection_video_profiles
+from tests.e2e.sample_corpus import _expected_sample_documents_fed
+from tests.e2e.tenants import _tenant_schema_name, register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 from tests.utils.kg_lookup import resolve_persisted_kg_nodes
 
@@ -518,7 +513,7 @@ def _asr_probe() -> tuple[str, str]:
     """The (base_url, model) the session readiness gate probes ASR with."""
     from cogniverse_cli.images import detect_torch_backend
 
-    from tests.e2e.conftest import _E2E_ASR_MODELS, _e2e_required_model_probes
+    from tests.e2e.inference import _E2E_ASR_MODELS, _e2e_required_model_probes
 
     backend = detect_torch_backend()
     expected_model = _E2E_ASR_MODELS[backend]

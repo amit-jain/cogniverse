@@ -10,14 +10,14 @@ import pytest
 import yaml
 from cogniverse_cli.argo import (
     ARGO_INSTALL_URL,
+    ARGO_NAMESPACE,
+    ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
     deploy_workflow_templates,
     filter_workflow_templates,
     install_argo_controller,
 )
 
-from tests.e2e.conftest import (
-    ARGO_NAMESPACE,
-    ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
+from tests.e2e.cluster import (
     KUBECTL_CONTEXT,
     argo_workflow_controller_probe_command,
     argo_workflow_controller_probe_failure_message,

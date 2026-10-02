@@ -42,14 +42,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.e2e.conftest import (
+from tests.e2e.batch_optimization import optimization_cli_document
+from tests.e2e.cluster import (
     IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     RUNTIME,
     TENANT_ID,
-    _ensure_sample_content_ingested,
-    optimization_cli_document,
 )
+from tests.e2e.conftest import _ensure_sample_content_ingested
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE
 
 pytestmark = [

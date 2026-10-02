@@ -32,19 +32,14 @@ from cogniverse_foundation.telemetry.config import (
 from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.e2e.cluster import RUNTIME, TENANT_DEPLOY_TIMEOUT_S, TENANT_ID
 from tests.e2e.conftest import (
     DASHBOARD,
     GATEWAY_VIDEO_QUERIES,
-    RUNTIME,
     SAMPLE_VIDEO_CONTENT_ID,
     SAMPLE_VIDEO_PATH,
-    TENANT_DEPLOY_TIMEOUT_S,
-    TENANT_ID,
     _ensure_sample_content_ingested,
-    _expected_sample_documents_fed,
-    _sample_video_media_type,
     _search_sample_content,
-    _tenant_schema_name,
     active_sub_tab_panel,
     active_tab_panel,
     click_button,
@@ -53,12 +48,15 @@ from tests.e2e.conftest import (
     fill_input,
     fill_textarea,
     panel_widget,
-    register_tenant_and_wait,
     set_tenant,
-    unique_id,
     wait_for_script_idle,
     wait_for_streamlit,
 )
+from tests.e2e.sample_corpus import (
+    _expected_sample_documents_fed,
+    _sample_video_media_type,
+)
+from tests.e2e.tenants import _tenant_schema_name, register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import (
     PROFILE,
     _deploy_profile_for_tenant,

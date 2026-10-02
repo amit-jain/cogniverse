@@ -26,7 +26,8 @@ from cogniverse_agents.optimizer.signature_variants import (
     SignatureVariantRegistry,
     variant_qualified_agent_key,
 )
-from tests.e2e.conftest import RUNTIME, unique_id
+from tests.e2e.cluster import RUNTIME
+from tests.e2e.tenants import unique_id
 
 # ---------------------------------------------------------------------------
 # 1. register — idempotent for identical defs, raises on conflict

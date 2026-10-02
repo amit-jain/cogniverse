@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-import tests.e2e.conftest as e2e_conftest
+from tests.e2e import cluster, inference
 
 _VALUES = pathlib.Path(__file__).resolve().parents[3] / "charts/cogniverse/values.yaml"
 
@@ -46,23 +46,23 @@ def test_the_chart_still_exposes_the_node_ports_the_gate_derives_from():
 
 
 def test_every_gated_service_maps_to_the_forwarded_host_port():
-    for service, url in e2e_conftest.e2e_required_health_probes("rocm"):
+    for service, url in inference.e2e_required_health_probes("rocm"):
         host_port = int(url.rsplit(":", 1)[1])
-        assert host_port in e2e_conftest.E2E_HOST_PORTS, (
+        assert host_port in cluster.E2E_HOST_PORTS, (
             f"{service} is gated at {url}, which the e2e port-forward does not "
-            f"expose; forwarded ports are {sorted(e2e_conftest.E2E_HOST_PORTS)}"
+            f"expose; forwarded ports are {sorted(cluster.E2E_HOST_PORTS)}"
         )
 
 
 def test_gliner_is_gated_because_sample_ingestion_calls_it():
-    probed = dict(e2e_required := e2e_conftest.e2e_required_health_probes("rocm"))
+    probed = dict(e2e_required := inference.e2e_required_health_probes("rocm"))
     assert "gliner" in probed, e2e_required
-    assert probed["gliner"] == e2e_conftest.GLINER_URL, probed
+    assert probed["gliner"] == cluster.GLINER_URL, probed
 
 
 def test_a_service_disabled_by_the_deployment_is_not_gated():
-    probed = dict(e2e_conftest.e2e_required_health_probes("rocm"))
-    for disabled in e2e_conftest._E2E_DISABLED_INFERENCE_SERVICES:
+    probed = dict(inference.e2e_required_health_probes("rocm"))
+    for disabled in inference._E2E_DISABLED_INFERENCE_SERVICES:
         assert disabled not in probed, (
             f"{disabled} is switched off by the e2e overrides, so it has no pod "
             "to probe and gating on it would fail readiness for a model nothing "
@@ -75,7 +75,7 @@ def test_the_gated_set_is_exactly_the_sidecars_sample_ingestion_needs():
     # (colbert_pylate, denseon), audio embed (clap_embed) and graph extraction
     # (gliner). These are the six the launcher warms and the six the session
     # fixture's own ingest exercises.
-    assert sorted(dict(e2e_conftest.e2e_required_health_probes("rocm"))) == [
+    assert sorted(dict(inference.e2e_required_health_probes("rocm"))) == [
         "clap_embed",
         "colbert_pylate",
         "denseon",
@@ -87,7 +87,7 @@ def test_the_gated_set_is_exactly_the_sidecars_sample_ingestion_needs():
 
 @pytest.mark.parametrize("backend", ["cpu", "rocm", "cuda"])
 def test_the_gate_is_never_empty_for_any_backend(backend):
-    assert e2e_conftest.e2e_required_health_probes(backend), backend
+    assert inference.e2e_required_health_probes(backend), backend
 
 
 def test_every_inference_sidecar_the_chart_exposes_is_port_forwarded():
@@ -104,7 +104,7 @@ def test_every_inference_sidecar_the_chart_exposes_is_port_forwarded():
         service: node_port
         for service, node_port in _chart_node_ports().items()
         if 29000 <= node_port < 30000
-        and (node_port + 4900) not in e2e_conftest.E2E_HOST_PORTS
+        and (node_port + 4900) not in cluster.E2E_HOST_PORTS
     }
     assert missing == {}, (
         "these inference sidecars declare a nodePort the e2e loadbalancer does "

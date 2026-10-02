@@ -24,13 +24,8 @@ import pytest
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import (
-    IN_POD_TELEMETRY_PRELUDE,
-    KUBECTL_CONTEXT,
-    RUNTIME,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.cluster import IN_POD_TELEMETRY_PRELUDE, KUBECTL_CONTEXT, RUNTIME
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 
 pytestmark = pytest.mark.e2e
 

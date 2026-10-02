@@ -176,6 +176,17 @@ uv run pytest tests/agents/unit/test_search_agent.py -v
 uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_search_by_text -v
 ```
 
+### E2E helpers outside the e2e conftest
+
+Importing `tests/e2e/conftest.py` publishes the e2e cluster's Vespa endpoint as
+`TEST_BACKEND_URL`/`TEST_BACKEND_PORT` for the rest of the session, so only
+modules under `tests/e2e` import it. Unit and integration tests import e2e
+helpers from the plain modules beside it: `cluster.py` (cluster name, kube
+context, host ports, seeded tenant), `tenants.py`, `sample_corpus.py`,
+`inference.py`, `report.py` and the others in `tests/e2e`.
+`tests/common/unit/test_e2e_conftest_import_guard.py` fails any module outside
+`tests/e2e` that reaches the conftest, directly or through another module.
+
 ### Shared e2e cluster lifecycle
 
 Tests that need the shared `cogniverse-e2e` cluster create it when absent and

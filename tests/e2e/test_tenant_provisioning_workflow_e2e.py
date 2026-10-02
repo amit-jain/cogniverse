@@ -23,13 +23,15 @@ from cogniverse_core.memory.provenance_store import PROVENANCE_BASE_SCHEMA
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime import provision_tenant
 from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
+from tests.e2e.cluster import KUBECTL_CONTEXT
 from tests.e2e.conftest import (
-    KUBECTL_CONTEXT,
     SAMPLE_VIDEO_PATH,
-    _deployed_schema_names_strict,
     _ensure_sample_content_ingested,
-    _sample_video_media_type,
     _search_sample_content,
+)
+from tests.e2e.sample_corpus import _sample_video_media_type
+from tests.e2e.tenants import (
+    _deployed_schema_names_strict,
     _tenant_schema_name,
     _tenant_schema_names_in_vespa,
     register_tenant_and_wait,

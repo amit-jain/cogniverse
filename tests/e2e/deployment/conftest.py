@@ -24,7 +24,7 @@ import httpx
 import pytest
 import yaml
 
-from tests.e2e.conftest import KUBECTL_CONTEXT
+from tests.e2e.cluster import KUBECTL_CONTEXT
 
 
 def _probe_existing_runtime() -> httpx.Response | None:

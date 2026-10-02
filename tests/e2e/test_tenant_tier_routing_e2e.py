@@ -62,16 +62,10 @@ from cogniverse_foundation.telemetry.span_contract import (
     LLM_SERVED_MODEL_ATTRIBUTE,
     read_span_attributes,
 )
-from tests.e2e.conftest import (
-    KUBECTL_CONTEXT,
-    RUNTIME,
-    SEEDED_TENANT_TIER,
-    TENANT_ID,
-    bootstrap_seeded_tenant_tier,
-    register_tenant_and_wait,
-    unique_id,
-)
+from tests.e2e.cluster import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import SEEDED_TENANT_TIER, bootstrap_seeded_tenant_tier
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 
 pytestmark = [pytest.mark.e2e, pytest.mark.integration]
 

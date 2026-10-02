@@ -41,7 +41,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.backend_env import LocalSystemConfig
-from tests.e2e.conftest import RUNTIME, unique_id
+from tests.e2e.cluster import RUNTIME
+from tests.e2e.tenants import unique_id
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071

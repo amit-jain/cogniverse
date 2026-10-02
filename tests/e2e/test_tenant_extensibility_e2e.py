@@ -23,18 +23,15 @@ from cogniverse_foundation.common.tenant_utils import (
 from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA
 from cogniverse_runtime.routers.tenant import _cron_workflow_name
+from tests.e2e.cluster import RUNTIME, TENANT_ID
 from tests.e2e.conftest import (
-    RUNTIME,
-    TENANT_ID,
     _kubectl_e2e,
     _kubectl_e2e_command,
     _require_kubectl_success,
-    _tenant_schema_name,
     assert_orchestrated,
     expected_gateway_routing,
-    register_tenant_and_wait,
-    unique_id,
 )
+from tests.e2e.tenants import _tenant_schema_name, register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE
 
 VESPA_URL = "http://localhost:33080"

@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from cogniverse_agents.wiki.wiki_schema import generate_slug
-from tests.e2e.conftest import RUNTIME, TENANT_ID
+from tests.e2e.cluster import RUNTIME, TENANT_ID
 
 SAFE_TENANT = TENANT_ID.replace(":", "_")
 

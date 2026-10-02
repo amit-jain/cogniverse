@@ -21,16 +21,15 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cogniverse_cli.argo import ARGO_NAMESPACE
 
-from tests.e2e.conftest import (
-    ARGO_NAMESPACE,
+from tests.e2e.cluster import (
     KUBECTL_CONTEXT,
     TENANT_ID,
     argo_workflow_controller_probe_command,
     argo_workflow_controller_probe_failure_message,
-    register_tenant_and_wait,
-    unique_id,
 )
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 pytestmark = pytest.mark.slow

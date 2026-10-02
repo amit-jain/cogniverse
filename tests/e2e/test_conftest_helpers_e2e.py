@@ -37,11 +37,10 @@ from PIL import Image
 
 import tests.e2e.conftest as e2e_conftest
 from cogniverse_foundation.config.unified_config import ROUTER_TIERS
-from tests.e2e.conftest import (
-    _TEST_TENANT_PREFIXES,
-    unique_id,
-    wait_for_span,
-)
+from tests.e2e import cluster, inference
+from tests.e2e.conftest import _TEST_TENANT_PREFIXES
+from tests.e2e.span_capture import wait_for_span
+from tests.e2e.tenants import unique_id
 from tests.e2e.test_api_e2e import IMAGE_PROFILE, PROFILE
 
 
@@ -97,7 +96,7 @@ _E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
 def _expected_e2e_sandbox_overrides() -> dict[str, str]:
     overrides = {
         f"inference.{service}.enabled": "false"
-        for service in sorted(e2e_conftest._E2E_DISABLED_INFERENCE_SERVICES)
+        for service in sorted(inference._E2E_DISABLED_INFERENCE_SERVICES)
     }
     overrides.update(
         {
@@ -217,10 +216,10 @@ class TestTheSeededTenantIsDerivedFromTheChart:
     monitor runs against, read from that overlay rather than restated."""
 
     def test_tenant_id_is_the_k3s_quality_monitor_tenant(self):
-        overlay = yaml.safe_load(e2e_conftest.K3S_VALUES.read_text())
+        overlay = yaml.safe_load(cluster.K3S_VALUES.read_text())
         chart_tenant = overlay["runtime"]["qualityMonitor"]["tenantId"]
         assert e2e_conftest.TENANT_ID == chart_tenant
-        assert e2e_conftest.seeded_tenant_id() == chart_tenant
+        assert cluster.seeded_tenant_id() == chart_tenant
         assert e2e_conftest.SEEDED_TENANT_TIER in ROUTER_TIERS
 
     def test_the_value_is_read_not_remembered(self, tmp_path):
@@ -230,7 +229,7 @@ class TestTheSeededTenantIsDerivedFromTheChart:
                 {"runtime": {"qualityMonitor": {"tenantId": "other_org:staging"}}}
             )
         )
-        assert e2e_conftest.seeded_tenant_id(other) == "other_org:staging"
+        assert cluster.seeded_tenant_id(other) == "other_org:staging"
 
     def test_an_overlay_naming_no_tenant_is_refused(self, tmp_path):
         blank = tmp_path / "values.yaml"
@@ -238,7 +237,7 @@ class TestTheSeededTenantIsDerivedFromTheChart:
             yaml.safe_dump({"runtime": {"qualityMonitor": {"tenantId": ""}}})
         )
         with pytest.raises(ValueError, match="runtime.qualityMonitor.tenantId"):
-            e2e_conftest.seeded_tenant_id(blank)
+            cluster.seeded_tenant_id(blank)
 
 
 class TestCollectionOrdering:

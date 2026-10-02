@@ -13,7 +13,7 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import KUBECTL_CONTEXT
+from tests.e2e.cluster import KUBECTL_CONTEXT
 
 
 @pytest.mark.integration

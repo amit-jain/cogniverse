@@ -16,6 +16,8 @@ import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from tests.e2e import cluster
+
 CRON_NAMESPACE = "cogniverse"
 E2E_SUSPENDED_ANNOTATION = "cogniverse.io/e2e-suspended"
 
@@ -42,9 +44,7 @@ def new_session_token() -> str:
 
 
 def _run_kubectl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    from tests.e2e.conftest import KUBECTL_CONTEXT
-
-    command = ["kubectl", "--context", KUBECTL_CONTEXT, *args]
+    command = ["kubectl", "--context", cluster.KUBECTL_CONTEXT, *args]
     try:
         return subprocess.run(
             command,
@@ -258,6 +258,30 @@ def suspend_cronworkflows_for_session(
             failures.append(name)
 
     return CronSuspendResult(tuple(restore_names), tuple(failures))
+
+
+_CRON_SESSION_TOKEN: str | None = None
+
+
+def _cron_session_token() -> str:
+    global _CRON_SESSION_TOKEN
+    if _CRON_SESSION_TOKEN is None:
+        _CRON_SESSION_TOKEN = new_session_token()
+    return _CRON_SESSION_TOKEN
+
+
+def _restore_stale_cronworkflows():
+    if _CRON_SESSION_TOKEN is None:
+        return CronRestoreResult(())
+    return restore_stale_cronworkflows(_CRON_SESSION_TOKEN)
+
+
+def _suspend_cronworkflows_for_session() -> CronSuspendResult:
+    return suspend_cronworkflows_for_session(_cron_session_token())
+
+
+def _restore_cronworkflows(names: list[str]) -> CronRestoreResult:
+    return restore_cronworkflows(names)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

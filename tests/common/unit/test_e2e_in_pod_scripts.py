@@ -16,8 +16,7 @@ from dspy.utils.exceptions import AdapterParseError
 
 from cogniverse_agents.entity_extraction_agent import EntityExtractionSignature
 from cogniverse_runtime import optimization_cli
-from tests.e2e import conftest as e2e_conftest
-from tests.e2e import test_batch_optimization_e2e as e2e
+from tests.e2e import batch_optimization
 
 _ROW = {
     "example_id": "truth:0",
@@ -32,7 +31,7 @@ _ROW = {
 
 
 def test_backdated_training_selection_script_renders_and_parses():
-    script = e2e._backdated_training_selection_script(
+    script = batch_optimization._backdated_training_selection_script(
         "flywheel_org:production", "entity_extraction", [_ROW]
     )
     ast.parse(script)
@@ -162,7 +161,7 @@ def test_fixture_carries_the_failed_run_s_stdout_fragments():
 
 
 def test_batch_job_stdout_parses_as_the_one_document_the_cli_printed():
-    document = e2e_conftest.optimization_cli_document(
+    document = batch_optimization.optimization_cli_document(
         _ENTITY_EXTRACTION_STDOUT, operation=_OPERATION
     )
 
@@ -173,7 +172,7 @@ def test_a_line_leaked_ahead_of_the_document_is_raised_with_its_text():
     leaked = "INFO compiling entity_extraction\n" + _ENTITY_EXTRACTION_STDOUT
 
     with pytest.raises(AssertionError) as raised:
-        e2e_conftest.optimization_cli_document(leaked, operation=_OPERATION)
+        batch_optimization.optimization_cli_document(leaked, operation=_OPERATION)
 
     assert str(raised.value) == (
         f"{_OPERATION}: stdout is not one JSON document "
@@ -188,7 +187,7 @@ def test_text_after_the_document_is_raised_where_it_starts():
     line = _ENTITY_EXTRACTION_STDOUT.count("\n") + 1
 
     with pytest.raises(AssertionError) as raised:
-        e2e_conftest.optimization_cli_document(trailing, operation=_OPERATION)
+        batch_optimization.optimization_cli_document(trailing, operation=_OPERATION)
 
     assert str(raised.value) == (
         f"{_OPERATION}: stdout is not one JSON document "
@@ -201,7 +200,7 @@ def test_a_json_value_that_is_not_an_object_is_raised():
     stdout = '["done"]\n'
 
     with pytest.raises(AssertionError) as raised:
-        e2e_conftest.optimization_cli_document(stdout, operation=_OPERATION)
+        batch_optimization.optimization_cli_document(stdout, operation=_OPERATION)
 
     assert str(raised.value) == (
         f"{_OPERATION}: stdout is JSON list, not an object: {stdout!r}"

@@ -36,7 +36,8 @@ from cogniverse_agents.deep_synthesis_workflow import (
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.e2e.backend_env import LocalSystemConfig
-from tests.e2e.conftest import StudentLLM, run_async, unique_id
+from tests.e2e.conftest import StudentLLM, run_async
+from tests.e2e.tenants import unique_id
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

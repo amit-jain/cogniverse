@@ -32,7 +32,7 @@ import httpx
 import pytest
 import redis.asyncio as aioredis
 
-from tests.e2e.conftest import KUBECTL_CONTEXT
+from tests.e2e.cluster import KUBECTL_CONTEXT
 
 RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 REDIS_URL = os.environ.get("COGNIVERSE_TEST_REDIS_URL", "redis://localhost:26379/0")

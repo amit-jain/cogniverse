@@ -28,12 +28,13 @@ from cogniverse_cli.streaming import (
 
 from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
 from cogniverse_runtime.sandbox_pool import SandboxSessionPool
-from tests.e2e.conftest import (
+from tests.e2e.cluster import (
     IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     RUNTIME,
     TENANT_ID,
 )
+from tests.e2e.coding_contract import _assert_coding_output_shape
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
@@ -51,27 +52,6 @@ SANDBOX_PROBE_EXEC_S = 60
 SANDBOX_PROBE_DEADLINE_S = SANDBOX_WAIT_READY_S + SANDBOX_PROBE_EXEC_S + 60
 """The probe's lease wait and its exec, plus a minute for the pod's
 interpreter start, session creation and teardown."""
-
-
-def _assert_coding_output_shape(result):
-    assert set(result) == {
-        "plan",
-        "code_changes",
-        "execution_results",
-        "summary",
-        "iterations_used",
-        "files_modified",
-        "rlm_synthesis",
-        "rlm_telemetry",
-        "pending_tool_calls",
-        "continuation_state",
-        "success",
-        "error",
-    }, result
-    assert result["pending_tool_calls"] == []
-    assert result["continuation_state"] == {}
-    assert result["success"] is True
-    assert result["error"] is None
 
 
 def _run_prerequisite_command(

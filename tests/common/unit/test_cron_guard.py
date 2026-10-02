@@ -8,12 +8,12 @@ from dataclasses import dataclass
 
 import pytest
 
-import tests.e2e.conftest as e2e_conftest
 import tests.e2e.cron_guard as cron_guard
+from tests.e2e import cluster
 
-# cron_guard reads this from the e2e conftest at call time; deriving it here
+# cron_guard reads this from tests.e2e.cluster at call time; deriving it here
 # means a context change fails on the real contract rather than on a literal.
-KUBECTL_CTX = e2e_conftest.KUBECTL_CONTEXT
+KUBECTL_CTX = cluster.KUBECTL_CONTEXT
 
 
 @dataclass

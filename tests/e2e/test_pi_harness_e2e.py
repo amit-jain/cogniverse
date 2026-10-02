@@ -20,16 +20,13 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.e2e.cluster import RUNTIME, TENANT_DEPLOY_TIMEOUT_S, runtime_available
 from tests.e2e.conftest import (
     _CAPTION_CORPUS_DIR,
-    RUNTIME,
     SAMPLE_DOCUMENT_TITLES,
-    TENANT_DEPLOY_TIMEOUT_S,
     _ingest_sample_documents,
-    register_tenant_and_wait,
-    runtime_available,
-    unique_id,
 )
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE, _deploy_profile_for_tenant
 
 pytestmark = pytest.mark.e2e

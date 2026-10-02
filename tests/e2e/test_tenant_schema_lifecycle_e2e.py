@@ -27,10 +27,9 @@ import httpx
 import pytest
 
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from tests.e2e.conftest import (
+from tests.e2e.cluster import RUNTIME, TENANT_DEPLOY_TIMEOUT_S
+from tests.e2e.tenants import (
     _VESPA_SCHEMAS_LIST_URL,
-    RUNTIME,
-    TENANT_DEPLOY_TIMEOUT_S,
     _deployed_schema_names_strict,
     _tenant_schema_name,
     own_tenant,
@@ -146,7 +145,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.conftest import register_tenant_and_wait, unique_id
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 
 RECORD = Path(__file__).parent / "minted.json"
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.conftest import TENANT_DEPLOY_TIMEOUT_S
+from tests.e2e.cluster import TENANT_DEPLOY_TIMEOUT_S
 
 _E2E_DIR = Path(__file__).resolve().parents[2] / "e2e"
 _BUDGET_NAME = "TENANT_DEPLOY_TIMEOUT_S"

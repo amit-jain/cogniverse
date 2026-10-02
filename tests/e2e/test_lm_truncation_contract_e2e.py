@@ -17,14 +17,13 @@ import json
 import httpx
 import pytest
 
+from tests.e2e.cluster import RUNTIME
 from tests.e2e.conftest import (
-    RUNTIME,
     _kubectl_e2e,
     _kubectl_e2e_command,
     _require_kubectl_success,
-    register_tenant_and_wait,
-    unique_id,
 )
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 
 # ``charts/cogniverse/files/config.json`` is a Helm template; the runtime reads
 # the rendered copy this ConfigMap carries.

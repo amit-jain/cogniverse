@@ -18,12 +18,8 @@ import httpx
 import pytest
 
 from cogniverse_core.agents.rlm_options import RLMOptions
-from tests.e2e.conftest import (
-    GATEWAY_VIDEO_QUERIES,
-    RUNTIME,
-    TENANT_ID,
-    expected_gateway_routing,
-)
+from tests.e2e.cluster import RUNTIME, TENANT_ID
+from tests.e2e.conftest import GATEWAY_VIDEO_QUERIES, expected_gateway_routing
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 
 

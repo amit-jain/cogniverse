@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e import sample_corpus
 from tests.e2e.corpus_text import (
     corpus_prose,
     has_substantive_prose,
@@ -117,11 +118,8 @@ class TestCorpusIngestBudget:
         data/testset: a glob also picks up assets the fixture deliberately does
         not ingest, so the budget it measured was not the ingest budget.
         """
-        import importlib
-
-        conftest = importlib.import_module("tests.e2e.conftest")
         members = []
-        for path in conftest._evaluation_text_corpus_paths():
+        for path in sample_corpus._evaluation_text_corpus_paths():
             if path.suffix.lower() == ".json":
                 try:
                     prose = corpus_prose(path)
@@ -254,24 +252,16 @@ class TestGroundTruthIsNotIngested:
     from the top two in sweep25.
     """
 
-    @staticmethod
-    def _conftest():
-        import importlib
-
-        return importlib.import_module("tests.e2e.conftest")
-
     def test_evaluation_query_asset_is_not_an_ingested_corpus_path(self):
-        conftest = self._conftest()
-        ingested = conftest._evaluation_text_corpus_paths()
-        asset = conftest.EVALUATION_QUERY_ASSET.resolve()
+        ingested = sample_corpus._evaluation_text_corpus_paths()
+        asset = sample_corpus.EVALUATION_QUERY_ASSET.resolve()
         assert asset not in {path.resolve() for path in ingested}, (
             f"{asset.name} is the ground truth for profile labels and the quality "
             f"monitor golden set; ingesting it pollutes the corpus it grades"
         )
 
     def test_no_ingested_corpus_file_contains_the_evaluation_queries(self):
-        conftest = self._conftest()
-        asset = conftest.EVALUATION_QUERY_ASSET
+        asset = sample_corpus.EVALUATION_QUERY_ASSET
         rows = json.loads(asset.read_text())
         # Only the question-type rows are full sentences. The answer_phrase rows
         # are fragments like "standing" or "lifting" that occur naturally in any
@@ -293,7 +283,7 @@ class TestGroundTruthIsNotIngested:
         assert [i for i, row in enumerate(rows) if not str(row["query"]).strip()] == []
 
         offenders = {}
-        for path in conftest._evaluation_text_corpus_paths():
+        for path in sample_corpus._evaluation_text_corpus_paths():
             text = path.read_text(errors="replace")
             hits = sorted(query for query in queries if query in text)
             if hits:

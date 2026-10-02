@@ -38,7 +38,6 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_synthetic.generators.base import (
     CONTENT_DROP_CATEGORIES,
     UNEXPECTED_DROP_CATEGORY,
@@ -51,31 +50,36 @@ from cogniverse_synthetic.topics import (
     topic_source_text,
 )
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
+from tests.e2e.artifacts import _atomic_artifact
+from tests.e2e.cluster import (
+    KUBECTL_CONTEXT,
+    RUNTIME,
+    TENANT_DEPLOY_TIMEOUT_S,
+    TENANT_ID,
+)
 from tests.e2e.conftest import (
     E2E_ARTIFACT_DIR,
     GATEWAY_VIDEO_QUERIES,
-    KUBECTL_CONTEXT,
-    RUNTIME,
     SAMPLE_VIDEO_PATH,
-    TENANT_DEPLOY_TIMEOUT_S,
-    TENANT_ID,
-    _atomic_artifact,
     _content_sha256,
-    _deployed_schema_names_strict,
     _ensure_sample_content_ingested,
     _ingest_sample_documents,
     _matching_sample_results,
-    _tenant_schema_name,
-    _tenant_schema_names_in_vespa,
     assert_orchestrated,
     expected_gateway_routing,
-    register_tenant_and_wait,
-    unique_id,
 )
 from tests.e2e.conftest import (
     _configured_profile_name as _configured_profile_name_from_config,
 )
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
+from tests.e2e.served_tokenizer import _served_document_tokens
+from tests.e2e.tenants import (
+    _deployed_schema_names_strict,
+    _tenant_schema_name,
+    _tenant_schema_names_in_vespa,
+    register_tenant_and_wait,
+    unique_id,
+)
 
 CAPTION_CORPUS_DIR = (
     Path(__file__).resolve().parents[2]
@@ -1859,7 +1863,7 @@ class TestTenantCRUD:
         graph_cli that minted simple-form tenants would 404 forever.
         Both forms must now resolve identically.
         """
-        from tests.e2e.conftest import unique_id
+        from tests.e2e.tenants import unique_id
 
         tid_simple = unique_id("apinorm")
         tid_canonical = f"{tid_simple}:{tid_simple}"
@@ -2865,7 +2869,7 @@ class TestPDFIngestionAndSearch:
 def _colbert_endpoint() -> str:
     from cogniverse_cli.images import detect_torch_backend
 
-    from tests.e2e.conftest import e2e_required_health_probes
+    from tests.e2e.inference import e2e_required_health_probes
 
     return dict(e2e_required_health_probes(detect_torch_backend()))["colbert_pylate"]
 
@@ -2900,29 +2904,6 @@ def _served_document_windows(text: str) -> tuple[list[str], int]:
         )
     assert response.status_code == 200, response.text
     return [text[start:end] for start, end in spans], response.json()["window_tokens"]
-
-
-E2E_HF_HUB_CACHE = Path.home() / ".cache/cogniverse-tests/huggingface/hub"
-
-
-def _served_document_tokens(
-    text: str, *, cache_dir: Path = E2E_HF_HUB_CACHE
-) -> list[int]:
-    """``text`` tokenized by the model the document profile is served from.
-
-    The tokenizer loads from the local cache only: a revision missing from
-    ``cache_dir`` raises at once instead of waiting on the Hub.
-    """
-    from transformers import AutoTokenizer
-
-    spec = get_inference_service_spec("colbert_pylate")
-    tokenizer = AutoTokenizer.from_pretrained(
-        spec.model_id,
-        revision=spec.model_revision,
-        cache_dir=str(cache_dir),
-        local_files_only=True,
-    )
-    return tokenizer(text, add_special_tokens=False)["input_ids"]
 
 
 def _repeated_audio_fixture(source: Path, dest: Path, repeats: int) -> Path:

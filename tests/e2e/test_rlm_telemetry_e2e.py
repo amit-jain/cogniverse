@@ -27,7 +27,8 @@ import os
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import StudentLLM, unique_id
+from tests.e2e.conftest import StudentLLM
+from tests.e2e.tenants import unique_id
 
 # RLMResult.metadata keys as built by RLMInference.process().
 RLM_METADATA_FIELDS = {

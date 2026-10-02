@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e import conftest as e2e_conftest
+from tests.e2e import tenants
 
 pytest_plugins = ["pytester"]
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e import conftest as e2e_conftest
+from tests.e2e import tenants
 
 EVENTS = Path(__file__).parent / "events.log"
 
@@ -35,17 +35,17 @@ def _fake_delete(minted):
     _record(f"delete {minted.rsplit('_', 1)[0]}")
 
 
-e2e_conftest.delete_minted_tenant_and_wait = _fake_delete
+tenants.delete_minted_tenant_and_wait = _fake_delete
 
 
 def mint(prefix):
-    tid = e2e_conftest.unique_id(prefix)
+    tid = tenants.unique_id(prefix)
     _record(f"mint {tid.rsplit('_', 1)[0]}")
     return tid
 
 
-pytest_fixture_setup = e2e_conftest.pytest_fixture_setup
-pytest_runtest_call = e2e_conftest.pytest_runtest_call
+pytest_fixture_setup = tenants.pytest_fixture_setup
+pytest_runtest_call = tenants.pytest_runtest_call
 
 
 def pytest_runtest_logstart(nodeid, location):
@@ -118,7 +118,7 @@ def test_minted_tenants_are_deleted_when_their_owner_scope_ends(pytester):
 
 def test_own_tenant_refuses_the_shared_seeded_tenant():
     with pytest.raises(ValueError) as raised:
-        e2e_conftest.own_tenant("flywheel_org:anything")
+        tenants.own_tenant("flywheel_org:anything")
     assert str(raised.value) == (
         "'flywheel_org:anything' belongs to the shared seeded tenant "
         "'flywheel_org:production', which the session keeps; mint a test "
@@ -127,9 +127,9 @@ def test_own_tenant_refuses_the_shared_seeded_tenant():
 
 
 def test_own_tenant_outside_any_scope_has_no_owner():
-    assert e2e_conftest._TENANT_OWNERS == []
+    assert tenants._TENANT_OWNERS == []
     with pytest.raises(RuntimeError) as raised:
-        e2e_conftest.own_tenant("opt_deadbeef:t1")
+        tenants.own_tenant("opt_deadbeef:t1")
     assert str(raised.value) == (
         "own_tenant('opt_deadbeef:t1') called outside fixture setup or a test "
         "body: no scope can tear it down"

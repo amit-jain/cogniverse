@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
@@ -9,6 +10,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -256,7 +258,7 @@ def test_non_modal_generation_url_remains_available_to_cluster_discovery(monkeyp
 
 
 def test_live_modal_selection_requires_an_explicit_opt_in(monkeypatch):
-    from tests.e2e import conftest as e2e_conftest
+    from tests.e2e import collection
 
     class Item:
         def iter_markers(self, name):
@@ -268,19 +270,20 @@ def test_live_modal_selection_requires_an_explicit_opt_in(monkeypatch):
     item = Item()
     monkeypatch.delenv("RUN_MODAL_INFERENCE_E2E", raising=False)
 
-    assert e2e_conftest._modal_inference_deselections(config, [item]) == [item]
+    assert collection._modal_inference_deselections(config, [item]) == [item]
 
     config.option.markexpr = "requires_modal_inference"
-    assert e2e_conftest._modal_inference_deselections(config, [item]) == []
+    assert collection._modal_inference_deselections(config, [item]) == []
 
     config.option.markexpr = ""
     monkeypatch.setenv("RUN_MODAL_INFERENCE_E2E", "1")
-    assert e2e_conftest._modal_inference_deselections(config, [item]) == []
+    assert collection._modal_inference_deselections(config, [item]) == []
 
 
-def test_modal_requirement_rejects_local_endpoint_before_stateful_stack(monkeypatch):
-    from tests.e2e import conftest as e2e_conftest
-    from tests.e2e import run_lock
+def test_modal_requirement_rejects_local_endpoint_before_stateful_stack():
+    """The session fixture's first statement is the Modal gate, and the gate
+    fails a locally-provisioned endpoint, so no cluster work precedes it."""
+    from tests.e2e.collection import _require_modal_inference_endpoints
 
     spec = get_inference_service_spec("vllm_llm_student")
 
@@ -300,26 +303,28 @@ def test_modal_requirement_rejects_local_endpoint_before_stateful_stack(monkeypa
         model_id=spec.model_id,
         model_revision=spec.model_revision,
     )
-    request = SimpleNamespace(session=SimpleNamespace(items=[Item()]))
-    stateful_calls = []
-
-    def acquire_run_lock(path):
-        stateful_calls.append("run_lock.acquire")
-        return True
-
-    monkeypatch.setattr(run_lock, "acquire", acquire_run_lock)
-    fixture = e2e_conftest.e2e_stack.__wrapped__(
-        request,
-        {spec.name: endpoint},
-    )
 
     with pytest.raises(
         pytest.fail.Exception,
         match="requires Modal provider.*resolved 'local'",
     ):
-        next(fixture)
+        _require_modal_inference_endpoints([Item()], {spec.name: endpoint})
 
-    assert stateful_calls == []
+    conftest = Path(__file__).resolve().parents[1] / "e2e" / "conftest.py"
+    stack = next(
+        node
+        for node in ast.parse(conftest.read_text()).body
+        if isinstance(node, ast.FunctionDef) and node.name == "e2e_stack"
+    )
+    statements = [
+        node
+        for node in stack.body
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
+    ]
+    assert ast.unparse(statements[0]) == (
+        "_require_modal_inference_endpoints(request.session.items, "
+        "resolved_inference_endpoints)"
+    )
 
 
 def test_gemma_fixture_injects_the_exact_authenticated_dspy_contract():

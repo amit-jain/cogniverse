@@ -700,7 +700,7 @@ class TestWaitForSpanHelperRealPhoenix:
 
         from phoenix.client import Client
 
-        from tests.e2e.conftest import wait_for_span
+        from tests.e2e.span_capture import wait_for_span
 
         TelemetryManager._instance = None
         phoenix_config = TelemetryConfig(
@@ -784,7 +784,7 @@ class TestWaitForSpanHelperRealPhoenix:
         from phoenix.client import Client
         from phoenix.client.types.spans import SpanQuery
 
-        from tests.e2e.conftest import wait_for_span
+        from tests.e2e.span_capture import wait_for_span
 
         TelemetryManager._instance = None
         phoenix_config = TelemetryConfig(
@@ -854,7 +854,7 @@ class TestWaitForSpanHelperFailures:
     def test_wait_for_span_raises_with_context_on_read_failure(self):
         from datetime import datetime, timedelta, timezone
 
-        from tests.e2e.conftest import wait_for_span
+        from tests.e2e.span_capture import wait_for_span
 
         class _BoomSpans:
             def get_spans_dataframe(self, **kwargs):
@@ -893,7 +893,7 @@ class TestWaitForSpanHelperFailures:
 
         import pandas as pd
 
-        from tests.e2e.conftest import wait_for_span
+        from tests.e2e.span_capture import wait_for_span
 
         class _BlipSpans:
             def __init__(self):

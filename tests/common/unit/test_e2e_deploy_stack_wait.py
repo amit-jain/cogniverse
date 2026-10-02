@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-import tests.e2e.conftest as e2e_conftest
 import tests.e2e.deployment.conftest as deploy_conftest
+from tests.e2e.cluster import KUBECTL_CONTEXT
 
 # Derived from the same place the helper reads it, so a context change fails on
 # the real contract rather than on a restated literal.
-KUBECTL_CTX = e2e_conftest.KUBECTL_CONTEXT
+KUBECTL_CTX = KUBECTL_CONTEXT
 
 CHART_TEMPLATE = (
     Path(__file__).resolve().parents[3]

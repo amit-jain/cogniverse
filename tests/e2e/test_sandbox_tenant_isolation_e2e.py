@@ -31,7 +31,8 @@ from cogniverse_runtime.sandbox_pool import (
     SandboxPoolConfig,
     SandboxSessionPool,
 )
-from tests.e2e.conftest import _ensure_host_sandbox_gateway, run_async, unique_id
+from tests.e2e.conftest import _ensure_host_sandbox_gateway, run_async
+from tests.e2e.tenants import unique_id
 
 pytestmark = pytest.mark.e2e
 

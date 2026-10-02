@@ -26,20 +26,21 @@ import pytest
 import yaml
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
-from tests.e2e.conftest import (
-    DASHBOARD,
+from tests.e2e.cluster import (
     K3S_VALUES,
     KUBECTL_CONTEXT,
     RUNTIME,
-    SAMPLE_VIDEO_CONTENT_ID,
-    SAMPLE_VIDEO_PATH,
     TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
-    _ensure_sample_content_ingested,
-    _sample_video_media_type,
-    register_tenant_and_wait,
-    unique_id,
 )
+from tests.e2e.conftest import (
+    DASHBOARD,
+    SAMPLE_VIDEO_CONTENT_ID,
+    SAMPLE_VIDEO_PATH,
+    _ensure_sample_content_ingested,
+)
+from tests.e2e.sample_corpus import _sample_video_media_type
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 from tests.e2e.test_pi_harness_e2e import harness_models
 

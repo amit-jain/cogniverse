@@ -23,7 +23,8 @@ import pytest
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError, CircuitState
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from tests.e2e.conftest import PHOENIX_URL, TENANT_ID, run_async
+from tests.e2e.cluster import TENANT_ID
+from tests.e2e.conftest import PHOENIX_URL, run_async
 
 PHOENIX_GRPC = "localhost:33317"
 # The dashboard cancels its recovery probe at this deadline; the value itself is

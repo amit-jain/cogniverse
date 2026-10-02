@@ -7,7 +7,7 @@ import av
 from PIL import Image
 from PyPDF2 import PdfReader
 
-from tests.e2e.conftest import (
+from tests.e2e.artifacts import (
     _extract_audio_fixture,
     _extract_image_fixture,
     _write_pdf_fixture,

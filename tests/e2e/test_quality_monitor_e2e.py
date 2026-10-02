@@ -20,9 +20,9 @@ import uuid
 
 import httpx
 import pytest
+from cogniverse_cli.argo import ARGO_NAMESPACE
 
-from tests.e2e.conftest import (
-    ARGO_NAMESPACE,
+from tests.e2e.cluster import (
     KUBECTL_CONTEXT,
     RUNTIME,
     TENANT_ID,

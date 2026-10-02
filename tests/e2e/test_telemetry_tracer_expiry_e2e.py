@@ -19,12 +19,8 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import (
-    IN_POD_TELEMETRY_PRELUDE,
-    KUBECTL_CONTEXT,
-    RUNTIME,
-    unique_id,
-)
+from tests.e2e.cluster import IN_POD_TELEMETRY_PRELUDE, KUBECTL_CONTEXT, RUNTIME
+from tests.e2e.tenants import unique_id
 
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"

@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from tests.e2e import conftest as e2e_conftest
+from tests.e2e import tenants
 
 _BASES = ("wiki_pages", "provenance", "agent_memories")
 _TENANT = "regwait_a1b2c3d4:t1"
@@ -85,12 +85,12 @@ def served(monkeypatch):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base = f"http://127.0.0.1:{server.server_address[1]}"
-        monkeypatch.setattr(e2e_conftest, "RUNTIME", base)
+        monkeypatch.setattr(tenants, "RUNTIME", base)
         monkeypatch.setattr(
-            e2e_conftest, "_VESPA_SCHEMAS_LIST_URL", f"{base}{_SCHEMAS_PATH}"
+            tenants, "_VESPA_SCHEMAS_LIST_URL", f"{base}{_SCHEMAS_PATH}"
         )
         monkeypatch.setattr(
-            e2e_conftest,
+            tenants,
             "_TENANT_OWNERS",
             [("function:test", state["owned"].append)],
         )
@@ -113,7 +113,7 @@ def test_named_bases_wait_for_every_one_of_them(served):
     partial_view = {f"{_BASES[0]}_{_SUFFIX}"}
     state = served(lambda n: partial_view if n < 2 else _full())
 
-    row = e2e_conftest.register_tenant_and_wait(
+    row = tenants.register_tenant_and_wait(
         _TENANT, created_by="regwait", base_schemas=list(_BASES), timeout_s=60.0
     )
 
@@ -132,7 +132,7 @@ def test_unnamed_bases_wait_for_the_first_schema_the_runtime_chose(served):
     chosen = {f"video_colpali_smol500_mv_frame_{_SUFFIX}"}
     state = served(lambda n: set() if n < 1 else chosen)
 
-    row = e2e_conftest.register_tenant_and_wait(
+    row = tenants.register_tenant_and_wait(
         _TENANT, created_by="regwait", timeout_s=60.0
     )
 
@@ -146,7 +146,7 @@ def test_a_partial_deploy_never_reports_ready(served):
     served(lambda n: partial_view)
 
     with pytest.raises(RuntimeError) as raised:
-        e2e_conftest.register_tenant_and_wait(
+        tenants.register_tenant_and_wait(
             _TENANT, created_by="regwait", base_schemas=list(_BASES), timeout_s=6.0
         )
 
@@ -159,10 +159,10 @@ def test_a_partial_deploy_never_reports_ready(served):
 def test_the_created_tenant_is_owned_for_teardown(served):
     state = served(lambda n: _full())
 
-    e2e_conftest.register_tenant_and_wait(
+    tenants.register_tenant_and_wait(
         _TENANT, created_by="regwait", base_schemas=list(_BASES), timeout_s=60.0
     )
 
     assert [(f.func, f.args, f.keywords) for f in state["owned"]] == [
-        (e2e_conftest.delete_minted_tenant_and_wait, (_TENANT,), {})
+        (tenants.delete_minted_tenant_and_wait, (_TENANT,), {})
     ]

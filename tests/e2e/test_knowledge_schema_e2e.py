@@ -48,10 +48,12 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.backend_env import LocalSystemConfig
-from tests.e2e.conftest import RUNTIME, run_async, unique_id
+from tests.e2e.cluster import RUNTIME
+from tests.e2e.conftest import run_async
+from tests.e2e.tenants import unique_id
 
 # k3d-cogniverse-e2e-serverlb forwards the offset 33xxx HOST ports onto the
-# chart's canonical NodePorts (see E2E_HOST_PORTS in conftest.py), so the e2e
+# chart's canonical NodePorts (see E2E_HOST_PORTS in cluster.py), so the e2e
 # stack never collides with a dev cluster on 8080/28xxx. Every localhost URL
 # here uses the 33xxx side: 33080 -> Vespa /query/, 33071 -> Vespa /config,
 # 33906 -> denseon.

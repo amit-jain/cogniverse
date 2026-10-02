@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 from tests.e2e import span_capture
+from tests.e2e.batch_optimization import OPTIMIZER_SPAN_CAPTURE_PATH
 from tests.e2e.span_capture import (
     SpanCaptureError,
     SpanCaptureFileError,
@@ -510,14 +511,17 @@ def test_replay_refuses_a_record_whose_attributes_are_not_a_mapping():
     )
 
 
-def _committed_capture_path() -> pathlib.Path:
-    """The exact path the e2e fixture replays from.
+# The exact path the e2e fixture replays from. Derived from the helper module
+# the fixture imports it from rather than restated here: a second literal can
+# drift from the one the fixture loads, and the fixture would then fail at run
+# time while this pin stayed green.
+COMMITTED_CAPTURE = OPTIMIZER_SPAN_CAPTURE_PATH
 
-    Derived from the fixture module rather than restated here: a second
-    literal can drift from the one the fixture loads, and the fixture would
-    then fail at run time while this pin stayed green.
-    """
-    import importlib.util
+
+def test_the_batch_fixture_replays_the_capture_pinned_here():
+    """The e2e module binds the replay path only by importing it from the
+    helper module, so the recording pinned below is the one it replays."""
+    import ast
 
     script = (
         pathlib.Path(__file__).resolve().parents[3]
@@ -525,14 +529,31 @@ def _committed_capture_path() -> pathlib.Path:
         / "e2e"
         / "test_batch_optimization_e2e.py"
     )
-    spec = importlib.util.spec_from_file_location("_batch_opt_e2e_for_pin", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.OPTIMIZER_SPAN_CAPTURE_PATH
+    tree = ast.parse(script.read_text())
+    bindings = sorted(
+        f"import from {node.module}"
+        if isinstance(node, ast.ImportFrom)
+        else f"assignment at line {node.lineno}"
+        for node in ast.walk(tree)
+        if (
+            isinstance(node, ast.ImportFrom)
+            and "OPTIMIZER_SPAN_CAPTURE_PATH"
+            in {a.asname or a.name for a in node.names}
+        )
+        or (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and "OPTIMIZER_SPAN_CAPTURE_PATH"
+            in {
+                target.id
+                for target in (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                if isinstance(target, ast.Name)
+            }
+        )
+    )
+    assert bindings == ["import from tests.e2e.batch_optimization"]
 
-
-COMMITTED_CAPTURE = _committed_capture_path()
 
 # The shape the optimizer reads. Span names come from the production
 # constants, so renaming one there fails this test and says the recorded

@@ -23,11 +23,11 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import KUBECTL_CONTEXT
+from tests.e2e.cluster import KUBECTL_CONTEXT
 
 NAMESPACE = "cogniverse"
 RUNTIME = (
-    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/cluster.py
 )
 HEAVY_TIMEOUT_S = 3600.0  # 60 min; measured run was 2026-08-17T13:26:55Z→14:14:03Z
 POLL_INTERVAL_S = 10.0

@@ -23,18 +23,16 @@ import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
+from tests.e2e.cluster import RUNTIME, TENANT_ID
 from tests.e2e.conftest import (
     DASHBOARD,
     GATEWAY_VIDEO_QUERIES,
-    RUNTIME,
-    TENANT_ID,
     click_top_tab,
     expected_gateway_routing,
-    register_tenant_and_wait,
     set_tenant,
-    unique_id,
     wait_for_streamlit,
 )
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import (
     AUDIO_PROFILE,
     DOCUMENT_PROFILE,

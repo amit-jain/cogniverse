@@ -25,7 +25,8 @@ from cogniverse_agents.optimizer.artifact_manager import (
     ArtifactManager,
 )
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from tests.e2e.conftest import PHOENIX_URL, run_async, unique_id
+from tests.e2e.conftest import PHOENIX_URL, run_async
+from tests.e2e.tenants import unique_id
 
 pytestmark = pytest.mark.e2e
 

@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[3]
-_SCRIPT = _ROOT / "tests" / "e2e" / "test_batch_optimization_e2e.py"
-_SPEC = importlib.util.spec_from_file_location(
-    "test_batch_optimization_e2e_for_unit", _SCRIPT
-)
-assert _SPEC is not None and _SPEC.loader is not None
-_MOD = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MOD)
+from tests.e2e import batch_optimization as _MOD
+
+_E2E = Path(__file__).resolve().parents[3] / "tests" / "e2e"
+_SCRIPT = _E2E / "test_batch_optimization_e2e.py"
+_HELPERS = _E2E / "batch_optimization.py"
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -55,6 +51,39 @@ def test_seeded_span_wait_uses_seed_start_lookback(monkeypatch):
     expected = _MOD._module_lookback_hours()
     assert lookbacks == [expected]
     assert expected > elapsed_hours
+
+
+def test_span_seeding_stamps_the_start_the_lookback_reads():
+    """The seeding fixture stamps the start on the helper module whose lookback
+    reads it, and the e2e module rebinds no name the helper module owns: a
+    stamp bound in the e2e module's own globals would leave the helper's start
+    unset, and every seeded-span wait would fail its assert."""
+    import ast
+
+    tree = ast.parse(_SCRIPT.read_text(encoding="utf-8"))
+    fixture = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "generate_spans_for_batch_jobs"
+    )
+    stamps = [
+        ast.unparse(target)
+        for node in ast.walk(fixture)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if "_SPAN_SEED_STARTED_AT" in ast.unparse(target)
+    ]
+    rebinds_helper_names = sorted(
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Global)
+        for name in node.names
+        if name in vars(_MOD)
+    )
+
+    assert stamps == ["batch_optimization._SPAN_SEED_STARTED_AT"]
+    assert rebinds_helper_names == []
 
 
 def test_committed_span_capture_clears_the_optimizer_floors_without_top_up():
@@ -493,9 +522,12 @@ def test_span_symbol_call_site_detector_flags_value_and_subscript():
 
 def test_every_span_count_call_site_passes_a_symbol_literal():
     """Record-only call sites never execute in replay sweeps, so the symbol
-    contract is enforced statically across every call site in the module."""
-    violations = _span_symbol_call_violations(_SCRIPT.read_text(encoding="utf-8"))
-    assert violations == []
+    contract is enforced statically across every call site in the suite."""
+    violations = {
+        path.name: _span_symbol_call_violations(path.read_text(encoding="utf-8"))
+        for path in (_SCRIPT, _HELPERS)
+    }
+    assert violations == {_SCRIPT.name: [], _HELPERS.name: []}
 
 
 def test_count_spans_script_rejects_a_span_name_value():
