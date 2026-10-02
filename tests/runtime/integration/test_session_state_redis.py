@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -573,6 +573,7 @@ def _dispatcher(ledger, store, replies, calls):
     )
     endpoint = MagicMock()
     endpoint.capabilities = {"search"}
+    dispatcher._registry.refresh = AsyncMock()
     dispatcher._registry.get_agent.return_value = endpoint
     dispatcher._conversation_store_factory = lambda _tenant: store
 

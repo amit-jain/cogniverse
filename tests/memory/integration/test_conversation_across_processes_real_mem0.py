@@ -45,7 +45,7 @@ TOGETHER_AGENT_S = 1.0
 def _serve_turns(vespa_ports, denseon_url, redis_url, prefix, barrier, conn):
     """One runtime process: commands arrive on ``conn`` while the loop keeps
     landing saves in the background."""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_PERSIST_FAILURE_CAPACITY,
@@ -73,6 +73,7 @@ def _serve_turns(vespa_ports, denseon_url, redis_url, prefix, barrier, conn):
         )
         endpoint = MagicMock()
         endpoint.capabilities = {"search"}
+        dispatcher._registry.refresh = AsyncMock()
         dispatcher._registry.get_agent.return_value = endpoint
 
         async def skip_wiki(*_args, **_kwargs):
