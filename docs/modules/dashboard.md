@@ -206,17 +206,21 @@ traces = analytics.get_traces(
 
 **File:** `libs/dashboard/cogniverse_dashboard/tabs/evaluation.py`
 
-**Purpose:** Experiment tracking and comparison
+**Purpose:** Score the current tenant's recorded searches against a golden dataset
 
 **Features:**
 
 - Select a Phoenix dataset; view example count and creation date
 
-- Per-profile, per-ranking-strategy nested tabs showing MRR, Recall@1, Recall@5, and query count for each experiment run
+- A lookback window (hours, default 168) over the tenant's `search_service.search` spans; the latest search per profile, strategy and dataset query is scored, its results keyed by source title (`result_source_title_key`)
+
+- Per-profile, per-ranking-strategy nested tabs showing MRR, Recall@1, Recall@5, and query count
 
 - Per-query results table (query, expected, retrieved results)
 
-- Deep links to the Phoenix dataset view and Phoenix's own experiment comparison UI
+- A count of matching searches that cannot be scored because a result carries no `source_title`
+
+- A deep link to the Phoenix dataset view
 
 ```python
 from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab

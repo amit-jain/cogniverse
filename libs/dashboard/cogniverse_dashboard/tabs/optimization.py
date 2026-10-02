@@ -139,6 +139,21 @@ def _optimization_history_frame(runs: List[Dict[str, Any]]) -> pd.DataFrame:
     )
 
 
+SEARCH_ANNOTATION_NAME = "search_quality_annotation"
+
+
+def _span_result_rows(span) -> List[Dict[str, Any]]:
+    """A search span's result rows, from its ``output.value``."""
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+    output = read_span_io(span)["output"]
+    return (
+        [row for row in output if isinstance(row, dict)]
+        if isinstance(output, list)
+        else []
+    )
+
+
 def _filter_search_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
     """Rows whose span name contains 'search'. ``na=False`` so a null name
     (Phoenix can return one) yields False rather than NaN, which would raise
@@ -369,11 +384,12 @@ def _render_search_annotation_tab():
                     st.text(span.get("attributes.query", "N/A"))
 
                     st.markdown("**Results:**")
-                    results = span.get("attributes.results", [])
+                    results = _span_result_rows(span)
                     if results:
                         for i, result in enumerate(results[:5]):  # Top 5
                             st.write(
-                                f"{i + 1}. {result.get('title', result.get('id', 'Unknown'))}"
+                                f"{i + 1}. "
+                                f"{result.get('source_title') or result.get('id', 'Unknown')}"
                             )
                     else:
                         st.info("No results returned")
@@ -498,13 +514,11 @@ def _save_search_annotation(
         async def save_annotation():
             await provider.annotations.add_annotation(
                 span_id=span_id,
-                name="search_quality_annotation",
+                name=SEARCH_ANNOTATION_NAME,
                 label=label,
                 score=float(rating),
                 metadata=annotation_data,
-                project=tenant_project_name(
-                    telemetry_manager, st.session_state["current_tenant"]
-                ),
+                project=tenant_project_name(telemetry_manager, tenant_id),
             )
 
         run_async_in_streamlit(save_annotation())
@@ -600,67 +614,79 @@ def _render_golden_dataset_tab():
 async def _build_golden_dataset_from_phoenix(
     tenant_id: str, min_rating: float, lookback_days: int
 ) -> Dict:
-    """Build golden dataset from annotated spans"""
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    """Build a golden dataset from annotated search spans.
 
-    # Get telemetry provider
+    A search span whose ``search_quality_annotation`` scores (the Search
+    Annotations tab's writes) average ``min_rating`` or higher contributes its
+    query and its top five results, keyed by ``result_source_title_key`` — the
+    key golden sets name a source by. A result with no source title is left
+    out, and a span left with none contributes nothing.
+    """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+    from cogniverse_sdk.document import result_source_title_key
+
     telemetry_manager = get_telemetry_manager()
     provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
     phoenix_project = tenant_project_name(telemetry_manager, tenant_id)
 
-    # Query annotated spans
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
-
     spans_df = await provider.traces.get_spans(
         project=phoenix_project, start_time=start_time, end_time=end_time
     )
-
-    # Filter for search spans with annotations
     search_spans = _filter_search_spans(spans_df)
+    if search_spans.empty:
+        return {}
+    annotations = await provider.annotations.get_annotations(
+        search_spans,
+        project=phoenix_project,
+        annotation_names=[SEARCH_ANNOTATION_NAME],
+    )
+    if annotations.empty:
+        return {}
+    ratings = annotations["result.score"].groupby(level=0).mean()
 
     golden_dataset = {}
-
-    for _, span in search_spans.iterrows():
-        # Check if span has annotation. pandas yields NaN (not None) for a
-        # missing value when the column exists — NaN < min_rating is False,
-        # which let unannotated spans into the dataset and NaN'd the export.
-        annotation_score = span.get("attributes.annotation.score")
-        if annotation_score is None or pd.isna(annotation_score):
+    untitled = 0
+    for span_index, span in search_spans.iterrows():
+        span_id = span["context.span_id"] if "context.span_id" in span else span_index
+        rating = ratings.get(span_id)
+        if rating is None or pd.isna(rating) or float(rating) < min_rating:
             continue
-        if float(annotation_score) < min_rating:
+        span_io = read_span_io(span)
+        query = str(span_io["input"] or "").strip()
+        rows = span_io["output"] if isinstance(span_io["output"], list) else []
+        expected_videos: List[str] = []
+        for row in rows[:5]:
+            try:
+                key = result_source_title_key(row)
+            except ValueError:
+                untitled += 1
+                continue
+            if key not in expected_videos:
+                expected_videos.append(key)
+        if not query or not expected_videos:
             continue
-
-        query = span.get("attributes.query", "")
-        results = span.get("attributes.results", [])
-
-        if not query or not results:
-            continue
-
-        # Extract expected videos (top results from highly-rated queries)
-        expected_videos = [
-            result.get("id", result.get("video_id"))
-            for result in results[:5]  # Top 5 results
-            if result.get("id") or result.get("video_id")
-        ]
-
-        # Build relevance scores
-        relevance_scores = {
-            vid: 1.0 / (i + 1)  # Reciprocal rank
-            for i, vid in enumerate(expected_videos)
-        }
 
         golden_dataset[query] = {
             "expected_videos": expected_videos,
-            "relevance_scores": relevance_scores,
-            "avg_relevance": float(annotation_score),
+            # Reciprocal rank of each source in the annotated search.
+            "relevance_scores": {
+                vid: 1.0 / (i + 1) for i, vid in enumerate(expected_videos)
+            },
+            "avg_relevance": float(rating),
             "profile": span.get("attributes.profile", "unknown"),
             "timestamp": span.get("start_time", "").isoformat()
             if hasattr(span.get("start_time"), "isoformat")
             else str(span.get("start_time")),
         }
-
+    if untitled:
+        logger.warning(
+            "%d annotated search results carry no source_title and were left "
+            "out of the golden dataset",
+            untitled,
+        )
     return golden_dataset
 
 

@@ -528,43 +528,26 @@ Build ground truth datasets from high-quality annotations:
 - **Lookback Days**: How far back to query annotations (default 30)
 - **Tenant ID**: Which tenant's data to use
 
-**Process** (`_build_golden_dataset_from_phoenix`, async):
+**Process** (`_build_golden_dataset_from_phoenix`, async): reads the tenant's search
+spans in the window (`provider.traces.get_spans` on `tenant_project_name(...)`,
+filtered to search spans), then their `search_quality_annotation` annotations, the
+ones the Search Annotations tab writes (`provider.annotations.get_annotations`).
+A span whose annotation scores average `min_rating` or more contributes its query
+(`input.value`) and its top five result rows (`output.value`), each keyed by
+`result_source_title_key`:
+
 ```python
-async def _build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_days):
-    telemetry_manager = get_telemetry_manager()
-    provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
-    end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=lookback_days)
-    spans_df = await provider.traces.get_spans(
-        project=tenant_project_name(telemetry_manager, tenant_id),
-        start_time=start_time,
-        end_time=end_time,
-    )
-    search_spans = _filter_search_spans(spans_df)
-
-    golden_dataset = {}
-    for _, span in search_spans.iterrows():
-        annotation_score = span.get("attributes.annotation.score")
-        if annotation_score is None or pd.isna(annotation_score):
-            continue  # unannotated spans are skipped, not NaN'd into the dataset
-        if float(annotation_score) < min_rating:
-            continue
-
-        query = span.get("attributes.query", "")
-        results = span.get("attributes.results", [])
-        if not query or not results:
-            continue
-
-        expected_videos = [r.get("id", r.get("video_id")) for r in results[:5]]
-        golden_dataset[query] = {
-            "expected_videos": expected_videos,
-            "relevance_scores": {v: 1.0 / (i + 1) for i, v in enumerate(expected_videos)},
-            "avg_relevance": float(annotation_score),
-            "profile": span.get("attributes.profile", "unknown"),
-        }
-    return golden_dataset
+golden_dataset[query] = {
+    "expected_videos": expected_videos,  # source-title keys, rank order, deduped
+    "relevance_scores": {v: 1.0 / (i + 1) for i, v in enumerate(expected_videos)},
+    "avg_relevance": rating,             # mean search_quality_annotation score
+    "profile": span.get("attributes.profile", "unknown"),
+    "timestamp": ...,                    # the span's start time
+}
 ```
+
+A result row with no `source_title` is left out and counted in a warning; a span
+left with no keyed result contributes nothing.
 
 **Export**: JSON format compatible with `GoldenDatasetEvaluator` (`libs/evaluation/cogniverse_evaluation/evaluators/golden_dataset.py`)
 
@@ -785,15 +768,23 @@ not hardcoded. Example illustrative output for a healthy tenant:
 
 ### 5. Evaluation Tab
 
-**Purpose**: Browse Phoenix experiment datasets and compare experiment runs against them.
+**Purpose**: Score the current tenant's recorded searches against a Phoenix golden dataset.
 
 **Location**: `libs/dashboard/cogniverse_dashboard/tabs/evaluation.py` (`render_evaluation_tab`)
 
-**Key Functions**: `get_phoenix_datasets()` and `get_experiment_runs()` query Phoenix's
-GraphQL API directly (`query_phoenix_graphql`, POST to `{phoenix_url}/graphql`), not
-through the telemetry-provider abstraction used elsewhere in the dashboard. Renders a
-dataset selector, per-dataset metrics (`calculate_metrics`), and deep links to Phoenix's
-own dataset/comparison views (`{phoenix_url}/datasets/{id}` and `.../compare`).
+**Key Functions**: `get_phoenix_datasets()` lists datasets through Phoenix's GraphQL
+API (`query_phoenix_graphql`, POST to `{phoenix_url}/graphql`).
+`get_golden_search_results(dataset_id, tenant_id, lookback_hours)` reads the dataset's
+examples (`query` in, comma-joined `expected_videos` out) and the tenant's
+`search_service.search` spans in the lookback window over Phoenix's REST API, every
+page of them. Each span whose query is in the dataset is scored under its `profile`
+and `strategy`, the latest search per profile, strategy and query counting; its
+result rows are keyed by `result_source_title_key`, the key golden sets name a
+source by, and scored with `calculate_metrics` (MRR, recall@1, recall@5). A search
+with a result row that carries no `source_title` is not scored; the tab shows how
+many. A tenant with no recorded search is an empty result; a Phoenix that does not
+answer raises `PhoenixUnavailableError`, which the tab renders as an error. The tab
+links to Phoenix's own dataset view (`{phoenix_url}/datasets/{id}`).
 
 ### 6. Embedding Atlas Tab
 

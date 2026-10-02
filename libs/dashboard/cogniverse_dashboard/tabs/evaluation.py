@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-Phoenix evaluation tab with EXACT tabbed format like generate_tabbed_html_report.py
+Golden-set evaluation tab: the tenant's recorded searches scored against a
+Phoenix golden dataset, in the tabbed format of generate_tabbed_html_report.py.
 """
 
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
+from urllib.parse import quote
 
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+
+from cogniverse_sdk.document import result_source_title_key
 
 logger = logging.getLogger(__name__)
 
@@ -101,24 +107,6 @@ def get_phoenix_datasets() -> List[Dict[str, Any]]:
     return datasets
 
 
-def get_experiment_runs(experiment_id: str) -> Dict[str, Any]:
-    """Get experiment runs using Phoenix REST API.
-
-    Raises :class:`PhoenixUnavailableError` on connection failure or a
-    non-200, matching :func:`query_phoenix_graphql`.
-    """
-    url = f"{_phoenix_base_url()}/v1/experiments/{experiment_id}"
-    try:
-        response = requests.get(url, timeout=_PHOENIX_REQUEST_TIMEOUT_S)
-    except requests.RequestException as exc:
-        raise PhoenixUnavailableError(f"Phoenix unreachable at {url}: {exc}") from exc
-    if response.status_code != 200:
-        raise PhoenixUnavailableError(
-            f"Phoenix returned HTTP {response.status_code} for {url}"
-        )
-    return response.json()
-
-
 def calculate_metrics(results: List[str], expected: List[str]) -> Dict[str, float]:
     """Calculate retrieval metrics"""
     if not expected:
@@ -168,174 +156,157 @@ def _aggregate_experiment_metrics(experiment_data: Dict[str, Any]) -> None:
             }
 
 
-@st.cache_data(ttl=60, show_spinner="Fetching experiments...")
-def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
-    """
-    Get all experiment data for a dataset by querying Phoenix.
-    This should automatically find and load all experiments for the dataset.
-    """
-    experiment_data = {}
+SEARCH_SPAN_NAME = "search_service.search"
+_SPAN_PAGE_LIMIT = 1000
 
-    # Get experiments for this dataset using the correct Phoenix API endpoint.
-    # A connection failure or non-200 here must raise PhoenixUnavailableError,
-    # same contract as the rest of this module -- the caller distinguishes
-    # that from a dataset that legitimately has zero experiments, and the
-    # result is cached for 60s so a swallowed outage would otherwise read as
-    # "no experiments" for the whole TTL window with no error re-shown.
-    experiment_ids = []
 
+@dataclass
+class GoldenSearchResults:
+    """Per-profile, per-strategy scores of the recorded searches of one golden
+    dataset, and how many matching searches could not be scored."""
+
+    results: Dict[str, Any] = field(default_factory=dict)
+    unscored_searches: int = 0
+
+
+def _phoenix_get(
+    path: str,
+    params: Dict[str, Any] | None = None,
+    *,
+    missing_project: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """GET a Phoenix REST path. ``missing_project`` is returned when Phoenix
+    answers that the path's project does not exist (no span was ever
+    recorded for it); every other non-200 answer raises."""
+    url = f"{_phoenix_base_url()}{path}"
     try:
-        response = requests.get(
-            f"{_phoenix_base_url()}/v1/datasets/{dataset_id}/experiments",
-            timeout=30,
-        )
+        response = requests.get(url, params=params, timeout=_PHOENIX_REQUEST_TIMEOUT_S)
     except requests.RequestException as exc:
-        raise PhoenixUnavailableError(
-            f"Phoenix unreachable while listing experiments for dataset "
-            f"{dataset_id}: {exc}"
-        ) from exc
+        raise PhoenixUnavailableError(f"Phoenix unreachable at {url}: {exc}") from exc
+    if (
+        missing_project is not None
+        and response.status_code == 404
+        and response.text.startswith("Project with name ")
+        and response.text.rstrip().endswith(" not found")
+    ):
+        return missing_project
     if response.status_code != 200:
         raise PhoenixUnavailableError(
-            f"Phoenix returned HTTP {response.status_code} listing "
-            f"experiments for dataset {dataset_id}"
+            f"Phoenix returned HTTP {response.status_code} for {url}"
         )
-    experiments_response = response.json()
-    if "data" in experiments_response:
-        for exp in experiments_response["data"]:
-            experiment_ids.append(exp["id"])
-    elif isinstance(experiments_response, list):
-        # If it returns a list directly
-        for exp in experiments_response:
-            if isinstance(exp, dict) and "id" in exp:
-                experiment_ids.append(exp["id"])
-            elif isinstance(exp, str):
-                # If it returns just IDs
-                experiment_ids.append(exp)
+    return response.json()
 
-    # Load each experiment
-    for exp_id in experiment_ids:
-        try:
-            # Use the /json endpoint which has the actual run data
-            response = requests.get(
-                f"{_phoenix_base_url()}/v1/experiments/{exp_id}/json",
-                timeout=30,
-            )
-            if response.status_code == 200:
-                runs = response.json()
 
-                # Get experiment metadata
-                meta_response = requests.get(
-                    f"{_phoenix_base_url()}/v1/experiments/{exp_id}",
-                    timeout=30,
-                )
-                exp_metadata = {}
-                if meta_response.status_code == 200:
-                    meta_data = meta_response.json()
-                    exp_metadata = meta_data.get("data", {}).get("metadata", {})
+def _golden_expectations(dataset_id: str) -> Dict[str, List[str]]:
+    """Each example's query and expected source keys, as DatasetManager writes
+    them (``query`` in, comma-joined ``expected_videos`` out)."""
+    expected: Dict[str, List[str]] = {}
+    payload = _phoenix_get(f"/v1/datasets/{dataset_id}/examples")
+    for example in payload["data"]["examples"]:
+        query = str(example["input"].get("query", "")).strip()
+        raw = example["output"].get("expected_videos", "")
+        items = raw.split(",") if isinstance(raw, str) else list(raw or [])
+        ids = [str(item).strip() for item in items if str(item).strip()]
+        if query and ids:
+            expected[query] = ids
+    return expected
 
-                # Extract profile and strategy
-                profile = exp_metadata.get("profile", "unknown")
-                strategy = exp_metadata.get(
-                    "ranking_strategy", exp_metadata.get("strategy", "unknown")
-                )
 
-                # Initialize structure
-                if profile not in experiment_data:
-                    experiment_data[profile] = {}
-                if strategy not in experiment_data[profile]:
-                    experiment_data[profile][strategy] = {
-                        "queries": [],
-                        "aggregate_metrics": {
-                            "mrr": {"mean": 0},
-                            "recall@1": {"mean": 0},
-                            "recall@5": {"mean": 0},
-                        },
-                    }
+def _search_spans(tenant_id: str, lookback_hours: int) -> List[Dict[str, Any]]:
+    """The tenant's search spans in the window, every page of them."""
+    from cogniverse_dashboard.utils import tenant_project_name
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-                # Process runs
-                for run in runs:
-                    input_data = run.get("input", {})
-                    reference_output = run.get("reference_output", {})
-                    output_data = run.get("output", {})
+    project = tenant_project_name(get_telemetry_manager(), tenant_id)
+    start = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    params: Dict[str, Any] = {
+        "limit": _SPAN_PAGE_LIMIT,
+        "start_time": start.isoformat(),
+    }
+    spans: List[Dict[str, Any]] = []
+    while True:
+        page = _phoenix_get(
+            f"/v1/projects/{quote(project, safe='')}/spans",
+            params,
+            missing_project={"data": [], "next_cursor": None},
+        )
+        spans.extend(
+            span for span in page.get("data", []) if span["name"] == SEARCH_SPAN_NAME
+        )
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return spans
+        params = {**params, "cursor": cursor}
 
-                    # IMPORTANT: Profile and strategy are in the output data for each run
-                    run_profile = output_data.get(
-                        "profile", profile
-                    )  # Use run's profile if available
-                    run_strategy = output_data.get(
-                        "ranking_strategy", strategy
-                    )  # Use run's strategy if available
 
-                    query = input_data.get("query", "")
-                    expected_videos_str = reference_output.get("expected_videos", "")
-                    expected_videos = (
-                        [v.strip() for v in expected_videos_str.split(",") if v.strip()]
-                        if expected_videos_str
-                        else []
-                    )
+@st.cache_data(ttl=60, show_spinner="Scoring recorded searches...")
+def get_golden_search_results(
+    dataset_id: str, tenant_id: str, lookback_hours: int = 168
+) -> GoldenSearchResults:
+    """Score the tenant's recorded searches of a golden dataset's queries.
 
-                    # Extract unique videos from results
-                    results = output_data.get("results", [])
-                    seen_videos = set()
-                    retrieved_videos = []
-                    for result in results:
-                        video_id = result.get("video_id", "")
-                        if video_id and video_id not in seen_videos:
-                            retrieved_videos.append(video_id)
-                            seen_videos.add(video_id)
+    Every ``search_service.search`` span in the window whose query is one of
+    the dataset's is scored under its ``profile`` and ``strategy``: its result
+    rows are keyed by ``result_source_title_key`` — the key golden sets name a
+    source by — and the latest search per profile, strategy and query counts.
+    A search with a row that carries no ``source_title`` is not scored and is
+    counted in ``unscored_searches``. Raises ``PhoenixUnavailableError`` when
+    Phoenix does not answer.
+    """
+    import json
 
-                    if query:
-                        # Use the run's profile and strategy, not the experiment metadata
-                        # Initialize structure for this run's profile/strategy if needed
-                        if run_profile not in experiment_data:
-                            experiment_data[run_profile] = {}
-                        if run_strategy not in experiment_data[run_profile]:
-                            experiment_data[run_profile][run_strategy] = {
-                                "queries": [],
-                                "aggregate_metrics": {
-                                    "mrr": {"mean": 0},
-                                    "recall@1": {"mean": 0},
-                                    "recall@5": {"mean": 0},
-                                },
-                            }
-
-                        metrics = calculate_metrics(retrieved_videos, expected_videos)
-                        experiment_data[run_profile][run_strategy]["queries"].append(
-                            {
-                                "query": query,
-                                "expected": expected_videos,
-                                "results": retrieved_videos,
-                                "metrics": metrics,
-                            }
-                        )
-
-        except requests.RequestException as exc:
-            # A Phoenix outage mid-load must not silently truncate the
-            # experiment list — surface it instead of skipping.
-            raise PhoenixUnavailableError(
-                f"Phoenix unreachable while loading experiment {exp_id}: {exc}"
-            ) from exc
-        except Exception:
-            logger.exception(
-                "Skipping experiment %s: unparseable response shape", exp_id
-            )
+    expected_by_query = _golden_expectations(dataset_id)
+    latest: Dict[tuple, Dict[str, Any]] = {}
+    unscored = 0
+    for span in _search_spans(tenant_id, lookback_hours):
+        attributes = span.get("attributes") or {}
+        query = str(attributes.get("query", "")).strip()
+        if query not in expected_by_query:
             continue
+        try:
+            rows = json.loads(attributes.get("output.value") or "[]")
+            retrieved = list(
+                dict.fromkeys(result_source_title_key(row) for row in rows)
+            )
+        except ValueError:
+            unscored += 1
+            continue
+        key = (
+            str(attributes.get("profile") or "unknown"),
+            str(attributes.get("strategy") or "default"),
+            query,
+        )
+        if key not in latest or span["start_time"] > latest[key]["start_time"]:
+            latest[key] = {"start_time": span["start_time"], "retrieved": retrieved}
 
-    # Aggregate ONCE, after every experiment is loaded — not inside the
-    # per-experiment loop (that recomputed the full aggregate E times).
-    _aggregate_experiment_metrics(experiment_data)
-
-    # If still no data, use mock data to show the UI structure
-    if not experiment_data:
-        # Return empty - the UI will handle showing "No experiments run"
-        pass
-
-    return experiment_data
+    results: Dict[str, Any] = {}
+    for (profile, strategy, query), searched in sorted(latest.items()):
+        expected = expected_by_query[query]
+        results.setdefault(profile, {}).setdefault(
+            strategy,
+            {
+                "queries": [],
+                "aggregate_metrics": {
+                    "mrr": {"mean": 0},
+                    "recall@1": {"mean": 0},
+                    "recall@5": {"mean": 0},
+                },
+            },
+        )["queries"].append(
+            {
+                "query": query,
+                "expected": expected,
+                "results": searched["retrieved"],
+                "metrics": calculate_metrics(searched["retrieved"], expected),
+            }
+        )
+    _aggregate_experiment_metrics(results)
+    return GoldenSearchResults(results=results, unscored_searches=unscored)
 
 
 def render_evaluation_tab():
     """Render the evaluation tab with EXACT tabbed format"""
-    st.subheader("🧪 Evaluation Experiments Dashboard")
+    st.subheader("🧪 Golden Set Evaluation")
 
     # Get datasets — a Phoenix outage renders as an error, never as the
     # same empty state a fresh project shows.
@@ -382,19 +353,24 @@ def render_evaluation_tab():
             f"[View in Phoenix]({_phoenix_base_url()}/datasets/{selected_dataset['id']})"
         )
 
-    # Phoenix comparison link
-    compare_url = f"{_phoenix_base_url()}/datasets/{selected_dataset['id']}/compare"
-    st.info(f"📊 **[Open Full Phoenix Comparison View]({compare_url})**")
-
-    # Load all experiment data for this dataset
-    with st.spinner("Loading experiments..."):
+    tenant_id = st.session_state["current_tenant"]
+    lookback_hours = st.number_input(
+        "Lookback (hours)", min_value=1, max_value=24 * 90, value=168
+    )
+    with st.spinner("Scoring recorded searches..."):
         try:
-            experiment_data = get_all_experiment_data_for_dataset(
-                selected_dataset["id"]
+            scored = get_golden_search_results(
+                selected_dataset["id"], tenant_id, int(lookback_hours)
             )
         except PhoenixUnavailableError as exc:
-            st.error(f"Cannot load experiments: {exc}")
+            st.error(f"Cannot load recorded searches: {exc}")
             return
+    experiment_data = scored.results
+    if scored.unscored_searches:
+        st.caption(
+            f"{scored.unscored_searches} recorded searches of these queries "
+            "carry a result with no source title and are not scored."
+        )
 
     st.markdown("---")
 
@@ -405,7 +381,10 @@ def render_evaluation_tab():
         profiles_with_data.append((profile_key, profile_key))
 
     if not profiles_with_data:
-        st.warning("No experiments found for this dataset.")
+        st.warning(
+            f"No searches of this dataset's queries recorded for tenant "
+            f"{tenant_id} in the last {int(lookback_hours)} hours."
+        )
         return
 
     # Create profile tabs (MAIN TABS) - only for profiles with data
