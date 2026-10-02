@@ -5,7 +5,7 @@ on one Vespa to pin what a worker serves after another one writes: the request
 thread never runs the refresh read, every tenant gets exactly one refresh, a
 store outage serves the last value read until the staleness bound and then
 raises, and a profile read-modify-write never writes back over another
-manager's change.
+manager's change. The router tier is held the same way.
 """
 
 from __future__ import annotations
@@ -23,8 +23,17 @@ import pytest
 import requests
 
 from cogniverse_foundation.caching import refreshing_cache as refreshing_cache_module
+from cogniverse_foundation.config import tenant_tiers as tenant_tiers_module
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.tenant_tiers import (
+    TENANT_TIER_KEY,
+    TENANT_TIER_SERVICE,
+    TENANT_TIER_VALUE_FIELD,
+    TenantRouterTiers,
+    resolve_tenant_tier,
+)
 from cogniverse_foundation.config.unified_config import (
+    DEFAULT_ROUTER_TIER,
     BackendProfileConfig,
     RoutingConfigUnified,
 )
@@ -37,6 +46,7 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 pytestmark = [pytest.mark.integration, pytest.mark.requires_vespa]
 
 REFRESH_THREAD = "scoped-config-refresh"
+TIER_REFRESH_THREAD = "router-tier-refresh"
 
 
 class _RecordingStore(VespaConfigStore):
@@ -108,7 +118,7 @@ def _routing(tenant: str, mode: str) -> RoutingConfigUnified:
 
 def _join_refreshes() -> None:
     for thread in threading.enumerate():
-        if thread.name == REFRESH_THREAD:
+        if thread.name in (REFRESH_THREAD, TIER_REFRESH_THREAD):
             thread.join(timeout=30)
             assert thread.is_alive() is False
 
@@ -306,3 +316,134 @@ def test_a_held_backend_config_never_drops_another_managers_profile(
             config_key="backend_config",
         )
         store.close()
+
+
+def _store_tier(store: VespaConfigStore, tenant: str, tier: str) -> None:
+    """Write the tier as another replica does: no reader here is invalidated."""
+    store.set_config(
+        tenant_id=tenant,
+        scope=ConfigScope.ROUTING,
+        service=TENANT_TIER_SERVICE,
+        config_key=TENANT_TIER_KEY,
+        config_value={TENANT_TIER_VALUE_FIELD: tier},
+    )
+
+
+def _delete_tier(store: VespaConfigStore, tenant: str) -> None:
+    store.delete_config(
+        tenant_id=tenant,
+        scope=ConfigScope.ROUTING,
+        service=TENANT_TIER_SERVICE,
+        config_key=TENANT_TIER_KEY,
+    )
+
+
+class _Accessor:
+    def __init__(self, config_manager: ConfigManager) -> None:
+        self.config_manager = config_manager
+
+
+def test_another_replicas_tier_write_is_served_after_one_off_thread_refresh(
+    vespa_instance, writer
+):
+    tenant = _tenant("tier")
+    store = _RecordingStore(vespa_instance["http_port"])
+    reader = TenantRouterTiers(
+        ConfigManager(store=store), refresh_after_s=1.0, max_staleness_s=30.0
+    )
+    try:
+        _store_tier(writer.store, tenant, "free")
+        assert reader(tenant) == "free"
+        _store_tier(writer.store, tenant, "pro")
+        assert reader(tenant) == "free"
+        caller = threading.current_thread().name
+        assert store.reads == [(tenant, caller)]
+
+        time.sleep(1.05)
+        store.answered.clear()
+        store.gate.clear()
+        assert reader(tenant) == "free"
+        # The request returned before the refresh it started was let go.
+        assert store.answered.wait(timeout=30)
+        assert store.reads == [(tenant, caller), (tenant, TIER_REFRESH_THREAD)]
+        store.gate.set()
+        _join_refreshes()
+
+        assert reader(tenant) == "pro"
+        assert len(store.reads) == 2
+    finally:
+        store.gate.set()
+        _delete_tier(writer.store, tenant)
+        store.close()
+
+
+def test_a_tier_outage_serves_the_held_tier_until_the_bound_then_routes_default(
+    vespa_instance, writer, caplog
+):
+    tenant = _tenant("tieroutage")
+    upstream = f"http://localhost:{vespa_instance['http_port']}"
+    with _SwitchableProxy(upstream) as proxy:
+        store = VespaConfigStore(
+            backend_url="http://127.0.0.1", backend_port=proxy.server.server_port
+        )
+        manager = ConfigManager(store=store)
+        reader = TenantRouterTiers(manager, refresh_after_s=1.0, max_staleness_s=9.0)
+        try:
+            _store_tier(writer.store, tenant, "pro")
+            read_at = time.monotonic()
+            assert reader(tenant) == "pro"
+            proxy.down = True
+            time.sleep(1.05)
+
+            with caplog.at_level(
+                logging.ERROR, logger=refreshing_cache_module.__name__
+            ):
+                assert reader(tenant) == "pro"
+                _join_refreshes()
+            messages = [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == refreshing_cache_module.__name__
+            ]
+            assert len(messages) == 1
+            assert re.fullmatch(
+                rf"router-tier: refreshing '{tenant}' failed with "
+                r"ConfigStoreUnavailableError: Failed to read Vespa config visit "
+                r"after 5 attempts over \d+\.\d{3}s: HTTPError: 503 Server Error: "
+                r"Service Unavailable for url: http://127\.0\.0\.1:\d+/document/v1/"
+                r"\S+; serving the value read \d+\.\ds ago until it is 9\.0s old",
+                messages[0],
+            )
+            assert reader(tenant) == "pro"
+
+            time.sleep(max(0.0, read_at + 9.05 - time.monotonic()))
+            with pytest.raises(ConfigStoreUnavailableError) as caught:
+                reader(tenant)
+            assert str(caught.value).startswith(
+                "Failed to read Vespa config visit after 5 attempts over "
+            )
+
+            # The request path's own reader for this manager holds nothing, so
+            # it reads on the caller's thread and routes the outage as default.
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger=tenant_tiers_module.__name__):
+                assert resolve_tenant_tier(_Accessor(manager), tenant) == (
+                    DEFAULT_ROUTER_TIER
+                )
+            warnings = [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == tenant_tiers_module.__name__
+            ]
+            assert len(warnings) == 1
+            assert warnings[0].startswith(
+                f"Router tier read failed for tenant {tenant} "
+                "(ConfigStoreUnavailableError: Failed to read Vespa config visit "
+            )
+            assert warnings[0].endswith(f"routing as {DEFAULT_ROUTER_TIER}")
+
+            proxy.down = False
+            assert reader(tenant) == "pro"
+        finally:
+            _delete_tier(writer.store, tenant)
+            store.close()

@@ -6,11 +6,11 @@ the same tenant, and a real chat completion crosses Envoy into the vLLM
 semantic router, whose decision the stub upstream reflects and whose
 ``routing_decision`` log line names.
 
-Each tier is set and exercised in turn inside one reader TTL, so a decision
-that follows a tier change proves the write invalidated the cached read --
-waiting out the TTL would prove only that entries expire. The expected
-decision, model and reasoning flag for a tier are read from the router config
-the stack runs, never restated here.
+Each tier is set and exercised in turn before the reader's refresh age, so a
+decision that follows a tier change proves the write invalidated the held
+read -- a refresh after that age would prove only that held tiers are re-read.
+The expected decision, model and reasoning flag for a tier are read from the
+router config the stack runs, never restated here.
 
 The router caches each response under the decision and the tenant identity on
 the exact request, so returning to the first tier with the same prompt is
@@ -37,7 +37,7 @@ from cogniverse_foundation.config.lm_response_cache import (
 )
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
-from cogniverse_foundation.config.tenant_tiers import TENANT_TIER_TTL_S
+from cogniverse_foundation.config.tenant_tiers import TENANT_TIER_REFRESH_S
 from cogniverse_foundation.config.unified_config import (
     ROUTER_TIERS,
     LLMEndpointConfig,
@@ -402,9 +402,9 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
         for index, tier in enumerate(tiers)
     ]
 
-    # Every tier change was read back inside one reader TTL, so the in-process
-    # invalidation is what carried it -- not an entry that happened to expire.
-    assert elapsed < TENANT_TIER_TTL_S
+    # Every tier change was read back before the reader's refresh age, so the
+    # in-process invalidation is what carried it -- not a background refresh.
+    assert elapsed < TENANT_TIER_REFRESH_S
 
 
 async def test_a_repeat_answered_in_process_never_reaches_the_router(tier_stack):
