@@ -177,18 +177,23 @@ def _listening_owners(port: int, pids: list[int]) -> list[int]:
 def _serving_worker(port: int, connection: http.client.HTTPConnection, pids):
     """The worker holding the server side of an open client connection, once
     a worker has accepted it: until then the kernel lists the server side,
-    queued on a listening socket, with no socket inode."""
+    queued on a listening socket, with no socket inode.
+
+    The kernel serves /proc/net/tcp a chunk at a time, so a read that races
+    sockets opening or closing can list one socket twice or miss it; a socket
+    is its inode, and a read that has not yet seen the accepted one reads
+    again."""
     client_port = connection.sock.getsockname()[1]
     deadline = time.monotonic() + ACCEPT_TIMEOUT_S
     while True:
-        inodes = [
+        accepted = {
             inode
             for local, remote, state, inode in _tcp_rows()
             if local == port and remote == client_port and state != _TCP_LISTEN
-        ]
-        assert len(inodes) == 1, (client_port, inodes)
-        if inodes[0] != 0:
-            return _owner(inodes[0], pids)
+        } - {0}
+        assert len(accepted) <= 1, (client_port, sorted(accepted))
+        if accepted:
+            return _owner(accepted.pop(), pids)
         assert time.monotonic() < deadline, f"no worker accepted {client_port}"
         time.sleep(0.05)
 
