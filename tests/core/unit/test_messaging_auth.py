@@ -52,15 +52,19 @@ class TestInviteTokenManager:
         token = token_manager.generate_token("acme:alice")
         assert token_manager.validate_token(token) == "acme:alice"
 
-        assert token_manager.mark_token_used(token, "acme:alice") is True
+        assert token_manager.claim_token(token, "telegram", "42") == "acme:alice"
         assert token_manager.validate_token(token) is None
+        assert token_manager.mark_token_used(token, "telegram", "42") is True
+        assert token_manager.validate_token(token) is None
+        assert token_manager.claim_token(token, "telegram", "42") is None
 
     def test_mark_used_stores_tz_aware_used_at(
         self, token_manager, config_manager_memory
     ):
         before = datetime.now(timezone.utc)
         token = token_manager.generate_token("acme:alice")
-        token_manager.mark_token_used(token, "acme:alice")
+        token_manager.claim_token(token, "telegram", "42")
+        token_manager.mark_token_used(token, "telegram", "42")
         after = datetime.now(timezone.utc)
 
         value = config_manager_memory.get_config_value(
@@ -71,6 +75,7 @@ class TestInviteTokenManager:
         )
         assert value["used"] is True
         assert value["tenant_id"] == "acme:alice"
+        assert value["claimed_by"] == {"platform": "telegram", "external_user_id": "42"}
         used_at = datetime.fromisoformat(value["used_at"])
         assert used_at.tzinfo is not None
         assert used_at.utcoffset() == timedelta(0)
@@ -135,20 +140,70 @@ class TestInviteTokenManager:
             manager.validate_token("anytoken")
 
     def test_mark_token_used_returns_false_on_store_failure(self):
-        """A failed consume write reports False so the caller can log that
-        the token stays live; it must not raise — the user is already
-        registered by the time the token is consumed."""
+        """A failed consume write reports False so the caller can log it; it
+        must not raise — the user is already registered by the time the
+        token is consumed. The token stays bound to that user."""
         from cogniverse_foundation.config.manager import ConfigManager
         from tests.utils.memory_store import InMemoryConfigStore
 
         class WriteFailStore(InMemoryConfigStore):
+            failing = False
+
             def set_config(self, *args, **kwargs):
-                raise ConnectionError("config store unreachable")
+                if self.failing:
+                    raise ConnectionError("config store unreachable")
+                return super().set_config(*args, **kwargs)
 
         store = WriteFailStore()
         store.initialize()
-        manager = InviteTokenManager(ConfigManager(store=store))
-        assert manager.mark_token_used("sometoken", "acme:alice") is False
+        config_manager = ConfigManager(store=store)
+        manager = InviteTokenManager(config_manager)
+        token = manager.generate_token("acme:alice")
+        assert manager.claim_token(token, "telegram", "42") == "acme:alice"
+        store.failing = True
+
+        assert manager.mark_token_used(token, "telegram", "42") is False
+
+        store.failing = False
+        value = config_manager.get_config_value(
+            tenant_id="_system",
+            scope=ConfigScope.SYSTEM,
+            service="messaging_gateway",
+            config_key=f"invite_token_{token}",
+        )
+        assert value["used"] is False
+        assert value["claimed_by"] == {"platform": "telegram", "external_user_id": "42"}
+        assert manager.claim_token(token, "telegram", "43") is None
+        assert manager.claim_token(token, "telegram", "42") == "acme:alice"
+
+    def test_a_claimed_token_is_refused_to_every_other_user(
+        self, token_manager, config_manager_memory
+    ):
+        token = token_manager.generate_token("acme:alice")
+        assert token_manager.claim_token(token, "telegram", "42") == "acme:alice"
+
+        assert token_manager.claim_token(token, "telegram", "43") is None
+        assert token_manager.claim_token(token, "slack", "42") is None
+        assert token_manager.mark_token_used(token, "telegram", "43") is False
+        # The bound user can retry the claim; it writes nothing new.
+        assert token_manager.claim_token(token, "telegram", "42") == "acme:alice"
+        history = config_manager_memory.store.get_config_history(
+            "_system:_system",
+            ConfigScope.SYSTEM,
+            "messaging_gateway",
+            f"invite_token_{token}",
+        )
+        assert [entry.version for entry in history] == [2, 1]
+        assert history[0].config_value["claimed_by"] == {
+            "platform": "telegram",
+            "external_user_id": "42",
+        }
+        assert history[0].config_value["used"] is False
+
+    def test_expired_or_unknown_tokens_cannot_be_claimed(self, token_manager):
+        expired = token_manager.generate_token("acme:alice", expires_in_hours=-1)
+        assert token_manager.claim_token(expired, "telegram", "42") is None
+        assert token_manager.claim_token("nonexistent", "telegram", "42") is None
 
 
 class TestUserTenantMapper:

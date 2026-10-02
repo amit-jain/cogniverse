@@ -928,80 +928,73 @@ class RegisterRequest(BaseModel):
     token: str
 
 
-_register_locks: Dict[str, asyncio.Lock] = {}
-
-
-def _register_lock(token: str) -> asyncio.Lock:
-    """Return the per-token registration lock (created on first use).
-
-    Serializing per token makes a concurrent second register of the SAME token
-    lose at validation, while registrations for DIFFERENT tokens run in
-    parallel instead of convoying behind one process-global lock. Runs on the
-    event loop with no await between get and set, so the lookup is atomic.
-    """
-    lock = _register_locks.get(token)
-    if lock is None:
-        lock = asyncio.Lock()
-        _register_locks[token] = lock
-    return lock
-
-
 @router.post("/messaging/register")
 async def register_messaging_user(
     request: RegisterRequest,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> Dict[str, Any]:
-    """Validate an invite token, store the user-tenant mapping, consume the
-    token — in that order, so a failed registration never burns the token.
+    """Claim an invite token for this user, store the user-tenant mapping,
+    consume the token — in that order.
 
-    404 = invalid/expired/used token. 503 = config store or Mem0 outage,
-    with the token intact for retry. The sequence is serialized per process
-    so a concurrent second register of the same token loses at validation.
+    The claim is a compare-and-set on the token's config record, so of any
+    number of concurrent registers on any process or replica exactly one
+    user gets the token; every other user gets 404 from then on. 404 =
+    invalid/expired/used token, or one another user claimed. 503 = config
+    store or Mem0 outage; the token stays claimed for this user, who can
+    retry.
     """
     from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
 
     token_manager = InviteTokenManager(config_manager)
-    async with _register_lock(request.token):
-        try:
-            tenant_id = await asyncio.to_thread(
-                token_manager.validate_token, request.token
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503, detail=f"registration unavailable: {exc}"
-            ) from exc
-        if not tenant_id:
-            raise HTTPException(status_code=404, detail="invalid_token")
-
-        try:
-            mapper = UserTenantMapper(_system_memory_manager())
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"registration unavailable: {exc}; token intact",
-            ) from exc
-        registered = await asyncio.to_thread(
-            mapper.register_user,
+    try:
+        tenant_id = await asyncio.to_thread(
+            token_manager.claim_token,
+            request.token,
             request.platform,
             request.external_user_id,
-            tenant_id,
         )
-        if not registered:
-            raise HTTPException(
-                status_code=503,
-                detail="registration unavailable: mapping store failed; token intact",
-            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"registration unavailable: {exc}"
+        ) from exc
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="invalid_token")
 
-        consumed = await asyncio.to_thread(
-            token_manager.mark_token_used, request.token, tenant_id
+    try:
+        mapper = UserTenantMapper(_system_memory_manager())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"registration unavailable: {exc}; token held for this user",
+        ) from exc
+    registered = await asyncio.to_thread(
+        mapper.register_user,
+        request.platform,
+        request.external_user_id,
+        tenant_id,
+    )
+    if not registered:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "registration unavailable: mapping store failed; "
+                "token held for this user"
+            ),
         )
-        if not consumed:
-            logger.error(
-                "User %s registered but token %s... not consumed; "
-                "it stays live until expiry",
-                request.external_user_id,
-                request.token[:8],
-            )
+
+    consumed = await asyncio.to_thread(
+        token_manager.mark_token_used,
+        request.token,
+        request.platform,
+        request.external_user_id,
+    )
+    if not consumed:
+        logger.error(
+            "User %s registered but token %s... not consumed; "
+            "it stays claimed by that user",
+            request.external_user_id,
+            request.token[:8],
+        )
     return {"tenant_id": tenant_id}
 
 
@@ -2516,7 +2509,6 @@ def _reset_admin_overrides_for_tests() -> None:
     _signature_variant_overrides.clear()
     _signature_variant_cache_ts.clear()
     _signature_variant_write_locks.clear()
-    _register_locks.clear()
 
 
 class HarnessKeyCreateRequest(BaseModel):
