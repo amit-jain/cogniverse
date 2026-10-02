@@ -746,7 +746,16 @@ async def process_agent_task(
     except SessionStateUnavailable as e:
         # The shared ledger that orders this context's turns did not answer;
         # the turn is refused rather than answered and never stored.
-        raise HTTPException(status_code=503, detail=str(e))
+        raise failure_response(
+            503,
+            "session_state_unavailable",
+            f"Agent '{agent_name}' could not complete: the session state store "
+            "did not answer; retry.",
+            e,
+            agent=agent_name,
+            context_id=task.context_id,
+            request_id=dispatch_context["request_id"],
+        )
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this
         # deployment, or is unreachable. 503 names the service to configure;

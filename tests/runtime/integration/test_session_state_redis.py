@@ -860,8 +860,9 @@ class TestManagedTurnsAgainstTheLedger:
 
 class TestRoutesReportTheOutage:
     async def test_the_process_route_answers_503_naming_the_store(
-        self, dead_redis, monkeypatch
+        self, dead_redis, monkeypatch, caplog
     ):
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         dispatcher = _dispatcher(
             _ledger(dead_redis, _prefix("conversation")), _Store(), {"q": "a"}, []
         )
@@ -884,10 +885,24 @@ class TestRoutesReportTheOutage:
 
         assert response.status_code == 503
         assert response.json() == {
-            "detail": (
-                "session state store unavailable: read the pending turns of context ctx"
-            )
+            "detail": {
+                "error": "session_state_unavailable",
+                "message": "Agent 'search_agent' could not complete: the session "
+                "state store did not answer; retry.",
+                "failure": "SessionStateUnavailable",
+                "agent": "search_agent",
+                "context_id": "ctx",
+                "request_id": "ctx",
+            }
         }
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "session_state_unavailable: SessionStateUnavailable: session state "
+            "store unavailable: read the pending turns of context ctx"
+        ]
         await dead_redis.aclose()
 
     async def test_v1_suspension_answers_503_when_the_store_is_down(self, dead_redis):
