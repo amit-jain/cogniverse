@@ -297,6 +297,8 @@ spec:
           value: {{ include "cogniverse.runtime.shutdown.uvicornGracefulSeconds" . | quote }}
         - name: A2A_DRAIN_TIMEOUT_SECONDS
           value: {{ include "cogniverse.runtime.shutdown.a2aDrainSeconds" . | quote }}
+        - name: UVICORN_WORKERS
+          value: {{ include "cogniverse.runtime.workers" . | quote }}
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: VESPA_URL
@@ -432,6 +434,11 @@ spec:
         {{- range $name := list "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN" "A2A_DRAIN_TIMEOUT_SECONDS" }}
         {{- if hasKey $.Values.runtime.env $name }}
         {{- fail (printf "%s is set from runtime.shutdown, which also sizes the pod's termination grace period; set it there" $name) }}
+        {{- end }}
+        {{- end }}
+        {{- range $name := list "UVICORN_WORKERS" "WEB_CONCURRENCY" }}
+        {{- if hasKey $.Values.runtime.env $name }}
+        {{- fail (printf "%s is set from runtime.workers; set it there" $name) }}
         {{- end }}
         {{- end }}
         {{- if hasKey .Values.runtime.env "COGNIVERSE_ROOT_PATH" }}

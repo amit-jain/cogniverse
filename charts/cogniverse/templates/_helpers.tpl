@@ -528,16 +528,22 @@ Services on the pylate engine are excluded: their server faults the GPU
 (exit 139) while TunableOp benchmarks an untuned GEMM shape, and real
 traffic supplies a new shape on nearly every request. An individual
 service overrides the engine-derived default with `tunableOp`.
+
+`tunableOpTuning: false` keeps the tuned results in use but stops tuning
+shapes the file does not hold; those run the default kernel instead of
+stalling the request that first meets them.
 */}}
 {{- define "cogniverse.tunableOpEnv" -}}
 {{- $svc := (index .root.Values.inference .name) | default dict -}}
 {{- $enabled := ne ($svc.engine | default "") "pylate" -}}
 {{- if hasKey $svc "tunableOp" -}}{{- $enabled = $svc.tunableOp -}}{{- end -}}
+{{- $tuning := true -}}
+{{- if hasKey $svc "tunableOpTuning" -}}{{- $tuning = $svc.tunableOpTuning -}}{{- end -}}
 {{- if and (eq .device "rocm") .root.Values.runtime.tunableOp $enabled }}
 - name: PYTORCH_TUNABLEOP_ENABLED
   value: "1"
 - name: PYTORCH_TUNABLEOP_TUNING
-  value: "1"
+  value: {{ ternary "1" "0" $tuning | quote }}
 - name: PYTORCH_TUNABLEOP_FILENAME
   value: /root/.cache/huggingface/tunableop_{{ .name | kebabcase }}_%d.csv
 {{- end }}
@@ -690,6 +696,18 @@ reuses its values. uvicorn reads its graceful-shutdown timeout as an integer.
 {{- fail (printf "runtime.shutdown.uvicornGracefulSeconds must be a whole number of seconds (uvicorn reads it as an integer), got %v" $seconds) -}}
 {{- end -}}
 {{- int $seconds -}}
+{{- end -}}
+
+{{/*
+The runtime's uvicorn worker-process count, one when a release predating
+runtime.workers reuses its values.
+*/}}
+{{- define "cogniverse.runtime.workers" -}}
+{{- $workers := dig "workers" 1 .Values.runtime -}}
+{{- if or (ne (float64 $workers) (float64 (int $workers))) (lt (int $workers) 1) -}}
+{{- fail (printf "runtime.workers must be a whole number of at least 1, got %v" $workers) -}}
+{{- end -}}
+{{- int $workers -}}
 {{- end -}}
 
 {{- define "cogniverse.runtime.shutdown.a2aDrainSeconds" -}}

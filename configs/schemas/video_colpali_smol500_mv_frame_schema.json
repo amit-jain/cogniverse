@@ -170,7 +170,7 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "max_sim",
@@ -222,7 +222,7 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         }
       ],
       "first_phase": "max_sim_hamming",
@@ -260,7 +260,7 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "max_sim",
@@ -310,7 +310,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "text_sim",
@@ -335,7 +335,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "text_sim",
@@ -410,7 +410,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "text_sim_no_desc",
@@ -435,7 +435,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
         },
         {
           "name": "text_sim_no_desc",

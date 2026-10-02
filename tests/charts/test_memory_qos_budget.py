@@ -327,3 +327,70 @@ def test_local_chat_serving_overcommits_this_host_by_the_overlay_delta():
         "the Modal overlay is no longer required on this host and the deploy "
         "path's serving default should be revisited"
     )
+
+
+# One runtime process at its measured peak: the dev cluster runtime pod's
+# cgroup high-water mark while it served from a single process.
+RUNTIME_PROCESS_PEAK_GIB = 1.84
+# The runtime_cli process that supervises the workers (measured RSS).
+RUNTIME_SUPERVISOR_GIB = 0.1
+PROD_SECRETS = (
+    "--set",
+    "minio.rootPassword=overlay-secret",
+    "--set",
+    "openshell.server.sshHandshakeSecret=overlay-secret",
+    "--set",
+    "phoenix.postgres.auth.password=overlay-secret",
+    "--set",
+    "redis.auth.password=overlay-secret",
+)
+
+
+def _runtime_workers_and_limit_gib(documents: list[dict]) -> tuple[int, float]:
+    containers = [
+        container
+        for workload, name, container in _resident_containers(documents)
+        if (workload, name) == ("cogniverse-runtime", "runtime")
+    ]
+    assert len(containers) == 1, containers
+    env = {item["name"]: item.get("value") for item in containers[0]["env"]}
+    limit = _quantity_gib(containers[0]["resources"]["limits"]["memory"])
+    return int(env["UVICORN_WORKERS"]), limit
+
+
+def _runtime_memory_needed_gib(workers: int) -> float:
+    supervisor = RUNTIME_SUPERVISOR_GIB if workers > 1 else 0.0
+    return workers * RUNTIME_PROCESS_PEAK_GIB + supervisor
+
+
+@pytest.mark.parametrize(
+    "stack, render, expected",
+    [
+        ("base", lambda: _render(), (1, 3.0)),
+        ("k3s", lambda: _render_as_deployed(), (1, 12.0)),
+        (
+            "prod",
+            lambda: _render("-f", str(CHART_PATH / "values.prod.yaml"), *PROD_SECRETS),
+            (1, 3.0),
+        ),
+    ],
+    ids=["base", "k3s", "prod"],
+)
+def test_the_runtime_memory_limit_holds_every_worker_process(stack, render, expected):
+    """Every uvicorn worker is a full copy of the runtime, so the container's
+    memory limit must hold that many peaks or the kernel kills the pod."""
+    workers, limit = _runtime_workers_and_limit_gib(render())
+
+    assert (workers, limit) == expected, stack
+    assert _runtime_memory_needed_gib(workers) <= limit, stack
+
+
+def test_more_workers_than_the_limit_holds_are_caught():
+    """Two workers in the base chart's 3Gi need 3.78Gi."""
+    workers, limit = _runtime_workers_and_limit_gib(
+        _render("--set", "runtime.workers=2")
+    )
+
+    assert (workers, limit) == (2, 3.0)
+    assert round(_runtime_memory_needed_gib(workers), 2) == 3.78
+    assert _runtime_memory_needed_gib(workers) > limit

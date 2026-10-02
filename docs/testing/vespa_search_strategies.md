@@ -115,7 +115,8 @@ The 14 strategy names above are not implemented identically by every schema — 
 
 | Schema family | Example profiles (`backend.profiles`) | Strategy set |
 |---|---|---|
-| ColPali/ColQwen patch (has description field) | `video_colpali_smol500_mv_frame`, `image_colpali_mv`, `video_colqwen_omni_mv_chunk_30s`, `document_visual_colpali` | All 14 strategies + `default` (15 rank profiles) |
+| ColPali/ColQwen patch, video | `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s` | All 14 strategies + `default` (15 rank profiles) |
+| ColPali/ColQwen patch, image and page | `image_colpali_mv`, `document_visual_colpali` | 7 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`) + `default`, which ranks by binary MaxSim alone |
 | X-CLIP sv_chunk (no description field) | `video_xclip_sv_chunk_6s` | 9 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`) + `default`; `bm25_no_description` and all `*_no_description` hybrids are absent because there is no description field to exclude |
 | LateOn text (`document_text` schema) | `document_text_semantic` | 7 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`) + `default`; no `hybrid_bm25_binary`/`hybrid_bm25_float` or `*_no_description` variants |
 | LateOn document (`lateon_mv` schema) | `lateon_mv` | `bm25_only`, `float_float`, `float_binary`, `hybrid_binary_bm25`, `hybrid_float_bm25` + `default`; the visual-search-only strategy is named `binary_only`, **not** `binary_binary` |
@@ -182,6 +183,7 @@ All BM25 strategies use fieldsets to search across:
 ### Ranking Phases
 - **First phase**: Initial candidate selection
 - **Second phase**: Reranking top candidates (default: top 100, from each rank profile's `second-phase.rerank-count`)
+- **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming` and `visual_sim_binary`): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
 - **Hybrid**: Different models for each phase
 
 ### Strategy Extraction & Runtime Resolution
@@ -239,7 +241,7 @@ results = backend.search({
 
 - AUDIO: Transcript search (`transcript_search`, BM25) plus CLAP acoustic and ColBERT-style semantic embedding strategies — named differently from the 14-strategy set
 
-- IMAGE: Visual embedding search via ColPali/ColQwen (`image_colpali_mv`, full 14-strategy set)
+- IMAGE: Visual embedding search via ColPali/ColQwen (`image_colpali_mv`, 7 of the 14 strategies)
 
 - DOCUMENT: Visual (ColPali page-as-image, `document_visual_colpali`) or text (LateOn, `document_text_semantic`/`lateon_mv`, reduced strategy set) search, or hybrid of both
 

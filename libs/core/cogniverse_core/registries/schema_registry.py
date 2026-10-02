@@ -7,9 +7,7 @@ Ensures all schemas are tracked and can be redeployed together.
 
 import logging
 import threading
-import time
 import weakref
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Dict, List, Optional
 
@@ -28,6 +26,7 @@ from cogniverse_core.registries.schema_deploy_lease import (
     SchemaDeployLease,
 )
 from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
+from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +35,14 @@ _SCHEMA_INTENT_GRACE_S = 90
 # ConfigStore service the registry rows and the deployment journal live under.
 SCHEMA_REGISTRY_SERVICE = "schema_registry"
 
-# Longest a DeployedSchemaNames entry answers True without re-reading the
-# store: how long another process's deletion can go unseen here.
-DEPLOYED_SCHEMAS_TTL_S = 30.0
+# Age at which a DeployedSchemaNames entry is re-read on a background thread
+# while it keeps answering.
+DEPLOYED_SCHEMAS_REFRESH_S = 15.0
+# Oldest entry that answers True: how long another process's deletion can go
+# unseen here.
+DEPLOYED_SCHEMAS_MAX_STALENESS_S = 30.0
+# Most tenants one DeployedSchemaNames holds.
+DEPLOYED_SCHEMAS_MAX_TENANTS = 512
 
 
 def _same_definition(stored: str, shipped: str) -> bool:
@@ -123,32 +127,42 @@ def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[st
 
 
 class DeployedSchemaNames:
-    """Whether a tenant has a base schema deployed, cached per tenant.
+    """Whether a tenant has a base schema deployed, held per tenant.
 
     ``reader(tenant_id, base_schema_name)``. A tenant's entry holds only
-    deployed names: a name in it answers True with no read until ``ttl_s``
-    after the read that produced it began. A name missing from it re-reads
-    the store before answering False, so a deployment by any process is
-    visible to the next call and a refusal is never served from memory.
-    Every schema-registry row or deployment-intent write in this process
-    drops the written tenant's entry from every reader
-    (``invalidate_deployed_schema_names``), so ``ttl_s`` bounds only how long
-    another process's deletion keeps answering True. Concurrent reads for one
-    tenant share one store read; a failed read raises to each caller and
-    caches nothing.
+    deployed names. A name in it answers True with no read until
+    ``refresh_after_s`` after the read that produced it began; until
+    ``max_staleness_s`` it still answers True while one background read
+    replaces the entry, so the caller never waits on that read. A name missing
+    from the entry, or an entry ``max_staleness_s`` old, re-reads the store on
+    the caller's thread before answering, so a deployment by any process is
+    visible to the next call and a refusal is never served from memory. Every
+    schema-registry row or deployment-intent write in this process drops the
+    written tenant's entry from every reader
+    (``invalidate_deployed_schema_names``), so ``max_staleness_s`` bounds only
+    how long another process's deletion keeps answering True. Concurrent reads
+    for one tenant share one store read; a failed read raises to each caller
+    waiting on it and caches nothing. A failed background read is logged and
+    the entry keeps answering until ``max_staleness_s``.
     """
 
     _live: ClassVar["weakref.WeakSet[DeployedSchemaNames]"] = weakref.WeakSet()
     _live_lock: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, config_manager, ttl_s: float = DEPLOYED_SCHEMAS_TTL_S) -> None:
-        if ttl_s <= 0:
-            raise ValueError(f"ttl_s must be positive, got {ttl_s}")
+    def __init__(
+        self,
+        config_manager,
+        refresh_after_s: float = DEPLOYED_SCHEMAS_REFRESH_S,
+        max_staleness_s: float = DEPLOYED_SCHEMAS_MAX_STALENESS_S,
+    ) -> None:
         self._config_manager = config_manager
-        self._ttl_s = ttl_s
-        self._lock = threading.Lock()
-        self._entries: Dict[str, tuple[frozenset[str], float]] = {}
-        self._reads: Dict[str, Future] = {}
+        self._names: RefreshingCache[str, frozenset[str]] = RefreshingCache(
+            name="deployed-schemas",
+            refresh_after_s=refresh_after_s,
+            max_staleness_s=max_staleness_s,
+            max_entries=DEPLOYED_SCHEMAS_MAX_TENANTS,
+            keep=bool,
+        )
         with DeployedSchemaNames._live_lock:
             DeployedSchemaNames._live.add(self)
 
@@ -157,62 +171,26 @@ class DeployedSchemaNames:
         return self._config_manager
 
     @property
-    def ttl_s(self) -> float:
-        return self._ttl_s
+    def refresh_after_s(self) -> float:
+        return self._names.refresh_after_s
+
+    @property
+    def max_staleness_s(self) -> float:
+        return self._names.max_staleness_s
 
     def __call__(self, tenant_id: str, base_schema_name: str) -> bool:
         tenant_id = canonical_tenant_id(tenant_id)
-        with self._lock:
-            cached = self._entries.get(tenant_id)
-            if (
-                cached is not None
-                and time.monotonic() < cached[1]
-                and base_schema_name in cached[0]
-            ):
-                return True
-        return base_schema_name in self._read(tenant_id)
-
-    def _read(self, tenant_id: str) -> frozenset[str]:
-        with self._lock:
-            started = time.monotonic()
-            read = self._reads.get(tenant_id)
-            if read is not None:
-                owner = False
-            else:
-                owner = True
-                read = self._reads[tenant_id] = Future()
-        if not owner:
-            return read.result()
-        try:
-            names = tenant_deployed_schema_names(self._config_manager, tenant_id)
-        except BaseException as exc:
-            with self._lock:
-                if self._reads.get(tenant_id) is read:
-                    del self._reads[tenant_id]
-            read.set_exception(exc)
-            raise
-        with self._lock:
-            # An invalidation during the read removed it from _reads: the
-            # answer may predate that write, so it is returned, never cached.
-            if self._reads.get(tenant_id) is read:
-                del self._reads[tenant_id]
-                for expired in [
-                    key for key, (_, until) in self._entries.items() if until <= started
-                ]:
-                    del self._entries[expired]
-                if names:
-                    self._entries[tenant_id] = (names, started + self._ttl_s)
-                else:
-                    self._entries.pop(tenant_id, None)
-        read.set_result(names)
-        return names
+        names = self._names.get(
+            tenant_id,
+            lambda: tenant_deployed_schema_names(self._config_manager, tenant_id),
+            accept=lambda held: base_schema_name in held,
+        )
+        return base_schema_name in names
 
     def invalidate(self, tenant_id: str) -> None:
         """Drop the tenant's entry and detach any read in flight for it."""
         tenant_id = canonical_tenant_id(tenant_id)
-        with self._lock:
-            self._entries.pop(tenant_id, None)
-            self._reads.pop(tenant_id, None)
+        self._names.invalidate(lambda key: key == tenant_id)
 
 
 def invalidate_deployed_schema_names(tenant_id: str) -> None:

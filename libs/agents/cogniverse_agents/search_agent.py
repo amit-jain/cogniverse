@@ -41,7 +41,13 @@ from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
     leased_backend,
 )
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.lm_deadline import LMCallDeadline
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    LMEndpointNotServing,
+    lm_endpoint_availability,
+    not_serving_cause,
+)
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_foundation.telemetry.span_contract import (
     QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
@@ -367,9 +373,12 @@ class SearchAgentDeps(AgentDeps):
 
 
 # Named reasons a search reports when its query rewrite did not apply. The
-# search still runs, on the original query.
+# search still runs, on the original query. ``QUERY_REWRITE_LM_NOT_SERVING``:
+# the LM endpoint answered 404 (nothing deployed), so the rewrite was refused
+# without a round trip until the endpoint is rechecked.
 QUERY_REWRITE_FAILED = "query_rewrite_failed"
 QUERY_REWRITE_TIMED_OUT = "query_rewrite_timed_out"
+QUERY_REWRITE_LM_NOT_SERVING = "query_rewrite_lm_not_serving"
 
 
 # Generation ceiling for one rewrite. Measured on the served endpoint over the
@@ -436,6 +445,35 @@ def _bound_lm_name() -> str:
     """
     lm = getattr(dspy.settings, "lm", None)
     return str(getattr(lm, "model", "") or "unbound")
+
+
+def _bound_lm_refusal() -> Optional[LMEndpointNotServing]:
+    """The fast failure the LM bound for this request would answer with now:
+    its endpoint answered 404 and is not yet due a recheck."""
+    lm = getattr(dspy.settings, "lm", None)
+    if not isinstance(lm, BodyBoundedLM):
+        return None
+    return lm_endpoint_availability().refusal(lm.availability_endpoint())
+
+
+def _rewrite_skipped(
+    query: str, error: Exception
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Search ``query`` as sent, naming the not-serving endpoint on the span
+    and in the log."""
+    from opentelemetry import trace as _otel_trace
+
+    _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK)
+    span = _otel_trace.get_current_span()
+    if span.get_span_context().is_valid:
+        span.set_attributes(not_serving_cause(error).span_attributes())
+    logger.warning(
+        "Query rewrite on %s skipped, its endpoint is not serving: %s; searching %r",
+        _bound_lm_name(),
+        error,
+        query,
+    )
+    return query, None, QUERY_REWRITE_LM_NOT_SERVING
 
 
 def _stamp_rewrite_path(path: str) -> None:
@@ -1013,11 +1051,16 @@ class SearchAgent(
         used as it stands. A rewrite that fails, or overruns
         ``input.query_rewrite_timeout_s`` — which bounds the whole step, its
         context injection as well as the LM round trip — searches the original
-        query and names the degradation instead of raising.
+        query and names the degradation instead of raising. While the bound
+        LM's endpoint is known to answer 404 the step is skipped outright,
+        context injection included (``QUERY_REWRITE_LM_NOT_SERVING``).
         """
         if input.enhanced_query:
             _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_LM)
             return input.enhanced_query, input.enhanced_query, None
+        refused = _bound_lm_refusal()
+        if refused is not None:
+            return _rewrite_skipped(query, refused)
 
         self.emit_progress("query_optimization", "Optimizing query with DSPy...")
         deadline = (
@@ -1058,6 +1101,8 @@ class SearchAgent(
             )
             return query, None, QUERY_REWRITE_TIMED_OUT
         except Exception as e:
+            if not_serving_cause(e) is not None:
+                return _rewrite_skipped(query, e)
             _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK)
             logger.warning(
                 "Query rewrite on %s failed: %r; searching %r",

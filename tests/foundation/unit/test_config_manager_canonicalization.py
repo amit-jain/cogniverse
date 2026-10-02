@@ -9,7 +9,10 @@ both sides the read silently misses the write and the value reads as unset.
 
 import pytest
 
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import (
+    SCOPED_CONFIG_MAX_ENTRIES,
+    ConfigManager,
+)
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from tests.utils.memory_store import InMemoryConfigStore
 
@@ -90,29 +93,32 @@ def test_distinct_tenants_do_not_collide(manager: ConfigManager):
 
 
 def test_scoped_config_cache_is_bounded():
-    """The scoped-config TTL cache must not grow one entry per tenant forever;
-    it is a bounded LRU. Reading far more distinct tenants than the cap leaves
-    the cache at the cap, not unbounded."""
+    """The scoped-config cache must not grow one entry per tenant forever;
+    it is a bounded LRU. Reading more distinct tenants than the cap leaves
+    the cache holding exactly the most recent cap of them."""
     manager = ConfigManager(store=InMemoryConfigStore())
-    manager._scoped_config_cache_max = 4
+    overflow = 10
 
-    for i in range(50):
+    for i in range(SCOPED_CONFIG_MAX_ENTRIES + overflow):
         manager.get_tenant_instructions_config(f"tenant{i}")
 
-    assert len(manager._scoped_config_cache) <= 4
+    held = [key[1] for key in manager._scoped_configs.keys()]
+    assert held == [
+        f"tenant{i}:tenant{i}"
+        for i in range(overflow, SCOPED_CONFIG_MAX_ENTRIES + overflow)
+    ]
 
 
 def test_scoped_cache_lru_keeps_recently_used():
     manager = ConfigManager(store=InMemoryConfigStore())
-    manager._scoped_config_cache_max = 3
-
-    # Prime three tenants.
-    for t in ("a", "b", "c"):
-        manager.get_tenant_instructions_config(t)
-    # Re-touch 'a' so it is the most-recently-used, then insert a fourth.
+    # Fill to the cap, oldest first: a, b, then the rest.
+    for tenant in ["a", "b"] + [f"t{i}" for i in range(SCOPED_CONFIG_MAX_ENTRIES - 2)]:
+        manager.get_tenant_instructions_config(tenant)
+    # Re-touch 'a' so it is the most-recently-used, then insert one more.
     manager.get_tenant_instructions_config("a")
-    manager.get_tenant_instructions_config("d")
+    manager.get_tenant_instructions_config("newest")
 
-    keys = {k[1] for k in manager._scoped_config_cache}  # canonical tenant ids
-    assert "a:a" in keys, "recently-used entry was evicted"
-    assert "b:b" not in keys, "least-recently-used entry should have been evicted"
+    held = [key[1] for key in manager._scoped_configs.keys()]
+    assert len(held) == SCOPED_CONFIG_MAX_ENTRIES
+    assert held[-2:] == ["a:a", "newest:newest"]
+    assert "b:b" not in held

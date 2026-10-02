@@ -735,11 +735,15 @@ def _tenant_registration_cleanup(vespa_backend):
 
 @pytest.fixture
 def upload_config_manager(real_stack):
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-    manager = create_default_config_manager()
-    manager._scoped_config_cache_ttl_s = 0
+    manager = ConfigManager(
+        store=create_default_config_manager().store,
+        scoped_config_refresh_s=0,
+        scoped_config_max_staleness_s=0,
+    )
     coordinates = {
         "tenant_id": f"{TENANT_ID}:{TENANT_ID}",
         "scope": ConfigScope.BACKEND,
@@ -1058,7 +1062,11 @@ async def test_omitted_profile_crosses_real_minio_redis_and_worker(
         backend_url="http://localhost",
         backend_port=vespa_backend["http_port"],
     )
-    manager = ConfigManager(store=config_store, scoped_config_cache_ttl_s=0)
+    manager = ConfigManager(
+        store=config_store,
+        scoped_config_refresh_s=0,
+        scoped_config_max_staleness_s=0,
+    )
     manager.set_system_config(
         SystemConfig(
             search_backend="vespa",
@@ -1212,7 +1220,9 @@ async def test_profile_failures_leave_real_minio_and_redis_unchanged(
     store = VespaConfigStore(
         backend_url="http://localhost", backend_port=vespa_backend["http_port"]
     )
-    manager = ConfigManager(store=store, scoped_config_cache_ttl_s=0)
+    manager = ConfigManager(
+        store=store, scoped_config_refresh_s=0, scoped_config_max_staleness_s=0
+    )
     manager.set_system_config(
         SystemConfig(
             search_backend="vespa",
@@ -1286,7 +1296,9 @@ async def test_profile_failures_leave_real_minio_and_redis_unchanged(
             backend_url="http://127.0.0.1", backend_port=proxy.port
         )
         failing_manager = ConfigManager(
-            store=failing_store, scoped_config_cache_ttl_s=0
+            store=failing_store,
+            scoped_config_refresh_s=0,
+            scoped_config_max_staleness_s=0,
         )
         application.dependency_overrides[
             ingestion_router.get_config_manager_dependency
@@ -1346,7 +1358,9 @@ async def test_redis_failure_after_real_minio_upload_keeps_truthful_side_effects
     store = VespaConfigStore(
         backend_url="http://localhost", backend_port=vespa_backend["http_port"]
     )
-    manager = ConfigManager(store=store, scoped_config_cache_ttl_s=0)
+    manager = ConfigManager(
+        store=store, scoped_config_refresh_s=0, scoped_config_max_staleness_s=0
+    )
     manager.set_system_config(
         SystemConfig(
             search_backend="vespa",
@@ -1481,7 +1495,6 @@ class TestUploadRealStack:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             reader = create_default_config_manager()
-            reader._scoped_config_cache_ttl_s = 0
             stored = reader.get_backend_config(tenant)
             if stored.default_profiles == {
                 "video": {"profile": selected_profile}

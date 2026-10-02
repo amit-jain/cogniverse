@@ -1201,10 +1201,10 @@ GET /ingestion/status/{job_id}
 GET /health
 ```
 
-**Response:**
+**Response** (the chat LLM's endpoint answered 404: nothing is deployed for the model):
 ```json
 {
-  "status": "healthy",
+  "status": "degraded",
   "service": "cogniverse-runtime",
   "backends": {
     "registered": 1,
@@ -1212,10 +1212,33 @@ GET /health
   },
   "agents": {
     "registered": 3,
-    "agents": ["search", "routing", "summarizer"]
+    "agents": ["search_agent", "gateway_agent", "orchestrator_agent"]
+  },
+  "dependencies": {
+    "llm": {
+      "status": "not_serving",
+      "endpoints": [
+        {
+          "endpoint": "http://cogniverse-semantic-router-envoy:8801/v1",
+          "model": "openai/cogniverse-classification",
+          "route": "pro",
+          "state": "not_serving",
+          "upstream_status": 404,
+          "failure": null,
+          "reason": "answered HTTP 404: nothing is deployed for this model; calls fail fast until the next recheck",
+          "observed_at": "2026-10-01T17:10:07.512301+00:00",
+          "recheck_in_s": 21.4
+        }
+      ]
+    }
   }
 }
 ```
+
+`status` is `healthy`, `degraded` (the chat LLM is `not_serving` or `failing`;
+search still serves) or, with HTTP 503, `unhealthy` (the search backend is
+unreachable). `dependencies.llm.status` is `not_called` until this worker
+process has made an LM call.
 
 ### Python SDK Reference
 

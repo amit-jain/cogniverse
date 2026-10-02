@@ -272,7 +272,9 @@ def test_unavailable_system_profile_store_raises_and_can_retry(
     )
     writer = ConfigManager(store=store)
     writer.add_backend_profile(profile, tenant_id=SYSTEM_TENANT_ID)
-    reader = ConfigManager(store=store, scoped_config_cache_ttl_s=300)
+    reader = ConfigManager(
+        store=store, scoped_config_refresh_s=300, scoped_config_max_staleness_s=300
+    )
     assert reader.get_backend_config("catalog:fault").profiles == {}
     config = ConfigUtils("catalog:fault", reader)
     config._ensure_system_config()

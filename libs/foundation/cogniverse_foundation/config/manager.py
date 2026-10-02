@@ -6,12 +6,11 @@ Provides unified interface for all configuration operations with caching.
 import copy
 import logging
 import threading
-import time
-from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 from cogniverse_foundation.common.tenant_utils import (
     SYSTEM_TENANT_ID,
     require_tenant_id,
@@ -36,6 +35,9 @@ logger = logging.getLogger(__name__)
 # None when removed. Listeners must not raise — we log and swallow.
 ProfileChangeListener = Callable[[str, str, Optional[Dict[str, Any]]], None]
 
+# Most (scope, tenant, service, key) scoped configs one manager holds in memory.
+SCOPED_CONFIG_MAX_ENTRIES = 512
+
 
 class ConfigManager:
     """
@@ -58,7 +60,8 @@ class ConfigManager:
         self,
         store: ConfigStore,
         profile_change_listener: Optional[ProfileChangeListener] = None,
-        scoped_config_cache_ttl_s: float = 5.0,
+        scoped_config_refresh_s: float = 5.0,
+        scoped_config_max_staleness_s: float = 60.0,
     ):
         """
         Initialize configuration manager with required ConfigStore.
@@ -74,15 +77,21 @@ class ConfigManager:
                 `BackendRegistry.add_profile_to_backends`. Kept as a
                 callback rather than a direct import so the foundation
                 layer doesn't depend on core.
-            scoped_config_cache_ttl_s: How long per-tenant scoped configs
-                (routing/telemetry/backend) are served from memory before
-                the store is consulted again. Same-manager setters
-                invalidate immediately; the TTL bounds staleness for
-                writes made by OTHER processes (another pod's admin API).
-                Set to 0 to disable.
+            scoped_config_refresh_s: Age at which a per-tenant scoped
+                config (routing/telemetry/backend/agent/durable/tenant
+                instructions) is re-read from the store. The read runs on a
+                background thread while callers keep getting the held value.
+            scoped_config_max_staleness_s: Age at which a held scoped config
+                is no longer served: the caller reads the store itself and a
+                failed read raises. Same-manager setters invalidate at once;
+                a write made by another process (another worker or pod) is
+                served here within this bound, and within about
+                ``scoped_config_refresh_s`` for a key read continuously.
+                Both 0 reads the store on every call.
 
         Raises:
-            ValueError: If store is None
+            ValueError: If store is None, or the scoped-config bounds are
+                negative or the refresh age exceeds the staleness bound
         """
         if store is None:
             raise ValueError("store is required")
@@ -102,21 +111,18 @@ class ConfigManager:
         # A process's explicitly deployed inference endpoints, served in
         # place of the persisted ones and never written to the store.
         self._pinned_inference_service_urls: Optional[Dict[str, str]] = None
-        # Per-tenant scoped configs (routing/telemetry/backend) are read on
-        # every request via ConfigUtils' ensure cascade — each read was a
-        # separate store round-trip (a YQL query against Vespa). Cache the
-        # raw config_value per (scope, tenant, service, key) under a short
-        # TTL; entries are deep-copied on the way out so callers can't
-        # mutate shared state.
-        self._scoped_config_cache_ttl_s = scoped_config_cache_ttl_s
-        # Bounded LRU: without a cap this dict grew one entry per
-        # (scope, tenant, service, key) forever, so a many-tenant server (or a
-        # per-tenant e2e suite) accumulated entries for the process lifetime,
-        # and a deleted tenant's entries lingered.
-        self._scoped_config_cache: "OrderedDict[tuple, tuple[float, Optional[dict]]]" = OrderedDict()
-        self._scoped_config_cache_max = 512
-        self._scoped_config_lock = threading.Lock()
-        self._scoped_fill_locks = tuple(threading.Lock() for _ in range(64))
+        # Per-tenant scoped configs are read on every request through
+        # ConfigUtils' ensure cascade, and each store read is a document visit
+        # costing a few hundred milliseconds. The raw config_value per
+        # (scope, tenant, service, key) is held in memory and refreshed off the
+        # request thread; values are deep-copied on the way out so callers
+        # can't mutate shared state.
+        self._scoped_configs: RefreshingCache[tuple, Optional[dict]] = RefreshingCache(
+            name="scoped-config",
+            refresh_after_s=scoped_config_refresh_s,
+            max_staleness_s=scoped_config_max_staleness_s,
+            max_entries=SCOPED_CONFIG_MAX_ENTRIES,
+        )
 
         logger.info(
             "ConfigManager initialized with %s, profile_change_listener=%s",
@@ -255,7 +261,7 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.get_agent_config"
         )
-        # Served from the scoped TTL cache — this read sits on the
+        # Served from the scoped-config cache — this read sits on the
         # per-dispatch answer path (behavior toggles for every summarizer /
         # report dispatch), so an uncached read cost one synchronous Vespa
         # query per dispatch while the sibling scopes were cached.
@@ -338,62 +344,42 @@ class ConfigManager:
     def _cached_config_value(
         self, scope: ConfigScope, tenant_id: str, service: str, config_key: str
     ) -> Optional[dict]:
-        """Return the raw ``config_value`` for a scoped config, served from
-        the TTL cache when fresh. ``None`` (config absent) is cached too, so
-        tenants without overrides don't re-query the store per request."""
-        key = (scope, tenant_id, service, config_key)
-        now = time.monotonic()
-        with self._scoped_config_lock:
-            hit = self._scoped_config_cache.get(key)
-            if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
-                self._scoped_config_cache.move_to_end(key)  # mark MRU
-                return copy.deepcopy(hit[1])
+        """Return the raw ``config_value`` for a scoped config from memory,
+        within the refresh and staleness bounds. ``None`` (config absent) is
+        held too, so tenants without overrides don't re-query the store per
+        request."""
 
-        fill_lock = self._scoped_fill_lock(scope, tenant_id)
-        with fill_lock:
-            now = time.monotonic()
-            with self._scoped_config_lock:
-                hit = self._scoped_config_cache.get(key)
-                if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
-                    self._scoped_config_cache.move_to_end(key)
-                    return copy.deepcopy(hit[1])
+        def read() -> Optional[dict]:
+            return self._stored_config_value(scope, tenant_id, service, config_key)
 
-            entry = self.store.get_config(
-                tenant_id=tenant_id,
-                scope=scope,
-                service=service,
-                config_key=config_key,
-            )
-            value = entry.config_value if entry is not None else None
-            with self._scoped_config_lock:
-                self._scoped_config_cache[key] = (time.monotonic(), value)
-                self._scoped_config_cache.move_to_end(key)
-                while len(self._scoped_config_cache) > self._scoped_config_cache_max:
-                    self._scoped_config_cache.popitem(last=False)
-            return copy.deepcopy(value)
+        return copy.deepcopy(
+            self._scoped_configs.get((scope, tenant_id, service, config_key), read)
+        )
 
-    def _scoped_fill_lock(self, scope: ConfigScope, tenant_id: str) -> threading.Lock:
-        """Return the bounded lock serializing one tenant/scope cache fill."""
-        index = hash((scope, tenant_id)) % len(self._scoped_fill_locks)
-        return self._scoped_fill_locks[index]
+    def _stored_config_value(
+        self, scope: ConfigScope, tenant_id: str, service: str, config_key: str
+    ) -> Optional[dict]:
+        """The scoped config's ``config_value`` as the store holds it now."""
+        entry = self.store.get_config(
+            tenant_id=tenant_id,
+            scope=scope,
+            service=service,
+            config_key=config_key,
+        )
+        return entry.config_value if entry is not None else None
 
     def _invalidate_scoped_config(self, scope: ConfigScope, tenant_id: str) -> None:
-        """Drop cached entries for a (scope, tenant) after a write."""
-        with self._scoped_fill_lock(scope, tenant_id):
-            with self._scoped_config_lock:
-                for key in [
-                    k
-                    for k in self._scoped_config_cache
-                    if k[0] == scope and k[1] == tenant_id
-                ]:
-                    del self._scoped_config_cache[key]
+        """Drop held entries for a (scope, tenant) after a write."""
+        self._scoped_configs.invalidate(
+            lambda key: key[0] == scope and key[1] == tenant_id
+        )
 
     # ========== Tenant Instructions ==========
 
     def get_tenant_instructions_config(self, tenant_id: str) -> Optional[Any]:
         """Get the raw tenant-instructions value (the SOUL.md equivalent).
 
-        Served from the scoped TTL cache — every memory-aware agent reads
+        Served from the scoped-config cache — every memory-aware agent reads
         the instructions on the per-dispatch enrichment path, so an uncached
         read cost one synchronous store query per dispatch while the sibling
         scopes were cached. Returns the stored ``config_value`` (typically
@@ -600,7 +586,27 @@ class ConfigManager:
         value = self._cached_config_value(
             ConfigScope.BACKEND, tenant_id, service, "backend_config"
         )
+        return self._backend_config_from(value, tenant_id, service)
 
+    def _stored_backend_config(self, tenant_id: str, service: str) -> BackendConfig:
+        """The tenant's backend config as the store holds it now.
+
+        The base of every profile read-modify-write: a held copy may predate
+        another process's write, and writing back a change over it would drop
+        that write.
+        """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager._stored_backend_config"
+        )
+        value = self._stored_config_value(
+            ConfigScope.BACKEND, tenant_id, service, "backend_config"
+        )
+        return self._backend_config_from(value, tenant_id, service)
+
+    @staticmethod
+    def _backend_config_from(
+        value: Optional[dict], tenant_id: str, service: str
+    ) -> BackendConfig:
         if value is None:
             # Return empty backend config - system config will be merged in ConfigUtils
             logger.debug(
@@ -693,9 +699,7 @@ class ConfigManager:
         )
         with self._profile_change_lock:
             with self._backend_lock:
-                backend_config = self.get_backend_config(
-                    tenant_id=tenant_id, service=service
-                )
+                backend_config = self._stored_backend_config(tenant_id, service)
                 backend_config.add_profile(profile)
                 self.set_backend_config(
                     backend_config, tenant_id=tenant_id, service=service
@@ -757,15 +761,11 @@ class ConfigManager:
         with self._profile_change_lock:
             with self._backend_lock:
                 # Get base profile (may be from default tenant or another tenant)
-                base_config = self.get_backend_config(
-                    tenant_id=base_tenant_id, service=service
-                )
+                base_config = self._stored_backend_config(base_tenant_id, service)
                 merged_profile = base_config.merge_profile(profile_name, overrides)
 
                 # Save to target tenant
-                target_config = self.get_backend_config(
-                    tenant_id=target_tenant_id, service=service
-                )
+                target_config = self._stored_backend_config(target_tenant_id, service)
                 target_config.add_profile(merged_profile)
                 self.set_backend_config(
                     target_config, tenant_id=target_tenant_id, service=service
@@ -824,9 +824,7 @@ class ConfigManager:
         )
         with self._profile_change_lock:
             with self._backend_lock:
-                backend_config = self.get_backend_config(
-                    tenant_id=tenant_id, service=service
-                )
+                backend_config = self._stored_backend_config(tenant_id, service)
 
                 # Check if profile exists
                 if profile_name not in backend_config.profiles:
@@ -912,9 +910,9 @@ class ConfigManager:
             config_key=config_key,
             config_value=config_value,
         )
-        # Same-manager setters invalidate immediately (the TTL only bounds
-        # staleness for writes from other processes) — the typed setters all
-        # do this, and reads routed through the scoped cache rely on it.
+        # Same-manager setters invalidate immediately (the staleness bound
+        # only covers writes from other processes) — the typed setters all do
+        # this, and reads routed through the scoped cache rely on it.
         self._invalidate_scoped_config(scope, tenant_id)
 
     # ========== Bulk Operations ==========

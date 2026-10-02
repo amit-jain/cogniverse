@@ -225,6 +225,7 @@ chart key.
 | Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
 | Default state | Disabled in base and k3d-only composition; the ROCm and CUDA overlays enable it |
+| Batching (ROCm) | `--max-num-seqs 16`: up to sixteen concurrent queries share one forward pass. `--max-num-batched-tokens 1536` and `--max-model-len 1536` keep the vision encoder at one 1024-patch image per step |
 
 The k3s overlay changes neither this service's image nor its enabled state, so
 a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
@@ -376,7 +377,10 @@ socket, so a model load fault cannot create a Kubernetes restart loop.
 | Model | `urchade/gliner_large-v2.1` at revision `abd49a1f1ebc12af1be84d06f6848221cf96dcad` (pinned; other request model IDs are rejected) |
 | Image | `cogniverse/gliner` (CUSTOM, `deploy/gliner/Dockerfile` + `cogniverse_cli.modal_inference.servers.gliner`) |
 | Endpoint | `POST /predict_entities` (mirrors the in-process `model.predict_entities(text, labels, threshold)` shape) |
-| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "default_model": "urchade/gliner_large-v2.1", "model_revision": "abd49a1f1ebc12af1be84d06f6848221cf96dcad", "loaded_models": ["urchade/gliner_large-v2.1"]}` |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "urchade/gliner_large-v2.1", "model_revision": "abd49a1f1ebc12af1be84d06f6848221cf96dcad", "loaded_models": ["urchade/gliner_large-v2.1"]}` |
+| Inference (cluster image) | ONNX Runtime CPU provider on the export the image build writes to `/opt/gliner-onnx` (`ONNX_MODEL_DIR`); no model download at run time |
+| Inference (Modal) | PyTorch on the GPU (`DEVICE=cuda`) |
+| Threads | Sized to the container's cgroup v2 CPU quota (`/sys/fs/cgroup/cpu.max`, rounded up); the library default when there is no quota |
 | Kubernetes probes | HTTP `GET /health` readiness on port 8080; TCP liveness on port 8080 |
 | NodePort | 29007 |
 | Default state | enabled |
@@ -390,6 +394,17 @@ the optional request `model` field must match that identifier exactly.
 GLiNER loader transparently. A pinned-model load failure returns HTTP 503; its
 `detail` matches
 `gliner: model urchade/gliner_large-v2.1 load failed (<ExceptionType>): <cause>`.
+
+The export is DeBERTa-v3-large as an ONNX graph. ONNX Runtime's optimizer
+folds the relative-position projections that PyTorch recomputes in every
+layer of every request; they depend only on the weights and are more than
+half of the forward pass for a gateway-length query. The export writes
+`source.json` naming the checkpoint, and the server refuses to load an
+export of any other model or revision. `transformers` and `onnxruntime` are
+pinned in the Dockerfile because the graph traces one and runs on the other.
+`tests/cli/integration/test_gliner_image_serving.py` builds the image, runs
+it under the chart's CPU and memory limits, and checks its entities against
+the PyTorch checkpoint's.
 
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
@@ -480,6 +495,16 @@ The reference deployment is `values.k3s.yaml` + `values.rocm.yaml` +
 `values.modal-llm.yaml` on an AMD Strix Halo host: ColPali and ASR in-cluster,
 the student and teacher LMs on external endpoints.
 
+With the Modal LLM apps undeployed the runtime stays ready and search keeps
+serving. Each worker's first LM call gets Modal's 404; after it, calls to that
+endpoint fail fast and one call rechecks it every 30s
+([LM endpoint availability](../modules/foundation.md#lm-endpoint-availability)).
+Searches report `query_rewrite.degraded: query_rewrite_lm_not_serving`,
+orchestrated queries answer 503 `llm_unavailable` with `Retry-After`, and
+`/health` answers `degraded`, naming the endpoint under `dependencies.llm`. A
+redeployed app is used again from the next recheck; its first request waits
+out the cold start.
+
 `config.defaultProfiles.video` names the profile the chart writes to
 `backend.default_profiles.video` (profile only; search takes the ranking from
 the profile's schema) and `active_video_profile`, and the one profile the
@@ -518,9 +543,20 @@ bounded `--gpu-memory-utilization` fractions. The Tomoro pooling service uses
 an explicit 1 GiB KV cache because its transient image-profile allocation is
 larger than its steady-state cache budget; it also caps preprocessing at
 1,048,576 pixels, matching the 1,024-patch Vespa document contract. See
-`values.rocm.yaml` for the complete per-service allocation. Its accompanying
-0.45 utilization value is retained only for vLLM's initial free-memory guard;
-the explicit byte value controls the actual cache reservation.
+`values.rocm.yaml` for the complete per-service allocation. Its 0.18
+utilization value is vLLM's initial free-memory guard; the explicit byte value
+controls the actual cache reservation.
+
+vLLM sizes the vision batch from the step's token budget, as
+`--max-num-batched-tokens // 1024` maximum-size images, both when it profiles
+memory at startup and when it schedules concurrent image requests. The ROCm
+overlay sets that budget to 1,536 tokens, so concurrent ingestion still
+encodes one image per step while sixteen text queries share a step. Chunked
+prefill is unsupported for this CLS-pooled model, so `--max-model-len` equals
+the budget; the largest request, one 1,024-patch image, is 1,031 tokens.
+`--max-cudagraph-capture-size 512` pads every step of up to 512 tokens to one
+of 51 captured sizes, so query traffic runs a fixed set of GEMM shapes.
+`tests/charts/test_rocm_startup_budget.py` pins these relations.
 
 Inference readiness probes begin immediately. A failed readiness probe only
 keeps the Service endpoint out of rotation; it does not restart the container.
@@ -551,6 +587,14 @@ The results file lives in the persistent `model-cache` volume, so tuning
 survives pod restarts and rollouts — a shape is benchmarked once over the
 file's lifetime. The first request hitting a not-yet-tuned shape pays a
 one-time tuning latency; the persisted file means later pods skip it.
+
+`inference.<service>.tunableOpTuning: false` renders
+`PYTORCH_TUNABLEOP_TUNING=0`: tuned shapes from the results file still apply,
+and a shape the file lacks runs the default kernel instead of being tuned on
+the request path. `vllm_colpali` sets it on the ROCm overlay. Its batched step
+lengths vary with the mix of concurrent queries and images, and tuning one new
+length stalls every queued request (31 s for a new 1,031-token image length,
+against 0.76 s once tuned).
 
 ---
 

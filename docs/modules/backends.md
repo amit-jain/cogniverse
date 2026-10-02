@@ -1622,10 +1622,10 @@ an outage never reads as "not deployed". `VespaBackend` passes a
 rows plus pending deployment intents that decide whether a profile is
 servable — so a search through the registry builds no other backend to answer
 it. The reader caches deployed names only: a warm search of a deployed schema
-reads nothing, a schema missing from the cache is re-read before the search is
-refused (a deployment by any process is visible to the next search), and a
-deletion by another process is seen within `DEPLOYED_SCHEMAS_TTL_S` (see the
-core module).
+reads nothing on the request thread, a schema missing from the cache is re-read
+before the search is refused (a deployment by any process is visible to the
+next search), and a deletion by another process is seen within
+`DEPLOYED_SCHEMAS_MAX_STALENESS_S` (see the core module).
 
 A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", *, is_schema_deployed, **kwargs)`
 factory function is also available; it builds a `VespaSearchBackend` from the
@@ -1768,12 +1768,14 @@ the schema's available rank profiles (there is no enum). Valid names:
 | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float` | Hybrid | Visual + text; embeddings required |
 | `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
-For the video `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
-`video_xclip_sv_chunk_6s`, and `video_xclip_sv_chunk_6s`
-schemas, `default` resolves to `phased` (`max_sim_hamming` first phase with
-`max_sim` rerank). Measured on an 85-query / 10-video corpus, that shift moved
-chunk video-MRR from 0.445 to 0.612 and frame video-MRR from 0.308 to 0.345,
-with p50 latency rising 75→96 ms (frame) and 69→85 ms (chunk), and p95 +30 ms.
+In the `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s` and
+`video_xclip_sv_chunk_6s` schemas, `default` inherits `phased`. On the two
+ColQwen3 video schemas its first phase, `max_sim_hamming`, scores every segment
+by binary MaxSim: for each query token, `1 - 2h/320`, where `h` is the Hamming
+distance to the token's nearest patch, summed over the query tokens. The second
+phase reranks the top 100 segments by float MaxSim (`max_sim`). The ColQwen3
+`image_colpali_mv` and `document_visual` schemas rank `default` by
+`max_sim_hamming` alone.
 
 > **Where a strategy's phase order lives.** The two-phase ranking
 > (`first_phase` / `second_phase`) that defines a strategy's actual behavior is

@@ -1450,16 +1450,20 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "colbert_pylate",
         "code_colbert_pylate",
     }, rocm_pods
-    for key in (
-        "vllm_colpali",
-        "vllm_asr",
-        "vllm_llm_student",
-        "vllm_llm_teacher",
-        "denseon",
-    ):
+    # vllm_colpali replays its results file without tuning new shapes: its
+    # batched steps vary in length, and tuning an unseen one stalls the
+    # engine for every queued request.
+    expected_tuning = {
+        "vllm_colpali": "0",
+        "vllm_asr": "1",
+        "vllm_llm_student": "1",
+        "vllm_llm_teacher": "1",
+        "denseon": "1",
+    }
+    for key, tuning in expected_tuning.items():
         env = _inference_env(deps, key)
         assert env["PYTORCH_TUNABLEOP_ENABLED"] == "1", key
-        assert env["PYTORCH_TUNABLEOP_TUNING"] == "1", key
+        assert env["PYTORCH_TUNABLEOP_TUNING"] == tuning, key
         assert (
             env["PYTORCH_TUNABLEOP_FILENAME"]
             == f"/root/.cache/huggingface/tunableop_{key.replace('_', '-')}_%d.csv"
@@ -1469,6 +1473,34 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
     for key, dep in deps.items():
         if not _is_rocm(dep):
             assert not (set(_inference_env(deps, key)) & _TUNABLEOP_VARS), key
+
+
+def test_tunableop_tuning_follows_the_per_service_toggle():
+    """``tunableOpTuning: false`` keeps TunableOp on but stops it tuning.
+
+    The results file is still read and applied; only benchmarking an unseen
+    shape at request time is switched off. Unset, tuning stays on.
+    """
+    base = ("inference.denseon.device=rocm", "runtime.tunableOp=true")
+
+    tuned = _inference_env(_inference_deployments(_render(*base)), "denseon")
+    replayed = _inference_env(
+        _inference_deployments(
+            _render(*base, "inference.denseon.tunableOpTuning=false")
+        ),
+        "denseon",
+    )
+
+    assert {k: tuned[k] for k in _TUNABLEOP_VARS} == {
+        "PYTORCH_TUNABLEOP_ENABLED": "1",
+        "PYTORCH_TUNABLEOP_TUNING": "1",
+        "PYTORCH_TUNABLEOP_FILENAME": "/root/.cache/huggingface/tunableop_denseon_%d.csv",
+    }
+    assert {k: replayed[k] for k in _TUNABLEOP_VARS} == {
+        "PYTORCH_TUNABLEOP_ENABLED": "1",
+        "PYTORCH_TUNABLEOP_TUNING": "0",
+        "PYTORCH_TUNABLEOP_FILENAME": "/root/.cache/huggingface/tunableop_denseon_%d.csv",
+    }
 
 
 def test_tunableop_env_absent_by_default():

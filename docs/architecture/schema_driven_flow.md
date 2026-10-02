@@ -250,7 +250,7 @@ flowchart TD
 
 | Strategy | Text | Float | Binary | nearestNeighbor | Notes |
 |----------|------|-------|--------|-----------------|-------|
-| default | - | ✓ | ✓ | - | Schema's default profile; binary first phase, float rerank |
+| default | - | ✓ | ✓ | - | Schema's default profile; on the ColQwen3 video schemas, binary first phase and float rerank |
 | bm25_only | ✓ | - | - | - | Pure text search |
 | float_float | - | ✓ | - | ✓* | Pure visual, float embeddings |
 | binary_binary | - | - | ✓ | ✓* | Pure visual, binary embeddings |

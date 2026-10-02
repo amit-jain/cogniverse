@@ -376,6 +376,10 @@ runtime:
 
   replicaCount: 2
 
+  # uvicorn worker processes per pod (UVICORN_WORKERS). Each runs the full
+  # runtime with its own in-memory state, so the memory limit must hold all.
+  workers: 1
+
   # Iterative-retrieval budgets (ITER_RETRIEVAL_* env overrides read at
   # runtime startup). The library's 30s wall-clock default assumes a fast
   # LM; the in-cluster LLM generates ~12 tok/s, so multi-iteration loops
@@ -401,7 +405,6 @@ runtime:
     RUNTIME_HOST: "0.0.0.0"
     RUNTIME_PORT: "8000"
     LOG_LEVEL: "INFO"
-    WORKERS: "4"
 
   # Shutdown budgets; the pod's terminationGracePeriodSeconds is derived
   # from them (cogniverse.runtime.terminationGracePeriodSeconds).
@@ -449,9 +452,9 @@ runtime:
 
   readinessProbe:
     httpGet:
-      # /health/ready is a lightweight in-memory backend-registration check
-      # (returns 503 until backends register) — unlike the heavy /health
-      # endpoint, so it won't stall under DSPy/CPU-LLM load.
+      # /health/ready answers 503 until the search backend is reachable,
+      # from a probe cached across hits, and never consults the chat LLM: an
+      # undeployed LLM leaves the pod serving search. /health reports the LLM.
       path: /health/ready
       port: 8000
     initialDelaySeconds: 30

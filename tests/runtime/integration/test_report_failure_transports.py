@@ -497,16 +497,16 @@ def _a2a_request(*, stream: bool) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("mode", "error_type"),
+    ("mode", "error_type", "upstream_status"),
     [
-        ("report-503", "ServiceUnavailableError"),
-        ("report-reset", "InternalServerError"),
-        ("report-timeout", "Timeout"),
+        ("report-503", "ServiceUnavailableError", 503),
+        ("report-reset", "InternalServerError", 500),
+        ("report-timeout", "Timeout", None),
     ],
 )
 @pytest.mark.asyncio
-async def test_openai_nonstream_uses_the_existing_internal_error_contract(
-    compat_url, report_runtime, mode, error_type
+async def test_openai_nonstream_answers_a_report_model_outage_with_a_503(
+    compat_url, report_runtime, mode, error_type, upstream_status
 ):
     _, _, modes = report_runtime
     modes[FAILING_TENANT] = mode
@@ -517,13 +517,16 @@ async def test_openai_nonstream_uses_the_existing_internal_error_contract(
             headers={"Authorization": f"Bearer {FAILING_KEY}"},
         )
 
-    assert response.status_code == 500
+    status = f", upstream HTTP {upstream_status}" if upstream_status else ""
+    assert response.status_code == 503
+    assert "retry-after" not in response.headers
     assert response.json()["error"] == {
         "message": (
-            f"detailed_report_agent failed with {error_type}. See server logs for detail."
+            "Agent 'detailed_report_agent' could not complete: the chat LLM is "
+            f"unavailable ({error_type}{status})."
         ),
         "type": "server_error",
-        "code": "internal_error",
+        "code": "llm_unavailable",
         "agent": "detailed_report_agent",
         "error_type": error_type,
     }
@@ -940,10 +943,10 @@ async def test_report_failure_is_an_unsuccessful_orchestrator_child(
     assert await drain_background_memory_writes(10.0) is True
 
     child_error = (
-        "HTTPStatusError: Server error '500 Internal Server Error' for url "
+        "HTTPStatusError: Server error '503 Service Unavailable' for url "
         "'http://report-runtime/agents/detailed_report_agent/process'\n"
         "For more information check: "
-        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
     )
     assert result.final_output["status"] == "failed"
     assert result.final_output["aggregated_content"] == ""

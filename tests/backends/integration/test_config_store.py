@@ -508,6 +508,85 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key="k1",
             )
 
+    def test_concurrent_writers_prune_the_same_key_without_failing(
+        self, vespa_instance
+    ):
+        """Writers racing on one key never fail on each other's prune deletes.
+
+        Runtime processes starting together each write the system config and
+        prune its old versions. One process's listing can match rows another
+        process deletes before the listing's summaries are filled, so those
+        hits come back without fields. Every concurrent write must still
+        return, and one later write must leave exactly the latest ``keep``.
+        """
+        keep = 2
+        writers = 6
+        rounds = 4
+        stores = [
+            VespaConfigStore(
+                backend_url="http://localhost",
+                backend_port=vespa_instance["http_port"],
+                keep_versions=keep,
+            )
+            for _ in range(writers)
+        ]
+        tenant = "cs_prune_race"
+        barrier = threading.Barrier(writers)
+        errors: list[Exception] = []
+
+        def write(store: VespaConfigStore, worker: int) -> None:
+            for round_ in range(rounds):
+                barrier.wait()
+                try:
+                    store.set_config(
+                        tenant_id=tenant,
+                        scope=ConfigScope.BACKEND,
+                        service="prune_race",
+                        config_key="k1",
+                        config_value={"worker": worker, "round": round_},
+                    )
+                except Exception as exc:
+                    errors.append(exc)
+
+        try:
+            threads = [
+                threading.Thread(target=write, args=(store, worker))
+                for worker, store in enumerate(stores)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+            assert [t.is_alive() for t in threads] == [False] * writers
+            assert errors == [], f"concurrent set_config raised: {errors!r}"
+
+            final = stores[0].set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service="prune_race",
+                config_key="k1",
+                config_value={"final": True},
+            )
+            config_id = stores[0]._create_document_id(
+                tenant, ConfigScope.BACKEND, "prune_race", "k1"
+            )
+            response = stores[0].vespa_app.query(
+                yql=(
+                    f"select version from config_metadata "
+                    f'where config_id contains "{config_id}" '
+                    f"order by version desc limit 100"
+                )
+            )
+            surviving = sorted(h["fields"]["version"] for h in response.hits)
+            assert surviving == [final.version - 1, final.version]
+        finally:
+            stores[0].delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service="prune_race",
+                config_key="k1",
+            )
+
     def test_set_config_does_not_prune_below_keep_window(self, vespa_instance):
         """Fewer than ``keep_versions`` writes → no rows pruned."""
         store = VespaConfigStore(

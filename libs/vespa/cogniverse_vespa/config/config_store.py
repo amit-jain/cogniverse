@@ -678,9 +678,12 @@ class VespaConfigStore(ImmutableConfigStore):
 
         Vespa's only delete primitive is per-document; iterate the
         sorted version list and drop everything beyond the head ``keep``
-        entries. Best-effort — a delete failure is logged but does not
-        propagate, since the leading set_config write already succeeded
-        and a stale row only costs query latency, not correctness.
+        entries. Best-effort — a listing or delete failure is logged but does
+        not propagate, since the leading set_config write already succeeded
+        and a stale row only costs query latency, not correctness. A degraded
+        listing (``root.errors``, e.g. rows another writer deleted between
+        match and summary fill, which come back without fields) prunes
+        nothing; the next write prunes again.
         """
         if keep < 1:
             return 0
@@ -691,7 +694,8 @@ class VespaConfigStore(ImmutableConfigStore):
         )
         try:
             response = self.vespa_app.query(yql=yql)
-        except (RequestException, VespaError) as exc:
+            _raise_if_degraded(response, config_id)
+        except (RequestException, VespaError, RuntimeError) as exc:
             logger.warning(f"Could not list versions to prune {config_id!r}: {exc}")
             return 0
         hits = list(response.hits or [])

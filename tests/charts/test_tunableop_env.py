@@ -76,14 +76,17 @@ def test_pylate_services_render_no_tunableop_env():
 def test_non_pylate_rocm_services_keep_tunableop_env():
     env = _tunableop_env(*ENABLE_BOTH_PYLATES)
 
-    for name in (
-        "cogniverse-vllm-asr",
-        "cogniverse-vllm-colpali",
-        "cogniverse-denseon",
-    ):
+    for name in ("cogniverse-vllm-asr", "cogniverse-denseon"):
         assert env[name]["PYTORCH_TUNABLEOP_ENABLED"] == "1", name
         assert env[name]["PYTORCH_TUNABLEOP_TUNING"] == "1", name
         assert env[name]["PYTORCH_TUNABLEOP_FILENAME"].endswith("_%d.csv"), name
+    # The Tomoro encoder keeps applying its tuned shapes but tunes no new
+    # ones: its batched step lengths vary, and tuning one stalls the engine.
+    assert env["cogniverse-vllm-colpali"] == {
+        "PYTORCH_TUNABLEOP_ENABLED": "1",
+        "PYTORCH_TUNABLEOP_TUNING": "0",
+        "PYTORCH_TUNABLEOP_FILENAME": "/root/.cache/huggingface/tunableop_vllm-colpali_%d.csv",
+    }
 
 
 def test_explicit_override_re_enables_tunableop_for_a_pylate_service():

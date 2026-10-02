@@ -183,6 +183,77 @@ class TestRuntimeInstrumentationEnv:
         assert env.get("ITER_RETRIEVAL_WALL_CLOCK_MS") == "45000"
 
 
+def _render_refusal(*set_args: str) -> str:
+    """The first line of helm's error for a render the chart must refuse."""
+    with pytest.raises(AssertionError) as refused:
+        _render_chart(*set_args)
+    stderr = str(refused.value).split("STDERR:\n", 1)[1]
+    return stderr.strip().splitlines()[0].split("): ", 1)[1]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestRuntimeWorkerProcesses:
+    """``runtime.workers`` is the runtime's uvicorn worker-process count.
+
+    The image runs ``cogniverse_runtime.runtime_cli``, which reads
+    ``UVICORN_WORKERS`` through uvicorn's own command line, so the rendered
+    variable is the number of processes the pod serves from.
+    """
+
+    def test_every_shipped_stack_serves_from_one_process(self):
+        # Production leaves its secrets empty for the operator to supply.
+        prod_secrets = (
+            "minio.rootPassword=overlay-secret",
+            "openshell.server.sshHandshakeSecret=overlay-secret",
+            "phoenix.postgres.auth.password=overlay-secret",
+            "redis.auth.password=overlay-secret",
+        )
+        for overlays, set_args in (
+            ((), ()),
+            (("values.k3s.yaml", "values.rocm.yaml"), ()),
+            (("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"), ()),
+            (("values.prod.yaml",), prod_secrets),
+        ):
+            env = _runtime_container_env(_render_chart(*set_args, values=overlays))
+            assert env["UVICORN_WORKERS"] == "1", overlays
+            assert "WORKERS" not in env, overlays
+
+    def test_the_worker_count_follows_the_value(self):
+        env = _runtime_container_env(_render_chart("runtime.workers=3"))
+        assert env["UVICORN_WORKERS"] == "3"
+
+    def test_the_container_runs_the_image_entrypoint_that_reads_it(self):
+        container = _runtime_container(_render_chart("runtime.workers=3"))
+        assert "command" not in container
+        assert "args" not in container
+        dockerfile = (REPO_ROOT / "libs/runtime/Dockerfile").read_text().splitlines()
+        assert [line for line in dockerfile if line.startswith("CMD ")] == [
+            'CMD ["python", "-m", "cogniverse_runtime.runtime_cli", "--host", '
+            '"0.0.0.0", "--port", "8000"]'
+        ]
+
+    @pytest.mark.parametrize("variable", ["UVICORN_WORKERS", "WEB_CONCURRENCY"])
+    def test_a_worker_count_set_through_runtime_env_is_refused(self, variable):
+        assert _render_refusal(f"runtime.env.{variable}=2") == (
+            f"{variable} is set from runtime.workers; set it there"
+        )
+
+    @pytest.mark.parametrize("workers", ["0", "1.5", "-2"])
+    def test_a_worker_count_that_is_not_a_whole_number_above_zero_is_refused(
+        self, workers
+    ):
+        assert _render_refusal(f"runtime.workers={workers}") == (
+            f"runtime.workers must be a whole number of at least 1, got {workers}"
+        )
+
+    def test_a_release_without_the_value_renders_one_worker(self):
+        """``helm upgrade --reuse-values`` from a release predating the value
+        carries no ``runtime.workers``; the render takes one worker."""
+        env = _runtime_container_env(_render_chart("runtime.workers=null"))
+        assert env["UVICORN_WORKERS"] == "1"
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestRuntimeSandboxHostMode:
