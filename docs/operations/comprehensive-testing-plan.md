@@ -194,17 +194,18 @@ for project in projects:
 
 **Expected projects:**
 
-- `cogniverse-default-search` (search telemetry)
+- `cogniverse-test:unit` (search, routing and orchestration spans of tenant
+  `test:unit`, the tenant the run below searches as)
 
-- `cogniverse-default-routing` (routing decisions)
-
-- `cogniverse-default-orchestration` (multi-agent workflows)
+- `cogniverse-test:unit-{service}` for a management service's spans, for
+  example `cogniverse-test:unit-synthetic_data`
 
 **Learning Points:**
 
-- Projects isolate telemetry by tenant and function
+- Projects isolate telemetry by tenant
 
-- Naming: `cogniverse-{tenant_id}-{function}`
+- Naming: `cogniverse-{tenant_id}` for user operations,
+  `cogniverse-{tenant_id}-{service}` for management operations
 
 ### 2.3 Span Collection Test
 
@@ -230,25 +231,26 @@ client = Client(base_url='http://localhost:6006')
 # default is 5s (independent of any client-level timeout) and a loaded
 # project can easily exceed that, silently reading as "no spans".
 spans_df = client.spans.get_spans_dataframe(
-    project_name="cogniverse-default-search",
+    project_name="cogniverse-test:unit",
     start_time=datetime.now(timezone.utc) - timedelta(hours=1),
     timeout=60,
 )
+search_spans = spans_df[spans_df["name"] == "search_service.search"]
 
-print(f"Total spans collected: {len(spans_df)}")
-print(f"Columns: {spans_df.columns.tolist()}")
+print(f"Search spans collected: {len(search_spans)}")
+print(f"Columns: {search_spans.columns.tolist()}")
 
 # Inspect a span
-if len(spans_df) > 0:
+if len(search_spans) > 0:
     print("\nSample span:")
-    print(spans_df.iloc[0][['name', 'attributes.query', 'latency_ms']])
+    print(search_spans.iloc[0][['name', 'attributes.query', 'attributes.latency_ms']])
 ```
 
 **Learning Points:**
 
 - Spans capture operation traces
 
-- Attributes store metadata (query, results, latency, etc.)
+- Attributes store metadata (query, profile, strategy, latency, result rows)
 
 - Can query by time range and project
 
@@ -257,17 +259,21 @@ if len(spans_df) > 0:
 **Check span structure:**
 ```python
 # Get span with all attributes
-span = spans_df.iloc[0]
+span = search_spans.iloc[0]
 
 # Key attributes for search spans
 search_attributes = [
     'attributes.query',
-    'attributes.results',
     'attributes.profile',
     'attributes.strategy',
+    'attributes.top_k',
+    'attributes.backend',
+    'attributes.result_granularity',
     'attributes.latency_ms',
-    'attributes.result_count',
-    'attributes.tenant_id'
+    'attributes.num_results',
+    'attributes.top_score',
+    'attributes.output.value',   # JSON list of the result rows
+    'attributes.tenant',         # {'id': <tenant_id>}
 ]
 
 for attr in search_attributes:
@@ -277,7 +283,8 @@ for attr in search_attributes:
 
 **Learning Points:**
 
-- Search spans include query, results, profile, strategy
+- Search spans include query, profile, strategy, result count and the result
+  rows (`output.value`)
 
 - Can filter spans by attributes
 
