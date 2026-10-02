@@ -52,6 +52,9 @@ QUERY_ENCODE_TIMEOUT_S = 30.0
 DOCUMENT_ENCODE_TIMEOUT_S = 120.0
 SEGMENT_EMBED_TIMEOUT_S = 600.0
 
+# How long a tripped inference-endpoint breaker rejects calls before one trial.
+INFERENCE_BREAKER_RESET_TIMEOUT_S = 15.0
+
 
 @runtime_checkable
 class _CacheResource(Protocol):
@@ -259,7 +262,7 @@ class RemoteInferenceClient:
             BreakerConfig(
                 name=f"inference:{self.endpoint_url}",
                 failure_threshold=5,
-                reset_timeout_s=15.0,
+                reset_timeout_s=INFERENCE_BREAKER_RESET_TIMEOUT_S,
                 counted_exceptions=(
                     requests.RequestException,
                     ConnectionError,

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 from typing import Any, Dict, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,9 +12,16 @@ from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+from cogniverse_core.common.models.model_loaders import (
+    INFERENCE_BREAKER_RESET_TIMEOUT_S,
+)
 from cogniverse_core.common.tenant_utils import (
     assert_tenant_exists,
     require_tenant_id,
+)
+from cogniverse_core.query.encoders import (
+    EncoderNotConfiguredError,
+    EncoderUnavailableError,
 )
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config, resolve_default_profile
@@ -23,6 +31,59 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+QUERY_ENCODER_NOT_CONFIGURED = "query_encoder_not_configured"
+QUERY_ENCODER_UNAVAILABLE = "query_encoder_unavailable"
+# A tripped inference-endpoint breaker admits a trial call after this long.
+QUERY_ENCODER_RETRY_AFTER_S = math.ceil(INFERENCE_BREAKER_RESET_TIMEOUT_S)
+
+
+def _query_encoder_failure(
+    exc: Union[EncoderNotConfiguredError, EncoderUnavailableError],
+    *,
+    profile: Optional[str],
+    strategy: Optional[str],
+) -> tuple[int, Dict[str, Any], Optional[Dict[str, str]]]:
+    """Status, body and headers for a search whose query encoder failed.
+
+    Built from the failure's typed fields, never its text, which names the
+    sidecar URL. A configuration gap no retry fixes is a 500; a configured
+    encoder whose service did not serve the request is a 503 with
+    ``Retry-After``.
+    """
+    if isinstance(exc, EncoderUnavailableError):
+        cause = exc.__cause__
+        failure = type(cause if cause is not None else exc).__name__
+        where = (
+            f"inference service '{exc.service}'" if exc.service else "the local encoder"
+        )
+        retry_after = QUERY_ENCODER_RETRY_AFTER_S
+        body = {
+            "error": QUERY_ENCODER_UNAVAILABLE,
+            "dependency": "query_encoder",
+            "profile": exc.profile,
+            "strategy": strategy,
+            "service": exc.service,
+            "failure": failure,
+            "retry_after_s": retry_after,
+            "message": (
+                f"The query encoder for profile '{exc.profile}' is unavailable: "
+                f"{where} did not serve the request ({failure}). "
+                f"Retry after {retry_after}s."
+            ),
+        }
+        return 503, body, {"Retry-After": str(retry_after)}
+    body = {
+        "error": QUERY_ENCODER_NOT_CONFIGURED,
+        "dependency": "query_encoder",
+        "profile": profile,
+        "strategy": strategy,
+        "message": (
+            f"Strategy '{strategy}' needs a query encoder, and profile "
+            f"'{profile}' has none configured in this deployment."
+        ),
+    }
+    return 500, body, None
 
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
@@ -178,6 +239,7 @@ async def search(
             component="search_service",
         )
 
+    profile = request.profile
     with context_manager as span:
         try:
             # Config ensure-chain (sync Vespa reads) + service construction run
@@ -233,6 +295,18 @@ async def search(
                         }
                         yield f"data: {json.dumps(final_data)}\n\n"
 
+                    except (EncoderNotConfiguredError, EncoderUnavailableError) as e:
+                        logger.warning(f"Search query encoder failed: {e}")
+                        _, body, _ = _query_encoder_failure(
+                            e, profile=profile, strategy=request.strategy
+                        )
+                        error_event = {
+                            "type": "error",
+                            "error": body["message"],
+                            "error_type": type(e).__name__,
+                            "detail": body,
+                        }
+                        yield f"data: {json.dumps(error_event)}\n\n"
                     except Exception as e:
                         error_event = {
                             "type": "error",
@@ -283,6 +357,14 @@ async def search(
             # otherwise mask it as an opaque 500.
             logger.warning(f"Search degraded: {e}")
             raise HTTPException(status_code=503, detail=str(e))
+        except (EncoderNotConfiguredError, EncoderUnavailableError) as e:
+            # Checked before ValueError: a missing encoder setting is not the
+            # caller's bad input, and its text names the sidecar URL.
+            logger.warning(f"Search query encoder failed: {e}")
+            status, body, headers = _query_encoder_failure(
+                e, profile=profile, strategy=request.strategy
+            )
+            raise HTTPException(status_code=status, detail=body, headers=headers)
         except ValueError as e:
             # Bad request input (unknown profile/strategy, missing schema) — a
             # client error, not a server fault. 400, not 500.

@@ -795,6 +795,24 @@ the streamed `final` event's `data`, carry `source_search_incomplete`.
 `source`; other profiles keep `segment` unless their config opts into a
 different default.
 
+The profile's query encoder is built only when the resolved strategy needs
+query embeddings, so a text-only strategy (`bm25_only`) answers whether or not
+the profile's encoder service is configured or reachable. An encoder failure
+answers with a `detail` built from typed fields, never the exception text
+(which names the sidecar URL):
+
+- configuration gap (`EncoderNotConfiguredError`: no model, or an inference
+  service with no configured URL) — 500, `{error: "query_encoder_not_configured",
+  dependency: "query_encoder", profile, strategy, message}`;
+- unavailable encoder service (`EncoderUnavailableError`) — 503 with
+  `Retry-After: 15` (the inference endpoint breaker's reset window),
+  `{error: "query_encoder_unavailable", dependency: "query_encoder", profile,
+  strategy, service, failure, retry_after_s, message}`, where `failure` names
+  the underlying error type.
+
+A streamed search reports either as its `error` event with that body under
+`detail`.
+
 **GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash
 curl "http://localhost:8000/search/strategies?tenant_id=acme:acme"

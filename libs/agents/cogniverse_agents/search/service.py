@@ -1,15 +1,15 @@
-"""Unified search service that coordinates query encoding and backend search.
+"""Unified search service over the profile's search backend.
 
-Profile-agnostic: profile and tenant_id are accepted at search() time.
-Caches encoders by model_name. A single shared search backend serves all tenants,
-with tenant_id passed in query_dict at search time for schema name derivation.
+Profile-agnostic: profile and tenant_id are accepted at search() time. A single
+shared search backend serves all tenants, with tenant_id passed in query_dict at
+search time for schema name derivation. The backend builds the profile's query
+encoder only when the resolved ranking strategy needs query embeddings.
 """
 
 import logging
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
-from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
     leased_backend,
@@ -23,8 +23,8 @@ class SearchService:
     """Unified search service for video retrieval.
 
     Profile-agnostic: ONE instance serves all profiles and tenants.
-    Encoders are cached by model_name (via QueryEncoderFactory).
-    A single shared search backend serves all tenants.
+    A single shared search backend serves all tenants. The service builds no
+    query encoder; a text-only strategy (``bm25_only``) never needs one.
     """
 
     def __init__(
@@ -108,14 +108,6 @@ class SearchService:
 
         return base_profile
 
-    def _get_encoder(self, profile: str, profile_config: Dict[str, Any]):
-        """Get or create the cached query encoder for the given profile.
-
-        The factory resolves the model from the profile config (``semantic_model``
-        for ColBERT-over-transcript profiles, ``embedding_model`` otherwise).
-        """
-        return QueryEncoderFactory.create_encoder(profile, config=self.config)
-
     def get_available_strategies(self, profile: str, tenant_id: str) -> list[str]:
         """Return the ranking-strategy names ``search`` accepts for a profile.
 
@@ -150,12 +142,7 @@ class SearchService:
             )
         return sorted(schema_strategies.keys())
 
-    def _get_backend(
-        self,
-        profile: str,
-        profile_config: Dict[str, Any],
-        query_encoder,
-    ):
+    def _get_backend(self, profile: str, profile_config: Dict[str, Any]):
         """Resolve the search backend for ``profile`` from the registry.
 
         Resolved on every call. The registry owns the instance's lifetime
@@ -163,7 +150,9 @@ class SearchService:
         a handle held on the service across requests goes dead and every
         later search raises ``BackendClosedError``. Holding one also served
         the first profile's backend for every later profile, ignoring the
-        ``schema_name`` and encoder resolved here.
+        ``schema_name`` resolved here. The config carries no query encoder:
+        the backend is shared across profiles, so one baked in would encode
+        every later profile's queries in the first profile's space.
 
         This is the seam tests bind a backend at. Callers that run an
         operation take :meth:`_leased_backend`, which also holds it against
@@ -187,7 +176,6 @@ class SearchService:
             "port": system_config.backend_port or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
-            "query_encoder": query_encoder,
             "profiles": backend_section.get("profiles", {}),
             "default_profiles": backend_section.get("default_profiles", {}),
         }
@@ -202,10 +190,10 @@ class SearchService:
         return backend
 
     @contextmanager
-    def _leased_backend(self, profile: str, profile_config, query_encoder):
+    def _leased_backend(self, profile: str, profile_config):
         """The profile's backend, held against eviction for the block."""
         with leased_backend(
-            lambda: self._get_backend(profile, profile_config, query_encoder)
+            lambda: self._get_backend(profile, profile_config)
         ) as backend:
             yield backend
 
@@ -243,7 +231,6 @@ class SearchService:
             serialize_search_results,
         )
 
-        # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile, tenant_id)
         content_type = profile_config.get("type")
         if not content_type:
@@ -251,7 +238,6 @@ class SearchService:
         result_granularity = resolve_result_granularity(
             profile_config, result_granularity
         )
-        query_encoder = self._get_encoder(profile, profile_config)
 
         logger.info(f"Searching profile={profile} tenant={tenant_id}")
 
@@ -267,13 +253,11 @@ class SearchService:
             if ranking_strategy:
                 logger.info(f"Using ranking strategy: {ranking_strategy}")
 
-            # Encoding is delegated to the backend: it resolves the ranking
-            # strategy (requested or auto-selected) and runs the encoder
-            # on-demand only when the strategy's rank config declares it
-            # needs embeddings. Encoding eagerly here paid a full model
-            # forward even for text-only strategies (bm25) that never read
-            # the embeddings — and required duplicating the backend's
-            # strategy-resolution logic to avoid.
+            # The backend resolves the ranking strategy (requested or
+            # auto-selected) and builds and runs the profile's encoder only
+            # when the strategy's rank config needs embeddings, so a text-only
+            # strategy (bm25) succeeds whether or not the profile's encoder
+            # service is configured or reachable.
             search_span_ctx.set_attribute("has_embeddings", False)
 
             # Call backend
@@ -296,12 +280,9 @@ class SearchService:
                     "strategy": ranking_strategy or "default",
                     "top_k": top_k,
                     "filters": filters,
-                    "query_encoder": query_encoder,
                     "result_granularity": result_granularity,
                 }
-                with self._leased_backend(
-                    profile, profile_config, query_encoder
-                ) as search_backend:
+                with self._leased_backend(profile, profile_config) as search_backend:
                     results = search_backend.search(query_dict)
 
                 # Serialize the result rows once and record the same payload on
@@ -342,9 +323,8 @@ class SearchService:
             Document as dictionary or None if not found
         """
         profile_config = self._get_profile_config(profile, tenant_id)
-        query_encoder = self._get_encoder(profile, profile_config)
 
-        with self._leased_backend(profile, profile_config, query_encoder) as backend:
+        with self._leased_backend(profile, profile_config) as backend:
             doc = backend.get_document(document_id)
         if doc:
             return {

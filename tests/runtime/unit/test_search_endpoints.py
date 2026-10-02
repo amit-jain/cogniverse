@@ -698,10 +698,6 @@ class TestSearchEndpoint:
                     "cogniverse_runtime.routers.search.SearchService._get_backend",
                     return_value=mock_backend,
                 ),
-                patch(
-                    "cogniverse_runtime.routers.search.SearchService._get_encoder",
-                    return_value=MagicMock(),
-                ),
             ):
                 async with httpx.AsyncClient(
                     transport=httpx.ASGITransport(app=test_app),
@@ -746,10 +742,6 @@ class TestSearchEndpoint:
                 patch(
                     "cogniverse_runtime.routers.search.SearchService._get_backend",
                     return_value=mock_backend,
-                ),
-                patch(
-                    "cogniverse_runtime.routers.search.SearchService._get_encoder",
-                    return_value=MagicMock(),
                 ),
             ):
                 async with httpx.AsyncClient(
