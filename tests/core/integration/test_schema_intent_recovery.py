@@ -49,7 +49,25 @@ def _connect(port, config_port, store=None):
 
 
 @pytest.fixture
-def recovery_backend(seeded_config_vespa):
+def tenant_manager_store(seeded_config_vespa, monkeypatch):
+    """Build the tenant manager's own ConfigManager on the seeded store.
+
+    The tenant manager builds it once per process from ``BACKEND_PORT``. A
+    runtime integration module that first instantiated ``seeded_config_vespa``
+    restores the session's dead default port when it ends, so the environment
+    is set here for each test and the manager rebuilt from it.
+    """
+    monkeypatch.setenv("BACKEND_URL", "http://localhost")
+    monkeypatch.setenv("BACKEND_PORT", str(seeded_config_vespa["http_port"]))
+    monkeypatch.setattr(tenant_manager, "_fallback_config_manager", None)
+    yield
+    built = tenant_manager._fallback_config_manager
+    if built is not None:
+        built.store.close()
+
+
+@pytest.fixture
+def recovery_backend(seeded_config_vespa, tenant_manager_store):
     port = seeded_config_vespa["http_port"]
     config_port = seeded_config_vespa["config_port"]
     store = VespaConfigStore(backend_url="http://127.0.0.1", backend_port=port)
