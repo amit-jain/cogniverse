@@ -87,8 +87,8 @@ SCHEMA_REFERENCE_FIXTURES = {
         "wiki x",
     ),
     "tests/backends/unit/test_build_query_inputs.py": (
-        "Injected query strategy and tenant identities",
-        "agent_memories_acme_acme video_colpali video_frame",
+        "Injected query strategy, tenant identities and tenant schema names",
+        "agent_memories_acme_acme video_colpali video_frame video_frame_acme_acme video_xclip_acme_acme",
     ),
     "tests/backends/unit/test_delete_schema_suffix_guard.py": (
         "Synthetic registry rows and deletion failures",
