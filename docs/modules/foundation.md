@@ -174,10 +174,15 @@ flowchart TB
 
 - Multi-tenant configuration with tenant isolation
 - Version history tracking for all configurations
-- In-process caching: the system config is cached until `set_system_config`
-  writes. Per-tenant scoped configs (routing, telemetry, backend, agent,
-  durable execution, tenant instructions) are held in a `RefreshingCache`
-  (see Tenant-Scoped Caching below). A value older than
+- In-process caching: the system config is held in a `RefreshingCache` with
+  `system_config_refresh_s` (default 5s) and `system_config_max_staleness_s`
+  (default 60s), on the same terms as the scoped configs below:
+  `set_system_config` holds what it wrote at once, another process's write
+  (the runtime storing its deployment overrides, a dashboard edit) is served
+  within 60s, and a store outage past that bound raises. Pinned inference
+  URLs are laid over every value served. Per-tenant scoped configs (routing,
+  telemetry, backend, agent, durable execution, tenant instructions) are held
+  in a `RefreshingCache` (see Tenant-Scoped Caching below). A value older than
   `scoped_config_refresh_s` (default 5s) is still served while one background
   thread re-reads it, so a request never waits on that store read. A value
   that reaches `scoped_config_max_staleness_s` (default 60s) is never served:
@@ -1060,9 +1065,9 @@ to linger.
 
 `cogniverse_foundation.caching.RefreshingCache` holds values read from a slow
 backing store and keeps the read off the caller's thread once a value is held.
-`ConfigManager` keeps its per-tenant scoped configs in one,
-`TenantRouterTiers` its per-tenant router tiers, and `DeployedSchemaNames`
-(core module) its per-tenant deployed schema names.
+`ConfigManager` keeps its system config and its per-tenant scoped configs in
+one each, `TenantRouterTiers` its per-tenant router tiers, and
+`DeployedSchemaNames` (core module) its per-tenant deployed schema names.
 
 ```python
 from cogniverse_foundation.caching import RefreshingCache
@@ -1091,9 +1096,11 @@ entry stays, and the key is not refreshed again for `refresh_after_s`. At most
 `max_background_reads` (default 4) background reads run at once. A stale entry
 found while all are busy is returned, and its refresh starts on a later call.
 `invalidate(matches)` drops matching entries and detaches their reads in
-flight, whose results are never cached. `max_entries` bounds the cache, evicting
-least recently used first. Setting both bounds to 0 reads on every call. The
-`clock` argument (default `time.monotonic`) sets the time source.
+flight, whose results are never cached. `put(key, value)` holds a value this
+process has just written as if read now, detaching the key's read in flight.
+`max_entries` bounds the cache, evicting least recently used first. Setting both
+bounds to 0 reads on every call. The `clock` argument (default
+`time.monotonic`) sets the time source.
 
 `get(key, read, accept=...)` lets one call refuse a held value: when
 `accept(held)` is False the call reads as if nothing were held. It runs under the

@@ -37,6 +37,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.e2e.backend_env import LocalSystemConfig
 from tests.e2e.conftest import RUNTIME, expected_initial_trust, unique_id
 
 VESPA_HTTP_PORT = 33080
@@ -46,18 +47,19 @@ DENSEON_URL = "http://localhost:33906"
 
 def _build_manager(tenant_id: str) -> Mem0MemoryManager:
     Mem0MemoryManager._instances.clear()
+    # The system config is answered in-process: storing this localhost URL
+    # map would starve the in-cluster ingestor, which reads the same store.
     cm = ConfigManager(
-        store=VespaConfigStore(
-            backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+        store=LocalSystemConfig(
+            VespaConfigStore(
+                backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+            ),
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=VESPA_HTTP_PORT,
+                inference_service_urls={"denseon": DENSEON_URL},
+            ),
         )
-    )
-    # In-memory only: cm.set_system_config would persist a denseon-only
-    # localhost URL map into config_metadata and starve the in-cluster
-    # ingestor (which reads inference_service_urls from the same store).
-    cm._system_config_cache = SystemConfig(  # noqa: SLF001
-        backend_url="http://localhost",
-        backend_port=VESPA_HTTP_PORT,
-        inference_service_urls={"denseon": DENSEON_URL},
     )
     mm = Mem0MemoryManager(tenant_id=tenant_id)
     mm.initialize(

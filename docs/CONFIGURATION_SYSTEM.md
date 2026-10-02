@@ -857,11 +857,10 @@ history = manager.store.get_config_history(
 target_entry = next((e for e in history if e.version == 5), None)
 if target_entry:
     # Re-apply the historical configuration through set_system_config() —
-    # NOT manager.store.set_config() directly. ConfigManager caches
-    # get_system_config() on the instance and only busts that cache inside
-    # set_system_config(); writing straight to the store would leave a
-    # stale SystemConfig cached and "verify rollback" below would silently
-    # print the pre-rollback value.
+    # NOT manager.store.set_config() directly. set_system_config() holds the
+    # written value in this manager at once; a write straight to the store
+    # reaches it only on the next background refresh, so "verify rollback"
+    # below could print the pre-rollback value.
     manager.set_system_config(SystemConfig.from_dict(target_entry.config_value))
     print(f"Rolled back to version {target_entry.version}")
 

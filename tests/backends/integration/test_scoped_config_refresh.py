@@ -5,7 +5,8 @@ on one Vespa to pin what a worker serves after another one writes: the request
 thread never runs the refresh read, every tenant gets exactly one refresh, a
 store outage serves the last value read until the staleness bound and then
 raises, and a profile read-modify-write never writes back over another
-manager's change. The router tier is held the same way.
+manager's change. The router tier and the system config are held the same
+way.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     BackendProfileConfig,
     RoutingConfigUnified,
+    SystemConfig,
 )
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
@@ -47,6 +49,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_vespa]
 
 REFRESH_THREAD = "scoped-config-refresh"
 TIER_REFRESH_THREAD = "router-tier-refresh"
+SYSTEM_REFRESH_THREAD = "system-config-refresh"
 
 
 class _RecordingStore(VespaConfigStore):
@@ -118,7 +121,7 @@ def _routing(tenant: str, mode: str) -> RoutingConfigUnified:
 
 def _join_refreshes() -> None:
     for thread in threading.enumerate():
-        if thread.name in (REFRESH_THREAD, TIER_REFRESH_THREAD):
+        if thread.name in (REFRESH_THREAD, TIER_REFRESH_THREAD, SYSTEM_REFRESH_THREAD):
             thread.join(timeout=30)
             assert thread.is_alive() is False
 
@@ -446,4 +449,111 @@ def test_a_tier_outage_serves_the_held_tier_until_the_bound_then_routes_default(
             assert reader(tenant) == "pro"
         finally:
             _delete_tier(writer.store, tenant)
+            store.close()
+
+
+_SYSTEM_ROW = {
+    "tenant_id": "_system",
+    "scope": ConfigScope.SYSTEM,
+    "service": "system",
+    "config_key": "system_config",
+}
+
+
+@pytest.fixture
+def system_config_row(writer):
+    """Put the shared Vespa's system config row back as the test found it."""
+    before = writer.store.get_config(**_SYSTEM_ROW)
+    yield
+    if before is None:
+        writer.store.delete_config(**_SYSTEM_ROW)
+    else:
+        writer.store.set_config(**_SYSTEM_ROW, config_value=before.config_value)
+
+
+def test_another_managers_system_config_write_is_served_after_one_off_thread_refresh(
+    vespa_instance, writer, system_config_row
+):
+    store = _RecordingStore(vespa_instance["http_port"])
+    reader = ConfigManager(
+        store=store, system_config_refresh_s=1.0, system_config_max_staleness_s=30.0
+    )
+    try:
+        writer.set_system_config(SystemConfig(llm_model="openai/first-model"))
+        assert reader.get_system_config().llm_model == "openai/first-model"
+        writer.set_system_config(SystemConfig(llm_model="openai/second-model"))
+        assert reader.get_system_config().llm_model == "openai/first-model"
+        caller = threading.current_thread().name
+        assert store.reads == [("_system", caller)]
+
+        time.sleep(1.05)
+        store.answered.clear()
+        store.gate.clear()
+        assert reader.get_system_config().llm_model == "openai/first-model"
+        # The call returned before the refresh it started was let go.
+        assert store.answered.wait(timeout=30)
+        assert store.reads == [("_system", caller), ("_system", SYSTEM_REFRESH_THREAD)]
+        store.gate.set()
+        _join_refreshes()
+
+        assert reader.get_system_config().llm_model == "openai/second-model"
+        assert len(store.reads) == 2
+    finally:
+        store.gate.set()
+        store.close()
+
+
+def test_a_system_config_outage_serves_the_held_value_until_the_bound_then_raises(
+    vespa_instance, writer, system_config_row, caplog
+):
+    upstream = f"http://localhost:{vespa_instance['http_port']}"
+    with _SwitchableProxy(upstream) as proxy:
+        store = VespaConfigStore(
+            backend_url="http://127.0.0.1", backend_port=proxy.server.server_port
+        )
+        reader = ConfigManager(
+            store=store, system_config_refresh_s=1.0, system_config_max_staleness_s=9.0
+        )
+        try:
+            writer.set_system_config(SystemConfig(llm_model="openai/held-model"))
+            read_at = time.monotonic()
+            assert reader.get_system_config().llm_model == "openai/held-model"
+            proxy.down = True
+            writer.set_system_config(SystemConfig(llm_model="openai/written-model"))
+            time.sleep(1.05)
+
+            with caplog.at_level(
+                logging.ERROR, logger=refreshing_cache_module.__name__
+            ):
+                assert reader.get_system_config().llm_model == "openai/held-model"
+                _join_refreshes()
+            messages = [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == refreshing_cache_module.__name__
+            ]
+            assert len(messages) == 1
+            assert re.fullmatch(
+                r"system-config: refreshing 'system_config' failed with "
+                r"ConfigStoreUnavailableError: Failed to read Vespa config visit "
+                r"after 5 attempts over \d+\.\d{3}s: HTTPError: 503 Server Error: "
+                r"Service Unavailable for url: http://127\.0\.0\.1:\d+/document/v1/"
+                r"\S+; serving the value read \d+\.\ds ago until it is 9\.0s old",
+                messages[0],
+            )
+            assert reader.get_system_config().llm_model == "openai/held-model"
+
+            time.sleep(max(0.0, read_at + 9.05 - time.monotonic()))
+            with pytest.raises(ConfigStoreUnavailableError) as caught:
+                reader.get_system_config()
+            assert str(caught.value).startswith(
+                "Failed to read Vespa config visit after 5 attempts over "
+            )
+            assert "HTTPError: 503 Server Error: Service Unavailable" in str(
+                caught.value
+            )
+
+            proxy.down = False
+            assert reader.get_system_config().llm_model == "openai/written-model"
+        finally:
             store.close()

@@ -504,3 +504,76 @@ def test_a_value_keep_rejects_is_returned_unheld_and_drops_the_entry():
         ("acme", f"{NAME}-refresh"),
         ("acme", caller),
     ]
+
+
+def test_put_holds_the_written_value_and_detaches_a_background_read_in_flight():
+    clock = _Clock()
+    source = _Source({"acme": "acme-1"})
+    cache = _cache(clock)
+    cache.get("acme", source.reader("acme"))
+    source.values["acme"] = "acme-2"
+    clock.now = 10.0
+    source.hold()
+    assert cache.get("acme", source.reader("acme")) == "acme-1"
+    # The refresh has read the pre-write value and is held there.
+    assert source.started.wait(timeout=10)
+
+    cache.put("acme", "acme-written")
+    source.released.set()
+    _join_refreshes()
+
+    assert cache.items() == [("acme", "acme-written")]
+    clock.now = 19.9
+    assert cache.get("acme", source.reader("acme")) == "acme-written"
+    assert [thread for _, thread in source.calls] == [
+        threading.current_thread().name,
+        f"{NAME}-refresh",
+    ]
+
+
+def test_put_during_a_cold_read_answers_that_reader_and_holds_the_written_value():
+    clock = _Clock()
+    source = _Source({"acme": "acme-before"})
+    cache = _cache(clock)
+    source.hold()
+    answers: list[str] = []
+    reader = threading.Thread(
+        target=lambda: answers.append(cache.get("acme", source.reader("acme"))),
+        name="cold-reader",
+    )
+    reader.start()
+    assert source.started.wait(timeout=10)
+
+    cache.put("acme", "acme-written")
+    source.released.set()
+    reader.join(timeout=10)
+
+    assert reader.is_alive() is False
+    assert answers == ["acme-before"]
+    assert cache.items() == [("acme", "acme-written")]
+    assert cache.get("acme", source.reader("acme")) == "acme-written"
+    assert source.calls == [("acme", "cold-reader")]
+
+
+def test_put_of_a_value_keep_rejects_drops_the_entry():
+    clock = _Clock()
+    source = _Source({"acme": frozenset({"a"}), "globex": frozenset({"g"})})
+    cache = _cache(clock, keep=bool)
+    cache.get("acme", source.reader("acme"))
+    cache.get("globex", source.reader("globex"))
+
+    cache.put("acme", frozenset())
+
+    assert cache.items() == [("globex", frozenset({"g"}))]
+
+
+def test_put_evicts_least_recently_used_beyond_max_entries():
+    clock = _Clock()
+    source = _Source({"acme": "acme-1", "globex": "globex-1"})
+    cache = _cache(clock, max_entries=2)
+    cache.get("acme", source.reader("acme"))
+    cache.get("globex", source.reader("globex"))
+
+    cache.put("initech", "initech-written")
+
+    assert cache.items() == [("globex", "globex-1"), ("initech", "initech-written")]
