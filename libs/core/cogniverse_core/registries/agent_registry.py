@@ -1,13 +1,19 @@
 """
 Agent Registry for dynamic agent discovery and management.
-Provides centralized registry for all available agents with health monitoring.
+
+Two layers make up the agents a registry serves. Configured agents are
+registered from configuration in every process at startup, so every process
+holds the same ones. Registrations made over HTTP live in a shared
+:class:`AgentRegistryStore`, which can also hide a configured agent; every
+process applies the store's current contents on :meth:`AgentRegistry.refresh`.
 """
 
 import asyncio
 import logging
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Protocol
 
 import httpx
 
@@ -22,18 +28,101 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class AgentRegistryUnavailableError(RuntimeError):
+    """Raised when the shared registration store cannot complete an operation."""
+
+
+@dataclass(frozen=True)
+class RegistryVersion:
+    """Position of a store's contents.
+
+    ``epoch`` names one lifetime of the store's data (a wiped store starts a
+    new one); ``counter`` increases with every change inside an epoch.
+    """
+
+    epoch: str
+    counter: int
+
+
+@dataclass(frozen=True)
+class RegistrySnapshot:
+    """The store's registrations and removals at one version."""
+
+    version: RegistryVersion
+    registered: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    removed: FrozenSet[str] = frozenset()
+
+
+class AgentRegistryStore(Protocol):
+    """Registrations shared by every process that serves one registry.
+
+    Every method raises :class:`AgentRegistryUnavailableError` when the store
+    cannot answer.
+    """
+
+    async def version(self) -> RegistryVersion: ...
+
+    async def snapshot(self) -> RegistrySnapshot: ...
+
+    async def register(self, name: str, data: Dict[str, Any]) -> None:
+        """Store ``data`` as the registration of ``name``, replacing any
+        registration or removal recorded for it."""
+        ...
+
+    async def unregister(self, name: str, *, configured: bool) -> bool:
+        """Remove ``name``; True when it was served before the call.
+
+        ``configured`` says whether ``name`` is a configured agent: one is
+        hidden by a recorded removal, any other loses its registration.
+        """
+        ...
+
+
+def endpoint_data(agent: AgentEndpoint) -> Dict[str, Any]:
+    """The registration fields of ``agent``, as a store keeps them."""
+    return {
+        "name": agent.name,
+        "url": agent.url,
+        "capabilities": list(agent.capabilities),
+        "streams_answer_tokens": agent.streams_answer_tokens,
+        "health_endpoint": agent.health_endpoint,
+        "process_endpoint": agent.process_endpoint,
+        "timeout": agent.timeout,
+    }
+
+
+def endpoint_from_data(data: Dict[str, Any]) -> AgentEndpoint:
+    """Build an endpoint from registration fields, defaults filled in."""
+    return AgentEndpoint(
+        name=data.get("name"),
+        url=data.get("url"),
+        capabilities=list(data.get("capabilities", [])),
+        streams_answer_tokens=data.get("streams_answer_tokens", False),
+        health_endpoint=data.get("health_endpoint", "/health"),
+        process_endpoint=data.get("process_endpoint", "/tasks/send"),
+        timeout=data.get("timeout", DEFAULT_AGENT_CALL_TIMEOUT_SECONDS),
+    )
+
+
 class AgentRegistry:
     """
     Registry for managing available agents with health monitoring and load balancing.
     Uses dependency injection for ConfigManager instead of singleton pattern.
     """
 
-    def __init__(self, tenant_id: str, config_manager: "ConfigManager" = None):
+    def __init__(
+        self,
+        tenant_id: str,
+        config_manager: "ConfigManager" = None,
+        store: Optional[AgentRegistryStore] = None,
+    ):
         """Initialize agent registry with dependency injection
 
         Args:
             tenant_id: Tenant identifier for config isolation (required)
             config_manager: ConfigManager instance (required for dependency injection)
+            store: Shared registration store. Without one, the registry serves
+                its configured agents only and refuses registrations.
         """
         from cogniverse_core.common.tenant_utils import require_tenant_id
 
@@ -46,8 +135,15 @@ class AgentRegistry:
         # config_manager is required (DI hygiene — see the None check above) but
         # this registry resolves nothing from it: agents self-register over HTTP.
         self.tenant_id = require_tenant_id(tenant_id, source="AgentRegistry")
+        # The served view: configured agents overlaid with the store's
+        # registrations and removals. Rebuilt whole and swapped on change.
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
+        self._configured: Dict[str, AgentEndpoint] = {}
+        self._registered: Dict[str, AgentEndpoint] = {}
+        self._removed: FrozenSet[str] = frozenset()
+        self._store = store
+        self._store_version: Optional[RegistryVersion] = None
         # Constructed lazily on first use — a registry used only for local
         # agent lookup never opens (or has to close) an httpx client.
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -57,6 +153,93 @@ class AgentRegistry:
         self._initialize_from_config()
 
         logger.info(f"AgentRegistry initialized for tenant: {tenant_id}")
+
+    def set_store(self, store: AgentRegistryStore) -> None:
+        """Attach the shared registration store; the next refresh applies it."""
+        self._store = store
+        self._store_version = None
+
+    async def refresh(self) -> None:
+        """Apply the store's current registrations and removals.
+
+        A request path calls this before it reads the registry, so a change
+        made by any process is served by the next request on every process.
+        Raises :class:`AgentRegistryUnavailableError` when the store cannot
+        answer; the served view is then left as it was.
+        """
+        if self._store is None:
+            return
+        if await self._store.version() == self._store_version:
+            return
+        self._apply(await self._store.snapshot())
+
+    async def add_registration(self, agent: AgentEndpoint) -> None:
+        """Register ``agent`` for every process sharing the store."""
+        if not agent.name or not agent.url:
+            raise ValueError("Agent must have name and URL")
+        await self._require_store().register(agent.name, endpoint_data(agent))
+        await self.refresh()
+        logger.info(f"Registered agent: {agent.name} at {agent.url}")
+
+    async def remove_registration(self, agent_name: str) -> bool:
+        """Stop serving ``agent_name`` in every process sharing the store.
+
+        Returns False when it was not served. A configured agent stays
+        removed until it is registered again.
+        """
+        store = self._require_store()
+        removed = await store.unregister(
+            agent_name, configured=agent_name in self._configured
+        )
+        await self.refresh()
+        if removed:
+            logger.info(f"Unregistered agent: {agent_name}")
+        return removed
+
+    def _require_store(self) -> AgentRegistryStore:
+        if self._store is None:
+            raise AgentRegistryUnavailableError(
+                "AgentRegistry has no shared store; registrations need one"
+            )
+        return self._store
+
+    def _apply(self, snapshot: RegistrySnapshot) -> None:
+        """Serve ``snapshot`` unless a newer one of its epoch is served."""
+        current = self._store_version
+        if (
+            current is not None
+            and current.epoch == snapshot.version.epoch
+            and current.counter >= snapshot.version.counter
+        ):
+            return
+        registered: Dict[str, AgentEndpoint] = {}
+        for name, data in sorted(snapshot.registered.items()):
+            kept = self._registered.get(name)
+            # An unchanged registration keeps its endpoint and with it the
+            # health this process observed.
+            registered[name] = (
+                kept
+                if kept is not None and endpoint_data(kept) == data
+                else endpoint_from_data(data)
+            )
+        self._registered = registered
+        self._removed = snapshot.removed
+        self._store_version = snapshot.version
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        agents = dict(self._configured)
+        for name in self._removed:
+            agents.pop(name, None)
+        agents.update(self._registered)
+        capabilities: Dict[str, List[str]] = {}
+        for name, agent in agents.items():
+            for capability in agent.capabilities:
+                names = capabilities.setdefault(capability, [])
+                if name not in names:
+                    names.append(name)
+        self.agents = agents
+        self.capabilities = capabilities
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -78,7 +261,11 @@ class AgentRegistry:
 
     def register_agent(self, agent: AgentEndpoint) -> bool:
         """
-        Register an agent in the registry.
+        Register a configured agent in this process's registry.
+
+        Every process registers the same configured agents at startup; a
+        registration every process must serve goes through
+        :meth:`add_registration`.
 
         Args:
             agent: Agent endpoint to register
@@ -91,15 +278,8 @@ class AgentRegistry:
             if not agent.name or not agent.url:
                 raise ValueError("Agent must have name and URL")
 
-            # Register agent
-            self.agents[agent.name] = agent
-
-            # Update capability mapping
-            for capability in agent.capabilities:
-                if capability not in self.capabilities:
-                    self.capabilities[capability] = []
-                if agent.name not in self.capabilities[capability]:
-                    self.capabilities[capability].append(agent.name)
+            self._configured[agent.name] = agent
+            self._rebuild()
 
             logger.info(f"Registered agent: {agent.name} at {agent.url}")
             return True
@@ -107,35 +287,6 @@ class AgentRegistry:
         except Exception as e:
             logger.error(f"Failed to register agent {agent.name}: {e}")
             return False
-
-    def unregister_agent(self, agent_name: str) -> bool:
-        """
-        Unregister an agent from the registry.
-
-        Args:
-            agent_name: Name of agent to unregister
-
-        Returns:
-            True if successfully unregistered
-        """
-        if agent_name not in self.agents:
-            return False
-
-        agent = self.agents[agent_name]
-
-        # Remove from capability mapping
-        for capability in agent.capabilities:
-            if capability in self.capabilities:
-                if agent_name in self.capabilities[capability]:
-                    self.capabilities[capability].remove(agent_name)
-                if not self.capabilities[capability]:
-                    del self.capabilities[capability]
-
-        # Remove agent
-        del self.agents[agent_name]
-
-        logger.info(f"Unregistered agent: {agent_name}")
-        return True
 
     def get_agent(self, agent_name: str) -> Optional[AgentEndpoint]:
         """
@@ -413,7 +564,7 @@ class AgentRegistry:
 
     def register_agent_from_data(self, registration_data: Dict[str, Any]) -> bool:
         """
-        Register agent from registration data payload.
+        Register a configured agent from registration data payload.
 
         Args:
             registration_data: Agent registration data containing name, url, capabilities
@@ -422,24 +573,7 @@ class AgentRegistry:
             True if successfully registered
         """
         try:
-            agent_endpoint = AgentEndpoint(
-                name=registration_data.get("name"),
-                url=registration_data.get("url"),
-                capabilities=registration_data.get("capabilities", []),
-                streams_answer_tokens=registration_data.get(
-                    "streams_answer_tokens", False
-                ),
-                health_endpoint=registration_data.get("health_endpoint", "/health"),
-                process_endpoint=registration_data.get(
-                    "process_endpoint", "/tasks/send"
-                ),
-                timeout=registration_data.get(
-                    "timeout", DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
-                ),
-            )
-
-            return self.register_agent(agent_endpoint)
-
+            return self.register_agent(endpoint_from_data(registration_data))
         except Exception as e:
             logger.error(f"Failed to register agent from data: {e}")
             return False

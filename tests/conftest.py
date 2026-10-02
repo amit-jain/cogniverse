@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 import requests
 
 from tests.utils.async_polling import simulate_processing_delay
@@ -1068,6 +1069,100 @@ def workflow_state_redis_url():
         yield f"redis://127.0.0.1:{port}/0"
     finally:
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+@pytest.fixture
+def shared_state_redis_url(request):
+    """Redis for the state every runtime process shares.
+
+    ``COGNIVERSE_TEST_REDIS_URL`` names an already-running Redis; otherwise
+    the session's test-owned container serves it.
+    """
+    import os
+
+    return os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
+        "workflow_state_redis_url"
+    )
+
+
+@pytest_asyncio.fixture
+async def shared_state_redis(shared_state_redis_url):
+    """A client built as the runtime builds its own, closed after the test."""
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
+
+    client = await connect_shared_state_redis(shared_state_redis_url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+def own_redis():
+    """A Redis container this test alone uses, and callables that pause and
+    unpause it.
+
+    Yields ``(url, pause, resume)``; the container is unpaused and removed
+    on teardown whatever the test did to it.
+    """
+    import socket
+    import subprocess
+    import time
+    import uuid
+
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    name = f"cogniverse-paused-redis-{uuid.uuid4().hex[:8]}"
+    started = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "-p",
+            f"127.0.0.1:{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if started.returncode != 0:
+        pytest.fail(f"Failed to start Redis: {started.stderr}")
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ping = subprocess.run(
+                ["docker", "exec", name, "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+            )
+            if ping.stdout.strip() == "PONG":
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail("Redis did not become ready within 30 seconds")
+
+        def pause():
+            subprocess.run(["docker", "pause", name], check=True, capture_output=True)
+
+        def resume():
+            subprocess.run(["docker", "unpause", name], check=True, capture_output=True)
+
+        yield f"redis://127.0.0.1:{port}/0", pause, resume
+    finally:
+        subprocess.run(["docker", "unpause", name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+@pytest.fixture
+def dead_redis_url():
+    """A Redis URL on a port nothing listens on."""
+    import socket
+
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    return f"redis://127.0.0.1:{port}/0"
 
 
 @pytest.fixture

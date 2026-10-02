@@ -24,6 +24,16 @@ import cogniverse_vespa.backend  # noqa: F401
 from cogniverse_runtime.routers import health
 
 
+class _NoAgents:
+    """A registry serving no agents."""
+
+    async def refresh(self) -> None:
+        return None
+
+    def list_agents(self) -> list:
+        return []
+
+
 class _OKHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path == "/ApplicationStatus":
@@ -97,7 +107,7 @@ class TestHealthReflectsBackendReachability:
         monkeypatch.setattr(
             health,
             "_get_agent_registry",
-            lambda: type("R", (), {"list_agents": lambda self: []})(),
+            lambda: _NoAgents(),
         )
         resp = _client(_dead_url()).get("/health")
         assert resp.status_code == 503
@@ -107,7 +117,7 @@ class TestHealthReflectsBackendReachability:
         monkeypatch.setattr(
             health,
             "_get_agent_registry",
-            lambda: type("R", (), {"list_agents": lambda self: []})(),
+            lambda: _NoAgents(),
         )
         with _stub_backend() as base:
             resp = _client(base).get("/health")
@@ -145,7 +155,7 @@ class TestReadinessFlapResistance:
         monkeypatch.setattr(
             health,
             "_get_agent_registry",
-            lambda: type("R", (), {"list_agents": lambda self: []})(),
+            lambda: _NoAgents(),
         )
         with _stub_backend() as base:
             client = _client(base)
@@ -180,7 +190,7 @@ class TestReadinessFlapResistance:
         monkeypatch.setattr(
             health,
             "_get_agent_registry",
-            lambda: type("R", (), {"list_agents": lambda self: []})(),
+            lambda: _NoAgents(),
         )
         _CountingHandler.hits = 0
         srv = http.server.HTTPServer(("127.0.0.1", 0), _CountingHandler)

@@ -607,6 +607,7 @@ class TestQualityMonitorTenantOwnership:
         seeded_vespa,
         qm_tenant,
         caplog,
+        shared_state_redis,
     ):
         """One monitor sees a later upload without losing its live siblings.
 
@@ -730,7 +731,14 @@ class TestQualityMonitorTenantOwnership:
                 await release.wait()
 
             with (
-                patch.object(agents_router, "_annotation_queue", AnnotationQueue()),
+                patch.object(
+                    agents_router,
+                    "_annotation_queue",
+                    AnnotationQueue(
+                        shared_state_redis,
+                        key_prefix=f"test:annotation-queue:{uuid.uuid4().hex}",
+                    ),
+                ),
                 patch(
                     "cogniverse_evaluation.quality_monitor.asyncio.sleep",
                     side_effect=controlled_sleep,
@@ -768,10 +776,12 @@ class TestQualityMonitorTenantOwnership:
                 first_release = await next_monitor_release()
 
                 deadline = time.monotonic() + 30
-                queued = agents_router.get_annotation_queue().get(routing_span_id)
+                queued = await agents_router.get_annotation_queue().get(routing_span_id)
                 while queued is None and time.monotonic() < deadline:
                     await real_sleep(0.1)
-                    queued = agents_router.get_annotation_queue().get(routing_span_id)
+                    queued = await agents_router.get_annotation_queue().get(
+                        routing_span_id
+                    )
 
                 assert lifecycle_task.done() is False
                 assert id(monitor) == monitor_identity
@@ -798,7 +808,7 @@ class TestQualityMonitorTenantOwnership:
                         "metadata": {},
                     }
                 ]
-                queued = agents_router.get_annotation_queue().get(routing_span_id)
+                queued = await agents_router.get_annotation_queue().get(routing_span_id)
                 assert queued.to_dict() == {
                     "span_id": routing_span_id,
                     "timestamp": queued.timestamp.isoformat(),

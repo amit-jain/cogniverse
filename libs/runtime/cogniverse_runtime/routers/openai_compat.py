@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict
 
 from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
 from cogniverse_runtime.harness_keys import HarnessKeyNotFoundError
 from cogniverse_runtime.harness_turn import (
     NoAnswerError,
@@ -1305,6 +1306,11 @@ async def chat_completions(
         return _dependency_unavailable(exc, "dispatcher")
     if dispatcher is None:
         return _unavailable("Runtime initialising; dispatcher not built yet.")
+    try:
+        await dispatcher.refresh_agent_registry()
+    except AgentRegistryUnavailableError as exc:
+        logger.warning("agent registry unavailable on /v1/chat: %s", exc)
+        return _dependency_unavailable(exc, "agent registry")
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())

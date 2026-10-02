@@ -25,6 +25,7 @@ from a2a.utils import get_message_text, new_agent_text_message
 from cogniverse_agents._coercion import coerce_bool, coerce_int
 from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, NothingToSearch
 from cogniverse_runtime.harness_turn import _raise_if_error
@@ -86,6 +87,22 @@ def _unwrap_exc(exc: BaseException) -> str:
     failures. ``str(group)`` is only 'unhandled errors in a TaskGroup (N
     sub-exceptions)', which hides what actually broke."""
     return "; ".join(f"{type(e).__name__}: {e}" for e in leaf_exceptions(exc))
+
+
+def _failure_text(agent_name: str, exc: BaseException) -> str:
+    """The final event body of a task whose dispatch failed: the agent and
+    the exception type; the exception text stays in the runtime log."""
+    return json.dumps(
+        {
+            "type": "error",
+            "agent": agent_name,
+            "error_type": type(exc).__name__,
+            "message": (
+                f"Agent '{agent_name}' failed with {type(exc).__name__}. "
+                "See runtime logs for detail."
+            ),
+        }
+    )
 
 
 # All agents support streaming via emit_progress() and call_dspy()
@@ -186,6 +203,18 @@ class CogniverseAgentExecutor(AgentExecutor):
 
         with request_trace_context(metadata):
             # Check if agent supports streaming and client requested it
+            try:
+                await self._dispatcher.refresh_agent_registry()
+            except AgentRegistryUnavailableError as e:
+                logger.error(f"A2A dispatch failed for agent '{agent_name}': {e}")
+                await self._emit_final(
+                    event_queue,
+                    task_id,
+                    context_id,
+                    TaskState.failed,
+                    _failure_text(agent_name, e),
+                )
+                return
             agent_entry = self._dispatcher._registry.get_agent(agent_name)
             capabilities = set(agent_entry.capabilities) if agent_entry else set()
             use_streaming = stream and bool(capabilities & _STREAMING_CAPABILITIES)
@@ -235,18 +264,18 @@ class CogniverseAgentExecutor(AgentExecutor):
         except Exception as e:
             logger.error(f"A2A dispatch failed for agent '{agent_name}': {e}")
             state = TaskState.failed
-            result_text = json.dumps(
-                {
-                    "type": "error",
-                    "agent": agent_name,
-                    "error_type": type(e).__name__,
-                    "message": (
-                        f"Agent '{agent_name}' failed with {type(e).__name__}. "
-                        "See runtime logs for detail."
-                    ),
-                }
-            )
+            result_text = _failure_text(agent_name, e)
 
+        await self._emit_final(event_queue, task_id, context_id, state, result_text)
+
+    @staticmethod
+    async def _emit_final(
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str,
+        state: TaskState,
+        result_text: str,
+    ) -> None:
         response_message = new_agent_text_message(result_text)
         event = TaskStatusUpdateEvent(
             task_id=task_id,

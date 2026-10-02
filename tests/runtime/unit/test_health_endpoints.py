@@ -11,7 +11,7 @@ ready/healthy assertions reflect a genuinely reachable backend.
 import http.server
 import threading
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -154,6 +154,7 @@ class TestHealthCheckFull:
             "vespa"
         ]
         mock_agent_cls.return_value.list_agents.return_value = ["search_agent"]
+        mock_agent_cls.return_value.refresh = AsyncMock()
 
         resp = health_client.get("/health")
         assert resp.status_code == 200
@@ -172,6 +173,7 @@ class TestHealthCheckFull:
         """GET /health response has all expected keys."""
         mock_backend_cls.get_instance.return_value.list_backends.return_value = []
         mock_agent_cls.return_value.list_agents.return_value = []
+        mock_agent_cls.return_value.refresh = AsyncMock()
 
         resp = health_client.get("/health")
         data = resp.json()
@@ -202,6 +204,7 @@ class TestHealthCheckFull:
             "vespa"
         ]
         mock_agent_cls.return_value.list_agents.return_value = []
+        mock_agent_cls.return_value.refresh = AsyncMock()
 
         for _ in range(3):
             assert health_client.get("/health").status_code == 200
@@ -223,6 +226,9 @@ class TestHealthCheckFull:
         ]
 
         class _Registry:
+            async def refresh(self):
+                return None
+
             def list_agents(self):
                 return ["search_agent", "summarizer_agent", "routing_agent"]
 
@@ -240,6 +246,43 @@ class TestHealthCheckFull:
             ]
         finally:
             agents_router._agent_registry, agents_router._dispatcher = saved
+
+    @patch("cogniverse_runtime.routers.health.BackendRegistry")
+    def test_health_is_503_when_the_shared_agent_registry_is_unreachable(
+        self, mock_backend_cls, health_client
+    ):
+        """A registry whose shared store cannot be read leaves /health
+        unhealthy with the store's error as the reason."""
+        from cogniverse_core.registries.agent_registry import (
+            AgentRegistryUnavailableError,
+        )
+        from cogniverse_runtime.routers import agents as agents_router
+
+        mock_backend_cls.get_instance.return_value.list_backends.return_value = [
+            "vespa"
+        ]
+
+        class _UnreachableRegistry:
+            async def refresh(self):
+                raise AgentRegistryUnavailableError(
+                    "shared agent registry unavailable: read version"
+                )
+
+        saved = (agents_router._agent_registry, agents_router._dispatcher)
+        agents_router.set_agent_registry(_UnreachableRegistry())
+        try:
+            resp = health_client.get("/health")
+        finally:
+            agents_router._agent_registry, agents_router._dispatcher = saved
+
+        assert (resp.status_code, resp.json()) == (
+            503,
+            {
+                "status": "unhealthy",
+                "service": "cogniverse-runtime",
+                "reason": "shared agent registry unavailable: read version",
+            },
+        )
 
     @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_returns_503_not_500_on_config_error(

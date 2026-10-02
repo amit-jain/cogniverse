@@ -636,11 +636,13 @@ and `AnnotationStorage` — plus two scheduled cycles in
   ISO-8601 timezone offset; the queue normalizes them to UTC and records assignment,
   deadline, and completion timestamps in UTC.
 - Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
-  completion persists the label durably **before** the in-memory state flips, so a
-  telemetry outage leaves the item open for retry instead of losing the label.
+  completion claims the request, persists the label durably, and only then marks it
+  completed, so a telemetry outage leaves the item open for retry instead of losing the
+  label, and of concurrent completions exactly one writes a label.
 
-This stays consistent with the "batch CLI, not a daemon" principle above; the pending
-worklist is in-memory and re-derivable, the labels are durable.
+This stays consistent with the "batch CLI, not a daemon" principle above; the worklist
+lives in Redis, shared by every runtime process, and is re-derivable; the labels are
+durable.
 
 ### End-to-End Flow
 

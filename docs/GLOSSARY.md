@@ -25,7 +25,7 @@ Pydantic model that all agent inputs must extend. Provides validation and serial
 Pydantic model that all agent outputs must extend. Provides validation and serialization for agent responses.
 
 ### AgentRegistry
-Central registry for discovering and accessing agents. Agents register themselves with capabilities for routing.
+Central registry for discovering and accessing agents. Agents register themselves with capabilities for routing; registrations made over HTTP are shared through Redis, so every runtime process serves the same agents.
 
 ### AudioAnalysisAgent
 A2A agent (`cogniverse_agents/audio_analysis_agent.py`) that transcribes audio with Whisper and searches it in Vespa via transcript (BM25), acoustic (CLAP nearest-neighbor), or hybrid modes. One of the 23 agents registered in `configs/config.json` under `agents.audio_analysis_agent` (enabled by default).

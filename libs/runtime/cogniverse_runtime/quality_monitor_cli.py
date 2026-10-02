@@ -305,9 +305,8 @@ async def run_annotation_cycle(
     per the annotation thresholds, spans already carrying an annotation are
     dropped, the batch is capped at
     ``optimization_triggers.max_annotations_per_cycle``, and the remainder is
-    POSTed to the runtime's ``/agents/annotations/queue/enqueue`` worklist.
-    The in-memory queue is re-derivable: a runtime restart just means the next
-    cycle repopulates it.
+    POSTed to the runtime's ``/agents/annotations/queue/enqueue`` worklist,
+    which every runtime process shares and which skips spans already queued.
     """
     import httpx
 

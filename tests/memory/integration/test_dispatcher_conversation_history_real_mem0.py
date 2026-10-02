@@ -19,7 +19,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -47,6 +47,13 @@ from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
 pytestmark = [pytest.mark.integration]
 
 TENANT = "acme:acme"
+
+
+def _registry_mock() -> MagicMock:
+    """A registry stand-in whose shared-store refresh does nothing."""
+    registry = MagicMock()
+    registry.refresh = AsyncMock()
+    return registry
 
 
 def _build_manager_with_cm(*, shared_memory_vespa, shared_denseon):
@@ -108,7 +115,7 @@ def _dispatcher_with_real_store(mm) -> AgentDispatcher:
     on the real Mem0 manager — no in-memory double."""
     config_manager = MagicMock()
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
     )
@@ -126,7 +133,7 @@ def _dispatcher_with_real_construction(cm) -> AgentDispatcher:
     way the served runtime does. Exercises the production construction path that
     the seam tests bypass."""
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=cm,
         schema_loader=MagicMock(),
     )
@@ -328,7 +335,7 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
         backend_port=shared_memory_vespa["http_port"],
     )
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
     )
@@ -417,7 +424,7 @@ async def test_dispatch_degrades_when_memory_unavailable():
     infrastructure needed."""
 
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
     )
@@ -458,7 +465,7 @@ async def test_recorded_persistence_failures_evict_oldest_first():
     lifetime. The newest failure displaces the oldest, and every retained entry
     still names its own context."""
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
     )
@@ -510,7 +517,7 @@ async def test_dispatch_bounded_when_history_load_hangs(monkeypatch):
             pass
 
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
     )
@@ -553,7 +560,7 @@ async def test_reply_does_not_wait_for_a_hung_save(monkeypatch, caplog):
             time.sleep(2.0)  # far past the 0.2s budget
 
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
     )

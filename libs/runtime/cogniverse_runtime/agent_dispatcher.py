@@ -1494,10 +1494,12 @@ class AgentDispatcher:
 
         Raises:
             ValueError: If agent is not found or has no supported execution path.
+            AgentRegistryUnavailableError: If the shared registry cannot be read.
         """
         if context is None:
             context = {}
 
+        await self.refresh_agent_registry()
         agent = self._registry.get_agent(agent_name)
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found in registry")
@@ -1564,6 +1566,11 @@ class AgentDispatcher:
         logger.warning("%s", message)
         return {"status": "error", "agent": agent_name, "error": message}
 
+    async def refresh_agent_registry(self) -> None:
+        """Serve every process's registrations; a request calls this before it
+        reads the registry."""
+        await self._registry.refresh()
+
     def supports_token_stream(self, agent_name: str) -> bool:
         """Return the registered answer-token streaming declaration."""
         agent = self._registry.get_agent(agent_name)
@@ -1582,6 +1589,7 @@ class AgentDispatcher:
         from cogniverse_runtime.a2a_executor import stream_agent_events
 
         context = dict(context or {})
+        await self.refresh_agent_registry()
         if self._registry.get_agent(agent_name) is None:
             raise ValueError(f"Agent '{agent_name}' not found in registry")
         tenant_id = require_tenant_id(

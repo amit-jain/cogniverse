@@ -8,10 +8,12 @@ One test walks the whole loop the scheduled cycles run in production:
    ``AnnotationStorage`` — identifies it and enqueues it through the REAL
    mounted runtime router;
 3. a reviewer completes it over the REAL endpoint; the label persists into
-   real Phoenix BEFORE the in-memory completion (the response says so);
+   real Phoenix BEFORE the queue marks it completed (the response says so);
 4. the label is readable back through ``query_annotated_spans``;
-5. a second cycle run (fresh queue, as after a runtime restart) drops the
-   span as already-annotated instead of re-asking for review.
+5. a second cycle run (an empty queue) drops the span as already-annotated
+   instead of re-asking for review.
+
+The queue lives in a real Redis, each run under a key prefix of its own.
 """
 
 from __future__ import annotations
@@ -57,7 +59,9 @@ async def _wait_for_span(storage, project, span_id):
 
 
 @pytest.mark.asyncio
-async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
+async def test_identify_enqueue_complete_persist_dedupe(
+    real_telemetry, shared_state_redis
+):
     from cogniverse_foundation.telemetry.span_contract import record_span_io
 
     # Two-part form up front: spans, storage, and enqueue must share the
@@ -82,7 +86,10 @@ async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
     # 2. The identification cycle — real agent, real storage, real router.
     app = FastAPI()
     app.include_router(agents_router.router, prefix="/agents")
-    with patch.object(agents_router, "_annotation_queue", AnnotationQueue()):
+    first_queue = AnnotationQueue(
+        shared_state_redis, key_prefix=f"test:annotation-queue:{uuid4().hex}"
+    )
+    with patch.object(agents_router, "_annotation_queue", first_queue):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://runtime"
         ) as client:
@@ -96,7 +103,7 @@ async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
             assert result["identified"] >= 1
             assert result["enqueued"] >= 1
             queue = agents_router.get_annotation_queue()
-            request = queue.get(span_id)
+            request = await queue.get(span_id)
             assert request is not None
             assert request.tenant_id == tenant_id
             assert request.query == "play something relaxing"
@@ -129,9 +136,12 @@ async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
     assert rows[0]["annotation_label"] == "wrong"
     assert rows[0]["annotation_reasoning"] == "should have gone to music"
 
-    # 5. A fresh cycle (fresh queue — as after a runtime restart) must NOT
-    # re-enqueue the reviewed span.
-    with patch.object(agents_router, "_annotation_queue", AnnotationQueue()):
+    # 5. A fresh cycle into an empty queue must NOT re-enqueue the reviewed
+    # span.
+    empty_queue = AnnotationQueue(
+        shared_state_redis, key_prefix=f"test:annotation-queue:{uuid4().hex}"
+    )
+    with patch.object(agents_router, "_annotation_queue", empty_queue):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://runtime"
         ) as client:
@@ -142,4 +152,4 @@ async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
                 http_client=client,
             )
         assert rerun["already_annotated"] >= 1
-        assert agents_router.get_annotation_queue().get(span_id) is None
+        assert await agents_router.get_annotation_queue().get(span_id) is None

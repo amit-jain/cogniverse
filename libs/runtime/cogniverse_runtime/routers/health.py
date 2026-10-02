@@ -156,7 +156,8 @@ async def health_check(request: Request) -> Any:
     e.g. a missing BACKEND_URL makes create_default_config_manager raise. A
     monitoring probe should read this as unhealthy, not as a server crash.
     Also 503 when the backend is registered but unreachable, so monitoring
-    goes red during a backend outage instead of showing green.
+    goes red during a backend outage instead of showing green, and when the
+    shared agent registry cannot be read.
 
     A chat LLM that is not serving or failing leaves it 200 with status
     ``degraded``: search serves without the LLM. ``dependencies.llm`` names
@@ -165,6 +166,7 @@ async def health_check(request: Request) -> Any:
     try:
         # Reused across probes; backends/agents are still queried live below.
         agent_registry = _resolve_agent_registry()
+        await agent_registry.refresh()
         backend_registry = BackendRegistry.get_instance()
         backends = backend_registry.list_backends()
         agents = agent_registry.list_agents()

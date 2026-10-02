@@ -1,5 +1,8 @@
 """
-Unit tests for AnnotationQueue — persistent queue with reviewer assignment and SLA.
+Tests for AnnotationQueue — the shared queue with reviewer assignment and SLA.
+
+The queue keeps its requests in Redis; each test gets its own key prefix on
+the test-owned Redis and a fixed clock.
 
 Tests:
 1. Queue state transitions: PENDING → ASSIGNED → COMPLETED
@@ -11,6 +14,7 @@ Tests:
 7. Priority sorting
 """
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -20,20 +24,45 @@ from cogniverse_agents.routing.annotation_agent import (
     AnnotationRequest,
     AnnotationStatus,
 )
-from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_agents.routing.annotation_queue import AnnotationQueue, EnqueueOutcome
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 
 pytestmark = [pytest.mark.unit]
+
+T0 = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class Clock:
+    def __init__(self):
+        self.now = T0
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def queue(shared_state_redis, clock):
+    return AnnotationQueue(
+        shared_state_redis,
+        key_prefix=f"test:annotation-queue:{uuid.uuid4().hex}",
+        clock=clock,
+    )
 
 
 def _make_request(
     span_id: str = "span-1",
     priority: AnnotationPriority = AnnotationPriority.MEDIUM,
     confidence: float = 0.5,
+    timestamp: datetime = T0 - timedelta(hours=1),
 ) -> AnnotationRequest:
     return AnnotationRequest(
         span_id=span_id,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp,
         query="test query",
         chosen_agent="search_agent",
         routing_confidence=confidence,
@@ -45,186 +74,177 @@ def _make_request(
 
 
 class TestAnnotationQueueBasicOperations:
-    def test_enqueue_and_get_pending(self):
-        queue = AnnotationQueue()
+    async def test_enqueue_and_get_pending(self, queue):
         req = _make_request("span-1")
-        queue.enqueue(req)
+        await queue.enqueue(req)
 
-        pending = queue.get_pending()
+        pending = (await queue.snapshot()).pending
         assert len(pending) == 1
         assert pending[0].span_id == "span-1"
         assert pending[0].status == AnnotationStatus.PENDING
+        assert pending[0].to_dict() == req.to_dict()
 
-    def test_enqueue_deduplication(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        queue.enqueue(_make_request("span-1"))
-        assert queue.size() == 1
+    async def test_enqueue_deduplication(self, queue):
+        assert await queue.enqueue(_make_request("span-1")) is True
+        assert await queue.enqueue(_make_request("span-1")) is False
+        assert (await queue.statistics())["total"] == 1
 
-    def test_enqueue_batch(self):
-        queue = AnnotationQueue()
+    async def test_enqueue_batch(self, queue):
         requests = [_make_request(f"span-{i}") for i in range(5)]
-        added = queue.enqueue_batch(requests)
-        assert added == 5
-        assert queue.size() == 5
+        added = await queue.enqueue_batch(requests)
+        assert added == EnqueueOutcome(enqueued=5, total=5)
+        assert (await queue.statistics())["total"] == 5
 
-    def test_enqueue_batch_deduplication(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-0"))
+    async def test_enqueue_batch_deduplication(self, queue):
+        await queue.enqueue(_make_request("span-0"))
         requests = [_make_request(f"span-{i}") for i in range(5)]
-        added = queue.enqueue_batch(requests)
-        assert added == 4  # span-0 already exists
-        assert queue.size() == 5
+        added = await queue.enqueue_batch(requests)
+        assert added.enqueued == 4  # span-0 already exists
+        assert added.total == 5
 
-    def test_size_and_statistics(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("s1", AnnotationPriority.HIGH))
-        queue.enqueue(_make_request("s2", AnnotationPriority.MEDIUM))
-        queue.enqueue(_make_request("s3", AnnotationPriority.LOW))
+    async def test_size_and_statistics(self, queue):
+        await queue.enqueue(_make_request("s1", AnnotationPriority.HIGH))
+        await queue.enqueue(_make_request("s2", AnnotationPriority.MEDIUM))
+        await queue.enqueue(_make_request("s3", AnnotationPriority.LOW))
 
-        assert queue.size() == 3
-        stats = queue.statistics()
+        stats = await queue.statistics()
         assert stats["total"] == 3
         assert stats["by_status"]["pending"] == 3
         assert stats["by_priority"]["high"] == 1
         assert stats["by_priority"]["medium"] == 1
         assert stats["by_priority"]["low"] == 1
+        assert stats == {
+            "total": 3,
+            "by_status": {"pending": 3},
+            "by_priority": {"high": 1, "medium": 1, "low": 1},
+        }
 
-    def test_get_returns_none_for_missing(self):
-        queue = AnnotationQueue()
-        assert queue.get("nonexistent") is None
+    async def test_get_returns_none_for_missing(self, queue):
+        assert await queue.get("nonexistent") is None
 
 
 class TestAnnotationQueueStateTransitions:
-    def test_assign_sets_status_and_metadata(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
+    async def test_assign_sets_status_and_metadata(self, queue):
+        await queue.enqueue(_make_request("span-1"))
 
-        result = queue.assign("span-1", reviewer="alice")
+        result = await queue.assign("span-1", reviewer="alice")
         assert result.status == AnnotationStatus.ASSIGNED
         assert result.assigned_to == "alice"
-        assert result.assigned_at is not None
-        assert result.sla_deadline is not None
+        assert result.assigned_at == T0
+        assert result.sla_deadline == T0 + timedelta(hours=24)
         assert result.assigned_at.tzinfo == timezone.utc
         assert result.sla_deadline.tzinfo == timezone.utc
 
-    def test_assign_with_custom_sla(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
+    async def test_assign_with_custom_sla(self, queue):
+        await queue.enqueue(_make_request("span-1"))
 
-        before = datetime.now(timezone.utc)
-        result = queue.assign("span-1", reviewer="bob", sla_hours=48)
-        assert result.sla_deadline > before + timedelta(hours=47)
+        result = await queue.assign("span-1", reviewer="bob", sla_hours=48)
+        assert result.sla_deadline == T0 + timedelta(hours=48)
 
-    def test_assign_with_zero_hour_sla(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
+    async def test_assign_with_zero_hour_sla(self, queue):
+        await queue.enqueue(_make_request("span-1"))
 
-        before = datetime.now(timezone.utc)
-        result = queue.assign("span-1", reviewer="bob", sla_hours=0)
-        after = datetime.now(timezone.utc)
+        result = await queue.assign("span-1", reviewer="bob", sla_hours=0)
 
-        assert before <= result.sla_deadline <= after
+        assert result.sla_deadline == T0
+        assert result.assigned_at == T0
 
-    def test_assign_missing_span_raises(self):
-        queue = AnnotationQueue()
+    async def test_assign_missing_span_raises(self, queue):
         with pytest.raises(KeyError, match="not found"):
-            queue.assign("nonexistent", reviewer="alice")
+            await queue.assign("nonexistent", reviewer="alice")
 
-    def test_assign_non_pending_raises(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        queue.assign("span-1", reviewer="alice")
+    async def test_assign_non_pending_raises(self, queue):
+        await queue.enqueue(_make_request("span-1"))
+        await queue.assign("span-1", reviewer="alice")
 
         with pytest.raises(ValueError, match="Cannot assign"):
-            queue.assign("span-1", reviewer="bob")
+            await queue.assign("span-1", reviewer="bob")
+        assert (await queue.get("span-1")).assigned_to == "alice"
 
-    def test_complete_from_assigned(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        queue.assign("span-1", reviewer="alice")
+    async def test_complete_from_assigned(self, queue):
+        await queue.enqueue(_make_request("span-1"))
+        await queue.assign("span-1", reviewer="alice")
 
-        result = queue.complete("span-1", label="correct_routing")
+        result = await queue.complete("span-1", label="correct_routing")
         assert result.status == AnnotationStatus.COMPLETED
-        assert result.completed_at is not None
+        assert result.completed_at == T0
         assert result.completed_at.tzinfo == timezone.utc
         # The reviewer's label is captured, not silently dropped.
         assert result.label == "correct_routing"
         assert result.to_dict()["label"] == "correct_routing"
+        assert (await queue.get("span-1")).to_dict() == result.to_dict()
 
-    def test_complete_from_pending(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
+    async def test_complete_from_pending(self, queue):
+        await queue.enqueue(_make_request("span-1"))
 
-        result = queue.complete("span-1")
+        result = await queue.complete("span-1")
         assert result.status == AnnotationStatus.COMPLETED
 
-    def test_complete_missing_span_raises(self):
-        queue = AnnotationQueue()
+    async def test_complete_missing_span_raises(self, queue):
         with pytest.raises(KeyError, match="not found"):
-            queue.complete("nonexistent")
+            await queue.complete("nonexistent")
 
-    def test_complete_already_completed_raises(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        queue.complete("span-1")
+    async def test_complete_already_completed_raises(self, queue):
+        await queue.enqueue(_make_request("span-1"))
+        await queue.complete("span-1")
 
         with pytest.raises(ValueError, match="Cannot complete"):
-            queue.complete("span-1")
+            await queue.complete("span-1")
 
 
 class TestAnnotationQueueSLAExpiration:
-    def test_get_expired_marks_past_deadline(self):
-        queue = AnnotationQueue()
-        req = _make_request("span-1")
-        queue.enqueue(req)
-        queue.assign("span-1", reviewer="alice", sla_hours=0)
+    async def test_get_expired_marks_past_deadline(self, queue, clock):
+        await queue.enqueue(_make_request("span-1"))
+        await queue.assign("span-1", reviewer="alice", sla_hours=0)
 
-        # Force deadline to be in the past
-        req.sla_deadline = datetime.now(timezone.utc) - timedelta(hours=1)
+        # Move past the deadline
+        clock.now = T0 + timedelta(hours=1)
 
-        expired = queue.get_expired()
+        expired = (await queue.snapshot()).expired
         assert len(expired) == 1
         assert expired[0].span_id == "span-1"
         assert expired[0].status == AnnotationStatus.EXPIRED
+        assert (await queue.get("span-1")).status == AnnotationStatus.EXPIRED
 
-    def test_not_expired_if_within_sla(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        queue.assign("span-1", reviewer="alice", sla_hours=24)
+    async def test_not_expired_if_within_sla(self, queue, clock):
+        await queue.enqueue(_make_request("span-1"))
+        await queue.assign("span-1", reviewer="alice", sla_hours=24)
+        clock.now = T0 + timedelta(hours=23)
 
-        expired = queue.get_expired()
+        expired = (await queue.snapshot()).expired
         assert len(expired) == 0
 
-    def test_pending_items_not_expired(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        expired = queue.get_expired()
+    async def test_pending_items_not_expired(self, queue, clock):
+        await queue.enqueue(_make_request("span-1"))
+        clock.now = T0 + timedelta(days=30)
+        expired = (await queue.snapshot()).expired
         assert len(expired) == 0
 
-    def test_default_sla_by_priority(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("s1", AnnotationPriority.HIGH))
-        queue.enqueue(_make_request("s2", AnnotationPriority.LOW))
+    async def test_default_sla_by_priority(self, queue):
+        await queue.enqueue(_make_request("s1", AnnotationPriority.HIGH))
+        await queue.enqueue(_make_request("s2", AnnotationPriority.LOW))
 
-        queue.assign("s1", reviewer="alice")
-        queue.assign("s2", reviewer="bob")
+        await queue.assign("s1", reviewer="alice")
+        await queue.assign("s2", reviewer="bob")
 
-        high_req = queue.get("s1")
-        low_req = queue.get("s2")
+        high_req = await queue.get("s1")
+        low_req = await queue.get("s2")
 
         # HIGH gets 4h SLA, LOW gets 72h SLA
         assert high_req.sla_deadline < low_req.sla_deadline
+        assert (high_req.sla_deadline, low_req.sla_deadline) == (
+            T0 + timedelta(hours=4),
+            T0 + timedelta(hours=72),
+        )
 
 
 class TestAnnotationQueuePrioritySorting:
-    def test_pending_sorted_by_priority(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("s-low", AnnotationPriority.LOW))
-        queue.enqueue(_make_request("s-high", AnnotationPriority.HIGH))
-        queue.enqueue(_make_request("s-med", AnnotationPriority.MEDIUM))
+    async def test_pending_sorted_by_priority(self, queue):
+        await queue.enqueue(_make_request("s-low", AnnotationPriority.LOW))
+        await queue.enqueue(_make_request("s-high", AnnotationPriority.HIGH))
+        await queue.enqueue(_make_request("s-med", AnnotationPriority.MEDIUM))
 
-        pending = queue.get_pending()
+        pending = (await queue.snapshot()).pending
         assert pending[0].span_id == "s-high"
         assert pending[1].span_id == "s-med"
         assert pending[2].span_id == "s-low"
@@ -241,16 +261,15 @@ class TestAnnotationRequestSerialization:
         assert d["sla_deadline"] is None
         assert d["completed_at"] is None
 
-    def test_to_dict_after_assignment(self):
-        queue = AnnotationQueue()
-        queue.enqueue(_make_request("span-1"))
-        req = queue.assign("span-1", reviewer="alice")
+    async def test_to_dict_after_assignment(self, queue):
+        await queue.enqueue(_make_request("span-1"))
+        req = await queue.assign("span-1", reviewer="alice")
         d = req.to_dict()
 
         assert d["status"] == "assigned"
         assert d["assigned_to"] == "alice"
-        assert d["assigned_at"] is not None
-        assert d["sla_deadline"] is not None
+        assert d["assigned_at"] == "2026-09-01T12:00:00+00:00"
+        assert d["sla_deadline"] == "2026-09-02T12:00:00+00:00"
         assert d["assigned_at"].endswith("+00:00")
         assert d["sla_deadline"].endswith("+00:00")
 

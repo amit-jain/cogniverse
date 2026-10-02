@@ -1301,6 +1301,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("SystemConfig.redis_url is required for A2A task storage")
     a2a_settings = _a2a_settings_from_env(os.environ)
     await _validate_a2a_redis(redis_url, a2a_settings)
+    replica_id = (
+        f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    )
+    # Agent registrations, annotation requests and /ingestion/start job
+    # status are shared by every worker process and replica through Redis.
+    from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+    from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
+    from cogniverse_runtime.ingestion_jobs import IngestionJobStore
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
+
+    shared_state_redis = await connect_shared_state_redis(redis_url)
+    agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
+    agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
+    ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
 
     def system_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -1715,9 +1729,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
-    replica_id = (
-        f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
-    )
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1806,6 +1817,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sandbox_manager.close)
     except Exception as exc:
         logger.warning("SandboxManager close failed during shutdown: %s", exc)
+    await shared_state_redis.aclose()
     logger.info("Cogniverse Runtime shut down successfully")
 
 

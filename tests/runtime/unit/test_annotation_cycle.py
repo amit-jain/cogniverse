@@ -8,6 +8,7 @@ here through the real mounted router, not a stub).
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -19,11 +20,20 @@ from cogniverse_agents.routing.annotation_agent import (
     AnnotationPriority,
     AnnotationRequest,
 )
+from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 from cogniverse_runtime.quality_monitor_cli import run_annotation_cycle
 from cogniverse_runtime.routers import agents as agents_router
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@pytest.fixture
+def annotation_queue(shared_state_redis):
+    """A queue of its own on the test-owned Redis."""
+    return AnnotationQueue(
+        shared_state_redis, key_prefix=f"test:annotation-queue:{uuid.uuid4().hex}"
+    )
 
 
 def _request(span_id, agent_type="routing"):
@@ -76,16 +86,11 @@ class _StubStorage:
 
 
 @pytest.mark.asyncio
-async def test_cycle_enqueues_unannotated_spans_with_tenant():
+async def test_cycle_enqueues_unannotated_spans_with_tenant(annotation_queue):
     app = FastAPI()
     app.include_router(agents_router.router, prefix="/agents")
     fresh_queue_patch = patch.object(
-        agents_router,
-        "_annotation_queue",
-        __import__(
-            "cogniverse_agents.routing.annotation_queue",
-            fromlist=["AnnotationQueue"],
-        ).AnnotationQueue(),
+        agents_router, "_annotation_queue", annotation_queue
     )
 
     with (
@@ -114,16 +119,16 @@ async def test_cycle_enqueues_unannotated_spans_with_tenant():
         assert result["identified"] == 3
         assert result["already_annotated"] == 1
         assert result["enqueued"] == 2
-        assert queue.get("r1") is not None
-        assert queue.get("r2") is None
-        assert queue.get("q1") is not None
+        assert (await queue.get("r1")).span_id == "r1"
+        assert await queue.get("r2") is None
+        assert (await queue.get("q1")).span_id == "q1"
         # Requests carry the tenant so completion can persist durably.
-        assert queue.get("r1").tenant_id == "acme:acme"
-        assert queue.get("q1").agent_type == "query_enhancement"
+        assert (await queue.get("r1")).tenant_id == "acme:acme"
+        assert (await queue.get("q1")).agent_type == "query_enhancement"
 
 
 @pytest.mark.asyncio
-async def test_cycle_caps_total_at_max_annotations_per_cycle():
+async def test_cycle_caps_total_at_max_annotations_per_cycle(annotation_queue):
     from cogniverse_agents.routing.config import (
         AutomationRulesConfig,
         OptimizationTriggersConfig,
@@ -136,14 +141,7 @@ async def test_cycle_caps_total_at_max_annotations_per_cycle():
     )
 
     with (
-        patch.object(
-            agents_router,
-            "_annotation_queue",
-            __import__(
-                "cogniverse_agents.routing.annotation_queue",
-                fromlist=["AnnotationQueue"],
-            ).AnnotationQueue(),
-        ),
+        patch.object(agents_router, "_annotation_queue", annotation_queue),
         patch(
             "cogniverse_agents.routing.annotation_agent.AnnotationAgent",
             _StubAnnotationAgent,
@@ -165,7 +163,7 @@ async def test_cycle_caps_total_at_max_annotations_per_cycle():
             )
 
         assert result["enqueued"] == 1
-        assert agents_router.get_annotation_queue().statistics()["total"] == 1
+        assert (await agents_router.get_annotation_queue().statistics())["total"] == 1
 
 
 class _CountingTraceStore:
@@ -204,7 +202,7 @@ class _StubTelemetryManager:
 
 
 @pytest.mark.asyncio
-async def test_cycle_pulls_project_spans_once_for_all_agent_types():
+async def test_cycle_pulls_project_spans_once_for_all_agent_types(annotation_queue):
     """One whole-project span pull serves every agent type in a cycle.
 
     The per-agent query_annotated_spans calls share an identical time window,
@@ -224,14 +222,7 @@ async def test_cycle_pulls_project_spans_once_for_all_agent_types():
     app.include_router(agents_router.router, prefix="/agents")
     try:
         with (
-            patch.object(
-                agents_router,
-                "_annotation_queue",
-                __import__(
-                    "cogniverse_agents.routing.annotation_queue",
-                    fromlist=["AnnotationQueue"],
-                ).AnnotationQueue(),
-            ),
+            patch.object(agents_router, "_annotation_queue", annotation_queue),
             patch(
                 "cogniverse_agents.routing.annotation_agent.AnnotationAgent",
                 _StubAnnotationAgent,

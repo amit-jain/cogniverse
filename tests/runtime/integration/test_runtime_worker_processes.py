@@ -21,9 +21,12 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
+
+from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
 
 pytestmark = pytest.mark.integration
 
@@ -457,3 +460,361 @@ class TestWorkerFailure:
                 == 0
             )
             assert _refuses(port)
+
+
+def _connection_to(port: int, worker: int, workers: list[int]):
+    """A connection that ``worker`` serves.
+
+    Which worker accepts a connection is the kernel's choice, read from
+    ``/proc`` after a harmless request; a connection another worker took is
+    closed and a new one opened.
+    """
+    for _ in range(200):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        assert _get(connection, "/health/live") == (200, {"status": "alive"})
+        if _serving_worker(port, connection, workers) == worker:
+            return connection
+        connection.close()
+    pytest.fail(f"no connection reached worker {worker} in 200 attempts")
+
+
+def _send(connection, method: str, path: str, body=None) -> tuple[int, dict]:
+    headers = {"Content-Type": "application/json"} if body is not None else {}
+    connection.request(
+        method, path, body=None if body is None else json.dumps(body), headers=headers
+    )
+    response = connection.getresponse()
+    return response.status, json.loads(response.read())
+
+
+class _Worker:
+    """Sends each request on a fresh connection that this worker serves."""
+
+    def __init__(self, port: int, pid: int, workers: list[int]):
+        self.port, self.pid, self.workers = port, pid, workers
+
+    def __call__(self, method: str, path: str, body=None) -> tuple[int, dict]:
+        connection = _connection_to(self.port, self.pid, self.workers)
+        try:
+            return _send(connection, method, path, body)
+        finally:
+            connection.close()
+
+
+def _at_once(port: int, workers: list[int], clients: int, method, path, body):
+    """``clients`` connections send the same request at once; returns each
+    answer with the worker that served it."""
+    connections = [
+        http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        for _ in range(clients)
+    ]
+    for connection in connections:
+        assert _get(connection, "/health/live") == (200, {"status": "alive"})
+    barrier = threading.Barrier(clients)
+    answers: list = [None] * clients
+    owners: list = [None] * clients
+
+    def client(index):
+        barrier.wait()
+        answers[index] = _send(connections[index], method, path, body)
+        # Read while the connection is open: an idle one is closed by the
+        # server once its keep-alive lapses.
+        owners[index] = _serving_worker(port, connections[index], workers)
+
+    threads = [threading.Thread(target=client, args=(i,)) for i in range(clients)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+    finally:
+        for connection in connections:
+            connection.close()
+    return list(zip(answers, owners))
+
+
+def _annotation(span_id: str) -> dict:
+    return {
+        "span_id": span_id,
+        "timestamp": "2026-09-01T11:00:00+00:00",
+        "query": "search for video clips of animals",
+        "chosen_agent": "search_agent",
+        "routing_confidence": 0.42,
+        "outcome": "ambiguous",
+        "priority": "medium",
+        "reason": "two workers",
+        "context": {"tags": []},
+        "status": "pending",
+        "assigned_to": None,
+        "assigned_at": None,
+        "sla_deadline": None,
+        "completed_at": None,
+        "label": None,
+        "agent_type": "routing",
+        "tenant_id": None,
+    }
+
+
+@pytest.fixture(scope="class")
+def two_workers(tmp_path_factory, workflow_state_redis_url, vespa_instance):
+    """One runtime serving from two workers, and a request sender for each."""
+    tmp_path = tmp_path_factory.mktemp("shared_state")
+    with _runtime(tmp_path, workflow_state_redis_url) as (process, log, port):
+        workers = _serving(process, log)
+        assert len(workers) == WORKERS
+        yield port, workers, [_Worker(port, pid, workers) for pid in workers], tmp_path
+
+
+class TestSharedStateAcrossWorkers:
+    """What one worker accepts, the other serves."""
+
+    def test_an_agent_registered_on_one_worker_is_served_by_the_other(
+        self, two_workers
+    ):
+        _, _, (first, second), _ = two_workers
+        name = f"mp_agent_{uuid.uuid4().hex[:8]}"
+        listed_before = first("GET", "/agents/")[1]["agents"]
+
+        registered = first(
+            "POST",
+            "/agents/register",
+            {"name": name, "url": "http://external:9000", "capabilities": ["mp"]},
+        )
+        info = second("GET", f"/agents/{name}")
+        listed = second("GET", "/agents/")
+        removed = second("DELETE", f"/agents/{name}")
+
+        assert registered == (
+            201,
+            {
+                "status": "registered",
+                "agent": name,
+                "url": "http://external:9000",
+                "capabilities": ["mp"],
+            },
+        )
+        assert info == (
+            200,
+            {
+                "name": name,
+                "url": "http://external:9000",
+                "capabilities": ["mp"],
+                "health_status": "unknown",
+                "health_endpoint": "/health",
+                "process_endpoint": "/tasks/send",
+            },
+        )
+        assert listed[0] == 200
+        assert listed[1]["count"] == len(listed_before) + 1
+        assert set(listed[1]["agents"]) == {*listed_before, name}
+        assert removed == (200, {"status": "unregistered", "agent": name})
+        assert first("GET", f"/agents/{name}") == (
+            404,
+            {"detail": f"Agent '{name}' not found"},
+        )
+        assert first("DELETE", f"/agents/{name}") == (
+            404,
+            {"detail": f"Agent '{name}' not found"},
+        )
+
+    def test_an_annotation_moves_through_its_lifecycle_across_workers(
+        self, two_workers
+    ):
+        _, _, (first, second), _ = two_workers
+        span_id = f"mp-span-{uuid.uuid4().hex}"
+        request = _annotation(span_id)
+        total = first("GET", "/agents/annotations/queue")[1]["statistics"]["total"]
+
+        enqueued = first(
+            "POST", "/agents/annotations/queue/enqueue", {"requests": [request]}
+        )
+        stored = second("GET", f"/agents/annotations/queue/{span_id}")
+        assigned = second(
+            "POST",
+            f"/agents/annotations/queue/{span_id}/assign",
+            {"reviewer": "mp-reviewer", "sla_hours": 1},
+        )
+        seen_assigned = first("GET", f"/agents/annotations/queue/{span_id}")
+        completed = first(
+            "POST",
+            f"/agents/annotations/queue/{span_id}/complete",
+            {"reasoning": "two workers"},
+        )
+        again = second("POST", f"/agents/annotations/queue/{span_id}/complete", {})
+
+        assert enqueued == (
+            200,
+            {"enqueued": 1, "skipped": 0, "queue_total": total + 1},
+        )
+        assert stored == (200, request)
+        assert assigned[0] == 200
+        assert seen_assigned == (200, assigned[1]["annotation"])
+        assert assigned[1]["annotation"]["assigned_to"] == "mp-reviewer"
+        assert completed[0] == 200
+        assert completed[1]["persisted"] is False
+        assert completed[1]["annotation"]["status"] == "completed"
+        assert again == (
+            400,
+            {"detail": f"Cannot complete span {span_id}: status is completed"},
+        )
+
+    def test_concurrent_enqueues_on_both_workers_add_each_span_once(self, two_workers):
+        port, workers, (first, _), _ = two_workers
+        spans = [f"mp-batch-{uuid.uuid4().hex}" for _ in range(8)]
+        total = first("GET", "/agents/annotations/queue")[1]["statistics"]["total"]
+
+        answers = _at_once(
+            port,
+            workers,
+            32,
+            "POST",
+            "/agents/annotations/queue/enqueue",
+            {"requests": [_annotation(span) for span in spans]},
+        )
+
+        assert set(owner for _, owner in answers) == set(workers)
+        assert [status for (status, _), _ in answers] == [200] * 32
+        assert sum(body["enqueued"] for (_, body), _ in answers) == 8
+        assert (
+            first("GET", "/agents/annotations/queue")[1]["statistics"]["total"]
+            == total + 8
+        )
+
+    def test_concurrent_assigns_on_both_workers_admit_exactly_one(self, two_workers):
+        port, workers, (first, _), _ = two_workers
+        span_id = f"mp-contended-{uuid.uuid4().hex}"
+        first(
+            "POST",
+            "/agents/annotations/queue/enqueue",
+            {"requests": [_annotation(span_id)]},
+        )
+
+        answers = _at_once(
+            port,
+            workers,
+            32,
+            "POST",
+            f"/agents/annotations/queue/{span_id}/assign",
+            {"reviewer": "contender"},
+        )
+
+        assert set(owner for _, owner in answers) == set(workers)
+        assert sorted(status for (status, _), _ in answers) == [200] + [400] * 31
+        assert {body["detail"] for (status, body), _ in answers if status == 400} == {
+            f"Cannot assign span {span_id}: status is assigned"
+        }
+
+    def test_concurrent_completions_on_both_workers_admit_exactly_one(
+        self, two_workers
+    ):
+        port, workers, (first, second), _ = two_workers
+        span_id = f"mp-complete-{uuid.uuid4().hex}"
+        first(
+            "POST",
+            "/agents/annotations/queue/enqueue",
+            {"requests": [_annotation(span_id)]},
+        )
+
+        answers = _at_once(
+            port,
+            workers,
+            32,
+            "POST",
+            f"/agents/annotations/queue/{span_id}/complete",
+            {"label": "correct_routing"},
+        )
+        winners = [body for (status, body), _ in answers if status == 200]
+        refusals = {
+            (status, body["detail"]) for (status, body), _ in answers if status != 200
+        }
+
+        assert set(owner for _, owner in answers) == set(workers)
+        assert len(winners) == 1
+        assert refusals <= {
+            (400, f"Cannot complete span {span_id}: status is completed"),
+            (409, f"Span {span_id} is being completed by another request"),
+        }
+        assert second("GET", f"/agents/annotations/queue/{span_id}") == (
+            200,
+            winners[0]["annotation"],
+        )
+
+    def test_an_ingestion_job_started_on_one_worker_is_read_on_the_other(
+        self, two_workers
+    ):
+        _, _, (first, second), tmp_path = two_workers
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+
+        started = first(
+            "POST",
+            "/ingestion/start",
+            {
+                "video_dir": str(video_dir),
+                "profile": "mp_unknown_profile",
+                "tenant_id": "__system__",
+            },
+        )
+        job_id = started[1]["job_id"]
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            status = second("GET", f"/ingestion/status/{job_id}")
+            if status[0] != 200 or status[1]["status"] not in ("started", "processing"):
+                break
+            time.sleep(0.5)
+
+        assert started == (
+            200,
+            {
+                "job_id": job_id,
+                "status": "started",
+                "message": "Ingestion job started successfully",
+            },
+        )
+        assert status == (
+            200,
+            {
+                "job_id": job_id,
+                "status": "failed",
+                "videos_processed": 0,
+                "videos_total": 0,
+                "errors": [
+                    "Profile mp_unknown_profile missing 'strategies' configuration. "
+                    "All profiles must use explicit strategy configuration."
+                ],
+            },
+        )
+        assert first("GET", f"/ingestion/status/{job_id}") == status
+
+
+class TestSharedStateOutage:
+    def test_a_paused_redis_answers_503_on_every_worker_and_recovers(
+        self, tmp_path, own_redis, vespa_instance
+    ):
+        url, pause, resume = own_redis
+        with _runtime(tmp_path, url) as (process, log, port):
+            workers = _serving(process, log)
+            senders = [_Worker(port, worker, workers) for worker in workers]
+            pause()
+            started = time.monotonic()
+            down = [
+                (
+                    send("GET", "/agents/"),
+                    send("GET", "/agents/annotations/queue"),
+                    send("GET", "/ingestion/status/any-job"),
+                )
+                for send in senders
+            ]
+            elapsed = time.monotonic() - started
+            resume()
+            up = [send("GET", "/agents/annotations/queue")[0] for send in senders]
+
+        unavailable = (
+            (503, {"detail": "shared agent registry unavailable: read version"}),
+            (503, {"detail": "annotation queue unavailable: read queue"}),
+            (503, {"detail": "ingestion job store unavailable: read job any-job"}),
+        )
+        assert down == [unavailable] * WORKERS
+        # Six requests, each bounded by the shared-state client's command timeout.
+        assert elapsed < 6 * SHARED_STATE_REDIS_TIMEOUT_SECONDS + 10, elapsed
+        assert up == [200] * WORKERS

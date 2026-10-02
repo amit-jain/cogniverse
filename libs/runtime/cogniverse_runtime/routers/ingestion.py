@@ -32,6 +32,10 @@ from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_te
 from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config, resolve_default_profile
+from cogniverse_runtime.ingestion_jobs import (
+    IngestionJobStore,
+    IngestionJobStoreUnavailableError,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -167,24 +171,24 @@ class IngestionStatus(BaseModel):
     errors: List[str] = []
 
 
-# In-memory job tracking (replace with Redis/DB in production). Bounded:
-# one entry per /ingestion/start job on a long-lived server grows forever,
-# so completed/failed jobs are evicted oldest-first past the cap while
-# in-flight jobs are always kept.
-_MAX_TRACKED_JOBS = 500
-ingestion_jobs: Dict[str, IngestionStatus] = {}
+# Job status every runtime process reads (injected from main.py).
+_job_store: Optional[IngestionJobStore] = None
 
 
-def _evict_finished_jobs() -> None:
-    if len(ingestion_jobs) <= _MAX_TRACKED_JOBS:
-        return
-    excess = len(ingestion_jobs) - _MAX_TRACKED_JOBS
-    for job_id in [
-        jid
-        for jid, job in ingestion_jobs.items()
-        if job.status in ("completed", "failed")
-    ][:excess]:
-        del ingestion_jobs[job_id]
+def set_job_store(store: IngestionJobStore) -> None:
+    """Inject the shared store of ``/ingestion/start`` job status."""
+    global _job_store
+    _job_store = store
+
+
+def get_job_store() -> IngestionJobStore:
+    """The injected job store; 503 until startup has wired it."""
+    if _job_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Ingestion job store not configured; service initialising",
+        )
+    return _job_store
 
 
 def _should_extract_claims_for_modality(modality: str) -> bool:
@@ -260,14 +264,13 @@ async def start_ingestion(
 
         job_id = str(uuid.uuid4())
 
-        # Initialize job status
-        _evict_finished_jobs()
-        ingestion_jobs[job_id] = IngestionStatus(
-            job_id=job_id,
-            status="started",
-            videos_processed=0,
-            videos_total=0,
-        )
+        # The job is recorded before it runs, so a status request on any
+        # process finds it from the moment this returns.
+        job_store = get_job_store()
+        try:
+            await job_store.create(job_id)
+        except IngestionJobStoreUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         # Run ingestion in background
         background_tasks.add_task(
@@ -276,6 +279,7 @@ async def start_ingestion(
             request=request,
             config_manager=config_manager,
             schema_loader=schema_loader,
+            job_store=job_store,
         )
 
         return {
@@ -293,11 +297,14 @@ async def start_ingestion(
 
 @router.get("/status/{job_id}")
 async def get_ingestion_status(job_id: str) -> IngestionStatus:
-    """Get status of ingestion job."""
-    if job_id not in ingestion_jobs:
+    """Get status of ingestion job, whichever runtime process runs it."""
+    try:
+        record = await get_job_store().get(job_id)
+    except IngestionJobStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if record is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
-
-    return ingestion_jobs[job_id]
+    return IngestionStatus(**record)
 
 
 @router.post("/upload")
@@ -1426,72 +1433,117 @@ async def run_ingestion(
     request: IngestionRequest,
     config_manager: ConfigManager,
     schema_loader: SchemaLoader,
+    job_store: IngestionJobStore,
 ) -> None:
     """Run ingestion process (background task)."""
+    async with job_store.lease(job_id):
+        try:
+            outcome = await _ingest(
+                job_id, request, config_manager, schema_loader, job_store
+            )
+        except Exception as e:
+            logger.error(f"Ingestion job {job_id} failed: {e}")
+            outcome = {"status": "failed", "errors": [str(e)]}
+        await _record_outcome(job_store, job_id, outcome)
+
+
+# Attempts at recording a finished job's outcome, the waits between them
+# summing to less than the job's lease.
+_OUTCOME_WRITE_BACKOFF_S = (1.0, 2.0, 4.0, 8.0)
+
+
+async def _record_outcome(
+    job_store: IngestionJobStore, job_id: str, outcome: Dict[str, Any]
+) -> None:
+    for delay in (*_OUTCOME_WRITE_BACKOFF_S, None):
+        try:
+            await job_store.finish(job_id, **outcome)
+            return
+        except IngestionJobStoreUnavailableError as exc:
+            if delay is None:
+                logger.error(
+                    "Ingestion job %s finished as %s but its outcome could not "
+                    "be recorded (%s); it reads as failed once its lease lapses",
+                    job_id,
+                    outcome["status"],
+                    exc,
+                )
+                return
+            await asyncio.sleep(delay)
+
+
+async def _ingest(
+    job_id: str,
+    request: IngestionRequest,
+    config_manager: ConfigManager,
+    schema_loader: SchemaLoader,
+    job_store: IngestionJobStore,
+) -> Dict[str, Any]:
+    """Run the pipeline over the request's directory; return the outcome."""
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+
+    # Combine a separately-supplied org_id with a simple tenant_id so the
+    # background pipeline writes to the same canonical org:tenant namespace
+    # start_ingestion resolved the backend under.
+    combined_tenant = request.tenant_id
+    if request.org_id and request.tenant_id and ":" not in request.tenant_id:
+        combined_tenant = f"{request.org_id}:{request.tenant_id}"
+    tenant_id = require_tenant_id(
+        combined_tenant, source="run_ingestion background task"
+    )
+
+    pipeline = VideoIngestionPipeline(
+        tenant_id=tenant_id,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+        schema_name=request.profile,
+    )
+
+    # Discover ingestible files by the profile's content type instead of
+    # hard-globbing **/*.mp4 (which found zero files for document/audio/image
+    # profiles and then crashed the pipeline on an empty batch).
+    from cogniverse_runtime.ingestion.strategies import (
+        content_type_for_profile,
+        discover_ingestible_files,
+    )
+
+    video_dir = Path(request.video_dir)
+    content_type = request.content_type or content_type_for_profile(request.profile)
+    video_files = discover_ingestible_files(video_dir, content_type)
+
+    if request.max_videos:
+        video_files = video_files[: request.max_videos]
+
     try:
-        from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-
-        # Combine a separately-supplied org_id with a simple tenant_id so the
-        # background pipeline writes to the same canonical org:tenant namespace
-        # start_ingestion resolved the backend under.
-        combined_tenant = request.tenant_id
-        if request.org_id and request.tenant_id and ":" not in request.tenant_id:
-            combined_tenant = f"{request.org_id}:{request.tenant_id}"
-        tenant_id = require_tenant_id(
-            combined_tenant, source="run_ingestion background task"
+        await job_store.update(
+            job_id, videos_total=len(video_files), status="processing"
         )
+    except IngestionJobStoreUnavailableError as exc:
+        logger.warning("Ingestion job %s progress not recorded: %s", job_id, exc)
 
-        pipeline = VideoIngestionPipeline(
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-            schema_name=request.profile,
-        )
+    # Process videos using the async concurrent method
+    result = await pipeline.process_videos_concurrent(
+        video_files=video_files,
+        max_concurrent=request.batch_size,
+    )
 
-        # Discover ingestible files by the profile's content type instead of
-        # hard-globbing **/*.mp4 (which found zero files for document/audio/image
-        # profiles and then crashed the pipeline on an empty batch).
-        from cogniverse_runtime.ingestion.strategies import (
-            content_type_for_profile,
-            discover_ingestible_files,
-        )
-
-        video_dir = Path(request.video_dir)
-        content_type = request.content_type or content_type_for_profile(request.profile)
-        video_files = discover_ingestible_files(video_dir, content_type)
-
-        if request.max_videos:
-            video_files = video_files[: request.max_videos]
-
-        # Update total
-        ingestion_jobs[job_id].videos_total = len(video_files)
-        ingestion_jobs[job_id].status = "processing"
-
-        # Process videos using the async concurrent method
-        result = await pipeline.process_videos_concurrent(
-            video_files=video_files,
-            max_concurrent=request.batch_size,
-        )
-
-        # Update job status from the pipeline's per-video results — the
-        # pipeline reports failures as {"video_path", "error", "status":
-        # "failed"} rows plus a completed/completed_with_errors/cancelled
-        # status, not a top-level "errors" list.
-        job = ingestion_jobs[job_id]
-        job.videos_processed = result.get("successful", 0)
-        for video_result in result.get("results", []):
-            if not isinstance(video_result, dict):
-                continue
-            if video_result.get("status") == "failed" or video_result.get("error"):
-                detail = video_result.get("error", "unknown error")
-                reasons = video_result.get("errors") or []
-                message = f"{video_result.get('video_path', '<unknown>')}: {detail}"
-                if reasons:
-                    message += " [" + "; ".join(str(r) for r in reasons) + "]"
-                job.errors.append(message)
-        job.status = result.get("status", "completed")
-
-    except Exception as e:
-        logger.error(f"Ingestion job {job_id} failed: {e}")
-        ingestion_jobs[job_id].status = "failed"
-        ingestion_jobs[job_id].errors.append(str(e))
+    # The job's outcome from the pipeline's per-video results — the
+    # pipeline reports failures as {"video_path", "error", "status":
+    # "failed"} rows plus a completed/completed_with_errors/cancelled
+    # status, not a top-level "errors" list.
+    errors: List[str] = []
+    for video_result in result.get("results", []):
+        if not isinstance(video_result, dict):
+            continue
+        if video_result.get("status") == "failed" or video_result.get("error"):
+            detail = video_result.get("error", "unknown error")
+            reasons = video_result.get("errors") or []
+            message = f"{video_result.get('video_path', '<unknown>')}: {detail}"
+            if reasons:
+                message += " [" + "; ".join(str(r) for r in reasons) + "]"
+            errors.append(message)
+    return {
+        "status": result.get("status", "completed"),
+        "videos_processed": result.get("successful", 0),
+        "errors": errors,
+    }

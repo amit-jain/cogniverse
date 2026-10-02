@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,6 +24,14 @@ from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_LOAD_TIMEOUT_S,
     AgentDispatcher,
 )
+
+
+def _registry_mock() -> MagicMock:
+    """A registry stand-in whose shared-store refresh does nothing."""
+    registry = MagicMock()
+    registry.refresh = AsyncMock()
+    return registry
+
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -60,7 +68,7 @@ class _RecordingStore:
 def _dispatcher(store, result):
     config_manager = MagicMock()
     d = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
     )
@@ -263,7 +271,7 @@ async def test_concurrent_tenants_report_their_own_read_outcome():
     stores = {"acme:acme": healthy, "peer:peer": broken}
 
     dispatcher = AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
     )

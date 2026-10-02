@@ -17,6 +17,14 @@ import cv2
 import numpy as np
 import pytest
 
+# ``tests/ingestion/pytest.ini`` can make this directory the rootdir, outside
+# the project conftest that owns the test Redis.
+from tests.conftest import (  # noqa: F401
+    shared_state_redis,
+    shared_state_redis_url,
+    workflow_state_redis_url,
+)
+
 # Test data constants
 TEST_VIDEO_WIDTH = 640
 TEST_VIDEO_HEIGHT = 480

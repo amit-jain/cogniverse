@@ -1287,6 +1287,7 @@ class TestA2AExecutorStreaming:
         from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 
         mock_dispatcher = Mock()
+        mock_dispatcher.refresh_agent_registry = AsyncMock()
         mock_dispatcher._registry = Mock()
         mock_agent_entry = Mock()
         mock_agent_entry.capabilities = ["summarization"]
@@ -1350,6 +1351,7 @@ class TestA2AExecutorStreaming:
         from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 
         mock_dispatcher = Mock()
+        mock_dispatcher.refresh_agent_registry = AsyncMock()
         mock_dispatcher._registry = Mock()
         mock_agent_entry = Mock()
         mock_agent_entry.capabilities = ["summarization"]

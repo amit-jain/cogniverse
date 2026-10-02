@@ -45,7 +45,7 @@ libs/agents/cogniverse_agents/
 ├── routing/
 │   ├── __init__.py
 │   ├── annotation_agent.py                # AnnotationAgent (identifies routing spans needing human review)
-│   ├── annotation_queue.py                # AnnotationQueue (in-memory pending/assigned/completed queue)
+│   ├── annotation_queue.py                # AnnotationQueue (Redis-backed pending/assigned/completed queue)
 │   ├── annotation_storage.py              # AnnotationStorage (persists per-agent-type annotations; RoutingAnnotationStorage alias)
 │   ├── config.py                          # AutomationRulesConfig + annotation/optimization threshold schemas
 │   ├── dspy_relationship_router.py        # ComposableQueryAnalysisModule, DSPyBasicRoutingModule, DSPyAdvancedRoutingModule
@@ -499,8 +499,17 @@ Constructor: `AnnotationAgent(tenant_id, confidence_threshold=0.6, failure_lookb
 max_annotations_per_run=50, automation_rules=None)` — an `AutomationRulesConfig` (from `routing/config.py`)
 can override the individual threshold kwargs.
 
-`routing/annotation_queue.py`'s `AnnotationQueue` tracks requests through `pending -> assigned -> completed`
-states. Enqueued timestamp strings must include a timezone offset and are normalized to UTC;
+`routing/annotation_queue.py`'s `AnnotationQueue(redis, key_prefix=..., clock=...)` tracks requests
+through `pending -> assigned -> completed` states in Redis, so every runtime process serves the same
+queue: each request is a hash, one sorted set per status indexes them, and every transition runs in
+one Lua script that checks the current status first. Its methods are coroutines: `enqueue`,
+`enqueue_batch` (all or none; `AnnotationQueueFullError` past `max_open` pending plus assigned
+requests), `get`, `assign`, `begin_completion` / `finish_completion` / `abandon_completion` (a claim
+that lets exactly one of concurrent completions persist a label; `complete` runs both steps),
+`snapshot(limit)` (statistics and the first `limit` pending, assigned and expired requests, read in one
+script that first expires assigned requests past their deadline and removes finished requests past
+`retention_seconds`) and `statistics`. A Redis failure raises `AnnotationQueueUnavailableError`.
+Enqueued timestamps must include a timezone offset and are normalized to UTC;
 assignment, deadline, and completion timestamps are also stored in UTC. `assign(..., sla_hours=None)`
 uses the priority default, while an explicit value, including `0`, is honored.
 `routing/annotation_storage.py`'s `AnnotationStorage` persists completed annotations under a
@@ -1005,7 +1014,7 @@ config = tenant_configs[tenant_id]
 ### Unit Tests
 Located in: `tests/routing/unit/`
 
-- `test_annotation_queue.py` - `AnnotationQueue` state-transition tests
+- `test_annotation_queue.py` - `AnnotationQueue` state-transition tests against the test-owned Redis
 - `test_learned_reranker.py` / `test_learned_reranker_integration.py` - learned reranker tests
 - `test_multi_modal_reranker.py` - multi-modal reranker tests
 - `test_relationship_router_confidence.py` - `ComposableQueryAnalysisModule` path-selection confidence tests
