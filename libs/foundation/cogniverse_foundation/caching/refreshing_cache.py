@@ -162,6 +162,24 @@ class RefreshingCache(Generic[K, V]):
         self._settle(key, pending, now, value=value)
         return value
 
+    def put(self, key: K, value: V) -> None:
+        """Hold ``value`` for ``key`` as if read now, detaching its read in flight.
+
+        For a value this process has just written: the next callers are
+        answered from it with no read, and a read that began before the write
+        is never cached. A value ``keep`` rejects drops the key's entry.
+        """
+        with self._lock:
+            now = self._clock()
+            self._reads.pop(key, None)
+            if not self._keep(value):
+                self._entries.pop(key, None)
+                return
+            self._entries[key] = _Entry(value, now, now + self._refresh_after_s)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
     def invalidate(self, matches: Callable[[K], bool]) -> None:
         """Drop every entry whose key ``matches`` and detach its read in flight."""
         with self._lock:

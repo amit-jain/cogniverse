@@ -18,7 +18,9 @@ The configuration system provides centralized management for all system configur
 
 - **Type-safe schemas**: Strongly typed configuration dataclasses
 
-- **Caching**: In-process cache of the system config (the hot-path read)
+- **Caching**: The system config (the hot-path read) is held in memory and
+  refreshed off the reading thread, so another process's write is served
+  within 60s
 
 - **DSPy integration**: Dynamic optimizer and module configuration
 

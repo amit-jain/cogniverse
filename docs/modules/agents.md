@@ -2606,10 +2606,13 @@ clip with CLAP and searches `acoustic_embedding`.
 **Transcription (`transcribe_audio`):**
 
 `transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
-local path and POSTs the file multipart to
+local path, decodes it to 16 kHz mono and POSTs it multipart to
 `{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
-Whisper). The response is mapped to a
-`TranscriptionResult(text, segments, language, confidence)`.
+Whisper), one chunk of at most 30 s per request, through
+`cogniverse_core.common.models.whisper_transcription`: an empty answer for a
+chunk carrying sound is asked again, the third time without timestamps, and
+raises `EmptyTranscriptError` if that is empty too. The merged answer is mapped
+to a `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds
 before checking segment bounds.

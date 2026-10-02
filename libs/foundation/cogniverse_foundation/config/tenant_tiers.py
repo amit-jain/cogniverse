@@ -6,23 +6,24 @@ addressed by canonical tenant id. A tenant with no row is
 ``DEFAULT_ROUTER_TIER``: absence is the default, so a tenant is routable
 without a row ever being written for it.
 
-``TenantRouterTiers`` is the read path a request takes. It caches the answer
-per canonical tenant for ``ttl_s`` and shares one store read between concurrent
-first-touches. Every write through ``set_tenant_tier`` drops the written tenant
-from every reader in this process, so an operator's change is visible to the
-next request here; ``ttl_s`` bounds only how long another replica keeps serving
-the tier it read before that write.
+``TenantRouterTiers`` is the read path a request takes. It holds the answer per
+canonical tenant in a ``RefreshingCache``: the request thread reads the store
+only for a tenant it holds nothing for, or holds a tier
+``TENANT_TIER_MAX_STALENESS_S`` old. Every write through ``set_tenant_tier``
+drops the written tenant from every reader in this process, so an operator's
+change is visible to the next request here; ``TENANT_TIER_MAX_STALENESS_S``
+bounds how long another replica keeps serving the tier it read before that
+write.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-import time
 import weakref
-from concurrent.futures import Future
-from typing import ClassVar, Dict
+from typing import ClassVar
 
+from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
@@ -36,7 +37,14 @@ logger = logging.getLogger(__name__)
 TENANT_TIER_SERVICE = "semantic_router"
 TENANT_TIER_KEY = "tenant_tier"
 TENANT_TIER_VALUE_FIELD = "tier"
-TENANT_TIER_TTL_S = 30.0
+# Age at which a held tier is re-read on a background thread while it keeps
+# answering.
+TENANT_TIER_REFRESH_S = 15.0
+# Oldest held tier that answers: how long another replica's write can go unseen
+# here.
+TENANT_TIER_MAX_STALENESS_S = 30.0
+# Most tenants one reader holds.
+TENANT_TIER_MAX_TENANTS = 512
 
 
 def validate_router_tier(tier: str) -> RouterTier:
@@ -98,26 +106,35 @@ def set_tenant_tier(config_manager, tenant_id: str, tier: str) -> RouterTier:
 
 
 class TenantRouterTiers:
-    """A tenant's router tier, cached per canonical tenant for ``ttl_s``.
+    """A tenant's router tier, held per canonical tenant.
 
-    ``reader(tenant_id)`` answers a ``RouterTier``. A cached tenant answers
-    with no store read until ``ttl_s`` after the read that produced it began.
-    Concurrent first-touches for one tenant share a single store read; a failed
-    read raises to every caller and caches nothing, so an outage is never
-    recorded as a tier.
+    ``reader(tenant_id)`` answers a ``RouterTier``. A held tier answers with no
+    store read until ``refresh_after_s`` after the read that produced it began;
+    until ``max_staleness_s`` it still answers while one background read
+    replaces it, so the caller never waits on that read. A tenant with nothing
+    held, or a tier ``max_staleness_s`` old, is read on the caller's thread;
+    concurrent callers share that read, and a failure raises to each of them
+    and caches nothing, so an outage is never recorded as a tier. A failed
+    background read is logged and the held tier answers until
+    ``max_staleness_s``.
     """
 
     _live: ClassVar["weakref.WeakSet[TenantRouterTiers]"] = weakref.WeakSet()
     _live_lock: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, config_manager, ttl_s: float = TENANT_TIER_TTL_S) -> None:
-        if ttl_s <= 0:
-            raise ValueError(f"ttl_s must be positive, got {ttl_s}")
+    def __init__(
+        self,
+        config_manager,
+        refresh_after_s: float = TENANT_TIER_REFRESH_S,
+        max_staleness_s: float = TENANT_TIER_MAX_STALENESS_S,
+    ) -> None:
         self._config_manager = config_manager
-        self._ttl_s = ttl_s
-        self._lock = threading.Lock()
-        self._entries: Dict[str, tuple[RouterTier, float]] = {}
-        self._reads: Dict[str, Future] = {}
+        self._tiers: RefreshingCache[str, RouterTier] = RefreshingCache(
+            name="router-tier",
+            refresh_after_s=refresh_after_s,
+            max_staleness_s=max_staleness_s,
+            max_entries=TENANT_TIER_MAX_TENANTS,
+        )
         with TenantRouterTiers._live_lock:
             TenantRouterTiers._live.add(self)
 
@@ -126,55 +143,23 @@ class TenantRouterTiers:
         return self._config_manager
 
     @property
-    def ttl_s(self) -> float:
-        return self._ttl_s
+    def refresh_after_s(self) -> float:
+        return self._tiers.refresh_after_s
+
+    @property
+    def max_staleness_s(self) -> float:
+        return self._tiers.max_staleness_s
 
     def __call__(self, tenant_id: str) -> RouterTier:
         canonical = canonical_tenant_id(tenant_id)
-        with self._lock:
-            cached = self._entries.get(canonical)
-            if cached is not None and time.monotonic() < cached[1]:
-                return cached[0]
-        return self._read(canonical)
-
-    def _read(self, canonical: str) -> RouterTier:
-        with self._lock:
-            started = time.monotonic()
-            read = self._reads.get(canonical)
-            if read is not None:
-                owner = False
-            else:
-                owner = True
-                read = self._reads[canonical] = Future()
-        if not owner:
-            return read.result()
-        try:
-            tier = read_tenant_tier(self._config_manager, canonical)
-        except BaseException as exc:
-            with self._lock:
-                if self._reads.get(canonical) is read:
-                    del self._reads[canonical]
-            read.set_exception(exc)
-            raise
-        with self._lock:
-            # An invalidation during the read detached it: the answer may
-            # predate that write, so it is returned but never cached.
-            if self._reads.get(canonical) is read:
-                del self._reads[canonical]
-                for expired in [
-                    key for key, (_, until) in self._entries.items() if until <= started
-                ]:
-                    del self._entries[expired]
-                self._entries[canonical] = (tier, started + self._ttl_s)
-        read.set_result(tier)
-        return tier
+        return self._tiers.get(
+            canonical, lambda: read_tenant_tier(self._config_manager, canonical)
+        )
 
     def invalidate(self, tenant_id: str) -> None:
         """Drop the tenant's entry and detach any read in flight for it."""
         canonical = canonical_tenant_id(tenant_id)
-        with self._lock:
-            self._entries.pop(canonical, None)
-            self._reads.pop(canonical, None)
+        self._tiers.invalidate(lambda key: key == canonical)
 
 
 def invalidate_tenant_tier(tenant_id: str) -> None:

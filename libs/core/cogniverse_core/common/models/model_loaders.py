@@ -36,6 +36,12 @@ from typing import (
 import numpy as np
 import requests
 
+from cogniverse_core.common.models.whisper_transcription import (
+    decode_audio,
+    lenient_chunk_answer,
+    response_format,
+    transcribe_in_chunks,
+)
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_foundation.config.inference_service import (
@@ -970,21 +976,44 @@ class RemoteWhisperLoader(ModelLoader):
                 """Transcribe an audio file via vLLM /v1/audio/transcriptions.
 
                 Mirrors the OpenAI Whisper API contract: multipart upload
-                with ``file``, ``model``, optional ``language``.
+                with ``file``, ``model``, optional ``language``, one
+                ``verbose_json`` request per chunk of at most 30 s. Returns
+                ``text``, ``language``, ``duration`` and ``segments``; a
+                chunk carrying sound that keeps coming back empty, the last
+                time asked without timestamps, raises
+                ``EmptyTranscriptError``.
                 """
-                with open(audio_path, "rb") as f:
-                    files = {"file": (Path(audio_path).name, f, "audio/wav")}
-                    data: Dict[str, Any] = {"model": self.model_name}
-                    if language and language != "auto":
-                        data["language"] = language
+                name = Path(audio_path).name
+
+                def transcribe_chunk(chunk, chunk_language, timestamps):
+                    data: Dict[str, Any] = {
+                        "model": self.model_name,
+                        "response_format": response_format(timestamps),
+                    }
+                    if chunk_language:
+                        data["language"] = chunk_language
                     resp = self.session.post(
                         f"{self.endpoint_url}/v1/audio/transcriptions",
-                        files=files,
+                        files={"file": (name, chunk.wav(), "audio/wav")},
                         data=data,
                         timeout=600,
                     )
-                resp.raise_for_status()
-                return resp.json()
+                    resp.raise_for_status()
+                    return lenient_chunk_answer(resp.json(), chunk)
+
+                transcript = transcribe_in_chunks(
+                    decode_audio(Path(audio_path)),
+                    transcribe_chunk,
+                    language=None if language in (None, "", "auto") else language,
+                    source=str(audio_path),
+                    logger=self.logger,
+                )
+                return {
+                    "text": transcript["full_text"],
+                    "language": transcript["language"],
+                    "duration": transcript["duration"],
+                    "segments": transcript["segments"],
+                }
 
         wrapper = WhisperRemoteWrapper(
             self.remote_url, self._resolved_headers, self.model_name, self.logger

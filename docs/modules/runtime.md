@@ -487,12 +487,18 @@ refuses anything outside it with 422 and the valid set in the message; an
 unknown tenant is 404; a registry or store outage is 503.
 
 Requests read the tier through `resolve_tenant_tier`, whose per-manager reader
-caches it per canonical tenant for `TENANT_TIER_TTL_S` (30 s). `PUT` drops the
-tenant from every reader in its own process immediately, so the TTL bounds only
-how long another replica keeps serving the tier it read before the write. A
-store failure at request time routes the tenant as `default` and logs a WARNING
-naming the tenant and the error: a routing downgrade serves the request where
-raising would fail it.
+holds it per canonical tenant in a `RefreshingCache`. A held tier answers with
+no store read for `TENANT_TIER_REFRESH_S` (15 s); until
+`TENANT_TIER_MAX_STALENESS_S` (30 s) it still answers while one background
+thread (`router-tier-refresh`) re-reads it, so a request never waits on that
+read. Only a tenant with nothing held, or a tier 30 s old, is read on the
+request thread. `PUT` drops the tenant from every reader in its own process
+immediately, so 30 s bounds how long another replica keeps serving the tier it
+read before the write, and a tenant served continuously sees it after about
+15 s plus one read. A failed background read is logged at ERROR and the held
+tier answers until 30 s. A store failure on the request thread routes the
+tenant as `default` and logs a WARNING naming the tenant and the error: a
+routing downgrade serves the request where raising would fail it.
 
 
 ```text

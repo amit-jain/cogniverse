@@ -38,6 +38,9 @@ ProfileChangeListener = Callable[[str, str, Optional[Dict[str, Any]]], None]
 # Most (scope, tenant, service, key) scoped configs one manager holds in memory.
 SCOPED_CONFIG_MAX_ENTRIES = 512
 
+# The one key the system config is held under.
+_SYSTEM_CONFIG_KEY = "system_config"
+
 
 class ConfigManager:
     """
@@ -53,7 +56,7 @@ class ConfigManager:
     - Versioned (full history tracking)
     - Tenant-scoped (multi-tenant ready)
     - Persisted through a pluggable ConfigStore (default: VespaConfigStore)
-    - Backed by an in-process cache of the system config (hot path)
+    - Held in memory and refreshed off the reading thread
     """
 
     def __init__(
@@ -62,6 +65,8 @@ class ConfigManager:
         profile_change_listener: Optional[ProfileChangeListener] = None,
         scoped_config_refresh_s: float = 5.0,
         scoped_config_max_staleness_s: float = 60.0,
+        system_config_refresh_s: float = 5.0,
+        system_config_max_staleness_s: float = 60.0,
     ):
         """
         Initialize configuration manager with required ConfigStore.
@@ -88,10 +93,18 @@ class ConfigManager:
                 served here within this bound, and within about
                 ``scoped_config_refresh_s`` for a key read continuously.
                 Both 0 reads the store on every call.
+            system_config_refresh_s: Age at which the held system config is
+                re-read from the store on a background thread while callers
+                keep getting the held value.
+            system_config_max_staleness_s: Age at which the held system
+                config is no longer served: the caller reads the store itself
+                and a failed read raises. ``set_system_config`` on this
+                manager replaces it at once; another process's write is served
+                here within this bound.
 
         Raises:
-            ValueError: If store is None, or the scoped-config bounds are
-                negative or the refresh age exceeds the staleness bound
+            ValueError: If store is None, or either pair of bounds is negative
+                or has a refresh age above its staleness bound
         """
         if store is None:
             raise ValueError("store is required")
@@ -100,14 +113,16 @@ class ConfigManager:
         self._backend_lock = threading.Lock()
         self._profile_change_lock = threading.RLock()
         self._profile_change_listener = profile_change_listener
-        # System config doesn't change after the runtime applies its env
-        # overrides at startup, but `get_system_config` is hot — every
-        # `create_dspy_lm` calls it. Without a cache each call hits the
-        # backend (Vespa query timeout in tests where Vespa isn't
-        # reachable burns ~20s per test). The cache is busted by
-        # `set_system_config` so live updates still propagate.
-        self._system_config_cache: Optional[SystemConfig] = None
-        self._system_config_lock = threading.Lock()
+        # `get_system_config` is hot, so the system config is held in memory
+        # and re-read off the caller's thread; another process's write (the
+        # runtime storing its deployment overrides, a dashboard edit) is
+        # served within the staleness bound.
+        self._system_config: RefreshingCache[str, SystemConfig] = RefreshingCache(
+            name="system-config",
+            refresh_after_s=system_config_refresh_s,
+            max_staleness_s=system_config_max_staleness_s,
+            max_entries=1,
+        )
         # A process's explicitly deployed inference endpoints, served in
         # place of the persisted ones and never written to the store.
         self._pinned_inference_service_urls: Optional[Dict[str, str]] = None
@@ -169,38 +184,31 @@ class ConfigManager:
     def get_system_config(self) -> SystemConfig:
         """Get system-wide infrastructure configuration.
 
-        Cached on the instance after the first call — `set_system_config`
-        is the only path that writes, and it invalidates the cache.
+        Served from memory within ``system_config_refresh_s`` and
+        ``system_config_max_staleness_s`` (see ``__init__``); a store failure
+        past the staleness bound raises.
 
         Returns:
             SystemConfig instance
         """
-        # Return a copy so a caller mutating a field (the get-modify-set path,
-        # or a nested dict) cannot poison the shared cache other callers read.
-        # The cache still saves the expensive store round-trip; the copy of a
-        # small dataclass is cheap by comparison.
-        if self._system_config_cache is not None:
-            return self._served_system_config(self._system_config_cache)
+        # A copy, so a caller mutating a field (the get-modify-set path, or a
+        # nested dict) cannot change the value other callers are served.
+        return self._served_system_config(
+            self._system_config.get(_SYSTEM_CONFIG_KEY, self._stored_system_config)
+        )
 
-        with self._system_config_lock:
-            if self._system_config_cache is not None:
-                return self._served_system_config(self._system_config_cache)
-
-            entry = self.store.get_config(
-                tenant_id=self._SYSTEM_TENANT_ID,
-                scope=ConfigScope.SYSTEM,
-                service="system",
-                config_key="system_config",
-            )
-
-            if entry is None:
-                logger.warning("No system config found, using defaults")
-                cfg = SystemConfig()
-            else:
-                cfg = SystemConfig.from_dict(entry.config_value)
-
-            self._system_config_cache = cfg
-            return self._served_system_config(cfg)
+    def _stored_system_config(self) -> SystemConfig:
+        """The system config as the store holds it now."""
+        entry = self.store.get_config(
+            tenant_id=self._SYSTEM_TENANT_ID,
+            scope=ConfigScope.SYSTEM,
+            service="system",
+            config_key="system_config",
+        )
+        if entry is None:
+            logger.warning("No system config found, using defaults")
+            return SystemConfig()
+        return SystemConfig.from_dict(entry.config_value)
 
     def _served_system_config(self, cached: SystemConfig) -> SystemConfig:
         served = copy.deepcopy(cached)
@@ -235,10 +243,9 @@ class ConfigManager:
             config_key="system_config",
             config_value=system_config.to_dict(),
         )
-        # Bust the get_system_config cache so the new write is visible
-        # on the next read in this process.
-        with self._system_config_lock:
-            self._system_config_cache = copy.deepcopy(system_config)
+        # Hold what was written, detaching any read in flight, so no read
+        # that began before the write is served after it.
+        self._system_config.put(_SYSTEM_CONFIG_KEY, copy.deepcopy(system_config))
 
         logger.info("System config updated")
         return system_config

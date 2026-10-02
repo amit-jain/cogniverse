@@ -1066,7 +1066,7 @@ def _get_runtime_config_manager():
     cm = ConfigManager(store=store)
 
     # k3d-LB host ports per inference.<svc>.service.nodePort.
-    sys_cfg = cm.get_system_config()
+    stored_inference_urls = cm.get_system_config().inference_service_urls or {}
     host_inference_urls = {
         "denseon": "http://localhost:33906",
         "vllm_colpali": "http://localhost:33901",
@@ -1075,13 +1075,11 @@ def _get_runtime_config_manager():
         "video_embed": "http://localhost:33903",
         "vllm_asr": "http://localhost:33905",
     }
-    sys_cfg.inference_service_urls = {
-        k: host_inference_urls.get(k, v)
-        for k, v in (sys_cfg.inference_service_urls or {}).items()
-    }
-    # In-memory only — cm.set_system_config would persist host-localhost
-    # URLs into config_metadata and break the in-cluster runtime.
-    cm._system_config_cache = sys_cfg  # noqa: SLF001
+    # Served in place of the stored URLs and never written: storing
+    # host-localhost URLs would break the in-cluster runtime.
+    cm.pin_inference_service_urls(
+        {k: host_inference_urls.get(k, v) for k, v in stored_inference_urls.items()}
+    )
     return cm
 
 

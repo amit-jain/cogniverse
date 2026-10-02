@@ -18,8 +18,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from cogniverse_core.common.models.whisper_transcription import wav_bytes
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 from cogniverse_runtime.ingestion.processors.served_model import ServedModelUnavailable
 from cogniverse_runtime.ingestion.processors.vlm_descriptor import VLMDescriptor
@@ -30,6 +32,12 @@ pytestmark = [pytest.mark.unit]
 # than this to answer, so the stand-in endpoint delays past it.
 OLD_PROBE_TIMEOUT_SECONDS = 10.0
 COLD_BOOT_SECONDS = 11.0
+
+
+def _tone_wav(seconds: float) -> bytes:
+    """The extracted audio: a sound-bearing 16 kHz mono PCM16 WAV."""
+    t = np.arange(round(seconds * 16000)) / 16000
+    return wav_bytes((3000 * np.sin(2 * np.pi * 440 * t)).astype(np.int16))
 
 
 class _Endpoint(ThreadingHTTPServer):
@@ -350,7 +358,7 @@ class TestColdAsrEndpointDiscovery:
             first_answer_delay=COLD_BOOT_SECONDS,
         )
         monkeypatch.setattr(
-            AudioProcessor, "_extract_audio_wav", staticmethod(lambda p: b"RIFF")
+            AudioProcessor, "_extract_audio_wav", staticmethod(lambda p: _tone_wav(2.0))
         )
         processor = AudioProcessor(
             logging.getLogger("test"),

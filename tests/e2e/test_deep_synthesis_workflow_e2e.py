@@ -35,6 +35,7 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from tests.e2e.backend_env import LocalSystemConfig
 from tests.e2e.conftest import StudentLLM, run_async, unique_id
 
 # ---------------------------------------------------------------------------
@@ -142,18 +143,19 @@ class TestDeepSynthesisOverHundredDocuments:
 
         Mem0MemoryManager._instances.clear()
         tenant_id = unique_id("rlm_deep") + ":t1"
+        # The system config is answered in-process: storing this localhost URL
+        # map would starve the in-cluster ingestor, which reads the same store.
         cm = ConfigManager(
-            store=VespaConfigStore(
-                backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+            store=LocalSystemConfig(
+                VespaConfigStore(
+                    backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+                ),
+                SystemConfig(
+                    backend_url="http://localhost",
+                    backend_port=VESPA_HTTP_PORT,
+                    inference_service_urls={"denseon": "http://localhost:33906"},
+                ),
             )
-        )
-        # In-memory only: cm.set_system_config would persist a denseon-only
-        # localhost URL map into config_metadata and starve the in-cluster
-        # ingestor (which reads inference_service_urls from the same store).
-        cm._system_config_cache = SystemConfig(  # noqa: SLF001
-            backend_url="http://localhost",
-            backend_port=VESPA_HTTP_PORT,
-            inference_service_urls={"denseon": "http://localhost:33906"},
         )
         mm = Mem0MemoryManager(tenant_id=tenant_id)
         mm.initialize(

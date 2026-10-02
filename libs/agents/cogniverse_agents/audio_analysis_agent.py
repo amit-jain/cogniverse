@@ -25,6 +25,13 @@ from cogniverse_agents.search.vespa_query import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.models.whisper_transcription import (
+    AudioChunk,
+    ChunkTranscript,
+    decode_audio,
+    response_format,
+    transcribe_in_chunks,
+)
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
     leased_backend,
@@ -356,6 +363,23 @@ def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:
     }
 
 
+def _parse_untimed_transcription(
+    body: Any, url: str, chunk: AudioChunk
+) -> ChunkTranscript:
+    """A ``json`` answer: its text, as one segment spanning the chunk."""
+    if not isinstance(body, Mapping):
+        raise _remote_contract_error(url, "$", "expected an object")
+    text = _required_remote_field(body, "text", url, "$")
+    if not isinstance(text, str):
+        raise _remote_contract_error(url, "$.text", "expected a string")
+    segments = (
+        [{"start": 0.0, "end": chunk.end_s - chunk.start_s, "text": text.strip()}]
+        if text.strip()
+        else []
+    )
+    return ChunkTranscript(text=text, language=None, segments=segments)
+
+
 class AudioAnalysisAgent(
     A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnalysisDeps]
 ):
@@ -574,40 +598,63 @@ class AudioAnalysisAgent(
     ) -> Dict[str, Any]:
         """POST audio multipart to vLLM ``/v1/audio/transcriptions``.
 
-        A successful response must include typed text, language, duration,
-        and timestamped segments. Empty ``segments`` remain valid so callers
-        can distinguish silence from a single full-clip segment.
+        The audio is decoded to 16 kHz mono and sent one chunk of at most
+        30 s per request. A timestamped response must include typed text,
+        language, duration, and timestamped segments; empty ``segments``
+        remain valid for a silent chunk. A chunk carrying sound that comes
+        back empty is asked again, the last time without timestamps (whose
+        response must include typed text), and then raises
+        ``EmptyTranscriptError``.
         """
         import requests
 
         url = f"{self._whisper_endpoint.rstrip('/')}/v1/audio/transcriptions"
-        with open(audio_path, "rb") as f:
-            files = {"file": (audio_path.name, f, "audio/wav")}
+        samples = decode_audio(audio_path)
+
+        def transcribe_chunk(
+            chunk: AudioChunk, chunk_language: Optional[str], timestamps: bool
+        ) -> ChunkTranscript:
+            audio_bytes = chunk.wav()
             data: Dict[str, Any] = {
                 "model": self._whisper_model,
-                "response_format": "verbose_json",
+                "response_format": response_format(timestamps),
             }
-            if language and language != "auto":
-                data["language"] = language
+            if chunk_language:
+                data["language"] = chunk_language
             logger.info(
-                f"🛰️  POST {url}  ({audio_path.stat().st_size / 1024:.1f} KiB audio)"
+                f"🛰️  POST {url}  (chunk {chunk.index}, "
+                f"{len(audio_bytes) / 1024:.1f} KiB audio)"
             )
             resp = requests.post(
                 url,
-                files=files,
+                files={"file": (audio_path.name, audio_bytes, "audio/wav")},
                 data=data,
                 headers=self._whisper_headers,
                 timeout=600.0,
             )
-        resp.raise_for_status()
-        try:
-            body = resp.json()
-        except ValueError as exc:
-            raise _remote_contract_error(
-                url, "$", "response body is not valid JSON"
-            ) from exc
+            resp.raise_for_status()
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise _remote_contract_error(
+                    url, "$", "response body is not valid JSON"
+                ) from exc
+            if not timestamps:
+                return _parse_untimed_transcription(body, url, chunk)
+            parsed = _parse_remote_transcription(body, url)
+            return ChunkTranscript(
+                text=body["text"],
+                language=parsed["language"],
+                segments=parsed["segments"],
+            )
 
-        return _parse_remote_transcription(body, url)
+        return transcribe_in_chunks(
+            samples,
+            transcribe_chunk,
+            language=None if language in (None, "", "auto") else language,
+            source=str(audio_path),
+            logger=logger,
+        )
 
     def _get_backend(self):
         """Resolve the shared audio search backend from the registry.

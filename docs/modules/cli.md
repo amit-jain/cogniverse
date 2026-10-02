@@ -150,9 +150,10 @@ cogniverse inference modal undeploy vllm_colpali --confirm-service vllm_colpali
 `cogniverse_foundation.inference_specs` is the contract source for each
 service's immutable model revision, GPU candidates, secret requirements, the
 `context_window` a vLLM service launches with (`--max-model-len`) and publishes
-(`max_model_len` on `/v1/models`), and the pre-measurement
+(`max_model_len` on `/v1/models`), the pre-measurement
 `boot_deadline_seconds` that Modal serving and the runtime teacher probe share
-for scale-to-zero services.
+for scale-to-zero services, and the `scaledown_window` every service shares:
+a container idle for 300 s scales to zero, chat models included.
 
 ### Coding agent
 

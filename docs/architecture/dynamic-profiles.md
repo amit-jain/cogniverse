@@ -112,6 +112,8 @@ class ConfigManager:
         profile_change_listener: Optional[ProfileChangeListener] = None,
         scoped_config_refresh_s: float = 5.0,
         scoped_config_max_staleness_s: float = 60.0,
+        system_config_refresh_s: float = 5.0,
+        system_config_max_staleness_s: float = 60.0,
     ):
         if store is None:
             raise ValueError("store is required")

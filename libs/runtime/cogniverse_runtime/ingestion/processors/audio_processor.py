@@ -6,8 +6,9 @@ Transcribes audio from videos using Whisper. Two modes:
 
 - Remote (default in production): when ``endpoint`` is set, POSTs the
   audio multipart to the vLLM Whisper pod's OpenAI-compatible
-  ``/v1/audio/transcriptions`` endpoint. The pod owns model selection
-  via its ``--model`` arg.
+  ``/v1/audio/transcriptions`` endpoint, one request per chunk of at most
+  30 s (``cogniverse_core.common.models.whisper_transcription``). The pod
+  owns model selection via its ``--model`` arg.
 - Local: loads ``openai-whisper`` in-process. Requires the
   ``cogniverse-runtime[whisper-local]`` extra; useful only for offline
   dev hosts without a cluster ASR sidecar.
@@ -20,6 +21,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from cogniverse_core.common.models.whisper_transcription import (
+    AudioChunk,
+    ChunkTranscript,
+    lenient_chunk_answer,
+    pcm16_wav_samples,
+    response_format,
+    transcribe_in_chunks,
+)
 from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
 
 from ..processor_base import BaseProcessor
@@ -287,70 +296,59 @@ class AudioProcessor(BaseProcessor):
 
         vLLM's Whisper endpoint rejects raw video containers ("Invalid
         or unsupported audio file") and requires 16 kHz mono PCM. We
-        extract the audio stream via pyav, resample on the fly, and
-        send the resulting wav buffer.
+        extract the audio stream via pyav and resample on the fly, then
+        send it one chunk of at most 30 s per request. A chunk carrying
+        sound that keeps coming back empty raises ``EmptyTranscriptError``.
         """
 
         import requests
 
         url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
         headers = self.auth_headers()
-        audio_bytes = self._extract_audio_wav(video_path)
-        files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
+        samples = pcm16_wav_samples(self._extract_audio_wav(video_path))
         served = resolve_served_model_id(
             f"{self.endpoint.rstrip('/')}/v1",
             service_name=_ASR_INFERENCE_SERVICE,
             headers=headers,
             logger=self.logger,
         )
-        data: dict[str, Any] = {
-            "model": served,
-            "response_format": "verbose_json",
-        }
-        if self.language and self.language != "auto":
-            data["language"] = self.language
 
-        self.logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
-        resp = requests.post(
-            url,
-            data=data,
-            files=files,
-            headers=headers,
-            timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-
-        full_text = (body.get("text") or "").strip()
-        raw_segments = body.get("segments") or []
-        segments = [
-            {
-                "start": float(seg.get("start", 0.0)),
-                "end": float(seg.get("end", 0.0)),
-                "text": (seg.get("text") or "").strip(),
+        def transcribe_chunk(
+            chunk: AudioChunk, language: str | None, timestamps: bool
+        ) -> ChunkTranscript:
+            audio_bytes = chunk.wav()
+            data: dict[str, Any] = {
+                "model": served,
+                "response_format": response_format(timestamps),
             }
-            for seg in raw_segments
-            if isinstance(seg, dict)
-        ]
-        # vLLM omits segments on short audio; synthesize one so callers
-        # always have a non-empty list to iterate.
-        if not segments and full_text:
-            segments = [
-                {
-                    "start": 0.0,
-                    "end": float(body.get("duration") or 0.0),
-                    "text": full_text,
-                }
-            ]
+            if language:
+                data["language"] = language
+            self.logger.info(
+                f"🛰️  POST {url}  (chunk {chunk.index}, "
+                f"{len(audio_bytes) / 1024:.1f} KiB audio)"
+            )
+            resp = requests.post(
+                url,
+                data=data,
+                files={"file": (f"{video_id}.wav", audio_bytes, "audio/wav")},
+                headers=headers,
+                timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            return lenient_chunk_answer(resp.json(), chunk)
 
+        transcript = transcribe_in_chunks(
+            samples,
+            transcribe_chunk,
+            language=None if self.language in (None, "", "auto") else self.language,
+            source=str(video_path),
+            logger=self.logger,
+        )
         return {
             "video_id": video_id,
             "video_path": str(video_path),
-            "model": body.get("model", served),
-            "language": body.get("language", "unknown"),
-            "duration": float(body.get("duration") or 0.0),
-            "full_text": full_text,
-            "segments": segments,
+            "model": served,
+            **transcript,
         }
 
     def process(

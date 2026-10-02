@@ -10,15 +10,23 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import pytest
 import requests
 
+from cogniverse_core.common.models.whisper_transcription import wav_bytes
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 MODAL = "https://amit-jain--cogniverse-vllm-asr-inference.modal.run"
 IN_CLUSTER = "http://cogniverse-vllm-asr:8000"
+
+
+def _tone_wav(seconds: float) -> bytes:
+    """The extracted audio: a sound-bearing 16 kHz mono PCM16 WAV."""
+    t = np.arange(round(seconds * 16000)) / 16000
+    return wav_bytes((3000 * np.sin(2 * np.pi * 440 * t)).astype(np.int16))
 
 
 def _processor(endpoint: str) -> AudioProcessor:
@@ -65,7 +73,7 @@ class _Response:
 def test_both_remote_calls_carry_the_bearer(monkeypatch):
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "real-bearer")
     monkeypatch.setattr(
-        AudioProcessor, "_extract_audio_wav", staticmethod(lambda p: b"RIFF")
+        AudioProcessor, "_extract_audio_wav", staticmethod(lambda p: _tone_wav(1.5))
     )
     calls: list[tuple] = []
 

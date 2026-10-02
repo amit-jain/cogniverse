@@ -206,7 +206,8 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
     assert transcript["full_text"] == "hello world"
     assert transcript["language"] == "en"
     assert transcript["video_id"] == "clip"
-    assert transcript["duration"] == pytest.approx(1.5)
+    # The length of the audio sent, as the server measures it too.
+    assert transcript["duration"] == 0.2
     assert len(transcript["segments"]) == 2
     assert transcript["segments"][0] == {"start": 0.0, "end": 0.7, "text": "hello"}
     assert transcript["segments"][1] == {"start": 0.7, "end": 1.5, "text": "world"}

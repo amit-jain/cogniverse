@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import threading
@@ -472,6 +473,201 @@ def test_profile_read_modify_write_never_drops_another_managers_write():
 def test_inconsistent_scoped_config_bounds_raise(refresh_s, max_staleness_s, message):
     with pytest.raises(ValueError) as caught:
         _refreshing_manager(
+            InMemoryConfigStore(),
+            refresh_s=refresh_s,
+            max_staleness_s=max_staleness_s,
+        )
+    assert str(caught.value) == message
+
+
+SYSTEM_REFRESH_THREAD = "system-config-refresh"
+
+
+def _system_refreshing_manager(
+    store, refresh_s: float, max_staleness_s: float = 30.0
+) -> ConfigManager:
+    return ConfigManager(
+        store=store,
+        system_config_refresh_s=refresh_s,
+        system_config_max_staleness_s=max_staleness_s,
+    )
+
+
+def _join_system_refreshes() -> None:
+    for thread in threading.enumerate():
+        if thread.name == SYSTEM_REFRESH_THREAD:
+            thread.join(timeout=10)
+            assert thread.is_alive() is False
+
+
+def test_the_system_config_is_held_for_the_documented_bounds():
+    parameters = inspect.signature(ConfigManager).parameters
+    assert (
+        parameters["system_config_refresh_s"].default,
+        parameters["system_config_max_staleness_s"].default,
+    ) == (5.0, 60.0)
+
+
+def test_another_processes_system_config_write_is_served_after_one_background_read():
+    store = _CoordinatedConfigStore()
+    _seed_system(store, "old-model")
+    manager = _system_refreshing_manager(store, refresh_s=0.2)
+    assert manager.get_system_config().llm_model == "old-model"
+    # Written straight to the store, as another process's manager does.
+    _seed_system(store, "new-model")
+    assert manager.get_system_config().llm_model == "old-model"
+    time.sleep(0.25)
+    store.read_captured.clear()
+    store.gate.clear()
+
+    assert manager.get_system_config().llm_model == "old-model"
+    # The call returned while the refresh it started was held at the store.
+    assert store.read_captured.wait(timeout=5)
+    assert store.gate.is_set() is False
+    caller = threading.current_thread().name
+    assert store.reads == [("_system", caller), ("_system", SYSTEM_REFRESH_THREAD)]
+    store.gate.set()
+    _join_system_refreshes()
+
+    assert manager.get_system_config().llm_model == "new-model"
+    assert store.get_calls == 2
+
+
+def test_concurrent_reads_at_refresh_age_share_one_background_system_read():
+    store = _CoordinatedConfigStore()
+    _seed_system(store, "old-model")
+    manager = _system_refreshing_manager(store, refresh_s=0.2)
+    assert manager.get_system_config().llm_model == "old-model"
+    _seed_system(store, "new-model")
+    time.sleep(0.25)
+    store.gate.clear()
+    store.reads.clear()
+    worker_count = 12
+    ready = threading.Barrier(worker_count)
+
+    def read_model(_: int) -> str:
+        ready.wait(timeout=10)
+        return manager.get_system_config().llm_model
+
+    with ThreadPoolExecutor(
+        max_workers=worker_count, thread_name_prefix="request"
+    ) as pool:
+        models = list(pool.map(read_model, range(worker_count)))
+
+    # Every request returned while the one refresh was held at the store.
+    assert store.gate.is_set() is False
+    assert models == ["old-model"] * worker_count
+    store.gate.set()
+    _join_system_refreshes()
+    assert store.reads == [("_system", SYSTEM_REFRESH_THREAD)]
+    assert manager.get_system_config().llm_model == "new-model"
+    assert store.get_calls == 2
+
+
+def test_a_failed_system_refresh_serves_the_held_value_until_the_bound_then_raises(
+    caplog,
+):
+    store = _CoordinatedConfigStore()
+    _seed_system(store, "held-model")
+    manager = _system_refreshing_manager(store, refresh_s=0.2, max_staleness_s=1.5)
+    filled_at = time.monotonic()
+    assert manager.get_system_config().llm_model == "held-model"
+    store.fail_every_get = True
+    time.sleep(0.25)
+
+    with caplog.at_level(logging.ERROR, logger=refreshing_cache_module.__name__):
+        assert manager.get_system_config().llm_model == "held-model"
+        _join_system_refreshes()
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == refreshing_cache_module.__name__
+    ]
+    assert len(messages) == 1
+    assert re.fullmatch(
+        r"system-config: refreshing 'system_config' failed with ConnectionError: "
+        r"configuration store unavailable; serving the value read 0\.\d+s ago "
+        r"until it is 1\.5s old",
+        messages[0],
+    )
+    assert manager.get_system_config().llm_model == "held-model"
+
+    time.sleep(max(0.0, filled_at + 1.55 - time.monotonic()))
+    store.reads.clear()
+    for _ in range(2):
+        with pytest.raises(ConnectionError) as caught:
+            manager.get_system_config()
+        assert str(caught.value) == "configuration store unavailable"
+    caller = threading.current_thread().name
+    assert store.reads == [("_system", caller), ("_system", caller)]
+
+    store.fail_every_get = False
+    _seed_system(store, "recovered-model")
+    assert manager.get_system_config().llm_model == "recovered-model"
+
+
+def test_a_system_write_during_a_background_refresh_is_never_overwritten():
+    store = _CoordinatedConfigStore()
+    _seed_system(store, "old-model")
+    manager = _system_refreshing_manager(store, refresh_s=0.2)
+    assert manager.get_system_config().llm_model == "old-model"
+    time.sleep(0.25)
+    store.read_captured.clear()
+    store.gate.clear()
+
+    assert manager.get_system_config().llm_model == "old-model"
+    # The refresh has read the pre-write row and is held there.
+    assert store.read_captured.wait(timeout=5)
+    manager.set_system_config(SystemConfig(llm_model="new-model"))
+    store.gate.set()
+    _join_system_refreshes()
+
+    assert [manager.get_system_config().llm_model for _ in range(3)] == [
+        "new-model"
+    ] * 3
+    assert store.get_calls == 2
+
+
+def test_a_refreshed_system_config_still_serves_the_pinned_inference_urls():
+    store = _CoordinatedConfigStore()
+    _seed_system_urls(store, {"denseon": "http://persisted-denseon:8000"})
+    manager = _system_refreshing_manager(store, refresh_s=0.2)
+    manager.pin_inference_service_urls({"denseon": "http://explicit-denseon:8000"})
+    assert manager.get_system_config().inference_service_urls == {
+        "denseon": "http://explicit-denseon:8000"
+    }
+    store.set_config(
+        tenant_id="_system",
+        scope=ConfigScope.SYSTEM,
+        service="system",
+        config_key="system_config",
+        config_value=SystemConfig(
+            llm_model="rewritten-model",
+            inference_service_urls={"denseon": "http://rewritten-denseon:8000"},
+        ).to_dict(),
+    )
+    time.sleep(0.25)
+    manager.get_system_config()
+    _join_system_refreshes()
+
+    served = manager.get_system_config()
+    assert (served.llm_model, served.inference_service_urls) == (
+        "rewritten-model",
+        {"denseon": "http://explicit-denseon:8000"},
+    )
+    assert store.get_calls == 2
+
+
+@pytest.mark.parametrize(
+    ("refresh_s", "max_staleness_s", "message"),
+    [
+        (-1.0, 60.0, "refresh_after_s must be >= 0, got -1.0"),
+        (5.0, 1.0, "max_staleness_s (1.0) must be >= refresh_after_s (5.0)"),
+    ],
+)
+def test_inconsistent_system_config_bounds_raise(refresh_s, max_staleness_s, message):
+    with pytest.raises(ValueError) as caught:
+        _system_refreshing_manager(
             InMemoryConfigStore(),
             refresh_s=refresh_s,
             max_staleness_s=max_staleness_s,

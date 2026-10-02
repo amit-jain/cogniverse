@@ -1283,7 +1283,10 @@ selection:
 with `metric_threshold=_entity_bootstrap_threshold(...)`.
 
 All three pass `teacher_settings={"lm": teacher_lm_or_raise(llm_config)}`, so the
-bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. That helper probes the
+bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. Both shipped configs
+give it `request_timeout` 210 s: the teacher's Modal app scales to zero, so the first call after
+an idle window waits out the engine start (up to 135 s measured on the Modal chat apps), and the
+Modal proxy's 300 s upstream timeout stays above it. That helper probes the
 endpoint and then builds the LM through `create_budgeted_dspy_lm`, so the teacher's prompt is
 bounded by the window it actually serves: `max_model_len` read from the endpoint, or the
 endpoint's declared `context_window` when the listing carries none, minus the

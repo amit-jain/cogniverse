@@ -9,6 +9,7 @@ serving. Chart values are rendered by Helm before parsing.
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 from pathlib import Path
@@ -16,11 +17,14 @@ from typing import Any
 
 import pytest
 import yaml
+from cogniverse_cli.modal_inference.vllm import _build_process_proxy_app
 
 from cogniverse_agents.optimizer.golden_set_ground_truth import (
     canonicalize_golden_set_ground_truth_rows,
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
+from cogniverse_foundation.config.unified_config import LLMConfig
 from cogniverse_runtime.agent_dispatcher import GROUNDING_SEARCH_TIMEOUT_KEY
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 from tests.fixtures.shipped_config import load_shipped_config
@@ -313,14 +317,59 @@ def test_shipped_configs_declare_identical_teacher_request_bounds():
         teacher = config["llm_config"]["teacher"]
         return {
             key: teacher.get(key)
-            for key in ("temperature", "max_tokens", "context_window")
+            for key in (
+                "temperature",
+                "max_tokens",
+                "context_window",
+                "request_timeout",
+            )
         }
 
     assert (
         bounds(load_shipped_config(SHIPPED))
         == bounds(load_shipped_config(CHART))
-        == {"temperature": 0.7, "max_tokens": 2048, "context_window": 4096}
+        == {
+            "temperature": 0.7,
+            "max_tokens": 2048,
+            "context_window": 4096,
+            "request_timeout": 210.0,
+        }
     )
+
+
+# One-token completions against the Modal chat apps scaled to zero after 900 s
+# idle, 2026-09-13: student cold 135.0 s, teacher cold 82.6 s (105-120 s on
+# earlier days); warm calls under 0.9 s on both.
+LONGEST_MEASURED_MODAL_CHAT_COLD_START_S = 135.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
+def test_the_teacher_lm_waits_out_a_cold_start_inside_the_modal_proxy_bound(
+    path: Path,
+):
+    """Bootstrap and self-consistency calls reach the teacher directly, with no
+    deadline of their own, and its Modal app scales to zero: the first call
+    after an idle window pays the engine start. A timed-out call is retried
+    once and a timeout never trips the LM fail-fast, so a timeout shorter than
+    the cold start costs a whole extra call. The timeout is 1.5x the longest
+    measured Modal chat cold start, rounded up. The Modal proxy cuts any
+    upstream request at its own timeout once the engine is up, so the client's
+    must be the shorter, or the proxy decides instead."""
+    teacher = LLMConfig.from_dict(
+        load_shipped_config(path)["llm_config"]
+    ).resolve_teacher()
+    lm = create_budgeted_dspy_lm(teacher)
+    modal_proxy_timeout = (
+        inspect.signature(_build_process_proxy_app)
+        .parameters["request_timeout"]
+        .default
+    )
+
+    assert (lm.kwargs["timeout"], lm.num_retries) == (210.0, 1)
+    assert lm.kwargs["timeout"] >= 1.5 * LONGEST_MEASURED_MODAL_CHAT_COLD_START_S
+    assert modal_proxy_timeout == 300.0
+    assert lm.kwargs["timeout"] < modal_proxy_timeout
 
 
 @pytest.mark.unit
