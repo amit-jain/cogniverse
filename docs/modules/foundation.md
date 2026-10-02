@@ -268,9 +268,11 @@ read-modify-write through `ConfigStore.update_config`: the change is applied to
 the config as stored, and re-applied to the newer one whenever another writer
 lands first, so no process's profile change is overwritten. A change that
 leaves the stored config as it was writes no new version (startup's
-`reaffirm_system_profiles` on every worker writes once). A write that loses
-every attempt raises `ConfigWriteConflictError`, and a store failure raises;
-either way nothing is written.
+`reaffirm_system_profiles` on every worker writes once). Every profile write,
+one that wrote nothing included, drops the manager's held copy of that
+tenant's backend config, so its next read serves what it found stored. A
+write that loses every attempt raises `ConfigWriteConflictError`, and a store
+failure raises; either way nothing is written.
 
 Searches read profile writes from the store: the shared search backend
 resolves the querying tenant's profiles per request through `get_config`, so

@@ -605,8 +605,9 @@ class ConfigManager:
         entry = self.store.update_config(
             tenant_id, ConfigScope.BACKEND, service, "backend_config", update
         )
-        if changed:
-            self._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
+        # Even a change that wrote nothing read the config as stored now, and
+        # what this manager holds may predate another process's write.
+        self._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
         return changed, 0 if entry is None else entry.version
 
     @staticmethod

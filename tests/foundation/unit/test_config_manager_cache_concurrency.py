@@ -463,6 +463,28 @@ def test_profile_read_modify_write_never_drops_another_managers_write():
     ]
 
 
+def test_a_profile_write_that_finds_it_stored_serves_the_stored_config():
+    """Two runtime workers affirm the same system profile at startup. The
+    second finds it already stored and writes nothing; its next read must
+    serve the config it found, not the one it held from before the first
+    worker's write."""
+    store = InMemoryConfigStore()
+    worker_a = ConfigManager(store=store)
+    worker_b = ConfigManager(store=store)
+    worker_b.add_backend_profile(_profile("wiki"), tenant_id="acme")
+    held_before = sorted(worker_b.list_backend_profiles("acme"))
+
+    worker_a.add_backend_profile(_profile("memories"), tenant_id="acme")
+    affirmed = worker_b.add_backend_profile(_profile("memories"), tenant_id="acme")
+
+    assert held_before == ["wiki"]
+    assert affirmed.version == 2
+    assert sorted(worker_b.list_backend_profiles("acme")) == ["memories", "wiki"]
+    assert worker_b.get_backend_profile("memories", tenant_id="acme") == _profile(
+        "memories"
+    )
+
+
 @pytest.mark.parametrize(
     ("refresh_s", "max_staleness_s", "message"),
     [
