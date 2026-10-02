@@ -11,7 +11,10 @@ import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_core.registries.exceptions import SchemaRevisionConflictError
+from cogniverse_core.registries.exceptions import (
+    SchemaChangeRefusedError,
+    SchemaRevisionConflictError,
+)
 from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
 from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_sdk.document import Document
@@ -35,6 +38,12 @@ logger = logging.getLogger(__name__)
 # schema to accept a feed. Measured: 6 s for a 138-schema package on an idle
 # cluster, 17 s with three schema-removal generations queued ahead of it.
 SCHEMA_CONVERGENCE_TIMEOUT_S = 120
+
+
+class InvalidApplicationPackageError(RuntimeError):
+    """The config server answered 400 ``INVALID_APPLICATION_PACKAGE``: it
+    validated the package and refused it, so posting it again is refused the
+    same way. A change that needs a validation override lands here."""
 
 
 def _http_status_of(exc: BaseException) -> Optional[int]:
@@ -955,6 +964,17 @@ class VespaBackend(Backend):
             "search_enabled": self._initialized_as_search,
         }
 
+    def deployment_lease(self):
+        """Hold the application-package deployment lease on this thread.
+
+        See ``VespaSchemaManager.deployment_lease``: a deploy made while it is
+        held reuses it, so the caller keeps every other deployer out from its
+        deploy decision through the registration that follows.
+        """
+        if not self.schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+        return self.schema_manager.deployment_lease()
+
     def deploy_schemas(
         self,
         schema_definitions: List[Dict[str, Any]],
@@ -1212,6 +1232,10 @@ class VespaBackend(Backend):
                         "nothing was activated or registered. Retry the deploy: "
                         f"{lost}"
                     ) from lost
+                except InvalidApplicationPackageError as invalid:
+                    raise SchemaChangeRefusedError(
+                        f"Vespa refused the application package: {invalid}"
+                    ) from invalid
                 except RuntimeError as refused:
                     raise BackendDeploymentError(
                         f"Vespa refused the application package: {refused}"
@@ -1388,6 +1412,12 @@ class VespaBackend(Backend):
                         f"Deployment failed with status {response.status_code}: "
                         f"{error_detail}"
                     )
+                    if (
+                        response.status_code == 400
+                        and error_detail.get("error-code")
+                        == "INVALID_APPLICATION_PACKAGE"
+                    ):
+                        raise InvalidApplicationPackageError(last_error)
                     raise RuntimeError(last_error)
                 # Backoff: 0.5s, 1s, 2s, 4s before final attempt.
                 wait = 0.5 * (2 ** (attempt - 1))

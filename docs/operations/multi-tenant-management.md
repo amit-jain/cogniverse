@@ -145,6 +145,7 @@ The tenant management service (`libs/runtime/cogniverse_runtime/admin/tenant_man
 | DELETE | `/admin/tenants/{tenant_full_id}` | Delete tenant and all data. Same canonicalization as GET. | None (open) |
 | DELETE | `/admin/organizations/{org_id}` | Delete organization and all tenants | None (open) |
 | POST | `/admin/reconcile-orphans?dry_run={true\|false}` | List Vespa-only schema orphans, optionally drop them all in one redeploy. See [Orphan reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation). | None (open) |
+| GET | `/admin/schemas/drift` | List tenant schemas registered with a definition other than the shipped one, with Vespa's reason for each the startup migration could not redeploy. See [Schema changes in a release](../operations/multi-tenant-ops.md#schema-changes-in-a-release). | None (open) |
 
 > `DELETE /admin/tenants/{id}` redeploys the Vespa application package
 > without the tenant's schemas. If the redeploy would still leave an
@@ -531,7 +532,7 @@ sequenceDiagram
 
 **Key Responsibilities**:
 
-- Idempotent schema deployment (`SchemaRegistry.deploy_schema` skips redeploying a schema that is already tracked, unless `force=True`); primary content schemas deploy eagerly from `POST /admin/tenants`, while auxiliary schemas like `knowledge_graph` deploy lazily on a tenant's first write
+- Idempotent schema deployment (`SchemaRegistry.deploy_schema` skips redeploying a schema that is already tracked with the shipped definition, unless `force=True`; a tracked schema whose definition differs is redeployed, see [Schema changes in a release](multi-tenant-ops.md#schema-changes-in-a-release)); primary content schemas deploy eagerly from `POST /admin/tenants`, while auxiliary schemas like `knowledge_graph` deploy lazily on a tenant's first write
 - Tenant registration and validation
 - Schema naming with tenant isolation
 - Metadata schema management (organization_metadata, tenant_metadata)

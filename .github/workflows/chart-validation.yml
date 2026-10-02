@@ -22,6 +22,7 @@ on:
       - 'libs/core/cogniverse_core/registries/schema_deploy_lease.py'
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
+      - 'libs/runtime/Dockerfile'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
   pull_request:
@@ -46,6 +47,7 @@ on:
       - 'libs/core/cogniverse_core/registries/schema_deploy_lease.py'
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
+      - 'libs/runtime/Dockerfile'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
 

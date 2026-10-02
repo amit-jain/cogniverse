@@ -9,6 +9,7 @@ Tests the pluggable backend architecture including:
 - Registry operations
 """
 
+import contextlib
 import sys
 import unittest
 from pathlib import Path
@@ -239,6 +240,10 @@ class MockFullBackend(Backend):
     ) -> bool:
         """Deploy or ensure schema exists for tenant."""
         return True
+
+    def deployment_lease(self):
+        """No other deployer to serialise against."""
+        return contextlib.nullcontext()
 
     def deploy_schemas(
         self, schema_names: List[str], tenant_id: str, force: bool = False

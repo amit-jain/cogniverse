@@ -49,8 +49,8 @@ async def test_a2a_card_advertises_loaded_agents(monkeypatch, workflow_state_red
 async def test_the_schema_migration_runs_after_startup_without_holding_it(
     monkeypatch, workflow_state_redis_url
 ):
-    """The provenance schema migration deploys one package per drifted tenant,
-    so it runs once startup completes: the runtime serves while it runs."""
+    """The schema migration deploys one package per drifted tenant, so it
+    runs once startup completes: the runtime serves while it runs."""
     import asyncio
 
     import dspy
@@ -65,9 +65,9 @@ async def test_the_schema_migration_runs_after_startup_without_holding_it(
     release = asyncio.Event()
     migrated = []
 
-    async def migration_in_progress(resolve_registry, base_schema_name, stop):
+    async def migration_in_progress(resolve_registry, stop):
         registry = await asyncio.to_thread(resolve_registry)
-        migrated.append((type(registry).__name__, base_schema_name))
+        migrated.append(type(registry).__name__)
         running.set()
         await release.wait()
 
@@ -82,7 +82,7 @@ async def test_the_schema_migration_runs_after_startup_without_holding_it(
             served = await client.get("/a2a/.well-known/agent-card.json")
         release.set()
 
-    assert migrated == [("SchemaRegistry", "provenance")]
+    assert migrated == ["SchemaRegistry"]
     assert served.status_code == 200
     assert served.json()["name"] == "Cogniverse Runtime"
 
@@ -107,7 +107,7 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
     running = asyncio.Event()
     order = []
 
-    async def migration_never_done(resolve_registry, base_schema_name, stop):
+    async def migration_never_done(resolve_registry, stop):
         running.set()
         try:
             await asyncio.Event().wait()
