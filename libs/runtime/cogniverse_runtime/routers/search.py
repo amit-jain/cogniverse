@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import math
 from typing import Any, Dict, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,9 +11,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
-from cogniverse_core.common.models.model_loaders import (
-    INFERENCE_BREAKER_RESET_TIMEOUT_S,
-)
 from cogniverse_core.common.tenant_utils import (
     assert_tenant_exists,
     require_tenant_id,
@@ -29,6 +25,7 @@ from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_runtime.http_errors import (
     failure_body,
     failure_response,
+    query_encoder_failure,
     record_failure,
 )
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
@@ -36,59 +33,6 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-QUERY_ENCODER_NOT_CONFIGURED = "query_encoder_not_configured"
-QUERY_ENCODER_UNAVAILABLE = "query_encoder_unavailable"
-# A tripped inference-endpoint breaker admits a trial call after this long.
-QUERY_ENCODER_RETRY_AFTER_S = math.ceil(INFERENCE_BREAKER_RESET_TIMEOUT_S)
-
-
-def _query_encoder_failure(
-    exc: Union[EncoderNotConfiguredError, EncoderUnavailableError],
-    *,
-    profile: Optional[str],
-    strategy: Optional[str],
-) -> tuple[int, Dict[str, Any], Optional[Dict[str, str]]]:
-    """Status, body and headers for a search whose query encoder failed.
-
-    Built from the failure's typed fields, never its text, which names the
-    sidecar URL. A configuration gap no retry fixes is a 500; a configured
-    encoder whose service did not serve the request is a 503 with
-    ``Retry-After``.
-    """
-    if isinstance(exc, EncoderUnavailableError):
-        cause = exc.__cause__
-        failure = type(cause if cause is not None else exc).__name__
-        where = (
-            f"inference service '{exc.service}'" if exc.service else "the local encoder"
-        )
-        retry_after = QUERY_ENCODER_RETRY_AFTER_S
-        body = {
-            "error": QUERY_ENCODER_UNAVAILABLE,
-            "dependency": "query_encoder",
-            "profile": exc.profile,
-            "strategy": strategy,
-            "service": exc.service,
-            "failure": failure,
-            "retry_after_s": retry_after,
-            "message": (
-                f"The query encoder for profile '{exc.profile}' is unavailable: "
-                f"{where} did not serve the request ({failure}). "
-                f"Retry after {retry_after}s."
-            ),
-        }
-        return 503, body, {"Retry-After": str(retry_after)}
-    body = {
-        "error": QUERY_ENCODER_NOT_CONFIGURED,
-        "dependency": "query_encoder",
-        "profile": profile,
-        "strategy": strategy,
-        "message": (
-            f"Strategy '{strategy}' needs a query encoder, and profile "
-            f"'{profile}' has none configured in this deployment."
-        ),
-    }
-    return 500, body, None
 
 
 SEARCH_DEGRADED = "search_degraded"
@@ -106,7 +50,7 @@ def _search_failure(
     """
     if isinstance(exc, (EncoderNotConfiguredError, EncoderUnavailableError)):
         record_failure(exc, "query_encoder")
-        return _query_encoder_failure(exc, profile=profile, strategy=strategy)
+        return query_encoder_failure(exc, profile=profile, strategy=strategy)
     if isinstance(exc, VespaSearchDegraded):
         # A Vespa soft-timeout / partial coverage is transient: 503, retry.
         record_failure(exc, SEARCH_DEGRADED)

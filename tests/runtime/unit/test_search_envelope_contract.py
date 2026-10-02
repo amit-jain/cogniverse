@@ -84,7 +84,7 @@ def _search_agent(config_manager, hits):
     reports runs for real, through whichever LM is bound.
     """
     with (
-        patch("cogniverse_agents.search_agent.QueryEncoderFactory"),
+        patch("cogniverse_core.query.encoders.QueryEncoderFactory"),
         patch("cogniverse_agents.search_agent.get_backend_registry"),
     ):
         agent = SearchAgent(

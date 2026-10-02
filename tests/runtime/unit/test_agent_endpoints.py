@@ -1703,6 +1703,94 @@ class TestAudioTextSearchBackendContract:
             }
         }
 
+    def _post_with_fault(self, monkeypatch, fault):
+        stub_dispatcher = MagicMock()
+        stub_dispatcher.dispatch = AsyncMock(side_effect=fault)
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        with TestClient(test_app, raise_server_exceptions=False) as client:
+            return client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": "red kayak",
+                    "context": {"tenant_id": "acme:prod", "request_id": "req-9"},
+                    "top_k": 3,
+                },
+            )
+
+    def test_process_route_maps_unconfigured_query_encoder_to_typed_500(
+        self, monkeypatch
+    ):
+        from cogniverse_core.query.encoders import EncoderNotConfiguredError
+
+        resp = self._post_with_fault(
+            monkeypatch,
+            EncoderNotConfiguredError(
+                "Profile 'frames' specifies inference_services.embedding="
+                "'vllm_colpali' but no URL is configured.",
+                profile="frames",
+            ),
+        )
+
+        assert resp.status_code == 500
+        assert resp.json() == {
+            "detail": {
+                "error": "query_encoder_not_configured",
+                "dependency": "query_encoder",
+                "profile": "frames",
+                "strategy": None,
+                "message": (
+                    "The search needs a query encoder, and profile 'frames' has "
+                    "none configured in this deployment."
+                ),
+                "agent": "search_agent",
+                "request_id": "req-9",
+            }
+        }
+        assert "retry-after" not in resp.headers
+
+    def test_process_route_maps_unavailable_query_encoder_to_typed_503(
+        self, monkeypatch
+    ):
+        import requests
+
+        from cogniverse_core.query.encoders import EncoderUnavailableError
+
+        fault = EncoderUnavailableError(
+            profile="frames",
+            service="vllm_colpali",
+            endpoint="http://cogniverse-vllm-colpali:8000",
+            detail="ConnectionError: refused",
+        )
+        fault.__cause__ = requests.ConnectionError("refused")
+        resp = self._post_with_fault(monkeypatch, fault)
+
+        assert resp.status_code == 503
+        assert resp.headers["retry-after"] == "15"
+        assert resp.json() == {
+            "detail": {
+                "error": "query_encoder_unavailable",
+                "dependency": "query_encoder",
+                "profile": "frames",
+                "strategy": None,
+                "service": "vllm_colpali",
+                "failure": "ConnectionError",
+                "retry_after_s": 15,
+                "message": (
+                    "The query encoder for profile 'frames' is unavailable: "
+                    "inference service 'vllm_colpali' did not serve the request "
+                    "(ConnectionError). Retry after 15s."
+                ),
+                "agent": "search_agent",
+                "request_id": "req-9",
+            }
+        }
+        assert "cogniverse-vllm-colpali" not in resp.text
+
     def test_process_route_maps_unreachable_pooling_sidecar_to_503(self, monkeypatch):
         """A configured sidecar that died mid-request surfaces as 503, not 500."""
         from cogniverse_foundation.config.inference_service import (

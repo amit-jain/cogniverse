@@ -28,6 +28,7 @@ import requests
 from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_core.query.encoders import encoder_outage_errors
 from cogniverse_sdk.document import (
     ALLOWED_RESULT_GRANULARITIES,
     ContentType,
@@ -59,24 +60,6 @@ _TRANSIENT_SEARCH_ERRORS = (
     TimeoutError,
     VespaError,
 )
-
-
-# An encoder failure that is a SERVICE outage rather than a config gap.
-# CircuitOpenError is included: a tripped per-endpoint breaker means the
-# service has been failing, which is an outage, not a missing setting.
-def _encoder_outage_errors():
-    from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
-    from cogniverse_foundation.config.inference_service import (
-        InferenceServiceUnavailableError,
-    )
-
-    return (
-        InferenceServiceUnavailableError,
-        CircuitOpenError,
-        requests.RequestException,
-        ConnectionError,
-        TimeoutError,
-    )
 
 
 _SEARCH_CONTENT_TYPES = {
@@ -1137,7 +1120,8 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile {profile_name!r} resolves to the "
                 f"{getattr(exc, 'service', 'embedding')!r} inference service, "
                 f"which has no configured URL and no in-process {module!r} "
-                f"backend in this image: {exc}"
+                f"backend in this image: {exc}",
+                profile=profile_name,
             )
         return EncoderUnavailableError(
             profile=profile_name,
@@ -1188,12 +1172,14 @@ class VespaSearchBackend(SearchBackend):
                 raise EncoderNotConfiguredError(
                     f"Profile {profile_name!r} declares neither 'semantic_model' "
                     f"nor 'embedding_model', so no query encoder can be built. "
-                    f"Add one to the profile or pass 'query_embeddings'."
+                    f"Add one to the profile or pass 'query_embeddings'.",
+                    profile=profile_name,
                 )
             if self._config_manager is None:
                 raise EncoderNotConfiguredError(
                     f"Profile {profile_name!r} needs a config_manager to resolve "
-                    f"its query encoder, but this backend was built without one."
+                    f"its query encoder, but this backend was built without one.",
+                    profile=profile_name,
                 )
             from cogniverse_core.query.encoders import QueryEncoderFactory
             from cogniverse_foundation.config.utils import get_config
@@ -1204,14 +1190,15 @@ class VespaSearchBackend(SearchBackend):
             )
         except (EncoderNotConfiguredError, EncoderUnavailableError):
             raise
-        except _encoder_outage_errors() as exc:
+        except encoder_outage_errors() as exc:
             raise self._encoder_fault(
                 profile_name, profile_config, tenant_id, exc
             ) from exc
         except Exception as exc:
             raise EncoderNotConfiguredError(
                 f"Profile {profile_name!r} declares a query encoder that could "
-                f"not be built: {type(exc).__name__}: {exc}"
+                f"not be built: {type(exc).__name__}: {exc}",
+                profile=profile_name,
             ) from exc
 
     def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
@@ -1568,7 +1555,7 @@ class VespaSearchBackend(SearchBackend):
                     ) as encode_span_ctx:
                         try:
                             query_embeddings = request_encoder.encode(query_text)
-                        except _encoder_outage_errors() as exc:
+                        except encoder_outage_errors() as exc:
                             raise self._encoder_fault(
                                 profile_name, profile_config, tenant_id, exc
                             ) from exc

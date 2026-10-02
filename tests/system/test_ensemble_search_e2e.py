@@ -254,7 +254,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+                "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 start_time = time.time()
@@ -358,7 +358,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+                "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 # Run multiple times to get average latency
@@ -453,7 +453,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+                "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(
@@ -543,7 +543,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+                "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
                 side_effect=mock_create_encoder,
             ):
                 result = await agent._process_impl(

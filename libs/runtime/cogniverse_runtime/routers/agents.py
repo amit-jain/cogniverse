@@ -13,6 +13,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+from cogniverse_core.query.encoders import (
+    EncoderNotConfiguredError,
+    EncoderUnavailableError,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.inference_service import (
     InferenceServiceUnavailableError,
@@ -20,7 +24,11 @@ from cogniverse_foundation.config.inference_service import (
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import (
+    failure_response,
+    query_encoder_failure,
+    record_failure,
+)
 from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_runtime.messaging import (
     InboundMessage,
@@ -583,6 +591,18 @@ async def process_agent_task(
                 context=dispatch_context,
                 top_k=task.top_k,
             )
+    except (EncoderNotConfiguredError, EncoderUnavailableError) as e:
+        # Checked before ValueError: a missing encoder setting is not the
+        # caller's bad input, and its text names the sidecar URL.
+        record_failure(e, "query_encoder")
+        status, body, headers = query_encoder_failure(
+            e,
+            profile=None,
+            strategy=None,
+            agent=agent_name,
+            request_id=dispatch_context["request_id"],
+        )
+        raise HTTPException(status_code=status, detail=body, headers=headers)
     except VespaSearchDegraded as e:
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.

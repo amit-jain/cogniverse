@@ -1376,7 +1376,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory"
+            "cogniverse_core.query.encoders.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
@@ -1451,7 +1451,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory"
+            "cogniverse_core.query.encoders.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
