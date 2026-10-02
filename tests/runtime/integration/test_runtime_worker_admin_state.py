@@ -459,10 +459,15 @@ class TestTenantDeleteAcrossWorkers:
         assert refused == (
             410,
             {
-                "detail": (
-                    f"Tenant '{tenant}' has been deleted; its schemas and "
-                    "memories are not written until the tenant is created again"
-                )
+                "detail": {
+                    "error": "tenant_deleted",
+                    "message": f"Tenant '{tenant}' has been deleted; its schemas "
+                    "and memories are not written until the tenant is created "
+                    "again.",
+                    "failure": "TenantDeletedError",
+                    "tenant_id": tenant,
+                    "profile_name": "video_colpali_smol500_mv_frame",
+                }
             },
         )
         assert _tenant_schemas_in_vespa(vespa_instance["config_port"], tenant) == []

@@ -909,10 +909,14 @@ async def test_deploy_for_a_deleted_tenant_is_410_and_deploys_nothing(env):
 
     assert resp.status_code == 410
     assert resp.json() == {
-        "detail": (
-            "Tenant 'acme:acme' has been deleted; its schemas and memories are "
-            "not written until the tenant is created again"
-        )
+        "detail": {
+            "error": "tenant_deleted",
+            "message": "Tenant 'acme:acme' has been deleted; its schemas and "
+            "memories are not written until the tenant is created again.",
+            "failure": "TenantDeletedError",
+            "tenant_id": "acme:acme",
+            "profile_name": "video_prism",
+        }
     }
     assert env.backend.deploy_calls == []
     assert env.registry.calls == []

@@ -864,7 +864,7 @@ async def deploy_profile_schema(
             )
 
         except TenantDeletedError as e:
-            raise HTTPException(status_code=410, detail=str(e)) from e
+            raise _tenant_deleted(e, profile_name) from e
         except Exception as e:
             logger.error(f"Schema deployment failed: {e}")
             return SchemaDeploymentResponse(
@@ -880,7 +880,7 @@ async def deploy_profile_schema(
     except HTTPException:
         raise
     except TenantDeletedError as e:
-        raise HTTPException(status_code=410, detail=str(e)) from e
+        raise _tenant_deleted(e, profile_name) from e
     except Exception as e:
         raise failure_response(
             500,
@@ -1469,8 +1469,13 @@ async def admin_close_session(session_id: str):
             timeout_s=SESSION_CLOSE_ACK_TIMEOUT_S,
         )
     except ClusterEventError as exc:
-        raise HTTPException(
-            status_code=503, detail=f"session {session_id} close incomplete: {exc}"
+        raise failure_response(
+            503,
+            "session_close_incomplete",
+            f"Session {session_id} was not closed on every runtime worker; retry "
+            "the close.",
+            exc,
+            session_id=session_id,
         ) from exc
 
     per_tenant: Dict[str, Dict[str, int]] = {}
@@ -2523,6 +2528,19 @@ class HarnessKeyCreateRequest(BaseModel):
 
         validate_tenant_id(value)
         return value
+
+
+def _tenant_deleted(exc: TenantDeletedError, profile_name: str) -> HTTPException:
+    """410 for a schema deploy of a tenant marked deleted."""
+    return failure_response(
+        410,
+        "tenant_deleted",
+        f"Tenant '{exc.tenant_id}' has been deleted; its schemas and memories "
+        "are not written until the tenant is created again.",
+        exc,
+        tenant_id=exc.tenant_id,
+        profile_name=profile_name,
+    )
 
 
 def _store_unavailable(store: str, exc: Exception, tenant_id: str):

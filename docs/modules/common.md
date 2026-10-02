@@ -942,7 +942,7 @@ Beyond the four functions above, `tenant_utils` exports:
 | `mark_tenant_deleted(store, tenant_id)` | function | Writes the tenant's deletion marker (an immutable config record: `SYSTEM_TENANT_ID`, `ConfigScope.SYSTEM`, service `tenant_deletions`, key the canonical tenant id). Idempotent. The tenant delete writes it before dropping anything. |
 | `tenant_is_deleted(store, tenant_id)` / `raise_if_tenant_deleted(store, tenant_id)` | functions | Read the marker from the store now (one document point read); the second raises `TenantDeletedError`. A store outage raises rather than reading as "not deleted". `SchemaRegistry.deploy_schemas` checks it before deciding and again under the deploy lease before activating, and `Mem0MemoryManager.add_memory` / `update_memory` / `restore_archived_memory` check it before writing, so no process recreates a deleted tenant's schemas or memories. |
 | `clear_tenant_deleted(store, tenant_id)` | function | Removes the marker; tenant create calls it before deploying the tenant's schemas. Returns `False` when the tenant was not marked. |
-| `TenantDeletedError` | exception | A write or schema deploy for a tenant marked deleted; the admin deploy route answers it with 410. |
+| `TenantDeletedError` | exception | A write or schema deploy for a tenant marked deleted; the admin deploy route answers it with 410 `tenant_deleted`. |
 
 ```python
 from dataclasses import dataclass

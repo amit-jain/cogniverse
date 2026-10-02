@@ -1162,10 +1162,13 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             mark_tenant_deleted, config_manager.store, canonical_tid
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"tenant {canonical_tid} not deleted: deletion marker store "
-            f"unavailable: {exc}",
+        raise failure_response(
+            503,
+            "tenant_delete_marker_unavailable",
+            f"Tenant {canonical_tid} was not deleted: the deletion marker store "
+            "did not answer; retry the delete.",
+            exc,
+            tenant_id=canonical_tid,
         ) from exc
     # Every worker releases what it holds for the tenant (cached agents, warm
     # memory managers, queued memory writes) before anything is dropped. A
@@ -1178,11 +1181,14 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             timeout_s=TENANT_DELETE_ACK_TIMEOUT_S,
         )
     except ClusterEventError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"tenant {canonical_tid} is marked deleted and its writes are "
-            f"refused, but not every runtime worker released it ({exc}); retry "
-            "the delete",
+        raise failure_response(
+            503,
+            "tenant_delete_incomplete",
+            f"Tenant {canonical_tid} is marked deleted and its writes are "
+            "refused, but not every runtime worker released it; retry the "
+            "delete.",
+            exc,
+            tenant_id=canonical_tid,
         ) from exc
 
     with metadata_backend() as backend:

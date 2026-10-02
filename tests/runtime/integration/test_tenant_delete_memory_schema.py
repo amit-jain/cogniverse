@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import multiprocessing
 import os
 import socket
@@ -938,8 +939,9 @@ async def test_a_delete_on_one_process_refuses_another_processs_queued_and_new_w
 
 @pytest.mark.asyncio
 async def test_a_delete_whose_marker_cannot_be_written_changes_nothing(
-    wired_tenant_manager, vespa_instance, monkeypatch
+    wired_tenant_manager, vespa_instance, monkeypatch, caplog
 ):
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
     from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
     from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 
@@ -958,10 +960,21 @@ async def test_a_delete_whose_marker_cannot_be_written_changes_nothing(
             await tm.delete_tenant_internal(tenant_id)
 
     assert caught.value.status_code == 503
-    assert caught.value.detail == (
-        f"tenant {tenant_id} not deleted: deletion marker store unavailable: "
+    assert caught.value.detail == {
+        "error": "tenant_delete_marker_unavailable",
+        "message": f"Tenant {tenant_id} was not deleted: the deletion marker "
+        "store did not answer; retry the delete.",
+        "failure": "ConfigStoreUnavailableError",
+        "tenant_id": tenant_id,
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ] == [
+        "tenant_delete_marker_unavailable: ConfigStoreUnavailableError: "
         "config store did not answer"
-    )
+    ]
     # Nothing was released or dropped: no worker was told.
     assert held.get(tenant_id) == "gateway-agent"
     assert tenant_is_deleted(store, tenant_id) is False
@@ -974,12 +987,13 @@ async def test_a_delete_whose_marker_cannot_be_written_changes_nothing(
 
 @pytest.mark.asyncio
 async def test_a_delete_no_worker_could_confirm_keeps_the_tenant_and_refuses_its_writes(
-    wired_tenant_manager, vespa_instance, owned_redis
+    wired_tenant_manager, vespa_instance, owned_redis, caplog
 ):
     """With the channel down the delete reports 503, not success: the tenant
     is marked, so every process already refuses its writes, its schemas and
     record stay for the retry, and the retry completes once the channel is
     back."""
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
     tenant_id = _unique_tenant()
     await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
     events = ClusterEvents(
@@ -1009,12 +1023,22 @@ async def test_a_delete_no_worker_could_confirm_keeps_the_tenant_and_refuses_its
         )
 
     assert caught.value.status_code == 503
-    assert caught.value.detail.startswith(
-        f"tenant {tenant_id} is marked deleted and its writes are refused, but "
-        "not every runtime worker released it (cluster events: cannot publish "
-        "'tenant_deleted': "
-    )
-    assert caught.value.detail.endswith("); retry the delete")
+    assert caught.value.detail == {
+        "error": "tenant_delete_incomplete",
+        "message": f"Tenant {tenant_id} is marked deleted and its writes are "
+        "refused, but not every runtime worker released it; retry the delete.",
+        "failure": "ClusterEventUnavailable",
+        "tenant_id": tenant_id,
+    }
+    [logged] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ]
+    assert logged.startswith(
+        "tenant_delete_incomplete: ClusterEventUnavailable: cluster events: "
+        "cannot publish 'tenant_deleted': "
+    ), logged
     store = tm._config_manager.store
     assert tenant_is_deleted(store, tenant_id) is True
     assert _deployed_for(tenant_id) == sorted(_schema_names(tenant_id))

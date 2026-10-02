@@ -9,6 +9,7 @@ makes against it plus the exact response body.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -869,8 +870,12 @@ class TestSessionRoutes:
         assert resp.status_code == 503
         assert resp.json() == {"detail": "session close: cluster events are not wired"}
 
-    def test_close_session_a_worker_did_not_confirm_is_503(self, client, monkeypatch):
+    def test_close_session_a_worker_did_not_confirm_is_503(
+        self, client, monkeypatch, caplog
+    ):
         from cogniverse_runtime.cluster_events import ClusterEventIncomplete
+
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
 
         class _OneWorkerSilent:
             async def publish(self, kind, payload, *, timeout_s):
@@ -884,9 +889,22 @@ class TestSessionRoutes:
 
         assert resp.status_code == 503
         assert resp.json() == {
-            "detail": "session sess-9 close incomplete: 1 of 2 workers handled "
-            "'session_closed'; 1 did not answer"
+            "detail": {
+                "error": "session_close_incomplete",
+                "message": "Session sess-9 was not closed on every runtime "
+                "worker; retry the close.",
+                "failure": "ClusterEventIncomplete",
+                "session_id": "sess-9",
+            }
         }
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "session_close_incomplete: ClusterEventIncomplete: 1 of 2 workers "
+            "handled 'session_closed'; 1 did not answer"
+        ]
 
 
 @pytest.mark.unit
