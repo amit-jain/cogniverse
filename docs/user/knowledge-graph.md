@@ -134,7 +134,7 @@ Every node, regardless of whether it came from code or docs, has the same shape:
 | `embedding` | `tensor<bfloat16>(token{}, v[128])` | ColBERT multi-vector (LateOn 128-dim per token, `colbert_pylate` sidecar) of `name + description` |
 | `embedding_binary` | `tensor<int8>(token{}, v[16])` | 1-bit-packed copy of `embedding` for the hamming pre-filter stage |
 
-Search ranks nodes with `hybrid_binary_bm25`: hamming distance on `embedding_binary` narrows candidates, then a full bfloat16 MaxSim rerank on `embedding` combines with BM25 over `name`/`description`.
+Search ranks the nodes matching the query text with `hybrid_binary_bm25`: binary MaxSim on `embedding_binary` (`1 - 2h/128` per query token, averaged over the query tokens) plus `nativeRank` over `name`/`description`.
 
 The `node_id` is deterministic: "SearchAgent" and "searchagent" normalize to the same id, so the same symbol extracted from different files is a single node with merged `mentions`.
 

@@ -39,10 +39,13 @@ def generate_unique_ports(
     failure. ``http_port`` stays in ``[base_http_port, 54544]`` so the derived
     ``config_port`` stays under 65535.
 
-    Callers invoke this once and cache the result; there is no
-    same-port-on-retry guarantee. Falls back to a deterministic
+    The probe releases the ports before returning, so another process can
+    take them before a container binds them: start containers through
+    :func:`start_docker_container_with_port_retry`, which allocates when the
+    container starts and retries a bind conflict on a fresh pair, rather than
+    caching a pair ahead of time. Falls back to a deterministic
     module_name+PID hash if no free pair is found after probing (e.g. a
-    sandbox where bind probing is unreliable), preserving the old behaviour.
+    sandbox where bind probing is unreliable).
 
     Args:
         module_name: Test module name (e.g., __name__ from the test file)
@@ -81,8 +84,9 @@ def start_docker_container_with_port_retry(
 
     Port probing and ``docker run`` cannot be atomic: another process may bind
     a candidate after :func:`generate_unique_ports` releases its probe socket.
-    Only Docker's allocation-conflict errors are retried. Invalid options,
-    missing images, and daemon failures raise immediately with their stderr.
+    A failed start removes the container it created. Only Docker's
+    allocation-conflict errors are retried; invalid options, missing images,
+    and daemon failures raise immediately with their stderr.
     """
     import os
     import threading
@@ -127,18 +131,19 @@ def start_docker_container_with_port_retry(
             return container_name, http_port, config_port
 
         last_error = " ".join(result.stderr.split())
-        if not any(marker in last_error.lower() for marker in allocation_markers):
-            raise RuntimeError(
-                f"Docker container {container_name} failed on attempt "
-                f"{attempt}/{max_attempts}: {last_error}"
-            )
-
+        # Docker creates the container before binding its ports or devices,
+        # so a failed start can leave it behind.
         subprocess.run(
             ["docker", "rm", "-f", container_name],
             capture_output=True,
             text=True,
             timeout=30,
         )
+        if not any(marker in last_error.lower() for marker in allocation_markers):
+            raise RuntimeError(
+                f"Docker container {container_name} failed on attempt "
+                f"{attempt}/{max_attempts}: {last_error}"
+            )
 
     raise RuntimeError(
         f"Docker container allocation failed after {max_attempts} attempts: "

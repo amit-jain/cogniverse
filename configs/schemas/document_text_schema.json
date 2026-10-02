@@ -288,18 +288,14 @@
       "functions": [
         {
           "name": "colbert_sim",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+          "expression": "reduce(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), avg, querytoken)"
         },
         {
           "name": "text_score",
-          "expression": "bm25(document_title) + bm25(full_text) + bm25(section_headings)"
+          "expression": "nativeRank(document_title, full_text, section_headings)"
         }
       ],
-      "first_phase": "colbert_sim",
-      "second_phase": {
-        "expression": "text_score",
-        "rerank_count": 100
-      },
+      "first_phase": "colbert_sim + text_score",
       "timeout": 2.0
     },
     {
@@ -313,18 +309,14 @@
       "functions": [
         {
           "name": "colbert_sim",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+          "expression": "reduce(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, token) / 128, avg, querytoken)"
         },
         {
           "name": "text_score",
-          "expression": "bm25(document_title) + bm25(full_text) + bm25(section_headings)"
+          "expression": "nativeRank(document_title, full_text, section_headings)"
         }
       ],
-      "first_phase": "colbert_sim",
-      "second_phase": {
-        "expression": "text_score",
-        "rerank_count": 100
-      },
+      "first_phase": "colbert_sim + text_score",
       "timeout": 2.0
     }
   ],

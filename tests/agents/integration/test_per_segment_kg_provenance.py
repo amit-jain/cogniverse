@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -42,7 +41,6 @@ from tests.fixtures.llm import (
     resolve_base_url,
     resolve_prefixed_model,
 )
-from tests.utils.docker_utils import generate_unique_ports  # noqa: F401
 from tests.utils.vespa_test_helpers import schema_full_name
 
 
@@ -292,12 +290,6 @@ def graph_vespa(shared_memory_vespa):
         "http_port": http_port,
         "config_port": shared_memory_vespa["config_port"],
     }
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture(scope="module")

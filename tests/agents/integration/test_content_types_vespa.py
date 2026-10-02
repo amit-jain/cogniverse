@@ -14,6 +14,8 @@ import pytest
 
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
+from tests.utils.docker_utils import start_docker_container_with_port_retry
+from tests.utils.vllm_sidecar import OWNER_LABEL
 
 pytestmark = pytest.mark.integration
 
@@ -54,26 +56,13 @@ def tomoro_client(vllm_sidecar):
 @pytest.fixture(scope="module")
 def test_vespa_manager():
     """
-    Setup test Vespa Docker instance on port 8082 (different from main Vespa)
+    Setup a test Vespa Docker instance on freshly allocated ports.
 
     Automatically starts test Vespa before tests and cleans up after.
     """
     print("\n" + "=" * 80)
     print("Setting up Content Types Test Vespa Instance")
     print("=" * 80)
-
-    # Configuration
-    test_port = 8082
-    config_port = 19073  # Config server port
-    container_name = f"vespa-content-types-test-{test_port}"
-
-    # Step 1: Stop and remove existing test container
-    print(f"\n🧹 Cleaning up any existing test container '{container_name}'...")
-    subprocess.run(["docker", "stop", container_name], capture_output=True)
-    subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-    # Step 2: Start test Vespa Docker
-    print(f"\n🚀 Starting test Vespa container on port {test_port}...")
 
     import platform
 
@@ -82,35 +71,21 @@ def test_vespa_manager():
         "linux/arm64" if machine in ["arm64", "aarch64"] else "linux/amd64"
     )
 
-    docker_result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
+    container_name, test_port, config_port = start_docker_container_with_port_retry(
+        __name__,
+        name_prefix="vespa-content-types-test",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=[
             "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{test_port}:8080",
-            "-p",
-            f"{config_port}:19071",
+            f"{OWNER_LABEL}={os.getpid()}",
             "--platform",
             docker_platform,
-            "vespaengine/vespa:8.668.5",
         ],
-        capture_output=True,
-        timeout=60,
     )
-
-    if docker_result.returncode != 0:
-        pytest.fail(
-            f"Failed to start Docker container: {docker_result.stderr.decode()}"
-        )
-
     print(f"✅ Container '{container_name}' started")
 
-    # Step 3: Wait for Vespa to be ready
+    # Wait for Vespa to be ready
     print(f"\n⏳ Waiting for Vespa config server on port {config_port}...")
     import requests
 

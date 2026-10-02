@@ -291,18 +291,14 @@
       "functions": [
         {
           "name": "semantic_sim",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v)), max, token), querytoken)"
+          "expression": "reduce(1 - 2 * reduce(sum(hamming(query(qtb), attribute(semantic_embedding_binary)), v), min, token) / 128, avg, querytoken)"
         },
         {
           "name": "text_score",
-          "expression": "bm25(audio_title) + bm25(audio_transcript)"
+          "expression": "nativeRank(audio_title, audio_transcript)"
         }
       ],
-      "first_phase": "semantic_sim",
-      "second_phase": {
-        "expression": "text_score",
-        "rerank_count": 100
-      },
+      "first_phase": "semantic_sim + text_score",
       "timeout": 2.0
     },
     {

@@ -254,14 +254,10 @@
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title)"
+          "expression": "nativeRank(video_title)"
         }
       ],
-      "first_phase": "visual_sim",
-      "second_phase": {
-        "expression": "text_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim + text_sim",
       "timeout": 2.0
     },
     {

@@ -1783,11 +1783,32 @@ phase reranks the top 100 segments by float MaxSim (`max_sim`). The ColQwen3
 `image_colpali_mv` and `document_visual` schemas rank `default` by
 `max_sim_hamming` alone.
 
-> **Where a strategy's phase order lives.** The two-phase ranking
-> (`first_phase` / `second_phase`) that defines a strategy's actual behavior is
+The visual-first hybrids (`hybrid_float_bm25`, `hybrid_binary_bm25`, their
+`_no_description` variants, and `hybrid_semantic_bm25` on `audio_content`)
+rank every document in one phase by a visual score plus a text score:
+
+- visual: MaxSim averaged over the query tokens, so query length does not
+  scale it. Each query token contributes its dot product with its best stored
+  vector (float), or `1 - 2h/bits` with `h` the Hamming distance to its
+  nearest stored vector (binary);
+- text: `nativeRank` over the profile's text fields, between 0 and 1.
+
+For them `VespaSearchBackend` matches every document with
+`rank(true, {grammar: "any"}userInput(@userQuery))`: the query terms only rank,
+a document without a text match keeps its visual score, and each document's
+text match counts in full. On the single-vector `video_xclip_sv_chunk_6s`
+schema, `hybrid_float_bm25` adds `closeness` to `nativeRank`. Every hybrid
+that retrieves through `nearestNeighbor` matches
+`({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`: the nearest
+neighbours and every document holding a query term are candidates, each with
+its full text features. The text-first `hybrid_bm25_*` profiles retrieve by
+text, rank by BM25 and rerank the top 100 by visual similarity.
+
+> **Where a strategy's phase order lives.** The ranking phases
+> (`first_phase` / `second_phase`) that define a strategy's actual behavior are
 > authoritative in the schema's `rank_profiles` (the schema JSON). By naming
-> convention `hybrid_binary_bm25*` ranks the binary visual phase first and
-> `hybrid_bm25_binary*` ranks the text/BM25 phase first.
+> convention `hybrid_binary_bm25*` ranks by binary visual similarity plus text
+> in one phase and `hybrid_bm25_binary*` ranks the text/BM25 phase first.
 > `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
 > phase-agnostic metadata (which embeddings/tensors each strategy needs) —
 > `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,
@@ -3068,6 +3089,7 @@ print(strategy.needs_float_embeddings)  # True
 print(strategy.needs_binary_embeddings) # False
 print(strategy.needs_text_query)        # True
 print(strategy.use_nearestneighbor)     # False (patch-based schema; True for global schemas)
+print(strategy.first_phase_embedding_field)  # "embedding"
 print(strategy.inputs)                  # {"qt": "tensor<float>(...)"}
 print(strategy.query_tensors_needed)    # ["qt"]
 ```
@@ -3078,6 +3100,7 @@ print(strategy.query_tensors_needed)    # ["qt"]
 - **needs_float_embeddings**: Input types contain "float"
 - **needs_binary_embeddings**: Input types contain "int8"
 - **use_nearestneighbor**: Global schemas + visual strategies
+- **first_phase_embedding_field**: The tensor field a visual or hybrid strategy's first phase scores, resolved through profile functions; a text-seeking strategy that has one matches every document and ranks by the query terms
 
 ---
 

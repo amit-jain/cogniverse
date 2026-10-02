@@ -230,7 +230,11 @@ flowchart TD
   - Patch models: Use tensor ranking
 
 - **Hybrid** (hybrid_binary_bm25):
-  - Combines `userInput` for text with embeddings
+  - Visual-first hybrids on patch/token models match every document with
+    `rank(true, {grammar: "any"}userInput(@userQuery))` and rank by visual
+    MaxSim plus `nativeRank` of the text fields
+  - Text-first hybrids (`hybrid_bm25_*`) match `userInput` and rerank by
+    embeddings
 
 - **Text-Only** (bm25_only):
   - Only uses `userInput`, no embeddings needed
@@ -258,8 +262,8 @@ flowchart TD
 | float_float | - | ✓ | - | ✓* | Pure visual, float embeddings |
 | binary_binary | - | - | ✓ | ✓* | Pure visual, binary embeddings |
 | float_binary | - | ✓/✓ | ✓/✓ | ✓* | Float primary, binary fallback |
-| hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Text + float embeddings, visual-similarity-first ranking |
-| hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Text + binary embeddings, visual-similarity-first ranking |
+| hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Float MaxSim plus text `nativeRank` in one phase over every document |
+| hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Binary MaxSim plus text `nativeRank` in one phase over every document |
 | hybrid_bm25_float | ✓ | ✓ | - | - | Same fields as hybrid_float_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
 | hybrid_bm25_binary | ✓ | - | ✓ | - | Same fields as hybrid_binary_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
 | phased | ✓ | ✓ | ✓ | ✓* | Two-phase: binary → float |
@@ -714,10 +718,18 @@ if strategy_info.use_nearestneighbor:
     # Global embedding - use nearestNeighbor
     field = strategy_info.nearestneighbor_field  # "embedding" or "embedding_binary"
     tensor = strategy_info.nearestneighbor_tensor  # "qt" or "qtb"
-    yql = f"where ({{targetHits:100}}nearestNeighbor({field}, {tensor}))"
+    nearest_neighbor = f"({{targetHits:100}}nearestNeighbor({field}, {tensor}))"
+    if strategy_info.needs_text_query:
+        # Hybrid - the nearest neighbours plus every document with a query term
+        yql = f'where ({{grammar: "any"}}userInput(@userQuery)) OR {nearest_neighbor}'
+    else:
+        yql = f"where {nearest_neighbor}"
 elif strategy_info.strategy_type.value == "pure_visual":
     # Patch embedding - use tensor ranking expression
     yql = "where true"  # Ranking handled by first-phase expression
+elif strategy_info.first_phase_embedding_field:
+    # Visual-first hybrid - every document, query terms only rank
+    yql = 'where rank(true, {grammar: "any"}userInput(@userQuery))'
 else:
     # Text search
     yql = "where userInput(@userQuery)"

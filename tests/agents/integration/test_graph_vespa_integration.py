@@ -7,7 +7,6 @@ extract → upsert → query round-trip against real multi-vector embeddings.
 """
 
 import json
-import socket
 import tempfile
 import threading
 import time
@@ -24,7 +23,6 @@ from cogniverse_agents.graph.graph_schema import (
     Node,
     normalize_name,
 )
-from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.vespa_test_helpers import schema_full_name
 
 
@@ -49,9 +47,6 @@ TENANT_ID = "test_tenant"
 # deploys (see deploy_tenant_schema → deploy_schema), which canonicalizes the
 # tenant id and so double-suffixes: knowledge_graph_test_tenant_test_tenant.
 GRAPH_SCHEMA = schema_full_name("knowledge_graph", TENANT_ID)
-CONTAINER_NAME = "vespa-graph-integration-tests"
-
-_HTTP_PORT, _CONFIG_PORT = generate_unique_ports(__name__)
 
 
 def _doc_url(port: int, doc_id: str) -> str:
@@ -176,12 +171,6 @@ def graph_vespa(shared_memory_vespa):
     }
     # No teardown — shared_vespa owns the container; the deployed
     # knowledge_graph_test_tenant schema stays around until session end.
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture(scope="module")

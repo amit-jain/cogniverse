@@ -59,6 +59,7 @@ class RankingStrategyInfo:
     use_nearestneighbor: bool = False
     nearestneighbor_field: Optional[str] = None
     nearestneighbor_tensor: Optional[str] = None
+    first_phase_embedding_field: Optional[str] = None
     embedding_field: Optional[str] = None
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
@@ -152,12 +153,15 @@ class RankingStrategyExtractor:
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
+        first_phase_embedding_field = None
 
         if strategy_type in [
             SearchStrategyType.PURE_VISUAL,
             SearchStrategyType.HYBRID,
         ]:
             ann_field = self._first_phase_embedding_field(profile)
+            if fields.get(ann_field, {}).get("type", "").startswith("tensor"):
+                first_phase_embedding_field = ann_field
             cell = (
                 _dense_cell_type(fields.get(ann_field, {}).get("type", ""))
                 if ann_field
@@ -211,6 +215,7 @@ class RankingStrategyExtractor:
             use_nearestneighbor=use_nearestneighbor,
             nearestneighbor_field=nearestneighbor_field,
             nearestneighbor_tensor=nearestneighbor_tensor,
+            first_phase_embedding_field=first_phase_embedding_field,
             embedding_field=embedding_field,
             query_tensor_name=query_tensor_name,
             timeout=profile.get("timeout", 2.0),
@@ -422,6 +427,7 @@ def save_ranking_strategies(
                 "use_nearestneighbor": strategy_info.use_nearestneighbor,
                 "nearestneighbor_field": strategy_info.nearestneighbor_field,
                 "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
+                "first_phase_embedding_field": strategy_info.first_phase_embedding_field,
                 "embedding_field": strategy_info.embedding_field,
                 "query_tensor_name": strategy_info.query_tensor_name,
                 "timeout": strategy_info.timeout,

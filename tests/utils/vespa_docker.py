@@ -9,14 +9,16 @@ Consolidates duplicate code from:
 import logging
 import os
 import platform
-import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
 import requests
 
 from tests.utils.async_polling import wait_for_vespa_indexing
-from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
+from tests.utils.docker_utils import (
+    cleanup_vespa_container,
+    start_docker_container_with_port_retry,
+)
 from tests.utils.vllm_sidecar import OWNER_LABEL
 
 logger = logging.getLogger(__name__)
@@ -30,115 +32,78 @@ class VespaDockerManager:
         self.http_port: Optional[int] = None
         self.config_port: Optional[int] = None
 
-    def start_container(
-        self,
-        module_name: str,
-        use_module_ports: bool = True,
-        http_port: int = None,
-        config_port: int = None,
-    ) -> Dict[str, any]:
+    def start_container(self, module_name: str) -> Dict[str, any]:
         """
-        Start isolated Vespa Docker container with unique ports.
+        Start an isolated Vespa Docker container on freshly allocated ports.
+
+        The host ports are chosen when the container starts and a bind
+        conflict (another process took a candidate between probing and
+        ``docker run``) is retried on a fresh pair. Each container gets a
+        name unique to this process, thread and port, so starting one never
+        touches a container another test or session owns.
 
         Args:
-            module_name: Test module name (used for port generation and container naming)
-            use_module_ports: If True, generate ports based on module name hash.
-                            If False, use sequential ports (8081, 19072)
-            http_port: Explicit HTTP port to use (overrides use_module_ports)
-            config_port: Explicit config port to use (overrides use_module_ports)
+            module_name: Test module name, used to seed port allocation
 
         Returns:
             dict: Container info with keys:
                 - container_name: Docker container name
                 - http_port: Vespa HTTP port
-                - config_port: Vespa config server port
+                - config_port: Vespa config server port (``http_port + 10991``)
                 - base_url: Full HTTP URL
 
         Raises:
-            RuntimeError: If container fails to start
+            RuntimeError: If the container fails to start
         """
-        # Always derive ports from the ephemeral range via generate_unique_ports
-        # unless the caller passed both explicitly. Never default to a fixed
-        # port like 8081 — that collides with anything else running on the host.
-        if http_port is None or config_port is None:
-            http_port, config_port = generate_unique_ports(module_name)
-
-        container_name = f"vespa-test-{http_port}"
-
-        logger.info(
-            f"Starting Vespa container '{container_name}' (HTTP={http_port}, Config={config_port})"
-        )
-
-        # Stop and remove existing container if exists
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-        # Detect platform
         machine = platform.machine().lower()
         if machine in ["arm64", "aarch64"]:
             docker_platform = "linux/arm64"
-            logger.info(f"Using ARM64 platform for {machine} architecture")
         else:
             docker_platform = "linux/amd64"
-            logger.info(f"Using AMD64 platform for {machine} architecture")
 
-        # Start Vespa Docker container
         try:
-            docker_result = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "-d",
-                    "--name",
-                    container_name,
-                    # Owner label so a SIGKILLed session's container gets
-                    # reaped by the next run's reap_dead_owner_containers().
-                    "--label",
-                    f"{OWNER_LABEL}={os.getpid()}",
-                    "-p",
-                    f"{http_port}:8080",  # Map container 8080 to test port
-                    "-p",
-                    f"{config_port}:19071",  # Map config server port
-                    "--platform",
-                    docker_platform,
-                    # Per-test transient Vespa — make this more attractive
-                    # to the kernel OOM-killer than the session-scoped
-                    # ``backend-memory-tests-*`` container (which sets
-                    # oom-score-adj=-1000). Losing a transient one fails
-                    # its own test but doesn't cascade across the sweep.
-                    "--oom-score-adj=300",
-                    "--tmpfs",
-                    "/opt/vespa/var/db/vespa/search:rw,size=8g,uid=1000,gid=1000,mode=0755",
-                    "vespaengine/vespa:8.668.5",
-                ],
-                capture_output=True,
-                timeout=60,
-            )
-
-            if docker_result.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to start Docker container: {docker_result.stderr.decode()}"
+            container_name, http_port, config_port = (
+                start_docker_container_with_port_retry(
+                    module_name,
+                    name_prefix="vespa-test",
+                    image="vespaengine/vespa:8.668.5",
+                    container_ports=(8080, 19071),
+                    extra_run_args=[
+                        # Owner label so a SIGKILLed session's container gets
+                        # reaped by the next run's reap_dead_owner_containers().
+                        "--label",
+                        f"{OWNER_LABEL}={os.getpid()}",
+                        "--platform",
+                        docker_platform,
+                        # Per-test transient Vespa — make this more attractive
+                        # to the kernel OOM-killer than the session-scoped
+                        # ``backend-memory-tests-*`` container (which sets
+                        # oom-score-adj=-1000). Losing a transient one fails
+                        # its own test but doesn't cascade across the sweep.
+                        "--oom-score-adj=300",
+                        "--tmpfs",
+                        "/opt/vespa/var/db/vespa/search:rw,size=8g,uid=1000,gid=1000,mode=0755",
+                    ],
                 )
-
-            logger.info(f"✅ Vespa Docker container '{container_name}' started")
-
-            # Store container info
-            self.container_name = container_name
-            self.http_port = http_port
-            self.config_port = config_port
-
-            return {
-                "container_name": container_name,
-                "http_port": http_port,
-                "config_port": config_port,
-                "base_url": f"http://localhost:{http_port}",
-            }
-
-        except Exception as e:
-            # Cleanup on failure
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
+            )
+        except RuntimeError as e:
             raise RuntimeError(f"Failed to start Vespa container: {e}") from e
+
+        logger.info(
+            f"✅ Vespa Docker container '{container_name}' started "
+            f"(HTTP={http_port}, Config={config_port})"
+        )
+
+        self.container_name = container_name
+        self.http_port = http_port
+        self.config_port = config_port
+
+        return {
+            "container_name": container_name,
+            "http_port": http_port,
+            "config_port": config_port,
+            "base_url": f"http://localhost:{http_port}",
+        }
 
     def wait_for_config_ready(self, container_info: Dict[str, any], timeout: int = 120):
         """

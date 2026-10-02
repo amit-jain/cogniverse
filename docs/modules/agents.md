@@ -2579,7 +2579,7 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 - `semantic` - Default. ColBERT (`phased_semantic`) over transcript text
 - `transcript` - Lexical BM25 (`transcript_search`) over `audio_title` and `audio_transcript`
-- `hybrid` - BM25 recall re-ranked with ColBERT (`hybrid_semantic_bm25`)
+- `hybrid` - Every clip ranked by ColBERT binary MaxSim plus `nativeRank` of `audio_title` and `audio_transcript` (`hybrid_semantic_bm25`)
 - `acoustic` - CLAP text-to-audio similarity over `acoustic_embedding`
 
 Text modes go through the shared search backend with `type="audio"`; the

@@ -124,7 +124,7 @@ class TestVespaBackendIngestion:
         Note: This fixture ONLY starts the container. Schema deployment happens
         automatically when VideoIngestionPipeline creates backends via BackendRegistry.
         """
-        manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
+        manager = VespaTestManager(app_name="test-ingestion")
 
         try:
             # Start Vespa container (no schema deployment)

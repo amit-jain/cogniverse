@@ -53,15 +53,15 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 
 ### Hybrid Search (Text + Visual)
 **Strategy**: `hybrid_float_bm25`
-- **Purpose**: Best overall accuracy
-- **Method**: Float embedding first phase, BM25 reranking
+- **Purpose**: Visual and text relevance together
+- **Method**: One phase over every document: float MaxSim averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings
 - **Speed**: Slow
 - **Use Case**: Complex queries with both visual and text components
 
 **Strategy**: `hybrid_binary_bm25`
 - **Purpose**: Fast hybrid search
-- **Method**: Binary embedding first phase, BM25 reranking
+- **Method**: One phase over every document: binary MaxSim (`1 - 2h/bits` per query token) averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings (binary)
 - **Speed**: Fast
 - **Use Case**: Fast hybrid search for visual+text queries
@@ -83,14 +83,14 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 ### No-Description Variants (ColPali/ColQwen schemas only)
 **Strategy**: `hybrid_float_bm25_no_description`
 - **Purpose**: Hybrid search excluding frame descriptions
-- **Method**: Float embedding + BM25 on video_title and audio_transcript only
+- **Method**: As `hybrid_float_bm25`, with `nativeRank` of video_title and audio_transcript only
 - **Requirements**: Text query + visual embeddings
 - **Speed**: Slow
 - **Use Case**: When frame descriptions are unreliable
 
 **Strategy**: `hybrid_binary_bm25_no_description`
 - **Purpose**: Fast hybrid without descriptions
-- **Method**: Binary embedding + BM25 on title and transcript only
+- **Method**: As `hybrid_binary_bm25`, with `nativeRank` of title and transcript only
 - **Requirements**: Text query + visual embeddings (binary)
 - **Speed**: Fast
 - **Use Case**: Fast hybrid without frame descriptions
@@ -170,7 +170,7 @@ All BM25 strategies use fieldsets to search across:
 ### BM25 Fieldsets
 - **Fieldset name**: `default`
 - **Fields**: `video_title`, `segment_description` (ColPali schemas only), `audio_transcript`
-- **Query method**: `VespaSearchBackend._build_query` emits YQL `userInput(@userQuery)`, which Vespa resolves against the schema's `default` fieldset; strategies without a text component build filter-only or `nearestNeighbor(...)` YQL instead. The rank profile's `first-phase`/`second-phase` expression then sums `bm25(field)` per fieldset member (e.g. `bm25_only` is `bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)`) rather than relying on a single `model.defaultIndex` override.
+- **Query method**: `VespaSearchBackend._build_query` emits YQL `userInput(@userQuery)`, which Vespa resolves against the schema's `default` fieldset; a visual-first hybrid on a multi-vector schema emits `rank(true, {grammar: "any"}userInput(@userQuery))` instead, matching every document and using the OR'ed query terms only to rank; a hybrid on a single-vector schema emits `({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`; strategies without a text component build filter-only or `nearestNeighbor(...)` YQL. The rank profile's `first-phase`/`second-phase` expression then sums `bm25(field)` per fieldset member (e.g. `bm25_only` is `bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)`) rather than relying on a single `model.defaultIndex` override.
 - **Note**: X-CLIP schemas exclude segment_description from the fieldset as they do not generate descriptions
 
 ### Embedding Types
@@ -183,8 +183,9 @@ All BM25 strategies use fieldsets to search across:
 ### Ranking Phases
 - **First phase**: Initial candidate selection
 - **Second phase**: Reranking top candidates (default: top 100, from each rank profile's `second-phase.rerank-count`)
-- **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming` and `visual_sim_binary`): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
-- **Hybrid**: Different models for each phase
+- **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming`, and `visual_sim_binary` in the text-first hybrids): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
+- **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`): one phase, the visual MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) plus `nativeRank` of the profile's text fields.
+- **Text-first hybrid** (`hybrid_bm25_*`): BM25 first phase over the text matches, visual MaxSim second phase over the top 100
 
 ### Strategy Extraction & Runtime Resolution
 `cogniverse_vespa.ranking_strategy_extractor.RankingStrategyExtractor` reads each schema's `rank_profiles` JSON and derives, per profile, a `RankingStrategyInfo` dataclass: `strategy_type` (`SearchStrategyType.PURE_VISUAL` / `PURE_TEXT` / `HYBRID`, inferred from whether the profile's inputs/first-phase expression reference float or int8 tensors and `bm25`/`userInput`), `needs_float_embeddings`, `needs_binary_embeddings`, `needs_text_query`, whether it uses `nearestNeighbor` (single-vector LVT schemas only — patch-based schemas rank with MaxSim over all patches instead), and the concrete embedding field name (parsed from `attribute(...)`/`closeness(field, ...)` in the profile's expressions).

@@ -1,4 +1,4 @@
-"""Default ranking on the ColQwen3 frame profile, against real Vespa.
+"""Default and hybrid ranking on the ColQwen3 frame profile, against real Vespa.
 
 ColQwen3 query encodings open with prompt-template tokens that reappear almost
 bit-for-bit in every frame (Hamming distance 0-4 of 320 bits). The binary
@@ -7,12 +7,16 @@ every query token by its estimated cosine ``1 - 2h/320``, as the float MaxSim
 it approximates does; otherwise bit noise on those template tokens decides
 which 100 frames the float second phase may rerank.
 
+The visual-first hybrids rank every frame by that MaxSim averaged over the
+query tokens plus the frame's ``nativeRank`` for the query text, so a frame
+without a text match keeps its visual score.
+
 The corpus is the ten-video ActivityNet frame index of the
 ``flywheel_org:production`` tenant, recorded with ``RECORD_GOLDEN=1`` together
-with the served ColQwen3 encodings of the pinned golden queries. Every frame
-keeps the patches that are a pinned query token's best float match or nearest
-binary match, so each frame's MaxSim scores for the pinned queries equal its
-scores over all of its patches. Documents are fed through the production
+with the frames' text fields and the served ColQwen3 encodings of the pinned
+golden queries. Every frame keeps the patches that are a pinned query token's
+best float match or nearest binary match, so each frame's MaxSim scores for the
+pinned queries equal its scores over all of its patches. Documents are fed through the production
 ingestion path and searched through ``VespaSearchBackend`` with the shipped
 profile config, the way ``POST /search`` serves the profile.
 
@@ -28,18 +32,25 @@ from __future__ import annotations
 import copy
 import json
 import os
+import socket
+import sys
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpr
 import numpy as np
 import pytest
 import requests
 
+from cogniverse_core.common.utils.retry import RetryConfig
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
+from cogniverse_vespa.ingestion_client import document_namespace
 from cogniverse_vespa.search_backend import VespaSearchBackend
 from tests.utils.vespa_test_helpers import make_config_manager, schema_tensor_dim
 
@@ -70,6 +81,38 @@ RECORDED_FRAMES_PER_VIDEO = {
     "v_-nl4G-00PtA": 4,
 }
 RECORDED_FRAME_COUNT = 361
+# Recorded array holding each text field the schema's default fieldset
+# searches, other than the title (recorded as video_titles).
+RECORDED_TEXT_ARRAYS = {
+    "segment_description": "segment_descriptions",
+    "audio_transcript": "audio_transcripts",
+}
+
+
+def _schema_json() -> dict:
+    return json.loads((SCHEMAS_DIR / f"{BASE_SCHEMA}_schema.json").read_text())
+
+
+def _searched_text_fields() -> set[str]:
+    """The fields ``userInput`` searches: the schema's default fieldset."""
+    (fieldset,) = [f for f in _schema_json()["fieldsets"] if f["name"] == "default"]
+    return set(fieldset["fields"])
+
+
+def _text_metadata_keys() -> dict[str, str]:
+    """The Document metadata key the ingestion path maps to each text field."""
+    mapping = _schema_json()["document_mapping"]
+    renamed = {field: key for key, field in mapping["metadata_fields"].items()}
+    return {field: renamed.get(field, field) for field in RECORDED_TEXT_ARRAYS}
+
+
+def _dead_port() -> int:
+    """A local TCP port with nothing listening on it."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
 
 
 def _video_key(title: str) -> str:
@@ -179,6 +222,10 @@ def _record_corpus() -> None:
         query_texts=np.array(PINNED_QUERIES),
         query_offsets=np.cumsum([0] + [len(query) for query in queries]),
         query_vectors=np.concatenate(queries).astype(np.float32),
+        **{
+            array: np.array([doc[field] for doc, _ in frames])
+            for field, array in RECORDED_TEXT_ARRAYS.items()
+        },
     )
 
 
@@ -242,6 +289,16 @@ def _validate_corpus(corpus: dict) -> None:
     assert corpus["patch_offsets"][-1] == len(corpus["patches"]), (
         "patch offsets do not cover the recorded patches"
     )
+    assert {"video_title", *RECORDED_TEXT_ARRAYS} == _searched_text_fields(), (
+        f"recorded text fields {sorted(RECORDED_TEXT_ARRAYS)}, schema searches "
+        f"{sorted(_searched_text_fields())}"
+    )
+    for field, array in RECORDED_TEXT_ARRAYS.items():
+        assert array in corpus, f"recording holds no {field}"
+        empty = sum(1 for text in corpus[array] if not str(text).strip())
+        assert len(corpus[array]) == RECORDED_FRAME_COUNT and empty == 0, (
+            f"{field}: {len(corpus[array])} frames recorded, {empty} without text"
+        )
 
 
 @pytest.fixture(scope="module")
@@ -290,6 +347,8 @@ def ranked_frames(vespa_instance, corpus):
         document.add_metadata("segment_index", int(corpus["segment_ids"][i]))
         document.add_metadata("start_time", float(corpus["start_times"][i]))
         document.add_metadata("end_time", float(corpus["end_times"][i]))
+        for field, key in _text_metadata_keys().items():
+            document.add_metadata(key, str(corpus[RECORDED_TEXT_ARRAYS[field]][i]))
         documents.append(document)
     for start in range(0, len(documents), 50):
         result = ingestion.ingest_documents(documents[start : start + 50], BASE_SCHEMA)
@@ -301,6 +360,15 @@ def ranked_frames(vespa_instance, corpus):
         timeout=30,
     ).json()["root"]["fields"]["totalCount"]
     assert indexed == RECORDED_FRAME_COUNT
+    stored = requests.get(
+        f"http://localhost:{vespa_instance['http_port']}/document/v1/"
+        f"{document_namespace(schema_name)}/{schema_name}/docid/"
+        f"{corpus['doc_ids'][0]}",
+        timeout=30,
+    ).json()["fields"]
+    assert {field: stored[field] for field in RECORDED_TEXT_ARRAYS} == {
+        field: str(corpus[array][0]) for field, array in RECORDED_TEXT_ARRAYS.items()
+    }
 
     search = VespaSearchBackend(
         config={
@@ -394,6 +462,347 @@ class TestDefaultRankingOnColQwen3Frames:
         )
 
 
+HYBRID_STRATEGIES = (
+    "hybrid_float_bm25",
+    "hybrid_binary_bm25",
+    "hybrid_float_bm25_no_description",
+    "hybrid_binary_bm25_no_description",
+)
+
+
+def _native_ranks(ranked_frames, query: str, strategy: str) -> dict[str, float]:
+    """Vespa's nativeRank of every frame for the strategy's own query."""
+    search, tenant, vectors = ranked_frames
+    schema_name = f"{BASE_SCHEMA}_{tenant.replace(':', '_')}"
+    body = search._build_query(
+        query,
+        vectors[query],
+        search._load_ranking_strategies()[BASE_SCHEMA][strategy],
+        strategy,
+        schema_name,
+        RECORDED_FRAME_COUNT,
+        {},
+        "native-rank",
+    )
+    response = requests.post(
+        f"{search.backend_url}:{search.backend_port}/search/",
+        json={**body, "ranking.listFeatures": True},
+        timeout=60,
+    ).json()
+    hits = response["root"]["children"]
+    assert len(hits) == RECORDED_FRAME_COUNT
+    return {
+        h["fields"]["documentid"].split("::", 1)[1]: h["fields"]["rankfeatures"][
+            "nativeRank"
+        ]
+        for h in hits
+    }
+
+
+def _fused_scores(corpus, ranked_frames, query: str, strategy: str) -> dict:
+    """Each frame's visual MaxSim, normalized by query length, plus its
+    nativeRank."""
+    vectors = _query_vectors(corpus)[query]
+    native = _native_ranks(ranked_frames, query, strategy)
+    max_sim = _binary_max_sim if "binary" in strategy else _float_max_sim
+    return {
+        str(doc_id): max_sim(vectors, _frame_patches(corpus, i)) / len(vectors)
+        + native[str(doc_id)]
+        for i, doc_id in enumerate(corpus["doc_ids"])
+    }
+
+
+# Video order and best frame the fused hybrids give over the full frame index.
+HYBRID_ORDER = {
+    "hybrid_float_bm25": {
+        "people shoveling": [
+            "v_-pkfcMUIEMo",
+            "v_-IMXSEIabMM",
+            "v_-uJnucdW6DY",
+            "v_-D1gdv_gQyw",
+            "v_-MbZ-W0AbN0",
+            "v_-nl4G-00PtA",
+            "v_-vnSFKJNB94",
+            "v_-cAcA8dO7kA",
+            "v_-6dz6tBH77I",
+            "v_-HpCLXdtcas",
+        ],
+        "a fire starter": [
+            "v_-D1gdv_gQyw",
+            "v_-uJnucdW6DY",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-MbZ-W0AbN0",
+            "v_-nl4G-00PtA",
+            "v_-vnSFKJNB94",
+            "v_-6dz6tBH77I",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+        ],
+        "catching": [
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-D1gdv_gQyw",
+            "v_-6dz6tBH77I",
+            "v_-IMXSEIabMM",
+            "v_-HpCLXdtcas",
+            "v_-pkfcMUIEMo",
+            "v_-cAcA8dO7kA",
+            "v_-vnSFKJNB94",
+            "v_-nl4G-00PtA",
+        ],
+    },
+    "hybrid_binary_bm25": {
+        "people shoveling": [
+            "v_-pkfcMUIEMo",
+            "v_-IMXSEIabMM",
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-nl4G-00PtA",
+            "v_-D1gdv_gQyw",
+            "v_-vnSFKJNB94",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+            "v_-6dz6tBH77I",
+        ],
+        "a fire starter": [
+            "v_-D1gdv_gQyw",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-vnSFKJNB94",
+            "v_-nl4G-00PtA",
+            "v_-6dz6tBH77I",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+        ],
+        "catching": [
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-D1gdv_gQyw",
+            "v_-vnSFKJNB94",
+            "v_-IMXSEIabMM",
+            "v_-HpCLXdtcas",
+            "v_-pkfcMUIEMo",
+            "v_-6dz6tBH77I",
+            "v_-nl4G-00PtA",
+            "v_-cAcA8dO7kA",
+        ],
+    },
+    "hybrid_float_bm25_no_description": {
+        "people shoveling": [
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-uJnucdW6DY",
+            "v_-D1gdv_gQyw",
+            "v_-MbZ-W0AbN0",
+            "v_-vnSFKJNB94",
+            "v_-cAcA8dO7kA",
+            "v_-6dz6tBH77I",
+            "v_-nl4G-00PtA",
+            "v_-HpCLXdtcas",
+        ],
+        "a fire starter": [
+            "v_-D1gdv_gQyw",
+            "v_-uJnucdW6DY",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-MbZ-W0AbN0",
+            "v_-vnSFKJNB94",
+            "v_-nl4G-00PtA",
+            "v_-6dz6tBH77I",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+        ],
+        "catching": [
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-D1gdv_gQyw",
+            "v_-6dz6tBH77I",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-cAcA8dO7kA",
+            "v_-vnSFKJNB94",
+            "v_-nl4G-00PtA",
+            "v_-HpCLXdtcas",
+        ],
+    },
+    "hybrid_binary_bm25_no_description": {
+        "people shoveling": [
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-D1gdv_gQyw",
+            "v_-nl4G-00PtA",
+            "v_-vnSFKJNB94",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+            "v_-6dz6tBH77I",
+        ],
+        "a fire starter": [
+            "v_-D1gdv_gQyw",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-vnSFKJNB94",
+            "v_-nl4G-00PtA",
+            "v_-6dz6tBH77I",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+        ],
+        "catching": [
+            "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-D1gdv_gQyw",
+            "v_-vnSFKJNB94",
+            "v_-IMXSEIabMM",
+            "v_-pkfcMUIEMo",
+            "v_-6dz6tBH77I",
+            "v_-nl4G-00PtA",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
+        ],
+    },
+}
+_SHOVEL_FRAME = (
+    "ad10d4d00bde8e6aaf479ec572da90c3ea359446e64749bbe75158eb4c22c1e4_seg_31"
+)
+_SHOVEL_FRAME_NO_DESCRIPTION = (
+    "a1e071ec33a0937c3cb67ab4780f9c3214cf00c36fe4e0dbf9991fc679bf3b17_seg_1"
+)
+_FIRE_FRAME = "7a3f548576b6e9070d4604e883c6a98c78e22c2862a21af70d57e887457f047d_seg_8"
+_CATCH_FRAME = "739064ebcf629a4ca93a7bb50177ff6cdab0d539a8008bba1dae766b957f8f2d_seg_8"
+HYBRID_TOP_HIT = {
+    "hybrid_float_bm25": {
+        "people shoveling": (_SHOVEL_FRAME, 0.824828197385741),
+        "a fire starter": (_FIRE_FRAME, 0.8255090974366946),
+        "catching": (_CATCH_FRAME, 0.7297115070479256),
+    },
+    "hybrid_binary_bm25": {
+        "people shoveling": (_SHOVEL_FRAME, 0.7580665447571603),
+        "a fire starter": (_FIRE_FRAME, 0.7270843125975414),
+        "catching": (_CATCH_FRAME, 0.65625),
+    },
+    "hybrid_float_bm25_no_description": {
+        "people shoveling": (_SHOVEL_FRAME_NO_DESCRIPTION, 0.8119350313513485),
+        "a fire starter": (_FIRE_FRAME, 0.7953657310467892),
+        "catching": (_CATCH_FRAME, 0.7297115070479256),
+    },
+    "hybrid_binary_bm25_no_description": {
+        "people shoveling": (_SHOVEL_FRAME_NO_DESCRIPTION, 0.7329315549170647),
+        "a fire starter": (_FIRE_FRAME, 0.6969409462076359),
+        "catching": (_CATCH_FRAME, 0.65625),
+    },
+}
+
+
+class TestHybridFusionOnColQwen3Frames:
+    @pytest.mark.parametrize("query", PINNED_QUERIES)
+    @pytest.mark.parametrize("strategy", HYBRID_STRATEGIES)
+    def test_hybrid_ranks_every_video_in_the_recorded_order(
+        self, ranked_frames, query, strategy
+    ):
+        results = _search(ranked_frames, query, strategy)
+        top_frame, top_score = HYBRID_TOP_HIT[strategy][query]
+
+        assert _ranked_videos(results) == HYBRID_ORDER[strategy][query]
+        assert results[0].document.id == top_frame
+        assert results[0].score == pytest.approx(top_score, abs=1e-6)
+
+    @pytest.mark.parametrize("query", PINNED_QUERIES)
+    @pytest.mark.parametrize("strategy", HYBRID_STRATEGIES[:2])
+    def test_every_video_scores_its_best_frame_fused_score(
+        self, ranked_frames, corpus, query, strategy
+    ):
+        """Over all 361 frames: the visual MaxSim from the recorded patches,
+        averaged over the query tokens, plus Vespa's nativeRank of the frame
+        for the same query decides each video's score and best frame."""
+        fused = _fused_scores(corpus, ranked_frames, query, strategy)
+        best = {}
+        for i, doc_id in enumerate(corpus["doc_ids"]):
+            key = _video_key(str(corpus["video_titles"][i]))
+            if fused[str(doc_id)] > best.get(key, (-np.inf, ""))[0]:
+                best[key] = (fused[str(doc_id)], str(doc_id))
+
+        results = _search(ranked_frames, query, strategy)
+
+        assert _ranked_videos(results) == sorted(best, key=lambda v: -best[v][0])
+        assert [r.document.id for r in results] == [
+            best[_video_key(r.document.metadata["video_title"])][1] for r in results
+        ]
+        for result in results:
+            video = _video_key(result.document.metadata["video_title"])
+            assert result.score == pytest.approx(best[video][0], abs=1e-5)
+
+    def test_concurrent_hybrid_searches_return_their_recorded_rankings(
+        self, ranked_frames
+    ):
+        """Hybrid searches released together through one backend each get
+        exactly the ranking their query and strategy get alone: the recorded
+        video order and top frame."""
+        cases = [(q, s) for q in PINNED_QUERIES for s in HYBRID_STRATEGIES] * 2
+        barrier = threading.Barrier(len(cases))
+
+        def released(case):
+            barrier.wait(timeout=60)
+            return _search(ranked_frames, *case)
+
+        with ThreadPoolExecutor(max_workers=len(cases)) as pool:
+            concurrent = list(pool.map(released, cases))
+
+        assert [_ranked_videos(results) for results in concurrent] == [
+            HYBRID_ORDER[strategy][query] for query, strategy in cases
+        ]
+        assert [results[0].document.id for results in concurrent] == [
+            HYBRID_TOP_HIT[strategy][query][0] for query, strategy in cases
+        ]
+        assert [results[0].score for results in concurrent] == pytest.approx(
+            [HYBRID_TOP_HIT[strategy][query][1] for query, strategy in cases],
+            abs=1e-6,
+        )
+
+    def test_hybrid_search_raises_when_vespa_is_unreachable(
+        self, ranked_frames, vespa_instance
+    ):
+        _, tenant, vectors = ranked_frames
+        config_manager = make_config_manager(vespa_instance)
+        port = _dead_port()
+        unreachable = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": port,
+                "profiles": {BASE_SCHEMA: SHIPPED_PROFILE},
+            },
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(SCHEMAS_DIR),
+            is_schema_deployed=DeployedSchemaNames(config_manager),
+            enable_connection_pool=False,
+            retry_config=RetryConfig(max_attempts=1),
+        )
+        try:
+            with pytest.raises(httpr.ConnectError) as excinfo:
+                unreachable.search(
+                    {
+                        "query": PINNED_QUERIES[0],
+                        "type": "video",
+                        "profile": BASE_SCHEMA,
+                        "strategy": "hybrid_float_bm25",
+                        "top_k": 10,
+                        "tenant_id": tenant,
+                        "query_embeddings": vectors[PINNED_QUERIES[0]],
+                    }
+                )
+        finally:
+            unreachable.close()
+
+        assert str(excinfo.value) == (
+            f"error sending request for url (http://localhost:{port}/search/)"
+        )
+
+
 class TestRecordingPins:
     """Each pin on the recording fails when the property it guards changes."""
 
@@ -432,6 +841,20 @@ class TestRecordingPins:
                 ),
                 "recorded queries",
             ),
+            (
+                lambda c: c.pop("audio_transcripts"),
+                "recording holds no audio_transcript",
+            ),
+            (
+                lambda c: c.update(
+                    segment_descriptions=np.array(["", *c["segment_descriptions"][1:]])
+                ),
+                "segment_description: 361 frames recorded, 1 without text",
+            ),
+            (
+                lambda c: c.update(audio_transcripts=c["audio_transcripts"][:-1]),
+                "audio_transcript: 360 frames recorded, 0 without text",
+            ),
         ],
     )
     def test_pin_fails_on_mutated_recording(self, corpus, mutate, message):
@@ -450,6 +873,17 @@ class TestRecordingPins:
 
         with pytest.raises(AssertionError, match="expected video of 'a fire starter'"):
             _validate_corpus(mutated)
+
+    def test_text_field_pin_fails_when_the_schema_searches_another_field(
+        self, corpus, monkeypatch
+    ):
+        searched = _searched_text_fields() | {"video_tags"}
+        monkeypatch.setattr(
+            sys.modules[__name__], "_searched_text_fields", lambda: searched
+        )
+
+        with pytest.raises(AssertionError, match="schema searches"):
+            _validate_corpus(copy.deepcopy(corpus))
 
     def test_rerank_window_pin_fails_when_no_video_fills_it(self, corpus):
         mutated = copy.deepcopy(corpus)

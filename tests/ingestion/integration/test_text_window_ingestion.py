@@ -29,11 +29,12 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.ingestion.integration.test_upload_via_queue import (
     _deploy_metadata_schemas,
     _install_test_vespa_disk_limit,
-    _paired_free_ports,
     _wait_for_config_port,
     _wait_for_data_port,
     _wait_for_schema_ready,
 )
+from tests.utils.docker_utils import start_docker_container_with_port_retry
+from tests.utils.vllm_sidecar import OWNER_LABEL
 
 pytestmark = pytest.mark.integration
 MODEL = "lightonai/LateOn"
@@ -120,19 +121,14 @@ def window_encoder():
 
 @pytest.fixture(scope="module")
 def window_backend():
-    http_port = _paired_free_ports()
-    config_port = http_port + 10991
-    with owned_container(
-        "vespaengine/vespa:8.668.5",
-        [
-            "-p",
-            f"127.0.0.1:{http_port}:8080",
-            "-p",
-            f"127.0.0.1:{config_port}:19071",
-            "--memory",
-            "6g",
-        ],
-    ):
+    name, http_port, config_port = start_docker_container_with_port_retry(
+        __name__,
+        name_prefix="ingestion-windows-vespa",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=["--label", f"{OWNER_LABEL}={os.getpid()}", "--memory", "6g"],
+    )
+    try:
         assert _wait_for_config_port(config_port) is True
         _deploy_metadata_schemas(config_port)
         assert _wait_for_data_port(http_port) is True
@@ -173,6 +169,8 @@ def window_backend():
                 tenant,
                 http_port,
             )
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], check=True, capture_output=True)
 
 
 def generator(backend, profile, model):

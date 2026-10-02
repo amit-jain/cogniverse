@@ -192,16 +192,17 @@ def _normalized_profile(profile: dict) -> dict:
 @pytest.mark.unit
 @pytest.mark.parametrize("schema", _HYBRID_SCHEMAS)
 def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
-    """A ``hybrid_binary_bm25*`` profile must be binary-first and a
-    ``hybrid_bm25_binary*`` profile text-first; the ``_no_description`` pair
-    were once byte-identical (both text-first), silently giving
-    hybrid_binary_bm25_no_description the wrong phase order."""
+    """A ``hybrid_binary_bm25*`` profile ranks every segment by binary MaxSim
+    plus text in its first phase and a ``hybrid_bm25_binary*`` profile
+    text-first; the ``_no_description`` pair were once byte-identical (both
+    text-first), silently giving hybrid_binary_bm25_no_description the wrong
+    phase order."""
     profiles = _rank_profiles(_REPO_ROOT / schema)
-    for suffix in ("", "_no_description"):
+    for suffix, text in (("", "text_sim"), ("_no_description", "text_sim_no_desc")):
         binary_first = profiles[f"hybrid_binary_bm25{suffix}"]
         text_first = profiles[f"hybrid_bm25_binary{suffix}"]
-        assert binary_first["first_phase"] == "visual_sim_binary", (
-            f"hybrid_binary_bm25{suffix} must rank binary first"
+        assert binary_first["first_phase"] == f"visual_sim_binary + {text}", (
+            f"hybrid_binary_bm25{suffix} must rank binary MaxSim plus text first"
         )
         assert "text_sim" in json.dumps(text_first["first_phase"]), (
             f"hybrid_bm25_binary{suffix} must rank text/bm25 first"
@@ -603,3 +604,144 @@ def test_substring_text_in_name_does_not_classify_text(tmp_path):
     )
     s = RankingStrategyExtractor().extract_from_schema(path)["context_boost"]
     assert s.strategy_type is SearchStrategyType.PURE_VISUAL
+
+
+# Visual-first hybrids score every document by an embedding in their first
+# phase, so retrieval must not be narrowed to text matches; text-first
+# hybrids and text strategies retrieve by text.
+_FIRST_PHASE_EMBEDDING_FIELDS = {
+    "video_colpali_smol500_mv_frame": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+        "hybrid_float_bm25_no_description": "embedding",
+        "hybrid_binary_bm25_no_description": "embedding_binary",
+        "hybrid_bm25_float": None,
+        "hybrid_bm25_binary": None,
+        "bm25_only": None,
+        "float_float": "embedding",
+    },
+    "video_colqwen_omni_mv_chunk_30s": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+        "hybrid_float_bm25_no_description": "embedding",
+        "hybrid_binary_bm25_no_description": "embedding_binary",
+        "hybrid_bm25_float": None,
+        "hybrid_bm25_binary": None,
+    },
+    "image_colpali_mv": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+    },
+    "document_visual": {
+        "hybrid_float_bm25": "colpali_embedding",
+        "hybrid_binary_bm25": "colpali_embedding_binary",
+    },
+    "document_text": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+    },
+    "lateon_mv": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+    },
+    "code_lateon_mv": {"hybrid_float_bm25": "embedding"},
+    "knowledge_graph": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+    },
+    "audio_content": {
+        "hybrid_semantic_bm25": "semantic_embedding_binary",
+        "transcript_search": None,
+    },
+    "video_xclip_sv_chunk_6s": {
+        "hybrid_float_bm25": "embedding",
+        "hybrid_binary_bm25": "embedding_binary",
+        "hybrid_bm25_float": None,
+    },
+}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("schema", sorted(_FIRST_PHASE_EMBEDDING_FIELDS))
+def test_first_phase_embedding_field_of_shipped_hybrids(schema):
+    strategies = RankingStrategyExtractor().extract_from_schema(
+        _REPO_ROOT / "configs" / "schemas" / f"{schema}_schema.json"
+    )
+
+    assert {
+        name: strategies[name].first_phase_embedding_field
+        for name in _FIRST_PHASE_EMBEDDING_FIELDS[schema]
+    } == _FIRST_PHASE_EMBEDDING_FIELDS[schema]
+
+
+@pytest.mark.unit
+def test_first_phase_embedding_field_reaches_the_search_backend(tmp_path):
+    """The search backend builds its YQL from the serialized strategy dict."""
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_vespa.search_backend import VespaSearchBackend
+
+    for schema in ("video_colqwen_omni_mv_chunk_30s", "document_text"):
+        source = _REPO_ROOT / "configs" / "schemas" / f"{schema}_schema.json"
+        (tmp_path / source.name).write_text(source.read_text())
+    backend = object.__new__(VespaSearchBackend)
+    backend._schema_loader = FilesystemSchemaLoader(tmp_path)
+
+    loaded = backend._load_ranking_strategies()
+
+    assert {
+        (schema, name): loaded[schema][name]["first_phase_embedding_field"]
+        for schema in ("video_colqwen_omni_mv_chunk_30s", "document_text")
+        for name in ("hybrid_float_bm25", "hybrid_binary_bm25", "bm25_only")
+    } == {
+        ("video_colqwen_omni_mv_chunk_30s", "hybrid_float_bm25"): "embedding",
+        ("video_colqwen_omni_mv_chunk_30s", "hybrid_binary_bm25"): "embedding_binary",
+        ("video_colqwen_omni_mv_chunk_30s", "bm25_only"): None,
+        ("document_text", "hybrid_float_bm25"): "embedding",
+        ("document_text", "hybrid_binary_bm25"): "embedding_binary",
+        ("document_text", "bm25_only"): None,
+    }
+
+
+@pytest.mark.unit
+def test_numeric_first_phase_attribute_is_not_an_embedding_field(tmp_path):
+    """A hybrid whose first phase boosts text by a numeric attribute and
+    reranks by an embedding retrieves by text: the attribute is no
+    first-phase embedding field."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "boosted",
+            "document": {
+                "fields": [
+                    {"name": "title", "type": "string"},
+                    {"name": "popularity", "type": "double"},
+                    {"name": "embedding", "type": "tensor<float>(token{}, v[4])"},
+                ]
+            },
+            "rank_profiles": [
+                {
+                    "name": "hybrid_boosted_bm25",
+                    "inputs": [
+                        {
+                            "name": "query(qt)",
+                            "type": "tensor<float>(querytoken{}, v[4])",
+                        }
+                    ],
+                    "first_phase": "bm25(title) + attribute(popularity)",
+                    "second_phase": {
+                        "expression": "sum(query(qt) * attribute(embedding))",
+                        "rerank_count": 10,
+                    },
+                }
+            ],
+        },
+    )
+
+    strategy = RankingStrategyExtractor().extract_from_schema(path)[
+        "hybrid_boosted_bm25"
+    ]
+
+    assert (strategy.needs_text_query, strategy.first_phase_embedding_field) == (
+        True,
+        None,
+    )
