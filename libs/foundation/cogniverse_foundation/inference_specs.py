@@ -74,7 +74,6 @@ def _spec(
     requires_hf_token: bool = False,
     source_revision: str | None = None,
     context_window: int | None = None,
-    scaledown_window: int = 300,
 ) -> InferenceServiceSpec:
     return InferenceServiceSpec(
         name=name,
@@ -85,7 +84,6 @@ def _spec(
         requires_hf_token=requires_hf_token,
         source_revision=source_revision,
         context_window=context_window,
-        scaledown_window=scaledown_window,
     )
 
 
@@ -151,7 +149,6 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "L40S",
             requires_hf_token=True,
             context_window=8192,
-            scaledown_window=900,
         ),
         "vllm_llm_teacher": _spec(
             "vllm_llm_teacher",
@@ -163,7 +160,6 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "L40S",
             requires_hf_token=True,
             context_window=4096,
-            scaledown_window=900,
         ),
         "vllm_asr": _spec(
             "vllm_asr",

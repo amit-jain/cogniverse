@@ -317,7 +317,7 @@ class TestTheAgentLmTimeoutCoversATeacherColdStart:
 
     def test_the_shipped_timeout_outlives_the_measured_cold_start(self):
         """Measured one-token completions on 2026-09-13 against the Modal
-        backends after their 900 s scale-down: student cold 135.0 s, warm
+        backends scaled to zero after 900 s idle: student cold 135.0 s, warm
         0.79 s and 0.85 s; teacher cold 82.6 s (105-120 s on earlier days),
         warm 0.86 s and 0.89 s. The shipped timeout is 1.5x the longest cold
         start (202.5 s, rounded up) and stays under Envoy's 300 s route
