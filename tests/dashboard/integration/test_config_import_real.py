@@ -283,17 +283,34 @@ def test_import_write_failure_is_visible_without_success(shared_vespa):
     assert store.get_config(target, ConfigScope.AGENT, "search_agent", "second") is None
 
 
-def _register_schema(store, tenant, base_schema):
-    """File a deployment in the registry the way the schema registry does."""
+@pytest.fixture
+def register_schema(shared_vespa):
+    """File deployments in the registry the way the schema registry does, and
+    delete them after the test: their stub definitions cannot be deployed, so a
+    row left on the session's Vespa fails every later deploy that merges the
+    registry."""
+    store = _store(shared_vespa["http_port"])
     registry = SchemaRegistry(
         SimpleNamespace(store=store), backend=object(), schema_loader=object()
     )
-    registry.register_schema(
-        tenant_id=tenant,
-        base_schema_name=base_schema,
-        full_schema_name=_full_schema_name(base_schema, tenant),
-        schema_definition=json.dumps({"name": _full_schema_name(base_schema, tenant)}),
-    )
+    filed = []
+
+    def _register(tenant, base_schema):
+        registry.register_schema(
+            tenant_id=tenant,
+            base_schema_name=base_schema,
+            full_schema_name=_full_schema_name(base_schema, tenant),
+            schema_definition=json.dumps(
+                {"name": _full_schema_name(base_schema, tenant)}
+            ),
+        )
+        filed.append((tenant, base_schema))
+
+    yield _register
+    for tenant, base_schema in filed:
+        store.delete_config(
+            tenant, ConfigScope.SCHEMA, SCHEMA_REGISTRY_SERVICE, f"schema_{base_schema}"
+        )
 
 
 def _full_schema_name(base_schema, tenant):
@@ -318,13 +335,13 @@ def _registry_rows(store, tenants):
 
 
 def test_an_export_restores_configurations_without_the_sources_deployments(
-    shared_vespa,
+    shared_vespa, register_schema
 ):
     store = _store(shared_vespa["http_port"])
     source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
     base_schema = "document_text"
-    _register_schema(store, source, base_schema)
-    _register_schema(store, target, base_schema)
+    register_schema(source, base_schema)
+    register_schema(target, base_schema)
     store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 3})
 
     payload = store.export_configs(source)
@@ -393,7 +410,9 @@ def test_an_upload_carrying_schema_rows_is_refused_before_any_write(shared_vespa
     assert _registry_rows(store, {source, target}) == []
 
 
-def test_concurrent_restores_keep_each_tenants_own_registry(shared_vespa):
+def test_concurrent_restores_keep_each_tenants_own_registry(
+    shared_vespa, register_schema
+):
     """Two operators restore one source's export into two registered tenants
     at once; each tenant's registry still names only its own deployment."""
     store = _store(shared_vespa["http_port"])
@@ -401,7 +420,7 @@ def test_concurrent_restores_keep_each_tenants_own_registry(shared_vespa):
     tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
     base_schema = "document_text"
     for tenant in [source, *tenants]:
-        _register_schema(store, tenant, base_schema)
+        register_schema(tenant, base_schema)
     store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 5})
     payload = store.export_configs(source)
 
