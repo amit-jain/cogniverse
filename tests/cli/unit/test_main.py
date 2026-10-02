@@ -771,6 +771,7 @@ class TestUpImagePrune:
             "install_argo_controller",
             "deploy_workflow_templates",
             "_print_status_table",
+            "start_port_forwards",
         )
         with ExitStack() as stack:
             for name, ret in returns.items():
@@ -1413,6 +1414,7 @@ class TestUpImageSource:
         ),
         ("cogniverse_cli.main.dev_image_set_values", {"return_value": {}}),
         ("cogniverse_cli.main.verify_local_images_cover_deploy", {}),
+        ("cogniverse_cli.main.start_port_forwards", {}),
     ]
 
     def _invoke(self, args, workspace_ok=True):
