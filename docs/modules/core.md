@@ -951,7 +951,23 @@ as the `/search` path does.
 
 `VespaSearchBackend.search` raises these when it builds or calls the encoder a
 profile declares, so a sidecar outage is never reported as a missing
-`query_embeddings` argument.
+`query_embeddings` argument. `EncoderNotConfiguredError.profile` names the
+profile when the raiser knows it.
+
+- `encoder_outage_errors()` — the exception types that mean a configured
+  encoder's service did not serve (an inference-service outage, a tripped
+  breaker, a transport error).
+- `build_query_encoder(profile, *, config, model_name=None)` — builds the
+  profile's encoder through `QueryEncoderFactory` and raises the typed faults:
+  a missing or incomplete setting (including a service with no URL and no
+  in-process backend) as `EncoderNotConfiguredError`, an outage as
+  `EncoderUnavailableError`.
+- `SharedQueryEncoder(profile, build, *, service=None)` — what a text search
+  hands the backend as `query_encoder` instead of embeddings. `build` runs at
+  most once, on the first `encode`; each query text is encoded once and the
+  embeddings, or the typed fault, are shared by every caller. An outage is
+  `EncoderUnavailableError` (naming `service`), a rejected query
+  (`ValueError`) `EncoderNotConfiguredError`.
 
 Every remote query encoder bounds its POST with
 `model_loaders.QUERY_ENCODE_TIMEOUT_S` (30s): the ColPali family through

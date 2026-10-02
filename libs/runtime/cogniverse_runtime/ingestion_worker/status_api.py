@@ -22,6 +22,7 @@ import re
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from cogniverse_runtime.http_errors import failure_response
 from cogniverse_runtime.ingestion_worker import queue
 from cogniverse_runtime.ingestion_worker.redis_client import get_redis
 
@@ -32,6 +33,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TERMINAL_STATES = {"complete", "failed"}
+
+
+def _status_store_unavailable(exc: Exception, ingest_id: str):
+    """503 for a status store read that failed; the Redis URL stays in the log."""
+    return failure_response(
+        503,
+        "ingest_status_store_unavailable",
+        "The ingestion status store did not answer; retry.",
+        exc,
+        ingest_id=ingest_id,
+    )
 
 
 def _redis_url() -> str:
@@ -89,9 +101,7 @@ async def stream_events(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=503, detail=f"ingestion status store unavailable: {exc}"
-        ) from exc
+        raise _status_store_unavailable(exc, ingest_id) from exc
 
     async def gen():
         last_id = last_event_id or "0-0"
@@ -141,9 +151,7 @@ async def get_status(ingest_id: str) -> dict:
     except Exception as exc:
         # Redis down is a dependency outage, not a server bug — 503 so
         # callers can retry, never an opaque 500.
-        raise HTTPException(
-            status_code=503, detail=f"ingestion status store unavailable: {exc}"
-        ) from exc
+        raise _status_store_unavailable(exc, ingest_id) from exc
     if not events:
         raise HTTPException(
             status_code=404,

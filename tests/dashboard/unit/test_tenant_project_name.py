@@ -115,6 +115,10 @@ class _RecordingAnnotations:
     async def add_annotation(self, *, project: str, **_kwargs) -> None:
         self._sink.append(project)
 
+    async def get_annotations(self, _spans, *, project: str, **_kwargs):
+        self._sink.append(project)
+        return pd.DataFrame()
+
 
 class _RecordingProvider:
     def __init__(self, sink: list[str], frame: pd.DataFrame) -> None:
@@ -199,7 +203,8 @@ def test_golden_dataset_builder_names_the_producers_project(projects) -> None:
         asyncio.run(optimization._build_golden_dataset_from_phoenix(_TENANT, 0.5, 30))
         == {}
     )
-    assert projects == [_producer_project()]
+    # Both reads — the spans and their annotations — name the producer's project.
+    assert projects == [_producer_project(), _producer_project()]
 
 
 def test_telemetry_probe_names_the_producers_project(projects) -> None:
@@ -227,6 +232,17 @@ def test_saved_annotation_lands_in_the_producers_project(projects) -> None:
     ).run()
     assert [e.message for e in app.exception] == []
     assert projects == [_producer_project()]
+
+
+def test_saved_annotation_lands_in_its_own_tenants_project(projects) -> None:
+    """The annotation goes to the project of the tenant it is saved for, not
+    to the session's current tenant."""
+    app = _app(
+        "optimization._save_search_annotation("
+        "'span-1', 1.0, 'Thumbs Up/Down', '', 'globex:prod')"
+    ).run()
+    assert [e.message for e in app.exception] == []
+    assert projects == [_producer_project("globex:prod")]
 
 
 def test_profile_span_analysis_names_the_producers_project(projects) -> None:

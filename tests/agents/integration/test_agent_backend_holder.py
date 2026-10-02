@@ -139,7 +139,7 @@ def _rows(results):
 @pytest.fixture
 def search_agent(wiki_tenant):
     with patch(
-        "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+        "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
         return_value=_StubEncoder(),
     ):
         agent = SearchAgent(

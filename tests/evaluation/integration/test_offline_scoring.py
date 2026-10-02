@@ -49,7 +49,15 @@ def _emit(tenant, query, item, content, *, malformed=False):
     with search_span(tenant_id=tenant, query=query, top_k=1) as span:
         add_search_results_to_span(
             span,
-            [{"id": item, "source_id": item, "score": 1.0, "content": content}],
+            [
+                {
+                    "id": item,
+                    "source_id": item,
+                    "source_title": f"{item}.mp4",
+                    "score": 1.0,
+                    "content": content,
+                }
+            ],
         )
         if malformed:
             span.set_attribute("output.value", "{broken")

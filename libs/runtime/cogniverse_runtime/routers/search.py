@@ -15,14 +15,91 @@ from cogniverse_core.common.tenant_utils import (
     assert_tenant_exists,
     require_tenant_id,
 )
+from cogniverse_core.query.encoders import (
+    EncoderNotConfiguredError,
+    EncoderUnavailableError,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config, resolve_default_profile
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_runtime.http_errors import (
+    failure_body,
+    failure_response,
+    query_encoder_failure,
+    record_failure,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+SEARCH_DEGRADED = "search_degraded"
+INVALID_SEARCH_REQUEST = "invalid_search_request"
+SEARCH_FAILED = "search_failed"
+
+
+def _search_failure(
+    exc: Exception, *, profile: Optional[str], strategy: Optional[str]
+) -> tuple[int, Dict[str, Any], Optional[Dict[str, str]]]:
+    """Status, body and headers for a failed search, from typed fields only.
+
+    The cause is logged and recorded on the active span; the body never
+    carries its text, which can name backend hosts, URLs or file paths.
+    """
+    if isinstance(exc, (EncoderNotConfiguredError, EncoderUnavailableError)):
+        record_failure(exc, "query_encoder")
+        return query_encoder_failure(exc, profile=profile, strategy=strategy)
+    if isinstance(exc, VespaSearchDegraded):
+        # A Vespa soft-timeout / partial coverage is transient: 503, retry.
+        record_failure(exc, SEARCH_DEGRADED)
+        return (
+            503,
+            failure_body(
+                SEARCH_DEGRADED,
+                "The search backend answered with degraded coverage; retry the search.",
+                exc,
+                profile=profile,
+                strategy=strategy,
+            ),
+            None,
+        )
+    if isinstance(exc, ValueError):
+        # Request input the profile or schema cannot serve (unknown profile or
+        # strategy, bad granularity): the caller's error, not a server fault.
+        record_failure(exc, INVALID_SEARCH_REQUEST, level=logging.WARNING)
+        named = [
+            f"{kind} '{value}'"
+            for kind, value in (("profile", profile), ("strategy", strategy))
+            if value
+        ]
+        subject = "Search with " + " and ".join(named) if named else "Search"
+        return (
+            400,
+            failure_body(
+                INVALID_SEARCH_REQUEST,
+                f"{subject} was rejected; GET /search/profiles and GET "
+                "/search/strategies list what this tenant accepts.",
+                exc,
+                profile=profile,
+                strategy=strategy,
+            ),
+            None,
+        )
+    record_failure(exc, SEARCH_FAILED)
+    subject = f"Search with profile '{profile}'" if profile else "Search"
+    return (
+        500,
+        failure_body(
+            SEARCH_FAILED,
+            f"{subject} failed; the runtime log names the cause.",
+            exc,
+            profile=profile,
+            strategy=strategy,
+        ),
+        None,
+    )
 
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
@@ -142,7 +219,14 @@ async def search(
     try:
         tenant_id = require_tenant_id(combined_tenant, source="SearchRequest")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise failure_response(
+            400,
+            "invalid_tenant_id",
+            "tenant_id is required on a search request, as '<org>:<tenant>' or "
+            "'<tenant>'.",
+            exc,
+            tenant_id=request.tenant_id,
+        )
 
     await assert_tenant_exists(tenant_id)
 
@@ -178,6 +262,7 @@ async def search(
             component="search_service",
         )
 
+    profile = request.profile
     with context_manager as span:
         try:
             # Config ensure-chain (sync Vespa reads) + service construction run
@@ -234,10 +319,14 @@ async def search(
                         yield f"data: {json.dumps(final_data)}\n\n"
 
                     except Exception as e:
+                        _, body, _ = _search_failure(
+                            e, profile=profile, strategy=request.strategy
+                        )
                         error_event = {
                             "type": "error",
-                            "error": str(e),
+                            "error": body["message"],
                             "error_type": type(e).__name__,
+                            "detail": body,
                         }
                         yield f"data: {json.dumps(error_event)}\n\n"
 
@@ -276,21 +365,11 @@ async def search(
             # Client errors raised above (e.g. 400 "no profile") must keep their
             # status — the broad handler below would otherwise mask them as 500.
             raise
-        except VespaSearchDegraded as e:
-            # Vespa soft-timeout / partial coverage — a transient, retryable
-            # backend fault, not a server bug. 503 tells the caller to retry,
-            # matching /agents/{name}/process; the broad handler below would
-            # otherwise mask it as an opaque 500.
-            logger.warning(f"Search degraded: {e}")
-            raise HTTPException(status_code=503, detail=str(e))
-        except ValueError as e:
-            # Bad request input (unknown profile/strategy, missing schema) — a
-            # client error, not a server fault. 400, not 500.
-            logger.info(f"Search rejected invalid input: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            logger.error(f"Search error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            status, body, headers = _search_failure(
+                e, profile=profile, strategy=request.strategy
+            )
+            raise HTTPException(status_code=status, detail=body, headers=headers)
 
 
 @router.get("/strategies")
@@ -420,5 +499,10 @@ async def rerank_results(
         logger.warning(f"Rerank bad request: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Rerank error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "rerank_failed",
+            f"Rerank with strategy '{request.get('strategy', 'learned')}' "
+            "failed; the runtime log names the cause.",
+            e,
+        )

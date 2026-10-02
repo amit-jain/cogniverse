@@ -4,6 +4,7 @@ Unit tests for profile-agnostic SearchService.
 Validates:
 - ONE SearchService instance serves multiple profiles
 - Encoder caching: same model loaded once, reused across calls
+- search() builds no query encoder; the backend builds one per strategy need
 - Profile/tenant_id passed at search() time, not construction
 - Missing profile raises ValueError with available profiles listed
 """
@@ -266,35 +267,27 @@ class TestBackendCaching:
 
     def test_get_backend_resolves_through_the_registry_per_call(self, search_service):
         """Every call resolves; the registry's LRU is the cache."""
-        mock_encoder = MagicMock()
         profile_config = {"embedding_model": "test", "schema_name": "test_schema"}
 
         mock_backend = MagicMock()
         with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
             mock_reg.return_value.get_search_backend.return_value = mock_backend
 
-            b1 = search_service._get_backend(
-                "frame_based_colpali", profile_config, mock_encoder
-            )
-            b2 = search_service._get_backend(
-                "frame_based_colpali", profile_config, mock_encoder
-            )
+            b1 = search_service._get_backend("frame_based_colpali", profile_config)
+            b2 = search_service._get_backend("frame_based_colpali", profile_config)
 
             assert (b1, b2) == (mock_backend, mock_backend)
             assert mock_reg.return_value.get_search_backend.call_count == 2
 
-    def test_each_profile_resolves_with_its_own_schema_and_encoder(
+    def test_each_profile_resolves_with_its_own_schema_and_no_encoder(
         self, search_service
     ):
         """A second profile must not inherit the first profile's binding.
 
-        Holding one instance returned the first profile's backend — bound to
-        the first profile's schema_name and encoder — for every later
-        profile, so a search on the second profile queried the first
-        profile's schema.
+        The backend is shared across profiles, so the config it is built from
+        carries the profile's schema and no query encoder: one baked in would
+        encode a later profile's queries in the first profile's space.
         """
-        first_encoder, second_encoder = MagicMock(), MagicMock()
-
         with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
             mock_reg.return_value.get_search_backend.return_value = MagicMock()
 
@@ -304,7 +297,6 @@ class TestBackendCaching:
                     "embedding_model": "a",
                     "schema_name": "video_colpali_smol500_mv_frame",
                 },
-                first_encoder,
             )
             search_service._get_backend(
                 "direct_video_colqwen",
@@ -312,33 +304,44 @@ class TestBackendCaching:
                     "embedding_model": "b",
                     "schema_name": "video_colqwen_omni_mv_chunk_30s",
                 },
-                second_encoder,
             )
 
         bound = [
             (
                 call.args[1]["profile"],
                 call.args[1]["schema_name"],
-                call.args[1]["query_encoder"],
+                sorted(call.args[1]),
             )
             for call in mock_reg.return_value.get_search_backend.call_args_list
         ]
+        backend_config_keys = [
+            "default_profiles",
+            "port",
+            "profile",
+            "profiles",
+            "schema_name",
+            "url",
+        ]
         assert bound == [
-            ("frame_based_colpali", "video_colpali_smol500_mv_frame", first_encoder),
-            ("direct_video_colqwen", "video_colqwen_omni_mv_chunk_30s", second_encoder),
+            (
+                "frame_based_colpali",
+                "video_colpali_smol500_mv_frame",
+                backend_config_keys,
+            ),
+            (
+                "direct_video_colqwen",
+                "video_colqwen_omni_mv_chunk_30s",
+                backend_config_keys,
+            ),
         ]
 
     def test_tenant_id_injected_in_query_dict(self, search_service):
         """Verify search() adds tenant_id to query_dict."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = None
-
         mock_backend = MagicMock()
         mock_backend.search.return_value = SearchResultBatch()
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
-            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
             patch(
                 "cogniverse_foundation.telemetry.context.search_span"
             ) as mock_search_span,
@@ -366,19 +369,22 @@ class TestBackendCaching:
 
 
 class TestEncodingDelegatedToBackend:
-    """search() must not run the query encoder eagerly — the backend resolves
-    the ranking strategy and encodes on-demand only when the strategy's rank
-    config needs embeddings. Eager encoding paid a full model forward even
-    for text-only (bm25) strategies."""
+    """search() builds no query encoder — the backend resolves the ranking
+    strategy and builds and runs the profile's encoder only when the
+    strategy's rank config needs embeddings. Building one here failed a
+    text-only (bm25) search whenever the profile's encoder service was not
+    configured."""
 
-    def test_search_never_encodes_and_sends_no_embeddings(self, search_service):
-        mock_encoder = MagicMock()
+    def test_search_builds_no_encoder_and_sends_no_embeddings(self, search_service):
         mock_backend = MagicMock()
         mock_backend.search.return_value = SearchResultBatch()
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
-            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
+            patch(
+                "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
+                side_effect=AssertionError("SearchService built a query encoder"),
+            ) as create_encoder,
         ):
             mock_reg.return_value.get_search_backend.return_value = mock_backend
 
@@ -389,33 +395,39 @@ class TestEncodingDelegatedToBackend:
                 ranking_strategy="bm25_only",
             )
 
-            mock_encoder.encode.assert_not_called()
-            query_dict = mock_backend.search.call_args[0][0]
-            assert "query_embeddings" not in query_dict
-            # The encoder still reaches the backend for its on-demand path.
-            assert (
-                mock_reg.return_value.get_search_backend.call_args[0][1][
-                    "query_encoder"
-                ]
-                is mock_encoder
-            )
+        assert create_encoder.call_count == 0
+        query_dict = mock_backend.search.call_args[0][0]
+        assert sorted(query_dict) == [
+            "filters",
+            "profile",
+            "query",
+            "result_granularity",
+            "strategy",
+            "tenant_id",
+            "top_k",
+            "type",
+        ]
+        assert sorted(mock_reg.return_value.get_search_backend.call_args[0][1]) == [
+            "default_profiles",
+            "port",
+            "profile",
+            "profiles",
+            "schema_name",
+            "url",
+        ]
 
 
 @pytest.mark.unit
 class TestQueryDictCarriesProfileContract:
     """The backend query dict is built from the profile the caller named:
     ``type`` is the profile's declared content type (the backend types every
-    hit with it), and the query encoder is whatever the factory resolves for
-    the profile — the service passes no model override."""
+    hit with it), and it carries no query encoder — the backend builds the
+    profile's encoder when the strategy needs one."""
 
     def _search(self, search_service, profile, **kwargs):
-        mock_encoder = MagicMock()
         mock_backend = MagicMock()
         mock_backend.search.return_value = SearchResultBatch()
-        with (
-            patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
-            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
-        ):
+        with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
             mock_reg.return_value.get_search_backend.return_value = mock_backend
             search_service.search(
                 query="podcasts about deep learning",
@@ -423,10 +435,10 @@ class TestQueryDictCarriesProfileContract:
                 tenant_id="acme:acme",
                 **kwargs,
             )
-        return mock_backend.search.call_args[0][0], mock_encoder
+        return mock_backend.search.call_args[0][0]
 
     def test_audio_profile_query_dict_is_typed_audio(self, search_service):
-        query_dict, encoder = self._search(
+        query_dict = self._search(
             search_service, "audio_clap_semantic", ranking_strategy="phased_semantic"
         )
         assert query_dict == {
@@ -437,12 +449,11 @@ class TestQueryDictCarriesProfileContract:
             "strategy": "phased_semantic",
             "top_k": 10,
             "filters": None,
-            "query_encoder": encoder,
             "result_granularity": "segment",
         }
 
     def test_video_profile_query_dict_is_typed_video(self, search_service):
-        query_dict, encoder = self._search(
+        query_dict = self._search(
             search_service,
             "frame_based_colpali",
             ranking_strategy="default",
@@ -456,14 +467,13 @@ class TestQueryDictCarriesProfileContract:
             "strategy": "default",
             "top_k": 10,
             "filters": None,
-            "query_encoder": encoder,
             "result_granularity": "segment",
         }
 
     def test_video_profile_default_query_dict_uses_source_granularity(
         self, search_service
     ):
-        query_dict, encoder = self._search(search_service, "frame_based_colpali")
+        query_dict = self._search(search_service, "frame_based_colpali")
         assert query_dict == {
             "query": "podcasts about deep learning",
             "type": "video",
@@ -472,7 +482,6 @@ class TestQueryDictCarriesProfileContract:
             "strategy": "default",
             "top_k": 10,
             "filters": None,
-            "query_encoder": encoder,
             "result_granularity": "source",
         }
 
@@ -494,24 +503,6 @@ class TestQueryDictCarriesProfileContract:
             match="Profile 'frame_based_colpali' missing 'type' configuration",
         ):
             self._search(svc, "frame_based_colpali")
-
-    def test_encoder_resolution_is_delegated_to_the_factory(self, search_service):
-        """No ``model_name`` override: the factory owns model selection, so a
-        ColBERT-over-transcript profile whose ``embedding_model`` names its
-        acoustic (CLAP) model still gets its ``semantic_model`` encoder."""
-        profile_config = search_service._get_profile_config(
-            "audio_clap_semantic", "acme:acme"
-        )
-        sentinel = MagicMock()
-        with patch(
-            "cogniverse_agents.search.service.QueryEncoderFactory.create_encoder",
-            return_value=sentinel,
-        ) as create_encoder:
-            encoder = search_service._get_encoder("audio_clap_semantic", profile_config)
-        assert encoder is sentinel
-        create_encoder.assert_called_once_with(
-            "audio_clap_semantic", config=search_service.config
-        )
 
 
 @pytest.mark.unit
@@ -637,7 +628,6 @@ class TestSearchResultsSerializedOncePerQuery:
             serialize_calls.append(len(res))
             return real_serialize(res)
 
-        mock_encoder = MagicMock()
         mock_backend = MagicMock()
         mock_backend.search.return_value = SearchResultBatch(
             results,
@@ -646,7 +636,6 @@ class TestSearchResultsSerializedOncePerQuery:
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
-            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
             patch(
                 "cogniverse_foundation.telemetry.context.backend_search_span",
                 fake_backend_span,

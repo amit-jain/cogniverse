@@ -20,6 +20,7 @@ from inspect_ai._util.registry import registry_unqualified_name
 
 from cogniverse_evaluation.core.inspect_scorers import get_configured_scorers
 from cogniverse_evaluation.data.datasets import INPUT_KEYS, OUTPUT_KEYS, DatasetManager
+from cogniverse_sdk.document import result_source_title_key
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     PHOENIX_URL,
@@ -199,8 +200,7 @@ def _runtime_result_ids(query: str, profile: str) -> list[str]:
     )
     assert response.status_code == 200, response.text[:500]
     return [
-        str(result.get("source_id") or result.get("document_id") or "")
-        for result in response.json().get("results", [])
+        result_source_title_key(result) for result in response.json().get("results", [])
     ]
 
 
@@ -271,11 +271,12 @@ class TestEvaluationCLIReportsTheRunsRealStatus:
                 }, exported_row
 
             # The expected id the runtime does return is scored, never dropped
-            # to 0.0 by a missing-evidence fallback.
+            # to 0.0 by a missing-evidence fallback. Golden ids are source
+            # title keys; the tenant's source ids are content hashes.
             retrieved = _runtime_result_ids(source_row["query"], profile)
             expected = source_row["expected_videos"]
-            if any(expected in candidate for candidate in retrieved):
-                assert exported_row["scores"]["recall_scorer"]["value"] != 0.0, (
+            if expected in retrieved:
+                assert exported_row["scores"]["recall_scorer"]["value"] == 1.0, (
                     exported_row,
                     retrieved,
                 )

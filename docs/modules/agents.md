@@ -231,6 +231,16 @@ config of `SearchAgentDeps.tenant_id` — the tenant's own profiles merged over
 the system's — and from the system tenant when it is unset. The dispatcher
 caches one agent per tenant and profile.
 
+**Query encoding**: constructing the agent builds no encoder. A text search
+(plain, relationship-aware, query variants, ensemble) hands the backend a
+`SharedQueryEncoder` instead of embeddings; the backend encodes through it only
+when the resolved ranking strategy needs embeddings, so `bm25_only` never
+builds or calls the encoder. `query_encoder` builds the active profile's
+encoder once, on first use, under a lock; media queries (an image or video
+file) go through it via `content_processor`. Encoder failures surface as
+`EncoderNotConfiguredError` and `EncoderUnavailableError`, which
+`/agents/{name}/process` answers as typed 500 and 503 bodies.
+
 #### Multi-Modal Support
 
 ```mermaid
@@ -1834,8 +1844,10 @@ SearchAgent was enhanced to support ensemble mode, allowing it to query multiple
 `_search_ensemble` returns an `EnsembleOutcome`: the fused hits, `searched`
 (the profiles whose search ran) and `degraded` (`(profile, reason)` for a leg
 that could not encode its query or whose search raised, with `reason` in
-`encode_failed` / `search_failed`). Profiles sharing an embedding model share
-one encode. `SearchOutput.profiles` names the legs that ran and
+`encode_failed` / `search_failed`; a leg is `encode_failed` when its search
+raised a typed encoder fault). Profiles sharing an embedding model share one
+`SharedQueryEncoder`, so one encode, and a leg encodes only when its ranking
+strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
 partial ensemble as partial. Every leg failing raises.
 

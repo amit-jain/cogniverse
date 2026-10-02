@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from cogniverse_core.query.encoders import (
     ColBERTQueryEncoder,
+    EncoderNotConfiguredError,
+    EncoderUnavailableError,
     QueryEncoderFactory,
+    SharedQueryEncoder,
+    build_query_encoder,
+)
+from cogniverse_foundation.config.inference_service import (
+    InferenceServiceUnavailableError,
 )
 
 
@@ -434,3 +444,160 @@ def test_concurrent_cold_start_keeps_endpoints_apart():
         assert all(r is results[url][0] for r in results[url])
         assert results[url][0].url == url
     assert results[urls[0]][0] is not results[urls[1]][0]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestBuildQueryEncoder:
+    """Building a profile's encoder reports a config gap and an outage as
+    distinct typed faults that name the profile."""
+
+    _PROFILE = {
+        "embedding_model": "lightonai/LateOn",
+        "model_loader": "colbert",
+        "schema_config": {"embedding_dim": 128},
+        "inference_services": {"embedding": "colbert_pylate"},
+    }
+
+    def test_a_service_with_no_url_is_a_configuration_gap(self):
+        config = _build_system_config("audio", self._PROFILE)
+
+        with pytest.raises(EncoderNotConfiguredError) as caught:
+            build_query_encoder("audio", config=config)
+
+        assert caught.value.profile == "audio"
+        assert str(caught.value).startswith(
+            "Profile 'audio' declares a query encoder that could not be built: "
+            "ValueError: Profile 'audio' specifies inference_services.embedding="
+            "'colbert_pylate' but no URL is configured."
+        )
+
+    def test_no_url_and_no_in_process_backend_is_a_configuration_gap(self):
+        config = _build_system_config("audio", self._PROFILE)
+        missing = InferenceServiceUnavailableError(
+            "colbert_pylate", "no URL and no pylate", module="pylate"
+        )
+        with patch.object(QueryEncoderFactory, "create_encoder", side_effect=missing):
+            with pytest.raises(EncoderNotConfiguredError) as caught:
+                build_query_encoder("audio", config=config)
+
+        assert (caught.value.profile, caught.value.__cause__) == ("audio", missing)
+
+    def test_an_unreachable_service_is_an_outage(self):
+        config = _build_system_config("audio", self._PROFILE)
+        down = InferenceServiceUnavailableError("colbert_pylate", "unreachable")
+        with patch.object(QueryEncoderFactory, "create_encoder", side_effect=down):
+            with pytest.raises(EncoderUnavailableError) as caught:
+                build_query_encoder("audio", config=config)
+
+        assert (caught.value.profile, caught.value.service, caught.value.endpoint) == (
+            "audio",
+            "colbert_pylate",
+            None,
+        )
+        assert caught.value.__cause__ is down
+
+
+class _CountingEncoder:
+    def __init__(self, embedding):
+        self.embedding = embedding
+        self.calls: list[str] = []
+        self._lock = threading.Lock()
+
+    def encode(self, query: str):
+        with self._lock:
+            self.calls.append(query)
+        time.sleep(0.05)
+        return self.embedding
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestSharedQueryEncoder:
+    def test_nothing_is_built_until_a_search_encodes(self):
+        builds = []
+        shared = SharedQueryEncoder("p", lambda: builds.append(1) or None)
+
+        assert builds == []
+        assert shared.profile == "p"
+
+    def test_concurrent_searches_build_once_and_encode_each_query_once(self):
+        encoder = _CountingEncoder(np.ones((2, 4), dtype=np.float32))
+        builds = []
+
+        def build():
+            builds.append(1)
+            return encoder
+
+        shared = SharedQueryEncoder("p", build)
+        workers = 8
+        barrier = threading.Barrier(workers)
+        results: list = [None] * workers
+
+        def search(index: int) -> None:
+            barrier.wait()
+            results[index] = shared.encode("red kayak" if index % 2 else "blue boat")
+
+        threads = [threading.Thread(target=search, args=(i,)) for i in range(workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert len(builds) == 1
+        assert sorted(encoder.calls) == ["blue boat", "red kayak"]
+        assert all(result is encoder.embedding for result in results)
+
+    def test_a_failed_encode_is_shared_not_retried(self):
+        down = ConnectionError("pooling sidecar refused")
+        attempts = []
+
+        def encode(query):
+            attempts.append(query)
+            raise down
+
+        shared = SharedQueryEncoder(
+            "p", lambda: type("E", (), {"encode": staticmethod(encode)})()
+        )
+
+        faults = []
+        for _ in range(3):
+            with pytest.raises(EncoderUnavailableError) as caught:
+                shared.encode("q")
+            faults.append(caught.value)
+
+        assert attempts == ["q"]
+        assert faults[0] is faults[1] is faults[2]
+        assert (faults[0].profile, faults[0].__cause__) == ("p", down)
+
+    def test_a_rejected_query_is_a_configuration_gap(self):
+        def encode(query):
+            raise ValueError("video_embed returned a 512-dim text vector")
+
+        shared = SharedQueryEncoder(
+            "p", lambda: type("E", (), {"encode": staticmethod(encode)})()
+        )
+
+        with pytest.raises(EncoderNotConfiguredError) as caught:
+            shared.encode("q")
+
+        assert caught.value.profile == "p"
+        assert str(caught.value) == (
+            "Profile 'p' query encoder rejected the query: ValueError: "
+            "video_embed returned a 512-dim text vector"
+        )
+
+    def test_a_build_fault_reaches_every_search(self):
+        gap = EncoderNotConfiguredError("no model", profile="p")
+        builds = []
+
+        def build():
+            builds.append(1)
+            raise gap
+
+        shared = SharedQueryEncoder("p", build)
+        for _ in range(2):
+            with pytest.raises(EncoderNotConfiguredError) as caught:
+                shared.encode("q")
+            assert caught.value is gap
+        assert builds == [1]

@@ -32,6 +32,7 @@ from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_te
 from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config, resolve_default_profile
+from cogniverse_runtime.http_errors import failure_response
 from cogniverse_runtime.ingestion_jobs import (
     IngestionJobStore,
     IngestionJobStoreUnavailableError,
@@ -218,6 +219,16 @@ def get_schema_loader_dependency() -> SchemaLoader:
     )
 
 
+def _upload_profile_unavailable(exc: Exception, tenant_id: str):
+    return failure_response(
+        503,
+        "upload_profile_unavailable",
+        f"Upload profile configuration is unavailable for tenant '{tenant_id}'; retry.",
+        exc,
+        tenant_id=tenant_id,
+    )
+
+
 @router.post("/start")
 async def start_ingestion(
     request: IngestionRequest,
@@ -291,8 +302,12 @@ async def start_ingestion(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Ingestion start error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "ingestion_start_failed",
+            "Starting the ingestion job failed; the runtime log names the cause.",
+            e,
+        )
 
 
 @router.get("/status/{job_id}")
@@ -364,15 +379,7 @@ async def upload_video(
     try:
         sys_cfg = await asyncio.to_thread(config_manager.get_system_config)
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": (
-                    "upload profile configuration unavailable for tenant "
-                    f"{upload_tenant_id!r}: {exc}"
-                )
-            },
-        ) from exc
+        raise _upload_profile_unavailable(exc, upload_tenant_id) from exc
 
     # The queue worker ingests to the deployment's single configured backend
     # (bootstrap.backend_type). Honor the request's ``backend`` by rejecting one
@@ -422,17 +429,17 @@ async def upload_video(
     except _NoDefaultUploadProfile as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except _UploadProfileConfigurationError as exc:
-        raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": (
-                    "upload profile configuration unavailable for tenant "
-                    f"{upload_tenant_id!r}: {exc}"
-                )
-            },
+        # Its text is built only from the tenant and profile names
+        # (_resolve_upload_profile), so it is the message itself.
+        raise failure_response(
+            503,
+            "upload_profile_unusable",
+            str(exc),
+            exc,
+            tenant_id=upload_tenant_id,
         ) from exc
+    except Exception as exc:
+        raise _upload_profile_unavailable(exc, upload_tenant_id) from exc
 
     from botocore.exceptions import BotoCoreError, ClientError
     from redis.exceptions import RedisError
@@ -457,16 +464,28 @@ async def upload_video(
             content_type=file.content_type,
         )
     except RuntimeError as exc:
-        # SystemConfig advertises MinIO but the process env lacks the
-        # credentials (config/env drift) — retryable deployment problem,
+        # SystemConfig advertises MinIO but the process env lacks its bucket
+        # or credentials (config/env drift) — retryable deployment problem,
         # not a client error or a 500.
-        raise HTTPException(status_code=503, detail={"message": str(exc)})
+        raise failure_response(
+            503,
+            "object_store_unconfigured",
+            "The object store is advertised but this runtime is missing one of "
+            "MINIO_DEFAULT_BUCKET, MINIO_ENDPOINT, MINIO_ACCESS_KEY and "
+            "MINIO_SECRET_KEY; enable minio in the chart values or set them.",
+            exc,
+            tenant_id=upload_tenant_id,
+        )
     except (BotoCoreError, ClientError) as exc:
         # MinIO/S3 down, throttling, or 5xx mid-transfer — a transient backend
         # outage, retryable. Surface 503, not an opaque 500. put_object is a
         # single PUT so there is no partial object to clean up.
-        raise HTTPException(
-            status_code=503, detail={"message": f"object store unavailable: {exc}"}
+        raise failure_response(
+            503,
+            "object_store_unavailable",
+            "The object store did not accept the upload; retry.",
+            exc,
+            tenant_id=upload_tenant_id,
         )
 
     redis = await get_redis(redis_url)
@@ -493,13 +512,24 @@ async def upload_video(
     except RedisError as exc:
         # Redis unreachable while enqueueing — the object is already uploaded;
         # a retry re-enqueues idempotently (content-addressed key). 503, not 500.
-        raise HTTPException(
-            status_code=503, detail={"message": f"ingest queue unavailable: {exc}"}
+        raise failure_response(
+            503,
+            "ingest_queue_unavailable",
+            "The ingest queue did not answer; the upload is stored, retry to "
+            "enqueue it.",
+            exc,
+            tenant_id=upload_tenant_id,
         )
     except StatusStreamUnavailable as exc:
         # The job may be running, but its status stream is gone: the state is
         # unknown and must not be rendered as one.
-        raise HTTPException(status_code=503, detail={"message": str(exc)})
+        raise failure_response(
+            503,
+            "ingest_status_unknown",
+            "The ingest's status stream is gone; its state is unknown.",
+            exc,
+            tenant_id=upload_tenant_id,
+        )
 
     response: Dict[str, Any] = {
         "ingest_id": result.ingest_id,

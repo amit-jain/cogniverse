@@ -113,7 +113,7 @@ def _dispatcher(budget_s=_TEST_BUDGET_S):
     config_manager = ConfigManager(store=store)
 
     with (
-        patch("cogniverse_agents.search_agent.QueryEncoderFactory"),
+        patch("cogniverse_core.query.encoders.QueryEncoderFactory"),
         patch("cogniverse_agents.search_agent.get_backend_registry"),
     ):
         agent = SearchAgent(

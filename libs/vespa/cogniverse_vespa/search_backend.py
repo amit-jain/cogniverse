@@ -28,6 +28,7 @@ import requests
 from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_core.query.encoders import encoder_outage_errors
 from cogniverse_sdk.document import (
     ALLOWED_RESULT_GRANULARITIES,
     ContentType,
@@ -59,24 +60,6 @@ _TRANSIENT_SEARCH_ERRORS = (
     TimeoutError,
     VespaError,
 )
-
-
-# An encoder failure that is a SERVICE outage rather than a config gap.
-# CircuitOpenError is included: a tripped per-endpoint breaker means the
-# service has been failing, which is an outage, not a missing setting.
-def _encoder_outage_errors():
-    from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
-    from cogniverse_foundation.config.inference_service import (
-        InferenceServiceUnavailableError,
-    )
-
-    return (
-        InferenceServiceUnavailableError,
-        CircuitOpenError,
-        requests.RequestException,
-        ConnectionError,
-        TimeoutError,
-    )
 
 
 _SEARCH_CONTENT_TYPES = {
@@ -116,6 +99,22 @@ def _schema_source_identity_field(
             )
         return None
     return mapping.id
+
+
+def _schema_source_title_field(
+    schema_json: Optional[Mapping[str, Any]], *, schema_name: str
+) -> Optional[str]:
+    """Return the schema's source title field from document_mapping.title.
+
+    Ingestion stores the source's original file basename there, which stays
+    stable when the source identity is a content hash.
+    """
+    mapping = DocumentFieldMapping.from_schema_json(
+        dict(schema_json or {}), schema_name=schema_name, required=False
+    )
+    if mapping is None or not mapping.title:
+        return None
+    return mapping.title
 
 
 def _source_identity_attribute(
@@ -1121,7 +1120,8 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile {profile_name!r} resolves to the "
                 f"{getattr(exc, 'service', 'embedding')!r} inference service, "
                 f"which has no configured URL and no in-process {module!r} "
-                f"backend in this image: {exc}"
+                f"backend in this image: {exc}",
+                profile=profile_name,
             )
         return EncoderUnavailableError(
             profile=profile_name,
@@ -1172,12 +1172,14 @@ class VespaSearchBackend(SearchBackend):
                 raise EncoderNotConfiguredError(
                     f"Profile {profile_name!r} declares neither 'semantic_model' "
                     f"nor 'embedding_model', so no query encoder can be built. "
-                    f"Add one to the profile or pass 'query_embeddings'."
+                    f"Add one to the profile or pass 'query_embeddings'.",
+                    profile=profile_name,
                 )
             if self._config_manager is None:
                 raise EncoderNotConfiguredError(
                     f"Profile {profile_name!r} needs a config_manager to resolve "
-                    f"its query encoder, but this backend was built without one."
+                    f"its query encoder, but this backend was built without one.",
+                    profile=profile_name,
                 )
             from cogniverse_core.query.encoders import QueryEncoderFactory
             from cogniverse_foundation.config.utils import get_config
@@ -1188,14 +1190,15 @@ class VespaSearchBackend(SearchBackend):
             )
         except (EncoderNotConfiguredError, EncoderUnavailableError):
             raise
-        except _encoder_outage_errors() as exc:
+        except encoder_outage_errors() as exc:
             raise self._encoder_fault(
                 profile_name, profile_config, tenant_id, exc
             ) from exc
         except Exception as exc:
             raise EncoderNotConfiguredError(
                 f"Profile {profile_name!r} declares a query encoder that could "
-                f"not be built: {type(exc).__name__}: {exc}"
+                f"not be built: {type(exc).__name__}: {exc}",
+                profile=profile_name,
             ) from exc
 
     def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
@@ -1388,6 +1391,7 @@ class VespaSearchBackend(SearchBackend):
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)
         source_identity_field = None
+        source_title_field = None
         source_temporal_field_names: tuple[str, ...] = ()
         if self._schema_loader is not None:
             schema_json = self._schema_loader.load_schema(base_schema_name)
@@ -1395,6 +1399,9 @@ class VespaSearchBackend(SearchBackend):
                 schema_json,
                 schema_name=base_schema_name,
                 required=False,
+            )
+            source_title_field = _schema_source_title_field(
+                schema_json, schema_name=base_schema_name
             )
             source_temporal_field_names = _schema_temporal_field_names(schema_json)
             if result_granularity == "source":
@@ -1548,7 +1555,7 @@ class VespaSearchBackend(SearchBackend):
                     ) as encode_span_ctx:
                         try:
                             query_embeddings = request_encoder.encode(query_text)
-                        except _encoder_outage_errors() as exc:
+                        except encoder_outage_errors() as exc:
                             raise self._encoder_fault(
                                 profile_name, profile_config, tenant_id, exc
                             ) from exc
@@ -1615,6 +1622,7 @@ class VespaSearchBackend(SearchBackend):
                         correlation_id,
                         content_type,
                         source_identity_field=source_identity_field,
+                        source_title_field=source_title_field,
                     )
                 )
                 results = _collapse_results_by_source(
@@ -1639,6 +1647,7 @@ class VespaSearchBackend(SearchBackend):
                     correlation_id,
                     content_type,
                     source_identity_field=source_identity_field,
+                    source_title_field=source_title_field,
                 )
 
             # Record metrics
@@ -1926,8 +1935,13 @@ class VespaSearchBackend(SearchBackend):
         result: Dict[str, Any],
         content_type: str,
         source_identity_field: Optional[str] = None,
+        source_title_field: Optional[str] = None,
     ) -> Document:
-        """Convert Vespa result to Document object."""
+        """Convert Vespa result to Document object.
+
+        Stamps ``source_id`` from the schema's identity field and, when the
+        hit carries one, ``source_title`` from its title field.
+        """
         if not isinstance(result, Mapping):
             raise ValueError("Vespa hit must be a mapping")
         raw_id = result.get("id")
@@ -1967,6 +1981,10 @@ class VespaSearchBackend(SearchBackend):
         if source_id is None:
             source_id = doc_id
         document.add_metadata("source_id", source_id)
+        if source_title_field:
+            source_title = fields.get(source_title_field)
+            if isinstance(source_title, str) and source_title.strip():
+                document.add_metadata("source_title", source_title)
 
         return document
 
@@ -1976,6 +1994,7 @@ class VespaSearchBackend(SearchBackend):
         correlation_id: str,
         content_type: str,
         source_identity_field: Optional[str] = None,
+        source_title_field: Optional[str] = None,
     ) -> SearchResultBatch:
         """Process a segment-granularity Vespa response into SearchResults.
 
@@ -2004,7 +2023,9 @@ class VespaSearchBackend(SearchBackend):
         logger.debug(f"[{correlation_id}] Processing {len(leaf_hits)} hits from Vespa")
         for hit in leaf_hits:
             results.append(
-                self._hit_to_result(hit, content_type, source_identity_field)
+                self._hit_to_result(
+                    hit, content_type, source_identity_field, source_title_field
+                )
             )
 
         total_count = None
@@ -2034,6 +2055,7 @@ class VespaSearchBackend(SearchBackend):
         content_type: str,
         *,
         source_identity_field: str,
+        source_title_field: Optional[str] = None,
     ) -> tuple[List[SearchResult], int, Dict[str, int]]:
         """Flatten a source-grouped response into segments, its totalCount and
         each source's matched-segment count.
@@ -2089,7 +2111,9 @@ class VespaSearchBackend(SearchBackend):
                     "has no hits"
                 )
             segments = [
-                self._hit_to_result(hit, content_type, source_identity_field)
+                self._hit_to_result(
+                    hit, content_type, source_identity_field, source_title_field
+                )
                 for hit in hits
             ]
             segments.sort(key=lambda result: (-result.score, result.document.id))
@@ -2115,11 +2139,13 @@ class VespaSearchBackend(SearchBackend):
         hit: Any,
         content_type: str,
         source_identity_field: Optional[str],
+        source_title_field: Optional[str] = None,
     ) -> SearchResult:
         doc = self._result_to_document(
             hit,
             content_type,
             source_identity_field=source_identity_field,
+            source_title_field=source_title_field,
         )
         try:
             score = hit["relevance"]

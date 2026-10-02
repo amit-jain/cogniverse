@@ -3,7 +3,7 @@
 import logging
 import threading
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import numpy as np
 
@@ -259,8 +259,13 @@ class EncoderNotConfiguredError(ValueError):
     A deployment/config gap: the profile names no model, names an inference
     service with no URL, or omits a dimension the encoder needs. Distinct
     from :class:`EncoderUnavailableError`, which means the encoder is
-    configured but its service cannot be reached.
+    configured but its service cannot be reached. ``profile`` names the
+    profile when the raiser knows it.
     """
+
+    def __init__(self, message: str, *, profile: Optional[str] = None):
+        super().__init__(message)
+        self.profile = profile
 
 
 class EncoderUnavailableError(RuntimeError):
@@ -277,6 +282,152 @@ class EncoderUnavailableError(RuntimeError):
             f"Query encoder for profile {profile!r} is unavailable — "
             f"{where}{at} did not serve the request{suffix}"
         )
+
+
+def encoder_outage_errors() -> tuple:
+    """The failures that mean a configured encoder's service did not serve.
+
+    A tripped per-endpoint breaker (``CircuitOpenError``) counts: the service
+    has been failing, which is an outage, not a missing setting.
+    """
+    import requests
+
+    from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
+
+    return (
+        InferenceServiceUnavailableError,
+        CircuitOpenError,
+        requests.RequestException,
+        ConnectionError,
+        TimeoutError,
+    )
+
+
+def build_query_encoder(
+    profile: str, *, config: "SystemConfig", model_name: Optional[str] = None
+) -> QueryEncoder:
+    """Build ``profile``'s query encoder, raising the typed encoder faults.
+
+    A missing or incomplete setting — including a service with no URL and no
+    in-process backend in this image — is ``EncoderNotConfiguredError``; a
+    configured service that did not answer is ``EncoderUnavailableError``.
+    """
+    try:
+        return QueryEncoderFactory.create_encoder(profile, model_name, config=config)
+    except (EncoderNotConfiguredError, EncoderUnavailableError):
+        raise
+    except encoder_outage_errors() as exc:
+        service = getattr(exc, "service", None)
+        if getattr(exc, "module", None):
+            raise EncoderNotConfiguredError(
+                f"Profile {profile!r} resolves to the {service!r} inference "
+                "service, which has no configured URL and no in-process backend "
+                f"in this image: {exc}",
+                profile=profile,
+            ) from exc
+        raise EncoderUnavailableError(
+            profile=profile,
+            service=service,
+            endpoint=None,
+            detail=type(exc).__name__,
+        ) from exc
+    except Exception as exc:
+        raise EncoderNotConfiguredError(
+            f"Profile {profile!r} declares a query encoder that could not be "
+            f"built: {type(exc).__name__}: {exc}",
+            profile=profile,
+        ) from exc
+
+
+class SharedQueryEncoder:
+    """An encoder a text search hands the backend instead of embeddings.
+
+    The backend calls ``encode`` only when the resolved ranking strategy needs
+    query embeddings, so a text-only strategy never builds or calls the
+    encoder. ``build`` runs on first use; each query text is encoded once and
+    the embeddings, or the failure, are shared by every search holding this
+    object. Failures surface as the typed encoder faults: a build failure as
+    ``build_query_encoder`` raises it, an outage as
+    ``EncoderUnavailableError``, a rejected query (``ValueError``) as
+    ``EncoderNotConfiguredError``.
+    """
+
+    def __init__(
+        self,
+        profile: str,
+        build: Callable[[], QueryEncoder],
+        *,
+        service: Optional[str] = None,
+    ):
+        self.profile = profile
+        self.service = service
+        self._build = build
+        self._lock = threading.Lock()
+        self._built = None
+        self._outcomes: dict = {}
+
+    def encode(self, query: str) -> np.ndarray:
+        with self._lock:
+            if query not in self._outcomes:
+                self._outcomes[query] = self._encode(query)
+            outcome = self._outcomes[query]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    def _encoder(self) -> QueryEncoder:
+        """The built encoder; the build, or its failure, happens once."""
+        if self._built is None:
+            try:
+                self._built = self._build()
+            except Exception as exc:
+                self._built = exc
+        if isinstance(self._built, BaseException):
+            raise self._built
+        return self._built
+
+    def _encode(self, query: str):
+        try:
+            return self._encoder().encode(query)
+        except (EncoderNotConfiguredError, EncoderUnavailableError) as exc:
+            return exc
+        except encoder_outage_errors() as exc:
+            return _caused_by(
+                EncoderUnavailableError(
+                    profile=self.profile,
+                    service=getattr(exc, "service", None) or self.service,
+                    endpoint=None,
+                    detail=type(exc).__name__,
+                ),
+                exc,
+            )
+        except ValueError as exc:
+            return _caused_by(
+                EncoderNotConfiguredError(
+                    f"Profile {self.profile!r} query encoder rejected the query: "
+                    f"{type(exc).__name__}: {exc}",
+                    profile=self.profile,
+                ),
+                exc,
+            )
+        except Exception as exc:
+            return _caused_by(
+                EncoderUnavailableError(
+                    profile=self.profile,
+                    service=self.service,
+                    endpoint=None,
+                    detail=type(exc).__name__,
+                ),
+                exc,
+            )
+
+
+def _caused_by(fault: Exception, cause: BaseException) -> Exception:
+    fault.__cause__ = cause
+    return fault
 
 
 def _resolve_inference_url(

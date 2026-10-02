@@ -18,10 +18,14 @@ rather than adding a wipe helper here that other tests would mis-use.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import socket
+import threading
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -304,3 +308,61 @@ def schema_tensor_dim(base_schema_name: str, field_name: str) -> int:
             )
         return int(match.group(1))
     raise KeyError(f"{base_schema_name} has no field named {field_name!r}")
+
+
+@contextlib.contextmanager
+def serve_search_route(
+    config_manager: ConfigManager, *, tenants: Iterable[str]
+) -> Iterator[str]:
+    """Serve the runtime ``/search`` router over a real socket.
+
+    The router reads ``config_manager`` and the shipped schemas; a request for
+    a tenant outside ``tenants`` fails the tenant-existence check. Yields the
+    base URL. Callers that switch ``config_manager``'s system config between
+    tests also clear ``BackendRegistry`` instances, since the shared search
+    backend keeps the manager it was first built with.
+    """
+    from unittest.mock import patch
+
+    import uvicorn
+    from fastapi import FastAPI
+
+    from cogniverse_runtime.routers import search
+
+    known = set(tenants)
+
+    async def _tenant_registered(tenant_id: str) -> None:
+        if tenant_id not in known:
+            raise AssertionError(f"search reached unregistered tenant {tenant_id!r}")
+
+    app = FastAPI()
+    app.include_router(search.router, prefix="/search")
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
+    )
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        FilesystemSchemaLoader(_SCHEMAS_DIR)
+    )
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    with patch(
+        "cogniverse_runtime.routers.search.assert_tenant_exists",
+        new=_tenant_registered,
+    ):
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 20
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not server.started:
+            raise RuntimeError("uvicorn did not start the search route")
+        try:
+            yield f"http://127.0.0.1:{port}"
+        finally:
+            server.should_exit = True
+            thread.join(timeout=20)

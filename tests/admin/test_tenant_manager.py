@@ -436,7 +436,9 @@ class TestTenantManagerAPI:
             "schema still in Vespa after schema-only-tenant DELETE"
         )
 
-    def test_delete_refuses_when_peer_orphan_would_be_dropped(self, test_client):
+    def test_delete_refuses_when_peer_orphan_would_be_dropped(
+        self, test_client, caplog
+    ):
         """A tenant delete whose redeploy would drop ANOTHER tenant's
         deployed-but-unregistered schema must surface the refusal over HTTP
         and leave the tenant intact — never silently destroy peer data."""
@@ -464,9 +466,32 @@ class TestTenantManagerAPI:
             victim, "video_colpali_smol500_mv_frame"
         )
         try:
-            resp = test_client.delete(f"/admin/tenants/{target}")
+            with caplog.at_level(
+                logging.ERROR, logger="cogniverse_runtime.http_errors"
+            ):
+                resp = test_client.delete(f"/admin/tenants/{target}")
             assert resp.status_code == 500, resp.text
-            assert "no registry record" in resp.text
+            assert resp.json() == {
+                "detail": {
+                    "error": "tenant_delete_failed",
+                    "message": (
+                        f"Deleting tenant {target} failed; the runtime log "
+                        "names the cause."
+                    ),
+                    "failure": "BackendDeploymentError",
+                    "tenant_id": target,
+                }
+            }
+            causes = [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == "cogniverse_runtime.http_errors"
+            ]
+            assert len(causes) == 1
+            assert causes[0].startswith(
+                "tenant_delete_failed: BackendDeploymentError: refusing to "
+                "redeploy: 1 deployed schema(s) have no registry record"
+            )
 
             # The refusal keeps the tenant; the delete is retryable.
             assert test_client.get(f"/admin/tenants/{target}").status_code == 200

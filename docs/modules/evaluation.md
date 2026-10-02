@@ -1772,6 +1772,16 @@ latency_p95_ceiling_ms: float = 1000.0
 min_samples_for_verdict: int = 10
 ```
 
+**Golden matching:** a golden set names each expected video by its original
+filename stem (`v_-uJnucdW6DY`). `evaluate_golden_set` keys every `/search`
+result by `result_source_title_key` (`cogniverse_sdk.document`): the
+`source_title` the search backend stamps from the schema's
+`document_mapping.title` field, which ingestion fills with the original upload
+basename, with its extension stripped. A tenant whose `source_id` is a content
+hash (multipart uploads land in MinIO as `{tenant}/{sha256}.{ext}`) and one
+whose `source_id` is the filename stem key identically. A query that returns a
+result with no `source_title` counts as failed.
+
 **Result dataclasses:** `AgentEvalResult` (per-agent score/baseline/degradation),
 `GoldenEvalResult` (mean_mrr, mean_ndcg, mean_precision_at_5, per-query scores,
 `baseline_mrr` captured before the new result is stored, plus
@@ -1812,7 +1822,11 @@ results against `QualityThresholds`, then (when `telemetry_provider` was
 passed to the constructor) consults `cogniverse_agents.routing.xgboost_meta_models.TrainingDecisionModel.should_train(...)`
 per agent to confirm or override the naive threshold verdict — logged as an
 override, never silent — falling back to the naive verdicts if the model
-can't be built or scored; `_build_trigger(...)` assembles an
+can't be built or scored. Until a `TrainingDecisionModel` is trained, the
+threshold verdicts stand unchanged (logged once per check): its untrained
+heuristic needs 50 live samples, more than the `live_sample_count` window
+holds, so whether there is enough data to train is left to each optimizer's
+population floor (lookback spans plus approved synthetic data); `_build_trigger(...)` assembles an
 `OptimizationTrigger` when optimization is warranted.
 
 **Example:**
@@ -1987,7 +2001,14 @@ precision on the harvested ground truth.
 
 **File:** `libs/evaluation/cogniverse_evaluation/metrics/custom.py`
 
-Pure functions operating on ranked ID lists — used by scorers and `QualityMonitor`'s golden-set evaluation:
+Pure functions operating on ranked ID lists — used by scorers and `QualityMonitor`'s golden-set evaluation.
+Every golden consumer (`QualityMonitor`, the `precision_scorer`/`recall_scorer`
+Inspect scorers over retrieval-solver and trace results, `GoldenDatasetEvaluator`,
+and `scripts/create_golden_dataset_from_traces.py`) builds the ranked ID list
+from each result's `result_source_title_key`, never its `source_id`. The
+retrieval solver carries each `/search` result's `source_title` into its
+packed results for that. `GoldenDatasetEvaluator` labels a span whose results
+carry no `source_title` `not_evaluable`; the scorers raise on one:
 
 ```python
 from cogniverse_evaluation.metrics.custom import (
@@ -3130,7 +3151,7 @@ result = evaluator.evaluate(
 - `test_data_managers.py` — `DatasetManager` / `TraceManager`
 - `test_storage.py` — `TelemetryStorage` connection/health-check handling, `get_traces_for_evaluation` raising `ConnectionError` when disconnected
 - `test_ground_truth.py` — ground truth strategy dispatch, per-schema discovery caching, `BackendGroundTruthStrategy`'s tighter `top_k`
-- `test_golden_dataset_from_traces.py` — `scripts/create_golden_dataset_from_traces.py`'s `GoldenDatasetGenerator` reads the flattened Phoenix span frame (`attributes.input.value`/`attributes.output.value`), not bare `input`/`output`
+- `test_golden_dataset_from_traces.py` — `scripts/create_golden_dataset_from_traces.py`'s `GoldenDatasetGenerator` reads the flattened Phoenix span frame (`attributes.input.value`/`attributes.output.value`), not bare `input`/`output`, and mines `expected_videos` as source title keys
 - `test_metrics.py` — MRR/nDCG/precision/recall/F1/MAP
 - `test_evaluators.py` — `Evaluator` base class, reference-free evaluators
 - `test_inspect_scorers.py`, `test_solvers.py`, `test_task.py`, `test_reranking.py` — Inspect AI integration
@@ -3154,6 +3175,7 @@ calls, without a live Phoenix.
 - `test_end_to_end.py` — full evaluation pipeline against a real backend
 - `test_incremental_span_eval.py` — `SpanEvaluator` incremental skip-set behavior
 - `test_golden_baseline_capture.py` — golden-set baseline MRR capture for `QualityMonitor`
+- `test_golden_source_title_matching.py` — a content-hash tenant and a filename-id tenant served by the real `/search` route over real Vespa score the same golden set identically through `QualityMonitor`, the retrieval solver's scorers and `GoldenDatasetEvaluator`; an untitled result fails its queries without storing a baseline
 - `test_xgboost_quality_monitor.py` — quality-monitor training-decision modeling
 - `test_provider_resolution.py` — `EvaluationRegistry` provider discovery/resolution
 - `test_schema_driven_pipeline.py` — schema-aware ground truth extraction

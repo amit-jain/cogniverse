@@ -1864,16 +1864,29 @@ app.add_middleware(PublicPrefix, prefix=ROOT_PATH)
 
 
 def register_degraded_search_handler(app: FastAPI) -> None:
-    """Map VespaSearchDegraded from any route to a 503 with the error detail.
+    """Map VespaSearchDegraded from any route to a typed 503.
 
     Search consumers (media agents, graph manager) raise it on a Vespa
     soft-timeout; without this handler those raises surface as opaque 500s.
+    Its text carries Vespa's error list, which names internal hosts, so the
+    body is built from typed fields and the text goes to the log.
     """
     from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+    from cogniverse_runtime.http_errors import failure_body, record_failure
 
     @app.exception_handler(VespaSearchDegraded)
     async def _degraded_search_to_503(request, exc: VespaSearchDegraded):
-        return JSONResponse(status_code=503, content={"detail": str(exc)})
+        record_failure(exc, "search_degraded")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": failure_body(
+                    "search_degraded",
+                    "The search backend answered with degraded coverage; retry.",
+                    exc,
+                )
+            },
+        )
 
 
 register_degraded_search_handler(app)

@@ -84,7 +84,7 @@ def _memory_config_manager():
 
 def _build_search_agent(tenant_id: str) -> SearchAgent:
     with patch(
-        "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder",
+        "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
         return_value=_StubEncoder(),
     ):
         agent = SearchAgent(

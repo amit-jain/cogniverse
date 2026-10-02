@@ -1361,9 +1361,17 @@ async def chat_completions(
             502, str(exc), "tool_choice_violation", err_type="server_error"
         )
     except NoAnswerError as exc:
+        # The agent's reported detail can carry a backend's error text; it
+        # stays in the log.
         logger.warning("chat.completions turn produced no answer: %s", exc)
         return _error_response(
-            502, str(exc), "upstream_no_answer", err_type="server_error"
+            502,
+            f"Agent '{agent_name}' finished without an answer to return "
+            f"(status={exc.status}).",
+            "upstream_no_answer",
+            err_type="server_error",
+            agent=agent_name,
+            error_type=type(exc).__name__,
         )
     except Exception as exc:
         llm_failure = llm_dependency_failure(exc)

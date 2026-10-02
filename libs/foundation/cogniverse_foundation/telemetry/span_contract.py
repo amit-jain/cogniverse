@@ -165,13 +165,16 @@ def search_result_row(result: Any) -> dict:
     ``.score`` / ``.document.metadata``) or an already-built result dict
     (``{"id","score",**metadata}``) and returns the superset id shape every
     search consumer reads — ``document_id`` / ``video_id`` / ``source_id`` / ``id``
-    all populated so a consumer's preferred key always resolves.
+    all populated so a consumer's preferred key always resolves — plus the
+    source's stored ``source_title`` (``None`` when the hit carries none),
+    which golden evaluation matches on.
     """
     if isinstance(result, dict):
         d = result
         _id = d.get("id") or d.get("document_id") or d.get("documentid")
         doc_id = d.get("document_id") or d.get("documentid") or _id
         source = d.get("source_id") or d.get("video_id")
+        source_title = d.get("source_title")
         content = (
             d.get("content")
             or d.get("text_content")
@@ -187,6 +190,7 @@ def search_result_row(result: Any) -> dict:
         _id = getattr(doc, "id", None)
         doc_id = _id
         source = meta.get("source_id") or meta.get("video_id")
+        source_title = meta.get("source_title")
         content = (
             meta.get("content")
             or meta.get("text_content")
@@ -211,6 +215,7 @@ def search_result_row(result: Any) -> dict:
         "document_id": doc_id,
         "video_id": video_id,
         "source_id": source or video_id,
+        "source_title": source_title,
         "id": _id,
         "score": score_f,
         "content": content,

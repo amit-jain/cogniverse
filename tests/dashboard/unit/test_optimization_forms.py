@@ -10,6 +10,7 @@ renders back.
 
 from __future__ import annotations
 
+import json
 import textwrap
 from copy import deepcopy
 from pathlib import Path
@@ -50,6 +51,7 @@ def _restore_patched_boundaries():
 def _golden_dataset_app(tmp_path: Path) -> AppTest:
     script = textwrap.dedent(
         """
+        import json
         from datetime import datetime, timezone
 
         import pandas as pd
@@ -60,33 +62,48 @@ def _golden_dataset_app(tmp_path: Path) -> AppTest:
         import cogniverse_foundation.telemetry.manager as tm
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
+        def _rows(*titles):
+            return json.dumps(
+                [
+                    {"source_id": f"hash-{t}", "source_title": t, "score": 1.0}
+                    for t in titles
+                ]
+            )
+
         spans_df = pd.DataFrame(
             [
                 {
-                    "name": "video_search.query",
-                    "attributes.annotation.score": 0.9,
-                    "attributes.query": "cats playing piano",
-                    "attributes.results": [{"id": "video_1"}, {"video_id": "video_2"}],
+                    "context.span_id": "span-cats",
+                    "name": "search_service.search",
+                    "attributes.input.value": "cats playing piano",
+                    "attributes.output.value": _rows("video_1.mp4", "video_2.mkv"),
                     "attributes.profile": "video_colpali",
                     "start_time": datetime(2026, 6, 1, tzinfo=timezone.utc),
                 },
                 {
-                    "name": "video_search.query",
-                    "attributes.annotation.score": 0.3,
-                    "attributes.query": "dogs surfing",
-                    "attributes.results": [{"id": "video_9"}],
+                    "context.span_id": "span-dogs",
+                    "name": "search_service.search",
+                    "attributes.input.value": "dogs surfing",
+                    "attributes.output.value": _rows("video_9.mp4"),
                     "attributes.profile": "video_colpali",
                     "start_time": datetime(2026, 6, 2, tzinfo=timezone.utc),
                 },
                 {
+                    "context.span_id": "span-route",
                     "name": "cogniverse.routing",
-                    "attributes.annotation.score": 0.95,
-                    "attributes.query": "not a search span",
-                    "attributes.results": [{"id": "video_x"}],
+                    "attributes.input.value": "not a search span",
+                    "attributes.output.value": _rows("video_x.mp4"),
                     "attributes.profile": "video_colpali",
                     "start_time": datetime(2026, 6, 3, tzinfo=timezone.utc),
                 },
             ]
+        )
+        annotations_df = pd.DataFrame(
+            {
+                "annotation_name": ["search_quality_annotation"] * 3,
+                "result.score": [0.9, 0.3, 0.95],
+            },
+            index=pd.Index(["span-cats", "span-dogs", "span-route"]),
         )
 
         class _Traces:
@@ -99,8 +116,16 @@ def _golden_dataset_app(tmp_path: Path) -> AppTest:
                 )
                 return spans_df
 
+        class _Annotations:
+            async def get_annotations(self, spans, *, project, annotation_names):
+                st.session_state.setdefault("_annotation_reads", []).append(
+                    (list(spans["context.span_id"]), project, annotation_names)
+                )
+                return annotations_df.loc[list(spans["context.span_id"])]
+
         class _Provider:
             traces = _Traces()
+            annotations = _Annotations()
 
         class _Manager:
             config = TelemetryConfig()
@@ -143,6 +168,13 @@ def test_golden_dataset_build_filters_by_rating_and_span_name(tmp_path: Path) ->
         }
     }
     assert at.session_state["golden_dataset_size"] == 1
+    assert at.session_state["_annotation_reads"] == [
+        (
+            ["span-cats", "span-dogs"],
+            "cogniverse-acme:acme",
+            ["search_quality_annotation"],
+        )
+    ]
 
 
 def _synthetic_data_app(tmp_path: Path) -> AppTest:
@@ -420,32 +452,34 @@ def test_golden_dataset_excludes_nan_annotation_scores(monkeypatch) -> None:
 
     from cogniverse_dashboard.tabs import optimization as opt
 
+    rows = json.dumps([{"source_id": "hash-v1", "source_title": "v1.mp4"}])
     spans_df = pd.DataFrame(
         [
             {
-                "name": "search",
-                "attributes.annotation.score": 0.9,
-                "attributes.query": "annotated query",
-                "attributes.results": [
-                    {"video_id": "v1", "relevance": 1.0},
-                ],
+                "context.span_id": "span-annotated",
+                "name": "search_service.search",
+                "attributes.input.value": "annotated query",
+                "attributes.output.value": rows,
                 "attributes.profile": "video_colpali",
                 "start_time": "2026-06-01T00:00:00+00:00",
             },
             {
-                "name": "search",
-                "attributes.annotation.score": float("nan"),
-                "attributes.query": "unannotated query",
-                "attributes.results": [
-                    {"video_id": "v2", "relevance": 1.0},
-                ],
+                "context.span_id": "span-unannotated",
+                "name": "search_service.search",
+                "attributes.input.value": "unannotated query",
+                "attributes.output.value": rows,
                 "attributes.profile": "video_colpali",
                 "start_time": "2026-06-01T00:00:00+00:00",
             },
         ]
     )
+    annotations_df = pd.DataFrame(
+        {"result.score": [0.9, float("nan")]},
+        index=pd.Index(["span-annotated", "span-unannotated"]),
+    )
     provider = MagicMock()
     provider.traces.get_spans = AsyncMock(return_value=spans_df)
+    provider.annotations.get_annotations = AsyncMock(return_value=annotations_df)
     manager = MagicMock()
     manager.get_provider.return_value = provider
     monkeypatch.setattr(
@@ -459,6 +493,7 @@ def test_golden_dataset_excludes_nan_annotation_scores(monkeypatch) -> None:
 
     assert list(dataset.keys()) == ["annotated query"]
     assert dataset["annotated query"]["avg_relevance"] == 0.9
+    assert dataset["annotated query"]["expected_videos"] == ["v1"]
 
 
 def test_create_dataset_from_upload_threads_tenant() -> None:

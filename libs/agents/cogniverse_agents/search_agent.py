@@ -16,8 +16,10 @@ Enhanced with:
 """
 
 import asyncio
+import functools
 import logging
 import tempfile
+import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -36,7 +38,12 @@ from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
-from cogniverse_core.query.encoders import QueryEncoderFactory
+from cogniverse_core.query.encoders import (
+    EncoderNotConfiguredError,
+    EncoderUnavailableError,
+    SharedQueryEncoder,
+    build_query_encoder,
+)
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
     leased_backend,
@@ -928,20 +935,69 @@ class SearchAgent(
             f"with profile {active_profile} (lazy per-tenant init)"
         )
 
-        # Initialize query encoder
-        try:
-            self.query_encoder = QueryEncoderFactory.create_encoder(
-                active_profile, model_name, config=self.search_config
-            )
-            logger.info(f"Query encoder initialized for profile: {active_profile}")
-        except Exception as e:
-            logger.error(f"Failed to initialize query encoder: {e}")
-            raise
-
-        # Initialize content processor
-        self.content_processor = ContentProcessor(self.query_encoder)
+        # The query encoder is built on first use (``query_encoder``): a text
+        # search hands the backend a SharedQueryEncoder, which the backend
+        # calls only for a strategy that reads embeddings, so constructing the
+        # agent needs no encoder service.
+        self._query_encoder_model = model_name
 
         logger.info("SearchAgent initialized (tenant-agnostic)")
+
+    @property
+    def query_encoder(self):
+        """The active profile's query encoder, built once on first use.
+
+        Raises the typed encoder faults (``EncoderNotConfiguredError``,
+        ``EncoderUnavailableError``). Media queries (an image or video file)
+        always need it; text searches reach it only through the backend.
+        """
+        encoder = self.__dict__.get("_query_encoder")
+        if encoder is not None:
+            return encoder
+        lock = self.__dict__.setdefault("_query_encoder_lock", threading.Lock())
+        with lock:
+            encoder = self.__dict__.get("_query_encoder")
+            if encoder is None:
+                encoder = build_query_encoder(
+                    self.active_profile,
+                    config=self.search_config,
+                    model_name=getattr(self, "_query_encoder_model", None),
+                )
+                self.__dict__["_query_encoder"] = encoder
+        return encoder
+
+    @query_encoder.setter
+    def query_encoder(self, encoder) -> None:
+        self.__dict__["_query_encoder"] = encoder
+        self.__dict__.pop("_content_processor", None)
+
+    @property
+    def content_processor(self) -> "ContentProcessor":
+        """Media-query encoding over ``query_encoder``, built on first use."""
+        processor = self.__dict__.get("_content_processor")
+        if processor is None:
+            processor = ContentProcessor(self.query_encoder)
+            self.__dict__["_content_processor"] = processor
+        return processor
+
+    @content_processor.setter
+    def content_processor(self, processor: "ContentProcessor") -> None:
+        self.__dict__["_content_processor"] = processor
+
+    def _shared_query_encoder(self) -> SharedQueryEncoder:
+        """The active profile's encoder for one request's text searches."""
+        return SharedQueryEncoder(
+            self.active_profile,
+            lambda: self.query_encoder,
+            service=self._encoder_service(self.active_profile),
+        )
+
+    def _encoder_service(self, profile_name: str) -> Optional[str]:
+        """The inference service ``profile_name`` encodes queries with."""
+        profiles = self.search_config.get("backend", {}).get("profiles", {})
+        profile = profiles.get(profile_name) if isinstance(profiles, dict) else None
+        services = (profile or {}).get("inference_services") or {}
+        return services.get("embedding")
 
     def _get_backend(self):
         """Resolve the shared search backend from the registry.
@@ -1149,11 +1205,11 @@ class SearchAgent(
 
         import asyncio
 
-        # Pre-compute query embeddings once per distinct model. Profiles
-        # sharing an embedding model share one encode (the factory already
-        # caches encoders by model, but encode() previously ran per profile),
-        # and both encoder construction and encode run off the event loop —
-        # a cold encoder construction is a full model load.
+        # One SharedQueryEncoder per distinct model: the backend encodes
+        # through it only when a leg's ranking strategy needs embeddings, and
+        # profiles sharing a model share one encode. Every leg runs in the
+        # thread pool below, so encoder construction and encode stay off the
+        # event loop.
         backend_config_data = self.search_config.get("backend", {})
         profiles_config = backend_config_data.get("profiles", {})
 
@@ -1171,70 +1227,41 @@ class SearchAgent(
                 "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
             )
 
-        unit_by_profile = {p: _encode_unit(p) for p in profiles}
-        representative = {}
-        for profile_name, unit in unit_by_profile.items():
-            representative.setdefault(unit, profile_name)
-
-        async def encode_unit(unit: str, profile_name: str):
-            try:
-
-                def _load_and_encode():
-                    if unit == "__active__":
-                        return self.query_encoder.encode(query)
-                    from cogniverse_core.query.encoders import QueryEncoderFactory
-
-                    encoder = QueryEncoderFactory.create_encoder(
-                        profile_name, unit, config=self.search_config
+        shared_by_unit: Dict[str, SharedQueryEncoder] = {}
+        encoder_by_profile: Dict[str, SharedQueryEncoder] = {}
+        for profile_name in profiles:
+            unit = _encode_unit(profile_name)
+            if unit not in shared_by_unit:
+                shared_by_unit[unit] = (
+                    self._shared_query_encoder()
+                    if unit == "__active__"
+                    else SharedQueryEncoder(
+                        profile_name,
+                        functools.partial(
+                            build_query_encoder,
+                            profile_name,
+                            config=self.search_config,
+                            model_name=unit,
+                        ),
+                        service=self._encoder_service(profile_name),
                     )
-                    return encoder.encode(query)
-
-                embeddings = await asyncio.to_thread(_load_and_encode)
-                logger.debug(
-                    f"Encoded query for model unit {unit}: shape {embeddings.shape}"
                 )
-                return unit, embeddings
-            except Exception as e:
-                logger.error(f"Failed to encode query for model unit {unit}: {e}")
-                return unit, None
-
-        unit_embeddings = dict(
-            await asyncio.gather(
-                *(encode_unit(u, rep) for u, rep in representative.items())
-            )
-        )
-
-        # Fan the shared embeddings back out to every profile.
-        valid_embeddings = {
-            profile: unit_embeddings[unit]
-            for profile, unit in unit_by_profile.items()
-            if unit_embeddings.get(unit) is not None
-        }
-
-        if not valid_embeddings:
-            raise ValueError("Failed to encode query for any profile")
-
-        degraded = tuple(
-            (profile, "encode_failed")
-            for profile in profiles
-            if profile not in valid_embeddings
-        )
-        logger.info(
-            f"Encoded query for {len(valid_embeddings)}/{len(profiles)} profiles"
-        )
+            encoder_by_profile[profile_name] = shared_by_unit[unit]
 
         # Execute searches in parallel using shared thread pool
         import concurrent.futures
 
         loop = asyncio.get_event_loop()
 
-        async def search_profile(profile_name: str, query_embeddings, executor):
+        async def search_profile(
+            profile_name: str, query_encoder: SharedQueryEncoder, executor
+        ):
             """Execute search for single profile"""
             try:
                 query_dict = {
                     "query": query,
                     "type": modality,
-                    "query_embeddings": query_embeddings,
+                    "query_encoder": query_encoder,
                     "top_k": top_k * 2,  # Fetch 2x results for better fusion
                     "filters": self._build_date_filter(
                         kwargs.get("start_date"), kwargs.get("end_date")
@@ -1269,11 +1296,11 @@ class SearchAgent(
 
         # Create shared thread pool and run searches in parallel
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(valid_embeddings)
+            max_workers=len(encoder_by_profile)
         ) as executor:
             search_tasks = [
-                search_profile(profile, embeddings, executor)
-                for profile, embeddings in valid_embeddings.items()
+                search_profile(profile, encoder, executor)
+                for profile, encoder in encoder_by_profile.items()
             ]
             profile_results_list = await asyncio.gather(*search_tasks)
 
@@ -1285,8 +1312,15 @@ class SearchAgent(
             raise profile_results_list[0][1]
 
         searched = tuple(profile for profile, _results in ok)
-        degraded += tuple(
-            (profile, "search_failed")
+        degraded = tuple(
+            (
+                profile,
+                "encode_failed"
+                if isinstance(
+                    result, (EncoderNotConfiguredError, EncoderUnavailableError)
+                )
+                else "search_failed",
+            )
             for profile, result in profile_results_list
             if isinstance(result, Exception)
         )
@@ -1396,15 +1430,12 @@ class SearchAgent(
                 logger.info(f"📚 Retrieved memory context for query: {query[:50]}...")
 
         try:
-            # Encode text query
-            query_embeddings = self.query_encoder.encode(query)
-
-            # Execute search with backend
-
+            # The backend encodes through the shared encoder only when the
+            # ranking strategy needs query embeddings.
             query_dict = {
                 "query": query,
                 "type": modality,
-                "query_embeddings": query_embeddings,
+                "query_encoder": self._shared_query_encoder(),
                 "top_k": top_k,
                 "filters": self._build_date_filter(
                     kwargs.get("start_date"), kwargs.get("end_date")
@@ -1840,13 +1871,12 @@ class SearchAgent(
                     f"Multi-query fusion search with {len(context.query_variants)} variants: {variant_names}"
                 )
             else:
-                # Single query path (existing behavior)
-                query_embeddings = self.query_encoder.encode(search_query)
-
+                # Single query path: the backend encodes through the shared
+                # encoder only when the ranking strategy needs embeddings.
                 query_dict = {
                     "query": search_query,
                     "type": search_params.modality,
-                    "query_embeddings": query_embeddings,
+                    "query_encoder": self._shared_query_encoder(),
                     "top_k": top_k,
                     "filters": self._build_date_filter(
                         search_params.start_date, search_params.end_date
@@ -1930,16 +1960,19 @@ class SearchAgent(
         """
         import concurrent.futures
 
+        # One encoder for every variant: built at most once, and the backend
+        # encodes a variant only when the ranking strategy needs embeddings.
+        query_encoder = self._shared_query_encoder()
+
         def search_single_variant(variant: Dict[str, str]) -> tuple:
-            """Encode and search a single query variant."""
+            """Search a single query variant."""
             variant_name = variant["name"]
             variant_query = variant["query"]
             try:
-                query_embeddings = self.query_encoder.encode(variant_query)
                 query_dict = {
                     "query": variant_query,
                     "type": modality,
-                    "query_embeddings": query_embeddings,
+                    "query_encoder": query_encoder,
                     "top_k": top_k * 2,
                     "filters": None,
                     "strategy": ranking_strategy,

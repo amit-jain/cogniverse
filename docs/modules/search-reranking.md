@@ -57,11 +57,11 @@ have been removed.
 
 ```mermaid
 flowchart TB
-    SearchService["<span style='color:#000'>SearchService<br/>• Query Encoding Coordination<br/>• Backend Search Orchestration<br/>• Multi-Tenant Telemetry Integration</span>"]
+    SearchService["<span style='color:#000'>SearchService<br/>• Backend Search Orchestration<br/>• Multi-Tenant Telemetry Integration</span>"]
 
-    SearchService --> EncoderFactory["<span style='color:#000'>Query Encoder Factory<br/>• ColPali Encoder frame-based<br/>• X-CLIP Encoder chunk/global<br/>• Strategy-Aware Encoding</span>"]
+    SearchService --> Backend["<span style='color:#000'>Search Backend Vespa<br/>• Vector Search binary/float<br/>• Hybrid Ranking BM25 + Neural<br/>• Multi-Schema Support</span>"]
 
-    EncoderFactory --> Backend["<span style='color:#000'>Search Backend Vespa<br/>• Vector Search binary/float<br/>• Hybrid Ranking BM25 + Neural<br/>• Multi-Schema Support</span>"]
+    Backend -->|strategy needs embeddings| EncoderFactory["<span style='color:#000'>Query Encoder Factory<br/>• ColPali Encoder frame-based<br/>• X-CLIP Encoder chunk/global<br/>• Strategy-Aware Encoding</span>"]
 
     Backend --> Results["<span style='color:#000'>SearchResult List</span>"]
 
@@ -334,11 +334,10 @@ def get_document(
 
 - **Telemetry**: `SearchService.search()` opens `search_span` (whole request) and
   `backend_search_span` (backend call) for multi-tenant tracking.
-  Query encoding is delegated to the backend, which opens its own `encode_span`
-  only when the resolved ranking strategy actually needs embeddings — encoding
-  is no longer performed eagerly in `SearchService` itself.
-
-- **Query Encoder**: `QueryEncoderFactory` for strategy-aware encoding
+  `SearchService` builds no query encoder. The backend builds the profile's
+  encoder through `QueryEncoderFactory` and opens its `encode_span` only when
+  the resolved ranking strategy needs embeddings, so a text-only strategy
+  never touches the encoder service.
 
 - **Backend Registry**: `get_backend_registry()` for Vespa backend instantiation
 

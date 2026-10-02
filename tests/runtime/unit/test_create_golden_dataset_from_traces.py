@@ -42,10 +42,16 @@ def _bare_generator(
 
 
 def _trace_row(query, score, videos, profile="frame_based_colpali"):
+    """A trace whose result rows carry a content-hash id and the source title,
+    as search span rows do."""
     return {
         "input": {"query": query},
         "score": score,
-        "output": {"results": [{"video_id": v} for v in videos]},
+        "output": {
+            "results": [
+                {"video_id": f"hash-of-{v}", "source_title": f"{v}.mp4"} for v in videos
+            ]
+        },
         "attributes": {"profile": profile, "ranking_strategy": "binary_binary"},
         "start_time": "2026-06-05T00:00:00+00:00",
     }

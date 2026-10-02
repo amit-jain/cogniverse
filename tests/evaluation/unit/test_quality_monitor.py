@@ -1,6 +1,7 @@
 """Unit tests for QualityMonitor — dual evaluation + threshold + trigger packaging."""
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,6 +84,16 @@ def monitor(golden_dataset):
     )
     m._dataset_store = InMemoryDatasetStore()
     return m
+
+
+def _hashed_row(title: str) -> dict:
+    """A /search result row as a content-hash tenant returns it."""
+    return {
+        "document_id": f"{hashlib.sha256(title.encode()).hexdigest()}_seg_0",
+        "source_id": hashlib.sha256(title.encode()).hexdigest(),
+        "source_title": title,
+        "score": 0.9,
+    }
 
 
 class TestSpanEvaluatorEndpoint:
@@ -678,7 +689,7 @@ class TestGoldenEvaluation:
             if "barbell" in query:
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(200, json={"results": []})
 
@@ -691,7 +702,7 @@ class TestGoldenEvaluation:
             result = await monitor.evaluate_golden_set()
 
         assert result.query_count == 2
-        assert result.mean_mrr > 0
+        assert result.mean_mrr == 0.5
 
         scores = {s["query"]: s for s in result.per_query_scores}
         assert scores["man lifting barbell"]["mrr"] == 1.0
@@ -726,7 +737,7 @@ class TestGoldenEvaluation:
             status_code = 200
 
             def json(self):
-                return {"results": [{"source_id": "v1", "score": 0.9}]}
+                return {"results": [_hashed_row("v1.mp4")]}
 
         class _GatedClient:
             async def post(self, url, json=None):
@@ -1065,7 +1076,7 @@ class TestClose:
 class TestXGBoostIntegration:
     def test_xgboost_overrides_optimize_to_skip(self, monitor):
         """XGBoost says don't train → override OPTIMIZE to SKIP."""
-        mock_model = MagicMock()
+        mock_model = MagicMock(is_trained=True)
         mock_model.should_train.return_value = (False, 0.01)
         monitor._training_decision_model = mock_model
         monitor._telemetry_provider = MagicMock()
@@ -1089,7 +1100,7 @@ class TestXGBoostIntegration:
 
     def test_xgboost_upgrades_skip_to_optimize(self, monitor):
         """XGBoost says train is beneficial → upgrade SKIP to OPTIMIZE."""
-        mock_model = MagicMock()
+        mock_model = MagicMock(is_trained=True)
         mock_model.should_train.return_value = (True, 0.08)
         monitor._training_decision_model = mock_model
         monitor._telemetry_provider = MagicMock()
@@ -1714,7 +1725,7 @@ class TestGoldenPartialBatch:
             if "barbell" in body.get("query", ""):
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(500, text="backend blew up")
 
@@ -1740,7 +1751,7 @@ class TestGoldenPartialBatch:
             if "barbell" in body.get("query", ""):
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(500, text="backend blew up")
 
@@ -1891,7 +1902,7 @@ class TestGoldenScoringRobustness:
         def handler(request):
             # Retrieve an id that is a SUBSTRING of the joined string but not a
             # real member — substring matching would score this MRR 1.0.
-            return httpx.Response(200, json={"results": [{"source_id": "video"}]})
+            return httpx.Response(200, json={"results": [_hashed_row("video.mp4")]})
 
         monitor._http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler), base_url="http://testserver"
@@ -1913,7 +1924,7 @@ class TestGoldenScoringRobustness:
         ]
 
         def handler(request):
-            return httpx.Response(200, json={"results": [{"source_id": "v2"}]})
+            return httpx.Response(200, json={"results": [_hashed_row("v2.mp4")]})
 
         monitor._http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler), base_url="http://testserver"
@@ -1969,6 +1980,67 @@ class TestLiveEvalOutageContracts:
             await monitor.update_baseline(live_results={AgentType.SEARCH: 0.8})
 
 
+class TestUntrainedTrainingDecisionModel:
+    """With no trained meta-model the threshold verdicts stand: the optimizer's
+    population floor, not a fixed live-sample count, decides whether there is
+    enough data to train."""
+
+    @pytest.fixture
+    def untrained(self, monitor):
+        from cogniverse_agents.routing.xgboost_meta_models import (
+            TrainingDecisionModel,
+        )
+
+        monitor._telemetry_provider = MagicMock()
+        monitor._training_decision_model = TrainingDecisionModel(
+            telemetry_provider=monitor._telemetry_provider, tenant_id="test_tenant"
+        )
+        return monitor
+
+    def test_golden_drop_with_no_live_search_samples_optimizes(self, untrained):
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.5,
+            mean_ndcg=0.8,
+            mean_precision_at_5=0.4,
+            query_count=5,
+            baseline_mrr=0.8,
+            baseline_ndcg=0.8,
+        )
+
+        assert untrained.check_thresholds(golden, None) == {
+            AgentType.SEARCH: Verdict.OPTIMIZE
+        }
+
+    def test_full_live_window_neither_vetoes_nor_upgrades(self, untrained):
+        live = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.3,
+                    baseline_score=0.8,
+                    degradation_pct=0.6,
+                    sample_count=20,
+                ),
+                AgentType.SUMMARY: AgentEvalResult(
+                    agent=AgentType.SUMMARY,
+                    score=0.7,
+                    baseline_score=0.7,
+                    degradation_pct=0.0,
+                    sample_count=60,
+                ),
+            },
+        )
+
+        assert untrained.check_thresholds(None, live) == {
+            AgentType.SEARCH: Verdict.OPTIMIZE,
+            AgentType.SUMMARY: Verdict.SKIP,
+        }
+
+
 class TestXGBoostVisibility:
     def test_meta_model_unavailable_logs_at_warning(self, monitor, caplog):
         """A failing meta-model gate (e.g. ImportError of cogniverse_agents)
@@ -1976,7 +2048,7 @@ class TestXGBoostVisibility:
         import logging
 
         monitor._telemetry_provider = MagicMock()
-        model = MagicMock()
+        model = MagicMock(is_trained=True)
         model.should_train.side_effect = RuntimeError("model load failed")
         monitor._training_decision_model = model
 

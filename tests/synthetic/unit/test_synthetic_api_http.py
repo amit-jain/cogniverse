@@ -668,7 +668,14 @@ def test_generate_timeout_surfaces_as_typed_504(
     response = client.post(path, **request_kwargs)
 
     assert response.status_code == 504
-    assert response.json()["detail"].startswith("profile_selection timeout:")
+    assert response.json() == {
+        "detail": {
+            "error": "profile_selection_timeout",
+            "message": "Profile selection did not finish within its time budget.",
+            "failure": "TimeoutError",
+        }
+    }
+    assert "profile_labeler" not in response.text
     fake.generate.assert_awaited_once()
 
 

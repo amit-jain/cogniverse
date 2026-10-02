@@ -113,9 +113,13 @@ def test_build_factory_surfaces_lazy_init_failure(monkeypatch):
         knowledge_router._build_factory("acme:prod")
 
     assert captured.value.status_code == 503
-    assert captured.value.detail == (
-        "Memory backend not initialised for tenant acme:prod: denseon missing"
-    )
+    assert captured.value.detail == {
+        "error": "memory_unavailable",
+        "message": "Memory backend not initialised for tenant acme:prod.",
+        "failure": "RuntimeError",
+        "tenant_id": "acme:prod",
+    }
+    assert str(captured.value.__cause__) == "denseon missing"
 
 
 @pytest.mark.unit

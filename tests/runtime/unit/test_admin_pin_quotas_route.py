@@ -161,7 +161,15 @@ async def test_pin_quotas_get_maps_store_outage_to_503(monkeypatch):
     app = _build_outage_app(monkeypatch)
     response = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
     assert response.status_code == 503
-    assert "pin-quota store unavailable" in response.json()["detail"]
+    assert response.json() == {
+        "detail": {
+            "error": "store_unavailable",
+            "message": "The pin-quota store did not answer; retry.",
+            "failure": "ConnectionError",
+            "store": "pin-quota",
+            "tenant_id": "acme:acme",
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -174,7 +182,15 @@ async def test_pin_quotas_put_maps_store_outage_to_503(monkeypatch):
             "/admin/tenants/acme:acme/pin_quotas", json={"user": 5}
         )
     assert response.status_code == 503
-    assert "pin-quota store unavailable" in response.json()["detail"]
+    assert response.json() == {
+        "detail": {
+            "error": "store_unavailable",
+            "message": "The pin-quota store did not answer; retry.",
+            "failure": "ConnectionError",
+            "store": "pin-quota",
+            "tenant_id": "acme:acme",
+        }
+    }
 
 
 @pytest.mark.asyncio

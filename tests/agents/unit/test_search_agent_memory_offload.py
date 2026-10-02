@@ -80,6 +80,7 @@ async def test_ensemble_remember_success_runs_off_the_event_loop():
 
 def _single_modality_agent(**overrides):
     agent = object.__new__(SearchAgent)
+    agent.search_config = {"backend": {"profiles": {}}}
     agent.active_profile = "p1"
     agent.is_memory_enabled = lambda: True
     agent._memory_agent_name = "search_agent"

@@ -102,7 +102,18 @@ def test_delete_topic_runtime_error_becomes_500(client: TestClient, fake_wm) -> 
     fake_wm.delete_page.side_effect = RuntimeError("vespa down")
     r = client.delete("/wiki/topic/foo?tenant_id=acme")
     assert r.status_code == 500
-    assert "vespa down" in r.json()["detail"]
+    assert r.json() == {
+        "detail": {
+            "error": "wiki_delete_failed",
+            "message": (
+                "Deleting wiki topic 'foo' failed; the runtime log names the cause."
+            ),
+            "failure": "RuntimeError",
+            "tenant_id": "acme",
+            "doc_id": "wiki_topic_acme_foo",
+        }
+    }
+    assert "vespa down" not in r.text
 
 
 def test_factory_not_configured_returns_503(monkeypatch) -> None:

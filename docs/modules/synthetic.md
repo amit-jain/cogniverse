@@ -601,8 +601,9 @@ The router replaces its configured service under a lock, so concurrent readers
 observe one fully constructed instance. Unexpected server exceptions are
 logged with their traceback but the HTTP response contains only
 `{"detail": "Internal server error"}`. A timeout from the production
-profile-selection callback returns HTTP `504` with a
-`profile_selection timeout:` detail instead of a bare `500`.
+profile-selection callback returns HTTP `504` with the detail
+`{"error": "profile_selection_timeout", "message": ..., "failure": "TimeoutError"}`
+instead of a bare `500`; the timeout's text stays in the log.
 
 **Example:**
 

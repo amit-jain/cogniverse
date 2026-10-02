@@ -887,7 +887,7 @@ flowchart TD
 
 - **Golden set evaluation**: runs curated queries against the runtime API, scores with IR metrics (MRR, NDCG@K, Precision@5). When MRR improves, the baseline is updated in Phoenix. Verdict flips to `OPTIMIZE` when MRR drops ≥ `golden_mrr_drop_pct` (10%) from the stored baseline.
 - **Live traffic evaluation**: samples recent spans from Phoenix (default: 20 per agent, `min_samples_for_verdict`=10 required before a verdict is issued), uses an LLM judge to assess quality. Verdict flips to `OPTIMIZE` when a per-agent score falls below `live_score_floor` (0.5) or degrades more than `golden_mrr_drop_pct` (10%) from that agent's baseline.
-- **XGBoost `TrainingDecisionModel`** then runs on every verdict (not only `OPTIMIZE` ones) and can move it either direction: override a naive `OPTIMIZE` down to `SKIP` when expected improvement is too low, or upgrade a naive `SKIP` up to `OPTIMIZE` when data volume/staleness signals warrant it.
+- **XGBoost `TrainingDecisionModel`**, once trained, then runs on every verdict (not only `OPTIMIZE` ones) and can move it either direction: override a naive `OPTIMIZE` down to `SKIP` when expected improvement is too low, or upgrade a naive `SKIP` up to `OPTIMIZE` when data volume/staleness signals warrant it. While it is untrained the threshold verdicts stand: whether there is enough data to train is each optimizer's population floor (lookback spans plus approved synthetic data), not a live-sample count.
 
 The monitor also **grows the golden set** by promoting high-scoring live queries (score ≥ 0.8) into the curated evaluation dataset.
 
@@ -952,6 +952,6 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **Phoenix Telemetry** | Observability | Span-level routing instrumentation with annotation support |
 | **LLM Auto-Annotation** | Semi-automated labeling | Pre-screen routing decisions before human review |
 | **Quality Monitor** | Continuous evaluation | Dual-strategy Deployment: golden set (2h) + live LLM judge (4h); triggers Argo on degradation |
-| **XGBoost Training Decision Model** | Optimization gating | Meta-model confirms, downgrades, or upgrades naive threshold verdicts based on data volume, model staleness, and expected improvement |
+| **XGBoost Training Decision Model** | Optimization gating | Once trained, the meta-model confirms, downgrades, or upgrades naive threshold verdicts based on data volume, model staleness, and expected improvement; untrained, it leaves them standing |
 | **Strategy Distillation** | Knowledge transfer | Pattern + LLM contrastive distillation from traces into Vespa-stored strategies |
 | **Two-Level Strategy Scoping** | Personalization | Org-level shared strategies + user-level personalized strategies via Mem0 |

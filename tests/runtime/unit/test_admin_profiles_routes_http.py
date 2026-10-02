@@ -341,7 +341,17 @@ async def test_list_profiles_schema_lookup_failure_raises_500(env):
     resp = await _get(env.app, "/admin/profiles", tenant_id="acme")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "schema registry unavailable"}
+    assert resp.json() == {
+        "detail": {
+            "error": "profile_list_failed",
+            "message": (
+                "Listing profiles for tenant 'acme' failed; the runtime log "
+                "names the cause."
+            ),
+            "failure": "RuntimeError",
+            "tenant_id": "acme",
+        }
+    }
     assert env.backend.schema_exists.call_args_list == [
         call(schema_name="video_colpali_sv", tenant_id="acme"),
     ]
@@ -359,7 +369,18 @@ async def test_get_profile_schema_lookup_failure_raises_500(env):
     resp = await _get(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "schema registry unavailable"}
+    assert resp.json() == {
+        "detail": {
+            "error": "profile_read_failed",
+            "message": (
+                "Reading profile 'video_colpali' failed; the runtime log names "
+                "the cause."
+            ),
+            "failure": "RuntimeError",
+            "profile_name": "video_colpali",
+            "tenant_id": "acme",
+        }
+    }
     assert env.backend.schema_exists.call_args_list == [
         call(schema_name="video_colpali_sv", tenant_id="acme"),
     ]
@@ -528,7 +549,18 @@ async def test_deploy_schema_lookup_failure_raises_500(env):
     )
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "registry lookup failed"}
+    assert resp.json() == {
+        "detail": {
+            "error": "schema_deploy_failed",
+            "message": (
+                "Deploying the schema of profile 'video_prism' failed; the "
+                "runtime log names the cause."
+            ),
+            "failure": "RuntimeError",
+            "profile_name": "video_prism",
+            "tenant_id": "acme",
+        }
+    }
     env.backend.schema_exists.assert_called_once_with(
         schema_name="video_prism_mv", tenant_id="acme"
     )

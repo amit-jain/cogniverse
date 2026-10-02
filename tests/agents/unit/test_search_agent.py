@@ -16,6 +16,10 @@ from cogniverse_agents.search_agent import (
     SearchAgentDeps,
     SearchInput,
 )
+from cogniverse_core.query.encoders import (
+    EncoderNotConfiguredError,
+    SharedQueryEncoder,
+)
 
 
 def _memory_config_manager():
@@ -168,7 +172,7 @@ class TestSearchAgent:
         encoder.encode_image = Mock(return_value=np.random.rand(128))
         return encoder
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -210,7 +214,7 @@ class TestSearchAgent:
         assert agent.embedding_type == "multi_vector"
         assert isinstance(agent.content_processor, ContentProcessor)
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -261,10 +265,20 @@ class TestSearchAgent:
             "video_id": "video2",
             "frame_id": "frame2",
         }
+        # The agent neither builds nor calls the encoder: it hands the backend
+        # a SharedQueryEncoder, which encodes only if the strategy asks.
+        [query_dict] = [c.args[0] for c in mock_search_backend.search.call_args_list]
+        assert "query_embeddings" not in query_dict
+        assert isinstance(query_dict["query_encoder"], SharedQueryEncoder)
+        assert mock_encoder_factory.create_encoder.call_count == 0
+        assert mock_query_encoder.encode.call_count == 0
+        # A strategy that reads embeddings builds the encoder once and encodes.
+        encoded = query_dict["query_encoder"].encode("find cats")
+        assert encoded is mock_query_encoder.encode.return_value
         mock_query_encoder.encode.assert_called_once_with("find cats")
-        mock_search_backend.search.assert_called_once()
+        assert mock_encoder_factory.create_encoder.call_count == 1
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -326,7 +340,7 @@ class TestSearchAgent:
         )
         mock_search_backend.search.assert_called_once()
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_by_image(
@@ -387,7 +401,7 @@ class TestSearchAgent:
         )
         mock_search_backend.search.assert_called_once()
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_text(
@@ -438,7 +452,7 @@ class TestSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_video(
@@ -498,7 +512,7 @@ class TestSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_image(
@@ -558,7 +572,7 @@ class TestSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_mixed_parts(
@@ -626,7 +640,7 @@ class TestSearchAgent:
         # Should have results from all three searches (2 each = 6 total)
         assert result["total_results"] == 6
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_empty_messages(
@@ -660,7 +674,7 @@ class TestSearchAgent:
         with pytest.raises(ValueError, match="Task contains no messages"):
             agent.process_enhanced_task(task)
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_no_valid_parts(
@@ -713,7 +727,7 @@ class TestSearchAgent:
 class TestSearchAgentEdgeCases:
     """Test edge cases and error conditions for SearchAgent"""
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_vespa_client_initialization_failure(
@@ -747,7 +761,7 @@ class TestSearchAgentEdgeCases:
         with pytest.raises(Exception, match="Vespa connection failed"):
             agent._get_backend()
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_query_encoder_initialization_failure(
@@ -766,19 +780,27 @@ class TestSearchAgentEdgeCases:
             "Encoder creation failed"
         )
 
-        with pytest.raises(Exception, match="Encoder creation failed"):
-            SearchAgent(
-                deps=SearchAgentDeps(
-                    profile="frame_based_colpali",
-                    tenant_id="test_tenant",
-                    backend_url="http://localhost",
-                    backend_port=8080,
-                ),
-                schema_loader=mock_schema_loader,
-                config_manager=_memory_config_manager(),
-            )
+        # Construction needs no encoder; its first use raises the typed fault.
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                profile="frame_based_colpali",
+                tenant_id="test_tenant",
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
+        )
+        assert mock_encoder_factory.create_encoder.call_count == 0
+        with pytest.raises(EncoderNotConfiguredError) as failure:
+            agent.query_encoder
+        assert str(failure.value) == (
+            "Profile 'frame_based_colpali' declares a query encoder that could not "
+            "be built: Exception: Encoder creation failed"
+        )
+        assert failure.value.profile == "frame_based_colpali"
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_failure_handling(
@@ -810,7 +832,7 @@ class TestSearchAgentEdgeCases:
                 "test query", tenant_id="test_tenant", ranking="binary_binary"
             )
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_by_text_omits_strategy_when_no_ranking(
@@ -871,7 +893,7 @@ class TestSearchAgentAdvancedFeatures:
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
             patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory"
+                "cogniverse_core.query.encoders.QueryEncoderFactory"
             ) as mock_encoder_factory,
         ):
             mock_get_config.return_value = mock_config
@@ -895,6 +917,8 @@ class TestSearchAgentAdvancedFeatures:
                 config_manager=_memory_config_manager(),
             )
             agent._get_backend = lambda: mock_search_backend
+            # The encoder is built on first use, after this patch has exited.
+            agent.query_encoder = mock_query_encoder
             return agent
 
     @pytest.mark.ci_fast
@@ -1017,7 +1041,7 @@ class TestSearchAgentAdvancedFeatures:
         assert params_full.confidence_threshold == 0.8
         assert params_full.use_relationship_boost is False
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1089,7 +1113,7 @@ class TestSearchAgentEnsembleSearch:
             },
         }
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1138,7 +1162,7 @@ class TestSearchAgentEnsembleSearch:
         assert fused[0]["id"] in ["doc1", "doc2"]
         assert fused[0]["num_profiles"] == 2
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1191,7 +1215,7 @@ class TestSearchAgentEnsembleSearch:
         doc1_result = next(r for r in fused if r["id"] == "doc1")
         assert abs(doc1_result["rrf_score"] - expected_score) < 0.001
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1236,7 +1260,7 @@ class TestSearchAgentEnsembleSearch:
         for i in range(len(fused) - 1):
             assert fused[i]["rrf_score"] >= fused[i + 1]["rrf_score"]
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
@@ -1286,7 +1310,7 @@ class TestSearchAgentEnsembleSearch:
         assert result.degraded_profiles == []
         agent._search_ensemble.assert_called_once()
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
@@ -1325,7 +1349,7 @@ class TestSearchAgentEnsembleSearch:
         assert result.search_mode == "single_profile"
         assert result.profile is not None
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1364,7 +1388,7 @@ class TestSearchAgentEnsembleSearch:
         # Should return exactly 5 results
         assert len(fused) == 5
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
@@ -1422,7 +1446,7 @@ class TestMultiQueryFusion:
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
             patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory"
+                "cogniverse_core.query.encoders.QueryEncoderFactory"
             ) as mock_encoder_factory,
         ):
             mock_get_config.return_value = mock_config
@@ -1446,6 +1470,8 @@ class TestMultiQueryFusion:
                 config_manager=_memory_config_manager(),
             )
             agent._get_backend = lambda: mock_search_backend
+            # The encoder is built on first use, after this patch has exited.
+            agent.query_encoder = mock_query_encoder
             return agent
 
     @pytest.mark.ci_fast
@@ -1851,7 +1877,7 @@ class TestEnsembleVsFusionPaths:
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
             patch(
-                "cogniverse_agents.search_agent.QueryEncoderFactory"
+                "cogniverse_core.query.encoders.QueryEncoderFactory"
             ) as mock_encoder_factory,
         ):
             mock_get_config.return_value = mock_config
@@ -1875,6 +1901,8 @@ class TestEnsembleVsFusionPaths:
                 config_manager=_memory_config_manager(),
             )
             agent._get_backend = lambda: mock_search_backend
+            # The encoder is built on first use, after this patch has exited.
+            agent.query_encoder = mock_query_encoder
             return agent
 
     @pytest.mark.ci_fast
@@ -2131,7 +2159,7 @@ class TestDspyConfidenceGate:
     """The DSPy query-rewrite gate must coerce a label confidence so a real
     LM returning "high" still applies the enhanced query."""
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
@@ -2193,8 +2221,8 @@ class TestEnsembleEncodingConcurrency:
 
         # A barrier of 2 only releases once BOTH profile encodings are in
         # flight. If the encodes run serially on the event loop (the bug), the
-        # first blocks here forever and the barrier times out -> the search
-        # raises "Failed to encode query for any profile".
+        # first blocks here until the barrier times out -> both legs degrade
+        # with encode_failed.
         barrier = threading.Barrier(2, timeout=5)
 
         def blocking_encode(_query):
@@ -2217,7 +2245,14 @@ class TestEnsembleEncodingConcurrency:
             "create_encoder",
             lambda *a, **k: SimpleNamespace(encode=blocking_encode),
         )
-        agent._get_backend = lambda: SimpleNamespace(search=lambda _qd: [])
+
+        def embedding_search(query_dict):
+            # A strategy that reads embeddings encodes through the encoder
+            # the leg was handed.
+            query_dict["query_encoder"].encode(query_dict["query"])
+            return []
+
+        agent._get_backend = lambda: SimpleNamespace(search=embedding_search)
         agent._build_date_filter = lambda _s, _e: None
 
         outcome = await asyncio.wait_for(
@@ -2241,7 +2276,7 @@ class TestProcessImplEventLoopOffload:
     """The default (non-ensemble) search paths must run their synchronous
     encode+Vespa work off the event loop."""
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
@@ -2354,11 +2389,14 @@ class TestEnsembleEncodeDedupe:
         )
         searched_profiles = []
 
-        def fake_search(query_dict):
+        def embedding_search(query_dict):
+            # A strategy that reads embeddings encodes through the encoder
+            # the leg was handed.
             searched_profiles.append(query_dict["profile"])
+            query_dict["query_encoder"].encode(query_dict["query"])
             return []
 
-        agent._get_backend = lambda: SimpleNamespace(search=fake_search)
+        agent._get_backend = lambda: SimpleNamespace(search=embedding_search)
         agent._build_date_filter = lambda _s, _e: None
 
         await agent._search_ensemble(
@@ -2376,6 +2414,95 @@ class TestEnsembleEncodeDedupe:
         )
         assert created_encoders == ["m_shared"]
         assert sorted(searched_profiles) == ["p_active", "p_shared_1", "p_shared_2"]
+
+    @pytest.mark.asyncio
+    async def test_a_text_only_strategy_builds_and_calls_no_encoder(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cogniverse_core.query import encoders as enc_mod
+
+        def fail_create_encoder(*args, **kwargs):
+            raise AssertionError("a text-only ensemble built a query encoder")
+
+        agent = SearchAgent.__new__(SearchAgent)
+        agent.active_profile = "p_active"
+        agent._query_encoder_model = None
+        agent.search_config = {
+            "backend": {
+                "profiles": {
+                    "p_active": {"embedding_model": "m_active"},
+                    "p_other": {"embedding_model": "m_other"},
+                }
+            }
+        }
+        monkeypatch.setattr(
+            enc_mod.QueryEncoderFactory, "create_encoder", fail_create_encoder
+        )
+        handed = []
+
+        def text_search(query_dict):
+            handed.append((query_dict["profile"], "query_embeddings" in query_dict))
+            return []
+
+        agent._get_backend = lambda: SimpleNamespace(search=text_search)
+        agent._build_date_filter = lambda _s, _e: None
+
+        outcome = await agent._search_ensemble(
+            "q",
+            tenant_id="t:t",
+            profiles=["p_active", "p_other"],
+            modality="video",
+            top_k=5,
+            ranking="bm25_only",
+        )
+
+        assert (outcome.searched, outcome.degraded) == (("p_active", "p_other"), ())
+        assert sorted(handed) == [("p_active", False), ("p_other", False)]
+
+    @pytest.mark.asyncio
+    async def test_an_unbuildable_encoder_degrades_only_its_legs(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cogniverse_core.query import encoders as enc_mod
+
+        def create_encoder(profile, model, config=None):
+            if model == "m_other":
+                raise ValueError("Profile 'p_other' specifies no URL")
+            return SimpleNamespace(encode=lambda _q: np.zeros((2, 128)))
+
+        agent = SearchAgent.__new__(SearchAgent)
+        agent.active_profile = "p_active"
+        agent._query_encoder_model = None
+        agent.query_encoder = SimpleNamespace(encode=lambda _q: np.zeros((2, 128)))
+        agent.search_config = {
+            "backend": {
+                "profiles": {
+                    "p_active": {"embedding_model": "m_active"},
+                    "p_other": {"embedding_model": "m_other"},
+                }
+            }
+        }
+        monkeypatch.setattr(
+            enc_mod.QueryEncoderFactory, "create_encoder", create_encoder
+        )
+
+        def embedding_search(query_dict):
+            query_dict["query_encoder"].encode(query_dict["query"])
+            return []
+
+        agent._get_backend = lambda: SimpleNamespace(search=embedding_search)
+        agent._build_date_filter = lambda _s, _e: None
+
+        outcome = await agent._search_ensemble(
+            "q",
+            tenant_id="t:t",
+            profiles=["p_active", "p_other"],
+            modality="video",
+            top_k=5,
+        )
+
+        assert outcome.searched == ("p_active",)
+        assert outcome.degraded == (("p_other", "encode_failed"),)
 
 
 def test_build_date_filter_rejects_bool():
@@ -2492,7 +2619,7 @@ class TestQueryRewriteRunsOnceForEveryLeg:
     how many profiles the tenant serves.
     """
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     async def test_three_legs_all_search_the_one_rewritten_query(
@@ -2527,7 +2654,7 @@ class TestQueryRewriteRunsOnceForEveryLeg:
         assert output.enhanced_query == _REWRITTEN_QUERY
         assert output.degraded_query_rewrite is None
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     async def test_single_profile_searches_the_same_rewritten_query(
@@ -2560,7 +2687,7 @@ class TestQueryRewriteRunsOnceForEveryLeg:
         assert output.enhanced_query == _REWRITTEN_QUERY
         assert output.degraded_query_rewrite is None
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     async def test_an_upstream_rewrite_is_used_without_a_second_round_trip(
@@ -2599,7 +2726,7 @@ class TestQueryRewriteRunsOnceForEveryLeg:
 class TestQueryRewriteDegradesToTheOriginalQuery:
     """A rewrite that fails or overruns its budget still searches, and says so."""
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     async def test_a_failing_lm_searches_the_original_query_and_names_it(
@@ -2636,7 +2763,7 @@ class TestQueryRewriteDegradesToTheOriginalQuery:
         assert output.enhanced_query is None
         assert output.search_mode == "ensemble"
 
-    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_core.query.encoders.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_foundation.config.utils.get_config")
     async def test_a_rewrite_past_its_budget_searches_the_original_query(
@@ -2702,13 +2829,16 @@ class TestSearchAgentResolvesItsTenantsProfiles:
     def test_the_tenant_profile_builds_its_encoder(self):
         config_manager = self._config_manager_with_tenant_profile()
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             agent = SearchAgent(
                 deps=SearchAgentDeps(profile="acme_frames", tenant_id="acme:acme"),
                 schema_loader=mock_schema_loader,
                 config_manager=config_manager,
             )
+            # Construction builds nothing; the first use builds the encoder.
+            assert create_encoder.call_args_list == []
+            assert agent.query_encoder is create_encoder.return_value
 
         # The factory resolves the query model from the tenant's profile.
         [call] = create_encoder.call_args_list
@@ -2729,13 +2859,14 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         }
         config_manager.set_backend_config(backend, tenant_id="acme:acme")
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             agent = SearchAgent(
                 deps=SearchAgentDeps(tenant_id="acme:acme"),
                 schema_loader=mock_schema_loader,
                 config_manager=config_manager,
             )
+            assert agent.query_encoder is create_encoder.return_value
 
         assert agent.search_config.get("active_video_profile") != "acme_frames"
         assert agent.active_profile == "acme_frames"
@@ -2751,7 +2882,7 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         config_path.write_text(json.dumps({"backend": {"profiles": {}}}))
         monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             with pytest.raises(
                 ValueError,
@@ -2796,10 +2927,12 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         )
         monkeypatch.setattr(search_agent_module, "search_agent", None)
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             async with search_agent_module.lifespan(search_agent_module.app):
                 agent = search_agent_module.search_agent
+                assert create_encoder.call_args_list == []
+                assert agent.query_encoder is create_encoder.return_value
 
         assert agent.active_profile == "system_frames"
         [call] = create_encoder.call_args_list
@@ -2824,7 +2957,7 @@ class TestSearchAgentResolvesItsTenantsProfiles:
         )
         monkeypatch.setattr(search_agent_module, "search_agent", None)
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             with pytest.raises(
                 ValueError,
@@ -2863,6 +2996,7 @@ class TestSearchAgentResolvesItsTenantsProfiles:
             async def start():
                 async with search_agent_module.lifespan(app):
                     served["profile"] = search_agent_module.search_agent.active_profile
+                    search_agent_module.search_agent.query_encoder
 
             asyncio.run(start())
             served["kwargs"] = kwargs
@@ -2873,7 +3007,7 @@ class TestSearchAgentResolvesItsTenantsProfiles:
             search_agent_module.app.state, "profile", None, raising=False
         )
         with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory.create_encoder"
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder"
         ) as create_encoder:
             search_agent_module.main(["--profile", "explicit_frames", "--port", "8123"])
 
@@ -2920,11 +3054,13 @@ class TestSearchAgentResolvesItsTenantsProfiles:
             ),
         ):
             QueryEncoderFactory._encoder_cache.clear()
-            SearchAgent(
+            agent = SearchAgent(
                 deps=SearchAgentDeps(profile="acme_audio", tenant_id="acme:acme"),
                 schema_loader=mock_schema_loader,
                 config_manager=config_manager,
             )
+            assert built == []
+            agent.query_encoder
             QueryEncoderFactory._encoder_cache.clear()
 
         assert (shipped["embedding_model"], shipped["semantic_model"]) == (
@@ -2935,12 +3071,61 @@ class TestSearchAgentResolvesItsTenantsProfiles:
 
     def test_without_the_tenant_the_profile_is_unknown(self):
         config_manager = self._config_manager_with_tenant_profile()
-        with pytest.raises(ValueError) as caught:
-            SearchAgent(
-                deps=SearchAgentDeps(profile="acme_frames"),
-                schema_loader=mock_schema_loader,
-                config_manager=config_manager,
-            )
-        assert str(caught.value).startswith(
-            "Unknown profile: acme_frames. Available profiles: ["
+        agent = SearchAgent(
+            deps=SearchAgentDeps(profile="acme_frames"),
+            schema_loader=mock_schema_loader,
+            config_manager=config_manager,
         )
+        with pytest.raises(EncoderNotConfiguredError) as caught:
+            agent.query_encoder
+        assert str(caught.value).startswith(
+            "Profile 'acme_frames' declares a query encoder that could not be "
+            "built: ValueError: Unknown profile: acme_frames. Available profiles: ["
+        )
+
+
+@pytest.mark.unit
+class TestLazyQueryEncoder:
+    """The agent builds its encoder once, on first use, whatever the race."""
+
+    def test_concurrent_first_uses_build_one_encoder(self, monkeypatch):
+        import threading
+        import time
+        from types import SimpleNamespace
+
+        from cogniverse_core.query import encoders as enc_mod
+
+        builds = []
+
+        def slow_create_encoder(profile, model, config=None):
+            builds.append((profile, model))
+            time.sleep(0.05)
+            return SimpleNamespace(encode=lambda _q: np.zeros((1, 4)))
+
+        monkeypatch.setattr(
+            enc_mod.QueryEncoderFactory, "create_encoder", slow_create_encoder
+        )
+        agent = SearchAgent.__new__(SearchAgent)
+        agent.active_profile = "p_active"
+        agent._query_encoder_model = None
+        agent.search_config = {"backend": {"profiles": {}}}
+
+        workers = 8
+        barrier = threading.Barrier(workers)
+        seen: list = [None] * workers
+
+        def first_use(index: int) -> None:
+            barrier.wait()
+            seen[index] = agent.query_encoder
+
+        threads = [
+            threading.Thread(target=first_use, args=(i,)) for i in range(workers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert builds == [("p_active", None)]
+        assert all(encoder is seen[0] for encoder in seen)
+        assert agent.content_processor.query_encoder is seen[0]

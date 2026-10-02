@@ -76,7 +76,12 @@ def monitor(phoenix_container):
     # Pre-populate the loader's cache slot; evaluate_golden_set reads it first.
     m._golden_queries = [{"query": "q", "expected_videos": ["vidA"]}]
     # vidA at rank 2 -> reciprocal rank 0.5
-    m._http_client = _FakeSearchClient([{"source_id": "other"}, {"source_id": "vidA"}])
+    m._http_client = _FakeSearchClient(
+        [
+            {"source_id": "9f3c1a", "source_title": "other.mp4"},
+            {"source_id": "4b7e20", "source_title": "vidA.mp4"},
+        ]
+    )
     # This file pins the baseline-capture contract; the XGBoost timing gate
     # (its own policy, exercised by test_quality_monitor) would override the
     # threshold verdict off this stack's empty training history.

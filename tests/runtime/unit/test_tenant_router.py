@@ -402,8 +402,14 @@ class TestListMemories:
 
         assert resp.status_code == 503
         assert resp.json() == {
-            "detail": "Memory backend not initialised for tenant acme:acme: denseon missing"
+            "detail": {
+                "error": "memory_unavailable",
+                "message": "Memory backend not initialised for tenant acme:acme.",
+                "failure": "RuntimeError",
+                "tenant_id": "acme:acme",
+            }
         }
+        assert "denseon" not in resp.text
 
 
 @pytest.mark.unit
@@ -1403,7 +1409,14 @@ class TestPostManualOptimize:
         with patch("httpx.AsyncClient.post", new=fake_post):
             resp = client.post("/acme/optimize", json={"mode": "simba"})
         assert resp.status_code == 502
-        assert "500" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "argo_rejected",
+                "message": "Argo rejected the Workflow submit (HTTP 500).",
+                "upstream_status": 500,
+            }
+        }
+        assert "internal server error" not in resp.text
 
     def test_502_when_argo_returns_no_workflow_name(self, argo_configured_client):
         """Defensive: if Argo accepts but omits the assigned name, fail loud."""

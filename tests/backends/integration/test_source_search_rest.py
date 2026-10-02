@@ -308,13 +308,27 @@ def faulted(request, vespa_instance, rest_corpus, client):
         proxy.__exit__(None, None, None)
 
 
+def _search_failed_body() -> dict:
+    """The typed body a failed search answers with; Vespa's text stays in the log."""
+    return {
+        "error": "search_failed",
+        "message": (
+            f"Search with profile '{PROFILE}' failed; the runtime log names the cause."
+        ),
+        "failure": "VespaError",
+        "profile": PROFILE,
+        "strategy": "float_float",
+    }
+
+
 def test_a_faulted_search_is_a_server_error_not_an_empty_answer(client, faulted):
     proxy, message = faulted
 
     response = _post(client, "restcorpus")
 
     assert response.status_code == 500, response.text
-    assert message in response.json()["detail"], response.text
+    assert response.json() == {"detail": _search_failed_body()}, response.text
+    assert message not in response.text
     assert "source_search_incomplete" not in response.text
     assert _search_requests(proxy) == FAST_RETRY.max_attempts
 
@@ -331,6 +345,12 @@ def test_a_faulted_stream_ends_in_an_error_event_not_a_final_one(client, faulted
         if line.startswith("data: ")
     ]
     assert [event["type"] for event in events] == ["status", "error"]
-    assert message in events[1]["error"]
-    assert events[1]["error_type"] == "VespaError"
+    body = _search_failed_body()
+    assert events[1] == {
+        "type": "error",
+        "error": body["message"],
+        "error_type": "VespaError",
+        "detail": body,
+    }
+    assert message not in response.text
     assert _search_requests(proxy) == FAST_RETRY.max_attempts

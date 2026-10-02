@@ -778,6 +778,39 @@ keeps the shipped value; a failed read of the tenant's stored profile raises.
 
 ## API Reference
 
+### Failure Bodies
+
+A failed request never carries an exception's text, which can name backend
+URLs, credentials or file paths. Server-side failures (5xx) across the
+runtime routers answer with a `detail` built by `cogniverse_runtime/http_errors.py`:
+`{error, message, failure, ...fields}` — a stable `error` code, a `message`
+built from values the route owns (tenant, profile, job and workflow names),
+`failure` (the exception's type name) and route-specific fields such as
+`tenant_id`, `profile_name` or `store`. `record_failure` writes the cause,
+with its traceback, to the runtime log and records it on the active span.
+An upstream that answered with an error status (Argo) is reported by
+`upstream_rejection` as `{error, message, upstream_status, ...fields}`; its
+response body goes to the log only. Health probes report `reason` without the
+backend URL, plus `failure` when an exception caused it.
+
+Codes by router: search `search_failed`, `search_degraded`,
+`invalid_search_request`, `invalid_tenant_id`, `query_encoder_not_configured`,
+`query_encoder_unavailable`, `rerank_failed`; agents `search_degraded`,
+`inference_service_unavailable`, `no_execution_path`; admin
+`stats_unavailable`, `profile_create_failed`, `profile_list_failed`,
+`profile_read_failed`, `profile_update_failed`, `profile_delete_failed`,
+`schema_deploy_failed`, `registration_unavailable`, `resolve_unavailable`,
+`memory_unavailable`, `store_unavailable`, `harness_key_store_unavailable`;
+tenant management `organization_create_failed`, `organization_list_failed`,
+`organization_delete_failed`, `tenant_create_failed`, `tenant_list_failed`,
+`tenant_delete_failed`, `reconcile_unavailable`; ingestion
+`ingestion_start_failed`, `upload_profile_unavailable`,
+`upload_profile_unusable`, `object_store_unconfigured`,
+`object_store_unavailable`, `ingest_queue_unavailable`,
+`ingest_status_unknown`, `ingest_status_store_unavailable`; tenant jobs and
+optimization `argo_unavailable`, `argo_rejected`, `argo_no_workflow_name`;
+wiki `wiki_delete_failed`; synthetic `profile_selection_timeout`.
+
 ### Search Endpoints
 
 **POST /search/** - Execute search query
@@ -804,6 +837,30 @@ the streamed `final` event's `data`, carry `source_search_incomplete`.
 `segment` keeps every hit and omits those fields. Video profiles default to
 `source`; other profiles keep `segment` unless their config opts into a
 different default.
+
+The profile's query encoder is built only when the resolved strategy needs
+query embeddings, so a text-only strategy (`bm25_only`) answers whether or not
+the profile's encoder service is configured or reachable. An encoder failure
+answers with a `detail` built from typed fields, never the exception text
+(which names the sidecar URL):
+
+- configuration gap (`EncoderNotConfiguredError`: no model, or an inference
+  service with no configured URL) — 500, `{error: "query_encoder_not_configured",
+  dependency: "query_encoder", profile, strategy, message}`;
+- unavailable encoder service (`EncoderUnavailableError`) — 503 with
+  `Retry-After: 15` (the inference endpoint breaker's reset window),
+  `{error: "query_encoder_unavailable", dependency: "query_encoder", profile,
+  strategy, service, failure, retry_after_s, message}`, where `failure` names
+  the underlying error type.
+
+Any other failure is typed the same way (see Failure Bodies): Vespa's
+degraded coverage is a 503 `search_degraded`, request input the profile or
+schema cannot serve (an unknown profile or strategy) a 400
+`invalid_search_request`, a missing tenant a 400 `invalid_tenant_id`, and
+anything else a 500 `search_failed`; each carries `profile` and `strategy`.
+A streamed search reports any failure as its `error` event, with the message
+under `error`, the exception type under `error_type` and the body under
+`detail`.
 
 **GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash
@@ -953,7 +1010,7 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 
 `context.max_output_tokens`, when set, caps the completion every LM call of the dispatch may produce; the endpoint's configured `max_tokens` still applies when smaller. A value that is not a positive integer returns 400 before any generation.
 
-Error mapping: `VespaSearchDegraded` returns 503; `InferenceServiceUnavailableError` returns 503 naming the unavailable service — either an unconfigured service missing its in-process backend (an audio query with no `clap_embed` sidecar) or a configured sidecar that is unreachable (ColBERT pooling when the `colbert-pylate` pod is down); `ValueError` returns 404, 501 or 400 by message. A failure on the chat LLM (`llm_dependency_failure` in `cogniverse_runtime/llm_dependency.py`: a `RoutedLMCallFailed`, an `LMEndpointNotServing` or a litellm provider error, the raised exception itself or its `__cause__` chain) returns 503 when the LLM is unavailable — nothing deployed (`UpstreamNotServing`, `LMEndpointNotServing`), not answering, overloaded, rate-limited — and 502 when it rejected the request (`UpstreamAuthRejected`, `RouterDecodeFailed`, another 4xx). Its `detail` is `{error: "llm_unavailable" | "llm_request_rejected", dependency: "llm", agent, failure, upstream_status, model, retry_after_s, request_id, message}`, built from the failure's typed fields; a not-serving endpoint also answers `Retry-After` with the seconds until it is rechecked. A complex query whose orchestrator cannot plan because the LLM is undeployed therefore gets a 503 within milliseconds once the first 404 has been seen. Any other failure returns 500 with a JSON `detail` naming the agent, the exception type and the `request_id` — the traceback and the exception text stay in the runtime log, since backend URLs there can carry credentials.
+Error mapping: `VespaSearchDegraded` returns 503 `search_degraded`; `InferenceServiceUnavailableError` returns 503 `inference_service_unavailable` with `service` and `module` — either an unconfigured service missing its in-process backend (an audio query with no `clap_embed` sidecar) or a configured sidecar that is unreachable (ColBERT pooling when the `colbert-pylate` pod is down); both bodies carry `agent` and `request_id` (see Failure Bodies). A query encoder failure answers like `POST /search`: `EncoderNotConfiguredError` a 500 `query_encoder_not_configured`, `EncoderUnavailableError` a 503 `query_encoder_unavailable` with `Retry-After`, each with `agent` and `request_id`. `ValueError` returns 404 or 400 by message, and 501 `no_execution_path` for a capability with no execution path. A failure on the chat LLM (`llm_dependency_failure` in `cogniverse_runtime/llm_dependency.py`: a `RoutedLMCallFailed`, an `LMEndpointNotServing` or a litellm provider error, the raised exception itself or its `__cause__` chain) returns 503 when the LLM is unavailable — nothing deployed (`UpstreamNotServing`, `LMEndpointNotServing`), not answering, overloaded, rate-limited — and 502 when it rejected the request (`UpstreamAuthRejected`, `RouterDecodeFailed`, another 4xx). Its `detail` is `{error: "llm_unavailable" | "llm_request_rejected", dependency: "llm", agent, failure, upstream_status, model, retry_after_s, request_id, message}`, built from the failure's typed fields; a not-serving endpoint also answers `Retry-After` with the seconds until it is rechecked. A complex query whose orchestrator cannot plan because the LLM is undeployed therefore gets a 503 within milliseconds once the first 404 has been seen. Any other failure returns 500 with a JSON `detail` naming the agent, the exception type and the `request_id` — the traceback and the exception text stay in the runtime log, since backend URLs there can carry credentials.
 
 **POST /agents/{agent_name}/message** - Enqueue an inbound message for a running agent session (202 on success)
 ```bash

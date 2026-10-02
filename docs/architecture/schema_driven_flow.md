@@ -242,9 +242,9 @@ flowchart TD
    auto-selected) and checks its `needs_float_embeddings` /
    `needs_binary_embeddings` flags
 3. Embeddings are generated on-demand only when the strategy needs them —
-   `self.query_encoder.encode(query_text)` is called lazily inside the
-   backend's search path
-4. If both flags are false (e.g. `bm25_only`), the encoder is never called —
+   the backend builds the profile's encoder (`QueryEncoderFactory`) and calls
+   `encode(query_text)` inside its search path
+4. If both flags are false (e.g. `bm25_only`), no encoder is built or called —
    text-only search via `userInput` YQL only
 
 ## 3. Ranking Strategy Details
@@ -460,13 +460,13 @@ if not validate_strategy_for_schema("video_colpali_smol500_mv_frame", "float_flo
 ### Current Implementation
 
 Lazy, on-demand embedding generation is already implemented in
-`VespaSearchBackend`. `SearchService` never encodes the query itself —
+`VespaSearchBackend`. `SearchService` never builds or calls a query encoder —
 it passes the raw query text to the backend, which resolves the ranking
-strategy first and only invokes the query encoder when the strategy's
+strategy first and only builds and invokes the query encoder when the strategy's
 `needs_float_embeddings` / `needs_binary_embeddings` flags require it
 (`libs/vespa/cogniverse_vespa/search_backend.py`, the on-demand-encode
 block around `requires_embeddings = rank_config.get("needs_float_embeddings", ...)`).
-Text-only strategies (`bm25_only`) never invoke the encoder:
+Text-only strategies (`bm25_only`) never build or invoke the encoder:
 
 ```python
 # libs/vespa/cogniverse_vespa/search_backend.py (simplified)
@@ -475,8 +475,11 @@ requires_embeddings = rank_config.get(
 ) or rank_config.get("needs_binary_embeddings", False)
 
 if requires_embeddings and query_embeddings is None:
-    if self.query_encoder:
-        query_embeddings = self.query_encoder.encode(query_text)
+    if request_encoder is None:
+        request_encoder = self._resolve_encoder_for_profile(
+            profile_name, profile_config, tenant_id
+        )
+    query_embeddings = request_encoder.encode(query_text)
 ```
 
 ### Remaining Gaps

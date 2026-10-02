@@ -379,9 +379,16 @@ async def test_warm_partial_put_read_failure_returns_503_without_mutation(
             try:
                 assert response.status_code == 503
                 prefix = "pin-quota" if kind == "pin_quotas" else "signature-variant"
-                assert response.json()["detail"].startswith(
-                    f"{prefix} store unavailable: "
-                )
+                assert response.json() == {
+                    "detail": {
+                        "error": "store_unavailable",
+                        "message": f"The {prefix} store did not answer; retry.",
+                        "failure": "DatasetStoreUnavailableError",
+                        "store": prefix,
+                        "tenant_id": tenant,
+                    }
+                }
+                assert "store offline" not in response.text
                 assert second._blob_write_queue.status() == {"pending": 0, "failed": []}
             finally:
                 proxy.intercept = None

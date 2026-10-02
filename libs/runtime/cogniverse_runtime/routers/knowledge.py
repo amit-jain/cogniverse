@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_runtime.http_errors import failure_response
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,12 @@ def _build_factory(_tid: str):
                 mm, _tid, _require_config_manager(), auto_create_schema=False
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(f"Memory backend not initialised for tenant {_tid}: {exc}"),
+            raise failure_response(
+                503,
+                "memory_unavailable",
+                f"Memory backend not initialised for tenant {_tid}.",
+                exc,
+                tenant_id=_tid,
             ) from exc
     if not mm.memory:
         raise HTTPException(

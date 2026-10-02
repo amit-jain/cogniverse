@@ -473,7 +473,8 @@ def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
 ```
 
 `quality_monitor.py` (`libs/evaluation/cogniverse_evaluation/`) is the actual runtime consumer of
-`TrainingDecisionModel`.
+`TrainingDecisionModel`; it consults the model only once trained, and leaves the threshold verdicts
+standing while it is not.
 
 ---
 

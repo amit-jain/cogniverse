@@ -143,7 +143,19 @@ async def test_profile_delete_keeps_loop_responsive_and_preserves_config_on_fail
             response = await task
     if failure:
         assert response.status_code == 500
-        assert "injected storage refusal" in response.json()["detail"]
+        assert response.json() == {
+            "detail": {
+                "error": "profile_delete_failed",
+                "message": (
+                    "Deleting profile 'wiki_delete' failed; the runtime log names "
+                    "the cause."
+                ),
+                "failure": "RuntimeError",
+                "profile_name": "wiki_delete",
+                "tenant_id": env.tenant,
+            }
+        }
+        assert "injected storage refusal" not in response.text
         assert (
             env.cm.get_backend_profile("wiki_delete", tenant_id=env.tenant).to_dict()
             == profile.to_dict()

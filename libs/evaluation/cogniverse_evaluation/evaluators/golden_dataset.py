@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from cogniverse_sdk.document import result_source_title_key
+
 from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
@@ -79,12 +81,17 @@ class GoldenDatasetEvaluator(Evaluator):
         expected_videos = golden_data.get("expected_videos", [])
         relevance_scores = golden_data.get("relevance_scores", {})
 
-        # Extract actual results
-        retrieved_videos = []
-        for result in output:
-            video_id = result.get("source_id", result.get("video_id"))
-            if video_id:
-                retrieved_videos.append(video_id)
+        # Golden sets name a source by its original filename stem, which a
+        # content-hash source_id never equals: match on the stored title.
+        try:
+            retrieved_videos = [result_source_title_key(r) for r in output]
+        except ValueError as exc:
+            return create_evaluation_result(
+                score=-1.0,
+                label="not_evaluable",
+                explanation=str(exc),
+                metadata={"dataset_id": dataset_id},
+            )
 
         # Calculate metrics
         metrics = self._calculate_metrics(
