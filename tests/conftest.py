@@ -1196,6 +1196,50 @@ def workflow_store(telemetry_manager_with_phoenix, workflow_state_redis_url):
     return store
 
 
+@pytest.fixture
+async def session_redis(workflow_state_redis_url):
+    """A client on the test Redis, opened the way the runtime opens its own."""
+    from cogniverse_runtime.session_state import open_session_redis
+
+    client = await open_session_redis(workflow_state_redis_url)
+    try:
+        yield client
+    finally:
+        await client.aclose()
+
+
+@pytest.fixture
+def conversation_ledger(session_redis):
+    """The runtime's ConversationLedger, sized as the runtime sizes it, in a key
+    namespace no other test shares."""
+    import uuid
+
+    from cogniverse_runtime.agent_dispatcher import (
+        CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        CONVERSATION_SAVE_LEASE_S,
+    )
+    from cogniverse_runtime.session_state import ConversationLedger
+
+    return ConversationLedger(
+        session_redis,
+        save_lease_s=CONVERSATION_SAVE_LEASE_S,
+        failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        key_prefix=f"test:conversation:{uuid.uuid4().hex}",
+    )
+
+
+@pytest.fixture
+def continuation_store(session_redis):
+    """The runtime's ContinuationStore in a key namespace no other test shares."""
+    import uuid
+
+    from cogniverse_runtime.session_state import ContinuationStore
+
+    return ContinuationStore(
+        session_redis, key_prefix=f"test:continuation:{uuid.uuid4().hex}"
+    )
+
+
 # shared_vespa — the single canonical Vespa container for the whole sweep.
 #
 # Every per-package conftest that used to spawn its own Vespa Docker container

@@ -149,6 +149,12 @@ def make_persistent_vespa_ops(
     )
 
 
+class VespaQueryDegraded(RuntimeError):
+    """Vespa answered a query degraded: HTTP 200 with ``root.errors`` or a
+    ``coverage.degraded`` flag (a soft timeout, or a content node outside its
+    ideal state), so its hits may be empty or partial."""
+
+
 def raise_if_degraded(response, context: str) -> None:
     """Raise on a Vespa soft-timeout (degraded) query response.
 
@@ -169,7 +175,7 @@ def raise_if_degraded(response, context: str) -> None:
     errors = root.get("errors") or []
     coverage = root.get("coverage") or {}
     if errors or coverage.get("degraded"):
-        raise RuntimeError(
+        raise VespaQueryDegraded(
             f"Vespa returned a degraded/soft-timeout response for {context}: "
             f"errors={errors} coverage={coverage}"
         )

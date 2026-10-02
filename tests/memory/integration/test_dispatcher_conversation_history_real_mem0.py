@@ -38,8 +38,8 @@ from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_SAVE_TIMEOUT_S,
     AgentDispatcher,
     ConversationHistory,
-    ConversationPersistFailed,
 )
+from cogniverse_runtime.session_state import ConversationPersistFailed
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
@@ -110,14 +110,16 @@ def _no_wiki(dispatcher: AgentDispatcher) -> None:
     dispatcher._maybe_auto_file_wiki = _skip
 
 
-def _dispatcher_with_real_store(mm) -> AgentDispatcher:
+def _dispatcher_with_real_store(mm, ledger) -> AgentDispatcher:
     """Real dispatcher whose conversation store is a real ConversationStore
-    on the real Mem0 manager — no in-memory double."""
+    on the real Mem0 manager and whose ledger is the real one on real Redis —
+    no in-memory double."""
     config_manager = MagicMock()
     d = AgentDispatcher(
         agent_registry=_registry_mock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
+        conversation_ledger=ledger,
     )
     d._conversation_store_factory = lambda tenant_id: ConversationStore(mm, tenant_id)
     agent = MagicMock()
@@ -127,7 +129,7 @@ def _dispatcher_with_real_store(mm) -> AgentDispatcher:
     return d
 
 
-def _dispatcher_with_real_construction(cm) -> AgentDispatcher:
+def _dispatcher_with_real_construction(cm, ledger) -> AgentDispatcher:
     """Real dispatcher with NO store factory injected — it must build its own
     ConversationStore + Mem0MemoryManager from the real ConfigManager, the same
     way the served runtime does. Exercises the production construction path that
@@ -136,6 +138,7 @@ def _dispatcher_with_real_construction(cm) -> AgentDispatcher:
         agent_registry=_registry_mock(),
         config_manager=cm,
         schema_loader=MagicMock(),
+        conversation_ledger=ledger,
     )
     # factory deliberately left None: _build_conversation_store must construct
     # the real manager itself.
@@ -165,12 +168,12 @@ async def _dispatch(dispatcher, query, context_id, tenant=TENANT, **extra):
 
 @pytest.mark.asyncio
 async def test_history_round_trips_through_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
     seen: list = []
     _reply_with(
@@ -196,7 +199,7 @@ async def test_history_round_trips_through_real_mem0(
     # turns with exact content: every query the gateway sent and every reply
     # the agent returned.
     assert await d.drain_conversation_saves() is True
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
     persisted = ConversationStore(mm, TENANT).get_history(ctx)
     assert persisted == [
         {"role": "user", "content": "what is colpali"},
@@ -207,11 +210,13 @@ async def test_history_round_trips_through_real_mem0(
 
 
 @pytest.mark.asyncio
-async def test_contexts_do_not_bleed_in_real_mem0(shared_memory_vespa, shared_denseon):
+async def test_contexts_do_not_bleed_in_real_mem0(
+    shared_memory_vespa, shared_denseon, conversation_ledger
+):
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     ctx_a = f"chat{uuid.uuid4().hex[:10]}"
     ctx_b = f"chat{uuid.uuid4().hex[:10]}"
     seen: list = []
@@ -236,14 +241,14 @@ async def test_contexts_do_not_bleed_in_real_mem0(shared_memory_vespa, shared_de
 
 @pytest.mark.asyncio
 async def test_explicit_history_bypasses_management_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """A caller supplying its own conversation_history is respected and
     nothing is persisted to Mem0 for that context."""
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
     seen: list = []
     _reply_with(d, {}, seen)
@@ -252,13 +257,13 @@ async def test_explicit_history_bypasses_management_real_mem0(
     await _dispatch(d, "q", ctx, conversation_history=supplied)
 
     assert seen[0] == supplied
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
     assert ConversationStore(mm, TENANT).get_history(ctx) == []
 
 
 @pytest.mark.asyncio
 async def test_same_context_saves_land_in_scheduling_order_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """Four concurrent messages on ONE context persist all eight turns to real
     Mem0 in the order their replies were produced.
@@ -271,7 +276,7 @@ async def test_same_context_saves_land_in_scheduling_order_real_mem0(
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
     gates = {i: asyncio.Event() for i in range(4)}
     at_agent: list = []
@@ -296,7 +301,7 @@ async def test_same_context_saves_land_in_scheduling_order_real_mem0(
         assert (await dispatches[index])["message"] == f"reply {index}"
 
     assert await d.drain_conversation_saves() is True
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
     assert ConversationStore(mm, TENANT).get_history(ctx) == [
         {"role": "user", "content": "turn 3"},
         {"role": "assistant", "content": "reply 3"},
@@ -311,7 +316,7 @@ async def test_same_context_saves_land_in_scheduling_order_real_mem0(
 
 @pytest.mark.asyncio
 async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """A gateway 'simple' route persists the DOWNSTREAM agent's answer as the
     assistant turn in real Mem0 — not the routing breadcrumb. Reloaded from real
@@ -338,6 +343,7 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
         agent_registry=_registry_mock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
     d._conversation_store_factory = lambda tenant_id: ConversationStore(mm, tenant_id)
     _no_wiki(d)
@@ -416,17 +422,18 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_dispatch_degrades_when_memory_unavailable():
+async def test_dispatch_degrades_when_memory_unavailable(conversation_ledger, caplog):
     """History is enrichment: when the store is unavailable the agent still
     answers with no history — the reply is never lost to a memory outage.
     The store build raises here (as get_all_memories does on a real Mem0
-    outage), so this exercises the dispatcher's real degrade path with no
-    infrastructure needed."""
+    outage), so this exercises the dispatcher's real degrade path against the
+    real ledger with no Mem0 needed."""
 
     d = AgentDispatcher(
         agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
 
     def _raise(_tenant):
@@ -441,33 +448,56 @@ async def test_dispatch_degrades_when_memory_unavailable():
     _reply_with(d, {"q": "answered anyway"}, seen)
 
     ctx = f"chat{uuid.uuid4().hex[:10]}"
-    result = await _dispatch(d, "q", ctx)
+    with caplog.at_level(logging.WARNING, logger="cogniverse_runtime.agent_dispatcher"):
+        result = await _dispatch(d, "q", ctx)
 
-    assert result["message"] == "answered anyway"
-    assert seen[0] == []  # degraded to no history, still ran
+        assert result["message"] == "answered anyway"
+        assert seen[0] == []  # degraded to no history, still ran
 
-    # The save could not run either, and that loss is readable rather than
-    # silent: the outage reaches a consumer as the store's own error.
-    assert await d.drain_conversation_saves() is True
-    assert d.conversation_persist_status() == {"pending": 0, "failed": [(TENANT, ctx)]}
-    failure = d.conversation_persist_failure(TENANT, ctx)
+        # The save could not run either, and that loss is readable rather than
+        # silent: the shared ledger names the store's own error type, and the
+        # log carries its message.
+        assert await d.drain_conversation_saves() is True
+    assert (await d.conversation_persist_status()) == {
+        "pending": 0,
+        "failed": [(TENANT, ctx)],
+    }
+    failure = await d.conversation_persist_failure(TENANT, ctx)
     assert type(failure) is ConversationPersistFailed
-    assert type(failure.__cause__) is ConnectionError
-    assert str(failure.__cause__) == "mem0 unreachable"
+    assert (failure.tenant_id, failure.context_id, failure.error_type) == (
+        TENANT,
+        ctx,
+        "ConnectionError",
+    )
+    assert str(failure) == (
+        f"conversation turns for context {ctx} (tenant {TENANT}) were not "
+        "persisted: ConnectionError"
+    )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.agent_dispatcher"
+    ] == [
+        f"Conversation history unavailable for context {ctx}: ConnectionError: "
+        "ConnectionError('mem0 unreachable')",
+        f"Conversation turns for context {ctx} were NOT persisted: "
+        "ConnectionError: ConnectionError('mem0 unreachable')",
+    ]
 
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_recorded_persistence_failures_evict_oldest_first():
-    """The failure record is bounded: contexts are unbounded (one per chat), so
-    a sustained outage must not grow the dispatcher's record for the pod's
-    lifetime. The newest failure displaces the oldest, and every retained entry
-    still names its own context."""
+async def test_recorded_persistence_failures_evict_oldest_first(conversation_ledger):
+    """The shared failure record is bounded: contexts are unbounded (one per
+    chat), so a sustained outage must not grow it without limit. The newest
+    failure displaces the oldest, and every retained entry still names its own
+    context."""
     d = AgentDispatcher(
         agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
 
     def _raise(_tenant):
@@ -487,11 +517,11 @@ async def test_recorded_persistence_failures_evict_oldest_first():
         await _dispatch(d, "q", context_id)
     assert await d.drain_conversation_saves() is True
 
-    status = d.conversation_persist_status()
+    status = await d.conversation_persist_status()
     assert status["pending"] == 0
     assert status["failed"] == [(TENANT, ctx) for ctx in contexts[3:]]
-    assert d.conversation_persist_failure(TENANT, contexts[2]) is None
-    oldest_kept = d.conversation_persist_failure(TENANT, contexts[3])
+    assert await d.conversation_persist_failure(TENANT, contexts[2]) is None
+    oldest_kept = await d.conversation_persist_failure(TENANT, contexts[3])
     assert type(oldest_kept) is ConversationPersistFailed
     assert oldest_kept.context_id == contexts[3]
 
@@ -499,11 +529,13 @@ async def test_recorded_persistence_failures_evict_oldest_first():
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_dispatch_bounded_when_history_load_hangs(monkeypatch):
+async def test_dispatch_bounded_when_history_load_hangs(
+    monkeypatch, conversation_ledger
+):
     """A hung Mem0 must not stall the reply. The history load is time-bounded,
     so once the budget elapses the agent answers with no history rather than
-    waiting on the backend. No infrastructure needed — a hanging store stub
-    drives the real bound."""
+    waiting on the backend. A hanging store stub drives the real bound; the
+    ledger is the real one on Redis."""
     from cogniverse_runtime import agent_dispatcher as _ad
 
     monkeypatch.setattr(_ad, "CONVERSATION_LOAD_TIMEOUT_S", 0.2)
@@ -520,6 +552,7 @@ async def test_dispatch_bounded_when_history_load_hangs(monkeypatch):
         agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
     d._conversation_store_factory = lambda _tenant: _HangingLoadStore()
     agent = MagicMock()
@@ -537,17 +570,20 @@ async def test_dispatch_bounded_when_history_load_hangs(monkeypatch):
     assert seen[0] == []  # degraded to no history when the load timed out
     assert elapsed < 1.5  # bounded well under the 2s hang
     assert await d.drain_conversation_saves() is True
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
 
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_reply_does_not_wait_for_a_hung_save(monkeypatch, caplog):
+async def test_reply_does_not_wait_for_a_hung_save(
+    monkeypatch, caplog, conversation_ledger
+):
     """A hung save never touches the reply: the answer returns with the save
     still pending, and the save then fails at its own budget with the failure
-    readable on the dispatcher and the exception TYPE in the log. No
-    infrastructure needed — a hanging store stub drives the real bound."""
+    readable through the shared ledger and the exception TYPE in the log. A
+    hanging store stub drives the real bound; the ledger is the real one on
+    Redis."""
     from cogniverse_runtime import agent_dispatcher as _ad
 
     monkeypatch.setattr(_ad, "CONVERSATION_SAVE_TIMEOUT_S", 0.2)
@@ -563,6 +599,7 @@ async def test_reply_does_not_wait_for_a_hung_save(monkeypatch, caplog):
         agent_registry=_registry_mock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
     d._conversation_store_factory = lambda _tenant: _HangingSaveStore()
     agent = MagicMock()
@@ -578,17 +615,24 @@ async def test_reply_does_not_wait_for_a_hung_save(monkeypatch, caplog):
     elapsed = time.monotonic() - start
 
     assert result["message"] == "answered anyway"
-    # The reply is back before the save has even started running.
-    assert d.conversation_persist_status() == {"pending": 1, "failed": []}
+    # The reply is back while the save is still running.
     assert elapsed < 0.2
+    assert (await d.conversation_persist_status()) == {"pending": 1, "failed": []}
 
     with caplog.at_level(logging.WARNING, logger="cogniverse_runtime.agent_dispatcher"):
         assert await d.drain_conversation_saves() is True
 
-    assert d.conversation_persist_status() == {"pending": 0, "failed": [(TENANT, ctx)]}
-    failure = d.conversation_persist_failure(TENANT, ctx)
+    assert (await d.conversation_persist_status()) == {
+        "pending": 0,
+        "failed": [(TENANT, ctx)],
+    }
+    failure = await d.conversation_persist_failure(TENANT, ctx)
     assert type(failure) is ConversationPersistFailed
-    assert type(failure.__cause__) is TimeoutError
+    assert (failure.tenant_id, failure.context_id, failure.error_type) == (
+        TENANT,
+        ctx,
+        "TimeoutError",
+    )
     assert [
         record.getMessage()
         for record in caplog.records
@@ -602,7 +646,7 @@ async def test_reply_does_not_wait_for_a_hung_save(monkeypatch, caplog):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_history_round_trips_through_real_construction(
-    shared_memory_vespa, shared_denseon, monkeypatch
+    shared_memory_vespa, shared_denseon, monkeypatch, conversation_ledger
 ):
     """With NO store factory injected, the dispatcher builds its own real
     ConversationStore + Mem0MemoryManager from the ConfigManager (the served
@@ -632,7 +676,7 @@ async def test_history_round_trips_through_real_construction(
     )
     monkeypatch.setenv("VESPA_CONFIG_PORT", str(shared_memory_vespa["config_port"]))
     monkeypatch.setenv("LLM_ENDPOINT", get_llm_base_url())
-    d = _dispatcher_with_real_construction(cm)
+    d = _dispatcher_with_real_construction(cm, conversation_ledger)
     # The non-seam manager resolves its own per-tenant schema
     # (agent_memories_{canonical.replace(':','_')}), so dispatch under the
     # tenant the shared memory fixture provisioned that schema for.
@@ -662,15 +706,15 @@ async def test_history_round_trips_through_real_construction(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_reply_returns_before_persistence_and_next_turn_reads_it(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """The reply does not wait for the Mem0 write, and the next turn on the
     same context still reads the previous turn.
 
     Both latencies are real timings taken in this test: the reply comes back
     before either turn has been written, and the turn that follows it sees the
-    exact pair the first turn persisted because the load waits on that
-    context's save chain.
+    exact pair the first turn persisted because the load waits for that
+    context's pending turns in the shared ledger.
     """
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
@@ -684,12 +728,12 @@ async def test_reply_returns_before_persistence_and_next_turn_reads_it(
         def get_history(self, context_id, max_turns=10):
             return self._inner.get_history(context_id, max_turns)
 
-        def store_turn(self, context_id, role, content):
+        def store_turn(self, context_id, role, content, seq):
             started = time.monotonic()
-            self._inner.store_turn(context_id, role, content)
+            self._inner.store_turn(context_id, role, content, seq)
             write_durations.append(time.monotonic() - started)
 
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     d._conversation_store_factory = lambda tenant_id: _RecordingStore(
         ConversationStore(mm, tenant_id)
     )
@@ -707,9 +751,11 @@ async def test_reply_returns_before_persistence_and_next_turn_reads_it(
 
     assert r1["message"] == "a late-interaction model"
     # Nothing has run on the loop since the save was scheduled, so the reply
-    # provably returned before persistence: the save is queued, the store empty.
-    assert d.conversation_persist_status() == {"pending": 1, "failed": []}
+    # provably returned before persistence: the store is empty, the turn is
+    # pending in the ledger, and the save is still running.
     assert ConversationStore(mm, TENANT).get_history(ctx) == []
+    assert len(await conversation_ledger.pending(TENANT, ctx)) == 1
+    assert (await d.conversation_persist_status()) == {"pending": 1, "failed": []}
 
     r2 = await _dispatch(d, "how many dims", ctx)
     assert r2["message"] == "128"
@@ -738,7 +784,7 @@ async def test_reply_returns_before_persistence_and_next_turn_reads_it(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_contexts_persist_independently_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """One context's stalled save never holds another context's.
 
@@ -751,7 +797,7 @@ async def test_contexts_persist_independently_real_mem0(
     )
     store = ConversationStore(mm, TENANT)
     # Warm the embedder so the timing below measures a steady-state save.
-    store.store_turn(f"warm{uuid.uuid4().hex[:8]}", "user", "warm the write path")
+    store.store_turn(f"warm{uuid.uuid4().hex[:8]}", "user", "warm the write path", 0)
 
     ctx_a = f"chat{uuid.uuid4().hex[:10]}"
     ctx_b = f"chat{uuid.uuid4().hex[:10]}"
@@ -764,12 +810,12 @@ async def test_contexts_persist_independently_real_mem0(
         def get_history(self, context_id, max_turns=10):
             return self._inner.get_history(context_id, max_turns)
 
-        def store_turn(self, context_id, role, content):
+        def store_turn(self, context_id, role, content, seq):
             if context_id == ctx_a:
                 assert barrier.wait(timeout=60.0), "A's write was never released"
-            self._inner.store_turn(context_id, role, content)
+            self._inner.store_turn(context_id, role, content, seq)
 
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     d._conversation_store_factory = lambda tenant_id: _BarrierOnA(
         ConversationStore(mm, tenant_id)
     )
@@ -779,7 +825,9 @@ async def test_contexts_persist_independently_real_mem0(
     await _dispatch(d, "in A", ctx_a)
     started = time.monotonic()
     await _dispatch(d, "in B", ctx_b)
-    await d._conversation_save_chains[(TENANT, ctx_b)]
+    b_pending = await conversation_ledger.pending(TENANT, ctx_b)
+    assert len(b_pending) == 1
+    assert await conversation_ledger.wait_settled(TENANT, ctx_b, b_pending, 60.0) == []
     b_elapsed = time.monotonic() - started
 
     assert store.get_history(ctx_b) == [
@@ -788,7 +836,7 @@ async def test_contexts_persist_independently_real_mem0(
     ]
     # A is still parked at the barrier while B is durable.
     assert store.get_history(ctx_a) == []
-    assert d.conversation_persist_status() == {"pending": 1, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 1, "failed": []}
     print(f"CONTEXT_B_SAVE_ELAPSED_S={b_elapsed:.3f}")
     # A steady-state save measures ~0.1s against real Mem0 on this host; B
     # cannot have waited out A's 60s barrier.
@@ -805,7 +853,7 @@ async def test_contexts_persist_independently_real_mem0(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_paused_mem0_loses_the_turn_observably_real_mem0(
-    shared_memory_vespa, shared_denseon, caplog
+    shared_memory_vespa, shared_denseon, caplog, conversation_ledger
 ):
     """With Mem0's backend paused, the reply is unaffected and the lost turn is
     reported: the save burns its own budget off the reply path, records a typed
@@ -814,7 +862,7 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     seen: list = []
     _reply_with(d, {"first": "reply one", "second": "reply two"}, seen)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
@@ -824,7 +872,7 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
     r1 = await _dispatch(d, "first", ctx)
     healthy_elapsed = time.monotonic() - healthy_started
     assert await d.drain_conversation_saves() is True
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
 
     paused_started = time.monotonic()
     r2 = await _dispatch(d, "second", ctx)
@@ -858,15 +906,17 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
 
             # The reply cost 2s at most while the save spent its whole budget.
             assert drain_elapsed >= CONVERSATION_SAVE_TIMEOUT_S
-            assert d.conversation_persist_status() == {
+            assert (await d.conversation_persist_status()) == {
                 "pending": 0,
                 "failed": [(TENANT, ctx)],
             }
-            failure = d.conversation_persist_failure(TENANT, ctx)
+            failure = await d.conversation_persist_failure(TENANT, ctx)
             assert type(failure) is ConversationPersistFailed
-            assert type(failure.__cause__) is TimeoutError
-            assert failure.context_id == ctx
-            assert failure.tenant_id == TENANT
+            assert (failure.tenant_id, failure.context_id, failure.error_type) == (
+                TENANT,
+                ctx,
+                "TimeoutError",
+            )
 
             load_started = time.monotonic()
             degraded = await d._load_conversation_history(TENANT, ctx)
@@ -902,22 +952,22 @@ async def test_paused_mem0_loses_the_turn_observably_real_mem0(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_runtime_shutdown_drains_a_pending_turn_real_mem0(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """A turn answered moments before shutdown still lands: the runtime's own
-    shutdown seam drains the dispatcher's pending saves."""
+    shutdown seam drains the saves this process is running."""
     from cogniverse_runtime.routers import agents as agents_router
 
     mm = _build_manager(
         shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
     )
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     seen: list = []
     _reply_with(d, {"before shutdown": "answered before shutdown"}, seen)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
 
     await _dispatch(d, "before shutdown", ctx)
-    assert d.conversation_persist_status() == {"pending": 1, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 1, "failed": []}
 
     previous = agents_router._dispatcher
     agents_router._dispatcher = d
@@ -954,7 +1004,7 @@ async def test_save_budget_covers_measured_store_turn_cost(
     for index in range(6):
         role = "user" if index % 2 == 0 else "assistant"
         started = time.monotonic()
-        store.store_turn(ctx, role, f"budget probe {index}")
+        store.store_turn(ctx, role, f"budget probe {index}", index)
         writes.append(time.monotonic() - started)
     read_started = time.monotonic()
     history = store.get_history(ctx)

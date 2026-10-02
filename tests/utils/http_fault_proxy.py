@@ -116,12 +116,15 @@ class InterceptFaultProxy:
     ``(status, payload)`` to answer without contacting upstream. ``payload`` is
     the response body as bytes, or any JSON-serialisable value, which is sent
     as ``application/json``. Every request seen is recorded in ``requests``.
+    ``port`` binds a chosen local port; the default takes a free one.
     """
 
     def __init__(
         self,
         upstream: str,
         intercept: Callable[[str, str, bytes], tuple[int, object] | None] | None = None,
+        *,
+        port: int = 0,
     ) -> None:
         self.upstream_url = upstream.rstrip("/")
         self.intercept = intercept
@@ -177,7 +180,7 @@ class InterceptFaultProxy:
             def log_message(self, *_args):
                 return
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self.port = self._server.server_port
         self.url = f"http://127.0.0.1:{self.port}"

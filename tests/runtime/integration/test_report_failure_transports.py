@@ -176,13 +176,13 @@ class _RecordingConversationStore:
     def get_history(self, context_id, max_turns=20):
         return []
 
-    def store_turn(self, context_id, role, content):
+    def store_turn(self, context_id, role, content, seq):
         self.turns.append({"role": role, "content": content})
 
     def get_missing_assistant_markers(self, context_id):
         return []
 
-    def store_missing_assistant_marker(self, context_id, reason):
+    def store_missing_assistant_marker(self, context_id, reason, seq):
         self.turns.append({"role": "assistant_missing", "content": str(reason)})
 
 
@@ -214,7 +214,7 @@ def provider():
 
 
 @pytest.fixture
-def report_runtime(provider, monkeypatch):
+def report_runtime(provider, monkeypatch, conversation_ledger):
     from cogniverse_foundation.telemetry import manager as telemetry_module
     from cogniverse_foundation.telemetry.config import TelemetryConfig
     from cogniverse_foundation.telemetry.manager import TelemetryManager
@@ -235,7 +235,10 @@ def report_runtime(provider, monkeypatch):
         )
     )
     dispatcher = AgentDispatcher(
-        agent_registry=registry, config_manager=manager, schema_loader=None
+        agent_registry=registry,
+        config_manager=manager,
+        schema_loader=None,
+        conversation_ledger=conversation_ledger,
     )
     conversations = {
         FAILING_TENANT: _RecordingConversationStore(),

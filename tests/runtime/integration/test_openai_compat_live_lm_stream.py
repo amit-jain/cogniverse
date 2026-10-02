@@ -378,7 +378,7 @@ def _point_primary_at(api_base: str, tmp_path: Path, monkeypatch) -> None:
 
 
 @pytest.fixture()
-def app(dispatcher, tmp_path):
+def app(dispatcher, tmp_path, continuation_store):
     """The production app with the /v1 wiring its lifespan performs."""
     config = get_config(tenant_id=TENANT_A, config_manager=dispatcher._config_manager)
     runtime_main.configure_ambient_dspy(create_dspy_lm(config.get_llm_config().primary))
@@ -393,12 +393,12 @@ def app(dispatcher, tmp_path):
     )
     openai_compat.set_model_map(dict(SHIPPED_CONFIG["harness"]["models"]))
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(continuation_store)
     yield runtime_main.app
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(None)
 
 
 @pytest.fixture()
@@ -892,7 +892,7 @@ class TestClientDisconnect:
     """A hang-up mid-stream stops the turn and leaves nothing behind."""
 
     async def test_hang_up_cancels_the_turn_without_an_error_or_a_continuation(
-        self, app, proxy, tmp_path, monkeypatch, caplog
+        self, app, proxy, tmp_path, monkeypatch, caplog, continuation_store
     ):
         _point_primary_at(proxy.api_base, tmp_path, monkeypatch)
         proxy.clear()
@@ -931,7 +931,7 @@ class TestClientDisconnect:
             assert _agent_turn_tasks() == []
             assert [task.cancelled() for task in running] == [True]
             assert openai_compat.in_flight_count() == 0
-            assert openai_compat.continuation_count() == 0
+            assert await continuation_store.count() == 0
         finally:
             server.should_exit = True
             await serving

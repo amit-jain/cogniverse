@@ -36,6 +36,12 @@ from cogniverse_core.conversation import (
 )
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
+from cogniverse_runtime.session_state import (
+    SESSION_REDIS_TIMEOUT_SECONDS,
+    ConversationLedger,
+    ConversationPersistFailed,
+    SessionStateUnavailable,
+)
 
 if TYPE_CHECKING:
     from cogniverse_runtime.sandbox_manager import SandboxManager
@@ -83,12 +89,13 @@ GATEWAY_ARTIFACT_TTL_S = 300.0
 # contended backend, not the expected cost.
 CONVERSATION_LOAD_TIMEOUT_S = 5.0
 
-# Conversation persistence runs OFF the reply path on a per-context chain, so
-# this budget bounds how long one context's chain stays occupied by a hung
-# backend — it never delays a reply. A tenant's first save in a fresh process
-# costs ~7.2s against real Mem0 (building the store, then two verbatim turn
-# writes, the first of which warms the embedder); every later save costs
-# ~0.1s. The budget carries ~2.8x the measured cold cost.
+# Conversation persistence runs OFF the reply path, so this budget bounds how
+# long one save stays pending against a hung backend — it never delays a
+# reply, and it bounds how long the context's next turn waits for the save. A
+# tenant's first save in a fresh process costs ~7.2s against real Mem0
+# (building the store, then two verbatim turn writes, the first of which warms
+# the embedder); every later save costs ~0.1s. The budget carries ~2.8x the
+# measured cold cost.
 CONVERSATION_SAVE_TIMEOUT_S = 20.0
 
 # Attempts one turn append gets before the turn is given up on, retries
@@ -101,21 +108,26 @@ CONVERSATION_SAVE_ATTEMPTS = 4
 
 # First backoff, doubled per retry — about twice a measured steady-state write
 # (0.03-0.11s), so a blip that clears within one write cycle is caught without
-# idling the chain.
+# idling the save.
 CONVERSATION_SAVE_RETRY_BACKOFF_S = 0.25
 
 # Budget held back from the retry schedule for the attempt it is about to make
 # and the marker write that follows a permanent failure (~0.22s measured).
 CONVERSATION_SAVE_STEP_RESERVE_S = 0.5
 
-# Unrecovered persistence failures are kept per context so a consumer can read
-# which turns were lost. Contexts are unbounded (one per chat), so the newest
-# failure displaces the oldest instead of growing for the pod's lifetime.
+# Unrecovered persistence failures are kept per context in the shared ledger so
+# a consumer can read which turns were lost. Contexts are unbounded (one per
+# chat), so the newest failure displaces the oldest instead of growing without
+# limit.
 CONVERSATION_PERSIST_FAILURE_CAPACITY = 256
 
-# Shutdown waits longer than one save budget: the in-flight save settles at its
-# own bound, and a save queued behind it needs a second one. A shorter budget
-# would abandon a turn that was about to land.
+# How long a turn stays pending in the shared ledger: its save budget plus one
+# Redis command to settle it. A turn whose process died before settling it
+# stops holding the context's next turn once this lapses.
+CONVERSATION_SAVE_LEASE_S = CONVERSATION_SAVE_TIMEOUT_S + SESSION_REDIS_TIMEOUT_SECONDS
+
+# Shutdown waits longer than one save lease, so a save accepted as shutdown
+# begins still lands and settles.
 CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S = 2 * CONVERSATION_SAVE_TIMEOUT_S
 
 # Bound on cached per-tenant GatewayAgents. Least-recently-dispatched tenants
@@ -150,26 +162,8 @@ ORCHESTRATOR_AGENT_CACHE_CAPACITY = 64
 RELOAD_RETRY_COOLDOWN_S = 10.0
 
 
-class ConversationPersistFailed(Exception):
-    """A dispatched turn's conversation history was not persisted.
-
-    Carries the tenant, the context and the originating error so a consumer
-    can tell a hung backend from a rejected write; the dispatcher keeps the
-    latest one per context and serves it through
-    :meth:`AgentDispatcher.conversation_persist_failure`.
-    """
-
-    def __init__(self, tenant_id: str, context_id: str, cause: BaseException):
-        super().__init__(
-            f"conversation turns for context {context_id} (tenant {tenant_id}) "
-            f"were not persisted: {type(cause).__name__}: {cause}"
-        )
-        self.tenant_id = tenant_id
-        self.context_id = context_id
-        self.__cause__ = cause
-
-
 CONVERSATION_HISTORY_LOADED = "loaded"
+CONVERSATION_HISTORY_INCOMPLETE = "incomplete"
 CONVERSATION_HISTORY_UNAVAILABLE = "unavailable"
 
 
@@ -178,8 +172,9 @@ class ConversationHistory:
     """A context's prior turns and the outcome of the read that produced them.
 
     ``state`` separates "this context has no prior turns" from "the store did
-    not answer", so an answer written without the context it should have had
-    is never presented as one written with it.
+    not answer" and from "earlier turns were still being saved", so an answer
+    written without the context it should have had is never presented as one
+    written with it.
     """
 
     turns: List[Dict[str, str]]
@@ -641,6 +636,7 @@ class AgentDispatcher:
         schema_loader: SchemaLoader,
         sandbox_manager: "SandboxManager | None" = None,
         artifact_manager_factory: Optional["Callable[[str], ArtifactManager]"] = None,
+        conversation_ledger: Optional[ConversationLedger] = None,
     ) -> None:
         self._registry = agent_registry
         self._config_manager = config_manager
@@ -694,17 +690,11 @@ class AgentDispatcher:
         # discarded is documented to allow that — keep the handles, discard
         # them on completion via add_done_callback.
         self._background_tasks: set[asyncio.Task[Any]] = set()
-        # Conversation persistence runs off the reply path, one chain per
-        # (tenant_id, context_id): the head is that context's most recently
-        # scheduled save, and a load waits on it so a turn reads its own
-        # writes. Entries are dropped as each chain settles.
-        self._conversation_save_chains: Dict[Tuple[str, str], "asyncio.Task[None]"] = {}
-        # Latest unrecovered persistence failure per context, cleared by the
-        # next save that lands, so a dropped turn stays readable. Insertion
-        # order is the eviction order once the capacity is reached.
-        self._conversation_persist_failures: Dict[
-            Tuple[str, str], ConversationPersistFailed
-        ] = {}
+        # Turn order, pending saves and lost turns of server-managed
+        # conversations, shared by every process serving them.
+        self._conversation_ledger = conversation_ledger
+        # This process's saves still running, so shutdown can land them.
+        self._conversation_saves: set["asyncio.Task[None]"] = set()
 
     def _resolve_gliner_url(self) -> Optional[str]:
         """Look up the deployed GLiNER sidecar URL from system config.
@@ -1705,7 +1695,9 @@ class AgentDispatcher:
         if managed_history is not None:
             if isinstance(result, dict):
                 result["conversation"] = managed_history.envelope()
-            self._schedule_conversation_save(tenant_id, str(context_id), query, result)
+            await self._schedule_conversation_save(
+                tenant_id, str(context_id), query, result
+            )
 
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
@@ -1752,26 +1744,58 @@ class AgentDispatcher:
             return None
         return ConversationStore(mgr, tenant_id)
 
+    def set_conversation_ledger(self, ledger: Optional[ConversationLedger]) -> None:
+        """Use ``ledger`` for the turn order and pending saves of server-managed
+        conversations."""
+        self._conversation_ledger = ledger
+
+    def _require_conversation_ledger(self) -> ConversationLedger:
+        if self._conversation_ledger is None:
+            raise SessionStateUnavailable(
+                "server-managed conversation history needs the shared "
+                "conversation ledger, and none is configured"
+            )
+        return self._conversation_ledger
+
     async def _load_conversation_history(
         self, tenant_id: str, context_id: str
     ) -> ConversationHistory:
         """Load a context's recent turns off the event loop, time-bounded.
 
-        Waits for this context's pending saves first, so a turn reads its own
-        writes even though the previous reply did not wait for them; other
-        contexts' saves are never waited on.
+        Waits first for the context's turns whose saves are still landing, on
+        whichever process accepted them, so a turn reads the turns answered
+        before it even though their replies did not wait for the writes. One
+        save budget bounds the wait; turns still pending after it are reported
+        as ``incomplete`` and read without. Other contexts' saves are never
+        waited on.
 
-        History is enrichment, not a hard dependency: a Mem0 outage, an
-        unconfigured backend, or a read that exceeds
-        CONVERSATION_LOAD_TIMEOUT_S degrades to no history, so the agent still
-        answers — it just loses prior-turn context, never the reply. A hung
-        backend cannot stall the reply past the budget (the offloaded thread
-        may run on, but the dispatch stops waiting). The degrade is reported:
-        the returned state is ``unavailable`` with the failing exception, which
-        the turn's envelope carries under ``conversation``, so a caller can
-        tell a context with no prior turns from one whose turns were not read.
+        The ledger orders turns, so a Redis outage raises
+        ``SessionStateUnavailable`` before the agent runs. Mem0 history is
+        enrichment, not a hard dependency: a Mem0 outage, an unconfigured
+        backend, or a read that exceeds CONVERSATION_LOAD_TIMEOUT_S degrades to
+        no history, so the agent still answers — it just loses prior-turn
+        context, never the reply. A hung backend cannot stall the reply past
+        the budget (the offloaded thread may run on, but the dispatch stops
+        waiting). The degrade is reported: the returned state is
+        ``unavailable`` with the failing exception, which the turn's envelope
+        carries under ``conversation``, so a caller can tell a context with no
+        prior turns from one whose turns were not read.
         """
-        await self._await_conversation_saves(tenant_id, context_id)
+        ledger = self._require_conversation_ledger()
+        unsettled = await ledger.wait_settled(
+            tenant_id,
+            context_id,
+            await ledger.pending(tenant_id, context_id),
+            CONVERSATION_SAVE_TIMEOUT_S,
+        )
+        if unsettled:
+            logger.warning(
+                "Conversation saves for context %s did not settle within "
+                "%.1fs; reading history without %d turn(s)",
+                context_id,
+                CONVERSATION_SAVE_TIMEOUT_S,
+                len(unsettled),
+            )
 
         async def _load() -> List[Dict[str, str]]:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
@@ -1793,78 +1817,51 @@ class AgentDispatcher:
                 state=CONVERSATION_HISTORY_UNAVAILABLE,
                 reason=repr(exc),
             )
+        if unsettled:
+            return ConversationHistory(
+                turns=turns,
+                state=CONVERSATION_HISTORY_INCOMPLETE,
+                reason=(
+                    f"{len(unsettled)} earlier turn(s) still saving after "
+                    f"{CONVERSATION_SAVE_TIMEOUT_S:.0f}s"
+                ),
+            )
         return ConversationHistory(turns=turns)
 
-    def _schedule_conversation_save(
+    async def _schedule_conversation_save(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
     ) -> "asyncio.Task[None]":
-        """Queue this turn's persistence behind the context's pending saves.
+        """Give this turn its position, then persist it in the background.
 
-        The reply returns without waiting: the answer is already produced, and
-        a Mem0 write measured in seconds must not be added to every turn's
-        latency. Chaining per ``(tenant_id, context_id)`` keeps one context's
-        turns in dispatch order; separate contexts run concurrently.
+        The position is taken and the turn marked pending before the reply
+        returns, so the context's next turn — on any process — waits for this
+        save and reads the turns in order. The write itself does not delay
+        the reply: a Mem0 write measured in seconds must not be added to every
+        turn's latency. A Redis outage raises ``SessionStateUnavailable``
+        rather than answering a turn that would never be stored.
         """
-        key = (tenant_id, context_id)
-        previous = self._conversation_save_chains.get(key)
+        ledger = self._require_conversation_ledger()
+        position = await ledger.accept(tenant_id, context_id)
         task = self._spawn_background(
             self._save_conversation_turns(
-                tenant_id, context_id, query, result, after=previous
+                ledger, tenant_id, context_id, query, result, position
             )
         )
-        self._conversation_save_chains[key] = task
-        task.add_done_callback(
-            lambda finished, _key=key: self._release_conversation_chain(_key, finished)
-        )
+        self._conversation_saves.add(task)
+        task.add_done_callback(self._conversation_saves.discard)
         return task
-
-    def _release_conversation_chain(
-        self, key: Tuple[str, str], task: "asyncio.Task[None]"
-    ) -> None:
-        """Drop a settled chain head, unless a newer save already replaced it."""
-        if self._conversation_save_chains.get(key) is task:
-            del self._conversation_save_chains[key]
-
-    async def _await_conversation_saves(self, tenant_id: str, context_id: str) -> bool:
-        """Wait for one context's chained saves to settle.
-
-        Returns True when nothing is pending for the context. One save budget
-        bounds the wait — the in-flight save's own bound — so a stuck save
-        costs the next turn its history (logged) rather than holding the reply
-        open. Other contexts' saves are never waited on.
-        """
-        key = (tenant_id, context_id)
-        deadline = time.monotonic() + CONVERSATION_SAVE_TIMEOUT_S
-        while True:
-            task = self._conversation_save_chains.get(key)
-            if task is None:
-                return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                logger.warning(
-                    "Conversation saves for context %s did not settle within "
-                    "%.1fs; reading history without them",
-                    context_id,
-                    CONVERSATION_SAVE_TIMEOUT_S,
-                )
-                return False
-            await asyncio.wait([task], timeout=remaining)
 
     async def drain_conversation_saves(
         self, timeout_s: float = CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S
     ) -> bool:
-        """Land every pending conversation save before the process exits.
+        """Land every save this process is still running before it exits.
 
         Returns False when the budget elapsed with saves still in flight —
         those turns are lost, and the count is logged.
         """
         deadline = time.monotonic() + timeout_s
         while True:
-            pending = [
-                task
-                for task in list(self._conversation_save_chains.values())
-                if not task.done()
-            ]
+            pending = [task for task in self._conversation_saves if not task.done()]
             if not pending:
                 return True
             remaining = deadline - time.monotonic()
@@ -1878,49 +1875,55 @@ class AgentDispatcher:
                 return False
             await asyncio.wait(pending, timeout=remaining)
 
-    def conversation_persist_status(self) -> Dict[str, Any]:
-        """Conversation saves accepted but not yet landed, and those lost.
+    async def conversation_persist_status(self) -> Dict[str, Any]:
+        """This process's saves still running, and every unrecovered loss.
 
-        ``{"pending": N, "failed": [(tenant_id, context_id), ...]}``. A turn
-        whose save failed stays in ``failed`` until a later save for the same
-        context succeeds, so a lost turn is readable rather than silent.
+        ``{"pending": N, "failed": [(tenant_id, context_id), ...]}``, failures
+        oldest first from the shared ledger. A turn whose save failed stays in
+        ``failed`` until a later turn of the same context lands, so a lost
+        turn is readable from any process rather than silent.
         """
+        failed = await self._require_conversation_ledger().failures()
         return {
-            "pending": sum(
-                1 for task in self._conversation_save_chains.values() if not task.done()
-            ),
-            "failed": list(self._conversation_persist_failures),
+            "pending": sum(1 for task in self._conversation_saves if not task.done()),
+            "failed": failed,
         }
 
-    def conversation_persist_failure(
+    async def conversation_persist_failure(
         self, tenant_id: str, context_id: str
     ) -> Optional[ConversationPersistFailed]:
         """The last unrecovered persistence failure for a context, if any."""
-        return self._conversation_persist_failures.get((tenant_id, str(context_id)))
+        return await self._require_conversation_ledger().failure(
+            tenant_id, str(context_id)
+        )
 
     async def _save_conversation_turns(
         self,
+        ledger: ConversationLedger,
         tenant_id: str,
         context_id: str,
         query: str,
         result: Dict[str, Any],
-        after: "Optional[asyncio.Task[None]]" = None,
+        position: int,
     ) -> None:
         """Append the user + assistant turns off the event loop, time-bounded.
 
-        Runs on the context's save chain: ``after`` is that context's previous
-        save, awaited first so turns land in dispatch order. Each append is
-        retried on its own within the budget (see
-        :meth:`_append_conversation_turn`), so an
+        ``ledger`` accepted the turn at ``position`` and settles it here. The
+        user turn is stored at ``position`` and the reply at the next one,
+        so the context's turns read back in the order their replies were
+        accepted, whichever save lands first. Each append is retried on its
+        own within the budget (see :meth:`_append_conversation_turn`), so an
         append that already landed is never repeated. When the assistant
         append is given up on, the user turn stays and a durable
         ``assistant_missing`` marker takes the reply's place — the next turn
         reads an unanswered user message rather than prose no agent produced.
 
-        A save that fails or exceeds CONVERSATION_SAVE_TIMEOUT_S records a
-        ConversationPersistFailed for the context and logs the exception type
-        — the turn is lost, and the loss is readable through
-        :meth:`conversation_persist_status`, never a silent drop.
+        A save that fails or exceeds CONVERSATION_SAVE_TIMEOUT_S is recorded
+        in the shared ledger with the exception type, and the exception is
+        logged — the turn is lost, and the loss is readable through
+        :meth:`conversation_persist_status` from any process, never a silent
+        drop. Either outcome settles the turn, which releases the context's
+        next turn.
 
         The assistant turn is the delivered answer — ``result["answer"]``, the
         same text every dispatch consumer renders. An envelope with no answer
@@ -1928,11 +1931,6 @@ class AgentDispatcher:
         the user turn alone, so history never carries text the assistant did
         not say.
         """
-        if after is not None:
-            # The predecessor records its own failure; this save proceeds
-            # either way so one bad write cannot stall a context forever.
-            await asyncio.wait([after])
-
         answer = result.get("answer")
         assistant_text = answer if isinstance(answer, str) else ""
 
@@ -1945,35 +1943,48 @@ class AgentDispatcher:
             if store is None:
                 return
             await self._append_conversation_turn(
-                store, context_id, "user", query, deadline
+                store, context_id, "user", query, position, deadline
             )
             if not assistant_text:
                 return
             try:
                 await self._append_conversation_turn(
-                    store, context_id, "assistant", assistant_text, deadline
+                    store,
+                    context_id,
+                    "assistant",
+                    assistant_text,
+                    position + 1,
+                    deadline,
                 )
             except Exception as exc:  # noqa: BLE001 — marked, then re-raised
-                await self._mark_conversation_reply_missing(store, context_id, exc)
+                await self._mark_conversation_reply_missing(
+                    store, context_id, exc, position + 1
+                )
                 raise
 
-        key = (tenant_id, context_id)
         try:
             await asyncio.wait_for(_save(), timeout=CONVERSATION_SAVE_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — recorded below, answer already sent
-            failures = self._conversation_persist_failures
-            failures.pop(key, None)
-            failures[key] = ConversationPersistFailed(tenant_id, context_id, exc)
-            while len(failures) > CONVERSATION_PERSIST_FAILURE_CAPACITY:
-                failures.pop(next(iter(failures)))
             logger.warning(
                 "Conversation turns for context %s were NOT persisted: %s: %r",
                 context_id,
                 type(exc).__name__,
                 exc,
             )
-            return
-        self._conversation_persist_failures.pop(key, None)
+            settle = ledger.failed(tenant_id, context_id, position, type(exc).__name__)
+        else:
+            settle = ledger.landed(tenant_id, context_id, position)
+        try:
+            await settle
+        except SessionStateUnavailable as exc:
+            logger.error(
+                "Conversation turn at position %d of context %s could not be "
+                "settled in the shared ledger; the context's next turn waits "
+                "out its lease: %r",
+                position,
+                context_id,
+                exc,
+            )
 
     async def _append_conversation_turn(
         self,
@@ -1981,9 +1992,11 @@ class AgentDispatcher:
         context_id: str,
         role: str,
         content: str,
+        seq: int,
         deadline: float,
     ) -> None:
-        """Append one turn, retrying a write that never reached a verdict.
+        """Append one turn at ``seq``, retrying a write that never reached a
+        verdict.
 
         Retrying stops at CONVERSATION_SAVE_ATTEMPTS, on a failure typed as
         permanent (a document the backend refused, a programming error), and
@@ -1993,7 +2006,9 @@ class AgentDispatcher:
         attempt = 1
         while True:
             try:
-                await asyncio.to_thread(store.store_turn, context_id, role, content)
+                await asyncio.to_thread(
+                    store.store_turn, context_id, role, content, seq
+                )
                 return
             except Exception as exc:  # noqa: BLE001 — classified, then re-raised
                 backoff = CONVERSATION_SAVE_RETRY_BACKOFF_S * 2 ** (attempt - 1)
@@ -2016,7 +2031,11 @@ class AgentDispatcher:
                 attempt += 1
 
     async def _mark_conversation_reply_missing(
-        self, store: ConversationStore, context_id: str, cause: BaseException
+        self,
+        store: ConversationStore,
+        context_id: str,
+        cause: BaseException,
+        seq: int,
     ) -> None:
         """Persist the marker that names a turn whose reply was not stored.
 
@@ -2026,7 +2045,7 @@ class AgentDispatcher:
         """
         try:
             await asyncio.to_thread(
-                store.store_missing_assistant_marker, context_id, cause
+                store.store_missing_assistant_marker, context_id, cause, seq
             )
         except Exception as exc:  # noqa: BLE001 — the caller re-raises the cause
             logger.warning(

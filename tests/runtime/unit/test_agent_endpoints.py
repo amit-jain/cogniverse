@@ -210,7 +210,7 @@ class TestGatewayOrchestrationHandoff:
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
     async def test_gateway_simple_persists_downstream_answer_not_breadcrumb(
-        self, dispatcher
+        self, dispatcher, conversation_ledger
     ):
         """A gateway 'simple' route persists the downstream agent's user-facing
         answer as the assistant turn — the rendered answer the response path
@@ -272,10 +272,11 @@ class TestGatewayOrchestrationHandoff:
             def get_history(self, ctx):
                 return []
 
-            def store_turn(self, ctx, role, content):
+            def store_turn(self, ctx, role, content, seq):
                 stored.append((role, content))
 
         dispatcher._conversation_store_factory = lambda tenant: _CaptureStore()
+        dispatcher.set_conversation_ledger(conversation_ledger)
 
         result = await dispatcher.dispatch(
             agent_name="gateway_agent",

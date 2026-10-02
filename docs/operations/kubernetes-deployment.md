@@ -1049,6 +1049,12 @@ Every replica and every worker holds its own in-process state; the runtime
 module guide's Deployment section lists what a follow-up request on another
 process does not see.
 
+Every replica and worker shares the one Redis instance the chart deploys
+(`redis.replicaCount: 1`). It must stay a single Redis, not Redis Cluster: the
+runtime's conversation ledger (`cogniverse_runtime/session_state.py`) updates a
+context's turn clock, its pending saves and the shared lost-turn record in one
+Lua script, and Redis Cluster refuses a script whose keys span hash slots.
+
 ### Backup & Restore
 
 **Backup:**

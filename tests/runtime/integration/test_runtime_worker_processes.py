@@ -5,6 +5,10 @@ real process tree against the shared test Vespa and a test-owned Redis, with
 the full lifespan in every worker. Which worker owns a listening socket or a
 client connection is read from ``/proc``, never from the runtime's own
 answer.
+
+A server-managed conversation needs no LM here: its tenant never deployed the
+schema of its one profile, so the summarizer answers with its fixed reply, and
+the turns persist in real Mem0 through the workers' own conversation stores.
 """
 
 from __future__ import annotations
@@ -26,7 +30,26 @@ from pathlib import Path
 
 import pytest
 
+from cogniverse_core.conversation import CONVERSATION_AGENT_NAME
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_HISTORY_LOADED,
+    CONVERSATION_SAVE_TIMEOUT_S,
+    GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+    AnswerGrounding,
+)
+from cogniverse_runtime.main import STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S
 from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.vespa_test_helpers import (
+    NON_IDEAL_STATE_ANSWER,
+    DegradeLatestVersionReads,
+    deploy_tenant_schema,
+    make_config_manager,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -38,7 +61,15 @@ WORKERS = 2
 BOOT_TIMEOUT_S = 600
 # Shutdown runs each worker's lifespan drains, all empty here.
 STOP_TIMEOUT_S = 120
+# How long a new connection may wait in a worker's accept queue.
+ACCEPT_TIMEOUT_S = 30
 _TCP_LISTEN = "0A"
+SHIPPED_PROFILES = json.loads((ROOT / "configs/config.json").read_text())["backend"][
+    "profiles"
+]
+# The profile a conversation tenant configures and never deploys, so the
+# summarizer answers that it has nothing to search, with no LM and no encoder.
+UNDEPLOYED_PROFILE = "document_text_semantic"
 
 
 def _records(log: Path, logger: str, level: str) -> list[str]:
@@ -145,15 +176,22 @@ def _listening_owners(port: int, pids: list[int]) -> list[int]:
 
 
 def _serving_worker(port: int, connection: http.client.HTTPConnection, pids):
-    """The worker holding the server side of an open client connection."""
+    """The worker holding the server side of an open client connection, once
+    a worker has accepted it: until then the kernel lists the server side,
+    queued on a listening socket, with no socket inode."""
     client_port = connection.sock.getsockname()[1]
-    inodes = [
-        inode
-        for local, remote, state, inode in _tcp_rows()
-        if local == port and remote == client_port and state != _TCP_LISTEN
-    ]
-    assert len(inodes) == 1, (client_port, inodes)
-    return _owner(inodes[0], pids)
+    deadline = time.monotonic() + ACCEPT_TIMEOUT_S
+    while True:
+        inodes = [
+            inode
+            for local, remote, state, inode in _tcp_rows()
+            if local == port and remote == client_port and state != _TCP_LISTEN
+        ]
+        assert len(inodes) == 1, (client_port, inodes)
+        if inodes[0] != 0:
+            return _owner(inodes[0], pids)
+        assert time.monotonic() < deadline, f"no worker accepted {client_port}"
+        time.sleep(0.05)
 
 
 def _get(connection: http.client.HTTPConnection, path: str) -> tuple[int, dict]:
@@ -176,7 +214,12 @@ def _refuses(port: int) -> bool:
 
 
 @contextlib.contextmanager
-def _runtime(tmp_path: Path, redis_url: str, name: str = "runtime"):
+def _runtime(
+    tmp_path: Path,
+    redis_url: str,
+    name: str = "runtime",
+    extra_env: dict[str, str] | None = None,
+):
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
@@ -197,6 +240,7 @@ def _runtime(tmp_path: Path, redis_url: str, name: str = "runtime"):
         COGNIVERSE_MEMORY_LIFECYCLE_DISABLED="1",
         LOG_LEVEL="INFO",
         PYTHONUNBUFFERED="1",
+        **(extra_env or {}),
     )
     log = tmp_path / f"{name}.log"
     with log.open("w") as output:
@@ -326,6 +370,161 @@ class TestTwoWorkersServe:
         assert set(owners) == set(workers)
 
 
+def _post(
+    connection: http.client.HTTPConnection, path: str, body: dict
+) -> tuple[int, dict]:
+    connection.request(
+        "POST",
+        path,
+        body=json.dumps(body),
+        headers={"Content-Type": "application/json"},
+    )
+    response = connection.getresponse()
+    return response.status, json.loads(response.read())
+
+
+def _connection_to(
+    port: int, worker: int, workers: list[int]
+) -> http.client.HTTPConnection:
+    """A new client connection ``worker`` holds, read from /proc."""
+    spare = []
+    try:
+        for _ in range(64):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=300)
+            connection.connect()
+            if _serving_worker(port, connection, workers) == worker:
+                return connection
+            spare.append(connection)
+    finally:
+        for connection in spare:
+            connection.close()
+    raise AssertionError(f"no connection of 64 reached worker {worker}")
+
+
+def _conversation_rows(
+    connection: http.client.HTTPConnection, tenant_id: str, context_id: str
+) -> list[dict]:
+    status, body = _get(
+        connection,
+        f"/admin/tenant/{tenant_id}/memories?agent_name={CONVERSATION_AGENT_NAME}"
+        "&limit=200",
+    )
+    assert status == 200, body
+    rows = [
+        row
+        for row in body["memories"]
+        if row["metadata"].get("context_id") == context_id
+    ]
+    return sorted(rows, key=lambda row: float(row["metadata"]["seq"]))
+
+
+class TestConversationAcrossWorkers:
+    def test_each_turn_reads_the_turns_the_other_worker_answered(
+        self, tmp_path, redis_url, vespa_instance, shared_vespa, shared_denseon
+    ):
+        """Consecutive turns of one context alternate between the workers; each
+        reads every turn answered before it, though the reply before it came
+        back while that turn's save was still landing on the other worker."""
+        # A tenant of its own: its memory schema is deployed, and its one
+        # profile embeds through DenseOn but its schema is never deployed.
+        tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
+        config_manager = make_config_manager(shared_vespa)
+        deploy_tenant_schema(
+            shared_vespa,
+            tenant_id=tenant_id,
+            base_schema_name="agent_memories",
+            config_manager=config_manager,
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                UNDEPLOYED_PROFILE,
+                {
+                    **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
+                    "inference_services": {"embedding": "denseon"},
+                },
+            ),
+            tenant_id=tenant_id,
+        )
+        expected_answer = AnswerGrounding(
+            hits=[],
+            state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+            undeployed_profiles=(UNDEPLOYED_PROFILE,),
+        ).unanswerable_text(tenant_id)
+        context_id = f"workers-{uuid.uuid4().hex}"
+        # Three turns cover both directions (first to second worker and back)
+        # and stay below the turn count that files a wiki page.
+        queries = [f"summarize turn {index}" for index in range(3)]
+        env = {
+            "INFERENCE_SERVICE_URLS": json.dumps({"denseon": shared_denseon}),
+            "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+        }
+        with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, port):
+            workers = _serving(process, log)
+            served = []
+            # A connection per turn: a turn waits out the previous turn's save,
+            # longer than a worker keeps an idle connection open.
+            for index, query in enumerate(queries):
+                worker = workers[index % 2]
+                connection = _connection_to(port, worker, workers)
+                try:
+                    status, body = _post(
+                        connection,
+                        "/agents/summarizer_agent/process",
+                        {
+                            "agent_name": "summarizer_agent",
+                            "query": query,
+                            "context": {"tenant_id": tenant_id},
+                            "context_id": context_id,
+                        },
+                    )
+                finally:
+                    connection.close()
+                assert status == 200, (body, log.read_text()[-20000:])
+                served.append((worker, body))
+
+            connection = _connection_to(port, workers[0], workers)
+            try:
+                deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
+                rows = _conversation_rows(connection, tenant_id, context_id)
+                while len(rows) < 2 * len(queries) and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    rows = _conversation_rows(connection, tenant_id, context_id)
+            finally:
+                connection.close()
+
+        assert [worker for worker, _ in served] == [
+            workers[0],
+            workers[1],
+            workers[0],
+        ]
+        for index, (_, body) in enumerate(served):
+            assert body["conversation"] == {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 2 * index,
+                "reason": None,
+            }, body
+            assert body["answer"] == expected_answer
+        assert [row["memory"] for row in rows] == [
+            f"[ctx:{context_id}] [{role}] {text}"
+            for query in queries
+            for role, text in (("user", query), ("assistant", expected_answer))
+        ]
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+        ] * len(queries)
+        # Each turn's rows sit at its ledger position and the one after it,
+        # and every turn's position is above the turn before it.
+        seqs = [int(row["metadata"]["seq"]) for row in rows]
+        assert [reply - user for user, reply in zip(seqs[0::2], seqs[1::2])] == [
+            1
+        ] * len(queries)
+        assert [
+            later - earlier >= 2 for earlier, later in zip(seqs[0::2], seqs[2::2])
+        ] == [True] * (len(queries) - 1)
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
 class TestSignals:
     def test_a_reload_signal_before_the_lifespan_handler_is_ignored(
         self, tmp_path, redis_url, vespa_instance
@@ -407,6 +606,81 @@ class TestSignals:
             assert _records(log, CLI_LOGGER, "ERROR") == []
 
 
+SYSTEM_CONFIG_ID = "_system:system:system:system_config"
+DEGRADED_VERSION_READS = 3
+
+
+def _system_config_version(http_port: int) -> int:
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=http_port)
+    try:
+        return store.get_config(
+            "_system", ConfigScope.SYSTEM, "system", "system_config"
+        ).version
+    finally:
+        store.close()
+
+
+class TestStartupThroughADegradedStore:
+    def test_workers_start_once_the_store_answers_whole(
+        self, tmp_path, redis_url, vespa_instance
+    ):
+        """The store answers the first system-config version reads as Vespa
+        does while its content node is outside its ideal state. Each worker's
+        startup write waits that out, both workers serve, and each write lands
+        above the latest version."""
+        degrade = DegradeLatestVersionReads(SYSTEM_CONFIG_ID, DEGRADED_VERSION_READS)
+        before = _system_config_version(vespa_instance["http_port"])
+        # The runtime derives the config server's port from the data port.
+        data_port, config_port = generate_unique_ports("degraded-store-proxy")
+        with (
+            InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}",
+                degrade,
+                port=data_port,
+            ),
+            InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['config_port']}", port=config_port
+            ),
+        ):
+            env = {"BACKEND_URL": "http://127.0.0.1", "BACKEND_PORT": str(data_port)}
+            with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, _):
+                workers = _serving(process, log)
+                waits = [
+                    re.sub(r"\(attempt \d+,", "(attempt N,", record)
+                    for record in _records(log, MAIN_LOGGER, "WARNING")
+                    if record.startswith(
+                        "Config store for the startup system config write"
+                    )
+                ]
+
+        assert len(workers) == WORKERS
+        assert degrade.served == DEGRADED_VERSION_READS
+        degraded_read = (
+            "Config store for the startup system config write is not ready "
+            f"(attempt N, retrying in {STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S:.1f}s): "
+            "ConfigStoreUnavailableError: Vespa returned a degraded/soft-timeout "
+            f"response for config {SYSTEM_CONFIG_ID}"
+        )
+        injected = (
+            f"{degraded_read}: errors=[] "
+            f"coverage={NON_IDEAL_STATE_ANSWER['root']['coverage']}"
+        )
+        assert waits.count(injected) == DEGRADED_VERSION_READS
+        # Vespa itself can answer the same read degraded while the other
+        # worker's write settles; that wait names the read just the same.
+        assert [
+            wait
+            for wait in waits
+            if not re.fullmatch(
+                re.escape(degraded_read) + r": errors=\[.*\] coverage=\{.*\}", wait
+            )
+        ] == []
+        # Each worker wrote once, above the version it found: a degraded read
+        # never became "no versions yet" and a write below the latest.
+        assert _system_config_version(vespa_instance["http_port"]) == before + WORKERS
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
 class TestWorkerFailure:
     def test_a_worker_that_dies_stops_the_runtime(
         self, tmp_path, redis_url, vespa_instance
@@ -462,7 +736,7 @@ class TestWorkerFailure:
             assert _refuses(port)
 
 
-def _connection_to(port: int, worker: int, workers: list[int]):
+def _answered_connection_to(port: int, worker: int, workers: list[int]):
     """A connection that ``worker`` serves.
 
     Which worker accepts a connection is the kernel's choice, read from
@@ -494,7 +768,7 @@ class _Worker:
         self.port, self.pid, self.workers = port, pid, workers
 
     def __call__(self, method: str, path: str, body=None) -> tuple[int, dict]:
-        connection = _connection_to(self.port, self.pid, self.workers)
+        connection = _answered_connection_to(self.port, self.pid, self.workers)
         try:
             return _send(connection, method, path, body)
         finally:

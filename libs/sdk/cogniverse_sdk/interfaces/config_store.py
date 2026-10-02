@@ -159,10 +159,11 @@ class ConfigEntry:
 class ConfigStoreUnavailableError(RuntimeError):
     """The backing store did not answer a read within the implementation's
     retry budget. Raised only for transient failures (connection refused,
-    timeouts, 5xx) that persisted across every attempt; a clean absence
-    returns None and a non-transient response propagates as itself. Callers
-    that wait for the store at startup retry on this; nothing else should
-    catch it silently."""
+    timeouts, 5xx) that persisted across every attempt, or for a read the
+    backend answered degraded (partial coverage, which can hide the rows it
+    asked for); a clean absence returns None and a non-transient response
+    propagates as itself. Callers that wait for the store at startup retry
+    on this; nothing else should catch it silently."""
 
 
 class ConfigWriteConflictError(RuntimeError):

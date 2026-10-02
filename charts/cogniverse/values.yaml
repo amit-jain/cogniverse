@@ -427,8 +427,9 @@ runtime:
   # Startup gates liveness/readiness while the entrypoint waits for Vespa.
   # Its 64-minute grace (2x the longest observed recovery) logs one ERROR;
   # the process keeps waiting until ready or stopped. This 4530s probe window
-  # covers that grace plus the probe and fresh-install allowances, derived
-  # from production constants in tests/charts/test_runtime_startup_probe.py.
+  # covers that grace plus the probe, fresh-install and startup config-write
+  # allowances, derived from production constants in
+  # tests/charts/test_runtime_startup_probe.py.
   startupProbe:
     tcpSocket:
       port: 8000
@@ -1859,15 +1860,22 @@ multiTenant:
     pods: "50"
 
 # ===========================================
-# Redis — ingestion queue + status streams
+# Redis — queues, task state and session state
 # ===========================================
-# Used by the ingest_v2 pipeline. Two roles:
-#   1. Queue: producer (POST /ingest in runtime) XADDs to ``ingest:queue``;
-#      consumers (ingestor pods) XREADGROUP via a consumer group for at-least-
-#      once delivery. Idempotency lookups in ``ingest:done:<sha>``.
-#   2. Status: workers XADD per-event to ``ingest:status:<id>`` so the SSE
-#      endpoint can replay the full event history for late-connecting clients.
-# AOF on so a pod restart doesn't lose in-flight queue entries.
+# The one instance every runtime replica and worker, the ingestors and the
+# dashboard share:
+#   - Ingestion: POST /ingestion/upload XADDs to ``ingest:queue``; ingestor
+#     pods XREADGROUP it through a consumer group for at-least-once delivery
+#     (dead letters in ``ingest:queue:dead``). Workers XADD per-event to
+#     ``ingest:status:<id>`` so the SSE endpoint replays the history to
+#     late-connecting clients; ``ingest:done:<sha>`` makes uploads idempotent.
+#   - A2A: the shared task store, its event relay and task leases.
+#   - Agent sessions: inbound and outbound message queues.
+#   - Conversations: server-managed turn order and pending saves, and
+#     suspended /v1 tool-call turns. Their Lua scripts span several keys, so
+#     this stays a single Redis, never Redis Cluster.
+#   - Approval and workflow writes: locks and replacement records.
+# AOF on so a pod restart doesn't lose in-flight queue entries or task state.
 redis:
   enabled: true  # required by the runtime; false fails the render
   # In-cluster auth. Off by default for the local/dev stack; enable in

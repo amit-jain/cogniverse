@@ -302,12 +302,12 @@ def dispatcher():
 
 
 @pytest.fixture()
-def compat_app(dispatcher):
+def compat_app(dispatcher, continuation_store):
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
     openai_compat.set_model_map(MODEL_MAP)
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(continuation_store)
     slow_stream_events.clear()
     app = FastAPI()
     app.include_router(openai_compat.router, prefix="/v1")
@@ -315,7 +315,7 @@ def compat_app(dispatcher):
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(None)
 
 
 @pytest.fixture()
@@ -541,7 +541,9 @@ class TestTokenStreamSelection:
         ]
         assert contents == openai_compat.split_answer_chunks(expected)
 
-    async def test_the_token_path_suspends_on_pending_tool_calls(self, client):
+    async def test_the_token_path_suspends_on_pending_tool_calls(
+        self, client, continuation_store
+    ):
         response = await client.post(
             "/v1/chat/completions",
             json=_body("cogniverse/tools", tools=TOOL_DEFS),
@@ -562,7 +564,7 @@ class TestTokenStreamSelection:
         ]
         assert frames[-1]["choices"][0]["finish_reason"] == "tool_calls"
         assert _data_lines(response.text)[-1] == "[DONE]"
-        assert openai_compat.continuation_count() == 1
+        assert await continuation_store.count() == 1
 
     async def test_a_suspended_turn_reports_usage_only_when_asked(self, client):
         asked = await client.post(

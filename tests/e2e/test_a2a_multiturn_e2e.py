@@ -472,9 +472,9 @@ def _await_conversation_rows(
 ) -> list[dict]:
     """Poll until the context holds ``expected`` rows, within the save budget.
 
-    The reply returns before the turns are persisted (the save runs on the
-    dispatcher's own chain), so the read has to wait for the write the way the
-    next turn would.
+    The reply returns before the turns are persisted (the save runs in the
+    background), so the read has to wait for the write the way the next turn
+    would.
     """
     deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
     rows: list[dict] = []

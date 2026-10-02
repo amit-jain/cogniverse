@@ -13,6 +13,10 @@ context's turns. Reads and writes RAISE on a backend outage — the caller
 (the agent dispatcher) decides that history is enrichment and degrades to
 no-history, so the outage is a logged degrade there, not a silent [] here.
 
+Each row carries the ``seq`` its writer assigned, and reads order by it, so
+turns written by different processes read back in the writers' order rather
+than in the order the writes landed.
+
 A turn whose assistant reply could not be stored keeps its user turn and
 carries an ``assistant_missing`` marker row in the reply's place. The
 marker is durable, so a half-turn is findable after a restart, and
@@ -22,7 +26,6 @@ message rather than prose no agent produced.
 
 import json
 import logging
-import time
 from typing import Dict, List, Tuple
 
 import httpx
@@ -154,9 +157,9 @@ class ConversationStore:
             tag = f"[{role}] "
             if text.startswith(tag):
                 text = text[len(tag) :]
-            # seq orders turns on read; store_turn always writes a float. A row
-            # whose seq is a foreign/corrupt non-number is dropped rather than
-            # crash the sort — a mixed str/float key set is unorderable.
+            # seq orders turns on read; store_turn always writes a number. A
+            # row whose seq is a foreign/corrupt non-number is dropped rather
+            # than crash the sort — a mixed str/float key set is unorderable.
             try:
                 seq = float(meta.get("seq", 0.0))
             except (ValueError, TypeError):
@@ -166,8 +169,8 @@ class ConversationStore:
         collected.sort(key=lambda item: item[0])
         return [turn for _seq, turn in collected]
 
-    def store_turn(self, context_id: str, role: str, content: str) -> None:
-        """Append one turn. ``seq`` (wall-clock) orders turns on read."""
+    def store_turn(self, context_id: str, role: str, content: str, seq: int) -> None:
+        """Append one turn at ``seq``, its place in the context's order."""
         if role not in KNOWN_TURN_ROLES:
             raise ValueError(
                 f"unknown conversation turn role {role!r}; "
@@ -188,15 +191,15 @@ class ConversationStore:
                 # not "role": Mem0 reserves it and overwrites with the
                 # message role, so the turn's role would be lost on read.
                 "turn_role": role,
-                "seq": time.time(),
+                "seq": seq,
             },
             infer=False,
         )
 
     def store_missing_assistant_marker(
-        self, context_id: str, cause: BaseException
+        self, context_id: str, cause: BaseException, seq: int
     ) -> None:
-        """Mark this context's last user turn as one whose reply was lost.
+        """Mark the reply at ``seq`` as lost.
 
         The content names the failure TYPE only — never its message, which
         can quote the user's text or the payload.
@@ -205,4 +208,5 @@ class ConversationStore:
             context_id,
             ASSISTANT_MISSING_ROLE,
             f"{ASSISTANT_MISSING_PREFIX}{type(cause).__name__}",
+            seq,
         )

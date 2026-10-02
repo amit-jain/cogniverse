@@ -158,12 +158,12 @@ def dispatcher():
 
 
 @pytest.fixture()
-def compat_app(dispatcher):
+def compat_app(dispatcher, continuation_store):
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY: TENANT})
     openai_compat.set_model_map(MODEL_MAP)
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(continuation_store)
     app = FastAPI()
     app.include_router(openai_compat.router, prefix="/v1")
     yield app
@@ -171,7 +171,7 @@ def compat_app(dispatcher):
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(None)
 
 
 def _sdk(app: FastAPI, key: str = KEY) -> openai.AsyncOpenAI:

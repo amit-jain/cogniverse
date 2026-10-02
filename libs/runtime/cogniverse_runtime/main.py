@@ -36,7 +36,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import Any, AsyncIterator, Callable, Mapping, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -727,6 +727,41 @@ def _log_workflow_submission_status() -> None:
 CONFIG_STORE_REPROBE_ATTEMPTS = 12
 CONFIG_STORE_REPROBE_INTERVAL_S = 10.0
 
+# How long a worker's startup config writes wait out a config store that does
+# not answer or answers degraded. Vespa answers a query degraded for a few
+# milliseconds while a concurrent write lands, as when workers start side by
+# side; the budget also covers a content node slower to reach its ideal state.
+STARTUP_CONFIG_WRITE_BUDGET_S = 60.0
+STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S = 1.0
+
+_Written = TypeVar("_Written")
+
+
+def write_startup_config(
+    write: Callable[[], _Written],
+    what: str,
+    *,
+    budget_s: float = STARTUP_CONFIG_WRITE_BUDGET_S,
+    retry_interval_s: float = STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S,
+) -> _Written:
+    """Run one startup config write, waiting out a briefly unavailable store.
+
+    A store still unavailable after ``budget_s`` raises ``RuntimeError`` naming
+    ``what`` and the last failure, which fails this worker's startup. Any other
+    failure propagates at once. Blocking: the lifespan runs it in a thread.
+    """
+    from cogniverse_runtime.startup_wait import wait_for_startup_dependency
+
+    return wait_for_startup_dependency(
+        write,
+        dependency=f"Config store for the startup {what} write",
+        process="runtime worker",
+        timeout_seconds=budget_s,
+        poll_interval_seconds=retry_interval_s,
+        retry_forever=False,
+        log=logger,
+    )
+
 
 def _resolve_library_env_defaults() -> dict[str, str | int | float | bool | None]:
     """Read the library-module defaults from the shared runtime resolver."""
@@ -1311,6 +1346,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
     agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
     ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
+    # Conversation turn order and suspended /v1 turns live in the same Redis,
+    # so every worker and replica serves any session's next request.
+    from cogniverse_runtime.agent_dispatcher import (
+        CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        CONVERSATION_SAVE_LEASE_S,
+    )
+    from cogniverse_runtime.session_state import (
+        ContinuationStore,
+        ConversationLedger,
+        open_session_redis,
+    )
+
+    session_redis = await open_session_redis(redis_url)
+    agents.set_conversation_ledger(
+        ConversationLedger(
+            session_redis,
+            save_lease_s=CONVERSATION_SAVE_LEASE_S,
+            failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        )
+    )
+    openai_compat.set_continuation_store(ContinuationStore(session_redis))
 
     def system_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -1338,7 +1394,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     if updated:
-        config_manager.set_system_config(system_config)
+        await asyncio.to_thread(
+            write_startup_config,
+            lambda: config_manager.set_system_config(system_config),
+            "system config",
+        )
         BackendRegistry.get_instance().clear_instances()
         logger.info("SystemConfig stored with deployment env var overrides")
 
@@ -1429,7 +1489,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # under SYSTEM_TENANT_ID, which every tenant's search merges per
         # request.
         try:
-            reaffirm_system_profiles(config_manager, config)
+            await asyncio.to_thread(
+                write_startup_config,
+                lambda: reaffirm_system_profiles(config_manager, config),
+                "system profiles",
+            )
             logger.info("Wiki backend profile registered")
         except Exception as exc:
             logger.warning("Wiki profile register failed: %s", exc)
@@ -1798,6 +1862,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.set_cluster_events(None)
     admin.set_cluster_events(None)
     await cluster_events.close()
+    agents.set_conversation_ledger(None)
+    openai_compat.set_continuation_store(None)
+    await session_redis.aclose()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 
