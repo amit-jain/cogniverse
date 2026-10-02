@@ -1668,6 +1668,13 @@ for result in results:
     print(f"Source video: {result.document.metadata['source_id']}")
 ```
 
+Every hit's metadata carries `source_id`, the value of the schema's
+`document_mapping.id` field (the document id when the schema declares none),
+and, when the hit stores one, `source_title`, the value of its
+`document_mapping.title` field. Ingestion fills the title with the source's
+original upload basename, so `source_title` stays the same whether `source_id`
+is a filename stem or a content hash; golden evaluation matches on it.
+
 `SearchResult.to_dict()` carries `matched_segments` and `segments_in_window`
 on source-granularity results. Each matched segment row includes
 `document_id`, `score`, and any temporal keys present in the schema; segment

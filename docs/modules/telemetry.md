@@ -1552,7 +1552,7 @@ Add search results details to span.
 
 - `num_results`: Number of results
 
-- `output.value`: Canonical JSON list of result rows (the shape every search consumer reads)
+- `output.value`: Canonical JSON list of result rows (the shape every search consumer reads): `document_id`, `video_id`, `source_id`, `source_title` (`None` when the hit stores no title), `id`, `score`, `content`
 
 - `top_score`: Score of top result
 

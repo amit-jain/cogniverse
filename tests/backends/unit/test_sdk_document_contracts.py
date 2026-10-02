@@ -20,6 +20,8 @@ from cogniverse_sdk.document import (
     Document,
     ProcessingStatus,
     SearchResult,
+    result_source_title_key,
+    source_title_key,
 )
 from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_sdk.interfaces.workflow_store import (
@@ -275,6 +277,18 @@ class TestSearchResultToDict:
         r = SearchResult(Document(metadata={"source_id": "vid_1"}), score=0.5)
         assert r.to_dict()["source_id"] == "vid_1"
 
+    def test_source_title_surfaces_only_when_stored(self):
+        titled = SearchResult(
+            Document(metadata={"source_id": "c0ffee", "source_title": "v_a.mp4"}),
+            score=0.5,
+        ).to_dict()
+        untitled = SearchResult(
+            Document(metadata={"source_id": "c0ffee"}), score=0.5
+        ).to_dict()
+
+        assert (titled["source_id"], titled["source_title"]) == ("c0ffee", "v_a.mp4")
+        assert "source_title" not in untitled
+
     def test_source_window_metadata_surfaces(self):
         r = SearchResult(
             Document(
@@ -334,6 +348,36 @@ class TestSearchResultToDict:
             "start_time": True,
             "end_time": False,
         }
+
+
+class TestSourceTitleKey:
+    @pytest.mark.parametrize(
+        ("title", "key"),
+        [
+            ("v_-uJnucdW6DY.mp4", "v_-uJnucdW6DY"),
+            ("v_-HpCLXdtcas.mkv", "v_-HpCLXdtcas"),
+            ("uploads/2026/v_-IMXSEIabMM.MP4", "v_-IMXSEIabMM"),
+            ("  report.final.pdf  ", "report.final"),
+            ("clip.2024", "clip.2024"),
+            ("v_-6dz6tBH77I", "v_-6dz6tBH77I"),
+        ],
+    )
+    def test_key_is_the_basename_without_its_extension(self, title, key):
+        assert source_title_key(title) == key
+
+    def test_row_key_reads_the_top_level_source_title(self):
+        row = {"document_id": "c0ffee_seg_0", "source_id": "c0ffee"}
+
+        assert result_source_title_key({**row, "source_title": "v_a.mkv"}) == "v_a"
+
+    @pytest.mark.parametrize("title", [None, "", "   ", 7])
+    def test_row_without_a_title_raises_naming_the_document(self, title):
+        row = {"document_id": "c0ffee_seg_0", "source_title": title}
+
+        with pytest.raises(
+            ValueError, match="search result 'c0ffee_seg_0' carries no source_title"
+        ):
+            result_source_title_key(row)
 
 
 class TestConfigEntryFromDictContract:

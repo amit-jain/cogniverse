@@ -158,7 +158,7 @@ def embedded_documents(colpali_client):
                 "id": name,
                 "fields": {
                     "video_id": f"v_{name}",
-                    "video_title": f"A solid {name} square",
+                    "video_title": f"v_{name}.mp4",
                     "segment_id": 0,
                     "start_time": 0.0,
                     "end_time": 5.0,

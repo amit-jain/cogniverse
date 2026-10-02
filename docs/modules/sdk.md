@@ -1053,10 +1053,18 @@ result_dict = result.to_dict()
 #     "metadata": doc.metadata,
 #     "highlights": {"text": "..."},
 #     # "source_id" included if present in doc.metadata
+#     # "source_title" included if present in doc.metadata
 #     # "temporal_info" (start_time/end_time/duration) included if both
 #     # start_time and end_time are present in doc.metadata
 # }
 ```
+
+`source_title_key(title)` returns the key golden evaluation sets name a source
+by: the title's basename without its file extension (`v_-uJnucdW6DY.mp4` →
+`v_-uJnucdW6DY`; a non-alphabetic suffix such as `clip.2024` is kept).
+`result_source_title_key(row)` applies it to a result row's top-level
+`source_title` (`to_dict()` output or a search span result row) and raises
+`ValueError` naming the row's document id when the row carries none.
 
 `document` must be a `Document`, `score` must be a finite Python `float`, and
 `highlights` must be a dictionary or `None`. Invalid values raise at

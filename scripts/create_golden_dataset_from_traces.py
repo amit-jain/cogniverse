@@ -22,6 +22,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.span_contract import read_span_io
+from cogniverse_sdk.document import result_source_title_key
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -215,6 +216,7 @@ class GoldenDatasetGenerator:
             }
         )
 
+        untitled_results = 0
         for _, row in traces_df.iterrows():
             try:
                 # Extract query from the (flattened) input columns
@@ -240,13 +242,17 @@ class GoldenDatasetGenerator:
                 if isinstance(output_data, dict):
                     results = output_data.get("results", [])
                     if results:
-                        # Store top results for this query
+                        # Golden sets name a source by its original filename
+                        # stem — the key of its stored title — never by a
+                        # content-hash source_id.
                         top_videos = []
                         for r in results[:5]:
-                            if isinstance(r, dict):
-                                video_id = r.get("video_id") or r.get("source_id")
-                                if video_id:
-                                    top_videos.append(video_id)
+                            if not isinstance(r, dict):
+                                continue
+                            try:
+                                top_videos.append(result_source_title_key(r))
+                            except ValueError:
+                                untitled_results += 1
 
                         if top_videos:
                             query_stats[query]["results"].append(top_videos)
@@ -266,6 +272,12 @@ class GoldenDatasetGenerator:
             except Exception as e:
                 logger.debug(f"Error processing row: {e}")
                 continue
+
+        if untitled_results:
+            logger.warning(
+                f"{untitled_results} result rows carry no source_title and are "
+                "left out of expected_videos"
+            )
 
         # Calculate average scores and filter
         processed_stats = {}

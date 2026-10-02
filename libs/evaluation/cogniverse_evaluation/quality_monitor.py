@@ -35,6 +35,7 @@ from cogniverse_foundation.config.bootstrap import (
     OPTIMIZATION_WORKFLOW_TEMPLATE_ENV,
 )
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_sdk.document import result_source_title_key
 
 logger = logging.getLogger(__name__)
 
@@ -568,7 +569,13 @@ class QualityMonitor:
         return last_golden, last_live
 
     async def evaluate_golden_set(self) -> GoldenEvalResult:
-        """Run golden queries against /search, score with IR metrics."""
+        """Run golden queries against /search, score with IR metrics.
+
+        A result matches an expected video when its ``source_title`` key
+        (``result_source_title_key``) equals the expected id. A query whose
+        search fails or returns an untitled result counts as failed, and a run
+        with failed queries never becomes a baseline.
+        """
         if self.search_profile is None:
             raise SearchProfileNotSelectedError(
                 f"tenant {self.tenant_id!r} has no default video profile selected "
@@ -604,9 +611,10 @@ class QualityMonitor:
                     return {"query": query, "failed": True}
 
                 results = response.json().get("results", [])
-                retrieved_ids = [
-                    r.get("source_id", r.get("video_id", "")) for r in results
-                ]
+                # Golden sets name a source by its original filename stem; a
+                # content-hash source_id never equals one, so match on the
+                # stored source title. An untitled result fails the query.
+                retrieved_ids = [result_source_title_key(r) for r in results]
 
                 metrics = calculate_metrics_suite(
                     retrieved_ids, expected_videos, k_values=[1, 5, 10]

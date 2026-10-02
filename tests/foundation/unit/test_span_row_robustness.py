@@ -57,6 +57,34 @@ def test_inf_score_never_reaches_the_json_payload():
     assert row["score"] == 0.0
 
 
+def test_row_carries_the_stored_source_title_for_objects_and_dicts():
+    doc = SimpleNamespace(
+        id="c0ffee_seg_0",
+        metadata={"source_id": "c0ffee", "source_title": "v_a.mp4"},
+    )
+    from_object = search_result_row(SimpleNamespace(document=doc, score=0.5))
+    from_dict = search_result_row(
+        {
+            "document_id": "c0ffee_seg_0",
+            "source_id": "c0ffee",
+            "source_title": "v_a.mp4",
+        }
+    )
+    untitled = search_result_row({"id": "d1", "source_id": "c0ffee", "score": 0.5})
+
+    assert from_object == {
+        "document_id": "c0ffee_seg_0",
+        "video_id": "c0ffee",
+        "source_id": "c0ffee",
+        "source_title": "v_a.mp4",
+        "id": "c0ffee_seg_0",
+        "score": 0.5,
+        "content": "",
+    }
+    assert (from_dict["source_id"], from_dict["source_title"]) == ("c0ffee", "v_a.mp4")
+    assert untitled["source_title"] is None
+
+
 def test_top3_event_accepts_dict_rows():
     span = _RecordingSpan()
     add_search_results_to_span(

@@ -107,8 +107,12 @@ async def test_evaluate_golden_set_iterates_loaded_blob_queries_exactly(monkeypa
     )
     monitor._http_client = _StubSearchClient(
         {
-            "find basketball highlights": [{"source_id": "video-a"}],
-            "find ocean waves": [{"source_id": "video-b"}],
+            "find basketball highlights": [
+                {"source_id": "5e3f9f1d", "source_title": "video-a.mp4"}
+            ],
+            "find ocean waves": [
+                {"source_id": "a1e071ec", "source_title": "video-b.mkv"}
+            ],
         }
     )
 

@@ -10,6 +10,8 @@ from typing import Any
 
 from inspect_ai.scorer import Score, Target, mean, scorer
 
+from cogniverse_sdk.document import result_source_title_key
+
 from .solver_output import unpack_solver_output
 
 logger = logging.getLogger(__name__)
@@ -255,15 +257,13 @@ def result_count_scorer():
 
 
 def _retrieved_ids(results: list) -> set[str]:
-    """Extract retrieved item ids from a config's results list."""
-    ids: set[str] = set()
-    for r in results:
-        item_id = (
-            r.get("video_id") or r.get("item_id") or r.get("document_id") or r.get("id")
-        )
-        if item_id:
-            ids.add(str(item_id))
-    return ids
+    """The golden keys a config retrieved: each row's source title key.
+
+    Ground-truth targets name a source by its original filename stem, which a
+    content-hash ``source_id`` never equals; ``result_source_title_key``
+    raises on a row that carries no ``source_title``.
+    """
+    return {result_source_title_key(r) for r in results}
 
 
 def _expected_ids(target: Any) -> set[str]:
@@ -304,10 +304,11 @@ def precision_scorer():
                 if not results_data.get("success", False):
                     config_scores[config_key] = 0.0
                     continue
-                retrieved = _retrieved_ids(results_data.get("results", []))
                 if not expected:
                     config_scores[config_key] = 1.0
-                elif not retrieved:
+                    continue
+                retrieved = _retrieved_ids(results_data.get("results", []))
+                if not retrieved:
                     config_scores[config_key] = 0.0
                 else:
                     config_scores[config_key] = len(retrieved & expected) / len(

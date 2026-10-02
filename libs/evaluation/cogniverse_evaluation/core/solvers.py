@@ -219,6 +219,7 @@ def create_retrieval_solver(
                         formatted_results.append(
                             {
                                 "video_id": video_id,
+                                "source_title": result.get("source_title"),
                                 "score": float(result.get("score", 1.0 / (i + 1))),
                                 "rank": i + 1,
                                 "content": result.get("content", ""),

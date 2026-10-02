@@ -1,6 +1,7 @@
 """Unit tests for QualityMonitor — dual evaluation + threshold + trigger packaging."""
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,6 +84,16 @@ def monitor(golden_dataset):
     )
     m._dataset_store = InMemoryDatasetStore()
     return m
+
+
+def _hashed_row(title: str) -> dict:
+    """A /search result row as a content-hash tenant returns it."""
+    return {
+        "document_id": f"{hashlib.sha256(title.encode()).hexdigest()}_seg_0",
+        "source_id": hashlib.sha256(title.encode()).hexdigest(),
+        "source_title": title,
+        "score": 0.9,
+    }
 
 
 class TestSpanEvaluatorEndpoint:
@@ -678,7 +689,7 @@ class TestGoldenEvaluation:
             if "barbell" in query:
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(200, json={"results": []})
 
@@ -691,7 +702,7 @@ class TestGoldenEvaluation:
             result = await monitor.evaluate_golden_set()
 
         assert result.query_count == 2
-        assert result.mean_mrr > 0
+        assert result.mean_mrr == 0.5
 
         scores = {s["query"]: s for s in result.per_query_scores}
         assert scores["man lifting barbell"]["mrr"] == 1.0
@@ -726,7 +737,7 @@ class TestGoldenEvaluation:
             status_code = 200
 
             def json(self):
-                return {"results": [{"source_id": "v1", "score": 0.9}]}
+                return {"results": [_hashed_row("v1.mp4")]}
 
         class _GatedClient:
             async def post(self, url, json=None):
@@ -1714,7 +1725,7 @@ class TestGoldenPartialBatch:
             if "barbell" in body.get("query", ""):
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(500, text="backend blew up")
 
@@ -1740,7 +1751,7 @@ class TestGoldenPartialBatch:
             if "barbell" in body.get("query", ""):
                 return httpx.Response(
                     200,
-                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                    json={"results": [_hashed_row("v_-HpCLXdtcas.mkv")]},
                 )
             return httpx.Response(500, text="backend blew up")
 
@@ -1891,7 +1902,7 @@ class TestGoldenScoringRobustness:
         def handler(request):
             # Retrieve an id that is a SUBSTRING of the joined string but not a
             # real member — substring matching would score this MRR 1.0.
-            return httpx.Response(200, json={"results": [{"source_id": "video"}]})
+            return httpx.Response(200, json={"results": [_hashed_row("video.mp4")]})
 
         monitor._http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler), base_url="http://testserver"
@@ -1913,7 +1924,7 @@ class TestGoldenScoringRobustness:
         ]
 
         def handler(request):
-            return httpx.Response(200, json={"results": [{"source_id": "v2"}]})
+            return httpx.Response(200, json={"results": [_hashed_row("v2.mp4")]})
 
         monitor._http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler), base_url="http://testserver"

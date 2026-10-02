@@ -8,6 +8,7 @@ silently empty against real traces. These feed the real flattened shape.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -104,3 +105,61 @@ def test_span_attributes_reconstructs_from_dotted_columns():
     )
     attrs = _span_attributes(row)
     assert attrs == {"profile": "p", "ranking_strategy": "s"}
+
+
+def _span_rows(titles):
+    """Canonical ``output.value`` rows for content-hash sources, built by the
+    production row writer from backend SearchResults."""
+    from cogniverse_foundation.telemetry.span_contract import search_result_row
+    from cogniverse_sdk.document import ContentType, Document, SearchResult
+
+    rows = []
+    for index, title in enumerate(titles):
+        source_id = hashlib.sha256(str(title).encode()).hexdigest()
+        document = Document(id=f"{source_id}_seg_0", content_type=ContentType.VIDEO)
+        document.add_metadata("source_id", source_id)
+        if title is not None:
+            document.add_metadata("source_title", title)
+        rows.append(search_result_row(SearchResult(document, 1.0 - index / 10)))
+    return rows
+
+
+def _trace(query, rows, score):
+    return {
+        "attributes.input.value": query,
+        "attributes.output.value": json.dumps(rows),
+        "score": score,
+        "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
+    }
+
+
+def test_expected_videos_are_title_stems_not_hash_ids():
+    rows = _span_rows(["v_-uJnucdW6DY.mp4", "v_-HpCLXdtcas.mkv"])
+    df = pd.DataFrame(
+        [
+            _trace("man lifting barbell", rows, 0.3),
+            _trace("man lifting barbell", rows, 0.4),
+        ]
+    )
+
+    stats = _generator().analyze_query_performance(df)
+
+    assert stats["man lifting barbell"]["expected_videos"] == [
+        "v_-uJnucdW6DY",
+        "v_-HpCLXdtcas",
+    ]
+
+
+def test_untitled_rows_are_left_out_and_reported(caplog):
+    rows = _span_rows(["v_-uJnucdW6DY.mp4", None])
+    df = pd.DataFrame([_trace("man lifting barbell", rows, 0.3)])
+
+    with caplog.at_level("WARNING"):
+        stats = _generator().analyze_query_performance(df)
+
+    assert stats["man lifting barbell"]["expected_videos"] == ["v_-uJnucdW6DY"]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "create_golden_dataset_from_traces"
+    ] == ["1 result rows carry no source_title and are left out of expected_videos"]

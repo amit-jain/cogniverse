@@ -70,6 +70,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     read_span_id,
     read_span_io,
 )
+from cogniverse_sdk.document import source_title_key
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -582,16 +583,6 @@ class ProfileLabelDerivationResult(dict):
         return self.exclusions_by_reason.get("incomplete_comparison", 0) / considered
 
 
-def _profile_selection_content_key(value: Any) -> str:
-    """Basename of ``value`` without its file extension."""
-    name = Path(str(value).strip()).name
-    suffix = Path(name).suffix
-    extension = suffix[1:]
-    if extension.isalnum() and any(ch.isalpha() for ch in extension):
-        return name[: -len(suffix)]
-    return name
-
-
 def _profile_selection_result_titles(
     rows: Any, profile: str, title_field: str
 ) -> tuple[list[str], list[str]]:
@@ -612,7 +603,7 @@ def _profile_selection_result_titles(
             )
         metadata = row.get("metadata")
         title = metadata.get(title_field) if isinstance(metadata, Mapping) else None
-        key = _profile_selection_content_key(title) if isinstance(title, str) else ""
+        key = source_title_key(title) if isinstance(title, str) else ""
         if key:
             keys.append(key)
         else:
@@ -854,9 +845,7 @@ def derive_profile_labels(
             )
             continue
 
-        expected_keys = [
-            _profile_selection_content_key(video) for video in expected_videos
-        ]
+        expected_keys = [source_title_key(video) for video in expected_videos]
         scored_profiles: list[dict[str, Any]] = []
         untitled_results: list[dict[str, Any]] = []
         failed_profiles: list[dict[str, Any]] = []

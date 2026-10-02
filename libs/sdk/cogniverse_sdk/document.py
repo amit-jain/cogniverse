@@ -663,6 +663,8 @@ class SearchResult:
         # Add source_id if present in metadata
         if "source_id" in self.document.metadata:
             result["source_id"] = self.document.metadata["source_id"]
+        if "source_title" in self.document.metadata:
+            result["source_title"] = self.document.metadata["source_title"]
 
         if self.matched_segments is not None:
             result["matched_segments"] = self.matched_segments
@@ -689,6 +691,43 @@ class SearchResult:
 
 
 ALLOWED_RESULT_GRANULARITIES = ("source", "segment")
+
+
+def source_title_key(title: str) -> str:
+    """The key golden evaluation sets name a source by.
+
+    It is the basename of the source's stored title (the original upload
+    filename) without its file extension, so ``v_-uJnucdW6DY.mp4`` keys as
+    ``v_-uJnucdW6DY`` whether the tenant's source id is that filename stem or
+    a content hash. A suffix that is not an alphanumeric extension with a
+    letter (``clip.2024``) is kept.
+    """
+    name = Path(str(title).strip()).name
+    suffix = Path(name).suffix
+    extension = suffix[1:]
+    if extension.isalnum() and any(ch.isalpha() for ch in extension):
+        return name[: -len(suffix)]
+    return name
+
+
+def result_source_title_key(row: Mapping[str, Any]) -> str:
+    """``source_title_key`` of a search result row's ``source_title``.
+
+    Reads the top-level ``source_title`` that ``SearchResult.to_dict()`` and
+    the search span's result rows carry. Raises ``ValueError`` naming the
+    row's document id when it carries none: such a row cannot be matched to a
+    golden source, and scoring it as a miss would read as a ranking failure.
+    """
+    title = row.get("source_title")
+    key = source_title_key(title) if isinstance(title, str) else ""
+    if not key:
+        document_id = row.get("document_id") or row.get("id")
+        raise ValueError(
+            f"search result {document_id!r} carries no source_title; its "
+            "schema declares no document_mapping.title or the document was "
+            "stored without one"
+        )
+    return key
 
 
 def resolve_result_granularity(

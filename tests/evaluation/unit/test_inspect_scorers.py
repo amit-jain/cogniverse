@@ -4,6 +4,7 @@ Focus on precision@k / recall@k, which are now wired into the production
 ``get_configured_scorers`` and score against the sample's ground-truth target.
 """
 
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -60,36 +61,62 @@ def _state_with(results: list) -> SimpleNamespace:
     return SimpleNamespace(output=SimpleNamespace(choices=[choice]))
 
 
+def _row(title: str) -> dict:
+    """A retrieval-solver row for a content-hash source titled ``title``."""
+    return {
+        "video_id": hashlib.sha256(title.encode()).hexdigest(),
+        "source_title": title,
+    }
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestPrecisionRecallScorers:
     @pytest.mark.asyncio
     async def test_precision_at_k(self):
         # retrieved {a,b,c}, relevant {a,b} -> precision = 2/3
-        state = _state_with([{"video_id": "a"}, {"video_id": "b"}, {"video_id": "c"}])
+        state = _state_with([_row("a.mp4"), _row("b.mp4"), _row("c.mp4")])
         score = await precision_scorer()(state, ["a", "b"])
         assert score.value == pytest.approx(2 / 3)
 
     @pytest.mark.asyncio
     async def test_recall_at_k_full(self):
         # retrieved {a,b,c}, relevant {a,b} -> recall = 2/2 = 1.0
-        state = _state_with([{"video_id": "a"}, {"video_id": "b"}, {"video_id": "c"}])
+        state = _state_with([_row("a.mp4"), _row("b.mp4"), _row("c.mp4")])
         score = await recall_scorer()(state, ["a", "b"])
         assert score.value == pytest.approx(1.0)
 
     @pytest.mark.asyncio
     async def test_recall_at_k_partial(self):
         # retrieved {a}, relevant {a,b,c} -> recall = 1/3
-        state = _state_with([{"video_id": "a"}])
+        state = _state_with([_row("a.mp4")])
         score = await recall_scorer()(state, ["a", "b", "c"])
         assert score.value == pytest.approx(1 / 3)
 
     @pytest.mark.asyncio
     async def test_vacuous_when_no_ground_truth(self):
         # No target -> precision/recall are undefined; score vacuously 1.0.
-        state = _state_with([{"video_id": "a"}])
+        state = _state_with([_row("a.mp4")])
         assert (await precision_scorer()(state, [])).value == pytest.approx(1.0)
         assert (await recall_scorer()(state, [])).value == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_hash_ids_match_through_the_source_title(self):
+        # The video ids are content hashes; only the titles name the golden ids.
+        state = _state_with([_row("v_-uJnucdW6DY.mp4"), _row("v_-HpCLXdtcas.mkv")])
+        precision = await precision_scorer()(state, ["v_-HpCLXdtcas"])
+        recall = await recall_scorer()(state, ["v_-HpCLXdtcas"])
+        assert (precision.value, recall.value) == (pytest.approx(1 / 2), 1.0)
+
+    @pytest.mark.asyncio
+    async def test_untitled_row_raises_instead_of_scoring_a_miss(self):
+        state = _state_with(
+            [_row("a.mp4"), {"video_id": "c0ffee", "document_id": "d9"}]
+        )
+        with pytest.raises(ValueError, match="'d9' carries no source_title"):
+            await precision_scorer()(state, ["a"])
+        with pytest.raises(ValueError, match="'d9' carries no source_title"):
+            await recall_scorer()(state, ["a"])
 
     def test_default_config_includes_precision_recall(self):
         # Default set: relevance, diversity, result_count, precision, recall.
