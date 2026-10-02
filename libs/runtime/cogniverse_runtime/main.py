@@ -728,9 +728,9 @@ CONFIG_STORE_REPROBE_ATTEMPTS = 12
 CONFIG_STORE_REPROBE_INTERVAL_S = 10.0
 
 # How long a worker's startup config writes wait out a config store that does
-# not answer or answers degraded. Vespa answers a query degraded for a few
-# milliseconds while a concurrent write lands, as when workers start side by
-# side; the budget also covers a content node slower to reach its ideal state.
+# not answer: each read already retries for about 4 s (the store's own
+# attempts), and a Vespa that stopped answering between the startup backend
+# wait and these writes gets the rest.
 STARTUP_CONFIG_WRITE_BUDGET_S = 60.0
 STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S = 1.0
 

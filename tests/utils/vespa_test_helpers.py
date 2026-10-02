@@ -396,33 +396,27 @@ NON_IDEAL_STATE_ANSWER = {
 }
 
 
-class DegradeLatestVersionReads:
-    """An ``InterceptFaultProxy`` intercept answering the config store's
-    latest-version reads of ``config_id`` with ``NON_IDEAL_STATE_ANSWER``.
+class DegradeConfigQueries:
+    """An ``InterceptFaultProxy`` intercept answering every search query on
+    ``config_metadata`` with ``NON_IDEAL_STATE_ANSWER``, as Vespa answers
+    while its content node is outside its ideal state.
 
-    The first ``times`` reads are degraded, or every one when ``times`` is
-    None; ``served`` counts the degraded answers. Every other request is
-    forwarded to Vespa.
+    ``queries`` lists the YQL of each degraded answer, in order. Every other
+    request, document API reads and writes included, is forwarded to Vespa.
     """
 
-    def __init__(self, config_id: str, times: int | None) -> None:
-        from cogniverse_vespa._yql import yql_quote
-
-        self._query = (
-            "select version from config_metadata where config_id contains "
-            f"{yql_quote(config_id)} order by version desc limit 1"
-        )
-        self._times = times
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.served = 0
+        self.queries: list[str] = []
 
-    def __call__(self, method: str, path: str, _body: bytes):
+    def __call__(self, method: str, path: str, body: bytes):
         if method != "POST" or not path.startswith("/search/"):
             return None
-        if parse_qs(urlsplit(path).query).get("yql") != [self._query]:
+        [yql] = parse_qs(urlsplit(path).query).get("yql") or [
+            json.loads(body or b"{}").get("yql", "")
+        ]
+        if " from config_metadata " not in yql:
             return None
         with self._lock:
-            if self._times is not None and self.served >= self._times:
-                return None
-            self.served += 1
+            self.queries.append(yql)
         return 200, NON_IDEAL_STATE_ANSWER

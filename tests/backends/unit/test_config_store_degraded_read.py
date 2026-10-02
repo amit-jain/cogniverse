@@ -325,40 +325,146 @@ def test_list_configs_raises_on_visit_timeout(monkeypatch):
     )
 
 
-def test_latest_version_read_raises_on_soft_timeout():
-    """The latest-version read gates every write: a soft-timeout returns
-    empty hits, which used to read as version 0 — set_config then wrote
-    version 1 BELOW the real latest and the operator's change silently
-    never took effect. It raises as the store being unavailable, so a caller
-    waiting out an outage waits this out too."""
-    store = _store_with(_soft_timeout_response())
+class _RecordingVespaApp(_FakeVespaApp):
+    """Answers every query with ``response`` and records queries and deletes."""
+
+    def __init__(self, response):
+        super().__init__(response)
+        self.queries = []
+        self.deleted = []
+
+    def query(self, yql=None, **kwargs):
+        self.queries.append(yql)
+        return self._response
+
+    def delete_data(self, schema, data_id):
+        self.deleted.append(data_id)
+
+
+def test_latest_version_read_is_a_visit_and_asks_no_query(monkeypatch):
+    """The latest-version read gates every write. It visits the key's stored
+    versions, so it never depends on the search coverage a query reports:
+    here every query would answer degraded, and the read never asks one."""
+    app = _RecordingVespaApp(_non_ideal_state_response())
+    store = VespaConfigStore(vespa_app=app)
+    other_key = {**_healthy_fields(), "config_key": "other", "version": 9}
+    other_key["config_id"] = "acme:system:system:other"
+    rows = [{**_healthy_fields(), "version": version} for version in (5, 7, 6)] + [
+        other_key
+    ]
+    visits = []
+
+    def visit(url, params, timeout):
+        visits.append((url, dict(params), timeout))
+        return _FakeVisitResponse(
+            {"documents": [{"id": "id:config::entry", "fields": f} for f in rows]}
+        )
+
+    monkeypatch.setattr(requests, "get", visit)
+
+    latest = store._get_latest_version(
+        "acme", ConfigScope.SYSTEM, "system", "poll_state"
+    )
+
+    assert latest == 7
+    assert app.queries == []
+    assert visits == [
+        (
+            "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/",
+            {
+                "wantedDocumentCount": 1000,
+                "selection": 'config_metadata.tenant_id == "acme" and '
+                'config_metadata.scope == "system" and '
+                'config_metadata.service == "system" and '
+                'config_metadata.config_key == "poll_state"',
+            },
+            30,
+        )
+    ]
+
+
+def test_latest_version_read_raises_on_visit_timeout(monkeypatch):
+    """A read the store does not answer never reads as "no versions yet",
+    which would write version 1 below the real latest: it raises as the
+    store being unavailable, so a caller waiting out an outage waits it out."""
+    clock = _FakeClock()
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.Timeout("visit timed out") for _ in range(attempts)]
+    calls = {"count": 0}
+
+    def timeout(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        raise failures[index]
+
+    monkeypatch.setattr(requests, "get", timeout)
+    store = _store_with(_clean_absent_response())
+
     with pytest.raises(ConfigStoreUnavailableError) as raised:
         store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
-    assert str(raised.value) == (
-        "Vespa returned a degraded/soft-timeout response for config "
-        "acme:system:system:poll_state: errors=[{'code': 12, 'summary': "
-        "'Timeout'}] coverage={'degraded': {'timeout': True}}"
+    assert calls["count"] == attempts
+    assert raised.value.__cause__ is failures[-1]
+    assert str(raised.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
     )
-    assert type(raised.value.__cause__) is VespaQueryDegraded
 
 
-def test_latest_version_read_raises_on_a_non_ideal_content_state():
-    """A query Vespa answers while its content node is outside its ideal
-    state: HTTP 200, no errors, partial coverage, here with no hits. Read as
-    data it would be "no versions yet"."""
-    store = _store_with(_non_ideal_state_response())
+@pytest.mark.parametrize(
+    "response, coverage",
+    [
+        (
+            _soft_timeout_response,
+            "errors=[{'code': 12, 'summary': 'Timeout'}] "
+            "coverage={'degraded': {'timeout': True}}",
+        ),
+        (
+            _non_ideal_state_response,
+            "errors=[] coverage={'coverage': 97, 'documents': 36, 'degraded': "
+            "{'match-phase': False, 'timeout': False, 'adaptive-timeout': False, "
+            "'non-ideal-state': True}, 'full': False, 'nodes': 1, 'results': 1, "
+            "'resultsFull': 0}",
+        ),
+    ],
+    ids=["soft_timeout", "non_ideal_state"],
+)
+def test_a_degraded_prune_listing_deletes_nothing(response, coverage, caplog):
+    """Pruning is the one write-side step that queries. A listing Vespa
+    answers degraded can miss versions, so it raises as the store being
+    unavailable; the prune deletes nothing and the next write prunes again."""
+    app = _RecordingVespaApp(response())
+    store = VespaConfigStore(vespa_app=app)
+    config_id = "acme:system:system:poll_state"
+
     with pytest.raises(ConfigStoreUnavailableError) as raised:
-        store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
+        config_store_module._raise_if_degraded(app.query(), config_id)
+    with caplog.at_level("WARNING", logger=config_store_module.logger.name):
+        dropped = store._prune_old_versions(config_id, keep=1)
 
-    assert str(raised.value) == (
+    degraded = (
         "Vespa returned a degraded/soft-timeout response for config "
-        "acme:system:system:poll_state: errors=[] coverage={'coverage': 97, "
-        "'documents': 36, 'degraded': {'match-phase': False, 'timeout': False, "
-        "'adaptive-timeout': False, 'non-ideal-state': True}, 'full': False, "
-        "'nodes': 1, 'results': 1, 'resultsFull': 0}"
+        f"{config_id}: {coverage}"
     )
+    assert str(raised.value) == degraded
     assert type(raised.value.__cause__) is VespaQueryDegraded
+    assert dropped == 0
+    assert app.deleted == []
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == config_store_module.logger.name
+    ] == [f"Could not list versions to prune {config_id!r}: {degraded}"]
 
 
 def test_get_stats_raises_on_truncated_visit(monkeypatch):

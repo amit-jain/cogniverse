@@ -22,7 +22,11 @@ import pytest
 import requests
 
 import cogniverse_vespa.config.config_store as config_store_module
-from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
+from cogniverse_sdk.interfaces.config_store import (
+    ConfigEntry,
+    ConfigScope,
+    ConfigStoreUnavailableError,
+)
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 logger = logging.getLogger(__name__)
@@ -286,13 +290,15 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key=key,
             )
 
-    def test_set_config_raises_on_version_query_failure_preserving_v1(
-        self, vespa_config_store
+    def test_set_config_raises_on_version_read_failure_preserving_v1(
+        self, vespa_instance, vespa_config_store
     ):
-        """A Vespa query-API outage during set_config must NOT be flattened to
-        version 0 — that treats a live config as brand-new and rewrites its v1
-        row. Seed v1..v3, break the query API, assert the write raises and every
-        version is intact."""
+        """A write reads the key's latest version first. A read the store does
+        not answer must NOT be flattened to version 0 — that treats a live
+        config as brand-new and rewrites its v1 row. Seed v1..v3, refuse every
+        document read, assert the write raises and every version is intact."""
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+
         store = vespa_config_store
         tenant, service, key = "cs_verr_a", "verr_probe", "k1"
 
@@ -319,26 +325,39 @@ class TestVespaConfigStoreListAllConfigs:
                 store.get_config(tenant, ConfigScope.BACKEND, service, key).version == 3
             )
 
-            # Inject a query-API outage during the write; the feed path and all
-            # verification reads stay on the real Vespa.
-            real_query = store.vespa_app.query
+            def refuse_reads(method, path, body):
+                if method == "GET" and path.startswith("/document/v1/"):
+                    return 503, {"message": "document reads refused"}
+                return None
 
-            def boom(*args, **kwargs):
-                raise ConnectionError("simulated Vespa query outage")
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}", refuse_reads
+            ) as proxy:
+                through = VespaConfigStore(
+                    backend_url="http://127.0.0.1", backend_port=proxy.port
+                )
+                try:
+                    with pytest.raises(ConfigStoreUnavailableError) as raised:
+                        through.set_config(
+                            tenant_id=tenant,
+                            scope=ConfigScope.BACKEND,
+                            service=service,
+                            config_key=key,
+                            config_value={"clobber": True},
+                        )
+                finally:
+                    through.close()
+            fed = [
+                (method, path)
+                for method, path, _ in proxy.requests
+                if method in ("POST", "PUT")
+            ]
 
-            store.vespa_app.query = boom
-            try:
-                with pytest.raises(ConnectionError):
-                    store.set_config(
-                        tenant_id=tenant,
-                        scope=ConfigScope.BACKEND,
-                        service=service,
-                        config_key=key,
-                        config_value={"clobber": True},
-                    )
-            finally:
-                store.vespa_app.query = real_query
-
+            assert str(raised.value).startswith(
+                "Failed to read Vespa config visit after "
+                f"{config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
+            ), str(raised.value)
+            assert fed == []
             # v1 untouched, latest unchanged, no spurious/rewritten row.
             assert store.get_config(
                 tenant, ConfigScope.BACKEND, service, key, version=1
@@ -357,6 +376,137 @@ class TestVespaConfigStoreListAllConfigs:
                 service=service,
                 config_key=key,
             )
+
+    def test_writes_land_while_every_config_query_answers_degraded(
+        self, vespa_instance, vespa_config_store
+    ):
+        """Vespa answers a search query degraded (a content node outside its
+        ideal state) for milliseconds while a concurrent write lands. A
+        write's latest-version read is a document visit, so a store whose
+        every query answers degraded still takes each write at the next
+        version; the only queries a write makes are its best-effort prune
+        listings, which skip."""
+        from tests.utils.http_fault_proxy import InterceptFaultProxy
+        from tests.utils.vespa_test_helpers import DegradeConfigQueries
+
+        store = vespa_config_store
+        tenant, service, key = "cs_degraded_a", "degraded_probe", "k1"
+        config_id = store._create_document_id(tenant, ConfigScope.BACKEND, service, key)
+        store.delete_config(
+            tenant_id=tenant, scope=ConfigScope.BACKEND, service=service, config_key=key
+        )
+        degrade = DegradeConfigQueries()
+        try:
+            with InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}", degrade
+            ) as proxy:
+                through = VespaConfigStore(
+                    backend_url="http://127.0.0.1", backend_port=proxy.port
+                )
+                try:
+                    written = [
+                        through.set_config(
+                            tenant_id=tenant,
+                            scope=ConfigScope.BACKEND,
+                            service=service,
+                            config_key=key,
+                            config_value={"write": write},
+                        ).version
+                        for write in range(1, 4)
+                    ]
+                finally:
+                    through.close()
+
+            prune_listing = (
+                f"select version from config_metadata where config_id contains "
+                f'"{config_id}" order by version desc limit '
+                f"{through.keep_versions + 100}"
+            )
+            assert written == [1, 2, 3]
+            assert degrade.queries == [prune_listing] * 3
+            assert [
+                (entry.version, entry.config_value)
+                for entry in store.get_config_history(
+                    tenant, ConfigScope.BACKEND, service, key
+                )
+            ] == [(3, {"write": 3}), (2, {"write": 2}), (1, {"write": 1})]
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+
+    def test_concurrent_writers_on_one_key_all_land(self, vespa_instance):
+        """Four stores, as four runtime processes hold, write one key as fast
+        as they can for 15 seconds. Each write lands at its own next version
+        and none fails: the concurrent writes put Vespa's search outside its
+        ideal state for milliseconds at a time, and a write's latest-version
+        read never asks search."""
+        writers = 4
+        stores = [
+            VespaConfigStore(
+                backend_url="http://localhost",
+                backend_port=vespa_instance["http_port"],
+            )
+            for _ in range(writers)
+        ]
+        tenant, service, key = (
+            f"cs_writers_{uuid.uuid4().hex[:8]}",
+            "concurrent_probe",
+            "k1",
+        )
+        deadline = time.monotonic() + 15
+        barrier = threading.Barrier(writers)
+        versions: list[int] = []
+        errors: list[str] = []
+        lock = threading.Lock()
+
+        def write(store: VespaConfigStore, worker: int) -> None:
+            barrier.wait()
+            count = 0
+            while time.monotonic() < deadline:
+                try:
+                    entry = store.set_config(
+                        tenant_id=tenant,
+                        scope=ConfigScope.BACKEND,
+                        service=service,
+                        config_key=key,
+                        config_value={"worker": worker, "write": count},
+                    )
+                except Exception as exc:
+                    with lock:
+                        errors.append(f"{type(exc).__name__}: {exc}")
+                else:
+                    with lock:
+                        versions.append(entry.version)
+                count += 1
+
+        try:
+            threads = [
+                threading.Thread(target=write, args=(store, worker))
+                for worker, store in enumerate(stores)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+            latest = stores[0].get_config(tenant, ConfigScope.BACKEND, service, key)
+
+            assert [thread.is_alive() for thread in threads] == [False] * writers
+            assert errors == []
+            assert sorted(versions) == list(range(1, len(versions) + 1))
+            assert latest.version == len(versions)
+        finally:
+            stores[0].delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+            for store in stores:
+                store.close()
 
     def test_scope_filter_excludes_other_scopes(self, vespa_config_store):
         """``scope=`` arg is enforced server-side via the selection clause."""

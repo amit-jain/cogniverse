@@ -208,11 +208,11 @@ class VespaConfigStore(ImmutableConfigStore):
             schema_name: Vespa schema name for config storage
             keep_versions: Per-config_id, how many recent versions to retain
                 after every ``set_config`` write. The default 10 is enough
-                to roll back a few accidental changes while keeping
-                ``_get_latest_version`` queries fast. Set to a higher
-                number on environments that depend on long version
-                history; set to 1 to keep only the latest at the cost of
-                losing rollback.
+                to roll back a few accidental changes while keeping each
+                config's reads, which visit every retained version, small.
+                Set to a higher number on environments that depend on long
+                version history; set to 1 to keep only the latest at the
+                cost of losing rollback.
         """
         if vespa_app is not None:
             self.vespa_app = vespa_app
@@ -502,33 +502,17 @@ class VespaConfigStore(ImmutableConfigStore):
     def _get_latest_version(
         self, tenant_id: str, scope: ConfigScope, service: str, config_key: str
     ) -> int:
-        """Get latest version number for a config"""
-        config_id = self._create_document_id(tenant_id, scope, service, config_key)
+        """The config's latest stored version, 0 when it has none.
 
-        # Query for all versions of this config
-        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        yql = (
-            f"select version from {self.schema_name} "
-            f"where config_id contains {yql_quote(config_id)} "
-            f"order by version desc limit 1"
-        )
-
-        try:
-            response = self.vespa_app.query(yql=yql)
-        except Exception as e:
-            # A backend read failure must not be flattened to 0 — set_config
-            # would treat a live config as brand-new (v1) and overwrite its
-            # real v1 row. Raise so the write aborts.
-            logger.error(f"Failed to query latest config version: {e!r}")
-            raise
-        # A soft-timeout arrives as HTTP 200 + root.errors + EMPTY hits — the
-        # same shape as "no versions yet". Without this guard a degraded read
-        # returned 0 and set_config wrote version 1 below the real latest,
-        # silently shadowing the operator's change.
-        _raise_if_degraded(response, config_id)
-        if response.hits and len(response.hits) > 0:
-            return response.hits[0]["fields"]["version"]
-        return 0
+        Read by visiting the config's stored versions, as ``get_config`` does,
+        so the answer never depends on the coverage a search query reports;
+        Vespa answers a query with partial coverage while a concurrent write
+        lands. A visit the store does not answer raises
+        ``ConfigStoreUnavailableError`` rather than reading as no versions,
+        which would make ``set_config`` write version 1 below the real latest.
+        """
+        latest = self.get_config(tenant_id, scope, service, config_key)
+        return 0 if latest is None else latest.version
 
     def set_config(
         self,

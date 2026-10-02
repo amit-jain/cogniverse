@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import http.client
+import inspect
 import json
 import os
 import re
@@ -38,15 +39,13 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     AnswerGrounding,
 )
-from cogniverse_runtime.main import STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S
 from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.vespa_test_helpers import (
-    NON_IDEAL_STATE_ANSWER,
-    DegradeLatestVersionReads,
+    DegradeConfigQueries,
     deploy_tenant_schema,
     make_config_manager,
 )
@@ -607,7 +606,6 @@ class TestSignals:
 
 
 SYSTEM_CONFIG_ID = "_system:system:system:system_config"
-DEGRADED_VERSION_READS = 3
 
 
 def _system_config_version(http_port: int) -> int:
@@ -621,14 +619,15 @@ def _system_config_version(http_port: int) -> int:
 
 
 class TestStartupThroughADegradedStore:
-    def test_workers_start_once_the_store_answers_whole(
+    def test_workers_start_while_every_config_query_answers_degraded(
         self, tmp_path, redis_url, vespa_instance
     ):
-        """The store answers the first system-config version reads as Vespa
-        does while its content node is outside its ideal state. Each worker's
-        startup write waits that out, both workers serve, and each write lands
-        above the latest version."""
-        degrade = DegradeLatestVersionReads(SYSTEM_CONFIG_ID, DEGRADED_VERSION_READS)
+        """Every query on the config store answers as Vespa does while its
+        content node is outside its ideal state. A worker's startup writes
+        read the latest version by visiting the stored versions, so neither
+        waits: both workers serve, each write lands above the latest version,
+        and the only system-config query each makes is its prune listing."""
+        degrade = DegradeConfigQueries()
         before = _system_config_version(vespa_instance["http_port"])
         # The runtime derives the config server's port from the data port.
         data_port, config_port = generate_unique_ports("degraded-store-proxy")
@@ -646,37 +645,21 @@ class TestStartupThroughADegradedStore:
             with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, _):
                 workers = _serving(process, log)
                 waits = [
-                    re.sub(r"\(attempt \d+,", "(attempt N,", record)
+                    record
                     for record in _records(log, MAIN_LOGGER, "WARNING")
-                    if record.startswith(
-                        "Config store for the startup system config write"
-                    )
+                    if record.startswith("Config store for the startup ")
                 ]
 
+        keep = inspect.signature(VespaConfigStore).parameters["keep_versions"].default
+        prune_listing = (
+            "select version from config_metadata where config_id contains "
+            f'"{SYSTEM_CONFIG_ID}" order by version desc limit {keep + 100}'
+        )
         assert len(workers) == WORKERS
-        assert degrade.served == DEGRADED_VERSION_READS
-        degraded_read = (
-            "Config store for the startup system config write is not ready "
-            f"(attempt N, retrying in {STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S:.1f}s): "
-            "ConfigStoreUnavailableError: Vespa returned a degraded/soft-timeout "
-            f"response for config {SYSTEM_CONFIG_ID}"
-        )
-        injected = (
-            f"{degraded_read}: errors=[] "
-            f"coverage={NON_IDEAL_STATE_ANSWER['root']['coverage']}"
-        )
-        assert waits.count(injected) == DEGRADED_VERSION_READS
-        # Vespa itself can answer the same read degraded while the other
-        # worker's write settles; that wait names the read just the same.
+        assert waits == []
         assert [
-            wait
-            for wait in waits
-            if not re.fullmatch(
-                re.escape(degraded_read) + r": errors=\[.*\] coverage=\{.*\}", wait
-            )
-        ] == []
-        # Each worker wrote once, above the version it found: a degraded read
-        # never became "no versions yet" and a write below the latest.
+            query for query in degrade.queries if f'"{SYSTEM_CONFIG_ID}"' in query
+        ] == [prune_listing] * WORKERS
         assert _system_config_version(vespa_instance["http_port"]) == before + WORKERS
         assert _records(log, CLI_LOGGER, "ERROR") == []
 

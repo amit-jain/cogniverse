@@ -108,7 +108,8 @@ def _fresh_install_stages_s() -> float:
 
 def _startup_config_writes_s() -> float:
     """The worker's two startup config writes (system config, system profiles),
-    each waiting out a degraded store for its budget and one more retry."""
+    each waiting out a store that does not answer for its budget and one more
+    retry."""
     return 2 * (
         runtime_main.STARTUP_CONFIG_WRITE_BUDGET_S
         + runtime_main.STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S
