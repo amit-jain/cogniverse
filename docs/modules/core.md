@@ -2055,6 +2055,8 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 | `whisper` | — | `RemoteWhisperLoader` |
 
 Remote loaders are selected when `remote_inference_url` is set in config.
+`RemoteWhisperLoader`'s wrapper transcribes through the chunked client below and
+returns `text`, `language`, `duration` and `segments`.
 `RemoteXClipLoader` forwards its exact configured model name on every
 video-segment request, so the remote service can reject requests for any other
 checkpoint instead of silently selecting a default. Remote loader cache keys
@@ -2070,6 +2072,35 @@ therefore cannot reuse a client authenticated with another key.
 encoder) for such a model without `remote_inference_url` raises a clear
 `RuntimeError` directing the operator to serve via vLLM and set
 `inference_service_url` (profile `inference_services.embedding`).
+
+### Chunked Whisper transcription (whisper_transcription.py)
+
+`transcribe_in_chunks(samples, transcribe_chunk, *, language, source, logger)`
+sends 16 kHz mono PCM16 audio to an OpenAI-compatible Whisper endpoint one
+chunk per request and merges the answers into `full_text`, `language`,
+`duration` and `segments` (times from the start of the audio). Every remote
+Whisper client goes through it: `AudioProcessor`, `AudioAnalysisAgent` and
+`RemoteWhisperLoader`.
+
+- `split_for_whisper(samples)` cuts where vLLM's Whisper server cuts a long
+  file: audio of at most 30 s is one chunk; longer audio is cut every 30 s at
+  the start of the quietest 0.1 s window in the chunk's last second.
+- With no language named, the first chunk's answer names it and every later
+  chunk is sent in it, as the server does for a whole file. Chunk texts join
+  with a space, or with nothing for `ja` and `zh`.
+- vLLM builds a `verbose_json` transcript only from text between timestamp
+  tokens, so a decode that emits none comes back as HTTP 200 with an empty
+  transcript: at random for any audio on the cluster's ROCm server, and every
+  time for some audio. A chunk whose loudest 25 ms frame reaches
+  `SILENCE_FLOOR_DBFS` (-60) and comes back empty is sent again; the last of
+  `TRANSCRIBE_ATTEMPTS` (3) requests asks for `json` (no timestamps), whose text
+  becomes one segment spanning the chunk. Still empty, it raises
+  `EmptyTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
+  `loudest_frame_dbfs`, `attempts`). A silent chunk may come back empty. A
+  request that fails is not repeated.
+- `decode_audio(path)` decodes any container's first audio stream to 16 kHz
+  mono PCM16 (pyav); `pcm16_wav_samples` and `wav_bytes` convert to and from
+  WAV.
 
 ### ColBERTModelLoader (model_loaders.py)
 

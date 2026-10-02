@@ -14,6 +14,11 @@ import pytest_asyncio
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
+from cogniverse_core.common.models.whisper_transcription import (
+    TRANSCRIBE_ATTEMPTS,
+    pcm16_wav_samples,
+    split_for_whisper,
+)
 from cogniverse_runtime.ingestion.pipeline import PipelineConfig, VideoIngestionPipeline
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 from cogniverse_runtime.ingestion_worker import idempotency, queue
@@ -96,6 +101,44 @@ def failing_asr():
         yield f"http://127.0.0.1:{server.server_port}", entered, release
     finally:
         release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+@pytest.fixture
+def empty_asr():
+    """Answers every transcription the way the cluster's ROCm Whisper answers
+    some: HTTP 200, an empty transcript and no segments."""
+    posts: list[int] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"data":[{"id":"openai/whisper-tiny"}]}')
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            posts.append(len(posts))
+            body = json.dumps(
+                {"text": "", "language": "en", "duration": "1.0", "segments": []}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", posts
+    finally:
         server.shutdown()
         server.server_close()
         thread.join(5)
@@ -248,4 +291,36 @@ async def test_local_transcription_failure_fails_the_job(job_redis, tmp_path):
     submitted, events = await run_job(job_redis, pipeline, spoken)
     assert [event["state"] for event in events] == ["queued", "running", "failed"]
     assert events[-1]["error_type"] == "IngestPipelineError"
+    assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None
+
+
+@pytest.mark.asyncio
+async def test_an_empty_answer_for_sound_fails_the_job_after_every_attempt(
+    job_redis, empty_asr, tmp_path
+):
+    endpoint, posts = empty_asr
+    video = tmp_path / "spoken.mp4"
+    make_video(video, audio=True)
+    pipeline = transcription_pipeline(tmp_path, endpoint)
+
+    failed = await pipeline.process_video_async_with_strategies(video)
+
+    (chunk,) = split_for_whisper(
+        pcm16_wav_samples(AudioProcessor._extract_audio_wav(video))
+    )
+    assert failed["status"] == "failed"
+    assert failed["error_context"]["stage"] == "transcription"
+    assert failed["error"] == (
+        f"Required transcription failed: {video}: chunk 0 "
+        f"(0.00-{chunk.end_s:.2f}s, loudest frame {chunk.loudest_frame_dbfs:.1f} "
+        "dBFS) carries sound but came back with an empty transcript on all "
+        f"{TRANSCRIBE_ATTEMPTS} attempts (Context: content_path={video}, "
+        "stage=transcription, profile=transcription)"
+    )
+    assert len(posts) == TRANSCRIBE_ATTEMPTS
+
+    submitted, events = await run_job(job_redis, pipeline, video)
+    assert [event["state"] for event in events] == ["queued", "running", "failed"]
+    assert events[-1]["error_type"] == "IngestPipelineError"
+    assert len(posts) == 2 * TRANSCRIBE_ATTEMPTS
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None

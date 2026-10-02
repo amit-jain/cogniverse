@@ -5,9 +5,11 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 """
 
 import asyncio
+import io
 import json
 import re
 import threading
+import wave
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -24,6 +26,11 @@ from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisDeps,
     AudioResult,
     TranscriptionResult,
+)
+from cogniverse_core.common.models.whisper_transcription import (
+    TRANSCRIBE_ATTEMPTS,
+    EmptyTranscriptError,
+    loudest_frame_dbfs,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -96,6 +103,27 @@ def _transcription_server(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def _write_tone(
+    path, seconds: float = 1.0, frequency: float = 440.0, quiet_from: int | None = None
+) -> bytes:
+    """Write a sound-bearing 16 kHz mono PCM16 WAV and return its bytes.
+
+    The sidecar path re-encodes exactly this format, so a clip of at most
+    30 s is sent byte for byte. ``quiet_from`` silences one 0.1 s window,
+    which is where a longer clip is cut.
+    """
+    t = np.arange(round(seconds * 16000)) / 16000
+    samples = (3000 * np.sin(2 * np.pi * frequency * t)).astype(np.int16)
+    if quiet_from is not None:
+        samples[quiet_from : quiet_from + 1600] = 0
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(samples.tobytes())
+    return path.read_bytes()
 
 
 def _agent_for_remote_transcription(base_url: str, authorization: str):
@@ -712,7 +740,7 @@ class TestAudioAnalysisAgent:
         the dead endpoint.
         """
         clip = tmp_path / "audio.wav"
-        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        clip_bytes = _write_tone(clip, seconds=1.5)
 
         response = {
             "text": "hello world",
@@ -748,7 +776,7 @@ class TestAudioAnalysisAgent:
         request_body = request["body"]
         assert isinstance(request_body, bytes)
         assert b'filename="audio.wav"' in request_body
-        assert b"RIFF\x00\x00\x00\x00WAVE" in request_body
+        assert clip_bytes in request_body
         assert b'name="model"\r\n\r\nopenai/whisper-large-v3-turbo' in request_body
         assert b'name="response_format"\r\n\r\nverbose_json' in request_body
         with pytest.raises(TypeError):
@@ -766,7 +794,7 @@ class TestAudioAnalysisAgent:
         self, tmp_path, monkeypatch
     ):
         clip = tmp_path / "audio.wav"
-        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        _write_tone(clip)
         token = "remote-whisper-secret"
         unavailable = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
         host, port = unavailable.server_address
@@ -788,9 +816,10 @@ class TestAudioAnalysisAgent:
         request_count = 8
         token = "remote-whisper-secret"
         clips = []
+        clip_bytes = []
         for index in range(request_count):
             clip = tmp_path / f"clip-{index}.wav"
-            clip.write_bytes(f"RIFF-audio-{index}".encode())
+            clip_bytes.append(_write_tone(clip, frequency=300.0 + 40.0 * index))
             clips.append(clip)
 
         all_requests_started = threading.Barrier(request_count)
@@ -862,7 +891,7 @@ class TestAudioAnalysisAgent:
         for index in range(request_count):
             assert any(
                 f'filename="clip-{index}.wav"'.encode() in body
-                and f"RIFF-audio-{index}".encode() in body
+                and clip_bytes[index] in body
                 for body in captured_bodies
             )
 
@@ -1041,7 +1070,7 @@ class TestAudioAnalysisAgent:
         self, response, message, tmp_path, monkeypatch
     ):
         clip = tmp_path / "audio.wav"
-        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        _write_tone(clip)
 
         with _transcription_server(response) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
@@ -1060,7 +1089,7 @@ class TestAudioAnalysisAgent:
         self, tmp_path, monkeypatch
     ):
         clip = tmp_path / "audio.wav"
-        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        _write_tone(clip)
 
         with _transcription_server({}, raw_body=b"not-json") as (base_url, _):
             agent = _agent_for_remote_transcription(
@@ -1087,7 +1116,7 @@ class TestAudioAnalysisAgent:
         the-truth behaviour.
         """
         clip = tmp_path / "audio.wav"
-        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        _write_tone(clip)
 
         response = {
             "text": "ok",
@@ -1105,6 +1134,158 @@ class TestAudioAnalysisAgent:
 
         assert result.text == "ok"
         assert result.segments == []
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_for_sound_is_asked_again_for_the_same_chunk(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        clip_bytes = _write_tone(clip)
+        answers = [
+            {"text": "", "language": "en", "duration": "1.0", "segments": []},
+            {
+                "text": " hello",
+                "language": "en",
+                "duration": "1.0",
+                "segments": [{"start": 0.0, "end": 1.0, "text": " hello"}],
+            },
+        ]
+
+        with _transcription_server(lambda body: answers.pop(0)) as (
+            base_url,
+            captured_requests,
+        ):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            result = await agent.transcribe_audio(f"file://{clip}", language="en")
+
+        assert (result.text, result.language, result.segments) == (
+            "hello",
+            "en",
+            [{"start": 0.0, "end": 1.0, "text": "hello"}],
+        )
+        assert len(captured_requests) == 2
+        assert all(clip_bytes in request["body"] for request in captured_requests)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_for_sound_on_every_attempt_raises_naming_it(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip)
+        empty = {"text": "", "language": "en", "duration": "1.0", "segments": []}
+
+        with _transcription_server(empty) as (base_url, captured_requests):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            with pytest.raises(EmptyTranscriptError) as caught:
+                await agent.transcribe_audio(f"file://{clip}")
+
+        loudest = loudest_frame_dbfs(
+            (3000 * np.sin(2 * np.pi * 440.0 * np.arange(16000) / 16000)).astype(
+                np.int16
+            )
+        )
+        assert str(caught.value) == (
+            f"{clip}: chunk 0 (0.00-1.00s, loudest frame {loudest:.1f} dBFS) "
+            "carries sound but came back with an empty transcript on all "
+            f"{TRANSCRIBE_ATTEMPTS} attempts"
+        )
+        assert len(captured_requests) == TRANSCRIBE_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_a_chunk_that_never_decodes_with_timestamps_keeps_untimed_text(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip)
+
+        def answer(body: bytes) -> dict:
+            if b'name="response_format"\r\n\r\njson\r\n' in body:
+                return {"text": " *BANG* *BANG*"}
+            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+
+        with _transcription_server(answer) as (base_url, captured_requests):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            result = await agent.transcribe_audio(f"file://{clip}")
+
+        assert (result.text, result.language, result.segments) == (
+            "*BANG* *BANG*",
+            "en",
+            [{"start": 0.0, "end": 1.0, "text": "*BANG* *BANG*"}],
+        )
+        assert [
+            re.search(
+                rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
+            ).group(1)
+            for request in captured_requests
+        ] == [b"verbose_json", b"verbose_json", b"json"]
+
+    @pytest.mark.asyncio
+    async def test_an_untimed_answer_without_text_is_refused_naming_the_field(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip)
+
+        def answer(body: bytes) -> dict:
+            if b'name="response_format"\r\n\r\njson\r\n' in body:
+                return {"usage": {"type": "duration", "seconds": 1}}
+            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+
+        with _transcription_server(answer) as (base_url, _):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            with pytest.raises(ValueError) as caught:
+                await agent.transcribe_audio(f"file://{clip}")
+
+        assert str(caught.value) == (
+            f"Remote transcription response from {base_url}/v1/audio/transcriptions "
+            "has invalid $.text: field is required"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_long_clip_is_sent_one_chunk_per_request_and_offset(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "long.wav"
+        # Silent at 29.5 s, inside the last second of the first 30 s.
+        _write_tone(clip, seconds=45.0, quiet_from=472000)
+
+        def answer(body: bytes) -> dict:
+            data = body[body.index(b"RIFF") : body.rindex(b"\r\n--")]
+            with wave.open(io.BytesIO(data), "rb") as reader:
+                seconds = reader.getnframes() / 16000
+            text = f" {seconds:.4f}s"
+            return {
+                "text": text,
+                "language": "en",
+                "duration": f"{seconds:.6f}",
+                "segments": [{"start": 0.0, "end": seconds, "text": text}],
+            }
+
+        with _transcription_server(answer) as (base_url, captured_requests):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            result = await agent.transcribe_audio(f"file://{clip}")
+
+        assert len(captured_requests) == 2
+        assert result.segments == [
+            {"start": 0.0, "end": 29.5, "text": "29.5000s"},
+            {"start": 29.5, "end": 45.0, "text": "15.5000s"},
+        ]
+        assert result.text == "29.5000s  15.5000s"
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
@@ -1273,7 +1454,7 @@ class TestAudioSearchEventLoop:
         """transcribe_audio offloads the synchronous _transcribe_via_sidecar
         helper (blocking file read + POST) off the event loop."""
         audio = tmp_path / "clip.wav"
-        audio.write_bytes(b"RIFFfake-wav-bytes")
+        _write_tone(audio)
         release = threading.Event()
 
         class _Resp:

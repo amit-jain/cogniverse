@@ -1498,6 +1498,17 @@ ffmpeg -y -i video.mp4 -ss 0.0 -t 30.0 -c copy -avoid_negative_ts make_zero chun
 
 Transcribe audio with caching support.
 
+With an `endpoint`, the audio is decoded to 16 kHz mono and sent one chunk per
+request, cut where vLLM's Whisper server cuts a long file (at most 30 s, at the
+quietest 0.1 s window of the chunk's last second); the language the first chunk
+is answered in is sent with every later one. Segment times count from the start
+of the file. A chunk whose loudest 25 ms frame reaches -60 dBFS and comes back
+with an empty transcript is sent again, the third time without timestamps (its
+text then spans the chunk as one segment), and then fails the transcription
+with `EmptyTranscriptError` naming the chunk, its time range and level; a
+silent chunk may come back empty. A failed transcription
+returns the `error` dict, which fails the pipeline's transcription stage.
+
 ```python
 processor = AudioProcessor(logger, model="whisper-large-v3", language="auto")
 result = processor.transcribe_audio(
