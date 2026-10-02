@@ -50,6 +50,8 @@ WORKERS = 2
 BOOT_TIMEOUT_S = 600
 # Shutdown runs each worker's lifespan drains, all empty here.
 STOP_TIMEOUT_S = 120
+# How long a new connection may wait in a worker's accept queue.
+ACCEPT_TIMEOUT_S = 30
 _TCP_LISTEN = "0A"
 SHIPPED_PROFILES = json.loads((ROOT / "configs/config.json").read_text())["backend"][
     "profiles"
@@ -163,15 +165,22 @@ def _listening_owners(port: int, pids: list[int]) -> list[int]:
 
 
 def _serving_worker(port: int, connection: http.client.HTTPConnection, pids):
-    """The worker holding the server side of an open client connection."""
+    """The worker holding the server side of an open client connection, once
+    a worker has accepted it: until then the kernel lists the server side,
+    queued on a listening socket, with no socket inode."""
     client_port = connection.sock.getsockname()[1]
-    inodes = [
-        inode
-        for local, remote, state, inode in _tcp_rows()
-        if local == port and remote == client_port and state != _TCP_LISTEN
-    ]
-    assert len(inodes) == 1, (client_port, inodes)
-    return _owner(inodes[0], pids)
+    deadline = time.monotonic() + ACCEPT_TIMEOUT_S
+    while True:
+        inodes = [
+            inode
+            for local, remote, state, inode in _tcp_rows()
+            if local == port and remote == client_port and state != _TCP_LISTEN
+        ]
+        assert len(inodes) == 1, (client_port, inodes)
+        if inodes[0] != 0:
+            return _owner(inodes[0], pids)
+        assert time.monotonic() < deadline, f"no worker accepted {client_port}"
+        time.sleep(0.05)
 
 
 def _get(connection: http.client.HTTPConnection, path: str) -> tuple[int, dict]:
@@ -363,26 +372,22 @@ def _post(
     return response.status, json.loads(response.read())
 
 
-def _connection_per_worker(
-    port: int, workers: list[int]
-) -> dict[int, http.client.HTTPConnection]:
-    """One open client connection held by each worker, read from /proc."""
-    held: dict[int, http.client.HTTPConnection] = {}
+def _connection_to(
+    port: int, worker: int, workers: list[int]
+) -> http.client.HTTPConnection:
+    """A new client connection ``worker`` holds, read from /proc."""
     spare = []
-    for _ in range(64):
-        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=300)
-        connection.connect()
-        worker = _serving_worker(port, connection, workers)
-        if worker in held:
+    try:
+        for _ in range(64):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=300)
+            connection.connect()
+            if _serving_worker(port, connection, workers) == worker:
+                return connection
             spare.append(connection)
-        else:
-            held[worker] = connection
-        if len(held) == len(workers):
-            break
-    for connection in spare:
-        connection.close()
-    assert sorted(held) == workers
-    return held
+    finally:
+        for connection in spare:
+            connection.close()
+    raise AssertionError(f"no connection of 64 reached worker {worker}")
 
 
 def _conversation_rows(
@@ -444,13 +449,15 @@ class TestConversationAcrossWorkers:
         }
         with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, port):
             workers = _serving(process, log)
-            connections = _connection_per_worker(port, workers)
             served = []
-            try:
-                for index, query in enumerate(queries):
-                    worker = workers[index % 2]
+            # A connection per turn: a turn waits out the previous turn's save,
+            # longer than a worker keeps an idle connection open.
+            for index, query in enumerate(queries):
+                worker = workers[index % 2]
+                connection = _connection_to(port, worker, workers)
+                try:
                     status, body = _post(
-                        connections[worker],
+                        connection,
                         "/agents/summarizer_agent/process",
                         {
                             "agent_name": "summarizer_agent",
@@ -459,21 +466,20 @@ class TestConversationAcrossWorkers:
                             "context_id": context_id,
                         },
                     )
-                    assert status == 200, (body, log.read_text()[-20000:])
-                    served.append((worker, body))
+                finally:
+                    connection.close()
+                assert status == 200, (body, log.read_text()[-20000:])
+                served.append((worker, body))
 
+            connection = _connection_to(port, workers[0], workers)
+            try:
                 deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
-                rows = _conversation_rows(
-                    connections[workers[0]], tenant_id, context_id
-                )
+                rows = _conversation_rows(connection, tenant_id, context_id)
                 while len(rows) < 2 * len(queries) and time.monotonic() < deadline:
                     time.sleep(0.5)
-                    rows = _conversation_rows(
-                        connections[workers[0]], tenant_id, context_id
-                    )
+                    rows = _conversation_rows(connection, tenant_id, context_id)
             finally:
-                for connection in connections.values():
-                    connection.close()
+                connection.close()
 
         assert [worker for worker, _ in served] == [
             workers[0],
