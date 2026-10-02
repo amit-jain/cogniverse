@@ -12,6 +12,11 @@ The comparison base defaults to ``HEAD~1`` and is overridable with
 A file the branch adds has no state at the base, so the range diff cannot
 see a later commit strip its assertions. Such a file is therefore also
 checked commit by commit against its own previous state.
+
+An assertion moved verbatim into a file the change creates (a helper moved
+to a new module) is not a loss: each such line in a created ``tests/`` file
+credits one identical removal elsewhere, and the per-commit check above keeps
+the created file from shedding it later.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -96,6 +102,44 @@ def analyze_diff(diff: str) -> dict[str, dict[str, object]]:
         ]
         result[path] = entry
     return result
+
+
+def moved_assertions(diff: str) -> dict[str, int]:
+    """Return, per existing ``tests/`` file, how many of its removed assertions
+    a file the same change creates adds back verbatim.
+
+    Lines compare with surrounding whitespace stripped. Each added line in a
+    created file credits at most one removal.
+    """
+    created: Counter[str] = Counter()
+    removed: dict[str, list[str]] = {}
+    path: str | None = None
+    created_file = deleted_file = False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            path = line.split(" b/", 1)[-1]
+            created_file = deleted_file = False
+            continue
+        if path is None or not path.startswith("tests/"):
+            continue
+        if line.startswith("new file mode"):
+            created_file = True
+        elif line.startswith("deleted file mode"):
+            deleted_file = True
+        if line.startswith(("+++", "---")) or not _ASSERT.match(line):
+            continue
+        if created_file and line.startswith("+"):
+            created[line[1:].strip()] += 1
+        elif not (created_file or deleted_file) and line.startswith("-"):
+            removed.setdefault(path, []).append(line[1:].strip())
+
+    moved: dict[str, int] = {}
+    for path in sorted(removed):
+        for text in removed[path]:
+            if created[text]:
+                created[text] -= 1
+                moved[path] = moved.get(path, 0) + 1
+    return moved
 
 
 def _is_guarded_none_check(name: str, text: str, added_lines: list[str]) -> bool:
@@ -179,18 +223,31 @@ def intra_branch_weakening(
     return offenders
 
 
+def net_assertion_losses(diff: str) -> dict[str, dict[str, int]]:
+    """``{path: {"removed", "moved", "added"}}`` for every changed test file
+    whose removals, less those moved into created files, exceed its additions."""
+    moved = moved_assertions(diff)
+    losses: dict[str, dict[str, int]] = {}
+    for path, f in analyze_diff(diff).items():
+        removed, added = int(f["removed"]), int(f["added"])  # type: ignore[arg-type]
+        if removed - moved.get(path, 0) > added:
+            losses[path] = {
+                "removed": removed,
+                "moved": moved.get(path, 0),
+                "added": added,
+            }
+    return losses
+
+
 def test_no_net_assertion_loss_in_changed_tests():
     base = os.environ.get("ASSERTION_GUARD_BASE", "HEAD~1")
-    offenders = {
-        path: f
-        for path, f in analyze_diff(_git_diff(base)).items()
-        if int(f["removed"]) > int(f["added"])  # type: ignore[arg-type]
-    }
+    offenders = net_assertion_losses(_git_diff(base))
     assert offenders == {}, (
         "these test files lost assertions; a fix may not reduce what a test "
         f"proves (base={base}): "
         + "; ".join(
-            f"{p}: -{f['removed']} +{f['added']}" for p, f in sorted(offenders.items())
+            f"{p}: -{f['removed']} (moved {f['moved']}) +{f['added']}"
+            for p, f in sorted(offenders.items())
         )
     )
 
@@ -470,3 +527,82 @@ def test_exact_comparisons_are_not_flagged_as_weak():
         "+    assert elapsed > 0.0 or exact is False\n"
     )
     assert analyze_diff(diff)["tests/foo/test_x.py"]["weak"] == []
+
+
+_MOVE_SOURCE = (
+    "diff --git a/tests/foo/test_x.py b/tests/foo/test_x.py\n"
+    "--- a/tests/foo/test_x.py\n"
+    "+++ b/tests/foo/test_x.py\n"
+    "-    assert result == {'a': 1}\n"
+    "-    assert order == ['a', 'b']\n"
+)
+
+
+def _created(path: str, *lines: str) -> str:
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{path}\n" + "".join(f"+{line}\n" for line in lines)
+    )
+
+
+def test_assertions_moved_into_a_created_module_are_not_a_loss():
+    diff = _MOVE_SOURCE + _created(
+        "tests/foo/helpers.py",
+        "def check(result, order):",
+        "    assert result == {'a': 1}",
+        "    assert order == ['a', 'b']",
+    )
+    assert moved_assertions(diff) == {"tests/foo/test_x.py": 2}
+    assert net_assertion_losses(diff) == {}
+
+
+def test_a_created_module_that_drops_a_moved_assertion_leaves_the_loss():
+    diff = _MOVE_SOURCE + _created(
+        "tests/foo/helpers.py",
+        "def check(result, order):",
+        "    assert result == {'a': 1}",
+    )
+    assert net_assertion_losses(diff) == {
+        "tests/foo/test_x.py": {"removed": 2, "moved": 1, "added": 0}
+    }
+
+
+def test_a_different_assertion_in_a_created_module_does_not_offset_a_removal():
+    diff = _MOVE_SOURCE + _created(
+        "tests/foo/helpers.py",
+        "    assert result == {'a': 2}",
+        "    assert order",
+    )
+    assert net_assertion_losses(diff) == {
+        "tests/foo/test_x.py": {"removed": 2, "moved": 0, "added": 0}
+    }
+
+
+def test_one_created_assertion_credits_one_removal():
+    diff = (
+        _MOVE_SOURCE + "diff --git a/tests/foo/test_y.py b/tests/foo/test_y.py\n"
+        "--- a/tests/foo/test_y.py\n"
+        "+++ b/tests/foo/test_y.py\n"
+        "-    assert result == {'a': 1}\n"
+        + _created(
+            "tests/foo/helpers.py",
+            "    assert result == {'a': 1}",
+            "    assert order == ['a', 'b']",
+        )
+    )
+    assert net_assertion_losses(diff) == {
+        "tests/foo/test_y.py": {"removed": 1, "moved": 0, "added": 0}
+    }
+
+
+def test_a_created_file_outside_tests_credits_nothing():
+    diff = _MOVE_SOURCE + _created(
+        "libs/core/helpers.py",
+        "    assert result == {'a': 1}",
+        "    assert order == ['a', 'b']",
+    )
+    assert net_assertion_losses(diff) == {
+        "tests/foo/test_x.py": {"removed": 2, "moved": 0, "added": 0}
+    }
