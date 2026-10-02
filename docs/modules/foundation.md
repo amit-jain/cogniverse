@@ -252,8 +252,8 @@ its reads carry them without writing to the store.
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
 | `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id="your_org:production", service="backend", *, replace=True)` | Add/update a backend profile; `replace=False` raises `BackendProfileExistsError` when the name is already stored, checked in the same compare-and-set as the write |
-| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and returns the merged profile |
+| `add_backend_profile(profile, tenant_id="your_org:production", service="backend", *, replace=True)` | Add/update a backend profile; returns `BackendProfileWrite(profile, version)`, the version of the tenant's backend config this write produced (for an identical re-add that writes nothing, the version already holding it). `replace=False` raises `BackendProfileExistsError` when the name is already stored, checked in the same compare-and-set as the write |
+| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and returns `BackendProfileWrite` with the merged profile and the target config version the update produced |
 | `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
 | `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
 

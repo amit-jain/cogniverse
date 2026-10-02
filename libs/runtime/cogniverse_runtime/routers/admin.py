@@ -264,9 +264,11 @@ async def create_profile(
             model_specific=request.model_specific,
         )
 
-        def _validate_and_add() -> None:
-            # Config-store reads and a compare-and-set write that retries
-            # with backoff under contention: off the serving loop.
+        def _validate_and_add() -> int:
+            """Validate and store the profile; the backend config version the
+            write produced. Config-store reads and a compare-and-set write
+            that retries with backoff under contention: off the serving
+            loop."""
             validation_errors = validator.validate_profile(
                 profile, tenant_id=request.tenant_id, is_update=False
             )
@@ -280,12 +282,12 @@ async def create_profile(
                 )
 
             try:
-                config_manager.add_backend_profile(
+                return config_manager.add_backend_profile(
                     profile,
                     tenant_id=request.tenant_id,
                     service="backend",
                     replace=False,
-                )
+                ).version
             except BackendProfileExistsError as exc:
                 # Another create of this name landed after the validation read.
                 raise HTTPException(
@@ -296,7 +298,7 @@ async def create_profile(
                     },
                 ) from exc
 
-        await asyncio.to_thread(_validate_and_add)
+        version = await asyncio.to_thread(_validate_and_add)
 
         schema_deployed = False
         tenant_schema_name = None
@@ -327,24 +329,13 @@ async def create_profile(
                 f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
             )
 
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
-
-        config_entry = await asyncio.to_thread(
-            config_manager.store.get_config,
-            tenant_id=canonical_tenant_id(request.tenant_id),
-            scope=ConfigScope.BACKEND,
-            service="backend",
-            config_key="backend_config",
-        )
-        actual_version = config_entry.version if config_entry else 1
-
         return ProfileCreateResponse(
             profile_name=request.profile_name,
             tenant_id=request.tenant_id,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
             created_at=datetime.now(timezone.utc).isoformat(),
-            version=actual_version,
+            version=version,
         )
 
     except HTTPException:
@@ -539,9 +530,10 @@ async def update_profile(
         HTTPException 500: Update operation failed
     """
 
-    def _update() -> List[str]:
-        """The profile update's config-store reads and compare-and-set write,
-        which retries with backoff under contention: off the serving loop."""
+    def _update() -> tuple[List[str], int]:
+        """The updated fields and the backend config version the update
+        produced. Its config-store reads and compare-and-set write, which
+        retries with backoff under contention, run off the serving loop."""
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
@@ -586,34 +578,23 @@ async def update_profile(
                 },
             )
 
-        config_manager.update_backend_profile(
+        written = config_manager.update_backend_profile(
             profile_name=profile_name,
             overrides=overrides,
             base_tenant_id=request.tenant_id,
             target_tenant_id=request.tenant_id,
             service="backend",
         )
-        return updated_fields
+        return updated_fields, written.version
 
     try:
-        updated_fields = await asyncio.to_thread(_update)
-
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
-
-        config_entry = await asyncio.to_thread(
-            config_manager.store.get_config,
-            tenant_id=canonical_tenant_id(request.tenant_id),
-            scope=ConfigScope.BACKEND,
-            service="backend",
-            config_key="backend_config",
-        )
-        actual_version = config_entry.version if config_entry else 1
+        updated_fields, version = await asyncio.to_thread(_update)
 
         return ProfileUpdateResponse(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
             updated_fields=updated_fields,
-            version=actual_version,
+            version=version,
         )
 
     except HTTPException:

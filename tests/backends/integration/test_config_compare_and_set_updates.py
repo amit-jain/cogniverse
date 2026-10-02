@@ -382,6 +382,30 @@ def _stored_profiles(store: VespaConfigStore, tenant: str) -> dict:
     }
 
 
+def _introduced_at(store: VespaConfigStore, tenant: str) -> dict:
+    """Each stored profile's name mapped to the backend config version that
+    first stored it as it is now."""
+    history = {
+        entry.version: entry.config_value["profiles"]
+        for entry in store.get_config_history(
+            tenant, ConfigScope.BACKEND, "backend", "backend_config", limit=50
+        )
+    }
+    latest = history[max(history)]
+    return {
+        name: min(
+            version
+            for version, profiles in history.items()
+            if all(
+                history[later].get(name) == profile
+                for later in history
+                if later >= version
+            )
+        )
+        for name, profile in latest.items()
+    }
+
+
 class TestProfileChangesAcrossWriters:
     def test_concurrent_profile_changes_from_separate_managers_all_persist(
         self, vespa_instance, store
@@ -405,16 +429,25 @@ class TestProfileChangesAcrossWriters:
                     {"embedding_model": "model-v2"},
                     base_tenant_id=tenant,
                     target_tenant_id=tenant,
-                ).embedding_model
+                )
             return manager.add_backend_profile(
                 _profile(f"added{index}"), tenant_id=tenant
-            ).profile_name
+            )
 
         try:
             with ThreadPoolExecutor(max_workers=len(managers)) as pool:
                 results = list(pool.map(change, range(len(managers))))
 
-            assert results == [True, "model-v2"] + [f"added{i}" for i in range(2, 8)]
+            writes = results[1:]
+            assert results[0] is True
+            assert [write.profile.profile_name for write in writes] == ["tuned"] + [
+                f"added{i}" for i in range(2, 8)
+            ]
+            assert writes[0].profile.embedding_model == "model-v2"
+            # Each write reports the version it produced, whatever landed after.
+            assert {
+                write.profile.profile_name: write.version for write in writes
+            } == _introduced_at(store, tenant)
             assert _stored_profiles(store, tenant) == {
                 "tuned": "model-v2",
                 **{f"added{i}": "" for i in range(2, 8)},
@@ -500,9 +533,15 @@ class TestProfileChangesAcrossWriters:
         tenant = _tenant("reaffirm")
         manager = _manager(vespa_instance["http_port"])
         try:
-            manager.add_backend_profile(_profile("wiki", "m1"), tenant_id=tenant)
-            manager.add_backend_profile(_profile("wiki", "m1"), tenant_id=tenant)
+            first = manager.add_backend_profile(
+                _profile("wiki", "m1"), tenant_id=tenant
+            )
+            again = manager.add_backend_profile(
+                _profile("wiki", "m1"), tenant_id=tenant
+            )
             assert manager.delete_backend_profile("absent", tenant_id=tenant) is False
+            # The identical add wrote nothing and reports the version holding it.
+            assert (first.version, again.version) == (1, 1)
 
             history = store.get_config_history(
                 tenant, ConfigScope.BACKEND, "backend", "backend_config"

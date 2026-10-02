@@ -1133,8 +1133,8 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **GET /admin/system/stats** - Get system statistics
 **GET /admin/profiles** - List processing profiles
 **GET /admin/profiles/{profile_name}** - Get profile details
-**POST /admin/profiles** - Create profile
-**PUT /admin/profiles/{profile_name}** - Update profile
+**POST /admin/profiles** - Create profile; `version` is the tenant's backend config version the create produced
+**PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 when the tenant has been deleted
 

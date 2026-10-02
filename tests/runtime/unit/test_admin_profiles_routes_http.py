@@ -26,7 +26,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import BackendProfileWrite, ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
@@ -37,6 +37,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _FIXED_CREATED_AT = datetime(2026, 1, 2, 3, 4, 5)
 _STORE_VERSION = 7
+# The backend config version a stub profile write reports producing.
+_WRITTEN_VERSION = 12
 
 
 def test_profile_create_example_uses_deployed_visual_encoder_contract():
@@ -120,7 +122,9 @@ class _StubConfigManager:
             "target_tenant_id": target_tenant_id,
             "service": service,
         }
-        return self.profiles.get(profile_name)
+        return BackendProfileWrite(
+            profile=self.profiles.get(profile_name), version=_WRITTEN_VERSION
+        )
 
     def delete_backend_profile(self, profile_name, tenant_id=None, service="backend"):
         self.calls["delete"] = {
@@ -139,7 +143,7 @@ class _StubConfigManager:
             "service": service,
             "replace": replace,
         }
-        return profile
+        return BackendProfileWrite(profile=profile, version=_WRITTEN_VERSION)
 
 
 class _StubValidator:
@@ -399,7 +403,7 @@ async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
         # Field order follows the route's check order: pipeline_config first,
         # description second; strategies/model_specific were omitted.
         "updated_fields": ["pipeline_config", "description"],
-        "version": _STORE_VERSION,
+        "version": _WRITTEN_VERSION,
     }
     assert env.cm.calls["update"] == {
         "profile_name": "video_colpali",
@@ -417,7 +421,8 @@ async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
             "description": "new desc",
         }
     }
-    assert env.cm.store.get_config_calls[-1]["tenant_id"] == "acme:acme"
+    # The version is the one the update produced, not read back afterwards.
+    assert env.cm.store.get_config_calls == []
 
 
 @pytest.mark.asyncio
@@ -622,8 +627,9 @@ async def test_create_profile_adds_profile_without_deploy(env):
         "tenant_id": "acme",
         "schema_deployed": False,
         "tenant_schema_name": None,
-        "version": _STORE_VERSION,
+        "version": _WRITTEN_VERSION,
     }
+    assert env.cm.store.get_config_calls == []
     add = env.cm.calls["add"]
     assert add["tenant_id"] == "acme"
     assert add["service"] == "backend"

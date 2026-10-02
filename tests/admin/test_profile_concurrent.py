@@ -246,6 +246,10 @@ class TestProfileConcurrentOperations:
         # Verify version increments are correct
         versions = [r["version"] for r in results if r["version"] is not None]
         assert len(set(versions)) == num_threads, "Versions should be unique"
+        # Each update reports the version it produced: one each, consecutive.
+        assert sorted(versions) == list(
+            range(min(versions), min(versions) + num_threads)
+        )
 
         # Final profile should have one of the updates
         final_response = test_client.get(

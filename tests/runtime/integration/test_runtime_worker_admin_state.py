@@ -296,6 +296,10 @@ class TestProfilesAcrossWorkers:
             _close(readers)
 
         assert [status for status, _ in answers] == [201] * len(names), answers
+        # Each create reports the version it wrote, not a later read.
+        assert sorted(body["version"] for _, body in answers) == list(
+            range(1, len(names) + 1)
+        )
         for pid, (status, body) in listed.items():
             assert status == 200, (pid, body)
             assert sorted(

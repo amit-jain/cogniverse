@@ -6,6 +6,7 @@ Provides unified interface for all configuration operations with caching.
 import copy
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -36,6 +37,16 @@ SCOPED_CONFIG_MAX_ENTRIES = 512
 
 class BackendProfileExistsError(ValueError):
     """A create-only profile add found the profile already stored."""
+
+
+@dataclass(frozen=True)
+class BackendProfileWrite:
+    """A stored profile add or update: the profile as written, and the
+    version of the tenant's backend config this write produced (or, for a
+    write that changed nothing, the version already holding it)."""
+
+    profile: BackendProfileConfig
+    version: int
 
 
 class ConfigManager:
@@ -555,16 +566,19 @@ class ConfigManager:
         tenant_id: str,
         service: str,
         change: Callable[[BackendConfig], None],
-    ) -> bool:
+    ) -> tuple[bool, int]:
         """Apply ``change`` to the stored backend config with compare-and-set.
 
         Every profile change is a read-modify-write of the tenant's whole
         backend config, and other processes write it too: ``change`` runs on
         the config as the store holds it, and again on the newer one each
         time a concurrent write lands first, so no process's change is
-        overwritten. Returns False when ``change`` left the config as stored,
-        in which case nothing is written. Raises ``ConfigWriteConflictError``
-        when every attempt lost, and storage failures, with nothing written.
+        overwritten. Returns whether ``change`` altered the stored config and
+        the version holding the result: the version this call wrote, or,
+        when ``change`` left the config as stored and nothing was written,
+        the stored version (0 when the tenant has none). Raises
+        ``ConfigWriteConflictError`` when every attempt lost, and storage
+        failures, with nothing written.
         """
 
         changed = False
@@ -582,12 +596,12 @@ class ConfigManager:
             changed = after != before
             return after if changed else None
 
-        self.store.update_config(
+        entry = self.store.update_config(
             tenant_id, ConfigScope.BACKEND, service, "backend_config", update
         )
         if changed:
             self._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
-        return changed
+        return changed, 0 if entry is None else entry.version
 
     @staticmethod
     def _backend_config_from(
@@ -667,7 +681,7 @@ class ConfigManager:
         service: str = "backend",
         *,
         replace: bool = True,
-    ) -> BackendProfileConfig:
+    ) -> BackendProfileWrite:
         """
         Add or update a backend profile for tenant.
 
@@ -684,7 +698,7 @@ class ConfigManager:
                 creators on any process exactly one succeeds.
 
         Returns:
-            Updated BackendProfileConfig
+            The profile and the backend config version holding it
         """
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.add_backend_profile"
@@ -698,12 +712,12 @@ class ConfigManager:
                 )
             backend_config.add_profile(profile)
 
-        written = self._update_backend_config(tenant_id, service, add)
+        written, version = self._update_backend_config(tenant_id, service, add)
         logger.info(
             f"{'Added' if written else 'Already held'} backend profile "
-            f"'{profile.profile_name}' for {tenant_id}:{service}"
+            f"'{profile.profile_name}' for {tenant_id}:{service} (version {version})"
         )
-        return profile
+        return BackendProfileWrite(profile=profile, version=version)
 
     def update_backend_profile(
         self,
@@ -712,7 +726,7 @@ class ConfigManager:
         base_tenant_id: str = SYSTEM_TENANT_ID,
         target_tenant_id: Optional[str] = None,
         service: str = "backend",
-    ) -> BackendProfileConfig:
+    ) -> BackendProfileWrite:
         """
         Update specific fields of a backend profile (tenant-specific tweak).
 
@@ -729,7 +743,8 @@ class ConfigManager:
             service: Service name
 
         Returns:
-            Updated BackendProfileConfig
+            The merged profile and the target tenant's backend config version
+            holding it
 
         Raises:
             ValueError: If profile doesn't exist in base tenant
@@ -767,13 +782,14 @@ class ConfigManager:
             merged["profile"] = source.merge_profile(profile_name, overrides)
             target_config.add_profile(merged["profile"])
 
-        self._update_backend_config(target_tenant_id, service, merge)
+        _, version = self._update_backend_config(target_tenant_id, service, merge)
 
         logger.info(
             f"Updated backend profile '{profile_name}' for "
-            f"{target_tenant_id}:{service} (based on {base_tenant_id})"
+            f"{target_tenant_id}:{service} (based on {base_tenant_id}, "
+            f"version {version})"
         )
-        return merged["profile"]
+        return BackendProfileWrite(profile=merged["profile"], version=version)
 
     def list_backend_profiles(
         self, tenant_id: str = None, service: str = "backend"
@@ -814,7 +830,7 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.delete_backend_profile"
         )
-        deleted = self._update_backend_config(
+        deleted, _ = self._update_backend_config(
             tenant_id,
             service,
             lambda backend_config: backend_config.profiles.pop(profile_name, None),

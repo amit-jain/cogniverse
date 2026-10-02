@@ -1161,7 +1161,7 @@ manager = create_default_config_manager()
 # base_tenant_id is where the base profile is read from (SYSTEM_TENANT_ID
 # for the cluster-wide default); target_tenant_id is where the merged
 # result is saved.
-merged_profile = manager.update_backend_profile(
+written = manager.update_backend_profile(
     profile_name="video_colpali_smol500_mv_frame",
     overrides={"strategies": {"segmentation": {"params": {"max_frames": 200}}}},  # 100 → 200
     base_tenant_id=SYSTEM_TENANT_ID,
@@ -1171,7 +1171,7 @@ merged_profile = manager.update_backend_profile(
 
 **Result**: Deep merge creates tenant-specific config
 ```python
-print(merged_profile.strategies)
+print(written.profile.strategies)  # written.version: acme's config version holding it
 # {'segmentation': {'class': 'FrameSegmentationStrategy', 'params': {'max_frames': 200}}}
 #   max_frames overridden (100 -> 200); 'class' inherited unchanged from system
 

@@ -300,7 +300,7 @@ async def test_admin_profile_create_resolves_its_deploy_backend_offloaded(monkey
         classmethod(lambda cls: SimpleNamespace(get_ingestion_backend=cold_backend)),
     )
     cm = MagicMock()
-    cm.store.get_config.return_value = None
+    cm.add_backend_profile.return_value = SimpleNamespace(version=1)
     validator = MagicMock()
     validator.validate_profile.return_value = []
 
@@ -336,11 +336,14 @@ async def test_admin_profile_create_and_update_offloaded():
     )
     from cogniverse_runtime.routers import admin
 
+    def slow_write(*args, **kwargs):
+        time.sleep(0.3)
+        return SimpleNamespace(version=1)
+
     cm = MagicMock()
-    cm.add_backend_profile = _blocking(0.3)
-    cm.update_backend_profile = _blocking(0.3)
+    cm.add_backend_profile = slow_write
+    cm.update_backend_profile = slow_write
     cm.get_backend_profile.return_value = SimpleNamespace(schema_name="s")
-    cm.store.get_config.return_value = None
     validator = MagicMock()
     validator.validate_profile.return_value = []
     validator.validate_update_fields.return_value = []
