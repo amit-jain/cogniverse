@@ -1776,6 +1776,7 @@ class VespaSearchBackend(SearchBackend):
             logger.info(f"[{correlation_id}] Applying filters: {filter_conditions}")
 
         # Build YQL based on strategy configuration
+        embedding_first = bool(rank_config.get("first_phase_embedding_field"))
         if rank_config.get("use_nearestneighbor"):
             # Use nearestNeighbor for visual search
             nn_field = rank_config.get("nearestneighbor_field", "embedding")
@@ -1788,8 +1789,14 @@ class VespaSearchBackend(SearchBackend):
             )
 
             if rank_config.get("needs_text_query") and query_text:
-                # Hybrid search with nearestNeighbor
-                base_where = f"userInput(@userQuery) OR ({nearest_neighbor})"
+                # Hybrid search with nearestNeighbor: the nearest neighbours
+                # and every text match are candidates. The query terms are
+                # OR'ed: weakAnd would skip documents below its running
+                # threshold and leave their text features unset, even for the
+                # documents nearestNeighbor retrieves.
+                base_where = (
+                    f'({{grammar: "any"}}userInput(@userQuery)) OR ({nearest_neighbor})'
+                )
                 if filter_conditions:
                     query_params["yql"] = (
                         f"select * from {schema_name} where ({base_where}) AND {filter_conditions}"
@@ -1810,16 +1817,26 @@ class VespaSearchBackend(SearchBackend):
                     query_params["yql"] = (
                         f"select * from {schema_name} where {base_where}"
                     )
-        elif rank_config.get("needs_text_query"):
-            # Text or hybrid search without nearestNeighbor
+        elif rank_config.get("needs_text_query") and (
+            query_text or not embedding_first
+        ):
+            # Text search, or hybrid search without nearestNeighbor. A hybrid
+            # whose first phase scores every document by its embedding matches
+            # every document and uses the text only to rank; without text it
+            # takes the embedding-only branch below. The ranking terms are
+            # OR'ed: weakAnd would skip documents below its running threshold
+            # and leave their text features unset.
+            base_where = (
+                'rank(true, {grammar: "any"}userInput(@userQuery))'
+                if embedding_first
+                else "userInput(@userQuery)"
+            )
             if filter_conditions:
                 query_params["yql"] = (
-                    f"select * from {schema_name} where userInput(@userQuery) AND {filter_conditions}"
+                    f"select * from {schema_name} where {base_where} AND {filter_conditions}"
                 )
             else:
-                query_params["yql"] = (
-                    f"select * from {schema_name} where userInput(@userQuery)"
-                )
+                query_params["yql"] = f"select * from {schema_name} where {base_where}"
             query_params["userQuery"] = query_text
         else:
             # Regular ranking without nearestNeighbor (patch-based models)
@@ -2517,6 +2534,9 @@ class VespaSearchBackend(SearchBackend):
                         "use_nearestneighbor": strategy_info.use_nearestneighbor,
                         "nearestneighbor_field": strategy_info.nearestneighbor_field,
                         "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
+                        "first_phase_embedding_field": (
+                            strategy_info.first_phase_embedding_field
+                        ),
                         "embedding_field": strategy_info.embedding_field,
                         "query_tensor_name": strategy_info.query_tensor_name,
                         "timeout": strategy_info.timeout,

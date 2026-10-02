@@ -145,18 +145,14 @@
       "functions": [
         {
           "name": "colbert_sim",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+          "expression": "reduce(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), avg, querytoken)"
         },
         {
           "name": "text_score",
-          "expression": "bm25(chunk_name) + bm25(signature) + bm25(source_code)"
+          "expression": "nativeRank(chunk_name, signature, source_code)"
         }
       ],
-      "first_phase": "colbert_sim",
-      "second_phase": {
-        "expression": "text_score",
-        "rerank_count": 100
-      },
+      "first_phase": "colbert_sim + text_score",
       "timeout": 2.0
     }
   ],

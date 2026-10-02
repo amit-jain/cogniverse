@@ -241,3 +241,127 @@ def test_concurrent_exact_and_approximate_queries_do_not_share_mode(
 
     for mode, yql in zip(modes, queries):
         assert ("approximate: false" in yql) is (mode is False)
+
+
+def _hybrid_query(
+    backend: VespaSearchBackend,
+    *,
+    query_text: str,
+    first_phase_embedding_field: str | None,
+    filters: dict | None = None,
+) -> dict:
+    return backend._build_query(
+        query_text=query_text,
+        query_embeddings=None,
+        rank_config={
+            "needs_text_query": True,
+            "first_phase_embedding_field": first_phase_embedding_field,
+        },
+        ranking_profile="hybrid_float_bm25",
+        schema_name="video_frame_acme_acme",
+        limit=10,
+        filters=filters or {},
+        correlation_id="t",
+    )
+
+
+def test_embedding_first_hybrid_matches_every_document(
+    backend: VespaSearchBackend,
+) -> None:
+    """A hybrid whose first phase scores every document by its embedding must
+    not narrow the match set to text matches; the text terms only rank."""
+    params = _hybrid_query(
+        backend,
+        query_text="man shoveling snow",
+        first_phase_embedding_field="embedding",
+    )
+
+    assert params["yql"] == (
+        "select * from video_frame_acme_acme where "
+        'rank(true, {grammar: "any"}userInput(@userQuery))'
+    )
+    assert params["userQuery"] == "man shoveling snow"
+
+
+def test_embedding_first_hybrid_keeps_filters(backend: VespaSearchBackend) -> None:
+    params = _hybrid_query(
+        backend,
+        query_text="man shoveling snow",
+        first_phase_embedding_field="embedding",
+        filters={"video_id": "v1"},
+    )
+
+    assert params["yql"] == (
+        "select * from video_frame_acme_acme where "
+        'rank(true, {grammar: "any"}userInput(@userQuery)) '
+        'AND video_id contains "v1"'
+    )
+
+
+def test_embedding_first_hybrid_without_text_ranks_every_document(
+    backend: VespaSearchBackend,
+) -> None:
+    params = _hybrid_query(
+        backend, query_text="", first_phase_embedding_field="embedding"
+    )
+
+    assert params["yql"] == "select * from video_frame_acme_acme where true"
+    assert "userQuery" not in params
+
+
+def test_text_first_hybrid_matches_text(backend: VespaSearchBackend) -> None:
+    params = _hybrid_query(
+        backend, query_text="man shoveling snow", first_phase_embedding_field=None
+    )
+
+    assert params["yql"] == (
+        "select * from video_frame_acme_acme where userInput(@userQuery)"
+    )
+    assert params["userQuery"] == "man shoveling snow"
+
+
+def _nearest_neighbor_hybrid_query(
+    backend: VespaSearchBackend, *, filters: dict | None = None
+) -> dict:
+    return backend._build_query(
+        query_text="man shoveling snow",
+        query_embeddings=None,
+        rank_config={
+            "use_nearestneighbor": True,
+            "needs_text_query": True,
+            "first_phase_embedding_field": "embedding",
+            "nearestneighbor_field": "embedding",
+            "nearestneighbor_tensor": "qt",
+        },
+        ranking_profile="hybrid_float_bm25",
+        schema_name="video_xclip_acme_acme",
+        limit=10,
+        filters=filters or {},
+        correlation_id="t",
+    )
+
+
+def test_nearest_neighbor_hybrid_ors_the_query_terms(
+    backend: VespaSearchBackend,
+) -> None:
+    """The nearest neighbours and every document holding any query term are
+    candidates, each with its full text features."""
+    params = _nearest_neighbor_hybrid_query(backend)
+
+    assert params["yql"] == (
+        "select * from video_xclip_acme_acme where "
+        '({grammar: "any"}userInput(@userQuery)) OR '
+        "({targetHits: 10}nearestNeighbor(embedding, qt))"
+    )
+    assert params["userQuery"] == "man shoveling snow"
+
+
+def test_nearest_neighbor_hybrid_keeps_filters(backend: VespaSearchBackend) -> None:
+    params = _nearest_neighbor_hybrid_query(backend, filters={"video_id": "v1"})
+
+    assert params["yql"] == (
+        "select * from video_xclip_acme_acme where "
+        '(({grammar: "any"}userInput(@userQuery)) OR '
+        "({targetHits: 10}nearestNeighbor(embedding, qt))) "
+        'AND video_id contains "v1"'
+    )

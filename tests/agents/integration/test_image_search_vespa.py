@@ -118,9 +118,9 @@ async def test_search_vespa_retrieves_and_ranks_matching_image(agent):
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_scores_bm25_match(agent):
-    # Hybrid must inject userQuery() so the bm25 second phase sees the query
-    # terms; without it every hit's bm25 score is 0.
+async def test_hybrid_search_adds_native_rank_to_visual_similarity(agent):
+    # Hybrid must inject userQuery() so the text score sees the query terms;
+    # without it every hit's nativeRank is 0.
     query_embedding = np.array([_MATCH], dtype=np.float32)
 
     results = await agent._search_vespa(
@@ -132,14 +132,16 @@ async def test_hybrid_search_scores_bm25_match(agent):
     )
 
     assert results, "hybrid image query returned no results"
-    # The second phase reranks on bm25(image_title) + bm25(image_description);
-    # both query terms hit the sunset doc, neither hits the cat doc, so the
-    # cat doc's bm25 relevance is exactly 0.
+    # hybrid_float_bm25 ranks by the MaxSim averaged over the query tokens
+    # (one token here: 320 x 0.25 = 80 for the aligned image, -80 for the
+    # opposed one) plus nativeRank(image_title, image_description). Both query
+    # terms hit the sunset doc and neither hits the cat doc, so the cat doc
+    # scores its visual similarity alone.
     assert [r.image_id for r in results] == ["img_sunset", "img_cat"]
-    # bm25 over the fixed two-document corpus is deterministic; the value is
-    # the recorded sum of both fields' term scores for the sunset doc.
-    assert results[0].relevance_score == pytest.approx(1.1121297330180966)
-    assert results[1].relevance_score == 0.0
+    # nativeRank over the fixed two-document corpus is deterministic; the value
+    # is the recorded text score of the sunset doc.
+    assert results[0].relevance_score == pytest.approx(80.0 + 0.19511743249235)
+    assert results[1].relevance_score == pytest.approx(-80.0)
 
 
 @pytest.mark.asyncio

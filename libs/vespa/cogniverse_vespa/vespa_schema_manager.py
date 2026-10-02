@@ -173,6 +173,7 @@ class VespaSchemaManager:
                 ApplicationPackage,
                 Document,
                 Field,
+                Function,
                 RankProfile,
                 Schema,
                 SecondPhaseRanking,
@@ -413,10 +414,17 @@ class VespaSchemaManager:
                             inputs=[
                                 ("query(qt)", "tensor<float>(querytoken{}, v[320])")
                             ],
-                            first_phase="sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)",
-                            second_phase=SecondPhaseRanking(
-                                expression="bm25(document_title)", rerank_count=100
-                            ),
+                            functions=[
+                                Function(
+                                    name="visual_sim_float",
+                                    expression="reduce(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), avg, querytoken)",
+                                ),
+                                Function(
+                                    name="text_sim",
+                                    expression="nativeRank(document_title)",
+                                ),
+                            ],
+                            first_phase="visual_sim_float + text_sim",
                         ),
                     ],
                 )

@@ -353,9 +353,10 @@ class TestAudioAgentSourceUrl:
 class TestAudioAcousticHybridSearch:
     """``_search_acoustic`` binds its CLAP query vector to the schema's
     ``acoustic_similarity`` profile; ``_search_hybrid`` requests
-    ``hybrid_semantic_bm25``, whose first phase scores the ColBERT
-    ``semantic_embedding_binary`` the ingest pipeline wrote and whose second
-    phase reranks on ``bm25(audio_title) + bm25(audio_transcript)``.
+    ``hybrid_semantic_bm25``, which ranks every clip by its binary MaxSim
+    against the ColBERT ``semantic_embedding_binary`` the ingest pipeline
+    wrote, averaged over the query tokens, plus
+    ``nativeRank(audio_title, audio_transcript)``.
     """
 
     @staticmethod
@@ -405,12 +406,18 @@ class TestAudioAcousticHybridSearch:
         assert scores == sorted(scores, reverse=True)
 
     @pytest.mark.asyncio
-    async def test_search_hybrid_ranks_by_semantic_first_phase_then_bm25(
+    async def test_search_hybrid_ranks_every_clip_by_semantic_plus_text_score(
         self, audio_agent
     ):
         results = await audio_agent._search_hybrid("kestrel telemetry", limit=5)
 
-        assert [r.audio_id for r in results] == ["launch_briefing", "harbour_logbook"]
+        # The two English clips carry the query terms; the Dutch interview
+        # carries neither and follows on its semantic score alone.
+        assert [r.audio_id for r in results] == [
+            "launch_briefing",
+            "harbour_logbook",
+            "atrium_interview",
+        ]
         scores = [r.relevance_score for r in results]
         assert scores == sorted(scores, reverse=True)
         assert results[0].audio_url == AUDIO_CLIPS["launch_briefing"]["source_url"]
@@ -418,10 +425,14 @@ class TestAudioAcousticHybridSearch:
     @pytest.mark.asyncio
     async def test_search_hybrid_follows_the_query_to_another_clip(self, audio_agent):
         """The ordering above is the corpus answering this query, not a fixed
-        arrangement: a query drawn from a different clip returns that clip."""
+        arrangement: a query drawn from a different clip ranks that clip first."""
         results = await audio_agent._search_hybrid("atrium akoestiek", limit=5)
 
-        assert [r.audio_id for r in results] == ["atrium_interview"]
+        assert [r.audio_id for r in results] == [
+            "atrium_interview",
+            "harbour_logbook",
+            "launch_briefing",
+        ]
         assert results[0].language == "nl"
         assert results[0].duration == 61.25
 
