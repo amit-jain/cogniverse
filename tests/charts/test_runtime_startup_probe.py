@@ -106,8 +106,21 @@ def _fresh_install_stages_s() -> float:
     )
 
 
+def _startup_config_writes_s() -> float:
+    """The worker's two startup config writes (system config, system profiles),
+    each waiting out a degraded store for its budget and one more retry."""
+    return 2 * (
+        runtime_main.STARTUP_CONFIG_WRITE_BUDGET_S
+        + runtime_main.STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S
+    )
+
+
 def _worst_case_cold_start_s() -> float:
-    return _backend_wait_worst_case_s() + _fresh_install_stages_s()
+    return (
+        _backend_wait_worst_case_s()
+        + _fresh_install_stages_s()
+        + _startup_config_writes_s()
+    )
 
 
 def test_backend_wait_budget_carries_double_the_longest_observed_recovery():
@@ -149,7 +162,8 @@ def test_startup_window_exceeds_the_entrypoints_backend_grace(stack):
         f"{stack}: startupProbe window {window}s does not exceed the protected "
         f"startup allowance {_worst_case_cold_start_s():.0f}s "
         f"(backend wait {_backend_wait_worst_case_s():.0f}s + fresh-install "
-        f"stages {_fresh_install_stages_s():.0f}s) — the kubelet kills the pod "
+        f"stages {_fresh_install_stages_s():.0f}s + startup config writes "
+        f"{_startup_config_writes_s():.0f}s) — the kubelet kills the pod "
         f"while the entrypoint is still inside its backend grace"
     )
 

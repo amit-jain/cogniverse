@@ -17,6 +17,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStoreUnavailableError,
 )
+from cogniverse_vespa._vespa_factory import VespaQueryDegraded
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -57,6 +58,32 @@ def _soft_timeout_response():
                 "errors": [{"code": 12, "summary": "Timeout"}],
                 "coverage": {"degraded": {"timeout": True}},
                 "children": [],
+            }
+        }
+    )
+
+
+def _non_ideal_state_response():
+    return _FakeQueryResponse(
+        {
+            "root": {
+                "id": "toplevel",
+                "relevance": 1.0,
+                "fields": {"totalCount": 0},
+                "coverage": {
+                    "coverage": 97,
+                    "documents": 36,
+                    "degraded": {
+                        "match-phase": False,
+                        "timeout": False,
+                        "adaptive-timeout": False,
+                        "non-ideal-state": True,
+                    },
+                    "full": False,
+                    "nodes": 1,
+                    "results": 1,
+                    "resultsFull": 0,
+                },
             }
         }
     )
@@ -302,10 +329,36 @@ def test_latest_version_read_raises_on_soft_timeout():
     """The latest-version read gates every write: a soft-timeout returns
     empty hits, which used to read as version 0 — set_config then wrote
     version 1 BELOW the real latest and the operator's change silently
-    never took effect."""
+    never took effect. It raises as the store being unavailable, so a caller
+    waiting out an outage waits this out too."""
     store = _store_with(_soft_timeout_response())
-    with pytest.raises(RuntimeError, match="degraded"):
+    with pytest.raises(ConfigStoreUnavailableError) as raised:
         store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+    assert str(raised.value) == (
+        "Vespa returned a degraded/soft-timeout response for config "
+        "acme:system:system:poll_state: errors=[{'code': 12, 'summary': "
+        "'Timeout'}] coverage={'degraded': {'timeout': True}}"
+    )
+    assert type(raised.value.__cause__) is VespaQueryDegraded
+
+
+def test_latest_version_read_raises_on_a_non_ideal_content_state():
+    """A query Vespa answers while its content node is outside its ideal
+    state: HTTP 200, no errors, partial coverage, here with no hits. Read as
+    data it would be "no versions yet"."""
+    store = _store_with(_non_ideal_state_response())
+    with pytest.raises(ConfigStoreUnavailableError) as raised:
+        store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+    assert str(raised.value) == (
+        "Vespa returned a degraded/soft-timeout response for config "
+        "acme:system:system:poll_state: errors=[] coverage={'coverage': 97, "
+        "'documents': 36, 'degraded': {'match-phase': False, 'timeout': False, "
+        "'adaptive-timeout': False, 'non-ideal-state': True}, 'full': False, "
+        "'nodes': 1, 'results': 1, 'resultsFull': 0}"
+    )
+    assert type(raised.value.__cause__) is VespaQueryDegraded
 
 
 def test_get_stats_raises_on_truncated_visit(monkeypatch):

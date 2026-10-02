@@ -21,6 +21,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ImmutableConfigStore,
 )
 from cogniverse_vespa._vespa_factory import (
+    VespaQueryDegraded,
     canonical_endpoint,
     make_persistent_vespa_ops,
     raise_if_degraded,
@@ -43,8 +44,15 @@ _CONFIG_STORE_DOCUMENT_READ_TIMEOUT_SECONDS = 5
 
 
 def _raise_if_degraded(response: Any, config_id: str) -> None:
-    """Raise on a degraded query response — shared guard, config context."""
-    raise_if_degraded(response, f"config {config_id}")
+    """Raise on a degraded query response — shared guard, config context.
+
+    A degraded answer is the store not answering, so it raises
+    ConfigStoreUnavailableError, the error callers wait out a store outage on.
+    """
+    try:
+        raise_if_degraded(response, f"config {config_id}")
+    except VespaQueryDegraded as exc:
+        raise ConfigStoreUnavailableError(str(exc)) from exc
 
 
 def _is_condition_miss(error: Exception) -> bool:

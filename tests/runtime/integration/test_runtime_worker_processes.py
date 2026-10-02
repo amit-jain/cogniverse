@@ -38,7 +38,17 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     AnswerGrounding,
 )
-from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_manager
+from cogniverse_runtime.main import STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.vespa_test_helpers import (
+    NON_IDEAL_STATE_ANSWER,
+    DegradeLatestVersionReads,
+    deploy_tenant_schema,
+    make_config_manager,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -593,6 +603,81 @@ class TestSignals:
             assert [pid for pid in workers if Path(f"/proc/{pid}").exists()] == []
             assert _refuses(port)
             assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
+SYSTEM_CONFIG_ID = "_system:system:system:system_config"
+DEGRADED_VERSION_READS = 3
+
+
+def _system_config_version(http_port: int) -> int:
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=http_port)
+    try:
+        return store.get_config(
+            "_system", ConfigScope.SYSTEM, "system", "system_config"
+        ).version
+    finally:
+        store.close()
+
+
+class TestStartupThroughADegradedStore:
+    def test_workers_start_once_the_store_answers_whole(
+        self, tmp_path, redis_url, vespa_instance
+    ):
+        """The store answers the first system-config version reads as Vespa
+        does while its content node is outside its ideal state. Each worker's
+        startup write waits that out, both workers serve, and each write lands
+        above the latest version."""
+        degrade = DegradeLatestVersionReads(SYSTEM_CONFIG_ID, DEGRADED_VERSION_READS)
+        before = _system_config_version(vespa_instance["http_port"])
+        # The runtime derives the config server's port from the data port.
+        data_port, config_port = generate_unique_ports("degraded-store-proxy")
+        with (
+            InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['http_port']}",
+                degrade,
+                port=data_port,
+            ),
+            InterceptFaultProxy(
+                f"http://localhost:{vespa_instance['config_port']}", port=config_port
+            ),
+        ):
+            env = {"BACKEND_URL": "http://127.0.0.1", "BACKEND_PORT": str(data_port)}
+            with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, _):
+                workers = _serving(process, log)
+                waits = [
+                    re.sub(r"\(attempt \d+,", "(attempt N,", record)
+                    for record in _records(log, MAIN_LOGGER, "WARNING")
+                    if record.startswith(
+                        "Config store for the startup system config write"
+                    )
+                ]
+
+        assert len(workers) == WORKERS
+        assert degrade.served == DEGRADED_VERSION_READS
+        degraded_read = (
+            "Config store for the startup system config write is not ready "
+            f"(attempt N, retrying in {STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S:.1f}s): "
+            "ConfigStoreUnavailableError: Vespa returned a degraded/soft-timeout "
+            f"response for config {SYSTEM_CONFIG_ID}"
+        )
+        injected = (
+            f"{degraded_read}: errors=[] "
+            f"coverage={NON_IDEAL_STATE_ANSWER['root']['coverage']}"
+        )
+        assert waits.count(injected) == DEGRADED_VERSION_READS
+        # Vespa itself can answer the same read degraded while the other
+        # worker's write settles; that wait names the read just the same.
+        assert [
+            wait
+            for wait in waits
+            if not re.fullmatch(
+                re.escape(degraded_read) + r": errors=\[.*\] coverage=\{.*\}", wait
+            )
+        ] == []
+        # Each worker wrote once, above the version it found: a degraded read
+        # never became "no versions yet" and a write below the latest.
+        assert _system_config_version(vespa_instance["http_port"]) == before + WORKERS
+        assert _records(log, CLI_LOGGER, "ERROR") == []
 
 
 class TestWorkerFailure:

@@ -427,8 +427,9 @@ runtime:
   # Startup gates liveness/readiness while the entrypoint waits for Vespa.
   # Its 64-minute grace (2x the longest observed recovery) logs one ERROR;
   # the process keeps waiting until ready or stopped. This 4530s probe window
-  # covers that grace plus the probe and fresh-install allowances, derived
-  # from production constants in tests/charts/test_runtime_startup_probe.py.
+  # covers that grace plus the probe, fresh-install and startup config-write
+  # allowances, derived from production constants in
+  # tests/charts/test_runtime_startup_probe.py.
   startupProbe:
     tcpSocket:
       port: 8000

@@ -2865,6 +2865,8 @@ per-attempt budget is 5s for a single document and for one bounded page,
 failures raise. A completed `set_config` is therefore immediately visible to
 those readers without sleeps or search-index convergence retries.
 
+A write first reads the key's latest version with a query. A query Vespa answers degraded — `root.errors`, or a `coverage.degraded` flag such as `non-ideal-state` with partial coverage, whose hits can miss the latest version — raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) instead of reading as "no versions yet", which would write version 1 below the real latest. Nothing is written.
+
 `compare_and_set_config(..., expected_version=n)` conditionally writes revision
 `n + 1` and returns `None` on contention. Its version checks and history retention
 are described in [Configuration Scopes](foundation.md#configuration-scopes).

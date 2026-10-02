@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List
+from urllib.parse import parse_qs, urlsplit
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -304,3 +306,62 @@ def schema_tensor_dim(base_schema_name: str, field_name: str) -> int:
             )
         return int(match.group(1))
     raise KeyError(f"{base_schema_name} has no field named {field_name!r}")
+
+
+# A query Vespa answers while its content node is outside its ideal state:
+# HTTP 200, no errors, partial coverage, here with no hits. Keys are in the
+# order pyvespa hands a decoded body back (sorted), so an error quoting the
+# coverage it read prints the same as this dict.
+NON_IDEAL_STATE_ANSWER = {
+    "root": {
+        "id": "toplevel",
+        "relevance": 1.0,
+        "fields": {"totalCount": 0},
+        "coverage": {
+            "coverage": 97,
+            "degraded": {
+                "adaptive-timeout": False,
+                "match-phase": False,
+                "non-ideal-state": True,
+                "timeout": False,
+            },
+            "documents": 36,
+            "full": False,
+            "nodes": 1,
+            "results": 1,
+            "resultsFull": 0,
+        },
+    }
+}
+
+
+class DegradeLatestVersionReads:
+    """An ``InterceptFaultProxy`` intercept answering the config store's
+    latest-version reads of ``config_id`` with ``NON_IDEAL_STATE_ANSWER``.
+
+    The first ``times`` reads are degraded, or every one when ``times`` is
+    None; ``served`` counts the degraded answers. Every other request is
+    forwarded to Vespa.
+    """
+
+    def __init__(self, config_id: str, times: int | None) -> None:
+        from cogniverse_vespa._yql import yql_quote
+
+        self._query = (
+            "select version from config_metadata where config_id contains "
+            f"{yql_quote(config_id)} order by version desc limit 1"
+        )
+        self._times = times
+        self._lock = threading.Lock()
+        self.served = 0
+
+    def __call__(self, method: str, path: str, _body: bytes):
+        if method != "POST" or not path.startswith("/search/"):
+            return None
+        if parse_qs(urlsplit(path).query).get("yql") != [self._query]:
+            return None
+        with self._lock:
+            if self._times is not None and self.served >= self._times:
+                return None
+            self.served += 1
+        return 200, NON_IDEAL_STATE_ANSWER

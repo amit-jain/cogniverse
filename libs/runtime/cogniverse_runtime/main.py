@@ -36,7 +36,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import Any, AsyncIterator, Callable, Mapping, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -721,6 +721,41 @@ def _log_workflow_submission_status() -> None:
 CONFIG_STORE_REPROBE_ATTEMPTS = 12
 CONFIG_STORE_REPROBE_INTERVAL_S = 10.0
 
+# How long a worker's startup config writes wait out a config store that does
+# not answer or answers degraded. Vespa answers a query degraded for a few
+# milliseconds while a concurrent write lands, as when workers start side by
+# side; the budget also covers a content node slower to reach its ideal state.
+STARTUP_CONFIG_WRITE_BUDGET_S = 60.0
+STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S = 1.0
+
+_Written = TypeVar("_Written")
+
+
+def write_startup_config(
+    write: Callable[[], _Written],
+    what: str,
+    *,
+    budget_s: float = STARTUP_CONFIG_WRITE_BUDGET_S,
+    retry_interval_s: float = STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S,
+) -> _Written:
+    """Run one startup config write, waiting out a briefly unavailable store.
+
+    A store still unavailable after ``budget_s`` raises ``RuntimeError`` naming
+    ``what`` and the last failure, which fails this worker's startup. Any other
+    failure propagates at once. Blocking: the lifespan runs it in a thread.
+    """
+    from cogniverse_runtime.startup_wait import wait_for_startup_dependency
+
+    return wait_for_startup_dependency(
+        write,
+        dependency=f"Config store for the startup {what} write",
+        process="runtime worker",
+        timeout_seconds=budget_s,
+        poll_interval_seconds=retry_interval_s,
+        retry_forever=False,
+        log=logger,
+    )
+
 
 def _resolve_library_env_defaults() -> dict[str, str | int | float | bool | None]:
     """Read the library-module defaults from the shared runtime resolver."""
@@ -1349,7 +1384,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     if updated:
-        config_manager.set_system_config(system_config)
+        await asyncio.to_thread(
+            write_startup_config,
+            lambda: config_manager.set_system_config(system_config),
+            "system config",
+        )
         BackendRegistry.get_instance().clear_instances()
         logger.info("SystemConfig stored with deployment env var overrides")
 
@@ -1440,7 +1479,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # registration itself is cluster-wide (all tenants see the same
         # profile shape), so it lives under SYSTEM_TENANT_ID.
         try:
-            reaffirm_system_profiles(config_manager, config)
+            await asyncio.to_thread(
+                write_startup_config,
+                lambda: reaffirm_system_profiles(config_manager, config),
+                "system profiles",
+            )
             logger.info("Wiki backend profile registered")
         except Exception as exc:
             logger.warning("Wiki profile register failed: %s", exc)

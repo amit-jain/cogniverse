@@ -12,11 +12,19 @@ backend would drop every tenant content schema and let Vespa GC their
 documents. These tests pin both guards against a real Vespa: the
 application-exists refusal, and Vespa rejecting a partial package when schema
 removal is disabled.
+
+A worker's startup config writes go through ``write_startup_config``: a store
+that answers degraded (a content node outside its ideal state) is waited out
+within its budget, and one still degraded at the end fails the write by name.
+The degradation comes from a proxy in front of the real Vespa.
 """
 
 import asyncio
+import logging
 import socket
 import threading
+import time
+import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -30,6 +38,11 @@ from cogniverse_runtime.backend_startup import (
     _wait_for_backend_startup,
     _wait_for_config_server,
 )
+from cogniverse_sdk.interfaces.config_store import (
+    ConfigScope,
+    ConfigStoreUnavailableError,
+)
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
 pytestmark = pytest.mark.integration
 
@@ -505,3 +518,158 @@ async def test_the_startup_migration_retries_a_held_lease_and_names_a_refused_te
         f"for tenant {refused}: "
     )
     assert "Vespa refused the application package" in refusals[0]
+
+
+def _stores(vespa_instance, intercept):
+    """A store on the real Vespa, and a proxy in front of it."""
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    direct = VespaConfigStore(
+        backend_url="http://localhost", backend_port=vespa_instance["http_port"]
+    )
+    proxy = InterceptFaultProxy(
+        f"http://localhost:{vespa_instance['http_port']}", intercept
+    )
+    return direct, proxy
+
+
+def _history(store, tenant):
+    return [
+        (entry.version, entry.config_value)
+        for entry in store.get_config_history(
+            tenant, ConfigScope.SYSTEM, "system", "system_config"
+        )
+    ]
+
+
+def _write_whole(store, tenant, value):
+    """Write ``value`` straight to Vespa, then wait until Vespa answers the
+    key's latest-version read whole, so every degraded answer the write under
+    test meets comes from the proxy."""
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            entry = store.set_config(
+                tenant, ConfigScope.SYSTEM, "system", "system_config", value
+            )
+            break
+        except ConfigStoreUnavailableError:
+            assert time.monotonic() < deadline, f"{tenant}: setup write never landed"
+            time.sleep(0.05)
+    while True:
+        try:
+            latest = store._get_latest_version(
+                tenant, ConfigScope.SYSTEM, "system", "system_config"
+            )
+        except ConfigStoreUnavailableError:
+            latest = None
+        if latest == entry.version:
+            return
+        assert time.monotonic() < deadline, (
+            f"{tenant}: v{entry.version} never read whole"
+        )
+        time.sleep(0.05)
+
+
+def test_a_startup_config_write_waits_out_degraded_version_reads(
+    vespa_instance, caplog
+):
+    from cogniverse_runtime.main import write_startup_config
+    from tests.utils.vespa_test_helpers import (
+        NON_IDEAL_STATE_ANSWER,
+        DegradeLatestVersionReads,
+    )
+
+    tenant = f"startup{uuid.uuid4().hex[:8]}"
+    config_id = f"{tenant}:system:system:system_config"
+    degrade = DegradeLatestVersionReads(config_id, 2)
+    direct, proxy = _stores(vespa_instance, degrade)
+    _write_whole(direct, tenant, {"written": "first"})
+    with proxy:
+        through = VespaConfigStore(
+            backend_url="http://127.0.0.1", backend_port=proxy.port
+        )
+        with caplog.at_level(logging.WARNING, logger="cogniverse_runtime.main"):
+            entry = write_startup_config(
+                lambda: through.set_config(
+                    tenant,
+                    ConfigScope.SYSTEM,
+                    "system",
+                    "system_config",
+                    {"written": "second"},
+                ),
+                "test",
+                budget_s=30.0,
+                retry_interval_s=0.1,
+            )
+        through.close()
+
+    degraded = (
+        "ConfigStoreUnavailableError: Vespa returned a degraded/soft-timeout "
+        f"response for config {config_id}: errors=[] "
+        f"coverage={NON_IDEAL_STATE_ANSWER['root']['coverage']}"
+    )
+    assert degrade.served == 2
+    assert entry.version == 2
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.main"
+    ] == [
+        "Config store for the startup test write is not ready "
+        f"(attempt {attempt}, retrying in 0.1s): {degraded}"
+        for attempt in (1, 2)
+    ]
+    assert _history(direct, tenant) == [
+        (2, {"written": "second"}),
+        (1, {"written": "first"}),
+    ]
+    direct.close()
+
+
+def test_a_store_degraded_past_the_budget_fails_the_write_naming_it(vespa_instance):
+    from cogniverse_runtime.main import write_startup_config
+    from tests.utils.vespa_test_helpers import (
+        NON_IDEAL_STATE_ANSWER,
+        DegradeLatestVersionReads,
+    )
+
+    tenant = f"startup{uuid.uuid4().hex[:8]}"
+    config_id = f"{tenant}:system:system:system_config"
+    degrade = DegradeLatestVersionReads(config_id, None)
+    direct, proxy = _stores(vespa_instance, degrade)
+    _write_whole(direct, tenant, {"written": "first"})
+    with proxy:
+        through = VespaConfigStore(
+            backend_url="http://127.0.0.1", backend_port=proxy.port
+        )
+        started = time.monotonic()
+        with pytest.raises(RuntimeError) as raised:
+            write_startup_config(
+                lambda: through.set_config(
+                    tenant,
+                    ConfigScope.SYSTEM,
+                    "system",
+                    "system_config",
+                    {"written": "second"},
+                ),
+                "test",
+                budget_s=1.0,
+                retry_interval_s=0.2,
+            )
+        elapsed = time.monotonic() - started
+        through.close()
+
+    assert type(raised.value) is RuntimeError
+    assert str(raised.value) == (
+        f"Config store for the startup test write was not ready after "
+        f"{degrade.served} attempts within 1.0s: ConfigStoreUnavailableError: "
+        "Vespa returned a degraded/soft-timeout response for config "
+        f"{config_id}: errors=[] "
+        f"coverage={NON_IDEAL_STATE_ANSWER['root']['coverage']}"
+    )
+    assert type(raised.value.__cause__) is ConfigStoreUnavailableError
+    assert 1.0 <= elapsed < 2.0
+    # Nothing was written while the store answered degraded.
+    assert _history(direct, tenant) == [(1, {"written": "first"})]
+    direct.close()
