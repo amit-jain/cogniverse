@@ -452,7 +452,7 @@ class TestGoldenEvalRealVespa:
             logging.INFO, logger="cogniverse_evaluation.quality_monitor"
         ):
             verdicts = monitor.check_thresholds(result2, None)
-        assert verdicts == {AgentType.SEARCH: Verdict.SKIP}
+        assert verdicts == {AgentType.SEARCH: Verdict.OPTIMIZE}
         assert [
             record.message
             for record in caplog.records
@@ -460,7 +460,9 @@ class TestGoldenEvalRealVespa:
         ] == [
             "Golden MRR dropped 29.8% (0.950 → 0.667)",
             "Golden nDCG dropped 29.8% (0.950 → 0.667)",
-            "XGBoost overrides search OPTIMIZE → SKIP (expected improvement 0.000 too low)",
+            "TrainingDecisionModel is untrained; the threshold verdicts stand "
+            "and each optimizer's population floor decides whether there is "
+            "enough data to train",
         ]
 
 
@@ -1243,7 +1245,7 @@ class TestXGBoostGateViaPhoenixProvider:
         )
 
         with patch.object(monitor, "_get_training_decision_model") as mock_get_model:
-            mock_model = MagicMock()
+            mock_model = MagicMock(is_trained=True)
             mock_model.should_train.return_value = (True, 0.3)
             mock_get_model.return_value = mock_model
 

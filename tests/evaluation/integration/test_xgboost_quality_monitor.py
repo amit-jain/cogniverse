@@ -15,6 +15,7 @@ import pytest
 from cogniverse_evaluation.quality_monitor import (
     AgentEvalResult,
     AgentType,
+    GoldenEvalResult,
     LiveEvalResult,
     QualityMonitor,
     Verdict,
@@ -101,26 +102,72 @@ class TestXGBoostQualityMonitorIntegration:
         assert model is not None
         assert not model.is_trained
 
-    def test_untrained_model_uses_fallback_heuristic(self, monitor_with_xgboost):
-        """Untrained XGBoost model uses fallback rules, not crash."""
+    def test_untrained_model_leaves_threshold_verdicts_standing(
+        self, monitor_with_xgboost, caplog
+    ):
+        """No trained meta-model: the threshold verdicts stand.
+
+        The live window holds at most ``live_sample_count`` (20) spans and the
+        monitor passes no synthetic count, so the untrained heuristic's
+        50-sample rule would veto every OPTIMIZE: a golden MRR drop and a live
+        score under the floor alike. Whether there is enough data to train is
+        the optimizer's population floor (lookback spans plus approved
+        synthetic data), so a degraded agent is handed to it, and a healthy
+        one with a full window is not optimized on placeholder staleness.
+        """
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="xgboost_test",
+            mean_mrr=0.5,
+            mean_ndcg=0.8,
+            mean_precision_at_5=0.4,
+            query_count=5,
+            baseline_mrr=0.8,
+            baseline_ndcg=0.8,
+        )
         live = LiveEvalResult(
             timestamp=datetime.utcnow(),
             tenant_id="xgboost_test",
             agent_results={
-                AgentType.SEARCH: AgentEvalResult(
-                    agent=AgentType.SEARCH,
+                AgentType.SUMMARY: AgentEvalResult(
+                    agent=AgentType.SUMMARY,
                     score=0.3,
                     baseline_score=0.8,
                     degradation_pct=0.6,
                     sample_count=20,
                 ),
+                AgentType.REPORT: AgentEvalResult(
+                    agent=AgentType.REPORT,
+                    score=0.7,
+                    baseline_score=0.7,
+                    degradation_pct=0.0,
+                    sample_count=60,
+                ),
             },
         )
 
-        verdicts = monitor_with_xgboost.check_thresholds(None, live)
-        # Fallback heuristic: 20 samples < 50 required → should_train=False
-        # XGBoost overrides OPTIMIZE → SKIP (not enough data for training)
-        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+        with caplog.at_level(
+            logging.INFO, logger="cogniverse_evaluation.quality_monitor"
+        ):
+            verdicts = monitor_with_xgboost.check_thresholds(golden, live)
+
+        assert verdicts == {
+            AgentType.SEARCH: Verdict.OPTIMIZE,
+            AgentType.SUMMARY: Verdict.OPTIMIZE,
+            AgentType.REPORT: Verdict.SKIP,
+        }
+        assert monitor_with_xgboost._get_training_decision_model().is_trained is False
+        assert [
+            record.message
+            for record in caplog.records
+            if record.name == "cogniverse_evaluation.quality_monitor"
+        ] == [
+            "Golden MRR dropped 37.5% (0.800 → 0.500)",
+            "summary live score 0.300 < floor 0.5",
+            "TrainingDecisionModel is untrained; the threshold verdicts stand "
+            "and each optimizer's population floor decides whether there is "
+            "enough data to train",
+        ]
 
     def test_trained_model_makes_informed_decision(self, monitor_with_xgboost):
         """Train XGBoost on sample data, verify it makes a decision."""

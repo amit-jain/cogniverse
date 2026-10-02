@@ -1822,7 +1822,11 @@ results against `QualityThresholds`, then (when `telemetry_provider` was
 passed to the constructor) consults `cogniverse_agents.routing.xgboost_meta_models.TrainingDecisionModel.should_train(...)`
 per agent to confirm or override the naive threshold verdict — logged as an
 override, never silent — falling back to the naive verdicts if the model
-can't be built or scored; `_build_trigger(...)` assembles an
+can't be built or scored. Until a `TrainingDecisionModel` is trained, the
+threshold verdicts stand unchanged (logged once per check): its untrained
+heuristic needs 50 live samples, more than the `live_sample_count` window
+holds, so whether there is enough data to train is left to each optimizer's
+population floor (lookback spans plus approved synthetic data); `_build_trigger(...)` assembles an
 `OptimizationTrigger` when optimization is warranted.
 
 **Example:**

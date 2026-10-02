@@ -1018,15 +1018,25 @@ class QualityMonitor:
     ) -> Dict[AgentType, Verdict]:
         """Use XGBoost TrainingDecisionModel to confirm or override verdicts.
 
-        The naive threshold check says "quality dropped." The meta-model
-        adds: "is optimization likely to help given current data volume,
-        model staleness, and recent performance?"
+        The naive threshold check says "quality dropped." A trained
+        meta-model adds: "is optimization likely to help given current data
+        volume, model staleness, and recent performance?" An untrained one
+        leaves the verdicts as they are: its heuristic needs 50 live samples,
+        more than the live window holds, and whether there is enough data to
+        train is each optimizer's population floor to decide.
         """
         if self._telemetry_provider is None:
             return verdicts
 
         try:
             model = self._get_training_decision_model()
+            if not model.is_trained:
+                logger.info(
+                    "TrainingDecisionModel is untrained; the threshold verdicts "
+                    "stand and each optimizer's population floor decides whether "
+                    "there is enough data to train"
+                )
+                return verdicts
 
             for agent_type, verdict in list(verdicts.items()):
                 context = self._build_modeling_context(agent_type, golden, live)

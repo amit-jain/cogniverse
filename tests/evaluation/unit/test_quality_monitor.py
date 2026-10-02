@@ -1076,7 +1076,7 @@ class TestClose:
 class TestXGBoostIntegration:
     def test_xgboost_overrides_optimize_to_skip(self, monitor):
         """XGBoost says don't train → override OPTIMIZE to SKIP."""
-        mock_model = MagicMock()
+        mock_model = MagicMock(is_trained=True)
         mock_model.should_train.return_value = (False, 0.01)
         monitor._training_decision_model = mock_model
         monitor._telemetry_provider = MagicMock()
@@ -1100,7 +1100,7 @@ class TestXGBoostIntegration:
 
     def test_xgboost_upgrades_skip_to_optimize(self, monitor):
         """XGBoost says train is beneficial → upgrade SKIP to OPTIMIZE."""
-        mock_model = MagicMock()
+        mock_model = MagicMock(is_trained=True)
         mock_model.should_train.return_value = (True, 0.08)
         monitor._training_decision_model = mock_model
         monitor._telemetry_provider = MagicMock()
@@ -1980,6 +1980,67 @@ class TestLiveEvalOutageContracts:
             await monitor.update_baseline(live_results={AgentType.SEARCH: 0.8})
 
 
+class TestUntrainedTrainingDecisionModel:
+    """With no trained meta-model the threshold verdicts stand: the optimizer's
+    population floor, not a fixed live-sample count, decides whether there is
+    enough data to train."""
+
+    @pytest.fixture
+    def untrained(self, monitor):
+        from cogniverse_agents.routing.xgboost_meta_models import (
+            TrainingDecisionModel,
+        )
+
+        monitor._telemetry_provider = MagicMock()
+        monitor._training_decision_model = TrainingDecisionModel(
+            telemetry_provider=monitor._telemetry_provider, tenant_id="test_tenant"
+        )
+        return monitor
+
+    def test_golden_drop_with_no_live_search_samples_optimizes(self, untrained):
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.5,
+            mean_ndcg=0.8,
+            mean_precision_at_5=0.4,
+            query_count=5,
+            baseline_mrr=0.8,
+            baseline_ndcg=0.8,
+        )
+
+        assert untrained.check_thresholds(golden, None) == {
+            AgentType.SEARCH: Verdict.OPTIMIZE
+        }
+
+    def test_full_live_window_neither_vetoes_nor_upgrades(self, untrained):
+        live = LiveEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.3,
+                    baseline_score=0.8,
+                    degradation_pct=0.6,
+                    sample_count=20,
+                ),
+                AgentType.SUMMARY: AgentEvalResult(
+                    agent=AgentType.SUMMARY,
+                    score=0.7,
+                    baseline_score=0.7,
+                    degradation_pct=0.0,
+                    sample_count=60,
+                ),
+            },
+        )
+
+        assert untrained.check_thresholds(None, live) == {
+            AgentType.SEARCH: Verdict.OPTIMIZE,
+            AgentType.SUMMARY: Verdict.SKIP,
+        }
+
+
 class TestXGBoostVisibility:
     def test_meta_model_unavailable_logs_at_warning(self, monitor, caplog):
         """A failing meta-model gate (e.g. ImportError of cogniverse_agents)
@@ -1987,7 +2048,7 @@ class TestXGBoostVisibility:
         import logging
 
         monitor._telemetry_provider = MagicMock()
-        model = MagicMock()
+        model = MagicMock(is_trained=True)
         model.should_train.side_effect = RuntimeError("model load failed")
         monitor._training_decision_model = model
 
