@@ -232,6 +232,98 @@ async def test_admin_schema_deploy_offloaded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_schema_deploy_target_resolution_offloaded(monkeypatch):
+    """Resolving what to deploy reads the profile from the config store, the
+    tenant's deletion marker, and the deployed schemas from Vespa; each of
+    them run inline froze every request on the API loop."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin.profile_models import SchemaDeploymentRequest
+    from cogniverse_runtime.routers import admin
+
+    def slow_profile(*args, **kwargs):
+        time.sleep(0.3)
+        return SimpleNamespace(schema_name="wiki_pages")
+
+    def slow_schema_exists(*args, **kwargs):
+        time.sleep(0.3)
+        return True
+
+    cm = MagicMock()
+    cm.get_backend_profile = slow_profile
+    cm.store.get_immutable_config.return_value = None  # tenant not deleted
+
+    backend = MagicMock()
+    backend.schema_exists = slow_schema_exists
+    backend.get_tenant_schema_name.return_value = "wiki_pages_acme_acme"
+    monkeypatch.setattr(
+        admin.BackendRegistry,
+        "get_instance",
+        classmethod(
+            lambda cls: SimpleNamespace(get_ingestion_backend=lambda *a, **k: backend)
+        ),
+    )
+
+    req = SchemaDeploymentRequest(tenant_id="acme:acme")
+    ticks = await _ticks_during(
+        lambda: admin.deploy_profile_schema(
+            "wiki_semantic", req, config_manager=cm, schema_loader=MagicMock()
+        )
+    )
+
+    assert ticks >= 30, (
+        f"only {ticks} ticks during 0.6s of profile and schema reads — they ran "
+        "on the event loop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_profile_create_resolves_its_deploy_backend_offloaded(monkeypatch):
+    """A create that deploys its schema first builds the tenant's ingestion
+    backend, which connects to Vespa on a cold cache; inline it froze every
+    request on the API loop."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
+    from cogniverse_runtime.routers import admin
+
+    backend = MagicMock()
+    backend.get_tenant_schema_name.return_value = "s_acme_acme"
+
+    def cold_backend(*args, **kwargs):
+        time.sleep(0.3)
+        return backend
+
+    monkeypatch.setattr(
+        admin.BackendRegistry,
+        "get_instance",
+        classmethod(lambda cls: SimpleNamespace(get_ingestion_backend=cold_backend)),
+    )
+    cm = MagicMock()
+    cm.store.get_config.return_value = None
+    validator = MagicMock()
+    validator.validate_profile.return_value = []
+
+    ticks = await _ticks_during(
+        lambda: admin.create_profile(
+            ProfileCreateRequest(
+                profile_name="p",
+                tenant_id="acme:acme",
+                schema_name="s",
+                embedding_model="m",
+                embedding_type="single_vector",
+                deploy_schema=True,
+            ),
+            config_manager=cm,
+            schema_loader=MagicMock(),
+            validator=validator,
+        )
+    )
+
+    assert ticks >= 15, f"event loop starved building the deploy backend: {ticks}"
+
+
+@pytest.mark.asyncio
 async def test_admin_profile_create_and_update_offloaded():
     """A profile write is a compare-and-set read-modify-write that re-reads
     and backs off while other processes write the same backend config; run

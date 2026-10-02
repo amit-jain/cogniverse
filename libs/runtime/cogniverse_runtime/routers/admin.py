@@ -302,26 +302,27 @@ async def create_profile(
         tenant_schema_name = None
 
         if request.deploy_schema:
-            backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_ingestion_backend(
-                "vespa",
-                tenant_id=request.tenant_id,
-                config_manager=config_manager,
-                schema_loader=schema_loader,
-            )
 
-            # deploy_schema blocks through Vespa prepareandactivate +
-            # convergence sleeps — run it off the loop (matches the
-            # tenant-manager's offload of the same call).
-            await asyncio.to_thread(
-                backend.schema_registry.deploy_schema,
-                tenant_id=request.tenant_id,
-                base_schema_name=request.schema_name,
-            )
+            def _deploy() -> str:
+                """Build the tenant's ingestion backend (Vespa connections on
+                a cold cache) and deploy the schema, which blocks through
+                prepareandactivate and convergence sleeps: off the loop."""
+                backend = BackendRegistry.get_instance().get_ingestion_backend(
+                    "vespa",
+                    tenant_id=request.tenant_id,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
+                )
+                backend.schema_registry.deploy_schema(
+                    tenant_id=request.tenant_id,
+                    base_schema_name=request.schema_name,
+                )
+                return backend.get_tenant_schema_name(
+                    request.tenant_id, request.schema_name
+                )
+
+            tenant_schema_name = await asyncio.to_thread(_deploy)
             schema_deployed = True
-            tenant_schema_name = backend.get_tenant_schema_name(
-                request.tenant_id, request.schema_name
-            )
             logger.info(
                 f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
             )
@@ -773,37 +774,37 @@ async def deploy_profile_schema(
         HTTPException 410: The tenant has been deleted
         HTTPException 500: Deployment failed
     """
-    try:
+
+    def _resolve_target():
+        """The profile, the tenant's ingestion backend and whether the schema
+        is deployed: config store and Vespa reads, run off the serving loop."""
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
             service="backend",
-        )
-        if not profile:
-            profile = await asyncio.to_thread(
-                _catalog_profile, config_manager, profile_name, request.tenant_id
-            )
-
+        ) or _catalog_profile(config_manager, profile_name, request.tenant_id)
         if not profile:
             raise HTTPException(
                 status_code=404,
                 detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
             )
-
-        await asyncio.to_thread(
-            raise_if_tenant_deleted, config_manager.store, request.tenant_id
-        )
-        backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend(
+        raise_if_tenant_deleted(config_manager.store, request.tenant_id)
+        backend = BackendRegistry.get_instance().get_ingestion_backend(
             "vespa",
             tenant_id=request.tenant_id,
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-
-        schema_exists = backend.schema_exists(
-            schema_name=profile.schema_name, tenant_id=request.tenant_id
+        return (
+            profile,
+            backend,
+            backend.schema_exists(
+                schema_name=profile.schema_name, tenant_id=request.tenant_id
+            ),
         )
+
+    try:
+        profile, backend, schema_exists = await asyncio.to_thread(_resolve_target)
 
         if schema_exists and not request.force:
             tenant_schema_name = backend.get_tenant_schema_name(

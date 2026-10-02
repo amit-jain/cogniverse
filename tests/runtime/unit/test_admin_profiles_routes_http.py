@@ -547,6 +547,29 @@ async def test_deploy_schema_lookup_failure_raises_500(env):
 
 
 @pytest.mark.asyncio
+async def test_deploy_whose_profile_cannot_be_read_raises_500_and_deploys_nothing(
+    env,
+):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    def unreadable(profile_name, tenant_id=None, service="backend"):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
+    env.cm.get_backend_profile = unreadable
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": True},
+    )
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "config store unreachable"}
+    assert env.backend.deploy_calls == []
+    assert env.registry.calls == []
+
+
+@pytest.mark.asyncio
 async def test_deploy_schema_already_deployed_skips_deploy(env):
     env.cm.profiles["video_colpali"] = _profile(
         "video_colpali", "video_colpali_sv", "colpali-v1.2"
