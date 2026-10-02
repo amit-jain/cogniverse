@@ -631,7 +631,6 @@ operations:
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
 | `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
-| `add_profile(profile_name, profile_config)` / `remove_profile(profile_name)` | Runtime profile management |
 | `health_check()` / `close()` | Lifecycle management |
 
 ---
@@ -650,8 +649,11 @@ endpoint the instance binds at `initialize()`:
 
 `url`/`port` come from `SystemConfig`, overridden by `config["backend"]` and
 then by top-level `config`. Profiles and `default_profiles` are not part of
-the key: `search()` merges the query tenant's profiles per request, and
-`add_profile` / `remove_profile` mutate them in place.
+the key: `search()` merges the query tenant's profiles per request, read
+through `get_config` (the shipped catalog, the system tenant's stored profiles
+and the tenant's own), into a local copy of the profiles the instance was
+built with. A profile written at runtime reaches searches through that read;
+no profile write changes a cached instance.
 
 Concurrent cold starts of one key build in parallel and resolve through
 `set_if_absent`; the losing builds are closed. `config_manager` and
@@ -685,10 +687,6 @@ otherwise rebuilt lazily on next use, so a closed instance refuses work:
 `BackendClosedError` naming the endpoint. A caller holding an evicted
 backend is refused rather than quietly building a second set of connections
 outside the cache.
-
-`add_profile_to_backends` / `remove_profile_from_backends` attempt every
-cached backend and then raise `ProfileFanoutError` carrying the per-backend
-failures, so a partial fanout is never reported as a success count.
 
 ### Undeployed Tenant Schemas
 

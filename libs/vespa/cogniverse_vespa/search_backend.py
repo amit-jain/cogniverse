@@ -788,9 +788,8 @@ class VespaSearchBackend(SearchBackend):
         self._config_manager = config_manager
         self._is_schema_deployed = is_schema_deployed
 
-        # Lock guards runtime mutation of self.profiles / self.default_profiles
-        # via add_profile / remove_profile. Reads in get_search_results take the
-        # same lock so a concurrent add can't produce a torn read.
+        # initialize() replaces self.profiles and self.default_profiles
+        # together; searches read both under the same lock.
         self._profiles_lock = threading.RLock()
 
         if config is not None:
@@ -900,21 +899,6 @@ class VespaSearchBackend(SearchBackend):
             f"with pool=True, metrics={self._enable_metrics}, {len(self.profiles)} profiles "
             f"(query-time mode)"
         )
-
-    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
-        """Register a profile config at runtime so queries can target it.
-
-        Used by BackendRegistry fanout when ConfigManager.add_backend_profile
-        fires its change-listener — closes the gap where dynamically-created
-        profiles were only visible to ingestion, not search.
-        """
-        with self._profiles_lock:
-            self.profiles[profile_name] = dict(profile_config)
-
-    def remove_profile(self, profile_name: str) -> None:
-        """Unregister a profile from the in-memory dict. Idempotent."""
-        with self._profiles_lock:
-            self.profiles.pop(profile_name, None)
 
     def batch_get_documents(
         self,
@@ -1259,8 +1243,6 @@ class VespaSearchBackend(SearchBackend):
         filters = query_dict.get("filters", {})  # Get filters from query_dict
 
         # Profile resolution
-        # Snapshot profiles+default_profiles under the lock so a concurrent
-        # add_profile / remove_profile can't produce a torn read here.
         with self._profiles_lock:
             profiles_snapshot = dict(self.profiles)
             default_profiles_snapshot = dict(self.default_profiles)

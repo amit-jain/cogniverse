@@ -107,14 +107,6 @@ def encoder_fault_env(vespa_instance, hung_encoder_service):
         )
     )
 
-    def listener(event, name, cfg):
-        if event == "added" and cfg is not None:
-            BackendRegistry.add_profile_to_backends(name, cfg)
-        elif event == "removed":
-            BackendRegistry.remove_profile_from_backends(name)
-
-    config_manager.set_profile_change_listener(listener)
-
     tenant_id = f"enc_fault_{uuid.uuid4().hex[:8]}"
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     registry = BackendRegistry.get_instance()

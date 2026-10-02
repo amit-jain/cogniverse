@@ -8,7 +8,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 
 - **Runtime profile creation** without code deployment
 - **Multi-tenant isolation** for SaaS deployments
-- **Concurrent access** with proper locking
+- **Concurrent access** from every worker process and replica, with compare-and-set writes
 - **Version control** for configuration changes
 - **Schema deployment automation** via API
 
@@ -109,15 +109,12 @@ class ConfigManager:
     def __init__(
         self,
         store: ConfigStore,
-        profile_change_listener: Optional[ProfileChangeListener] = None,
         scoped_config_refresh_s: float = 5.0,
         scoped_config_max_staleness_s: float = 60.0,
     ):
         if store is None:
             raise ValueError("store is required")
         self.store = store
-        self._profile_change_lock = threading.RLock()  # Orders persistence + notification
-        self._profile_change_listener = profile_change_listener
 
     def add_backend_profile(self, profile, tenant_id=None, service="backend", *, replace=True):
         tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
@@ -127,10 +124,8 @@ class ConfigManager:
                 raise BackendProfileExistsError(...)
             backend_config.add_profile(profile)
 
-        with self._profile_change_lock:
-            # Compare-and-set read-modify-write of the stored backend config.
-            self._update_backend_config(tenant_id, service, add)
-            self._notify_profile_change("added", profile.profile_name, profile.to_dict())
+        # Compare-and-set read-modify-write of the stored backend config.
+        self._update_backend_config(tenant_id, service, add)
 ```
 
 **Why compare-and-set?**
@@ -160,11 +155,15 @@ The read goes to the store, not the scoped-config cache. A change that leaves
 the stored config as it was writes nothing. A writer that loses every attempt
 raises `ConfigWriteConflictError` and writes nothing.
 
-The `_profile_change_lock` covers add, partial update, and delete within one
-process. It keeps each persisted change adjacent to its live-backend
-notification, so an older slow notification cannot overtake and replace a
-newer profile. Listener errors remain isolated: the persisted change succeeds
-and the error is logged.
+**How a write reaches searches:** the store is the only copy. The shared
+search backend resolves the querying tenant's profiles per request through
+`get_config` (the shipped catalog, the system tenant's stored profiles and the
+tenant's own) and merges them into a local copy of the profiles it was built
+with, so one tenant's profile is never visible to another. The writing
+process's `ConfigManager` drops its held copy on the write, so its next search
+sees the change at once; every other process and replica sees it within
+`scoped_config_max_staleness_s` (60 s by default; about
+`scoped_config_refresh_s`, 5 s, for a tenant searched continuously).
 
 **BackendConfig:**
 
@@ -449,60 +448,52 @@ flowchart TB
     User["<span style='color:#000'>1. User fills form - Dashboard</span>"]
     API["<span style='color:#000'>2. POST /admin/profiles</span>"]
     Router["<span style='color:#000'>3. Admin Router - Validate</span>"]
-    ConfigMgr["<span style='color:#000'>4. ConfigManager - Lock/Read/Write</span>"]
+    ConfigMgr["<span style='color:#000'>4. ConfigManager - Compare-and-set Read/Modify/Write</span>"]
     Store["<span style='color:#000'>5. ConfigStore - Version/Persist</span>"]
-    Propagate["<span style='color:#000'>6. Propagate to cached search backends<br/>(profile_change_listener →<br/>BackendRegistry.add_profile_to_backends →<br/>VespaSearchBackend.add_profile)</span>"]
-    Release["<span style='color:#000'>7. Release Lock</span>"]
-    Response["<span style='color:#000'>8. 201 Created</span>"]
-    Success["<span style='color:#000'>9. Success Message</span>"]
+    Response["<span style='color:#000'>6. 201 Created</span>"]
+    Success["<span style='color:#000'>7. Success Message</span>"]
+    Search["<span style='color:#000'>Searches resolve the tenant's<br/>stored profiles per request</span>"]
 
     User --> API
     API --> Router
     Router --> ConfigMgr
     ConfigMgr --> Store
-    Store --> Propagate
-    Propagate --> Release
-    Release --> Response
+    Store --> Response
     Response --> Success
+    Store -.-> Search
 
     style User fill:#90caf9,stroke:#1565c0,color:#000
     style API fill:#90caf9,stroke:#1565c0,color:#000
     style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ConfigMgr fill:#ffcc80,stroke:#ef6c00,color:#000
     style Store fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Propagate fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Release fill:#ffcc80,stroke:#ef6c00,color:#000
     style Response fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Success fill:#90caf9,stroke:#1565c0,color:#000
+    style Search fill:#a5d6a7,stroke:#388e3c,color:#000
 
-    linkStyle 0,1,2,3,4,5,6,7 stroke:#000,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6 stroke:#000,stroke-width:2px
 ```
 
 ### Concurrent Updates Flow
 
 ```mermaid
 sequenceDiagram
-    participant T1 as Thread 1
-    participant Lock as Backend Lock
+    participant P1 as Process 1
     participant Store as ConfigStore
-    participant T2 as Thread 2
+    participant P2 as Process 2
 
-    T1->>Lock: Acquire lock
-    activate Lock
-    T1->>Store: Read config
-    Store-->>T1: Version 1
-    T2->>Lock: Try acquire (BLOCKED)
-    T1->>Store: Write version 2
-    T1->>Lock: Release lock
-    deactivate Lock
-
-    Lock->>T2: Lock acquired
-    activate Lock
-    T2->>Store: Read config
-    Store-->>T2: Version 2
-    T2->>Store: Write version 3
-    T2->>Lock: Release lock
-    deactivate Lock
+    P1->>Store: Read config
+    Store-->>P1: Version 1
+    P2->>Store: Read config
+    Store-->>P2: Version 1
+    P1->>Store: compare_and_set(expected 1)
+    Store-->>P1: Version 2 written
+    P2->>Store: compare_and_set(expected 1)
+    Store-->>P2: Refused (version 2 stored)
+    P2->>Store: Re-read config, re-apply change
+    Store-->>P2: Version 2
+    P2->>Store: compare_and_set(expected 2)
+    Store-->>P2: Version 3 written
 ```
 
 ### Schema Deployment Flow

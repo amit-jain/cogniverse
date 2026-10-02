@@ -252,8 +252,8 @@ its reads carry them without writing to the store.
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
 | `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id="your_org:production", service="backend", *, replace=True)` | Add/update a backend profile, then notify live backends in persistence order; `replace=False` raises `BackendProfileExistsError` when the name is already stored, checked in the same compare-and-set as the write |
-| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and notifies live backends with the merged profile |
+| `add_backend_profile(profile, tenant_id="your_org:production", service="backend", *, replace=True)` | Add/update a backend profile; `replace=False` raises `BackendProfileExistsError` when the name is already stored, checked in the same compare-and-set as the write |
+| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and returns the merged profile |
 | `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
 | `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
 
@@ -265,7 +265,14 @@ lands first, so no process's profile change is overwritten. A change that
 leaves the stored config as it was writes no new version (startup's
 `reaffirm_system_profiles` on every worker writes once). A write that loses
 every attempt raises `ConfigWriteConflictError`, and a store failure raises;
-either way nothing is written and the profile-change listener is not called.
+either way nothing is written.
+
+Searches read profile writes from the store: the shared search backend
+resolves the querying tenant's profiles per request through `get_config`, so
+a write is searchable on the writing process at once and on every other
+process and replica within `scoped_config_max_staleness_s` (60 s by default,
+about `scoped_config_refresh_s` for a tenant searched continuously). Nothing
+pushes profile changes into backend instances.
 | `get_config_value(tenant_id, scope, service, config_key, default=None)` | Get arbitrary config value by scope |
 | `set_config_value(tenant_id, scope, service, config_key, config_value)` | Set arbitrary config value by scope |
 | `get_all_configs(tenant_id, scope=None)` | Get all configs for a tenant, optionally filtered by scope |

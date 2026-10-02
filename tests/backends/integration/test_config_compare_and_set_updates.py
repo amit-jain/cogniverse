@@ -30,7 +30,10 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigStoreUnavailableError,
     ConfigWriteConflictError,
 )
-from cogniverse_vespa.config.config_store import VespaConfigStore
+from cogniverse_vespa.config.config_store import (
+    _CONFIG_STORE_READ_MAX_ATTEMPTS,
+    VespaConfigStore,
+)
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_vespa]
@@ -367,13 +370,8 @@ def _profile(name: str, model: str = "") -> BackendProfileConfig:
     )
 
 
-def _manager(port: int, notifications: list | None = None) -> ConfigManager:
-    manager = ConfigManager(store=_store(port))
-    if notifications is not None:
-        manager.set_profile_change_listener(
-            lambda event, name, config: notifications.append((event, name))
-        )
-    return manager
+def _manager(port: int) -> ConfigManager:
+    return ConfigManager(store=_store(port))
 
 
 def _stored_profiles(store: VespaConfigStore, tenant: str) -> dict:
@@ -496,12 +494,11 @@ class TestProfileChangesAcrossWriters:
                 manager.store.close()
             _delete(store, tenant, ConfigScope.BACKEND)
 
-    def test_reaffirming_an_identical_profile_writes_no_version_but_notifies(
+    def test_reaffirming_an_identical_profile_writes_no_version(
         self, vespa_instance, store
     ):
         tenant = _tenant("reaffirm")
-        notifications: list = []
-        manager = _manager(vespa_instance["http_port"], notifications)
+        manager = _manager(vespa_instance["http_port"])
         try:
             manager.add_backend_profile(_profile("wiki", "m1"), tenant_id=tenant)
             manager.add_backend_profile(_profile("wiki", "m1"), tenant_id=tenant)
@@ -511,16 +508,15 @@ class TestProfileChangesAcrossWriters:
                 tenant, ConfigScope.BACKEND, "backend", "backend_config"
             )
             assert [entry.version for entry in history] == [1]
-            assert notifications == [("added", "wiki"), ("added", "wiki")]
+            assert _stored_profiles(store, tenant) == {"wiki": "m1"}
         finally:
             manager.store.close()
             _delete(store, tenant, ConfigScope.BACKEND)
 
-    def test_a_profile_change_losing_every_race_raises_and_notifies_nothing(
+    def test_a_profile_change_losing_every_race_raises_and_writes_nothing(
         self, vespa_instance, store
     ):
         tenant = _tenant("profconflict")
-        notifications: list = []
         raced = _RacedStore(
             vespa_instance["http_port"],
             store,
@@ -528,16 +524,19 @@ class TestProfileChangesAcrossWriters:
             compete=_add_competitor_profile,
         )
         manager = ConfigManager(store=raced)
-        manager.set_profile_change_listener(
-            lambda event, name, config: notifications.append((event, name))
-        )
         try:
             with pytest.raises(ConfigWriteConflictError) as caught:
                 manager.add_backend_profile(_profile("lost"), tenant_id=tenant)
 
             assert caught.value.config_id == f"{tenant}:backend:backend:backend_config"
             assert caught.value.attempts == CONFIG_UPDATE_MAX_ATTEMPTS
-            assert notifications == []
+            # Every stored version is a competitor's; the lost change wrote none.
+            assert [
+                entry.version
+                for entry in store.get_config_history(
+                    tenant, ConfigScope.BACKEND, "backend", "backend_config"
+                )
+            ] == list(range(CONFIG_UPDATE_MAX_ATTEMPTS, 0, -1))
             assert _stored_profiles(store, tenant) == {
                 f"competitor{write}": ""
                 for write in range(1, CONFIG_UPDATE_MAX_ATTEMPTS + 1)
@@ -546,21 +545,23 @@ class TestProfileChangesAcrossWriters:
             raced.close()
             _delete(store, tenant, ConfigScope.BACKEND)
 
-    def test_a_profile_change_against_an_unreachable_store_raises_and_notifies_nothing(
-        self,
-    ):
-        notifications: list = []
-        manager = _manager(DEAD_PORT, notifications)
+    def test_a_profile_change_against_an_unreachable_store_raises(self):
+        manager = _manager(DEAD_PORT)
         tenant = _tenant("profdead")
+        unreachable = (
+            "Failed to read Vespa config visit after "
+            f"{_CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
+        )
         try:
-            with pytest.raises(ConfigStoreUnavailableError):
+            with pytest.raises(ConfigStoreUnavailableError) as added:
                 manager.add_backend_profile(_profile("unwritten"), tenant_id=tenant)
-            with pytest.raises(ConfigStoreUnavailableError):
+            with pytest.raises(ConfigStoreUnavailableError) as deleted:
                 manager.delete_backend_profile("unwritten", tenant_id=tenant)
         finally:
             manager.store.close()
 
-        assert notifications == []
+        assert str(added.value).startswith(unreachable)
+        assert str(deleted.value).startswith(unreachable)
 
 
 def _add_profile_in_process(port, tenant, index, barrier, errors) -> None:

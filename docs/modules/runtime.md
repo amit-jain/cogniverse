@@ -332,7 +332,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 **Startup Sequence:**
 
 1. Before uvicorn starts, `python -m cogniverse_runtime.runtime_cli` polls the Vespa data plane and config server through `startup_wait.wait_for_startup_dependency`. `BACKEND_STARTUP_WAIT_BUDGET_S` is a logging grace (64 minutes by default, overridable with `RUNTIME_STARTUP_GRACE_SECONDS`): expiry logs one ERROR and the process keeps retrying. SIGTERM sets the helper's abort flag and exits with code 0 and a named abort log. Each attempt probes with `BACKEND_STARTUP_PROBE_TIMEOUT_S`; failed attempts sleep for `BACKEND_STARTUP_RETRY_INTERVAL_S`. A fresh backend receives metadata schemas and then waits for its feed endpoint. The chart's startupProbe owns restart timing and exceeds the grace plus probe and fresh-install allowances. Uvicorn starts once the feed endpoint is ready, so the wait and any metadata bootstrap run once per pod; the lifespan then initializes the application in every worker (see [Deployment](#deployment)).
-2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
+2. Load configuration via `ConfigManager`
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router

@@ -126,10 +126,6 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Persistent session routing target",
         "s",
     ),
-    "tests/backends/unit/test_profile_change_listener_chain.py": (
-        "Configuration listener event fixtures",
-        "safe to_delete",
-    ),
     "tests/backends/unit/test_query_metadata_status_check.py": (
         "Injected metadata query target",
         "agent_memories_acme x",

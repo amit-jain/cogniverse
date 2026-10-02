@@ -218,25 +218,6 @@ class SearchBackend(ABC):
         """
         pass
 
-    # -----------------------------------------------------------------
-    # Runtime profile mutation
-    # -----------------------------------------------------------------
-    # Backends cache a `profiles` dict at startup so profile resolution
-    # at query time is a cheap in-memory lookup. When new profiles are
-    # added dynamically (via ConfigManager.add_backend_profile or
-    # POST /admin/profiles), the runtime's BackendRegistry fans the
-    # change out to every cached backend by invoking these hooks.
-
-    @abstractmethod
-    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
-        """Register a new profile at runtime."""
-        pass
-
-    @abstractmethod
-    def remove_profile(self, profile_name: str) -> None:
-        """Unregister a profile at runtime."""
-        pass
-
     @abstractmethod
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """

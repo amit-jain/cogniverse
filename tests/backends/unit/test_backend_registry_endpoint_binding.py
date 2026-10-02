@@ -32,7 +32,6 @@ class RecordingSearchBackend(SearchBackend):
         self.schema_loader = schema_loader
         self.config_manager = config_manager
         self.schema_registry = None
-        self.profiles: dict[str, dict] = {}
         self.config: dict = {}
         self.closed = False
 
@@ -54,12 +53,6 @@ class RecordingSearchBackend(SearchBackend):
 
     def get_statistics(self) -> dict:
         return {}
-
-    def add_profile(self, profile_name: str, profile_config: dict) -> None:
-        self.profiles[profile_name] = dict(profile_config)
-
-    def remove_profile(self, profile_name: str) -> None:
-        self.profiles.pop(profile_name, None)
 
     def get_embedding_requirements(self, schema_name: str) -> dict:
         return {}
@@ -489,50 +482,48 @@ class TestEvictionReleasesTheBackend:
         assert "http://127.0.0.1:41004" in str(excinfo.value)
 
 
-class TestProfileFanoutReportsEveryFailure:
-    def test_add_profile_raises_naming_the_failed_backend_and_updates_the_rest(
-        self, registry
+class TestProfileWritesLeaveCachedBackends:
+    """A profile write changes the config store only. Searches resolve the
+    querying tenant's profiles per request, so every cached backend keeps its
+    identity and the config it was initialized with."""
+
+    def test_a_profile_added_and_deleted_rebuilds_and_mutates_no_backend(
+        self, registry, config_manager, schema_loader
     ):
-        from cogniverse_core.registries.backend_registry import ProfileFanoutError
+        import copy
+        import uuid
 
-        good = RecordingSearchBackend(None, None, None)
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
-        class RejectingBackend(RecordingSearchBackend):
-            def add_profile(self, profile_name, profile_config):
-                raise RuntimeError("schema not deployed")
+        backend = _search(
+            registry,
+            config_manager,
+            schema_loader,
+            ENDPOINT_A,
+            profiles={"startup": {"type": "video"}},
+        )
+        initialized_with = copy.deepcopy(backend.config)
+        cached = sorted(registry._backend_instances.keys())
+        tenant = f"profile_write_{uuid.uuid4().hex[:8]}"
 
-        bad = RejectingBackend(None, None, None)
-        BackendRegistry._backend_instances.set("search_good@http://a:1", good)
-        BackendRegistry._backend_instances.set("search_bad@http://b:2", bad)
+        config_manager.add_backend_profile(
+            BackendProfileConfig(
+                profile_name="runtime_added",
+                type="video",
+                schema_name="video_colpali_smol500_mv_frame",
+                embedding_model="vidore/colsmol-500m",
+            ),
+            tenant_id=tenant,
+        )
+        assert (
+            config_manager.delete_backend_profile("runtime_added", tenant_id=tenant)
+            is True
+        )
 
-        with pytest.raises(ProfileFanoutError) as excinfo:
-            BackendRegistry.add_profile_to_backends("p", {"type": "video"})
-
-        assert excinfo.value.failures == {
-            "search_bad@http://b:2": "RuntimeError: schema not deployed"
-        }
-        assert excinfo.value.profile_name == "p"
-        assert good.profiles == {"p": {"type": "video"}}
-
-    def test_remove_profile_raises_naming_the_failed_backend(self, registry):
-        from cogniverse_core.registries.backend_registry import ProfileFanoutError
-
-        good = RecordingSearchBackend(None, None, None)
-        good.profiles = {"p": {"type": "video"}}
-
-        class RejectingBackend(RecordingSearchBackend):
-            def remove_profile(self, profile_name):
-                raise KeyError("locked")
-
-        bad = RejectingBackend(None, None, None)
-        BackendRegistry._backend_instances.set("search_good@http://a:1", good)
-        BackendRegistry._backend_instances.set("search_bad@http://b:2", bad)
-
-        with pytest.raises(ProfileFanoutError) as excinfo:
-            BackendRegistry.remove_profile_from_backends("p")
-
-        assert excinfo.value.failures == {"search_bad@http://b:2": "KeyError: 'locked'"}
-        assert good.profiles == {}
+        assert _search(registry, config_manager, schema_loader, ENDPOINT_A) is backend
+        assert backend.config == initialized_with
+        assert sorted(registry._backend_instances.keys()) == cached
+        assert backend.closed is False
 
 
 class TestVespaStoreSourceIsCanonical:

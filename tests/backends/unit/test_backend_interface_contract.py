@@ -63,14 +63,30 @@ def test_real_vespa_ingest_stream_accepts_schema_name():
     )
 
 
-def test_runtime_profile_mutation_is_required_and_matches_real_backends():
-    assert {"add_profile", "remove_profile"} <= SearchBackend.__abstractmethods__
-    assert _params(VespaSearchBackend.add_profile) == _params(SearchBackend.add_profile)
-    assert _params(VespaSearchBackend.remove_profile) == _params(
-        SearchBackend.remove_profile
-    )
-    assert _params(VespaBackend.add_profile) == _params(SearchBackend.add_profile)
-    assert _params(VespaBackend.remove_profile) == _params(SearchBackend.remove_profile)
+_PROFILE_MUTATION = ("add_profile", "remove_profile")
+
+
+def _profile_mutation(cls) -> list[str]:
+    return [name for name in _PROFILE_MUTATION if hasattr(cls, name)]
+
+
+def test_search_backends_hold_no_profiles_a_profile_write_must_update():
+    """Searches resolve the querying tenant's profiles from the config store
+    per request, so neither the ABCs nor the real backends take profile
+    changes."""
+    assert sorted(SearchBackend.__abstractmethods__) == [
+        "batch_get_documents",
+        "get_document",
+        "get_embedding_requirements",
+        "get_statistics",
+        "health_check",
+        "initialize",
+        "search",
+    ]
+    assert _profile_mutation(SearchBackend) == []
+    assert _profile_mutation(Backend) == []
+    assert _profile_mutation(VespaSearchBackend) == []
+    assert _profile_mutation(VespaBackend) == []
 
 
 class _InitializationProbe:

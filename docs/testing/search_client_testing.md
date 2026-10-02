@@ -182,11 +182,11 @@ are covered by separate test files:
 |---|---|
 | `tests/backends/unit/test_build_query_inputs.py` | `_build_query` binds every declared float input (`qt`/`qtb`/`q`/`acoustic_query`), not just the common ones |
 | `tests/backends/unit/test_filter_condition_quoting.py` | `_build_filter_conditions` produces well-formed, correctly quoted YQL for every filter shape |
-| `tests/backends/unit/test_search_backend_dynamic_profiles.py` | Runtime `add_profile` / `remove_profile` on a live backend instance |
-| `tests/backends/unit/test_profile_change_listener_chain.py` | `ConfigManager.add_backend_profile` → `profile_change_listener` → `BackendRegistry.add_profile_to_backends` → `VespaSearchBackend.add_profile` wiring |
+| `tests/backends/unit/test_search_backend_dynamic_profiles.py` | Per-request profile resolution: a profile the searching tenant stored after the backend was built resolves, another tenant's is neither resolved nor listed, a deleted one stops resolving, concurrent tenants each resolve their own, and an unreadable store raises |
 | `tests/backends/unit/test_search_metrics.py` | `SearchMetrics` latency window stays bounded |
-| `tests/backends/integration/test_dynamic_profile_search_visibility.py` | A profile added at runtime is immediately searchable (real Vespa) |
-| `tests/runtime/integration/test_dynamic_profile_visibility.py` | `POST /admin/profiles` → `backend.search()` sees the new profile end-to-end |
+| `tests/backends/integration/test_dynamic_profile_search_visibility.py` | A profile added at runtime is immediately searchable by its tenant alone, and stops resolving once deleted (real Vespa) |
+| `tests/runtime/integration/test_dynamic_profile_visibility.py` | `POST /admin/profiles` → `backend.search()` sees the new profile end-to-end for its tenant, not for another |
+| `tests/runtime/integration/test_runtime_profile_visibility.py` | Across worker processes: a profile added or deleted on one worker reaches another worker's searches within the config manager's staleness bound; another tenant never resolves it; a document fed into a runtime-added profile is stored embedded and searchable |
 | `tests/runtime/integration/test_search_integration.py` | Full router → ConfigManager → BackendRegistry → SchemaLoader wiring with a real ColPali query encoder |
 | `tests/runtime/integration/test_export_embeddings_real_vespa.py` | `export_embeddings` filtering and Document-v1 selection escaping |
 | `tests/runtime/integration/test_tenant_extensibility.py` | Tenant-scoped instructions/memory round-tripped through the real Vespa config store |

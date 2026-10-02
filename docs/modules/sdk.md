@@ -180,11 +180,6 @@ class Backend(IngestionBackend, SearchBackend):
     # health_check() -> bool
     # get_embedding_requirements(schema_name) -> Dict[str, Any]
 
-    # Inherited from SearchBackend (concrete no-ops - override to support
-    # runtime profile mutation without a restart):
-    # add_profile(profile_name, profile_config) -> None
-    # remove_profile(profile_name) -> None
-
     # Inherited from IngestionBackend (abstract - must implement):
     # ingest_documents(documents, schema_name, operation_type="feed") -> Dict[str, Any]
     # ingest_stream(documents, schema_name) -> Iterator[Dict[str, Any]]
@@ -782,8 +777,6 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
-- `add_profile(profile_name, profile_config)`: Required runtime registration of a new ranking/retrieval profile
-- `remove_profile(profile_name)`: Required runtime removal of a ranking/retrieval profile
 
 **Methods (IngestionBackend):**
 

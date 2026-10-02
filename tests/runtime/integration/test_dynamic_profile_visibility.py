@@ -1,10 +1,10 @@
 """Runtime: POST /admin/profiles → backend.search() returns ingested doc.
 
-Real integration, real content assertion. The point of this test is
-to prove the runtime-startup wiring (ConfigManager +
-profile_change_listener set up as `main.py` does) makes a profile
-posted through the HTTP admin API immediately available to the
-backend search layer.
+Real integration, real content assertion. A profile posted through the HTTP
+admin API is immediately searchable by its tenant on the shared search
+backend, which resolves the searching tenant's profiles from the config store
+per request; another tenant's search neither resolves nor lists it, and once
+DELETE /admin/profiles removes it the tenant's search refuses it.
 
 We bypass the /search/ HTTP endpoint because it routes through
 `QueryEncoderFactory` which only knows ColPali/ColQwen/ColBERT/
@@ -12,22 +12,11 @@ X-CLIP encoders — not generic text embedders like
 DenseOn. The backend search layer accepts pre-computed
 query_embeddings directly, so we call it that way and assert the
 ingested document is returned by id.
-
-Flow:
-  1. Cached VespaSearchBackend starts WITHOUT our target profile.
-  2. POST /admin/profiles (deploy_schema=True) — triggers the
-     profile_change_listener fanout and a Vespa schema deploy.
-  3. Wait for Vespa content cluster to activate the new schema.
-  4. PUT a real document with a deterministic 768-dim vector to the
-     tenant-scoped Vespa schema.
-  5. backend.search(query_dict=..., query_embeddings=same_vector) —
-     asserts the ingested document id appears in the results.
-  6. DELETE /admin/profiles/<name> and verify removal from the
-     cached backend.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import time
 import uuid
@@ -39,6 +28,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.routers import admin, search
 from tests.utils.async_polling import wait_for_vespa_indexing
 
@@ -58,17 +48,8 @@ def wired_app(
     real_telemetry,
     clean_backend_registry,
 ):
-    """FastAPI app with admin router and profile_change_listener wired,
-    mirroring runtime startup."""
-
-    def listener(event, name, cfg):
-        if event == "added" and cfg is not None:
-            BackendRegistry.add_profile_to_backends(name, cfg)
-        elif event == "removed":
-            BackendRegistry.remove_profile_from_backends(name)
-
-    config_manager.set_profile_change_listener(listener)
-
+    """FastAPI app with the admin and search routers wired as runtime startup
+    wires them."""
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
 
@@ -85,8 +66,6 @@ def wired_app(
 
     with TestClient(app) as client:
         yield client
-
-    config_manager.set_profile_change_listener(None)
 
 
 def _wait_for_vespa_schema(vespa_url: str, schema: str, timeout: float = 120.0) -> None:
@@ -112,6 +91,18 @@ def _wait_for_vespa_schema(vespa_url: str, schema: str, timeout: float = 120.0) 
     raise AssertionError(f"Vespa never activated schema {schema} after {timeout}s")
 
 
+def _refused_listing(live_backend, query_dict: dict) -> list:
+    """The profiles a "not found" refusal lists for this search."""
+    with pytest.raises(ValueError) as refused:
+        live_backend.search(query_dict=query_dict)
+    prefix = (
+        f"Requested profile '{query_dict['profile']}' not found. Available profiles: "
+    )
+    message = str(refused.value)
+    assert message.startswith(prefix), message
+    return ast.literal_eval(message[len(prefix) :])
+
+
 @pytest.mark.integration
 def test_admin_profile_post_makes_backend_search_return_ingested_doc(
     wired_app, vespa_instance, config_manager, schema_loader
@@ -122,6 +113,7 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
     VespaSearchBackend accessed after HTTP profile registration.
     """
     tenant_id = f"http_be_{uuid.uuid4().hex[:8]}"
+    other_tenant = f"http_be_other_{uuid.uuid4().hex[:8]}"
     profile_name = f"http_be_probe_{uuid.uuid4().hex[:8]}"
 
     # --- Cold cached backend has no target profile ---------------------
@@ -138,7 +130,25 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
-    assert profile_name not in live_backend.profiles
+    rng = np.random.default_rng(42)
+    vector = rng.random(768).astype(np.float32).tolist()
+    unique_token = f"zxqv_{uuid.uuid4().hex[:12]}"
+
+    def query(tenant: str) -> dict:
+        return {
+            "query": unique_token,
+            "type": "document",
+            "profile": profile_name,
+            "strategy": "semantic_search",
+            "tenant_id": tenant,
+            "top_k": 5,
+            "query_embeddings": np.asarray(vector, dtype=np.float32),
+        }
+
+    # --- Not registered yet: the tenant's search refuses it ---------
+    assert profile_name not in _refused_listing(live_backend, query(tenant_id))
+    # The search built the backend's own profiles; nothing below changes them.
+    built_with = dict(live_backend.profiles)
 
     # --- POST /admin/profiles with schema deploy --------------------
     create_resp = wired_app.post(
@@ -156,30 +166,29 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
             "deploy_schema": True,
         },
     )
-    assert create_resp.status_code in (200, 201), (
+    assert create_resp.status_code == 201, (
         f"admin /profiles failed: {create_resp.status_code} {create_resp.text}"
     )
     created = create_resp.json()
     assert created["schema_deployed"] is True
     tenant_schema = created["tenant_schema_name"]
-    assert tenant_schema
+    assert tenant_schema == f"agent_memories_{tenant_id}_{tenant_id}"
 
-    # --- Listener fanout landed on cached backend -------------------
-    live = live_backend.profiles.get(profile_name)
-    assert live is not None, (
-        "POST /admin/profiles didn't propagate to cached search backend"
+    # --- The tenant's search resolves it from the store, per request --
+    resolved = (
+        get_config(tenant_id=tenant_id, config_manager=config_manager)
+        .get("backend")
+        .get("profiles")[profile_name]
     )
-    assert live["schema_name"] == "agent_memories"
-    assert live["embedding_type"] == "single_vector"
+    assert resolved["schema_name"] == "agent_memories"
+    assert resolved["embedding_type"] == "single_vector"
+    assert live_backend.profiles == built_with
 
     # --- Wait for Vespa content cluster to apply schema -------------
     vespa_url = f"http://localhost:{vespa_instance['http_port']}"
     _wait_for_vespa_schema(vespa_url, tenant_schema)
 
     # --- PUT a real document with deterministic 768-dim vector ------
-    rng = np.random.default_rng(42)
-    vector = rng.random(768).astype(np.float32).tolist()
-    unique_token = f"zxqv_{uuid.uuid4().hex[:12]}"
     doc_id = f"http_be_probe_{unique_token}"
 
     put_resp = requests.post(
@@ -197,54 +206,35 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
         },
         timeout=10,
     )
-    assert put_resp.status_code in (200, 201), (
+    assert put_resp.status_code == 200, (
         f"Direct Vespa PUT failed: {put_resp.status_code} {put_resp.text[:300]}"
     )
 
     wait_for_vespa_indexing(delay=3)
 
-    # --- backend.search() with identical vector → doc is top hit ----
-    results = live_backend.search(
-        query_dict={
-            "query": unique_token,
-            "type": "document",
-            "profile": profile_name,
-            "strategy": "semantic_search",
-            "tenant_id": tenant_id,
-            "top_k": 5,
-            "query_embeddings": np.asarray(vector, dtype=np.float32),
+    # --- backend.search() with identical vector → the doc is the only hit
+    results = live_backend.search(query_dict=query(tenant_id))
+    assert [result.document.id for result in results] == [doc_id], (
+        f"backend.search for profile {profile_name!r} on schema "
+        f"{tenant_schema!r} did not return exactly the ingested document."
+    )
+
+    # --- Another tenant neither resolves nor sees it -----------------
+    visible_to_other = list(
+        {
+            **built_with,
+            **get_config(tenant_id=other_tenant, config_manager=config_manager)
+            .get("backend")
+            .get("profiles"),
         }
     )
-    assert isinstance(results, list)
-    assert len(results) > 0, (
-        f"backend.search returned zero hits for profile {profile_name!r} "
-        f"on schema {tenant_schema!r}. Doc {doc_id!r} should be top hit."
-    )
+    assert profile_name not in visible_to_other
+    assert _refused_listing(live_backend, query(other_tenant)) == visible_to_other
 
-    hit_ids: list[str] = []
-    for r in results:
-        rid = getattr(r, "id", None) or getattr(r, "document_id", None)
-        if rid is None and hasattr(r, "document") and r.document is not None:
-            rid = getattr(r.document, "id", None)
-        if rid is None and isinstance(r, dict):
-            rid = (
-                r.get("id")
-                or r.get("document_id")
-                or ((r.get("document") or {}).get("id"))
-            )
-        if rid:
-            hit_ids.append(str(rid))
-
-    assert doc_id in hit_ids, (
-        f"backend.search returned {len(results)} hits but none matched "
-        f"the ingested document id {doc_id!r}. Hit ids: {hit_ids!r}. "
-        "Document ingested after HTTP profile registration was not "
-        "retrievable via backend search — visibility gap regressed."
-    )
-
-    # --- DELETE /admin/profiles/<name> removes from cached backend --
+    # --- DELETE /admin/profiles/<name>: the tenant's search refuses it --
     del_resp = wired_app.delete(
         f"/admin/profiles/{profile_name}", params={"tenant_id": tenant_id}
     )
-    assert del_resp.status_code in (200, 204)
-    assert profile_name not in live_backend.profiles
+    assert del_resp.status_code == 200, del_resp.text
+    assert profile_name not in _refused_listing(live_backend, query(tenant_id))
+    assert live_backend.profiles == built_with

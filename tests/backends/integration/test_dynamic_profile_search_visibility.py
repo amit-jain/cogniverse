@@ -1,31 +1,22 @@
-"""Integration test for dynamic profile visibility at search time.
+"""Profiles added at runtime resolve per tenant on the cached search backend.
 
-Existing `test_tenant_schema_lifecycle.py` deploys schemas and asserts
-against the SchemaRegistry's own tracking — it never calls a real
-`backend.search(...)` against a dynamically-added profile, so it
-never exercised the in-memory profile visibility path that caused
-the agent_memories retry storm.
+The shared ``VespaSearchBackend`` holds the profiles it was built with. A
+profile registered later through ``ConfigManager.add_backend_profile`` (the
+path the admin router uses) reaches a search only through the searching
+tenant's config, read per request:
 
-This test closes that gap with hard assertions on real data:
+    1. The cached backend refuses the profile before it is registered.
+    2. Once registered for a tenant, that tenant's search resolves it and
+       returns a real document fed into the tenant-scoped schema.
+    3. Another tenant's search refuses it and does not list it.
+    4. Once deleted, the tenant's search refuses it again.
 
-    1. Construct a cached `VespaSearchBackend` with NO profiles — the
-       target profile must be absent.
-    2. Register the profile at runtime via
-       `ConfigManager.add_backend_profile` (the same path the admin
-       router uses).
-    3. Deploy its schema to Vespa.
-    4. Ingest a real document with a unique token into the tenant-
-       scoped schema.
-    5. Wait for Vespa to index.
-    6. Call `backend.search(...)` with the new profile and assert we
-       get back a document that contains the unique token.
-
-If any step fails the test fails loudly — no swallowed exceptions, no
-"did not raise" soft assertions.
+The backend's own profiles never change along the way.
 """
 
 from __future__ import annotations
 
+import ast
 import logging
 import uuid
 from pathlib import Path
@@ -56,14 +47,6 @@ def temp_config_manager(vespa_instance):
             backend_port=vespa_instance["http_port"],
         )
     )
-
-    def listener(event, name, cfg):
-        if event == "added" and cfg is not None:
-            BackendRegistry.add_profile_to_backends(name, cfg)
-        elif event == "removed":
-            BackendRegistry.remove_profile_from_backends(name)
-
-    cm.set_profile_change_listener(listener)
     return cm
 
 
@@ -79,21 +62,55 @@ def clean_registry():
     BackendRegistry._backend_instances.clear()
 
 
+def _search_backend(registry, vespa_instance, config_manager, schema_loader):
+    return registry.get_search_backend(
+        name="vespa",
+        config={
+            "backend": {
+                "url": "http://localhost",
+                "config_port": vespa_instance["config_port"],
+                "port": vespa_instance["http_port"],
+            }
+        },
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+
+def _refused_listing(search_backend, query_dict: dict) -> list:
+    """The profiles a "not found" refusal lists for this search."""
+    with pytest.raises(ValueError) as refused:
+        search_backend.search(query_dict=query_dict)
+    prefix = (
+        f"Requested profile '{query_dict['profile']}' not found. Available profiles: "
+    )
+    message = str(refused.value)
+    assert message.startswith(prefix), message
+    return ast.literal_eval(message[len(prefix) :])
+
+
+def _hit_ids(results) -> list[str]:
+    return [result.document.id for result in results]
+
+
+def _searched_profiles(config_manager, tenant_id: str) -> dict:
+    """The tenant's profiles as every search reads them per request."""
+    from cogniverse_foundation.config.utils import get_config
+
+    return get_config(tenant_id=tenant_id, config_manager=config_manager).get(
+        "backend"
+    )["profiles"]
+
+
 @pytest.mark.integration
-def test_register_profile_then_ingest_and_search_returns_the_document(
+def test_a_profile_registered_for_a_tenant_at_runtime_is_searchable_by_it_alone(
     vespa_instance, temp_config_manager, schema_loader, clean_registry
 ):
     """Real ingest + real search + content assertion.
 
-    End-to-end proof that a profile registered at runtime via
-    `ConfigManager.add_backend_profile` is (a) propagated to the cached
-    `VespaSearchBackend.profiles`, and (b) usable for an actual search
-    that returns a document ingested via direct Vespa PUT.
-
-    Uses `agent_memories` schema (768-dim dense single-vector) so we
-    don't need a model at test time — a deterministic pseudo-embedding
-    is sufficient for the search to succeed (the query uses the SAME
-    vector as the document, so distance is 0 and it's the top hit).
+    Uses the `agent_memories` schema (768-dim dense single-vector) so no
+    model is needed at test time — the query uses the SAME vector as the
+    document, so distance is 0 and it is the top hit.
     """
     import json
     import time
@@ -105,27 +122,34 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
 
     registry = BackendRegistry.get_instance()
     tenant_id = f"dyn_roundtrip_{uuid.uuid4().hex[:8]}"
-    # Profile name must survive as an in-memory dict key; pick something unique.
+    other_tenant = f"dyn_other_{uuid.uuid4().hex[:8]}"
     profile_name = f"mem_probe_{uuid.uuid4().hex[:8]}"
 
-    # --- Cached search backend starts WITHOUT our profile ----------
-    search_backend = registry.get_search_backend(
-        name="vespa",
-        config={
-            "backend": {
-                "url": "http://localhost",
-                "config_port": vespa_instance["config_port"],
-                "port": vespa_instance["http_port"],
-            }
-        },
-        config_manager=temp_config_manager,
-        schema_loader=schema_loader,
+    search_backend = _search_backend(
+        registry, vespa_instance, temp_config_manager, schema_loader
     )
-    assert profile_name not in search_backend.profiles
 
-    # --- Register profile via ConfigManager (fires listener) -------
-    # Schema is agent_memories (already defined in configs/schemas/),
-    # 768-dim dense single-vector. semantic_search ranking strategy.
+    rng = np.random.default_rng(42)
+    vector = rng.random(768).astype(np.float32).tolist()
+    unique_token = f"zxqv_{uuid.uuid4().hex[:12]}"
+
+    def query(tenant: str, top_k: int = 5) -> dict:
+        return {
+            "query": unique_token,
+            "type": "document",
+            "profile": profile_name,
+            "strategy": "semantic_search",
+            "tenant_id": tenant,
+            "top_k": top_k,
+            "query_embeddings": np.asarray(vector, dtype=np.float32),
+        }
+
+    # --- Not registered yet: the tenant's search refuses it ---------
+    assert profile_name not in _refused_listing(search_backend, query(tenant_id))
+    # The search built the backend's own profiles; nothing below changes them.
+    built_with = dict(search_backend.profiles)
+
+    # --- Register the profile for the searching tenant -------------
     profile = BackendProfileConfig(
         profile_name=profile_name,
         type="document",
@@ -135,9 +159,8 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         schema_config={"embedding_dims": 768},
     )
     temp_config_manager.add_backend_profile(
-        profile, tenant_id="test:unit", service="backend"
+        profile, tenant_id=tenant_id, service="backend"
     )
-    assert profile_name in search_backend.profiles
 
     # --- Deploy agent_memories schema for our tenant via registry ---
     ingestion_backend = registry.get_ingestion_backend(
@@ -160,21 +183,17 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         tenant_id, "agent_memories"
     )
 
-    # Wait for Vespa content cluster to pick up the new schema.
-    # The ApplicationPackage deploy is async — the config server accepts
-    # it immediately but content nodes need a few seconds to activate.
-    # Poll the Vespa search endpoint until it can resolve the new type.
+    # The ApplicationPackage deploy is async — the config server accepts it
+    # immediately but content nodes need a few seconds to activate.
     vespa_url = f"http://localhost:{vespa_instance['http_port']}"
-    for attempt in range(30):
+    for _ in range(30):
         check = requests.get(
             f"{vespa_url}/search/",
             params={"yql": f"select * from {tenant_schema} where true limit 0"},
             timeout=5,
         )
-        if check.status_code == 200:
-            root = check.json().get("root", {})
-            if "errors" not in root:
-                break
+        if check.status_code == 200 and "errors" not in check.json().get("root", {}):
+            break
         time.sleep(1)
     else:
         pytest.fail(
@@ -182,15 +201,7 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
             "deploy_schema returned success but content cluster didn't apply it."
         )
 
-    # --- PUT document directly to Vespa (skip complex ingest pipe) ---
-    # Deterministic seeded 768-dim vector, used for both doc and query so
-    # distance is 0 and this doc is the top hit.
-    rng = np.random.default_rng(42)
-    vector = rng.random(768).astype(np.float32).tolist()
-
-    unique_token = f"zxqv_{uuid.uuid4().hex[:12]}"
     doc_id = f"dyn_probe_{unique_token}"
-
     put_resp = requests.post(
         f"{vespa_url}/document/v1/content/{tenant_schema}/docid/{doc_id}",
         json={
@@ -206,209 +217,110 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         },
         timeout=10,
     )
-    assert put_resp.status_code in (200, 201), (
+    assert put_resp.status_code == 200, (
         f"Direct Vespa PUT failed: {put_resp.status_code} {put_resp.text[:300]}"
     )
-
-    # Wait for Vespa to index.
     wait_for_vespa_indexing(delay=3)
 
-    # --- Real search, matching embedding → doc MUST be top hit -----
-    results = search_backend.search(
-        query_dict={
-            "query": unique_token,
-            "type": "document",
-            "profile": profile_name,
-            "strategy": "semantic_search",
-            "tenant_id": tenant_id,
-            "top_k": 5,
-            "query_embeddings": np.asarray(vector, dtype=np.float32),
+    # --- The tenant's search resolves it: the document is the only hit
+    assert _hit_ids(search_backend.search(query_dict=query(tenant_id))) == [doc_id]
+    # Vespa's default query profile rejects hits > 400 unless the built query
+    # raises maxHits/maxOffset per request.
+    assert _hit_ids(search_backend.search(query_dict=query(tenant_id, 1000))) == [
+        doc_id
+    ]
+
+    # --- Another tenant neither resolves nor sees it -----------------
+    from cogniverse_foundation.config.utils import get_config
+
+    visible_to_other = list(
+        {
+            **built_with,
+            **get_config(tenant_id=other_tenant, config_manager=temp_config_manager)
+            .get("backend")
+            .get("profiles"),
         }
     )
+    assert profile_name not in visible_to_other
+    assert _refused_listing(search_backend, query(other_tenant)) == visible_to_other
 
-    assert isinstance(results, list)
-    assert len(results) > 0, (
-        f"Search for identical-vector query returned zero hits against the "
-        f"just-deployed profile {profile_name!r} on schema {tenant_schema!r}. "
-        "The document we PUT isn't retrievable — either profile propagation, "
-        "schema deployment, or Vespa indexing regressed."
+    # --- Deleted: the tenant's search refuses it again ---------------
+    assert (
+        temp_config_manager.delete_backend_profile(
+            profile_name, tenant_id=tenant_id, service="backend"
+        )
+        is True
     )
-
-    # Collect hit IDs from whatever shape the results have.
-    hit_ids: list[str] = []
-    for r in results:
-        rid = getattr(r, "id", None) or getattr(r, "document_id", None)
-        if rid is None and hasattr(r, "document") and r.document is not None:
-            rid = getattr(r.document, "id", None)
-        if rid is None and isinstance(r, dict):
-            rid = (
-                r.get("id")
-                or r.get("document_id")
-                or ((r.get("document") or {}).get("id"))
-            )
-        if rid:
-            hit_ids.append(str(rid))
-
-    assert doc_id in hit_ids, (
-        f"Search returned {len(results)} hits but none matched the "
-        f"ingested document id {doc_id!r}. Hit ids: {hit_ids!r}. "
-        "The PUT document was not retrievable via the dynamically-"
-        "registered profile — exactly the bug the fix targets."
-    )
-
-    # --- Same search with top_k above the default 400-hit cap -------
-    # Vespa's default query profile rejects hits > 400 as an illegal
-    # query unless maxHits/maxOffset are raised per request; the built
-    # query must honor any requested top_k against the real backend.
-    large_results = search_backend.search(
-        query_dict={
-            "query": unique_token,
-            "type": "document",
-            "profile": profile_name,
-            "strategy": "semantic_search",
-            "tenant_id": tenant_id,
-            "top_k": 1000,
-            "query_embeddings": np.asarray(vector, dtype=np.float32),
-        }
-    )
-    large_hit_ids: list[str] = []
-    for r in large_results:
-        rid = getattr(r, "id", None) or getattr(r, "document_id", None)
-        if rid is None and hasattr(r, "document") and r.document is not None:
-            rid = getattr(r.document, "id", None)
-        if rid is None and isinstance(r, dict):
-            rid = (
-                r.get("id")
-                or r.get("document_id")
-                or ((r.get("document") or {}).get("id"))
-            )
-        if rid:
-            large_hit_ids.append(str(rid))
-    assert doc_id in large_hit_ids, (
-        f"top_k=1000 search returned {len(large_results)} hits without the "
-        f"ingested document id {doc_id!r}. Hit ids: {large_hit_ids!r}. "
-        "Vespa rejects hits above the default 400 cap unless the query "
-        "raises maxHits/maxOffset per request."
-    )
+    assert profile_name not in _refused_listing(search_backend, query(tenant_id))
+    assert search_backend.profiles == built_with
 
 
 @pytest.mark.integration
-def test_profile_registered_via_config_manager_appears_in_live_backend(
+def test_a_profile_updated_for_a_tenant_resolves_with_its_merged_fields(
     vespa_instance, temp_config_manager, schema_loader, clean_registry
 ):
-    """Full positive-assertion round-trip against a real Vespa:
-
-    1. Construct the cached VespaSearchBackend (via registry) with NO
-       target profile.
-    2. Register the profile through `ConfigManager.add_backend_profile`
-       (the same path the admin router uses).
-    3. Verify the exact profile config appears on the live backend's
-       `profiles` dict with matching field values (schema_name,
-       embedding_model, embedding_type, schema_config).
-    4. Call `backend.search(...)` with the new profile name and assert
-       the profile-resolution phase completes (the exception the bug
-       used to fire has `"Requested profile '{name}' not found"` in
-       its message — that specific shape must not appear).
-    5. Delete the profile via `ConfigManager.delete_backend_profile`
-       and verify it's gone from the live backend.
-
-    Covers the full fanout chain with hard field-level assertions,
-    not string-contains or presence-only checks.
-    """
+    """What a tenant's search resolves for a runtime profile follows every
+    add, update and delete of it, field for field."""
     from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
     registry = BackendRegistry.get_instance()
+    tenant_id = f"dyn_fields_{uuid.uuid4().hex[:8]}"
     target_profile = f"dyn_probe_{uuid.uuid4().hex[:8]}"
 
-    search_backend = registry.get_search_backend(
-        name="vespa",
-        config={
-            "backend": {
-                "url": "http://localhost",
-                "config_port": vespa_instance["config_port"],
-                "port": vespa_instance["http_port"],
-            }
-        },
-        config_manager=temp_config_manager,
-        schema_loader=schema_loader,
+    search_backend = _search_backend(
+        registry, vespa_instance, temp_config_manager, schema_loader
     )
-    # Step 1: cold cache, target absent.
-    assert target_profile not in search_backend.profiles
 
-    # Step 2: register via ConfigManager → listener → fanout.
-    profile = BackendProfileConfig(
-        profile_name=target_profile,
-        type="document",
-        schema_name="document_text",
-        embedding_model="lightonai/DenseOn",
-        embedding_type="single_vector",
-        schema_config={"embedding_dims": 768},
-    )
+    def probe() -> dict:
+        return {
+            "query": "probe",
+            "type": "document",
+            "profile": target_profile,
+            "tenant_id": tenant_id,
+            "top_k": 1,
+        }
+
+    assert target_profile not in _refused_listing(search_backend, probe())
+    built_with = dict(search_backend.profiles)
+
     temp_config_manager.add_backend_profile(
-        profile, tenant_id="test:unit", service="backend"
+        BackendProfileConfig(
+            profile_name=target_profile,
+            type="document",
+            schema_name="document_text",
+            embedding_model="lightonai/DenseOn",
+            embedding_type="single_vector",
+            schema_config={"embedding_dims": 768},
+        ),
+        tenant_id=tenant_id,
+        service="backend",
     )
 
-    # Step 3: full field-level assertion on what the live backend sees.
-    live = search_backend.profiles.get(target_profile)
-    assert live is not None, (
-        "Profile registered via ConfigManager did NOT reach the cached "
-        "search backend — the listener → BackendRegistry → VespaSearchBackend "
-        "chain is broken."
-    )
-    assert live["schema_name"] == "document_text"
-    assert live["embedding_model"] == "lightonai/DenseOn"
-    assert live["embedding_type"] == "single_vector"
-    assert live["schema_config"] == {"embedding_dims": 768}
-    assert live["type"] == "document"
+    resolved = _searched_profiles(temp_config_manager, tenant_id)[target_profile]
+    assert resolved["schema_name"] == "document_text"
+    assert resolved["embedding_model"] == "lightonai/DenseOn"
+    assert resolved["embedding_type"] == "single_vector"
+    assert resolved["schema_config"] == {"embedding_dims": 768}
+    assert resolved["type"] == "document"
 
-    # Step 4: partial update reaches the same live backend with merged fields.
     temp_config_manager.update_backend_profile(
         target_profile,
         {"embedding_model": "updated/DenseOn"},
-        base_tenant_id="test:unit",
-        target_tenant_id="test:unit",
+        base_tenant_id=tenant_id,
+        target_tenant_id=tenant_id,
         service="backend",
     )
-    updated_live = search_backend.profiles.get(target_profile)
-    assert updated_live == {
-        **live,
+    assert _searched_profiles(temp_config_manager, tenant_id)[target_profile] == {
+        **resolved,
         "embedding_model": "updated/DenseOn",
     }
 
-    # Step 5: profile resolution at search time must pass.
-    resolution_ok = False
-    try:
-        search_backend.search(
-            query_dict={
-                "query": "probe",
-                "type": "document",
-                "profile": target_profile,
-                "tenant_id": "dyn_probe_tenant",
-                "top_k": 1,
-            }
+    assert (
+        temp_config_manager.delete_backend_profile(
+            target_profile, tenant_id=tenant_id, service="backend"
         )
-        resolution_ok = True
-    except ValueError as exc:
-        msg = str(exc)
-        # The bug we're guarding against raises exactly this shape.
-        if f"Requested profile '{target_profile}' not found" in msg:
-            pytest.fail(
-                "Profile-resolution at search-time still raises the "
-                f"exact bug signature: {msg}"
-            )
-        # Any other ValueError (strategy/schema) is past the bug surface.
-        resolution_ok = True
-    except Exception:
-        # Non-ValueError exceptions are downstream of profile resolution.
-        resolution_ok = True
-    assert resolution_ok, "search should have at least reached profile resolution"
-
-    # Step 6: delete → profile disappears from the live backend.
-    deleted = temp_config_manager.delete_backend_profile(
-        target_profile, tenant_id="test:unit", service="backend"
+        is True
     )
-    assert deleted is True
-    assert target_profile not in search_backend.profiles, (
-        "delete_backend_profile propagated to ConfigStore but NOT to the "
-        "cached search backend — remove_profile fanout regressed."
-    )
+    assert target_profile not in _searched_profiles(temp_config_manager, tenant_id)
+    assert target_profile not in _refused_listing(search_backend, probe())
+    assert search_backend.profiles == built_with

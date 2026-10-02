@@ -514,30 +514,24 @@ class TestMem0MemoryAwareMixinIntegration:
 
 @pytest.mark.integration
 class TestMem0ProfileRegistrationIntegration:
-    """Regression guard: Mem0 must register agent_memories through
-    ConfigManager so the shared VespaSearchBackend learns about it.
+    """Regression guard: a fresh tenant's Mem0 search resolves
+    agent_memories on the shared VespaSearchBackend.
 
-    Before the fix Mem0 only added the profile to a local config dict
-    handed to a tenant-specific ingestion backend. The shared search
-    backend kept its startup snapshot, so `Mem0.search()` on a fresh
-    tenant raised `ValueError: profile 'agent_memories' not found` —
-    under concurrent suite load the retry storm wedged the FastAPI
-    event loop and cascade-failed the rest of the suite.
+    The shared search backend holds only the profiles it was built with. The
+    startup affirmation stores agent_memories under the system tenant, and
+    every search merges the system tenant's profiles for the querying tenant
+    per request; a search that missed it raised `ValueError: profile
+    'agent_memories' not found`, and under concurrent suite load the retry
+    storm wedged the FastAPI event loop.
     """
 
     def test_mem0_add_then_search_returns_the_memory_via_shared_backend(
         self, shared_memory_vespa, shared_denseon
     ):
         """Real round-trip: a cached search backend that came up without the
-        profile learns it from the startup affirmation, and a fresh tenant's
-        add_memory + search_memory then return the memory with matching
-        content.
-
-        This is the bug that surfaced as the retry storm: Mem0's write path
-        worked (writes landed in Vespa) but search went through the shared
-        VespaSearchBackend whose profiles dict was a startup snapshot with no
-        agent_memories entry — every search raised 'profile not found' and
-        retried.
+        profile resolves it for a fresh tenant once the startup affirmation
+        stored it, and that tenant's add_memory + search_memory then return
+        the memory with matching content.
         """
         import json
         from pathlib import Path
@@ -565,13 +559,6 @@ class TestMem0ProfileRegistrationIntegration:
             )
         )
 
-        def listener(event, name, cfg):
-            if event == "added" and cfg is not None:
-                BackendRegistry.add_profile_to_backends(name, cfg)
-            elif event == "removed":
-                BackendRegistry.remove_profile_from_backends(name)
-
-        config_manager.set_profile_change_listener(listener)
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Build the shared search backend BEFORE Mem0 init — mirrors a
@@ -618,13 +605,16 @@ class TestMem0ProfileRegistrationIntegration:
             schema_loader=schema_loader,
         )
 
-        # Assertion A: listener-fanout landed agent_memories on the
-        # shared backend's in-memory dict. Without this step, no amount
+        # Assertion A: the read every search of this tenant merges per
+        # request carries the stored system profile. Without it, no amount
         # of searching would work.
-        assert "agent_memories" in search_backend.profiles
-        assert search_backend.profiles["agent_memories"]["schema_name"] == (
-            "agent_memories"
-        )
+        from cogniverse_foundation.config.utils import get_config
+
+        resolved = get_config(tenant_id=tenant_id, config_manager=config_manager).get(
+            "backend"
+        )["profiles"]
+        assert resolved["agent_memories"]["type"] == "memory"
+        assert resolved["agent_memories"]["schema_name"] == "agent_memories"
 
         # Real write: a unique memory that we can search for later.
         content = (
@@ -660,7 +650,6 @@ class TestMem0ProfileRegistrationIntegration:
             manager.clear_agent_memory(tenant_id, agent_name)
         except Exception:
             pass
-        config_manager.set_profile_change_listener(None)
         BackendRegistry._backend_instances.clear()
 
 
