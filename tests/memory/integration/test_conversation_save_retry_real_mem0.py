@@ -13,6 +13,7 @@ all run the real code against the real backend.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -29,8 +30,8 @@ from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_SAVE_ATTEMPTS,
     CONVERSATION_SAVE_RETRY_BACKOFF_S,
     CONVERSATION_SAVE_TIMEOUT_S,
-    ConversationPersistFailed,
 )
+from cogniverse_runtime.session_state import ConversationPersistFailed
 from tests.memory.integration.test_dispatcher_conversation_history_real_mem0 import (
     TENANT,
     _build_manager,
@@ -47,11 +48,11 @@ FOLLOW_UP = "how many dims"
 FOLLOW_UP_REPLY = "128"
 
 
-def _retry_backoff_total() -> float:
-    """Wall time the shipped schedule sleeps when every retry is taken."""
+def _retry_backoff_total(retries: int = CONVERSATION_SAVE_ATTEMPTS - 1) -> float:
+    """Wall time the shipped schedule sleeps over its first ``retries``
+    retries; every retry by default."""
     return sum(
-        CONVERSATION_SAVE_RETRY_BACKOFF_S * 2**attempt
-        for attempt in range(CONVERSATION_SAVE_ATTEMPTS - 1)
+        CONVERSATION_SAVE_RETRY_BACKOFF_S * 2**attempt for attempt in range(retries)
     )
 
 
@@ -77,29 +78,29 @@ class _FaultyAssistantStore(ConversationStore):
         """Stop faulting: the backend the injection stood in for recovered."""
         self._remaining = 0
 
-    def store_turn(self, context_id, role, content):
+    def store_turn(self, context_id, role, content, seq):
         if role == "assistant" and self._remaining > 0:
             self._remaining -= 1
             self.attempts.append((role, "raised"))
             raise self._error_factory()
         self.attempts.append((role, "stored"))
         started = time.monotonic()
-        super().store_turn(context_id, role, content)
+        super().store_turn(context_id, role, content, seq)
         self.write_durations.append(time.monotonic() - started)
 
 
-def _dispatcher_with_faulty_store(mm, *, failures, error_factory):
+def _dispatcher_with_faulty_store(mm, ledger, *, failures, error_factory):
     store = _FaultyAssistantStore(
         mm, TENANT, failures=failures, error_factory=error_factory
     )
-    dispatcher = _dispatcher_with_real_store(mm)
+    dispatcher = _dispatcher_with_real_store(mm, ledger)
     dispatcher._conversation_store_factory = lambda _tenant_id: store
     return dispatcher, store
 
 
 @pytest.mark.asyncio
 async def test_transient_assistant_failure_retries_into_one_clean_pair(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """A blip on the assistant append is retried until it lands, and the user
     turn that already succeeded is never written twice."""
@@ -109,9 +110,11 @@ async def test_transient_assistant_failure_retries_into_one_clean_pair(
     # Two consecutive blips on the reply -- a fixed adversarial count, not one
     # derived from the shipped schedule, so a schedule that stopped retrying
     # fails here instead of quietly matching a smaller expectation.
+    blips = 2
     d, store = _dispatcher_with_faulty_store(
         mm,
-        failures=2,
+        conversation_ledger,
+        failures=blips,
         error_factory=lambda: requests.ConnectionError("denseon connection reset"),
     )
     ctx = f"chat{uuid.uuid4().hex[:10]}"
@@ -139,17 +142,17 @@ async def test_transient_assistant_failure_retries_into_one_clean_pair(
         {"role": "assistant", "content": REPLY},
     ]
     assert reader.get_missing_assistant_markers(ctx) == []
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
-    assert d.conversation_persist_failure(TENANT, ctx) is None
-    # The retried save slept the whole shipped backoff schedule and still fit
-    # the budget the save is bounded by.
-    assert elapsed > _retry_backoff_total()
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
+    assert await d.conversation_persist_failure(TENANT, ctx) is None
+    # The save slept the backoff of both retries it took and still fit the
+    # budget it is bounded by.
+    assert elapsed > _retry_backoff_total(blips)
     assert elapsed < CONVERSATION_SAVE_TIMEOUT_S
 
 
 @pytest.mark.asyncio
 async def test_exhausted_retries_keep_the_user_turn_and_mark_the_missing_reply(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """When the reply cannot be stored the user turn stays, a durable marker
     names the failure, and the next turn reads an unanswered user message --
@@ -159,6 +162,7 @@ async def test_exhausted_retries_keep_the_user_turn_and_mark_the_missing_reply(
     )
     d, store = _dispatcher_with_faulty_store(
         mm,
+        conversation_ledger,
         failures=None,
         error_factory=lambda: httpx.ConnectError("vespa refused the feed"),
     )
@@ -186,12 +190,21 @@ async def test_exhausted_retries_keep_the_user_turn_and_mark_the_missing_reply(
             "content": "assistant turn not persisted: ConnectError",
         }
     ]
-    assert d.conversation_persist_status() == {"pending": 0, "failed": [(TENANT, ctx)]}
-    failure = d.conversation_persist_failure(TENANT, ctx)
+    assert (await d.conversation_persist_status()) == {
+        "pending": 0,
+        "failed": [(TENANT, ctx)],
+    }
+    failure = await d.conversation_persist_failure(TENANT, ctx)
     assert type(failure) is ConversationPersistFailed
-    assert type(failure.__cause__) is httpx.ConnectError
-    assert failure.context_id == ctx
-    assert failure.tenant_id == TENANT
+    assert (failure.tenant_id, failure.context_id, failure.error_type) == (
+        TENANT,
+        ctx,
+        "ConnectError",
+    )
+    assert str(failure) == (
+        f"conversation turns for context {ctx} (tenant {TENANT}) were not "
+        "persisted: ConnectError"
+    )
 
     # The next dispatch on this context sees the unanswered user message and
     # nothing standing in for the reply that was lost. Its own reply lands:
@@ -223,12 +236,12 @@ async def test_exhausted_retries_keep_the_user_turn_and_mark_the_missing_reply(
         }
     ]
     # A later save that lands clears the context's failure record.
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
 
 
 @pytest.mark.asyncio
 async def test_a_rejected_write_is_marked_without_a_second_attempt(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger, caplog
 ):
     """A write the backend refused is a verdict, not a blip: it is never
     retried, and the half-turn is marked immediately."""
@@ -242,6 +255,7 @@ async def test_a_rejected_write_is_marked_without_a_second_attempt(
     )
     d, store = _dispatcher_with_faulty_store(
         mm,
+        conversation_ledger,
         failures=None,
         error_factory=lambda: RuntimeError(rejection),
     )
@@ -249,8 +263,9 @@ async def test_a_rejected_write_is_marked_without_a_second_attempt(
     seen: list = []
     _reply_with(d, {QUERY: REPLY}, seen)
 
-    await _dispatch(d, QUERY, ctx)
-    assert await d.drain_conversation_saves() is True
+    with caplog.at_level(logging.WARNING, logger="cogniverse_runtime.agent_dispatcher"):
+        await _dispatch(d, QUERY, ctx)
+        assert await d.drain_conversation_saves() is True
 
     # One attempt at the reply, then the marker: no backoff was ever served.
     assert store.attempts == [
@@ -267,15 +282,32 @@ async def test_a_rejected_write_is_marked_without_a_second_attempt(
             "content": "assistant turn not persisted: RuntimeError",
         }
     ]
-    failure = d.conversation_persist_failure(TENANT, ctx)
+    failure = await d.conversation_persist_failure(TENANT, ctx)
     assert type(failure) is ConversationPersistFailed
-    assert type(failure.__cause__) is RuntimeError
-    assert str(failure.__cause__) == rejection
+    assert (failure.tenant_id, failure.context_id, failure.error_type) == (
+        TENANT,
+        ctx,
+        "RuntimeError",
+    )
+    # The rejection's text quotes the stored document, so it stays in the
+    # runtime log and out of the shared record.
+    assert str(failure) == (
+        f"conversation turns for context {ctx} (tenant {TENANT}) were not "
+        "persisted: RuntimeError"
+    )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.agent_dispatcher"
+    ] == [
+        f"Conversation turns for context {ctx} were NOT persisted: "
+        f"RuntimeError: RuntimeError({rejection!r})"
+    ]
 
 
 @pytest.mark.asyncio
 async def test_retry_schedule_fits_the_measured_save_budget(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """The shipped retry schedule is sized from what a save really costs.
 
@@ -290,6 +322,7 @@ async def test_retry_schedule_fits_the_measured_save_budget(
     # it is served and timed.
     d, store = _dispatcher_with_faulty_store(
         mm,
+        conversation_ledger,
         failures=3,
         error_factory=lambda: httpx.ReadTimeout("vespa read timed out"),
     )
@@ -334,7 +367,7 @@ async def test_retry_schedule_fits_the_measured_save_budget(
         {"role": "user", "content": QUERY},
         {"role": "assistant", "content": REPLY},
     ]
-    assert d.conversation_persist_status() == {"pending": 0, "failed": []}
+    assert (await d.conversation_persist_status()) == {"pending": 0, "failed": []}
 
     # The retried save served every backoff and still fit the budget.
     assert retried_save_s > _retry_backoff_total()
@@ -351,7 +384,7 @@ async def test_retry_schedule_fits_the_measured_save_budget(
 
 @pytest.mark.asyncio
 async def test_a_marked_half_turn_leaves_a_concurrent_context_untouched(
-    shared_memory_vespa, shared_denseon
+    shared_memory_vespa, shared_denseon, conversation_ledger
 ):
     """Two contexts save at the same time -- proven by a barrier both user
     appends must reach -- and the one whose reply is lost takes the marker
@@ -367,7 +400,7 @@ async def test_a_marked_half_turn_leaves_a_concurrent_context_untouched(
     synchronised: set = set()
 
     class _ConcurrentStore(ConversationStore):
-        def store_turn(self, context_id, role, content):
+        def store_turn(self, context_id, role, content, seq):
             with lock:
                 first_write = context_id not in synchronised
                 if first_write:
@@ -382,12 +415,12 @@ async def test_a_marked_half_turn_leaves_a_concurrent_context_untouched(
             try:
                 if context_id == ctx_a and role == "assistant":
                     raise ConnectionError("vespa reset context A's reply")
-                super().store_turn(context_id, role, content)
+                super().store_turn(context_id, role, content, seq)
             finally:
                 with lock:
                     state["in_flight"] -= 1
 
-    d = _dispatcher_with_real_store(mm)
+    d = _dispatcher_with_real_store(mm, conversation_ledger)
     d._conversation_store_factory = lambda tenant_id: _ConcurrentStore(mm, tenant_id)
     seen: list = []
     _reply_with(
@@ -421,7 +454,7 @@ async def test_a_marked_half_turn_leaves_a_concurrent_context_untouched(
             "content": "assistant turn not persisted: ConnectionError",
         }
     ]
-    assert d.conversation_persist_status() == {
+    assert (await d.conversation_persist_status()) == {
         "pending": 0,
         "failed": [(TENANT, ctx_a)],
     }

@@ -19,10 +19,12 @@ Dual loop: a request may carry OpenAI ``tools`` definitions for the client's
 local tools. An agent returning ``pending_tool_calls`` suspends the turn —
 the response carries ``tool_calls`` and ``finish_reason: "tool_calls"``; the
 client executes locally and replays the transcript with the tool results
-appended, which resumes the turn. Suspended ``continuation_state`` is kept in
-a TTL store keyed by tenant, agent, seed and call ids; a miss (restart, TTL,
-another tenant) degrades to stateless re-derivation from the replayed
-transcript, never an error and never another tenant's state.
+appended, which resumes the turn on whichever process receives it. Suspended
+``continuation_state`` is kept in the shared Redis ``ContinuationStore``,
+keyed by tenant, agent, seed and call ids, for ``CONTINUATION_TTL_SECONDS``; a
+miss (expired, already resumed, another tenant) degrades to stateless
+re-derivation from the replayed transcript, never another tenant's state. A
+store that does not answer fails the turn with 503.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ from cogniverse_runtime.harness_turn import (
     to_openai_tool_calls,
 )
 from cogniverse_runtime.llm_dependency import llm_dependency_failure
+from cogniverse_runtime.session_state import ContinuationStore, SessionStateUnavailable
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 
 __all__ = ["derive_request_seed", "extract_answer_text", "to_openai_tool_calls"]
@@ -62,6 +65,7 @@ _dispatcher_provider: Optional[Callable[[], Any]] = None
 _api_keys: Dict[str, str] = {}
 _model_map: Dict[str, str] = {}
 _key_resolver: Optional[Callable[[str], Optional[str]]] = None
+_continuation_store: Optional[ContinuationStore] = None
 _in_flight: set = set()
 
 _CONTENT_CHUNK_CHARS = 256
@@ -101,6 +105,21 @@ def set_key_resolver(resolver: Optional[Callable[[str], Optional[str]]]) -> None
     after the static env map. None disables the dynamic path."""
     global _key_resolver
     _key_resolver = resolver
+
+
+def set_continuation_store(store: Optional[ContinuationStore]) -> None:
+    """The shared store suspended turns wait in for their tool results."""
+    global _continuation_store
+    _continuation_store = store
+
+
+def _require_continuation_store() -> ContinuationStore:
+    if _continuation_store is None:
+        raise SessionStateUnavailable(
+            "a turn with tool calls needs the shared continuation store, and "
+            "none is configured"
+        )
+    return _continuation_store
 
 
 def in_flight_count() -> int:
@@ -426,82 +445,6 @@ def split_answer_chunks(
     return [text[i : i + chunk_chars] for i in range(0, len(text), chunk_chars)]
 
 
-CONTINUATION_TTL_SECONDS = 600.0
-_ContinuationKey = Tuple[str, str, str, Tuple[str, ...]]
-_continuations: Dict[_ContinuationKey, Tuple[float, Dict[str, Any]]] = {}
-
-
-def _continuation_key(
-    tenant_id: str, agent_name: str, seed: str, call_ids: List[Any]
-) -> _ContinuationKey:
-    """Suspended-turn identity.
-
-    The tenant and the agent are part of the key: without them a second tenant
-    replaying the same opening message and the same call ids is handed the
-    first tenant's plan and, because the read pops, the owner resumes with
-    nothing.
-    """
-    return (
-        tenant_id,
-        agent_name,
-        seed,
-        tuple(sorted(str(call_id) for call_id in call_ids)),
-    )
-
-
-def _evict_expired(now: float) -> None:
-    for key in [key for key, (expiry, _) in _continuations.items() if expiry <= now]:
-        del _continuations[key]
-
-
-def put_continuation(
-    tenant_id: str,
-    agent_name: str,
-    seed: str,
-    call_ids: List[Any],
-    state: Dict[str, Any],
-    now: Optional[float] = None,
-) -> None:
-    """Store a suspended turn's state until its tool results come back.
-
-    Fast path only — the replayed transcript remains the source of truth, so
-    entries may vanish (TTL, restart) without breaking a resume.
-    """
-    now = time.monotonic() if now is None else now
-    _evict_expired(now)
-    _continuations[_continuation_key(tenant_id, agent_name, seed, call_ids)] = (
-        now + CONTINUATION_TTL_SECONDS,
-        state,
-    )
-
-
-def pop_continuation(
-    tenant_id: str,
-    agent_name: str,
-    seed: str,
-    call_ids: List[Any],
-    now: Optional[float] = None,
-) -> Optional[Dict[str, Any]]:
-    """One-shot retrieval of a suspended turn's state; None on miss/expiry."""
-    now = time.monotonic() if now is None else now
-    _evict_expired(now)
-    entry = _continuations.pop(
-        _continuation_key(tenant_id, agent_name, seed, call_ids), None
-    )
-    if entry is None:
-        return None
-    expires_at, state = entry
-    return None if expires_at <= now else state
-
-
-def continuation_count() -> int:
-    return len(_continuations)
-
-
-def clear_continuations() -> None:
-    _continuations.clear()
-
-
 def _usage_from_tracker(tracker: Any) -> Tuple[int, int]:
     """(prompt_tokens, completion_tokens) summed across tracked LM calls.
 
@@ -795,7 +738,7 @@ async def _run_turn(
     )
 
     if context.get("tool_results"):
-        state = pop_continuation(
+        state = await _require_continuation_store().pop(
             tenant_id,
             agent_name,
             seed,
@@ -819,7 +762,7 @@ async def _run_turn(
         tool_calls = to_openai_tool_calls(pending)
         state = result.get("continuation_state")
         if isinstance(state, dict) and state:
-            put_continuation(
+            await _require_continuation_store().put(
                 tenant_id, agent_name, seed, [c["id"] for c in tool_calls], state
             )
         usage = _finalize_usage(tracker, query, history, json.dumps(tool_calls))
@@ -854,12 +797,13 @@ def _chunk(
 
 
 def _error_frame(exc: BaseException, agent_name: str) -> str:
+    unavailable = isinstance(exc, SessionStateUnavailable)
     return _sse(
         {
             "error": {
                 **_failure_body(exc, agent_name),
                 "type": "server_error",
-                "code": "internal_error",
+                "code": "service_unavailable" if unavailable else "internal_error",
             }
         }
     )
@@ -1096,7 +1040,7 @@ async def _stream_tokens(
                     tool_calls = to_openai_tool_calls(pending)
                     state = payload.get("continuation_state")
                     if isinstance(state, dict) and state:
-                        put_continuation(
+                        await _require_continuation_store().put(
                             tenant_id,
                             agent_name,
                             seed,
@@ -1359,6 +1303,9 @@ async def chat_completions(
         return _error_response(
             502, str(exc), "upstream_no_answer", err_type="server_error"
         )
+    except SessionStateUnavailable as exc:
+        logger.warning("chat.completions turn lost its session state: %s", exc)
+        return _dependency_unavailable(exc, "session state store")
     except Exception as exc:
         llm_failure = llm_dependency_failure(exc)
         if llm_failure is not None:

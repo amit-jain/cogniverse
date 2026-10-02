@@ -26,6 +26,10 @@ from cogniverse_runtime.messaging import (
     QueueClosedError,
     get_inbound_queue_registry,
 )
+from cogniverse_runtime.session_state import (
+    ConversationLedger,
+    SessionStateUnavailable,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 
@@ -70,6 +74,7 @@ _config_manager: Optional[ConfigManager] = None
 _schema_loader: Optional[SchemaLoader] = None
 _dispatcher: Optional[AgentDispatcher] = None
 _sandbox_manager = None
+_conversation_ledger: Optional[ConversationLedger] = None
 
 
 def set_agent_registry(registry: AgentRegistry) -> None:
@@ -86,6 +91,18 @@ def set_sandbox_manager(sandbox_mgr) -> None:
     _sandbox_manager = sandbox_mgr
     _dispatcher = None
     logger.info("SandboxManager injected into agents router")
+
+
+def set_conversation_ledger(ledger: Optional[ConversationLedger]) -> None:
+    """Inject the shared conversation ledger into the dispatcher, built or not."""
+    global _conversation_ledger
+    _conversation_ledger = ledger
+    if _dispatcher is not None:
+        _dispatcher.set_conversation_ledger(ledger)
+    logger.info(
+        "Conversation ledger %s agents router",
+        "injected into" if ledger is not None else "removed from",
+    )
 
 
 def set_agent_dependencies(
@@ -155,6 +172,7 @@ def _ensure_dispatcher() -> AgentDispatcher:
         schema_loader=_schema_loader,
         sandbox_manager=_sandbox_manager,
         artifact_manager_factory=_build_artifact_manager_factory(),
+        conversation_ledger=_conversation_ledger,
     )
     return _dispatcher
 
@@ -585,6 +603,10 @@ async def process_agent_task(
     except VespaSearchDegraded as e:
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.
+        raise HTTPException(status_code=503, detail=str(e))
+    except SessionStateUnavailable as e:
+        # The shared ledger that orders this context's turns did not answer;
+        # the turn is refused rather than answered and never stored.
         raise HTTPException(status_code=503, detail=str(e))
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this

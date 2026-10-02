@@ -5,6 +5,10 @@ real process tree against the shared test Vespa and a test-owned Redis, with
 the full lifespan in every worker. Which worker owns a listening socket or a
 client connection is read from ``/proc``, never from the runtime's own
 answer.
+
+A server-managed conversation needs no LM here: its tenant never deployed the
+schema of its one profile, so the summarizer answers with its fixed reply, and
+the turns persist in real Mem0 through the workers' own conversation stores.
 """
 
 from __future__ import annotations
@@ -21,9 +25,20 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
+
+from cogniverse_core.conversation import CONVERSATION_AGENT_NAME
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_HISTORY_LOADED,
+    CONVERSATION_SAVE_TIMEOUT_S,
+    GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+    AnswerGrounding,
+)
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_manager
 
 pytestmark = pytest.mark.integration
 
@@ -36,6 +51,12 @@ BOOT_TIMEOUT_S = 600
 # Shutdown runs each worker's lifespan drains, all empty here.
 STOP_TIMEOUT_S = 120
 _TCP_LISTEN = "0A"
+SHIPPED_PROFILES = json.loads((ROOT / "configs/config.json").read_text())["backend"][
+    "profiles"
+]
+# The profile a conversation tenant configures and never deploys, so the
+# summarizer answers that it has nothing to search, with no LM and no encoder.
+UNDEPLOYED_PROFILE = "document_text_semantic"
 
 
 def _records(log: Path, logger: str, level: str) -> list[str]:
@@ -173,7 +194,12 @@ def _refuses(port: int) -> bool:
 
 
 @contextlib.contextmanager
-def _runtime(tmp_path: Path, redis_url: str, name: str = "runtime"):
+def _runtime(
+    tmp_path: Path,
+    redis_url: str,
+    name: str = "runtime",
+    extra_env: dict[str, str] | None = None,
+):
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
@@ -194,6 +220,7 @@ def _runtime(tmp_path: Path, redis_url: str, name: str = "runtime"):
         COGNIVERSE_MEMORY_LIFECYCLE_DISABLED="1",
         LOG_LEVEL="INFO",
         PYTHONUNBUFFERED="1",
+        **(extra_env or {}),
     )
     log = tmp_path / f"{name}.log"
     with log.open("w") as output:
@@ -321,6 +348,164 @@ class TestTwoWorkersServe:
 
         assert len(owners) == clients
         assert set(owners) == set(workers)
+
+
+def _post(
+    connection: http.client.HTTPConnection, path: str, body: dict
+) -> tuple[int, dict]:
+    connection.request(
+        "POST",
+        path,
+        body=json.dumps(body),
+        headers={"Content-Type": "application/json"},
+    )
+    response = connection.getresponse()
+    return response.status, json.loads(response.read())
+
+
+def _connection_per_worker(
+    port: int, workers: list[int]
+) -> dict[int, http.client.HTTPConnection]:
+    """One open client connection held by each worker, read from /proc."""
+    held: dict[int, http.client.HTTPConnection] = {}
+    spare = []
+    for _ in range(64):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=300)
+        connection.connect()
+        worker = _serving_worker(port, connection, workers)
+        if worker in held:
+            spare.append(connection)
+        else:
+            held[worker] = connection
+        if len(held) == len(workers):
+            break
+    for connection in spare:
+        connection.close()
+    assert sorted(held) == workers
+    return held
+
+
+def _conversation_rows(
+    connection: http.client.HTTPConnection, tenant_id: str, context_id: str
+) -> list[dict]:
+    status, body = _get(
+        connection,
+        f"/admin/tenant/{tenant_id}/memories?agent_name={CONVERSATION_AGENT_NAME}"
+        "&limit=200",
+    )
+    assert status == 200, body
+    rows = [
+        row
+        for row in body["memories"]
+        if row["metadata"].get("context_id") == context_id
+    ]
+    return sorted(rows, key=lambda row: float(row["metadata"]["seq"]))
+
+
+class TestConversationAcrossWorkers:
+    def test_each_turn_reads_the_turns_the_other_worker_answered(
+        self, tmp_path, redis_url, vespa_instance, shared_vespa, shared_denseon
+    ):
+        """Consecutive turns of one context alternate between the workers; each
+        reads every turn answered before it, though the reply before it came
+        back while that turn's save was still landing on the other worker."""
+        # A tenant of its own: its memory schema is deployed, and its one
+        # profile embeds through DenseOn but its schema is never deployed.
+        tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
+        config_manager = make_config_manager(shared_vespa)
+        deploy_tenant_schema(
+            shared_vespa,
+            tenant_id=tenant_id,
+            base_schema_name="agent_memories",
+            config_manager=config_manager,
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                UNDEPLOYED_PROFILE,
+                {
+                    **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
+                    "inference_services": {"embedding": "denseon"},
+                },
+            ),
+            tenant_id=tenant_id,
+        )
+        expected_answer = AnswerGrounding(
+            hits=[],
+            state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+            undeployed_profiles=(UNDEPLOYED_PROFILE,),
+        ).unanswerable_text(tenant_id)
+        context_id = f"workers-{uuid.uuid4().hex}"
+        # Three turns cover both directions (first to second worker and back)
+        # and stay below the turn count that files a wiki page.
+        queries = [f"summarize turn {index}" for index in range(3)]
+        env = {
+            "INFERENCE_SERVICE_URLS": json.dumps({"denseon": shared_denseon}),
+            "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+        }
+        with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, port):
+            workers = _serving(process, log)
+            connections = _connection_per_worker(port, workers)
+            served = []
+            try:
+                for index, query in enumerate(queries):
+                    worker = workers[index % 2]
+                    status, body = _post(
+                        connections[worker],
+                        "/agents/summarizer_agent/process",
+                        {
+                            "agent_name": "summarizer_agent",
+                            "query": query,
+                            "context": {"tenant_id": tenant_id},
+                            "context_id": context_id,
+                        },
+                    )
+                    assert status == 200, (body, log.read_text()[-20000:])
+                    served.append((worker, body))
+
+                deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
+                rows = _conversation_rows(
+                    connections[workers[0]], tenant_id, context_id
+                )
+                while len(rows) < 2 * len(queries) and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    rows = _conversation_rows(
+                        connections[workers[0]], tenant_id, context_id
+                    )
+            finally:
+                for connection in connections.values():
+                    connection.close()
+
+        assert [worker for worker, _ in served] == [
+            workers[0],
+            workers[1],
+            workers[0],
+        ]
+        for index, (_, body) in enumerate(served):
+            assert body["conversation"] == {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 2 * index,
+                "reason": None,
+            }, body
+            assert body["answer"] == expected_answer
+        assert [row["memory"] for row in rows] == [
+            f"[ctx:{context_id}] [{role}] {text}"
+            for query in queries
+            for role, text in (("user", query), ("assistant", expected_answer))
+        ]
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+        ] * len(queries)
+        # Each turn's rows sit at its ledger position and the one after it,
+        # and every turn's position is above the turn before it.
+        seqs = [int(row["metadata"]["seq"]) for row in rows]
+        assert [reply - user for user, reply in zip(seqs[0::2], seqs[1::2])] == [
+            1
+        ] * len(queries)
+        assert [
+            later - earlier >= 2 for earlier, later in zip(seqs[0::2], seqs[2::2])
+        ] == [True] * (len(queries) - 1)
+        assert _records(log, CLI_LOGGER, "ERROR") == []
 
 
 class TestSignals:

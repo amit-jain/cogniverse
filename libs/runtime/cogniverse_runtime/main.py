@@ -1301,6 +1301,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("SystemConfig.redis_url is required for A2A task storage")
     a2a_settings = _a2a_settings_from_env(os.environ)
     await _validate_a2a_redis(redis_url, a2a_settings)
+    # Conversation turn order and suspended /v1 turns live in the same Redis,
+    # so every worker and replica serves any session's next request.
+    from cogniverse_runtime.agent_dispatcher import (
+        CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        CONVERSATION_SAVE_LEASE_S,
+    )
+    from cogniverse_runtime.session_state import (
+        ContinuationStore,
+        ConversationLedger,
+        open_session_redis,
+    )
+
+    session_redis = await open_session_redis(redis_url)
+    agents.set_conversation_ledger(
+        ConversationLedger(
+            session_redis,
+            save_lease_s=CONVERSATION_SAVE_LEASE_S,
+            failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+        )
+    )
+    openai_compat.set_continuation_store(ContinuationStore(session_redis))
 
     def system_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -1779,6 +1800,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
+    agents.set_conversation_ledger(None)
+    openai_compat.set_continuation_store(None)
+    await session_redis.aclose()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 

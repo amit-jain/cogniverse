@@ -23,6 +23,8 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -37,6 +39,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import openai_compat
+from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -278,8 +281,12 @@ def pi_driver_dir(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def live_v1():
-    """The /v1 app with the deterministic agent on a real socket."""
+def live_v1(workflow_state_redis_url):
+    """The /v1 app with the deterministic agent on a real socket.
+
+    The continuation store is opened and closed by the app's own lifespan, on
+    the server's loop, as the runtime opens its own.
+    """
     store = InMemoryConfigStore()
     store.initialize()
     config_manager = ConfigManager(store=store)
@@ -296,13 +303,24 @@ def live_v1():
         agent_registry=registry, config_manager=config_manager, schema_loader=None
     )
 
-    app = FastAPI()
+    @asynccontextmanager
+    async def session_state(_app):
+        redis = await open_session_redis(workflow_state_redis_url)
+        openai_compat.set_continuation_store(
+            ContinuationStore(redis, key_prefix=f"test:continuation:{uuid.uuid4().hex}")
+        )
+        try:
+            yield
+        finally:
+            openai_compat.set_continuation_store(None)
+            await redis.aclose()
+
+    app = FastAPI(lifespan=session_state)
     app.include_router(openai_compat.router, prefix="/v1")
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY: TENANT})
     openai_compat.set_model_map({MODEL: "pi_echo_agent"})
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
 
     port = _free_port()
     server = uvicorn.Server(
@@ -323,7 +341,6 @@ def live_v1():
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
-    openai_compat.clear_continuations()
     for agent_name in _AGENT_CLASSES:
         ConfigLoader.AGENT_CLASSES.pop(agent_name, None)
 

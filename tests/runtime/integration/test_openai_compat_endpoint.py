@@ -270,23 +270,25 @@ def _build_app() -> FastAPI:
 
 
 @pytest.fixture()
-def compat_app(dispatcher):
-    """The real router mounted at /v1, wired to the real dispatcher.
+def compat_app(dispatcher, continuation_store):
+    """The real router mounted at /v1, wired to the real dispatcher and the
+    real continuation store on Redis.
 
-    Module-level DI is reset after each test so nothing leaks between them.
+    Module-level DI is reset after each test so nothing leaks between them;
+    each test's suspended turns live in a key namespace of their own.
     """
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY_A: TENANT_A_RAW, KEY_B: TENANT_B})
     openai_compat.set_model_map(MODEL_MAP)
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(continuation_store)
     slow_agent_events.clear()
     yield _build_app()
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(None)
 
 
 @pytest.fixture()
@@ -633,28 +635,27 @@ class TestTenantBoundary:
 class TestContinuationIsolation:
     """R3 — a suspended turn belongs to one tenant and one agent."""
 
-    def test_key_separates_tenant_and_agent(self):
-        openai_compat.clear_continuations()
-        openai_compat.put_continuation(
+    async def test_key_separates_tenant_and_agent(self, continuation_store):
+        await continuation_store.put(
             TENANT_A, "tool_echo_agent", "seed", ["c1"], {"plan": "a"}
         )
 
         assert (
-            openai_compat.pop_continuation(TENANT_B, "tool_echo_agent", "seed", ["c1"])
+            await continuation_store.pop(TENANT_B, "tool_echo_agent", "seed", ["c1"])
             is None
         )
         assert (
-            openai_compat.pop_continuation(TENANT_A, "other_agent", "seed", ["c1"])
+            await continuation_store.pop(TENANT_A, "other_agent", "seed", ["c1"])
             is None
         )
-        assert openai_compat.continuation_count() == 1
-        assert openai_compat.pop_continuation(
+        assert await continuation_store.count() == 1
+        assert await continuation_store.pop(
             TENANT_A, "tool_echo_agent", "seed", ["c1"]
         ) == {"plan": "a"}
-        assert openai_compat.continuation_count() == 0
+        assert await continuation_store.count() == 0
 
     async def test_replay_by_another_tenant_misses_and_leaves_the_owner_intact(
-        self, client
+        self, client, continuation_store
     ):
         suspend = await client.post(
             "/v1/chat/completions",
@@ -674,7 +675,7 @@ class TestContinuationIsolation:
                 },
             }
         ]
-        assert openai_compat.continuation_count() == 1
+        assert await continuation_store.count() == 1
 
         resume_messages = [
             {"role": "user", "content": QUERY},
@@ -714,7 +715,7 @@ class TestContinuationIsolation:
             "rounds": 1,
             "results": ["wrote it"],
         }
-        assert openai_compat.continuation_count() == 0
+        assert await continuation_store.count() == 0
 
     async def test_two_spellings_of_one_tenant_share_one_namespace(self, client):
         """The router canonicalizes the key's tenant before it keys anything.

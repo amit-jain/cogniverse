@@ -68,15 +68,43 @@ async def test_store_and_reload_turns_in_order_real_mem0(
     store = ConversationStore(mm, SYSTEM_TENANT_ID)
     ctx = f"chat{uuid.uuid4().hex[:10]}"
 
-    store.store_turn(ctx, "user", "what is colpali")
-    store.store_turn(ctx, "assistant", "a late-interaction retrieval model")
-    store.store_turn(ctx, "user", "how many dimensions")
+    store.store_turn(ctx, "user", "what is colpali", 1)
+    store.store_turn(ctx, "assistant", "a late-interaction retrieval model", 2)
+    store.store_turn(ctx, "user", "how many dimensions", 3)
 
     history = store.get_history(ctx)
     assert history == [
         {"role": "user", "content": "what is colpali"},
         {"role": "assistant", "content": "a late-interaction retrieval model"},
         {"role": "user", "content": "how many dimensions"},
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_turns_read_back_in_writer_order_not_landing_order_real_mem0(
+    shared_memory_vespa, shared_denseon
+):
+    """Two processes' saves land in either order; the seq each writer was
+    given decides the order the context reads back."""
+    mm = _build_manager(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+    store = ConversationStore(mm, SYSTEM_TENANT_ID)
+    ctx = f"chat{uuid.uuid4().hex[:10]}"
+    first = 1759400000000000
+    second = first + 2
+
+    store.store_turn(ctx, "user", "second question", second)
+    store.store_turn(ctx, "assistant", "second answer", second + 1)
+    store.store_turn(ctx, "user", "first question", first)
+    store.store_turn(ctx, "assistant", "first answer", first + 1)
+
+    assert store.get_history(ctx) == [
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+        {"role": "assistant", "content": "second answer"},
     ]
 
 
@@ -90,8 +118,8 @@ async def test_contexts_isolated_real_mem0(shared_memory_vespa, shared_denseon):
     a = f"chat{uuid.uuid4().hex[:10]}"
     b = f"chat{uuid.uuid4().hex[:10]}"
 
-    store.store_turn(a, "user", "belongs to A")
-    store.store_turn(b, "user", "belongs to B")
+    store.store_turn(a, "user", "belongs to A", 1)
+    store.store_turn(b, "user", "belongs to B", 1)
 
     assert store.get_history(a) == [{"role": "user", "content": "belongs to A"}]
     assert store.get_history(b) == [{"role": "user", "content": "belongs to B"}]
@@ -107,7 +135,7 @@ async def test_history_window_is_bounded_real_mem0(shared_memory_vespa, shared_d
     ctx = f"chat{uuid.uuid4().hex[:10]}"
 
     for i in range(14):
-        store.store_turn(ctx, "user", f"turn {i}")
+        store.store_turn(ctx, "user", f"turn {i}", i)
 
     history = store.get_history(ctx, max_turns=10)
     assert len(history) == 10
@@ -134,14 +162,14 @@ async def test_quiet_context_survives_busy_neighbor_real_mem0(
     quiet = f"chat{uuid.uuid4().hex[:10]}"
     busy = f"chat{uuid.uuid4().hex[:10]}"
 
-    store.store_turn(quiet, "user", "quiet q1")
-    store.store_turn(quiet, "assistant", "quiet a1")
-    store.store_turn(quiet, "user", "quiet q2")
+    store.store_turn(quiet, "user", "quiet q1", 1)
+    store.store_turn(quiet, "assistant", "quiet a1", 2)
+    store.store_turn(quiet, "user", "quiet q2", 3)
     # Push the quiet context strictly before the flood so the second-grained
     # created_at cannot tie its turns into the newest-100 page.
     time.sleep(1.2)
     for i in range(101):
-        store.store_turn(busy, "user", f"busy {i}")
+        store.store_turn(busy, "user", f"busy {i}", i)
 
     assert store.get_history(quiet) == [
         {"role": "user", "content": "quiet q1"},

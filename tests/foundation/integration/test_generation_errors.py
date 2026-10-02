@@ -289,7 +289,7 @@ async def summary_route(build_dispatcher, monkeypatch):
 
 
 @pytest.fixture
-def compat_route(build_dispatcher):
+def compat_route(build_dispatcher, continuation_store):
     """Factory for the ``/v1`` app, wired the way the runtime lifespan wires it."""
 
     @asynccontextmanager
@@ -301,7 +301,7 @@ def compat_route(build_dispatcher):
             {SUMMARY_MODEL: "summarizer_agent", TEXT_MODEL: "text_analysis_agent"}
         )
         openai_compat.set_key_resolver(None)
-        openai_compat.clear_continuations()
+        openai_compat.set_continuation_store(continuation_store)
         app = FastAPI()
         app.include_router(openai_compat.router, prefix="/v1")
         with dspy.context(adapter=LenientJSONAdapter()):
@@ -315,7 +315,7 @@ def compat_route(build_dispatcher):
     openai_compat.set_api_keys({})
     openai_compat.set_model_map({})
     openai_compat.set_key_resolver(None)
-    openai_compat.clear_continuations()
+    openai_compat.set_continuation_store(None)
 
 
 @pytest.fixture

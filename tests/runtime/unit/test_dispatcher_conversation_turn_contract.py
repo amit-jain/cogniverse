@@ -31,13 +31,18 @@ TENANT = "acme:acme"
 
 
 class _RecordingStore:
-    """A ConversationStore-shaped double recording exactly what was stored."""
+    """A ConversationStore-shaped double recording exactly what was stored,
+    ordered by the seq each write carries, as the real store reads it."""
 
     def __init__(self, turns=None, read_error=None, read_block=None):
-        self.turns = list(turns or [])
+        self._rows = [(index, turn) for index, turn in enumerate(turns or [])]
         self.read_error = read_error
         self.read_block = read_block
         self.reads = 0
+
+    @property
+    def turns(self):
+        return [turn for _seq, turn in sorted(self._rows, key=lambda row: row[0])]
 
     def get_history(self, context_id, max_turns=20):
         self.reads += 1
@@ -45,24 +50,25 @@ class _RecordingStore:
             self.read_block.wait()
         if self.read_error is not None:
             raise self.read_error
-        return list(self.turns)
+        return self.turns
 
-    def store_turn(self, context_id, role, content):
-        self.turns.append({"role": role, "content": content})
+    def store_turn(self, context_id, role, content, seq):
+        self._rows.append((seq, {"role": role, "content": content}))
 
     def get_missing_assistant_markers(self, context_id):
         return []
 
-    def store_missing_assistant_marker(self, context_id, reason):
-        self.turns.append({"role": "assistant_missing", "content": reason})
+    def store_missing_assistant_marker(self, context_id, reason, seq):
+        self._rows.append((seq, {"role": "assistant_missing", "content": reason}))
 
 
-def _dispatcher(store, result):
+def _dispatcher(store, result, ledger):
     config_manager = MagicMock()
     d = AgentDispatcher(
         agent_registry=MagicMock(),
         config_manager=config_manager,
         schema_loader=MagicMock(),
+        conversation_ledger=ledger,
     )
     agent = MagicMock()
     agent.capabilities = {"search"}
@@ -110,7 +116,9 @@ async def _dispatch(dispatcher, query, context_id):
 
 
 @pytest.mark.asyncio
-async def test_the_persisted_assistant_turn_is_the_delivered_answer():
+async def test_the_persisted_assistant_turn_is_the_delivered_answer(
+    conversation_ledger,
+):
     """The summary envelope's ``message`` is a status line, not the answer.
 
     Persisting it makes the next turn read "Generated summary for '...'" as
@@ -123,6 +131,7 @@ async def test_the_persisted_assistant_turn_is_the_delivered_answer():
             "message": "Generated summary for 'what did the speaker say'",
             "result": {"summary": "The speaker said tides follow the moon."},
         },
+        conversation_ledger,
     )
 
     result = await _dispatch(dispatcher, "what did the speaker say", "ctx-1")
@@ -143,7 +152,9 @@ async def test_the_persisted_assistant_turn_is_the_delivered_answer():
 
 
 @pytest.mark.asyncio
-async def test_an_envelope_with_no_answer_persists_the_user_turn_alone():
+async def test_an_envelope_with_no_answer_persists_the_user_turn_alone(
+    conversation_ledger,
+):
     """An error envelope has no answer; nothing may take its place."""
     store = _RecordingStore()
     dispatcher, _ = _dispatcher(
@@ -153,6 +164,7 @@ async def test_an_envelope_with_no_answer_persists_the_user_turn_alone():
             "message": "search_agent failed: Vespa unreachable",
             "result": {},
         },
+        conversation_ledger,
     )
 
     result = await _dispatch(dispatcher, "what did the speaker say", "ctx-2")
@@ -162,7 +174,7 @@ async def test_an_envelope_with_no_answer_persists_the_user_turn_alone():
 
 
 @pytest.mark.asyncio
-async def test_a_loaded_history_is_reported_with_its_turn_count():
+async def test_a_loaded_history_is_reported_with_its_turn_count(conversation_ledger):
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_HISTORY_LOADED,
     )
@@ -173,7 +185,9 @@ async def test_a_loaded_history_is_reported_with_its_turn_count():
             {"role": "assistant", "content": "second"},
         ]
     )
-    dispatcher, seen = _dispatcher(store, {"message": "m", "result": {"summary": "s"}})
+    dispatcher, seen = _dispatcher(
+        store, {"message": "m", "result": {"summary": "s"}}, conversation_ledger
+    )
 
     result = await _dispatch(dispatcher, "third", "ctx-3")
 
@@ -191,7 +205,9 @@ async def test_a_loaded_history_is_reported_with_its_turn_count():
 
 
 @pytest.mark.asyncio
-async def test_a_memory_outage_is_reported_not_answered_as_a_fresh_context():
+async def test_a_memory_outage_is_reported_not_answered_as_a_fresh_context(
+    conversation_ledger,
+):
     """A failed read is not an empty context.
 
     Without this the caller cannot tell "you have said nothing before" from
@@ -204,7 +220,9 @@ async def test_a_memory_outage_is_reported_not_answered_as_a_fresh_context():
 
     outage = ConnectionError("mem0 unreachable")
     store = _RecordingStore(read_error=outage)
-    dispatcher, seen = _dispatcher(store, {"message": "m", "result": {"summary": "s"}})
+    dispatcher, seen = _dispatcher(
+        store, {"message": "m", "result": {"summary": "s"}}, conversation_ledger
+    )
 
     result = await _dispatch(dispatcher, "third", "ctx-4")
 
@@ -221,7 +239,9 @@ async def test_a_memory_outage_is_reported_not_answered_as_a_fresh_context():
 
 
 @pytest.mark.asyncio
-async def test_a_read_that_exceeds_its_budget_is_reported_as_unavailable():
+async def test_a_read_that_exceeds_its_budget_is_reported_as_unavailable(
+    conversation_ledger,
+):
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_HISTORY_UNAVAILABLE,
         ConversationHistory,
@@ -229,7 +249,9 @@ async def test_a_read_that_exceeds_its_budget_is_reported_as_unavailable():
 
     release = threading.Event()
     store = _RecordingStore(read_block=release)
-    dispatcher, _ = _dispatcher(store, {"message": "m", "result": {"summary": "s"}})
+    dispatcher, _ = _dispatcher(
+        store, {"message": "m", "result": {"summary": "s"}}, conversation_ledger
+    )
 
     try:
         history = await asyncio.wait_for(
@@ -247,7 +269,7 @@ async def test_a_read_that_exceeds_its_budget_is_reported_as_unavailable():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_tenants_report_their_own_read_outcome():
+async def test_concurrent_tenants_report_their_own_read_outcome(conversation_ledger):
     """One tenant's memory outage must not be attributed to another's turn.
 
     Both dispatches are in flight together, so the degrade has to ride the
@@ -266,6 +288,7 @@ async def test_concurrent_tenants_report_their_own_read_outcome():
         agent_registry=MagicMock(),
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
+        conversation_ledger=conversation_ledger,
     )
     agent = MagicMock()
     agent.capabilities = {"search"}

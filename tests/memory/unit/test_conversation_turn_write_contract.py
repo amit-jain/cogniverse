@@ -11,8 +11,6 @@ against real Mem0 in tests/memory/integration.
 
 from __future__ import annotations
 
-import time
-
 import httpx
 import pytest
 import requests
@@ -86,17 +84,14 @@ def test_marker_write_names_the_failure_type_and_carries_no_user_text():
     manager = _RecordingManager()
     store = ConversationStore(manager, TENANT)
 
-    before = time.time()
     store.store_missing_assistant_marker(
-        CTX, ConnectionError("POST /document/v1 for 'what is my bank pin' failed")
+        CTX,
+        ConnectionError("POST /document/v1 for 'what is my bank pin' failed"),
+        1759400000000001,
     )
-    after = time.time()
 
     assert len(manager.adds) == 1
     written = manager.adds[0]
-    seq = written["metadata"].pop("seq")
-    assert type(seq) is float
-    assert before <= seq <= after
     assert written == {
         "content": "[ctx:c1] [assistant_missing] assistant turn not persisted: "
         "ConnectionError",
@@ -107,11 +102,31 @@ def test_marker_write_names_the_failure_type_and_carries_no_user_text():
             "context_id": CTX,
             "session_id": CTX,
             "turn_role": "assistant_missing",
+            "seq": 1759400000000001,
         },
         "infer": False,
     }
     # The exception's own message quoted the user's query; the row does not.
     assert "bank pin" not in written["content"]
+
+
+def test_store_turn_writes_the_seq_its_writer_assigned():
+    """The writer's seq is stored as given, so turns written by different
+    processes order by the writers' positions, not by when each write ran."""
+    manager = _RecordingManager()
+    store = ConversationStore(manager, TENANT)
+
+    store.store_turn(CTX, "user", "what is colpali", 1759400000000004)
+    store.store_turn(CTX, "assistant", "a late-interaction model", 1759400000000005)
+
+    assert [write["metadata"]["seq"] for write in manager.adds] == [
+        1759400000000004,
+        1759400000000005,
+    ]
+    assert [write["content"] for write in manager.adds] == [
+        "[ctx:c1] [user] what is colpali",
+        "[ctx:c1] [assistant] a late-interaction model",
+    ]
 
 
 def test_history_never_renders_a_marker_but_the_marker_stays_readable():
@@ -178,7 +193,7 @@ def test_store_turn_refuses_a_role_no_reader_renders():
     store = ConversationStore(manager, TENANT)
 
     with pytest.raises(ValueError) as excinfo:
-        store.store_turn(CTX, "system", "you are a helpful assistant")
+        store.store_turn(CTX, "system", "you are a helpful assistant", 1)
 
     assert str(excinfo.value) == (
         "unknown conversation turn role 'system'; expected one of "
