@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -585,9 +586,11 @@ async def test_deploy_schema_lookup_failure_raises_500(env):
 
 @pytest.mark.asyncio
 async def test_deploy_whose_profile_cannot_be_read_raises_500_and_deploys_nothing(
-    env,
+    env, caplog
 ):
     from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
 
     def unreadable(profile_name, tenant_id=None, service="backend"):
         raise ConfigStoreUnavailableError("config store unreachable")
@@ -601,7 +604,21 @@ async def test_deploy_whose_profile_cannot_be_read_raises_500_and_deploys_nothin
     )
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "config store unreachable"}
+    assert resp.json() == {
+        "detail": {
+            "error": "schema_deploy_failed",
+            "message": "Deploying the schema of profile 'video_prism' failed; the "
+            "runtime log names the cause.",
+            "failure": "ConfigStoreUnavailableError",
+            "profile_name": "video_prism",
+            "tenant_id": "acme",
+        }
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ] == ["schema_deploy_failed: ConfigStoreUnavailableError: config store unreachable"]
     assert env.backend.deploy_calls == []
     assert env.registry.calls == []
 
