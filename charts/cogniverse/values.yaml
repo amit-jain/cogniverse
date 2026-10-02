@@ -405,7 +405,6 @@ runtime:
     RUNTIME_HOST: "0.0.0.0"
     RUNTIME_PORT: "8000"
     LOG_LEVEL: "INFO"
-    WORKERS: "4"
 
   # Shutdown budgets; the pod's terminationGracePeriodSeconds is derived
   # from them (cogniverse.runtime.terminationGracePeriodSeconds).

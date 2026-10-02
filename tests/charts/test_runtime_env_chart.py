@@ -217,6 +217,7 @@ class TestRuntimeWorkerProcesses:
         ):
             env = _runtime_container_env(_render_chart(*set_args, values=overlays))
             assert env["UVICORN_WORKERS"] == "1", overlays
+            assert "WORKERS" not in env, overlays
 
     def test_the_worker_count_follows_the_value(self):
         env = _runtime_container_env(_render_chart("runtime.workers=3"))
