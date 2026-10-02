@@ -263,8 +263,8 @@ SCHEMA_REFERENCE_FIXTURES = {
         "ProfileSelectionExampleSchema RoutingExperienceSchema source_schema",
     ),
     "tests/runtime/unit/test_admin_profiles_routes_http.py": (
-        "Injected profiles for administrative route responses and the deploy route's catalog/tenant resolution",
-        "acme_video_colpali_sv beta_only_mv catalog_prism_mv shipped_video_mv tenant_prism_mv video_colpali_sv video_new_sv video_prism_mv",
+        "Injected profiles for administrative route responses, the deploy route's catalog/tenant resolution and contended profile writes",
+        "acme_video_colpali_sv beta_only_mv catalog_prism_mv shipped_video_mv tenant_prism_mv video_colpali_sv video_dup_sv video_new_sv video_prism_mv video_tuned_sv",
     ),
     "tests/runtime/unit/test_admin_reconcile_orphans.py": (
         "Injected deployed schema list for tenant recovery",
@@ -285,6 +285,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/runtime/unit/test_dispatcher_answer_search_wiring.py": (
         "Injected active video profile",
         "video_custom_mv_frame",
+    ),
+    "tests/runtime/unit/test_event_loop_offload.py": (
+        "Injected profile for the offloaded profile create and update",
+        "s",
     ),
     "tests/synthetic/unit/test_agent_inference.py": (
         "Injected modality classification input",
