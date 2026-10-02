@@ -893,6 +893,9 @@ class ArtifactCacheDispatcher(AgentDispatcher):
             "fixture_agent", tenant_id, None, None
         )
 
+    async def refresh_agent_registry(self):
+        """The fixture agent is served without a registry."""
+
     def supports_token_stream(self, agent_name):
         return False
 

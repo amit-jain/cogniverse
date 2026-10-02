@@ -554,6 +554,29 @@ Local registry operations do not create an HTTP client. Concurrent remote
 health or discovery calls share one lazily constructed client, and `close()`
 detaches that client before awaiting connection-pool shutdown.
 
+`register_agent` and `register_agent_from_data` add configured agents to this
+process's registry; every runtime process registers the same ones at startup.
+Registrations every process must serve go through a shared
+`AgentRegistryStore` passed as `store=` (or attached with `set_store`); the
+runtime uses `RedisAgentRegistryStore`:
+
+```python
+registry = AgentRegistry(tenant_id="acme", config_manager=config_manager, store=store)
+
+await registry.add_registration(agent)                  # every process
+removed = await registry.remove_registration("search_agent")  # False if not served
+await registry.refresh()  # apply the store's current registrations and removals
+```
+
+The served view is the configured agents overlaid with the store's
+registrations and removals: a registration replaces a configured agent of the
+same name, and removing a configured agent hides it until it is registered
+again. A request path calls `refresh()` before it reads the registry; it reads
+the store's version and re-reads the registrations only when that moved.
+Store failures raise `AgentRegistryUnavailableError`, and `refresh()` then
+leaves the served view as it was. Without a store a registry serves its
+configured agents and refuses `add_registration` / `remove_registration`.
+
 ### BackendRegistry
 
 ```python

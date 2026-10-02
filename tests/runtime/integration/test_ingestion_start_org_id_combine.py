@@ -15,14 +15,17 @@ is real.
 from __future__ import annotations
 
 import time as _time
+import uuid
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
 
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
+from cogniverse_runtime.ingestion_jobs import IngestionJobStore
 from cogniverse_runtime.routers import ingestion as ingestion_router
 
 pytestmark = pytest.mark.integration
@@ -33,7 +36,9 @@ COMBINED_TENANT = "bigcorp:acme"
 
 
 @pytest.fixture
-def start_client(memory_manager, vespa_instance, config_manager):
+def start_client(
+    memory_manager, vespa_instance, config_manager, shared_state_redis_url
+):
     """Ingestion router wired to the real Vespa-backed ConfigManager, with the
     tenant_manager module seams pointed at the same real backend so
     ``assert_tenant_exists`` reads the live ``tenant_metadata`` schema."""
@@ -85,8 +90,19 @@ def start_client(memory_manager, vespa_instance, config_manager):
     app.dependency_overrides[ingestion_router.get_schema_loader_dependency] = lambda: (
         FilesystemSchemaLoader(Path("configs/schemas"))
     )
-    with TestClient(app) as client:
-        yield client
+    redis = Redis.from_url(shared_state_redis_url, decode_responses=True)
+    previous_store = ingestion_router._job_store
+    ingestion_router.set_job_store(
+        IngestionJobStore(
+            redis, owner="test", key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}"
+        )
+    )
+    try:
+        with TestClient(app) as client:
+            yield client
+            client.portal.call(redis.aclose)
+    finally:
+        ingestion_router._job_store = previous_store
 
     tenant_utils._TENANT_EXISTS_CACHE.pop(COMBINED_TENANT, None)
 

@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -50,6 +50,14 @@ from tests.utils.memory_store import (
     InMemoryConfigStore,
     register_deployed_schema,
 )
+
+
+def _registry_mock() -> MagicMock:
+    """A registry stand-in whose shared-store refresh does nothing."""
+    registry = MagicMock()
+    registry.refresh = AsyncMock()
+    return registry
+
 
 _SHIPPED_CONFIG = json.loads(
     (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
@@ -145,7 +153,7 @@ def _config_manager(
 @pytest.fixture
 def dispatcher():
     return AgentDispatcher(
-        agent_registry=MagicMock(),
+        agent_registry=_registry_mock(),
         config_manager=_config_manager(),
         schema_loader=MagicMock(),
     )
@@ -719,7 +727,7 @@ class TestAgentBehaviorConfigWiring:
         store.initialize()
         cm = ConfigManager(store=store)
         dispatcher = AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=cm,
             schema_loader=MagicMock(),
         )
@@ -1841,7 +1849,7 @@ class TestGroundingFollowsTenantServableProfiles:
     @staticmethod
     def _dispatcher(profiles=None, service_urls=None, deployed=None):
         return AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=_config_manager(
                 profiles=profiles, service_urls=service_urls, deployed=deployed
             ),
@@ -2084,7 +2092,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
     @staticmethod
     def _dispatcher(profiles):
         dispatcher = AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=_config_manager(profiles=profiles),
             schema_loader=MagicMock(),
         )
@@ -2344,7 +2352,7 @@ class TestGroundingConfigReadsLeaveTheLoop:
             lambda **kwargs: fake_config,
         )
         dispatcher = AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=_config_manager(profiles={}),
             schema_loader=MagicMock(),
         )
@@ -2387,7 +2395,7 @@ class TestGroundingSearchBudgetFaultContract:
     @staticmethod
     def _dispatcher():
         return AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=_config_manager(profiles=_document_profiles()),
             schema_loader=MagicMock(),
         )
@@ -2462,7 +2470,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
     @staticmethod
     def _dispatcher(deployed=None):
         dispatcher = AgentDispatcher(
-            agent_registry=MagicMock(),
+            agent_registry=_registry_mock(),
             config_manager=_config_manager(
                 profiles=_document_profiles(), deployed=deployed
             ),

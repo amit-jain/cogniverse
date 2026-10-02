@@ -38,6 +38,7 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 def mock_dispatcher():
     """AgentDispatcher with mocked internals."""
     registry = MagicMock()
+    registry.refresh = AsyncMock()
     config_manager = MagicMock()
     schema_loader = MagicMock()
     dispatcher = AgentDispatcher(
@@ -1049,6 +1050,7 @@ class TestServedTaskStoreIsBounded:
         agent_ep = MagicMock()
         agent_ep.capabilities = ["search"]
         dispatcher._registry.get_agent.return_value = agent_ep
+        dispatcher._registry.refresh = AsyncMock()
         return dispatcher
 
     @staticmethod

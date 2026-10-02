@@ -13,6 +13,7 @@ NO MOCKS for telemetry/Phoenix. Uses shared phoenix_container fixture.
 import asyncio
 import logging
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -227,6 +228,7 @@ class TestAnnotationQueueIntegration:
         real_provider,
         project_name,
         test_tenant_id,
+        shared_state_redis,
     ):
         """Write low-confidence spans → identify → enqueue → assign → complete."""
         _write_routing_spans(
@@ -253,22 +255,29 @@ class TestAnnotationQueueIntegration:
         low_conf = [r for r in requests if r.routing_confidence < 0.6]
         assert len(low_conf) >= 2, f"Expected >=2 low confidence, got {len(low_conf)}"
 
-        queue = AnnotationQueue()
-        added = queue.enqueue_batch(requests)
+        reviewed_at = datetime.now(timezone.utc)
+        queue = AnnotationQueue(
+            shared_state_redis,
+            key_prefix=f"test:annotation-queue:{uuid.uuid4().hex}",
+            clock=lambda: reviewed_at,
+        )
+        added = (await queue.enqueue_batch(requests)).enqueued
         assert added == len(requests)
-        assert queue.size() == len(requests)
+        assert (await queue.statistics())["total"] == len(requests)
 
-        first = queue.get_pending()[0]
-        assigned = queue.assign(first.span_id, reviewer="integration_test_user")
+        first = (await queue.snapshot()).pending[0]
+        assigned = await queue.assign(first.span_id, reviewer="integration_test_user")
         assert assigned.status == AnnotationStatus.ASSIGNED
         assert assigned.assigned_to == "integration_test_user"
-        assert assigned.sla_deadline is not None
+        assert assigned.sla_deadline == reviewed_at + timedelta(
+            hours={"high": 4, "medium": 24, "low": 72}[first.priority.value]
+        )
 
-        completed = queue.complete(first.span_id, label="correct_routing")
+        completed = await queue.complete(first.span_id, label="correct_routing")
         assert completed.status == AnnotationStatus.COMPLETED
-        assert completed.completed_at is not None
+        assert completed.completed_at == reviewed_at
 
-        stats = queue.statistics()
+        stats = await queue.statistics()
         assert stats["by_status"]["completed"] == 1
         assert stats["by_status"].get("pending", 0) == len(requests) - 1
 

@@ -82,10 +82,13 @@ class TestEmptyBatchDoesNotCrash:
 class TestRunIngestionRouteDiscovery:
     @pytest.mark.asyncio
     async def test_document_profile_ingests_the_document_dir_not_empty(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, shared_state_redis
     ):
         """The route must feed the discovered document dir to the pipeline; the
         old ``**/*.mp4`` glob fed an empty batch for a document profile."""
+        import uuid
+
+        from cogniverse_runtime.ingestion_jobs import IngestionJobStore
         from cogniverse_runtime.routers import ingestion as ing
 
         (tmp_path / "a.txt").write_text("hello")
@@ -106,24 +109,20 @@ class TestRunIngestionRouteDiscovery:
         )
 
         job_id = "job-doc-1"
-        ing.ingestion_jobs[job_id] = ing.IngestionStatus(
-            job_id=job_id,
-            status="pending",
-            videos_processed=0,
-            videos_total=0,
-            errors=[],
+        store = IngestionJobStore(
+            shared_state_redis,
+            owner="test",
+            key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}",
         )
+        await store.create(job_id)
         request = ing.IngestionRequest(
             video_dir=str(tmp_path),
             profile="document_text_semantic",
             tenant_id="acme:acme",
         )
-        try:
-            await ing.run_ingestion(
-                job_id, request, config_manager=None, schema_loader=None
-            )
+        await ing.run_ingestion(
+            job_id, request, config_manager=None, schema_loader=None, job_store=store
+        )
 
-            assert captured["files"] == [tmp_path]
-            assert ing.ingestion_jobs[job_id].status == "completed"
-        finally:
-            ing.ingestion_jobs.pop(job_id, None)
+        assert captured["files"] == [tmp_path]
+        assert (await store.get(job_id))["status"] == "completed"

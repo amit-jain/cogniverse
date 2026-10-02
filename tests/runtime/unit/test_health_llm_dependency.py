@@ -27,6 +27,7 @@ from cogniverse_runtime.routers import health
 from tests.runtime.unit.test_health_backend_reachability import (
     _client,
     _dead_url,
+    _NoAgents,
     _stub_backend,
 )
 from tests.utils.modal_app import ModalApp
@@ -45,7 +46,7 @@ def no_agents(monkeypatch):
     monkeypatch.setattr(
         health,
         "_get_agent_registry",
-        lambda: type("R", (), {"list_agents": lambda self: []})(),
+        lambda: _NoAgents(),
     )
 
 

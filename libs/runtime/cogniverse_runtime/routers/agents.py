@@ -1,19 +1,27 @@
 """Agent endpoints - unified interface for all agent operations."""
 
+import asyncio
 import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
-if TYPE_CHECKING:
-    from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from cogniverse_agents.routing.annotation_queue import (
+    AnnotationCompletionInProgressError,
+    AnnotationQueue,
+    AnnotationQueueFullError,
+    AnnotationQueueUnavailableError,
+)
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
-from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import (
+    AgentRegistry,
+    AgentRegistryUnavailableError,
+    endpoint_from_data,
+)
 from cogniverse_foundation.config.inference_service import (
     InferenceServiceUnavailableError,
 )
@@ -168,6 +176,17 @@ def get_registry() -> AgentRegistry:
     return _agent_registry
 
 
+async def _current_registry() -> AgentRegistry:
+    """The registry with every process's registrations applied; 503 when the
+    shared store cannot be read."""
+    registry = get_registry()
+    try:
+        await registry.refresh()
+    except AgentRegistryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return registry
+
+
 def get_dispatcher() -> AgentDispatcher:
     """Get the agent dispatcher (public accessor for A2A executor)."""
     return _ensure_dispatcher()
@@ -237,16 +256,19 @@ async def register_agent(data: AgentRegistrationData) -> Dict[str, Any]:
     """
     Register an agent in the curated registry (A2A pattern).
 
-    Agents call this endpoint during startup to self-register.
+    Agents call this endpoint during startup to self-register. The
+    registration is served by every runtime process from the next request on.
     """
     registry = get_registry()
 
-    success = registry.register_agent_from_data(data.model_dump())
-
-    if not success:
+    try:
+        await registry.add_registration(endpoint_from_data(data.model_dump()))
+    except ValueError:
         raise HTTPException(
             status_code=400, detail=f"Failed to register agent '{data.name}'"
         )
+    except AgentRegistryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return {
         "status": "registered",
@@ -259,7 +281,7 @@ async def register_agent(data: AgentRegistrationData) -> Dict[str, Any]:
 @router.get("/")
 async def list_agents() -> Dict[str, Any]:
     """List all registered agents."""
-    registry = get_registry()
+    registry = await _current_registry()
     agents = registry.list_agents()
 
     return {
@@ -271,20 +293,26 @@ async def list_agents() -> Dict[str, Any]:
 @router.get("/stats")
 async def get_registry_stats() -> Dict[str, Any]:
     """Get registry statistics including health status"""
-    registry = get_registry()
+    registry = await _current_registry()
     return registry.get_registry_stats()
 
 
-_annotation_queue: Optional["AnnotationQueue"] = None
+_annotation_queue: Optional[AnnotationQueue] = None
 
 
-def get_annotation_queue():
-    """Lazily create or return the singleton AnnotationQueue."""
+def set_annotation_queue(queue: AnnotationQueue) -> None:
+    """Inject the annotation queue every runtime process shares."""
     global _annotation_queue
-    if _annotation_queue is None:
-        from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+    _annotation_queue = queue
 
-        _annotation_queue = AnnotationQueue()
+
+def get_annotation_queue() -> AnnotationQueue:
+    """The injected annotation queue; 503 until startup has wired it."""
+    if _annotation_queue is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Annotation queue not configured; runtime initialising",
+        )
     return _annotation_queue
 
 
@@ -305,25 +333,36 @@ class EnqueueBatchRequest(BaseModel):
     requests: List[Dict[str, Any]]
 
 
+def _queue_unavailable(exc: AnnotationQueueUnavailableError) -> HTTPException:
+    return HTTPException(status_code=503, detail=str(exc))
+
+
 @router.get("/annotations/queue")
 async def get_annotation_queue_status() -> Dict[str, Any]:
-    """Get annotation queue statistics and pending items."""
+    """Get annotation queue statistics and the first 50 requests of each list.
+
+    Assigned requests past their SLA deadline turn expired on this read.
+    """
     queue = get_annotation_queue()
-    pending = queue.get_pending()
-    assigned = queue.get_assigned()
-    expired = queue.get_expired()
+    try:
+        snapshot = await queue.snapshot(limit=50)
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
     return {
-        "statistics": queue.statistics(),
-        "pending": [r.to_dict() for r in pending[:50]],
-        "assigned": [r.to_dict() for r in assigned[:50]],
-        "expired": [r.to_dict() for r in expired[:50]],
+        "statistics": snapshot.statistics,
+        "pending": [r.to_dict() for r in snapshot.pending],
+        "assigned": [r.to_dict() for r in snapshot.assigned],
+        "expired": [r.to_dict() for r in snapshot.expired],
     }
 
 
 @router.get("/annotations/queue/{span_id}")
 async def get_annotation_request(span_id: str) -> Dict[str, Any]:
     """Return one annotation request by span id."""
-    request = get_annotation_queue().get(span_id)
+    try:
+        request = await get_annotation_queue().get(span_id)
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
     if request is None:
         raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
     return request.to_dict()
@@ -334,7 +373,7 @@ async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]
     """Assign a pending annotation to a reviewer."""
     queue = get_annotation_queue()
     try:
-        request = queue.assign(
+        request = await queue.assign(
             span_id=span_id, reviewer=body.reviewer, sla_hours=body.sla_hours
         )
         return {"status": "assigned", "annotation": request.to_dict()}
@@ -342,6 +381,8 @@ async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]
         raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
 
 
 @router.post("/annotations/queue/enqueue")
@@ -350,6 +391,8 @@ async def enqueue_annotations(body: EnqueueBatchRequest) -> Dict[str, Any]:
 
     Called by the scheduled annotation-identification cycle; also usable by
     external systems. Duplicated span_ids (already in the queue) are skipped.
+    A batch that would take the open requests past the queue's limit is
+    refused whole with 429.
     """
     from cogniverse_agents.routing.annotation_agent import AnnotationRequest
 
@@ -359,11 +402,16 @@ async def enqueue_annotations(body: EnqueueBatchRequest) -> Dict[str, Any]:
     except (KeyError, ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
 
-    enqueued = queue.enqueue_batch(requests)
+    try:
+        outcome = await queue.enqueue_batch(requests)
+    except AnnotationQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
     return {
-        "enqueued": enqueued,
-        "skipped": len(requests) - enqueued,
-        "queue_total": queue.statistics()["total"],
+        "enqueued": outcome.enqueued,
+        "skipped": len(requests) - outcome.enqueued,
+        "queue_total": outcome.total,
     }
 
 
@@ -371,82 +419,115 @@ async def enqueue_annotations(body: EnqueueBatchRequest) -> Dict[str, Any]:
 async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, Any]:
     """Mark an annotation as completed, persisting the label durably.
 
-    The label is the whole value of the review — persistence happens BEFORE
-    the in-memory completion, so a telemetry outage leaves the item open for
-    retry (502) instead of silently discarding the reviewer's work. Items
-    enqueued without a tenant_id can't be persisted; they complete in-memory
-    with ``persisted: false``.
+    The request is claimed first, so of concurrent completions on any
+    processes exactly one persists a label (the others get 409). The label is
+    the whole value of the review — persistence happens BEFORE the
+    completion, so a telemetry outage releases the claim and leaves the item
+    open for retry (502) instead of silently discarding the reviewer's work.
+    Items enqueued without a tenant_id can't be persisted; they complete with
+    ``persisted: false``.
     """
-    from cogniverse_agents.routing.annotation_agent import AnnotationStatus
-
     queue = get_annotation_queue()
-    request = queue.get(span_id)
-    if request is None:
-        raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
-    # Guard status BEFORE persisting so a re-complete of a finished item can't
-    # write a duplicate annotation.
-    if request.status not in (AnnotationStatus.PENDING, AnnotationStatus.ASSIGNED):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Cannot complete span {span_id}: status is {request.status.value}"
-            ),
-        )
-
-    persisted = False
-    if body.label is not None:
-        import cogniverse_agents.routing.annotation_storage as annotation_storage_mod
-        from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
-
-        try:
-            label_enum = AnnotationLabel(body.label)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unknown annotation label '{body.label}'; expected one of "
-                    f"{sorted(m.value for m in AnnotationLabel)}"
-                ),
-            )
-        if request.tenant_id:
-            storage = annotation_storage_mod.AnnotationStorage(
-                tenant_id=request.tenant_id, agent_type=request.agent_type
-            )
-            try:
-                await storage.store_human_annotation(
-                    span_id=span_id,
-                    label=label_enum,
-                    reasoning=body.reasoning,
-                    annotator_id=body.annotator,
-                )
-                persisted = True
-            except Exception as e:
-                logger.error("Annotation persist failed for span %s: %r", span_id, e)
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        "Annotation could not be persisted to the telemetry "
-                        "backend; the item remains open for retry."
-                    ),
-                )
-        else:
-            logger.warning(
-                "Annotation for span %s completed without tenant_id — label "
-                "kept in-memory only",
-                span_id,
-            )
-
     try:
-        request = queue.complete(span_id=span_id, label=body.label)
-        return {
-            "status": "completed",
-            "persisted": persisted,
-            "annotation": request.to_dict(),
-        }
+        claim = await queue.begin_completion(span_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AnnotationCompletionInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
+
+    try:
+        persisted = await _persist_label(claim.request, span_id, body)
+    except HTTPException:
+        await _release_claim(queue, claim)
+        raise
+
+    try:
+        request = await queue.finish_completion(claim, label=body.label)
+    except AnnotationCompletionInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AnnotationQueueUnavailableError as exc:
+        raise _queue_unavailable(exc) from exc
+    return {
+        "status": "completed",
+        "persisted": persisted,
+        "annotation": request.to_dict(),
+    }
+
+
+def _label_persistence():
+    """The telemetry label writer and the label types.
+
+    Their first import loads litellm, which fetches its model cost map over
+    the network (five-second timeout), so callers import them off the event
+    loop.
+    """
+    import cogniverse_agents.routing.annotation_storage as annotation_storage_mod
+    from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
+
+    return annotation_storage_mod, AnnotationLabel
+
+
+async def _persist_label(request, span_id: str, body: CompleteRequest) -> bool:
+    """Write the reviewer's label to telemetry; True when it was written."""
+    if body.label is None:
+        return False
+    annotation_storage_mod, AnnotationLabel = await asyncio.to_thread(
+        _label_persistence
+    )
+
+    try:
+        label_enum = AnnotationLabel(body.label)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown annotation label '{body.label}'; expected one of "
+                f"{sorted(m.value for m in AnnotationLabel)}"
+            ),
+        )
+    if not request.tenant_id:
+        logger.warning(
+            "Annotation for span %s completed without tenant_id — label kept "
+            "in the queue only",
+            span_id,
+        )
+        return False
+    storage = annotation_storage_mod.AnnotationStorage(
+        tenant_id=request.tenant_id, agent_type=request.agent_type
+    )
+    try:
+        await storage.store_human_annotation(
+            span_id=span_id,
+            label=label_enum,
+            reasoning=body.reasoning,
+            annotator_id=body.annotator,
+        )
+    except Exception as e:
+        logger.error("Annotation persist failed for span %s: %r", span_id, e)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Annotation could not be persisted to the telemetry "
+                "backend; the item remains open for retry."
+            ),
+        )
+    return True
+
+
+async def _release_claim(queue: AnnotationQueue, claim) -> None:
+    try:
+        await queue.abandon_completion(claim)
+    except AnnotationQueueUnavailableError as exc:
+        logger.error(
+            "Could not release the completion claim on span %s (%s); it lapses "
+            "on its own",
+            claim.span_id,
+            exc,
+        )
 
 
 @router.get("/by-capability/{capability}")
@@ -456,7 +537,7 @@ async def find_agents_by_capability(capability: str) -> Dict[str, Any]:
 
     Enables capability-based agent discovery.
     """
-    registry = get_registry()
+    registry = await _current_registry()
     agents = registry.find_agents_by_capability(capability)
 
     return {
@@ -477,7 +558,7 @@ async def find_agents_by_capability(capability: str) -> Dict[str, Any]:
 @router.get("/{agent_name}")
 async def get_agent_info(agent_name: str) -> Dict[str, Any]:
     """Get information about a specific agent."""
-    registry = get_registry()
+    registry = await _current_registry()
 
     agent = registry.get_agent(agent_name)
     if not agent:
@@ -495,10 +576,13 @@ async def get_agent_info(agent_name: str) -> Dict[str, Any]:
 
 @router.delete("/{agent_name}", status_code=200)
 async def unregister_agent(agent_name: str) -> Dict[str, Any]:
-    """Unregister an agent from the registry"""
+    """Unregister an agent from every runtime process's registry."""
     registry = get_registry()
 
-    success = registry.unregister_agent(agent_name)
+    try:
+        success = await registry.remove_registration(agent_name)
+    except AgentRegistryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if not success:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
@@ -512,7 +596,7 @@ async def unregister_agent(agent_name: str) -> Dict[str, Any]:
 @router.get("/{agent_name}/card")
 async def get_agent_card(agent_name: str) -> Dict[str, Any]:
     """Get agent card (A2A protocol) for a specific agent."""
-    registry = get_registry()
+    registry = await _current_registry()
 
     agent = registry.get_agent(agent_name)
     if not agent:
@@ -585,6 +669,8 @@ async def process_agent_task(
     except VespaSearchDegraded as e:
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.
+        raise HTTPException(status_code=503, detail=str(e))
+    except AgentRegistryUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this

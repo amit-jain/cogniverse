@@ -6,13 +6,25 @@ via HTTP POST and clients discover agents via HTTP GET.
 Also tests the process_agent_task dispatch logic.
 """
 
+import uuid
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
 
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
+
+
+def _shared_store(redis_url: str) -> RedisAgentRegistryStore:
+    """A registration store of its own on the test-owned Redis; its client
+    connects on the loop that first uses it."""
+    return RedisAgentRegistryStore(
+        Redis.from_url(redis_url, decode_responses=True),
+        key_prefix=f"test:agent-registry:{uuid.uuid4().hex}",
+    )
 
 
 @pytest.mark.unit
@@ -27,9 +39,14 @@ class TestAgentRegistryHTTPEndpoints:
         return config_manager
 
     @pytest.fixture
-    def agent_registry(self, config_manager):
-        """Create agent registry for testing"""
-        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
+    def agent_registry(self, config_manager, shared_state_redis_url):
+        """Create agent registry for testing, sharing registrations through
+        the test-owned Redis as the runtime does."""
+        registry = AgentRegistry(
+            tenant_id="test:unit",
+            config_manager=config_manager,
+            store=_shared_store(shared_state_redis_url),
+        )
         return registry
 
     @pytest.fixture
@@ -46,7 +63,9 @@ class TestAgentRegistryHTTPEndpoints:
         app = FastAPI()
         app.include_router(router, prefix="/agents")
 
-        return TestClient(app)
+        with TestClient(app) as client:
+            yield client
+            client.portal.call(agent_registry._store._redis.aclose)
 
     def test_registry_stores_no_resolved_config(self, config_manager):
         """The registry self-registers agents over HTTP and no longer pays a
@@ -254,7 +273,7 @@ class TestAgentRegistryHTTPEndpoints:
 class TestAgentRegistryIntegration:
     """Integration tests for agent registry with HTTP endpoints"""
 
-    def test_full_registration_discovery_flow(self):
+    def test_full_registration_discovery_flow(self, shared_state_redis_url):
         """Test complete flow: register → discover by capability → get info"""
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
@@ -263,13 +282,19 @@ class TestAgentRegistryIntegration:
 
         # Setup
         config_manager = Mock()
-        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
+        store = _shared_store(shared_state_redis_url)
+        registry = AgentRegistry(
+            tenant_id="test:unit", config_manager=config_manager, store=store
+        )
         set_agent_registry(registry)
 
         app = FastAPI()
         app.include_router(router, prefix="/agents")
-        client = TestClient(app)
+        with TestClient(app) as client:
+            self._register_discover_and_list(client)
+            client.portal.call(store._redis.aclose)
 
+    def _register_discover_and_list(self, client):
         # Step 1: Register two agents
         client.post(
             "/agents/register",

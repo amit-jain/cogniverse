@@ -9,7 +9,6 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 from a2a.server.context import ServerCallContext
 from a2a.server.events import Event
@@ -31,6 +30,8 @@ from redis.exceptions import (
     RedisError,
     ResponseError,
 )
+
+from cogniverse_runtime.shared_state import redacted_redis_url
 
 _UNAVAILABLE = "shared A2A task store unavailable"
 # How long a closed or orphaned event relay stays readable for late consumers.
@@ -108,24 +109,6 @@ class CancelCommand:
     request_id: str
     task_id: str
     reply_key: str
-
-
-def _redacted_redis_url(redis_url: str) -> str:
-    """``redis_url`` as scheme, host, port and database only.
-
-    Credentials ride in the userinfo or a ``password`` query parameter, so
-    both are dropped from anything logged or raised.
-    """
-    parts = urlsplit(redis_url)
-    host = parts.hostname or ""
-    if ":" in host:
-        host = f"[{host}]"
-    try:
-        port = parts.port
-    except ValueError:
-        port = None
-    netloc = f"{host}:{port}" if port is not None else host
-    return f"{parts.scheme}://{netloc}{parts.path}"
 
 
 _CALL_CONTEXT_LEASE_KEY = "cogniverse.a2a.task_lease"
@@ -568,7 +551,7 @@ class RedisTaskStore(TaskStore):
             )
         if max_connections < 1:
             raise ValueError(f"max_connections must be >= 1, got {max_connections}")
-        named = _redacted_redis_url(redis_url)
+        named = redacted_redis_url(redis_url)
         client = Redis.from_pool(
             BlockingConnectionPool.from_url(
                 redis_url,

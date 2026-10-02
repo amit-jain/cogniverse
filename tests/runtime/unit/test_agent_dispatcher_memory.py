@@ -36,6 +36,7 @@ def mock_dispatcher():
 
     schema_loader = MagicMock()
     registry = MagicMock()
+    registry.refresh = AsyncMock()
 
     return AgentDispatcher(
         agent_registry=registry,

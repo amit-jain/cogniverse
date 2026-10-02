@@ -5,9 +5,11 @@ Tests the gateway→orchestration handoff via AgentDispatcher, and HTTP-level
 round-trip tests for the annotation queue endpoints.
 """
 
+import functools
 import time
+import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -22,6 +24,7 @@ from cogniverse_agents.routing.annotation_agent import (
     AnnotationStatus,
 )
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _GatewayAgentEntry
 from cogniverse_runtime.routers import agents as agents_router
@@ -44,6 +47,7 @@ def mock_telemetry_manager():
 def dispatcher():
     """Create an AgentDispatcher with mock dependencies."""
     registry = MagicMock()
+    registry.refresh = AsyncMock()
     config_manager = MagicMock()
     from cogniverse_foundation.config.unified_config import BackendConfig
 
@@ -1175,7 +1179,7 @@ def _make_annotation_request(
 ) -> AnnotationRequest:
     return AnnotationRequest(
         span_id=span_id,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         query="http test query",
         chosen_agent="search_agent",
         routing_confidence=0.5,
@@ -1186,24 +1190,45 @@ def _make_annotation_request(
     )
 
 
+class _QueueInAppLoop:
+    """The queue's methods, run to completion on the app's event loop."""
+
+    def __init__(self, portal, queue: AnnotationQueue):
+        self._portal = portal
+        self._queue = queue
+
+    def __getattr__(self, name):
+        method = getattr(self._queue, name)
+        return lambda *args, **kwargs: self._portal.call(
+            functools.partial(method, *args, **kwargs)
+        )
+
+
 @pytest.fixture
-def annotation_client():
+def annotation_client(shared_state_redis_url):
     """
     TestClient with agents router mounted and a fresh AnnotationQueue injected.
 
-    Overrides the module-level _annotation_queue singleton so each test
-    gets an isolated queue — no cross-test state leakage.
+    The queue lives on the test-owned Redis under a key prefix of its own,
+    so each test gets an isolated queue — no cross-test state leakage. Its
+    client connects on the app's event loop, where the test's direct queue
+    calls run too.
     """
+    from redis.asyncio import Redis
+
     test_app = FastAPI()
     test_app.include_router(agents_router.router, prefix="/agents")
 
-    fresh_queue = AnnotationQueue()
-    # Patch the module-level singleton directly for the duration of the test
+    redis = Redis.from_url(shared_state_redis_url, decode_responses=True)
+    fresh_queue = AnnotationQueue(
+        redis, key_prefix=f"test:annotation-queue:{uuid.uuid4().hex}"
+    )
     original = agents_router._annotation_queue
-    agents_router._annotation_queue = fresh_queue
+    agents_router.set_annotation_queue(fresh_queue)
     try:
         with TestClient(test_app) as client:
-            yield client, fresh_queue
+            yield client, _QueueInAppLoop(client.portal, fresh_queue)
+            client.portal.call(redis.aclose)
     finally:
         agents_router._annotation_queue = original
 
@@ -1530,7 +1555,7 @@ class TestGetAgentCard:
             process_endpoint="/tasks/process",
             health_status="healthy",
         )
-        registry = MagicMock(name="agent_registry")
+        registry = MagicMock(spec=AgentRegistry, name="agent_registry")
         registry.get_agent.side_effect = lambda name: (
             entry if name == "video_search_agent" else None
         )
