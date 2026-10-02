@@ -6,8 +6,7 @@ an earlier release holds each blob under its base name
 `dspy-{kind}-{tenant}-{key}`, which the ring does not read.
 
 Every serving blob is affected: `config/artefact_state_{agent}` (unmigrated, a
-tenant serves un-optimized prompts), `config/pin_quotas`,
-`config/signature_variants`, each `config/blob_state_{kind}_{key}` activation
+tenant serves un-optimized prompts), each `config/blob_state_{kind}_{key}` activation
 pointer, `config/*_ground_truth`, `model/*`, `xgboost/*` and `workflow/*`.
 
 ## Deploy sequence

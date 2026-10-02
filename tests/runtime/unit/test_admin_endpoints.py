@@ -21,33 +21,18 @@ from cogniverse_runtime.routers import admin as admin_router
 
 
 @pytest.fixture(autouse=True)
-def _stub_pin_quota_store(monkeypatch):
-    """Pin/promote enforcement now warms quotas from the durable artifact store
-    (real Phoenix in prod). These in-process route tests have no Phoenix, so
-    stub the factory with an in-memory blob store — the quota values are not
-    what these tests assert (the store round-trip is covered by
-    test_pin_quota_enforcement_reads_blob.py). Tests that need specific quota
-    values override this in their own body."""
+def _stub_pin_quota_store():
+    """Pin/promote enforcement reads quotas from the admin config store (real
+    Vespa in prod). These in-process route tests wire an in-memory store — the
+    quota values are not what these tests assert (the store round-trip is
+    covered by test_pin_quota_enforcement_reads_blob.py)."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
 
-    class _InMemoryAM:
-        _blobs: dict = {}
-
-        def __init__(self, tenant):
-            self._tenant = tenant
-
-        async def load_blob(self, kind, key):
-            return self._blobs.get((self._tenant, kind, key))
-
-        async def save_blob(self, kind, key, raw):
-            self._blobs[(self._tenant, kind, key)] = raw
-
-    _InMemoryAM._blobs = {}
-    monkeypatch.setattr(
-        admin_router, "_build_artifact_manager", lambda key: _InMemoryAM(key)
-    )
-    admin_router._reset_admin_overrides_for_tests()
+    previous = admin_router._config_manager
+    admin_router.set_config_manager(ConfigManager(store=InMemoryConfigStore()))
     yield
-    admin_router._reset_admin_overrides_for_tests()
+    admin_router.set_config_manager(previous)
 
 
 def _make_stub_manager_class(delete_results=None):

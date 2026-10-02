@@ -98,7 +98,7 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
     import dspy
 
     from cogniverse_runtime import main as runtime_main
-    from cogniverse_runtime.routers import admin as admin_router
+    from cogniverse_runtime.routers import agents as agents_router
 
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setenv("COGNIVERSE_SANDBOX_POLICY", "disabled")
@@ -115,17 +115,19 @@ async def test_shutdown_stops_the_background_deploys_before_its_drains(
             order.append(f"migration cancelled, stop set: {stop.is_set()}")
             raise
 
-    async def recording_blob_drain(timeout_s: float = 60.0) -> bool:
-        order.append("blob drain")
+    async def recording_conversation_drain() -> bool:
+        order.append("conversation drain")
         return True
 
     monkeypatch.setattr(runtime_main, "_migrate_drifted_schemas", migration_never_done)
-    monkeypatch.setattr(admin_router, "drain_blob_writes", recording_blob_drain)
+    monkeypatch.setattr(
+        agents_router, "drain_conversation_saves", recording_conversation_drain
+    )
 
     async with runtime_main.lifespan(FastAPI()):
         await asyncio.wait_for(running.wait(), timeout=5)
 
-    assert order == ["migration cancelled, stop set: True", "blob drain"]
+    assert order == ["migration cancelled, stop set: True", "conversation drain"]
 
 
 @pytest.mark.asyncio

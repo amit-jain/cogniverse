@@ -187,7 +187,6 @@ def _grace_and_budgets(*set_args: str) -> tuple[int, dict]:
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S,
     )
-    from cogniverse_runtime.routers.admin import drain_blob_writes
 
     manifests = _render_chart(*set_args)
     deployments = [
@@ -207,9 +206,6 @@ def _grace_and_budgets(*set_args: str) -> tuple[int, dict]:
     }
     budgets = {
         "uvicorn graceful shutdown": float(env["UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"]),
-        "blob-write drain": inspect.signature(drain_blob_writes)
-        .parameters["timeout_s"]
-        .default,
         "conversation-save drain": CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S,
         # The A2A drain, then at most as long again for what it cancelled.
         "A2A shutdown": 2
@@ -221,17 +217,15 @@ def _grace_and_budgets(*set_args: str) -> tuple[int, dict]:
 
 def test_termination_grace_covers_every_shutdown_drain():
     """SIGTERM lets uvicorn close open connections for its graceful-shutdown
-    timeout, then the lifespan drains accepted admin blob writes, pending
-    conversation saves, the A2A protocol and background memory writes in
-    turn. The pod's grace period
+    timeout, then the lifespan drains pending conversation saves, the A2A
+    protocol and background memory writes in turn. The pod's grace period
     must cover all of them plus the rest of teardown, or SIGKILL lands
     mid-drain and an accepted write or a draining execution is lost."""
     grace, budgets = _grace_and_budgets()
 
-    assert grace == 220
+    assert grace == 160
     assert budgets == {
         "uvicorn graceful shutdown": 15.0,
-        "blob-write drain": 60.0,
         "conversation-save drain": 40.0,
         "A2A shutdown": 60.0,
         "memory-write drain": 30.0,
@@ -242,9 +236,9 @@ def test_termination_grace_covers_every_shutdown_drain():
 @pytest.mark.parametrize(
     "set_args,grace_expected",
     [
-        (("runtime.shutdown.a2aDrainSeconds=45.5",), 251),
-        (("runtime.shutdown.uvicornGracefulSeconds=40",), 245),
-        (("runtime.shutdown.teardownSeconds=30",), 235),
+        (("runtime.shutdown.a2aDrainSeconds=45.5",), 191),
+        (("runtime.shutdown.uvicornGracefulSeconds=40",), 185),
+        (("runtime.shutdown.teardownSeconds=30",), 175),
     ],
 )
 def test_termination_grace_follows_the_configured_budgets(set_args, grace_expected):
@@ -274,7 +268,7 @@ def test_a_release_without_the_shutdown_block_renders_the_default_grace():
     budgets instead of failing on a nil pointer."""
     grace, budgets = _grace_and_budgets("runtime.shutdown=null")
 
-    assert grace == 220
+    assert grace == 160
     assert budgets["uvicorn graceful shutdown"] == 15.0
     assert budgets["A2A shutdown"] == 60.0
 

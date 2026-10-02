@@ -3,51 +3,62 @@
 Drives the mounted FastAPI app in-process via ASGITransport to pin the route's
 request/response serialization and validation: the exact wire body shape, the
 org_admin unlimited-sentinel rejection, and canonical-tenant routing of the
-artifact key. The ArtifactManager is a double here because these assert route
-LOGIC, not store behavior — the real Phoenix save->cold-read->load round-trip
-and cross-replica enforcement live in
+stored record. The config store is the in-memory one here because these assert
+route LOGIC — the real Vespa round-trip and cross-process enforcement live in
 tests/runtime/integration/test_pin_quota_enforcement_reads_blob.py.
 """
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin as admin_router
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
-class _StubArtifactManager:
-    """Faithful double for ArtifactManager: async ``load_blob(kind, key)``
-    returning the persisted raw string, or None when the blob is unset."""
+class _RecordingStore(InMemoryConfigStore):
+    """In-memory config store that records which record each read named."""
 
-    def __init__(self, blobs):
-        self._blobs = blobs
-        self.received = []
+    def __init__(self):
+        super().__init__()
+        self.reads = []
 
-    async def load_blob(self, kind, key):
-        self.received.append((kind, key))
-        return self._blobs.get((kind, key))
+    def get_config(self, tenant_id, scope, service, config_key, version=None):
+        self.reads.append((tenant_id, scope, service, config_key))
+        return super().get_config(tenant_id, scope, service, config_key, version)
 
 
-def _build_app(blobs, monkeypatch):
-    stub = _StubArtifactManager(blobs)
-    stub.built_for = []
-    admin_router._reset_admin_overrides_for_tests()
+class _OutageStore(InMemoryConfigStore):
+    """Config store that is down."""
 
-    def _factory(key):
-        stub.built_for.append(key)
-        return stub
+    def get_config(self, *args, **kwargs):
+        raise ConnectionError("config store down")
 
-    monkeypatch.setattr(admin_router, "_build_artifact_manager", _factory)
-    app = FastAPI()
-    app.include_router(admin_router.router, prefix="/admin")
-    return app, stub
+
+@pytest.fixture
+def wired():
+    previous = admin_router._config_manager
+
+    def wire(store):
+        admin_router.set_config_manager(ConfigManager(store=store))
+        app = FastAPI()
+        app.include_router(admin_router.router, prefix="/admin")
+        return app
+
+    yield wire
+    admin_router.set_config_manager(previous)
+
+
+def _seed(store, tenant_id, quotas):
+    store.set_config(
+        tenant_id, ConfigScope.SYSTEM, "admin_overrides", "pin_quotas", quotas
+    )
 
 
 async def _get(app, path):
@@ -57,29 +68,36 @@ async def _get(app, path):
         return await client.get(path)
 
 
+async def _put(app, path, body):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        return await client.put(path, json=body)
+
+
+RECORD = ("acme:acme", ConfigScope.SYSTEM, "admin_overrides", "pin_quotas")
+
+
 @pytest.mark.asyncio
-async def test_pin_quotas_returns_persisted_blob(monkeypatch):
+async def test_pin_quotas_returns_the_stored_record(wired):
+    store = _RecordingStore()
     persisted = {"user": 7, "tenant_admin": 20, "org_admin": -1}
-    app, stub = _build_app(
-        {("config", "pin_quotas"): json.dumps(persisted)}, monkeypatch
-    )
-    try:
-        resp = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
-    finally:
-        admin_router._reset_admin_overrides_for_tests()
+    _seed(store, "acme:acme", persisted)
+    app = wired(store)
+
+    resp = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
         "tenant_id": "acme:acme",
         "quotas": {"user": 7, "tenant_admin": 20, "org_admin": -1},
-        "pending_write": False,
     }
-    # The blob was read from the durable store under the canonical tenant key.
-    assert stub.received == [("config", "pin_quotas")]
+    # The record was read from the store under the canonical tenant key.
+    assert store.reads == [RECORD]
 
 
 @pytest.mark.asyncio
-async def test_pin_quotas_unset_returns_defaults(monkeypatch):
+async def test_pin_quotas_unset_returns_defaults(wired):
     from cogniverse_core.memory.pinning import PinQuotas
 
     d = PinQuotas()
@@ -88,104 +106,113 @@ async def test_pin_quotas_unset_returns_defaults(monkeypatch):
         "tenant_admin": d.tenant_admin,
         "org_admin": -1 if d.org_admin is None else d.org_admin,
     }
-    app, stub = _build_app({}, monkeypatch)
-    try:
-        resp = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
-    finally:
-        admin_router._reset_admin_overrides_for_tests()
+    store = _RecordingStore()
+    app = wired(store)
+
+    resp = await _get(app, "/admin/tenants/acme/pin_quotas")
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {
-        "tenant_id": "acme:acme",
-        "quotas": expected,
-        "pending_write": False,
-    }
-    assert stub.received == [("config", "pin_quotas")]
-    # The CANONICAL tenant must reach the per-tenant store — a factory that
-    # dropped or mis-derived the tenant would read another tenant's quotas.
-    assert stub.built_for == ["acme:acme"]
-
-
-async def _put(app, path, body):
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://t"
-    ) as client:
-        return await client.put(path, json=body)
+    assert resp.json() == {"tenant_id": "acme", "quotas": expected}
+    # The CANONICAL tenant must reach the store — a read under the bare id
+    # would look up a record no PUT writes.
+    assert store.reads == [RECORD]
 
 
 @pytest.mark.asyncio
-async def test_org_admin_quota_rejects_sub_sentinel_negatives(monkeypatch):
+async def test_put_merges_the_named_fields_onto_the_stored_record(wired):
+    store = _RecordingStore()
+    _seed(store, "acme:acme", {"user": 1, "tenant_admin": 2, "org_admin": -1})
+    app = wired(store)
+
+    resp = await _put(app, "/admin/tenants/acme/pin_quotas", {"tenant_admin": 9})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "tenant_id": "acme",
+        "quotas": {"user": 1, "tenant_admin": 9, "org_admin": -1},
+    }
+    stored = store.get_config(*RECORD)
+    assert (stored.version, stored.config_value) == (
+        2,
+        {"user": 1, "tenant_admin": 9, "org_admin": -1},
+    )
+
+
+@pytest.mark.asyncio
+async def test_org_admin_quota_rejects_sub_sentinel_negatives(wired):
     """-1 means unlimited; any other negative used to persist as a literal
     limit that usage comparisons always exceed — every org_admin pin for
     the tenant was silently rejected until the value was corrected."""
-    from unittest.mock import AsyncMock
+    store = _RecordingStore()
+    app = wired(store)
 
-    app, stub = _build_app({}, monkeypatch)
-    stub.save_blob = AsyncMock()
-    try:
-        bad = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -5})
-        ok = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -1})
-    finally:
-        admin_router._reset_admin_overrides_for_tests()
+    bad = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -5})
+    assert store.get_config(*RECORD) is None
+    ok = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -1})
 
     assert bad.status_code == 400
     assert "org_admin" in bad.json()["detail"]
     assert ok.status_code == 200
     assert ok.json()["quotas"]["org_admin"] == -1
-
-
-class _OutageArtifactManager:
-    """ArtifactManager double whose blob store is down."""
-
-    async def load_blob(self, kind, key):
-        raise ConnectionError("blob store down")
-
-    async def save_blob(self, kind, key, raw):
-        raise ConnectionError("blob store down")
-
-
-def _build_outage_app(monkeypatch):
-    admin_router._reset_admin_overrides_for_tests()
-    monkeypatch.setattr(
-        admin_router, "_build_artifact_manager", lambda key: _OutageArtifactManager()
-    )
-    app = FastAPI()
-    app.include_router(admin_router.router, prefix="/admin")
-    return app
+    assert store.get_config(*RECORD).config_value["org_admin"] == -1
 
 
 @pytest.mark.asyncio
-async def test_pin_quotas_get_maps_store_outage_to_503(monkeypatch):
-    """A blob-store outage is a dependency failure — 503 with a descriptive
+async def test_pin_quotas_get_maps_store_outage_to_503(wired):
+    """A config-store outage is a dependency failure — 503 with a descriptive
     detail, never an opaque 500."""
-    app = _build_outage_app(monkeypatch)
+    app = wired(_OutageStore())
     response = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
     assert response.status_code == 503
-    assert "pin-quota store unavailable" in response.json()["detail"]
+    assert response.json() == {
+        "detail": "pin-quota store unavailable: config store down"
+    }
 
 
 @pytest.mark.asyncio
-async def test_pin_quotas_put_maps_store_outage_to_503(monkeypatch):
-    app = _build_outage_app(monkeypatch)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://t"
-    ) as client:
-        response = await client.put(
-            "/admin/tenants/acme:acme/pin_quotas", json={"user": 5}
-        )
+async def test_pin_quotas_put_maps_store_outage_to_503(wired):
+    app = wired(_OutageStore())
+    response = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"user": 5})
     assert response.status_code == 503
-    assert "pin-quota store unavailable" in response.json()["detail"]
+    assert response.json() == {
+        "detail": "pin-quota store unavailable: config store down"
+    }
 
 
 @pytest.mark.asyncio
-async def test_pin_quotas_put_still_validates_before_store(monkeypatch):
+async def test_pin_quotas_put_still_validates_before_store(wired):
     """Request validation fires before the store is touched — a bad request
     is a 400 even when the store is down."""
-    app = _build_outage_app(monkeypatch)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://t"
-    ) as client:
-        response = await client.put(
-            "/admin/tenants/acme:acme/pin_quotas", json={"user": -2}
-        )
+    app = wired(_OutageStore())
+    response = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"user": -2})
     assert response.status_code == 400
+    assert response.json() == {"detail": "user quota must be >= 0"}
+
+
+@pytest.mark.asyncio
+async def test_a_put_losing_every_compare_and_set_answers_409_and_writes_nothing(
+    wired,
+):
+    class _ContendedStore(InMemoryConfigStore):
+        def compare_and_set_config(self, *args, **kwargs):
+            return None
+
+    store = _ContendedStore()
+    _seed(store, "acme:acme", {"user": 1, "tenant_admin": 2, "org_admin": -1})
+    app = wired(store)
+
+    response = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"user": 5})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": (
+            "pin-quota update conflicted: config acme:acme:system:admin_overrides:"
+            "pin_quotas changed under every one of 10 compare-and-set attempts; "
+            "nothing was written"
+        )
+    }
+    stored = store.get_config(*RECORD)
+    assert (stored.version, stored.config_value) == (
+        1,
+        {"user": 1, "tenant_admin": 2, "org_admin": -1},
+    )

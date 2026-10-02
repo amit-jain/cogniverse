@@ -68,10 +68,9 @@ async def test_load_failure_returns_error_overlay_with_the_resolved_variant(
 
     d = _dispatcher(lambda tenant_id: am)
     monkeypatch.setattr(
-        admin_router, "load_signature_variants", AsyncMock(return_value={})
-    )
-    monkeypatch.setattr(
-        d, "_resolve_signature_variant", lambda tenant_id, agent_name: "variant-b"
+        admin_router,
+        "cached_signature_variants",
+        AsyncMock(return_value={"search_agent": "variant-b", "other": "variant-c"}),
     )
 
     with caplog.at_level(logging.WARNING):
@@ -91,6 +90,47 @@ async def test_load_failure_returns_error_overlay_with_the_resolved_variant(
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
         "Artefact resolution for agent=search_agent tenant=acme:acme failed "
         "(error) — serving default prompts: Phoenix read failed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_variant_store_outage_serves_the_default_variant_and_names_it(
+    caplog, monkeypatch
+):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    am = AsyncMock()
+    am.load_for_request = AsyncMock(
+        return_value={
+            "prompts": None,
+            "served_from": "default",
+            "version": None,
+            "variant_id": "default",
+        }
+    )
+    lookup = AsyncMock(side_effect=ConfigStoreUnavailableError("vespa down"))
+    monkeypatch.setattr(admin_router, "cached_signature_variants", lookup)
+
+    with caplog.at_level(logging.WARNING):
+        result = await _dispatcher(lambda tenant_id: am).resolve_artefact_for_request(
+            "search_agent", "acme:acme", "seed-1"
+        )
+
+    assert result == {
+        "prompts": None,
+        "served_from": "default",
+        "version": None,
+        "variant_id": "default",
+        "artifact_load_status": ARTIFACT_LOAD_LOADED,
+        "variant_lookup_status": ARTIFACT_LOAD_STORE_UNAVAILABLE,
+    }
+    assert am.load_for_request.await_args.kwargs == {
+        "request_seed": "seed-1",
+        "variant_id": "default",
+    }
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+        "Signature-variant lookup for agent=search_agent tenant=acme:acme failed "
+        "(store_unavailable) — serving the default variant: vespa down"
     ]
 
 

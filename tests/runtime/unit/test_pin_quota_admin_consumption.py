@@ -1,58 +1,53 @@
 """admin PUT /pin_quotas changes the effective PinQuotas.
 
-The admin endpoint writes overrides into a persisted quota blob and loads that
-blob back into ``PinQuotas.for_tenant`` through an explicit ``admin_overrides``
-argument. This test verifies the consumer wire end to end:
+The admin endpoint writes overrides into a stored quota record and loads that
+record back into ``PinQuotas.for_tenant`` through an explicit
+``admin_overrides`` argument. This test verifies the consumer wire end to end:
 
   * fresh process: loaded quotas resolve to dataclass defaults;
-  * admin endpoint PUT persists the override blob;
+  * admin endpoint PUT stores the override record;
   * subsequent loads reflect the PUT (raw or canonical id);
   * the lifecycle scheduler's PinService construction (the one
-    production caller) uses the loaded blob so the override propagates.
+    production caller) uses the loaded record so the override propagates.
 
-The blob boundary is an in-memory fake so the test is self-contained.
+The config store is the in-memory one so the test is self-contained.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
+import threading
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_core.memory.pinning import PinQuotas
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
-# Per-(tenant, kind, key) in-memory blob store standing in for the Phoenix-backed
-# ArtifactManager. The pin-quota consumer wire under test is the admin PUT ->
-# _pin_quota_overrides -> PinQuotas.for_tenant path; the durable blob boundary is
-# incidental, and depending on an ambient localhost:6006 made this pass or fail
-# on whatever happened to be listening on the host.
-_FAKE_BLOBS: dict = {}
 
+@pytest.fixture
+def wire_store():
+    previous = admin._config_manager
 
-def _fake_build_artifact_manager(tenant_id):
-    class _InMemoryAM:
-        async def save_blob(self, kind, key, data):
-            _FAKE_BLOBS[(tenant_id, kind, key)] = data
+    def wire(store):
+        admin.set_config_manager(ConfigManager(store=store))
+        return store
 
-        async def load_blob(self, kind, key):
-            return _FAKE_BLOBS.get((tenant_id, kind, key))
-
-    return _InMemoryAM()
+    yield wire
+    admin.set_config_manager(previous)
 
 
 @pytest.fixture
-def client(monkeypatch) -> TestClient:
-    _FAKE_BLOBS.clear()
-    monkeypatch.setattr(admin, "_build_artifact_manager", _fake_build_artifact_manager)
+def client(wire_store) -> TestClient:
+    wire_store(InMemoryConfigStore())
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    admin._reset_admin_overrides_for_tests()
     return TestClient(app)
 
 
@@ -179,42 +174,51 @@ class TestFallbackChain:
         )
 
 
+class _InterleavedStore(InMemoryConfigStore):
+    """Holds the first two pin-quota reads on one barrier, so two PUTs both
+    read the same version before either writes."""
+
+    def __init__(self):
+        super().__init__()
+        self.barrier = threading.Barrier(2)
+        self.held = 0
+
+    def get_config(self, tenant_id, scope, service, config_key, version=None):
+        entry = super().get_config(tenant_id, scope, service, config_key, version)
+        if config_key == "pin_quotas" and self.held < 2:
+            self.held += 1
+            self.barrier.wait(timeout=10)
+        return entry
+
+
 @pytest.mark.asyncio
-async def test_concurrent_same_tenant_puts_serialize_and_stay_consistent(monkeypatch):
-    """Two concurrent PUTs for one tenant must serialize: the per-tenant write
-    lock serializes acceptance and the write-behind queue's single worker
-    keeps save_blob critical sections from overlapping, so the durable blob
-    and the served override dict never diverge."""
-    admin._reset_admin_overrides_for_tests()
-    in_flight = {"n": 0, "max": 0}
-    blob: dict = {}
+async def test_concurrent_same_tenant_puts_each_keep_their_field(wire_store):
+    """Two concurrent PUTs for one tenant that both read the same stored
+    version each keep the field they changed: the losing compare-and-set
+    re-reads and merges onto the winner's record."""
+    store = wire_store(_InterleavedStore())
 
-    def _build_am(tenant_id):
-        class _AM:
-            async def save_blob(self, kind, key, data):
-                in_flight["n"] += 1
-                in_flight["max"] = max(in_flight["max"], in_flight["n"])
-                await asyncio.sleep(0.02)  # yield so an unserialized sibling overlaps
-                blob["value"] = data
-                await asyncio.sleep(0.02)
-                in_flight["n"] -= 1
-
-            async def load_blob(self, kind, key):
-                return blob.get("value")
-
-        return _AM()
-
-    monkeypatch.setattr(admin, "_build_artifact_manager", _build_am)
-
-    await asyncio.gather(
+    first, second = await asyncio.gather(
         admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=10)),
-        admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=20)),
+        admin.set_pin_quotas(
+            "acme:acme", admin.PinQuotasUpdateRequest(tenant_admin=20)
+        ),
     )
-    await admin._blob_write_queue.flush()
 
-    # Serialized: the save_blob critical sections never ran concurrently.
-    assert in_flight["max"] == 1
-    # The served override dict equals the durable blob — no divergence.
-    served = admin._pin_quota_overrides["acme:acme"]
-    assert json.loads(blob["value"]) == served
-    assert served["user"] in (10, 20)
+    assert store.held == 2
+    stored = store.get_config(
+        "acme:acme", ConfigScope.SYSTEM, "admin_overrides", "pin_quotas"
+    )
+    assert (stored.version, stored.config_value) == (
+        2,
+        {"user": 10, "tenant_admin": 20, "org_admin": -1},
+    )
+    # The PUT whose write landed first answered with its own field only; the
+    # other merged onto it and answered with both.
+    final = stored.config_value
+    first_alone = {"user": 10, "tenant_admin": 500, "org_admin": -1}
+    second_alone = {"user": 50, "tenant_admin": 20, "org_admin": -1}
+    assert [first.quotas, second.quotas] in (
+        [first_alone, final],
+        [final, second_alone],
+    )

@@ -3,9 +3,8 @@
 import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field, field_validator
@@ -31,6 +30,7 @@ from cogniverse_agents.optimizer.profile_selection_ground_truth import (
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
+from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 from cogniverse_foundation.config.manager import (
     BackendProfileExistsError,
     ConfigManager,
@@ -49,9 +49,9 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentRequest,
     SchemaDeploymentResponse,
 )
-from cogniverse_runtime.blob_write_queue import BlobWriteQueue
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_sdk.interfaces.config_store import (
+    ConfigScope,
     ConfigStoreUnavailableError,
     ConfigWriteConflictError,
 )
@@ -70,6 +70,7 @@ def set_config_manager(config_manager: ConfigManager) -> None:
     """Set ConfigManager for this module (for tests)."""
     global _config_manager
     _config_manager = config_manager
+    _signature_variant_cache.invalidate(lambda key: True)
 
 
 def set_schema_loader(schema_loader: SchemaLoader) -> None:
@@ -92,6 +93,7 @@ def reset_dependencies() -> None:
     _config_manager = None
     _schema_loader = None
     _profile_validator_schema_dir = None
+    _signature_variant_cache.invalidate(lambda key: True)
 
 
 def get_config_manager_dependency() -> ConfigManager:
@@ -1344,10 +1346,8 @@ async def admin_close_session(session_id: str):
 # ---------------------------------------------------------------------------
 # Operability admin endpoints (pin quota / variant select / canary)
 #
-# Pin quotas + variant selections live in a process-local override dict
-# (good enough for the admin loop until a TenantConfig persistence layer
-# for these specific keys exists). Canary actions go straight to
-# ArtifactManager which persists them to Phoenix.
+# Pin quotas and variant selections are per-tenant config-store records.
+# Canary actions go straight to ArtifactManager which persists them to Phoenix.
 # ---------------------------------------------------------------------------
 
 
@@ -1360,9 +1360,6 @@ class PinQuotasUpdateRequest(BaseModel):
 class PinQuotasResponse(BaseModel):
     tenant_id: str
     quotas: Dict[str, int]
-    # Persistence is write-behind: True while the accepted write has not yet
-    # landed in the durable blob.
-    pending_write: bool = False
 
 
 class ProfileSelectionGroundTruthResponse(BaseModel):
@@ -1397,220 +1394,83 @@ def _default_pin_quotas() -> Dict[str, int]:
     }
 
 
-# Pin quotas persist as a per-tenant blob so a PUT survives a runtime
-# restart and is visible to every replica — the same store the canary /
-# gateway-threshold artefacts use. The process dict is a write-through cache
-# in front of it, keyed by canonical tenant id.
-_pin_quota_overrides: Dict[str, Dict[str, int]] = {}
-_signature_variant_overrides: Dict[str, Dict[str, str]] = {}
+# Pin quotas and signature-variant selections are per-tenant config records.
+# Every PUT is a compare-and-set read-modify-write of the record, so concurrent
+# PUTs on any process or replica each keep the fields they changed, and a PUT
+# is in the store before it is answered.
+_ADMIN_OVERRIDES_SERVICE = "admin_overrides"
+_PIN_QUOTA_KEY = "pin_quotas"
+_SIGNATURE_VARIANT_KEY = "signature_variants"
 
-# Per-tenant write locks serialize the pin-quota read-modify-write so the blob
-# and the write-through cache never diverge under concurrent same-tenant PUTs.
-_pin_quota_write_locks: Dict[str, asyncio.Lock] = {}
-
-# Monotonic timestamp of each cached pin-quota entry. The write-through cache is
-# bounded by a short TTL so a PUT on another replica converges here instead of
-# being masked forever by a same-instance cache that only its own writes touch.
-_pin_quota_cache_ts: Dict[str, float] = {}
-_PIN_QUOTA_CACHE_TTL_S = 30.0
-
-_PIN_QUOTA_BLOB_KIND = "config"
-_PIN_QUOTA_BLOB_KEY = "pin_quotas"
-
-
-def _merge_accepted_blob_write(base: str, accepted: str, durable: Optional[str]) -> str:
-    """Replay the fields a PUT changed onto the blob as it stands now.
-
-    ``base`` is what the PUT merged onto, ``accepted`` what it answered with;
-    the difference is the set of fields it changed. Everything else comes from
-    ``durable``, so a field another replica persisted between the accept and
-    this apply survives.
-    """
-    if durable is None:
-        return accepted
-    base_fields = json.loads(base)
-    accepted_fields = json.loads(accepted)
-    durable_fields = json.loads(durable)
-    if not all(
-        isinstance(fields, dict)
-        for fields in (base_fields, accepted_fields, durable_fields)
-    ):
-        raise ValueError("admin config blobs are JSON objects")
-    merged = dict(durable_fields)
-    for field, value in accepted_fields.items():
-        if field not in base_fields or base_fields[field] != value:
-            merged[field] = value
-    for field in base_fields:
-        if field not in accepted_fields:
-            merged.pop(field, None)
-    return json.dumps(merged)
+# The dispatcher resolves a tenant's variant selection on every request, so
+# each process serves it from memory: re-read off the request path once it is
+# SIGNATURE_VARIANT_REFRESH_S old, never served once it is
+# SIGNATURE_VARIANT_MAX_STALENESS_S old. A PUT on this process is served at
+# once; one on another process or replica within those bounds.
+SIGNATURE_VARIANT_REFRESH_S = 5.0
+SIGNATURE_VARIANT_MAX_STALENESS_S = 30.0
+_signature_variant_cache: RefreshingCache[str, Dict[str, str]] = RefreshingCache(
+    name="signature-variants",
+    refresh_after_s=SIGNATURE_VARIANT_REFRESH_S,
+    max_staleness_s=SIGNATURE_VARIANT_MAX_STALENESS_S,
+    max_entries=1024,
+)
 
 
-async def _apply_blob_write(
-    tenant_id: str, kind: str, key: str, content: str, base: str
-) -> None:
-    """Durably persist an accepted admin config-blob write.
-
-    The merge happens here, against a read taken now, rather than against the
-    snapshot the PUT read: between the two, a peer replica's own write-behind
-    persist may have landed, and that value is only visible in the store.
-    """
-    am = _build_artifact_manager(tenant_id)
-    durable = await am.load_blob(kind, key)
-    await am.save_blob(kind, key, _merge_accepted_blob_write(base, content, durable))
-
-
-# Write-behind queue for the admin config blobs (pin quotas, signature
-# variants); a PUT is accepted immediately instead of paying the store
-# round-trips inline.
-_blob_write_queue = BlobWriteQueue(_apply_blob_write)
-
-# Signature-variant selections persist the same way pin quotas do: a per-tenant
-# blob so a PUT survives a restart and is visible to every replica, fronted by a
-# TTL-bounded write-through cache. Without persistence the selection lived only
-# in the process dict of the replica that served the PUT — lost on restart and
-# invisible to the dispatcher on every other replica.
-_signature_variant_cache_ts: Dict[str, float] = {}
-_signature_variant_write_locks: Dict[str, asyncio.Lock] = {}
-_SIGNATURE_VARIANT_BLOB_KIND = "config"
-_SIGNATURE_VARIANT_BLOB_KEY = "signature_variants"
-
-
-def _signature_variant_write_lock(key: str) -> asyncio.Lock:
-    lock = _signature_variant_write_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _signature_variant_write_locks[key] = lock
-    return lock
-
-
-async def load_signature_variants(
-    tenant_id: str, *, for_update: bool = False
-) -> Dict[str, str]:
-    """Return a tenant's persisted signature-variant selections.
-
-    Overlays the write-behind queue (read-your-write; a failed write raises
-    rather than silently serving the stale blob), then the TTL-bounded
-    write-through cache, then the durable blob. Warmed by the dispatcher
-    before it resolves a variant so every replica serves the selection an
-    admin PUT accepted, not just the one that handled the PUT. A store
-    outage propagates rather than masquerading as "no selection".
-
-    ``for_update`` is the PUT merge base: it skips the TTL cache and reads
-    the durable blob, so a selection another replica persisted is not erased
-    by this replica's stale snapshot, and it merges from the last ACCEPTED
-    state instead of raising, so a new PUT can supersede a failed write.
-    """
-    key = canonical_tenant_id(tenant_id)
-    if for_update:
-        failed = _blob_write_queue.failed_error(
-            key, _SIGNATURE_VARIANT_BLOB_KIND, _SIGNATURE_VARIANT_BLOB_KEY
+def _admin_config_store():
+    if _config_manager is None:
+        raise RuntimeError(
+            "admin config store is not wired: set_config_manager was never called"
         )
-        if failed is not None:
-            return dict(json.loads(failed.content))
-    else:
-        _blob_write_queue.raise_if_failed(
-            key, _SIGNATURE_VARIANT_BLOB_KIND, _SIGNATURE_VARIANT_BLOB_KEY
-        )
-    pending = _blob_write_queue.pending_content(
-        key, _SIGNATURE_VARIANT_BLOB_KIND, _SIGNATURE_VARIANT_BLOB_KEY
+    return _config_manager.store
+
+
+def _stored_override(tenant_key: str, config_key: str) -> Optional[Dict[str, Any]]:
+    """A tenant's override record as the store holds it now, or None."""
+    entry = _admin_config_store().get_config(
+        tenant_key, ConfigScope.SYSTEM, _ADMIN_OVERRIDES_SERVICE, config_key
     )
-    if pending is not None:
-        return dict(json.loads(pending))
-    cached = _signature_variant_overrides.get(key)
-    ts = _signature_variant_cache_ts.get(key)
-    if (
-        not for_update
-        and cached is not None
-        and ts is not None
-        and (time.monotonic() - ts) < _PIN_QUOTA_CACHE_TTL_S
-    ):
-        return dict(cached)
-
-    am = _build_artifact_manager(key)
-    raw = await am.load_blob(_SIGNATURE_VARIANT_BLOB_KIND, _SIGNATURE_VARIANT_BLOB_KEY)
-    if not raw:
-        return {}
-    try:
-        selections = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Corrupt signature_variants blob for tenant=%s; ignoring", key)
-        return {}
-    _signature_variant_overrides[key] = selections
-    _signature_variant_cache_ts[key] = time.monotonic()
-    return dict(selections)
+    return None if entry is None else dict(entry.config_value)
 
 
-def _pin_quota_write_lock(key: str) -> asyncio.Lock:
-    """Return the per-tenant pin-quota write lock (created on first use).
+def _update_override(
+    tenant_key: str,
+    config_key: str,
+    change: Callable[[Dict[str, Any]], None],
+    empty: Callable[[], Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Apply ``change`` to a tenant's override record with compare-and-set.
 
-    Runs on the event loop with no await between get and set, so the lookup is
-    atomic across concurrent handlers.
+    ``change`` edits the record as stored (``empty()`` when there is none) in
+    place, and runs again on the newer record whenever a concurrent PUT
+    lands first. Returns the record as stored afterwards; an unchanged record
+    is not rewritten.
     """
-    lock = _pin_quota_write_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _pin_quota_write_locks[key] = lock
-    return lock
 
+    def update(entry):
+        current = dict(entry.config_value) if entry is not None else empty()
+        changed = dict(current)
+        change(changed)
+        return None if entry is not None and changed == current else changed
 
-async def _load_pin_quotas(
-    tenant_id: str, *, for_update: bool = False
-) -> Dict[str, int]:
-    """Return a tenant's persisted pin quotas, or the defaults if unset.
-
-    Overlays the write-behind queue first (read-your-write; a failed write
-    raises rather than silently reverting to the stale blob), then the
-    write-through cache, then the durable blob. A store outage propagates
-    (the blob read raises) rather than masquerading as "unset" — an admin
-    must not silently see defaults when the real values are merely
-    unreachable.
-
-    ``for_update`` is the PUT merge base: it skips the TTL cache and reads
-    the durable blob, so a quota another replica persisted is not erased by
-    this replica's stale snapshot, and it merges from the last ACCEPTED
-    state instead of raising, so a new PUT can supersede a failed write.
-    """
-    key = canonical_tenant_id(tenant_id)
-    if for_update:
-        failed = _blob_write_queue.failed_error(
-            key, _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY
-        )
-        if failed is not None:
-            return dict(json.loads(failed.content))
-    else:
-        _blob_write_queue.raise_if_failed(
-            key, _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY
-        )
-    pending = _blob_write_queue.pending_content(
-        key, _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY
+    entry = _admin_config_store().update_config(
+        tenant_key, ConfigScope.SYSTEM, _ADMIN_OVERRIDES_SERVICE, config_key, update
     )
-    if pending is not None:
-        return dict(json.loads(pending))
-    cached = _pin_quota_overrides.get(key)
-    ts = _pin_quota_cache_ts.get(key)
-    if (
-        not for_update
-        and cached is not None
-        and ts is not None
-        and (time.monotonic() - ts) < (_PIN_QUOTA_CACHE_TTL_S)
-    ):
-        return dict(cached)
+    return dict(entry.config_value)
 
-    am = _build_artifact_manager(key)
-    raw = await am.load_blob(_PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY)
-    if not raw:
-        # No override blob — do not cache under the tenant key, so PinQuotas
-        # .for_tenant still falls through to TenantConfig metadata / defaults.
-        return _default_pin_quotas()
-    try:
-        quotas = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Corrupt pin_quotas blob for tenant=%s; using defaults", key)
-        return _default_pin_quotas()
-    _pin_quota_overrides[key] = quotas
-    _pin_quota_cache_ts[key] = time.monotonic()
-    return dict(quotas)
+
+async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
+    """Return a tenant's stored pin quotas, or the defaults if none are stored.
+
+    Reads the store on every call, so enforcement on every process and
+    replica applies the last answered PUT. A store outage propagates rather
+    than masquerading as "unset" — an admin must not silently see defaults
+    when the real values are merely unreachable.
+    """
+    stored = await asyncio.to_thread(
+        _stored_override, canonical_tenant_id(tenant_id), _PIN_QUOTA_KEY
+    )
+    return _default_pin_quotas() if stored is None else stored
 
 
 @router.get("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
@@ -1618,20 +1478,11 @@ async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
     """return effective pin quotas for a tenant."""
     try:
         quotas = await _load_pin_quotas(tenant_id)
-    except HTTPException:
-        raise
     except Exception as exc:
-        # The blob read raises on a store outage (never masquerades as
-        # "unset"); map it to 503 rather than an opaque 500.
+        # The store read raises on an outage (never masquerades as "unset");
+        # map it to 503 rather than an opaque 500.
         raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
-    return PinQuotasResponse(
-        tenant_id=tenant_id,
-        quotas=quotas,
-        pending_write=_blob_write_queue.pending_content(
-            canonical_tenant_id(tenant_id), _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY
-        )
-        is not None,
-    )
+    return PinQuotasResponse(tenant_id=tenant_id, quotas=quotas)
 
 
 @router.put("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
@@ -1640,9 +1491,9 @@ async def set_pin_quotas(
 ) -> PinQuotasResponse:
     """set per-role pin quotas for a tenant.
 
-    Only non-None fields are updated. Negative values (other than
-    org_admin's unlimited sentinel of -1) are rejected. The result is
-    persisted durably so it survives a restart.
+    Only non-None fields are updated, merged onto the stored record. Negative
+    values (other than org_admin's unlimited sentinel of -1) are rejected.
+    The result is in the store before the response is sent.
     """
     # Validate before touching the store so a bad request never depends on it.
     if body.user is not None and body.user < 0:
@@ -1656,37 +1507,29 @@ async def set_pin_quotas(
         raise HTTPException(400, "org_admin quota must be >= 0, or -1 for unlimited")
 
     key = canonical_tenant_id(tenant_id)
-    # Serialize the whole read-modify-write-cache sequence per tenant: two
-    # concurrent PUTs for the same tenant would otherwise interleave the
-    # save_blob await and the cache set, leaving the durable blob and the served
-    # override dict with different values (a wrong pin-quota limit) until a
-    # restart reconciles from the blob.
-    async with _pin_quota_write_lock(key):
-        try:
-            current = await _load_pin_quotas(tenant_id, for_update=True)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
-        merge_base = dict(current)
-        if body.user is not None:
-            current["user"] = body.user
-        if body.tenant_admin is not None:
-            current["tenant_admin"] = body.tenant_admin
-        if body.org_admin is not None:
-            current["org_admin"] = body.org_admin
-
-        _pin_quota_overrides[key] = current
-        _pin_quota_cache_ts[key] = time.monotonic()
-        _blob_write_queue.enqueue(
-            key,
-            _PIN_QUOTA_BLOB_KIND,
-            _PIN_QUOTA_BLOB_KEY,
-            json.dumps(current),
-            base=json.dumps(merge_base),
+    requested = {
+        role: value
+        for role, value in (
+            ("user", body.user),
+            ("tenant_admin", body.tenant_admin),
+            ("org_admin", body.org_admin),
         )
-        logger.info("Accepted pin-quota update for tenant=%s: %s", key, current)
-    return PinQuotasResponse(tenant_id=tenant_id, quotas=current, pending_write=True)
+        if value is not None
+    }
+    try:
+        quotas = await asyncio.to_thread(
+            _update_override,
+            key,
+            _PIN_QUOTA_KEY,
+            lambda stored: stored.update(requested),
+            _default_pin_quotas,
+        )
+    except ConfigWriteConflictError as exc:
+        raise HTTPException(409, f"pin-quota update conflicted: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
+    logger.info("Updated pin quotas for tenant=%s: %s", key, quotas)
+    return PinQuotasResponse(tenant_id=tenant_id, quotas=quotas)
 
 
 @router.put(
@@ -1890,11 +1733,11 @@ class PinUnpinResponse(BaseModel):
 
 
 async def _pin_service_for(tenant_id: str):
-    """Build the tenant's PinService with quotas read from the durable blob.
+    """Build the tenant's PinService with quotas read from the store now.
 
-    Enforcement resolves quotas through PinQuotas.for_tenant, which now takes
-    the caller-supplied durable blob. Loading here makes every replica enforce
-    the persisted quotas.
+    Enforcement resolves quotas through PinQuotas.for_tenant from the stored
+    record read here, so every process and replica enforces the last
+    answered PUT.
     """
     admin_overrides = await _load_pin_quotas(tenant_id)
     return await asyncio.to_thread(_get_pin_service, tenant_id, admin_overrides)
@@ -2292,7 +2135,33 @@ class SignatureVariantSelectRequest(BaseModel):
 class SignatureVariantResponse(BaseModel):
     tenant_id: str
     selections: Dict[str, str]
-    pending_write: bool = False
+
+
+async def load_signature_variants(tenant_id: str) -> Dict[str, str]:
+    """Return a tenant's stored signature-variant selections, read now.
+
+    A store outage propagates rather than masquerading as "no selection".
+    """
+    stored = await asyncio.to_thread(
+        _stored_override, canonical_tenant_id(tenant_id), _SIGNATURE_VARIANT_KEY
+    )
+    return {} if stored is None else stored
+
+
+async def cached_signature_variants(tenant_id: str) -> Dict[str, str]:
+    """A tenant's selections as this process serves them to the dispatcher.
+
+    Served from memory within ``SIGNATURE_VARIANT_REFRESH_S`` /
+    ``SIGNATURE_VARIANT_MAX_STALENESS_S``; a read the store cannot answer
+    raises once nothing younger than the staleness bound is held.
+    """
+    key = canonical_tenant_id(tenant_id)
+    selections = await asyncio.to_thread(
+        _signature_variant_cache.get,
+        key,
+        lambda: _stored_override(key, _SIGNATURE_VARIANT_KEY) or {},
+    )
+    return dict(selections)
 
 
 @router.get(
@@ -2303,22 +2172,11 @@ async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
     """list per-agent variant selections for a tenant."""
     try:
         selections = await load_signature_variants(tenant_id)
-    except HTTPException:
-        raise
     except Exception as exc:
-        # The blob read raises on a store outage (never masquerades as "no
+        # The store read raises on an outage (never masquerades as "no
         # selection"); map it to 503 rather than an opaque 500.
         raise HTTPException(503, f"signature-variant store unavailable: {exc}") from exc
-    return SignatureVariantResponse(
-        tenant_id=tenant_id,
-        selections=selections,
-        pending_write=_blob_write_queue.pending_content(
-            canonical_tenant_id(tenant_id),
-            _SIGNATURE_VARIANT_BLOB_KIND,
-            _SIGNATURE_VARIANT_BLOB_KEY,
-        )
-        is not None,
-    )
+    return SignatureVariantResponse(tenant_id=tenant_id, selections=selections)
 
 
 @router.put(
@@ -2333,41 +2191,29 @@ async def set_signature_variant(
     """pick the variant id this tenant uses for an agent."""
     if not body.variant_id.strip():
         raise HTTPException(400, "variant_id must be non-empty")
-    # Store under the canonical key so the dispatcher's _resolve_signature_variant
-    # finds it whether the tenant arrives as simple or colon form.
+    # Store under the canonical key so the dispatcher finds it whether the
+    # tenant arrives as simple or colon form.
     key = canonical_tenant_id(tenant_id)
-    # Read-modify-write under the per-tenant lock so the blob and cache never
-    # diverge under concurrent same-tenant PUTs, and persist to the durable blob
-    # so the selection survives a restart and reaches every replica.
-    async with _signature_variant_write_lock(key):
-        try:
-            selections = await load_signature_variants(tenant_id, for_update=True)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                503, f"signature-variant store unavailable: {exc}"
-            ) from exc
-        merge_base = dict(selections)
-        selections[agent_type] = body.variant_id
-        _signature_variant_overrides[key] = selections
-        _signature_variant_cache_ts[key] = time.monotonic()
-        _blob_write_queue.enqueue(
+    try:
+        selections = await asyncio.to_thread(
+            _update_override,
             key,
-            _SIGNATURE_VARIANT_BLOB_KIND,
-            _SIGNATURE_VARIANT_BLOB_KEY,
-            json.dumps(selections),
-            base=json.dumps(merge_base),
+            _SIGNATURE_VARIANT_KEY,
+            lambda stored: stored.update({agent_type: body.variant_id}),
+            dict,
         )
+    except ConfigWriteConflictError as exc:
+        raise HTTPException(409, f"signature-variant update conflicted: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(503, f"signature-variant store unavailable: {exc}") from exc
+    _signature_variant_cache.invalidate(lambda cached: cached == key)
     logger.info(
         "Tenant=%s now using variant=%r for agent=%s",
         tenant_id,
         body.variant_id,
         agent_type,
     )
-    return SignatureVariantResponse(
-        tenant_id=tenant_id, selections=selections, pending_write=True
-    )
+    return SignatureVariantResponse(tenant_id=tenant_id, selections=selections)
 
 
 class CanaryPromoteRequest(BaseModel):
@@ -2477,38 +2323,9 @@ async def retire_canary(
     return CanaryActionResponse(tenant_id=tenant_id, agent_type=agent_type, state=state)
 
 
-async def drain_blob_writes(timeout_s: float = 60.0) -> bool:
-    """Drain accepted admin blob writes at shutdown.
-
-    Returns False when writes remain unpersisted past the budget or failed
-    terminally; either way the loss is named in the log, never silent.
-    """
-    try:
-        await asyncio.wait_for(_blob_write_queue.flush(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        logger.error(
-            "Blob-write drain timed out after %.1fs; unpersisted: %s",
-            timeout_s,
-            _blob_write_queue.status(),
-        )
-        return False
-    failed = _blob_write_queue.status()["failed"]
-    if failed:
-        logger.error("Blob writes failed terminally at shutdown: %s", failed)
-        return False
-    return True
-
-
 def _reset_admin_overrides_for_tests() -> None:
-    """Reset the in-memory override dicts. Called by integration tests."""
-    global _blob_write_queue
-    _blob_write_queue = BlobWriteQueue(_apply_blob_write)
-    _pin_quota_overrides.clear()
-    _pin_quota_cache_ts.clear()
-    _pin_quota_write_locks.clear()
-    _signature_variant_overrides.clear()
-    _signature_variant_cache_ts.clear()
-    _signature_variant_write_locks.clear()
+    """Drop every signature-variant selection this process holds."""
+    _signature_variant_cache.invalidate(lambda key: True)
 
 
 class HarnessKeyCreateRequest(BaseModel):

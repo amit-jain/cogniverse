@@ -5,14 +5,13 @@ signature variants, or canary promote/retire without writing custom
 Python.
 
 This test mounts the real `admin` router on a FastAPI TestClient and
-hits each endpoint. The canary and pin-quota endpoints round-trip
-through real Phoenix (docker-managed); the variant endpoints use the
-in-memory override store (no persistence layer for those keys yet).
+hits each endpoint. The pin-quota endpoints round-trip through the real Vespa
+config store and the canary endpoints through real Phoenix (both
+docker-managed).
 """
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
@@ -28,12 +27,30 @@ pytestmark = pytest.mark.integration
 def client() -> TestClient:
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    admin._reset_admin_overrides_for_tests()
-    # Context-managed so every request shares one portal event loop — the
-    # write-behind queue's worker lives on the loop that served the PUT and
-    # must survive across requests, as it does under a real server.
     with TestClient(app) as managed:
         yield managed
+
+
+def _config_session(vespa_instance):
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    return VespaConfigStore(
+        backend_url="http://localhost", backend_port=vespa_instance["http_port"]
+    )
+
+
+@pytest.fixture
+def config_store_env(vespa_instance):
+    """Wire the pin-quota endpoints to the real Vespa config store, as the
+    runtime entrypoint does with its ConfigManager."""
+    from cogniverse_foundation.config.manager import ConfigManager
+
+    previous = admin._config_manager
+    session = _config_session(vespa_instance)
+    admin.set_config_manager(ConfigManager(store=session))
+    yield session
+    admin.set_config_manager(previous)
+    session.close()
 
 
 @pytest.fixture
@@ -53,17 +70,21 @@ def phoenix_env(phoenix_container):
 
 
 class TestPinQuotaEndpoints:
-    def test_get_returns_defaults_when_unset(self, client: TestClient, phoenix_env):
+    def test_get_returns_defaults_when_unset(
+        self, client: TestClient, config_store_env
+    ):
         tenant = f"pinq_{uuid.uuid4().hex[:8]}"
         resp = client.get(f"/admin/tenants/{tenant}/pin_quotas")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body) == {"tenant_id", "quotas", "pending_write"}
+        assert set(body) == {"tenant_id", "quotas"}
         assert body["tenant_id"] == tenant
         # Defaults from PinQuotas dataclass; org_admin None (unlimited) -> -1.
         assert body["quotas"] == {"user": 50, "tenant_admin": 500, "org_admin": -1}
 
-    def test_put_updates_one_field_keeps_others(self, client: TestClient, phoenix_env):
+    def test_put_updates_one_field_keeps_others(
+        self, client: TestClient, config_store_env
+    ):
         tenant = f"pinq_{uuid.uuid4().hex[:8]}"
         # Set a baseline.
         baseline = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
@@ -83,10 +104,15 @@ class TestPinQuotaEndpoints:
         assert again["user"] == 99
         assert again == updated
 
-    def test_put_survives_process_restart(self, client: TestClient, phoenix_env):
-        """A PUT must persist durably, not just in the process cache. Clearing
-        the cache simulates a runtime restart; the value must reload from the
-        store on the next GET."""
+    def test_put_survives_process_restart(
+        self, client: TestClient, config_store_env, vespa_instance
+    ):
+        """A PUT must be stored before it is answered, not just held in the
+        process. A new config-store session stands in for a restarted
+        process; the value must load from the store on its first GET."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
         tenant = f"pinq_{uuid.uuid4().hex[:8]}"
         put = client.put(
             f"/admin/tenants/{tenant}/pin_quotas",
@@ -96,25 +122,29 @@ class TestPinQuotaEndpoints:
         put_body = put.json()
         assert put_body["tenant_id"] == tenant
         assert put_body["quotas"] == {"user": 7, "tenant_admin": 3, "org_admin": -1}
-        assert put_body["pending_write"] is True
+        assert set(put_body) == {"tenant_id", "quotas"}
+        stored = config_store_env.get_config(
+            f"{tenant}:{tenant}", ConfigScope.SYSTEM, "admin_overrides", "pin_quotas"
+        )
+        assert (stored.version, stored.config_value) == (
+            1,
+            {"user": 7, "tenant_admin": 3, "org_admin": -1},
+        )
 
-        # Persistence is write-behind: wait for the accepted write to land
-        # (pending_write is the reportable settle signal), then simulate a
-        # fresh process by dropping the write-through cache so the next read
-        # must hit the durable store.
-        deadline = time.monotonic() + 30
-        while client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["pending_write"]:
-            assert time.monotonic() < deadline, "pin-quota write never landed"
-            time.sleep(0.05)
-        admin._reset_admin_overrides_for_tests()
-
-        reloaded = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
+        restarted = _config_session(vespa_instance)
+        admin.set_config_manager(ConfigManager(store=restarted))
+        try:
+            reloaded = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()[
+                "quotas"
+            ]
+        finally:
+            restarted.close()
         assert reloaded["user"] == 7
         assert reloaded["tenant_admin"] == 3
         assert reloaded["org_admin"] == -1
 
     def test_negative_quota_rejected(self, client: TestClient):
-        # Validation happens before any store access, so no Phoenix needed.
+        # Validation happens before any store access, so no store needed.
         resp = client.put(
             f"/admin/tenants/pinq_{uuid.uuid4().hex[:8]}/pin_quotas",
             json={"user": -1},
@@ -126,9 +156,9 @@ class TestPinQuotaEndpoints:
 # ----- signature-variant endpoints ------------------------------------------
 
 
-# Signature-variant endpoints (in-memory override store, no Phoenix) moved to
-# tests/runtime/unit/test_admin_signature_variants.py so the fast gate covers
-# them; the pin-quota and canary endpoints below round-trip real Phoenix.
+# Signature-variant endpoint route logic is covered in
+# tests/runtime/unit/test_admin_signature_variants.py and its Vespa round-trip
+# in tests/runtime/integration/test_signature_variant_persistence.py.
 
 
 # ----- canary endpoints (real Phoenix) --------------------------------------

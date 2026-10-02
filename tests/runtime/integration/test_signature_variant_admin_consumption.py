@@ -1,16 +1,17 @@
 """Admin PUT /signature_variants actually changes which prompts load.
 
-The admin endpoint writes to ``_signature_variant_overrides`` and
-``load_for_request`` reads it, closing the loop end-to-end:
+The admin endpoint stores the tenant's selections in the config store and
+``load_for_request`` is handed the selected variant, closing the loop
+end-to-end:
 
   * ``ArtifactManager.load_for_request`` accepts ``variant_id``
     and qualifies all dataset names through it (so two variants get
     distinct datasets and distinct canary state).
   * ``AgentDispatcher.resolve_artefact_for_request`` reads the
-    admin override dict via ``_resolve_signature_variant`` and passes
+    selections through ``admin.cached_signature_variants`` and passes
     the variant_id to ``load_for_request``.
 
-Verifies, against a real Phoenix container:
+Verifies, against a real Phoenix container and a real Vespa config store:
 
   * default variant: prompts come from the bare-agent dataset;
   * after admin PUT for ``with_jurisdiction``, the same dispatcher
@@ -21,6 +22,7 @@ Verifies, against a real Phoenix container:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -68,26 +70,27 @@ def dispatcher(artifact_manager: ArtifactManager) -> AgentDispatcher:
 
 
 @pytest.fixture
-def admin_client(phoenix_container, monkeypatch) -> TestClient:
-    # The signature-variant PUT now persists to the durable artifact store, so
-    # point the admin router's factory at the test's real Phoenix container.
-    provider = PhoenixProvider()
-    provider.initialize(
-        {
-            "tenant_id": "admin-sigvar",
-            "http_endpoint": phoenix_container["http_endpoint"],
-            "grpc_endpoint": phoenix_container["otlp_endpoint"],
-        }
-    )
-    monkeypatch.setattr(
-        admin,
-        "_build_artifact_manager",
-        lambda key: ArtifactManager(telemetry_provider=provider, tenant_id=key),
-    )
+def admin_client() -> TestClient:
+    # The signature-variant PUT stores the selection in the config store; wire
+    # the admin router to the test's real Vespa one.
+    previous = admin._config_manager
+    admin.set_config_manager(create_default_config_manager())
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    admin._reset_admin_overrides_for_tests()
-    return TestClient(app)
+    yield TestClient(app)
+    admin.set_config_manager(previous)
+
+
+@pytest.fixture
+def in_memory_admin():
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    previous = admin._config_manager
+    store = InMemoryConfigStore()
+    admin.set_config_manager(ConfigManager(store=store))
+    yield store
+    admin.set_config_manager(previous)
 
 
 @pytest.mark.asyncio
@@ -222,32 +225,31 @@ class TestVariantSelectionRoundTrip:
 
 
 class TestResolveHelperBehavior:
-    def test_no_admin_dict_yields_default_variant(self):
-        admin._reset_admin_overrides_for_tests()
+    def test_no_stored_selection_yields_default_variant(self, in_memory_admin):
         from cogniverse_agents.optimizer.signature_variants import (
             DEFAULT_VARIANT_ID,
         )
 
-        assert (
-            AgentDispatcher._resolve_signature_variant("any_tenant", "search_agent")
-            == DEFAULT_VARIANT_ID
-        )
+        selections = asyncio.run(admin.cached_signature_variants("any_tenant"))
+        assert selections == {}
+        assert selections.get("search_agent", DEFAULT_VARIANT_ID) == "default"
 
-    def test_admin_dict_entry_returns_chosen_variant(self):
-        admin._reset_admin_overrides_for_tests()
-        # Overrides are keyed by the canonical tenant id.
-        admin._signature_variant_overrides["acme:acme"] = {
+    def test_stored_selection_returns_chosen_variant(self, in_memory_admin):
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        # Selections are stored under the canonical tenant id.
+        in_memory_admin.set_config(
+            "acme:acme",
+            ConfigScope.SYSTEM,
+            "admin_overrides",
+            "signature_variants",
+            {"search_agent": "with_jurisdiction"},
+        )
+        assert asyncio.run(admin.cached_signature_variants("acme")) == {
             "search_agent": "with_jurisdiction"
         }
-        try:
-            assert (
-                AgentDispatcher._resolve_signature_variant("acme", "search_agent")
-                == "with_jurisdiction"
-            )
-        finally:
-            admin._reset_admin_overrides_for_tests()
 
-    def test_put_and_resolve_agree_across_tenant_forms(self, monkeypatch):
+    def test_put_and_resolve_agree_across_tenant_forms(self, in_memory_admin):
         """A variant set via the admin PUT must resolve in dispatch regardless
         of whether the tenant arrives as simple ('acme') or canonical
         ('acme:acme') form. Pre-fix the PUT stored under the raw path key and
@@ -255,46 +257,23 @@ class TestResolveHelperBehavior:
         arriving in a different form than the PUT used got the default variant.
 
         This pins the canonicalization logic, not real persistence, so it uses
-        an in-memory artifact-store double (the durable round-trip is covered by
+        the in-memory config store (the Vespa round-trip is covered by
         test_signature_variant_persistence.py).
         """
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        blobs: dict = {}
-
-        class _AM:
-            def __init__(self, tenant):
-                self._t = tenant
-
-            async def save_blob(self, kind, key, raw):
-                blobs[(self._t, kind, key)] = raw
-
-            async def load_blob(self, kind, key):
-                return blobs.get((self._t, kind, key))
-
-        monkeypatch.setattr(admin, "_build_artifact_manager", lambda key: _AM(key))
-
-        admin._reset_admin_overrides_for_tests()
         app = FastAPI()
         app.include_router(admin.router, prefix="/admin")
         client = TestClient(app)
-        try:
-            # Admin selects the variant for the SIMPLE-form tenant.
-            r = client.put(
-                "/admin/tenants/acme/signature_variants/search_agent",
-                json={"variant_id": "with_jurisdiction"},
-            )
-            assert r.status_code == 200
-            # Dispatch resolves for the same tenant in COLON form.
-            assert (
-                AgentDispatcher._resolve_signature_variant("acme:acme", "search_agent")
-                == "with_jurisdiction"
-            )
-            # ...and in simple form.
-            assert (
-                AgentDispatcher._resolve_signature_variant("acme", "search_agent")
-                == "with_jurisdiction"
-            )
-        finally:
-            admin._reset_admin_overrides_for_tests()
+        # Admin selects the variant for the SIMPLE-form tenant.
+        r = client.put(
+            "/admin/tenants/acme/signature_variants/search_agent",
+            json={"variant_id": "with_jurisdiction"},
+        )
+        assert r.status_code == 200
+        # Dispatch resolves for the same tenant in COLON form.
+        assert asyncio.run(admin.cached_signature_variants("acme:acme")) == {
+            "search_agent": "with_jurisdiction"
+        }
+        # ...and in simple form.
+        assert asyncio.run(admin.cached_signature_variants("acme")) == {
+            "search_agent": "with_jurisdiction"
+        }

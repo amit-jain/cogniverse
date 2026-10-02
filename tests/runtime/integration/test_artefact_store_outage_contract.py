@@ -40,7 +40,8 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 pytestmark = pytest.mark.integration
 
 # Nothing listens here: the repo-wide dead-port convention.
-DEAD_ENDPOINT = "http://127.0.0.1:29071"
+DEAD_PORT = 29071
+DEAD_ENDPOINT = f"http://127.0.0.1:{DEAD_PORT}"
 
 # The shipped per-op budget (``_DATASET_OP_TIMEOUT_S``) sizes a read against a
 # loaded store. The paused-container case only needs the client to give up, so
@@ -250,12 +251,20 @@ def _reset_telemetry_singletons():
 @pytest.fixture(autouse=True)
 def _clean_admin_overrides():
     """Own the admin module state these tests read and write."""
-    endpoints = dict(admin_router._phoenix_endpoints)
+    previous = admin_router._config_manager
     admin_router._reset_admin_overrides_for_tests()
     yield
-    admin_router._reset_admin_overrides_for_tests()
-    admin_router._phoenix_endpoints.clear()
-    admin_router._phoenix_endpoints.update(endpoints)
+    admin_router.set_config_manager(previous)
+
+
+def _wire_variant_store(port: int, host: str = "http://localhost") -> None:
+    """Point the admin router's variant selections at a real config store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    admin_router.set_config_manager(
+        ConfigManager(store=VespaConfigStore(backend_url=host, backend_port=port))
+    )
 
 
 class TestDispatchOverlayNamesTheOutage:
@@ -265,7 +274,7 @@ class TestDispatchOverlayNamesTheOutage:
     async def test_outage_overlay_names_both_reads_as_store_unavailable(
         self, dead_manager, tenant_id
     ):
-        admin_router.set_phoenix_endpoints(DEAD_ENDPOINT, DEAD_ENDPOINT)
+        _wire_variant_store(DEAD_PORT)
         dispatcher = _dispatcher(lambda t: dead_manager)
 
         overlay = await dispatcher.resolve_artefact_for_request(
@@ -286,7 +295,7 @@ class TestDispatchOverlayNamesTheOutage:
         self, live_manager, tenant_id
     ):
         """The canary split keeps running when only the variant read is down."""
-        admin_router.set_phoenix_endpoints(DEAD_ENDPOINT, DEAD_ENDPOINT)
+        _wire_variant_store(DEAD_PORT)
         await live_manager.save_prompts(
             "entity_extraction_agent", {"system": "PROMOTED"}
         )
@@ -307,11 +316,9 @@ class TestDispatchOverlayNamesTheOutage:
 
     @pytest.mark.asyncio
     async def test_live_store_without_artefacts_is_loaded_on_the_default_variant(
-        self, live_manager, owned_phoenix, tenant_id
+        self, live_manager, vespa_instance, tenant_id
     ):
-        admin_router.set_phoenix_endpoints(
-            owned_phoenix["http_endpoint"], owned_phoenix["grpc_endpoint"]
-        )
+        _wire_variant_store(vespa_instance["http_port"])
         dispatcher = _dispatcher(lambda t: live_manager)
 
         overlay = await dispatcher.resolve_artefact_for_request(
@@ -329,11 +336,9 @@ class TestDispatchOverlayNamesTheOutage:
 
     @pytest.mark.asyncio
     async def test_promoted_prompts_reach_the_overlay_with_loaded_status(
-        self, live_manager, owned_phoenix, tenant_id
+        self, live_manager, vespa_instance, tenant_id
     ):
-        admin_router.set_phoenix_endpoints(
-            owned_phoenix["http_endpoint"], owned_phoenix["grpc_endpoint"]
-        )
+        _wire_variant_store(vespa_instance["http_port"])
         await live_manager.save_prompts(
             "entity_extraction_agent", {"system": "PROMOTED"}
         )
@@ -444,7 +449,7 @@ class TestArtefactManagerCacheUnderConcurrency:
     async def test_concurrent_outage_resolutions_all_report_store_unavailable(
         self, tenant_id
     ):
-        admin_router.set_phoenix_endpoints(DEAD_ENDPOINT, DEAD_ENDPOINT)
+        _wire_variant_store(DEAD_PORT)
         managers = {
             t: _manager(DEAD_ENDPOINT, DEAD_ENDPOINT, t)
             for t in (tenant_id, f"{tenant_id}b")
