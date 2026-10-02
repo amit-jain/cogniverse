@@ -620,22 +620,34 @@ def attached_chat_request(model: str, case: str) -> dict:
     }
 
 
-async def test_v1_nonstreaming_refuses_the_turn(compat_route, provider):
-    async with compat_route(streams_answer_tokens=False) as client:
-        response = await client.post(
-            "/v1/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            json=chat_request(TEXT_MODEL, "prose", stream=False),
-        )
+async def test_v1_nonstreaming_refuses_the_turn(compat_route, provider, caplog):
+    with caplog.at_level(logging.WARNING, logger=openai_compat.__name__):
+        async with compat_route(streams_answer_tokens=False) as client:
+            response = await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                json=chat_request(TEXT_MODEL, "prose", stream=False),
+            )
     assert provider.cases == ["prose"]
     assert response.status_code == 502, response.text
     assert response.json() == {
         "error": {
-            "message": no_answer_detail("text_analysis_agent", "prose"),
+            "message": "Agent 'text_analysis_agent' finished without an answer "
+            "to return (status=error).",
             "type": "server_error",
             "code": "upstream_no_answer",
+            "agent": "text_analysis_agent",
+            "error_type": "NoAnswerError",
         }
     }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == openai_compat.__name__
+    ] == [
+        "chat.completions turn produced no answer: "
+        + no_answer_detail("text_analysis_agent", "prose")
+    ]
 
 
 async def test_v1_buffered_stream_ends_in_an_error_frame(
