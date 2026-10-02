@@ -1025,13 +1025,18 @@ def config_manager_memory():
 
 @pytest.fixture(scope="session")
 def workflow_state_redis_url():
-    """Test-owned Redis for cross-process workflow-state coordination."""
+    """Test-owned Redis for cross-process workflow-state coordination.
+
+    tests/ingestion/conftest.py re-exports this fixture for runs rooted
+    there, so a whole-tree session can set it up once per conftest; each
+    container is named by its port as well as the session's pid.
+    """
     import subprocess
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    container_name = f"cogniverse-workflow-state-{os.getpid()}"
+    container_name = f"cogniverse-workflow-state-{os.getpid()}-{port}"
     result = subprocess.run(
         [
             "docker",
