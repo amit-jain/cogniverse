@@ -22,6 +22,7 @@ from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_foundation.config.utils import ConfigUtils
+from tests.utils.memory_store import InMemoryConfigStore
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHIPPED_CONFIG_PATH = REPO_ROOT / "configs" / "config.json"
@@ -72,20 +73,16 @@ def temp_schema_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def mock_config_manager() -> MagicMock:
-    """Create mock ConfigManager for testing."""
-    manager = MagicMock(spec=ConfigManager)
-    manager.get_backend_profile.return_value = None  # No existing profiles by default
-    return manager
+def config_manager() -> ConfigManager:
+    """A ConfigManager over an empty in-memory config store."""
+    return ConfigManager(store=InMemoryConfigStore())
 
 
 @pytest.fixture
-def validator(
-    mock_config_manager: MagicMock, temp_schema_dir: Path
-) -> ProfileValidator:
-    """Create ProfileValidator instance with mocked dependencies."""
+def validator(config_manager: ConfigManager, temp_schema_dir: Path) -> ProfileValidator:
+    """Create ProfileValidator instance over the in-memory config store."""
     return ProfileValidator(
-        config_manager=mock_config_manager,
+        config_manager=config_manager,
         schema_templates_dir=temp_schema_dir,
     )
 
@@ -172,7 +169,7 @@ class TestProfileTypeValidation:
 
     def test_profile_type_loading_does_not_use_configutils_private_api(
         self,
-        mock_config_manager: MagicMock,
+        config_manager: ConfigManager,
         temp_schema_dir: Path,
     ):
         """Shipped profile type loading should not depend on ConfigUtils internals."""
@@ -184,7 +181,7 @@ class TestProfileTypeValidation:
             ),
         ):
             validator = ProfileValidator(
-                config_manager=mock_config_manager,
+                config_manager=config_manager,
                 schema_templates_dir=temp_schema_dir,
             )
 
@@ -256,7 +253,7 @@ class TestProfileTypeValidation:
     def test_empty_profile_type_source_fails_loudly(
         self,
         temp_schema_dir: Path,
-        mock_config_manager: MagicMock,
+        config_manager: ConfigManager,
         valid_profile: BackendProfileConfig,
     ):
         """An empty shipped backend profile set must block validation."""
@@ -266,7 +263,7 @@ class TestProfileTypeValidation:
             temp_schema_dir / "missing_config.json",
         ):
             validator = ProfileValidator(
-                config_manager=mock_config_manager,
+                config_manager=config_manager,
                 schema_templates_dir=temp_schema_dir,
             )
 
@@ -439,19 +436,53 @@ class TestUniquenessValidation:
         self, validator: ProfileValidator, valid_profile: BackendProfileConfig
     ):
         """New profile with unique name should pass."""
-        validator.config_manager.get_backend_profile.return_value = None
         errors = validator._validate_uniqueness(valid_profile, tenant_id="test_tenant")
-        assert not errors
+        assert errors == []
 
     def test_duplicate_profile_name(
         self, validator: ProfileValidator, valid_profile: BackendProfileConfig
     ):
         """New profile with duplicate name should fail."""
-        # Mock existing profile
-        validator.config_manager.get_backend_profile.return_value = valid_profile
+        validator.config_manager.add_backend_profile(
+            valid_profile, tenant_id="test_tenant"
+        )
         errors = validator._validate_uniqueness(valid_profile, tenant_id="test_tenant")
-        assert errors
-        assert any("already exists" in err for err in errors)
+        assert errors == [
+            f"Profile '{valid_profile.profile_name}' already exists for tenant "
+            "'test_tenant'"
+        ]
+
+    def test_a_profile_another_manager_deleted_is_unique_despite_a_held_copy(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
+        """The check reads the store, not this manager's held copy: a profile
+        another process deleted is free to create again at once."""
+        held = validator.config_manager
+        held.add_backend_profile(valid_profile, tenant_id="test_tenant")
+        assert (
+            held.get_backend_profile(
+                valid_profile.profile_name, "test_tenant"
+            ).to_dict()
+            == valid_profile.to_dict()
+        )
+        other_process = ConfigManager(store=held.store)
+        assert (
+            other_process.delete_backend_profile(
+                valid_profile.profile_name, tenant_id="test_tenant"
+            )
+            is True
+        )
+        # This manager still holds the deleted profile.
+        assert (
+            held.get_backend_profile(
+                valid_profile.profile_name, "test_tenant"
+            ).to_dict()
+            == valid_profile.to_dict()
+        )
+
+        errors = validator._validate_uniqueness(valid_profile, tenant_id="test_tenant")
+
+        assert errors == []
 
 
 class TestUpdateFieldValidation:
@@ -579,8 +610,9 @@ class TestFullProfileValidation:
         self, validator: ProfileValidator, valid_profile: BackendProfileConfig
     ):
         """Update validation should skip uniqueness check."""
-        # Mock existing profile with same name
-        validator.config_manager.get_backend_profile.return_value = valid_profile
+        validator.config_manager.add_backend_profile(
+            valid_profile, tenant_id="test_tenant"
+        )
 
         with patch.object(validator, "_strategy_class_exists", return_value=True):
             errors = validator.validate_profile(

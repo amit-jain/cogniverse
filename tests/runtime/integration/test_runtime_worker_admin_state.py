@@ -373,3 +373,55 @@ class TestInviteAcrossWorkers:
             },
         )
         assert record["used"] is False
+
+
+class TestProfileRecreateAcrossWorkers:
+    def test_a_profile_deleted_on_one_worker_can_be_created_again_on_the_other(
+        self, runtime
+    ):
+        """The other worker has just served the profile from its held config;
+        the create's uniqueness check reads the store, so it is not refused."""
+        tenant = _tenant("recreate")
+        first, second = runtime.workers
+        body = {
+            "profile_name": "recreated_profile",
+            "tenant_id": tenant,
+            "type": "video",
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "multi_vector",
+            "deploy_schema": False,
+        }
+        pinned = _pinned(runtime, 1)
+        try:
+            created = _request(pinned[first][0], "POST", "/admin/profiles", body)
+            held = _request(
+                pinned[second][0],
+                "GET",
+                f"/admin/profiles/recreated_profile?tenant_id={tenant}",
+            )
+            deleted = _request(
+                pinned[first][0],
+                "DELETE",
+                f"/admin/profiles/recreated_profile?tenant_id={tenant}",
+            )
+            recreated = _request(pinned[second][0], "POST", "/admin/profiles", body)
+            duplicate = _request(pinned[first][0], "POST", "/admin/profiles", body)
+        finally:
+            _close(pinned)
+
+        assert (created[0], held[0], deleted[0]) == (201, 200, 200)
+        assert held[1]["profile_name"] == "recreated_profile"
+        assert recreated[0] == 201, recreated
+        assert duplicate == (
+            400,
+            {
+                "detail": {
+                    "message": "Profile validation failed",
+                    "errors": [
+                        f"Profile 'recreated_profile' already exists for tenant "
+                        f"'{tenant}'"
+                    ],
+                }
+            },
+        )

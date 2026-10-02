@@ -321,7 +321,8 @@ class ProfileValidator:
     def validate_profile(
         self, profile: BackendProfileConfig, tenant_id: str, is_update: bool = False
     ) -> List[str]:
-        """Validate complete profile"""
+        """Validate complete profile; the uniqueness check reads the tenant's
+        stored backend config, not the manager's held copy"""
         errors = []
         if not is_update:
             errors.extend(self._validate_uniqueness(profile, tenant_id))

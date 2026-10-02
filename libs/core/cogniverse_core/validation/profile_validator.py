@@ -133,14 +133,25 @@ class ProfileValidator:
     def _validate_uniqueness(
         self, profile: "BackendProfileConfig", tenant_id: str
     ) -> List[str]:
-        """Check if profile name is unique for tenant."""
+        """Check if profile name is unique for tenant.
+
+        Reads the tenant's backend config as the store holds it now, not the
+        manager's held copy: a profile another process deleted moments ago
+        must not refuse its re-creation here.
+        """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
         errors = []
 
-        existing = self.config_manager.get_backend_profile(
-            tenant_id=tenant_id,
-            profile_name=profile.profile_name,
+        stored = self.config_manager.store.get_config(
+            tenant_id=canonical_tenant_id(tenant_id),
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="backend_config",
         )
-        if existing:
+        profiles = {} if stored is None else stored.config_value.get("profiles", {})
+        if profile.profile_name in profiles:
             errors.append(
                 f"Profile '{profile.profile_name}' already exists for tenant '{tenant_id}'"
             )
