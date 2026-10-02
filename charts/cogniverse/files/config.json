@@ -194,7 +194,8 @@
       "temperature": 0.7,
       "max_tokens": 2048,
       "context_window": 4096,
-      "adapter_path": null
+      "adapter_path": null,
+      "request_timeout": 210.0
     },
     "overrides": {
       "query_analysis_module": null,
