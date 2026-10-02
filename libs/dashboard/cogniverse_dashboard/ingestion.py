@@ -16,6 +16,8 @@ from typing import Any, Callable, Dict, Tuple
 
 import httpx
 
+from cogniverse_dashboard.utils.runtime_client import runtime_error_message
+
 # The upload is queued and the worker does keyframe extraction, transcription
 # and embedding on it, so a minutes-long wait is the normal case.
 DEFAULT_POLL_TIMEOUT_S = 900.0
@@ -41,7 +43,7 @@ def _read_status(
     if status.status_code != 200:
         raise _StatusUnreadable(
             f"Ingestion status for {ingest_id}: HTTP "
-            f"{status.status_code}: {status.text}"
+            f"{status.status_code}: {runtime_error_message(status)}"
         )
     payload = status.json()
     return payload.get("state", "unknown"), payload.get("latest", {}) or {}
@@ -89,7 +91,8 @@ def submit_video_ingestion(
             "status": "error",
             "profile": profile,
             "message": (
-                f"Upload rejected: HTTP {response.status_code}: {response.text}"
+                f"Upload rejected: HTTP {response.status_code}: "
+                f"{runtime_error_message(response)}"
             ),
         }
 

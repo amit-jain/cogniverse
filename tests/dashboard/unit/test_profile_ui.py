@@ -157,6 +157,50 @@ class TestDashboardProfileIntegration:
                 )  # Will fail because Vespa is not available
                 assert "error" in result
 
+    def test_a_refused_deploy_shows_the_runtimes_message(self, running_api):
+        """The runtime answers a failure with a typed body; the dashboard
+        shows its message, not the body."""
+        from cogniverse_core.common.tenant_utils import mark_tenant_deleted
+        from cogniverse_dashboard.tabs.backend_profile import deploy_schema_via_api
+        from cogniverse_runtime.routers import admin
+
+        created = running_api.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "gone_test",
+                "tenant_id": "gone_tenant",
+                "type": "video",
+                "schema_name": "video_test",
+                "embedding_model": "test_model",
+                "embedding_type": "multi_vector",
+            },
+        )
+        mark_tenant_deleted(admin._config_manager.store, "gone_tenant:gone_tenant")
+
+        with patch(
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
+            return_value="http://testserver",
+        ):
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
+                mock_client_instance = Mock()
+                mock_client.return_value.__enter__.return_value = mock_client_instance
+                mock_client_instance.post = lambda endpoint, json: running_api.post(
+                    endpoint.removeprefix("http://testserver"), json=json
+                )
+
+                result = deploy_schema_via_api("gone_test", "gone_tenant", force=True)
+
+        assert created.status_code == 201, created.text
+        assert result == {
+            "success": False,
+            "tenant_schema_name": None,
+            "error": "HTTP 410: Tenant 'gone_tenant:gone_tenant' has been deleted; "
+            "its schemas and memories are not written until the tenant is "
+            "created again.",
+        }
+
     def test_delete_profile_via_api_success(self, running_api):
         """Test delete_profile_via_api function"""
         from cogniverse_dashboard.tabs.backend_profile import delete_profile_via_api

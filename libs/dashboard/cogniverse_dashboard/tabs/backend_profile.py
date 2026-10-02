@@ -12,6 +12,7 @@ import httpx
 import streamlit as st
 
 from cogniverse_dashboard.tabs.tenant_management import get_runtime_api_url
+from cogniverse_dashboard.utils.runtime_client import runtime_error_message
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 __all__ = ["get_runtime_api_url"]
@@ -47,7 +48,7 @@ def deploy_schema_via_api(
                 }
             else:
                 error_detail = (
-                    response.json().get("detail", response.text)
+                    runtime_error_message(response)
                     if response.text
                     else "Unknown error"
                 )
@@ -98,7 +99,7 @@ def delete_profile_via_api(
                 }
             else:
                 error_detail = (
-                    response.json().get("detail", response.text)
+                    runtime_error_message(response)
                     if response.text
                     else "Unknown error"
                 )
@@ -133,7 +134,7 @@ def get_profile_schema_status(profile_name: str, tenant_id: str) -> Dict[str, An
                 }
             else:
                 error_detail = (
-                    response.json().get("detail", response.text)
+                    runtime_error_message(response)
                     if response.text
                     else "Unknown error"
                 )
@@ -409,7 +410,7 @@ def render_create_profile_form(manager, tenant_id: str):
                         )
                     st.rerun()
                 else:
-                    detail = resp.json().get("detail", resp.text) if resp.text else ""
+                    detail = runtime_error_message(resp) if resp.text else ""
                     st.error(
                         f"❌ Failed to create profile (HTTP {resp.status_code}): {detail}"
                     )

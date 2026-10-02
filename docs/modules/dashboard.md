@@ -84,7 +84,7 @@ libs/dashboard/cogniverse_dashboard/
     __init__.py
     annotations.py                # Persist search-result relevance annotations to telemetry
     async_utils.py
-    runtime_client.py   # shared pooled httpx.Client for runtime calls (st.cache_resource)
+    runtime_client.py   # shared pooled httpx.Client for runtime calls (st.cache_resource); runtime_error_message
     traces.py
 ```
 
@@ -106,7 +106,7 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 
 1. **Analytics Session State**: Maintains Phoenix analytics instance across interactions
 2. **Tab Loading**: Dynamically imports tab modules with graceful fallback
-3. **Runtime Client**: Communicates with unified Runtime for search, agent status, and admin operations
+3. **Runtime Client**: Communicates with unified Runtime for search, agent status, and admin operations. A runtime failure answers `{"detail": {"error", "message", ...}}`; every tab shows it through `runtime_error_message(response)` (`utils/runtime_client.py`), which gives the body's `message`, a plain-string `detail` as it is, and any other body as its text
 4. **Async Wrapper**: Handles async operations in Streamlit's sync context
 
 ```python

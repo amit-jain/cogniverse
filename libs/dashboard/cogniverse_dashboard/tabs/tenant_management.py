@@ -9,6 +9,8 @@ from typing import Any, Dict, List
 import httpx
 import streamlit as st
 
+from cogniverse_dashboard.utils.runtime_client import runtime_error_message
+
 
 def get_runtime_api_url() -> str:
     """Get the runtime API URL from the dashboard's shared session state.
@@ -40,7 +42,7 @@ def _api_call(
                 return {"success": True, "data": response.json()}
             else:
                 detail = (
-                    response.json().get("detail", response.text)
+                    runtime_error_message(response)
                     if response.text
                     else "Unknown error"
                 )

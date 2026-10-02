@@ -139,7 +139,14 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
         if recorder.status_response_status != 200:
             return JSONResponse(
                 status_code=recorder.status_response_status,
-                content={"detail": "ingestion status store unavailable"},
+                content={
+                    "detail": {
+                        "error": "ingest_status_store_unavailable",
+                        "message": "The ingestion status store did not answer; retry.",
+                        "failure": "ConnectionError",
+                        "ingest_id": ingest_id,
+                    }
+                },
             )
         script = recorder.status_script.get(ingest_id)
         if not script:
@@ -156,7 +163,15 @@ def _build_app(recorder: RuntimeRecorder) -> FastAPI:
         if recorder.optimize_runs_status != 200:
             return JSONResponse(
                 status_code=recorder.optimize_runs_status,
-                content={"detail": "Argo API unreachable: connection refused"},
+                content={
+                    "detail": {
+                        "error": "argo_unavailable",
+                        "message": "Argo could not list the workflows of tenant "
+                        f"{tenant_id}; retry.",
+                        "failure": "ArgoListUnavailableError",
+                        "tenant_id": tenant_id,
+                    }
+                },
             )
         return {"runs": recorder.optimize_runs.get(tenant_id, [])[:limit]}
 
@@ -363,7 +378,14 @@ def test_failed_ingestion_is_reported_as_failure_not_a_success_banner(page, runt
 def test_rejected_upload_names_the_http_failure_and_never_polls(page, runtime):
     runtime.upload_response = {
         "status": 503,
-        "body": {"message": "object store unavailable"},
+        "body": {
+            "detail": {
+                "error": "object_store_unavailable",
+                "message": "The object store did not accept the upload; retry.",
+                "failure": "S3Error",
+                "tenant_id": "acme:a",
+            }
+        },
     }
     app = _open_tenant(page, "acme:a")
     _upload_video(app)
@@ -373,9 +395,19 @@ def test_rejected_upload_names_the_http_failure_and_never_polls(page, runtime):
     assert _ingestion_messages(app.success) == []
     reported = _ingestion_messages(app.error)
     assert len(reported) == 2
-    assert reported[0].startswith(f"{DEFAULT_PROFILE}: Upload rejected: HTTP 503:")
-    assert "object store unavailable" in reported[0]
+    assert reported[0] == (
+        f"{DEFAULT_PROFILE}: Upload rejected: HTTP 503: "
+        "The object store did not accept the upload; retry."
+    )
     assert reported[1] == f"Ingestion failed for {DEFAULT_PROFILE} (1 of 1 profiles)"
+    assert app.session_state["processing_results"] == [
+        {
+            "status": "error",
+            "profile": DEFAULT_PROFILE,
+            "message": "Upload rejected: HTTP 503: "
+            "The object store did not accept the upload; retry.",
+        }
+    ]
 
 
 def test_status_outage_mid_job_is_an_error_not_a_completed_ingestion(page, runtime):
@@ -387,8 +419,9 @@ def test_status_outage_mid_job_is_an_error_not_a_completed_ingestion(page, runti
 
     assert _ingestion_messages(app.success) == []
     reported = _ingestion_messages(app.error)
-    assert reported[0].startswith(
-        f"{DEFAULT_PROFILE}: Ingestion status for ingest-0: HTTP 503:"
+    assert reported[0] == (
+        f"{DEFAULT_PROFILE}: Ingestion status for ingest-0: HTTP 503: "
+        "The ingestion status store did not answer; retry."
     )
     assert app.session_state["processing_results"][0]["status"] == "error"
 
@@ -933,7 +966,7 @@ def test_optimization_overview_reports_a_runtime_outage_not_zero_runs(page, runt
         if e.value.startswith("Optimization runs unavailable")
     ] == [
         "Optimization runs unavailable: HTTP 503: "
-        "Argo API unreachable: connection refused"
+        "Argo could not list the workflows of tenant acme:a; retry."
     ]
     assert [
         w.value for w in app.warning if w.value.startswith("History unavailable")

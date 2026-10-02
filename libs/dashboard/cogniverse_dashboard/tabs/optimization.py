@@ -45,7 +45,10 @@ from cogniverse_dashboard.telemetry_gate import (
 )
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
-from cogniverse_dashboard.utils.runtime_client import get_runtime_client
+from cogniverse_dashboard.utils.runtime_client import (
+    get_runtime_client,
+    runtime_error_message,
+)
 from cogniverse_dashboard.utils.traces import span_window_end
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
@@ -87,13 +90,10 @@ def _fetch_optimization_runs(tenant_id: str) -> OptimizationRuns:
     except httpx.HTTPError as exc:
         return OptimizationRuns([], f"Optimization runs unavailable: {exc}")
     if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", response.text)
-        except ValueError:
-            detail = response.text
         return OptimizationRuns(
             [],
-            f"Optimization runs unavailable: HTTP {response.status_code}: {detail}",
+            f"Optimization runs unavailable: HTTP {response.status_code}: "
+            f"{runtime_error_message(response)}",
         )
     return OptimizationRuns(response.json()["runs"], None)
 
@@ -866,7 +866,8 @@ def _render_synthetic_data_tab():
 
                 else:
                     st.error(
-                        f"❌ Generation failed: {response.status_code} - {response.text}"
+                        f"❌ Generation failed: {response.status_code} - "
+                        f"{runtime_error_message(response)}"
                     )
 
             except requests.exceptions.ConnectionError:

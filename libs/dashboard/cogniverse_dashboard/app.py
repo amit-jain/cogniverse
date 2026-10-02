@@ -51,7 +51,10 @@ import httpx
 
 from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
-from cogniverse_dashboard.utils.runtime_client import get_runtime_client
+from cogniverse_dashboard.utils.runtime_client import (
+    get_runtime_client,
+    runtime_error_message,
+)
 from cogniverse_dashboard.utils.traces import (
     fetch_tenant_traces_safely,
     filter_traces_df,
@@ -620,7 +623,10 @@ def call_agent(task_data: dict) -> dict:
                 return response.json()
             return {
                 "status": "error",
-                "message": f"Search error: HTTP {response.status_code}: {response.text}",
+                "message": (
+                    f"Search error: HTTP {response.status_code}: "
+                    f"{runtime_error_message(response)}"
+                ),
             }
 
         elif action == "generate_report":
@@ -638,7 +644,10 @@ def call_agent(task_data: dict) -> dict:
                 return {"status": "success", "report": response.json()}
             return {
                 "status": "error",
-                "message": f"Report error: HTTP {response.status_code}: {response.text}",
+                "message": (
+                    f"Report error: HTTP {response.status_code}: "
+                    f"{runtime_error_message(response)}"
+                ),
             }
 
         else:
@@ -2136,7 +2145,10 @@ with main_tabs[6]:
                 st.session_state["last_optimize_run"] = data
                 st.success(f"✅ Submitted: {data['workflow_name']}")
             else:
-                st.error(f"❌ Submit failed ({resp.status_code}): {resp.text[:300]}")
+                st.error(
+                    f"❌ Submit failed ({resp.status_code}): "
+                    f"{runtime_error_message(resp)[:300]}"
+                )
         except Exception as e:
             st.error(f"❌ Failed to reach runtime: {e}")
 
@@ -2175,7 +2187,8 @@ with main_tabs[6]:
                     st.warning("Workflow no longer exists (TTL expired).")
                 else:
                     st.error(
-                        f"{verb.title()} failed ({resp.status_code}): {resp.text[:300]}"
+                        f"{verb.title()} failed ({resp.status_code}): "
+                        f"{runtime_error_message(resp)[:300]}"
                     )
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Could not {verb}: {e}")
@@ -2875,7 +2888,8 @@ with main_tabs[11]:
                         )
                     else:
                         error_msg = (
-                            f"Agent returned HTTP {resp.status_code}: {resp.text[:200]}"
+                            f"Agent returned HTTP {resp.status_code}: "
+                            f"{runtime_error_message(resp)[:200]}"
                         )
                         st.error(error_msg)
                         st.session_state.chat_messages.append(
