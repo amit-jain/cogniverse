@@ -52,35 +52,24 @@ PAUSED_READ_TIMEOUT_S = 5.0
 @pytest.fixture(scope="module")
 def owned_phoenix():
     """A Phoenix container this module owns, so it may be paused safely."""
+    from tests.utils.docker_utils import start_docker_container_with_port_retry
     from tests.utils.vllm_sidecar import OWNER_LABEL
 
-    port_offset = (os.getpid() % 1000) * 10
-    http_port = 26006 + port_offset
-    grpc_port = 24317 + port_offset
-    http_endpoint = f"http://localhost:{http_port}"
-    name = f"phoenix_outage_pid{os.getpid()}_{uuid.uuid4().hex[:8]}"
-
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
+    # Probed ports, retried on an allocation race: concurrent sessions hold
+    # containers on ports a fixed per-pid offset can land on.
+    name, http_port, grpc_port = start_docker_container_with_port_retry(
+        __name__,
+        name_prefix="phoenix-outage",
+        image="arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6",
+        container_ports=(6006, 4317),
+        extra_run_args=[
             "--label",
             f"{OWNER_LABEL}={os.getpid()}",
-            "-p",
-            f"{http_port}:6006",
-            "-p",
-            f"{grpc_port}:4317",
             "-e",
             "PHOENIX_WORKING_DIR=/phoenix",
-            "arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6",
         ],
-        check=True,
-        capture_output=True,
-        timeout=60,
     )
+    http_endpoint = f"http://localhost:{http_port}"
     try:
         deadline = time.monotonic() + 120
         ready = False
