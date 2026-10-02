@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from cogniverse_core.events import (
     get_queue_manager,
 )
+from cogniverse_runtime.http_errors import record_failure
 
 logger = logging.getLogger(__name__)
 
@@ -130,11 +131,12 @@ async def _event_stream(
         logger.info(f"SSE stream cancelled for task {task_id}")
         raise
     except Exception as e:
-        logger.error(f"SSE stream error for task {task_id}: {e}")
+        record_failure(e, "stream_error")
         error_data = json.dumps(
             {
                 "type": "stream_error",
-                "message": str(e),
+                "message": f"The event stream for task {task_id} failed.",
+                "failure": type(e).__name__,
             }
         )
         yield f"data: {error_data}\n\n"

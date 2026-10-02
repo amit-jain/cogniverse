@@ -13,6 +13,7 @@ import asyncio
 import copy
 import inspect
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -834,9 +835,18 @@ class TestOptimizationRunListing:
 
         response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
         assert response.status_code == 503, response.text
-        body = response.json()
-        assert list(body) == ["detail"]
-        assert body["detail"].startswith("Argo API unreachable:")
+        assert response.json() == {
+            "detail": {
+                "error": "argo_unavailable",
+                "message": (
+                    "Argo could not list the workflows of tenant "
+                    f"{_OPTIMIZE_TENANT}; retry."
+                ),
+                "failure": "ArgoListUnavailableError",
+                "tenant_id": _OPTIMIZE_TENANT,
+            }
+        }
+        assert str(dead_port) not in response.text
 
     def test_unconfigured_argo_answers_503(self, optimize_runs_env):
         client, _simba_name, _gateway_name = optimize_runs_env
@@ -880,6 +890,22 @@ def failing_argo():
         thread.join(timeout=5)
 
 
+_ARGO_LIST_UNAVAILABLE_BODY = {
+    "error": "argo_unavailable",
+    "message": f"Argo could not list the workflows of tenant {_OPTIMIZE_TENANT}; retry.",
+    "failure": "ArgoListUnavailableError",
+    "tenant_id": _OPTIMIZE_TENANT,
+}
+
+
+def _http_error_log(caplog):
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ]
+
+
 @pytest.mark.integration
 class TestOptimizationRunListingFaults:
     """Argo answering badly must raise, never read as "no runs"."""
@@ -890,20 +916,24 @@ class TestOptimizationRunListingFaults:
         app.include_router(tenant.router, prefix="/admin/tenant")
         return TestClient(app)
 
-    def test_a_rejecting_argo_answers_503(self, failing_argo):
+    def test_a_rejecting_argo_answers_503(self, failing_argo, caplog):
         _BadArgoHandler.status = 500
         _BadArgoHandler.body = b'{"message":"argo-server is restarting"}'
         _BadArgoHandler.content_type = "application/json"
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         with self._client(failing_argo) as client:
             response = client.get(f"/admin/tenant/{_OPTIMIZE_TENANT}/optimize/runs")
         assert response.status_code == 503, response.text
-        assert response.json() == {
-            "detail": (
-                'Argo list failed (500): {"message":"argo-server is restarting"}'
-            )
-        }
+        assert response.json() == {"detail": _ARGO_LIST_UNAVAILABLE_BODY}
+        assert "argo-server is restarting" not in response.text
+        # Argo's answer reaches the runtime log, never the caller.
+        assert _http_error_log(caplog) == [
+            "argo_unavailable: ArgoListUnavailableError: "
+            'Argo list failed (500): {"message":"argo-server is restarting"}'
+        ]
 
-    def test_an_html_body_on_200_answers_503(self, failing_argo):
+    def test_an_html_body_on_200_answers_503(self, failing_argo, caplog):
+        caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
         _BadArgoHandler.status = 200
         _BadArgoHandler.body = b"<html><body>502 Bad Gateway</body></html>"
         _BadArgoHandler.content_type = "text/html"
@@ -915,9 +945,9 @@ class TestOptimizationRunListingFaults:
             _BadArgoHandler.body = b'{"message":"argo-server is restarting"}'
             _BadArgoHandler.content_type = "application/json"
         assert response.status_code == 503, response.text
-        assert response.json() == {
-            "detail": (
-                "Argo list returned a non-JSON body: "
-                "<html><body>502 Bad Gateway</body></html>"
-            )
-        }
+        assert response.json() == {"detail": _ARGO_LIST_UNAVAILABLE_BODY}
+        assert "502 Bad Gateway" not in response.text
+        assert _http_error_log(caplog) == [
+            "argo_unavailable: ArgoListUnavailableError: Argo list returned a "
+            "non-JSON body: <html><body>502 Bad Gateway</body></html>"
+        ]

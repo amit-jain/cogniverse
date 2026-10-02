@@ -9,6 +9,7 @@ ready/healthy assertions reflect a genuinely reachable backend.
 """
 
 import http.server
+import logging
 import threading
 from contextlib import contextmanager
 from unittest.mock import patch
@@ -243,17 +244,31 @@ class TestHealthCheckFull:
 
     @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_returns_503_not_500_on_config_error(
-        self, mock_create_cm, health_client
+        self, mock_create_cm, health_client, caplog
     ):
         """A config failure (e.g. unset BACKEND_URL) must surface as 503
-        unhealthy, not a 500 server crash a probe reads as an outage bug."""
+        unhealthy, not a 500 server crash a probe reads as an outage bug. The
+        cause goes to the log, never into the unauthenticated body."""
         mock_create_cm.side_effect = ValueError(
             "BACKEND_URL environment variable is required"
         )
+        caplog.set_level(logging.WARNING, logger="cogniverse_runtime.http_errors")
 
         resp = health_client.get("/health")
         assert resp.status_code == 503
         data = resp.json()
-        assert data["status"] == "unhealthy"
-        assert data["service"] == "cogniverse-runtime"
-        assert "BACKEND_URL" in data["reason"]
+        assert data == {
+            "status": "unhealthy",
+            "service": "cogniverse-runtime",
+            "reason": "system status could not be assembled",
+            "failure": "ValueError",
+        }
+        assert "BACKEND_URL" not in resp.text
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "system_status_unavailable: ValueError: "
+            "BACKEND_URL environment variable is required"
+        ]

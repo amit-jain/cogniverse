@@ -490,11 +490,13 @@ class TestProfileAPICRUD:
         assert "not found" in response.json()["detail"].lower()
 
     def test_delete_schema_guard_refusal_surfaces_as_500(
-        self, test_client: TestClient, monkeypatch
+        self, test_client: TestClient, monkeypatch, caplog
     ):
         """A refused schema removal — dropping it would also destroy deployed
-        schemas the registry does not know — must reach the client as a 500
-        carrying the refusal message, not a 200 with schema_deleted false."""
+        schemas the registry does not know — must reach the client as a typed
+        500, not a 200 with schema_deleted false; the refusal itself is in the
+        runtime log."""
+        import logging
         from unittest.mock import MagicMock
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -525,15 +527,36 @@ class TestProfileAPICRUD:
                 classmethod(lambda cls: fake_registry),
             )
 
-            response = test_client.delete(
-                "/admin/profiles/test_guarded_delete"
-                "?tenant_id=test_tenant&delete_schema=true"
-            )
+            with caplog.at_level(
+                logging.ERROR, logger="cogniverse_runtime.http_errors"
+            ):
+                response = test_client.delete(
+                    "/admin/profiles/test_guarded_delete"
+                    "?tenant_id=test_tenant&delete_schema=true"
+                )
 
         assert response.status_code == 500
-        detail = response.json()["detail"]
-        assert "Refusing to delete" in detail
-        assert "knowledge_graph_test_tenant_test_tenant" in detail
+        assert response.json() == {
+            "detail": {
+                "error": "profile_delete_failed",
+                "message": (
+                    "Deleting profile 'test_guarded_delete' failed; the runtime "
+                    "log names the cause."
+                ),
+                "failure": "ValueError",
+                "profile_name": "test_guarded_delete",
+                "tenant_id": "test_tenant",
+            }
+        }
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_runtime.http_errors"
+        ] == [
+            "profile_delete_failed: ValueError: Refusing to delete "
+            "'video_test_test_tenant_test_tenant': redeploying without it would "
+            "also drop ['knowledge_graph_test_tenant_test_tenant']"
+        ]
         fake_backend.delete_schema.assert_called_once_with(
             schema_name="video_test", tenant_id="test_tenant"
         )

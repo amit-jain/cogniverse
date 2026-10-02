@@ -20,6 +20,7 @@ from cogniverse_foundation.config.inference_service import (
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.http_errors import failure_response
 from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_runtime.messaging import (
     InboundMessage,
@@ -585,18 +586,44 @@ async def process_agent_task(
     except VespaSearchDegraded as e:
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.
-        raise HTTPException(status_code=503, detail=str(e))
+        raise failure_response(
+            503,
+            "search_degraded",
+            f"Agent '{agent_name}' could not complete: the search backend "
+            "answered with degraded coverage; retry.",
+            e,
+            agent=agent_name,
+            request_id=dispatch_context["request_id"],
+        )
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this
-        # deployment. 503 names the service to configure instead of the
-        # opaque 500 the caller used to get.
-        raise HTTPException(status_code=503, detail=str(e))
+        # deployment, or is unreachable. 503 names the service to configure;
+        # the exception text, which can carry the sidecar URL, stays in the log.
+        raise failure_response(
+            503,
+            "inference_service_unavailable",
+            f"Agent '{agent_name}' could not complete: inference service "
+            f"'{e.service}' is unavailable.",
+            e,
+            agent=agent_name,
+            service=e.service,
+            module=e.module,
+            request_id=dispatch_context["request_id"],
+        )
     except ValueError as e:
         detail = str(e)
         if "not found" in detail:
             raise HTTPException(status_code=404, detail=detail)
         elif "no supported execution path" in detail:
-            raise HTTPException(status_code=501, detail=detail)
+            raise failure_response(
+                501,
+                "no_execution_path",
+                f"Agent '{agent_name}' has no supported execution path in this "
+                "runtime.",
+                e,
+                agent=agent_name,
+                request_id=dispatch_context["request_id"],
+            )
         raise HTTPException(status_code=400, detail=detail)
     except Exception as e:
         request_id = dispatch_context["request_id"]

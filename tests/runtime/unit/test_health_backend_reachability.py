@@ -80,8 +80,11 @@ class TestReadinessReflectsBackendReachability:
         resp = _client(_dead_url()).get("/health/ready")
         assert resp.status_code == 503
         body = resp.json()
-        assert body["status"] == "not_ready"
-        assert "unreachable" in body["reason"].lower()
+        assert body == {
+            "status": "not_ready",
+            "reason": "backend unreachable (ConnectError)",
+        }
+        assert "127.0.0.1" not in resp.text
 
     def test_not_ready_before_startup_wires_backend(self):
         resp = _client(None).get("/health/ready")

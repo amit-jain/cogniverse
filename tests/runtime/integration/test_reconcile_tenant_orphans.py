@@ -296,9 +296,12 @@ async def test_reconciliation_refuses_an_unreachable_config_server(
         with pytest.raises(HTTPException) as failure:
             await tm.reconcile_orphans(dry_run=True)
     assert failure.value.status_code == 503
-    assert failure.value.detail.startswith(
-        "Cannot enumerate deployed schemas during reconciliation: "
-    )
+    assert failure.value.detail == {
+        "error": "reconcile_unavailable",
+        "message": "Cannot enumerate deployed schemas during reconciliation.",
+        "failure": type(failure.value.__cause__).__name__,
+    }
+    assert str(port) not in str(failure.value.detail)
     assert failure.value.__cause__.request.method == "GET"
     assert failure.value.__cause__.request.url == (
         f"http://localhost:{port}/application/v2/tenant/default/application/default/"

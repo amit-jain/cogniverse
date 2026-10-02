@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from cogniverse_runtime.http_errors import failure_response
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -143,5 +145,12 @@ async def delete_wiki_topic(
     try:
         await asyncio.to_thread(wm.delete_page, doc_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise failure_response(
+            500,
+            "wiki_delete_failed",
+            f"Deleting wiki topic '{slug}' failed; the runtime log names the cause.",
+            exc,
+            tenant_id=tenant_id,
+            doc_id=doc_id,
+        )
     return {"status": "deleted", "doc_id": doc_id, "slug": slug}

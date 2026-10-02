@@ -471,10 +471,11 @@ class TestReconcileOrphansSafetyGuard:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
 
         assert resp.status_code == 503
-        assert resp.json()["detail"] == (
-            "Cannot read the schema registry during reconciliation: config store "
-            "refused the read"
-        )
+        assert resp.json()["detail"] == {
+            "error": "reconcile_unavailable",
+            "message": "Cannot read the schema registry during reconciliation.",
+            "failure": "ConnectionError",
+        }
         schema_registry._get_all_schemas.assert_called_once_with(strict=True)
         schema_manager.delete_orphan_schemas.assert_not_called()
 
@@ -502,10 +503,14 @@ class TestReconcileOrphansSafetyGuard:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
 
         assert resp.status_code == 503
-        assert resp.json()["detail"] == (
-            "Cannot read the system config naming the application during "
-            "reconciliation: system config unreadable"
-        )
+        assert resp.json()["detail"] == {
+            "error": "reconcile_unavailable",
+            "message": (
+                "Cannot read the system config naming the application during "
+                "reconciliation."
+            ),
+            "failure": "ConnectionError",
+        }
         schema_manager.delete_orphan_schemas.assert_not_called()
 
     def test_the_phantom_type_does_not_open_the_guard_for_other_schemas(
@@ -600,12 +605,15 @@ class TestReconcileOrphansInFlightDeploys:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
         assert resp.status_code == 503
         assert resp.json() == {
-            "detail": (
-                "Cannot read schema deployment intents; refusing to reconcile "
-                "orphans because a mid-deploy schema would be indistinguishable "
-                "from an orphan: Cannot read deployment intents: journal "
-                "unavailable"
-            )
+            "detail": {
+                "error": "reconcile_unavailable",
+                "message": (
+                    "Cannot read schema deployment intents; refusing to reconcile "
+                    "orphans because a mid-deploy schema would be "
+                    "indistinguishable from an orphan."
+                ),
+                "failure": "RegistryStorageError",
+            }
         }
         schema_manager.delete_orphan_schemas.assert_not_called()
 
@@ -834,11 +842,14 @@ class TestTenantRegistryReadContract:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
         assert resp.status_code == 503
         assert resp.json() == {
-            "detail": (
-                "Cannot read the tenant registry; refusing to reconcile "
-                "orphans because every schema would read as a tenant-orphan: "
-                "vespa unreachable"
-            )
+            "detail": {
+                "error": "reconcile_unavailable",
+                "message": (
+                    "Cannot read the tenant registry; refusing to reconcile "
+                    "orphans because every schema would read as a tenant-orphan."
+                ),
+                "failure": "RuntimeError",
+            }
         }
         schema_manager.delete_tenant_schemas_bulk.assert_not_called()
 

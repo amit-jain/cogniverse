@@ -1037,12 +1037,24 @@ class TestProcessRouteDegradedMapping:
                 json={
                     "agent_name": "document_agent",
                     "query": "quarterly report",
-                    "context": {"tenant_id": "acme:prod"},
+                    "context": {"tenant_id": "acme:prod", "request_id": "req-12"},
                 },
             )
 
         assert resp.status_code == 503
-        assert "code 12" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "search_degraded",
+                "message": (
+                    "Agent 'document_agent' could not complete: the search "
+                    "backend answered with degraded coverage; retry."
+                ),
+                "failure": "VespaSearchDegraded",
+                "agent": "document_agent",
+                "request_id": "req-12",
+            }
+        }
+        assert "code 12" not in resp.text
 
     def test_app_level_handler_maps_degraded_to_503(self):
         """Routes without their own mapping (graph, wiki) get the app-level
@@ -1061,7 +1073,16 @@ class TestProcessRouteDegradedMapping:
             resp = client.get("/boom")
 
         assert resp.status_code == 503
-        assert "code 12" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "search_degraded",
+                "message": (
+                    "The search backend answered with degraded coverage; retry."
+                ),
+                "failure": "VespaSearchDegraded",
+            }
+        }
+        assert "code 12" not in resp.text
 
 
 @pytest.mark.unit
@@ -1661,15 +1682,26 @@ class TestAudioTextSearchBackendContract:
                 json={
                     "agent_name": "gateway_agent",
                     "query": "listen to podcasts about deep learning run 4",
-                    "context": {"tenant_id": "acme:prod"},
+                    "context": {"tenant_id": "acme:prod", "request_id": "req-4"},
                     "top_k": 3,
                 },
             )
 
         assert resp.status_code == 503
-        detail = resp.json()["detail"]
-        assert "clap_embed" in detail
-        assert "torch" in detail
+        assert resp.json() == {
+            "detail": {
+                "error": "inference_service_unavailable",
+                "message": (
+                    "Agent 'gateway_agent' could not complete: inference service "
+                    "'clap_embed' is unavailable."
+                ),
+                "failure": "InferenceServiceUnavailableError",
+                "agent": "gateway_agent",
+                "service": "clap_embed",
+                "module": "torch",
+                "request_id": "req-4",
+            }
+        }
 
     def test_process_route_maps_unreachable_pooling_sidecar_to_503(self, monkeypatch):
         """A configured sidecar that died mid-request surfaces as 503, not 500."""
@@ -1697,13 +1729,27 @@ class TestAudioTextSearchBackendContract:
                 json={
                     "agent_name": "gateway_agent",
                     "query": "find PDF documents about Python run 5",
-                    "context": {"tenant_id": "acme:prod"},
+                    "context": {"tenant_id": "acme:prod", "request_id": "req-5"},
                     "top_k": 3,
                 },
             )
 
         assert resp.status_code == 503
-        assert resp.json()["detail"] == message
+        assert resp.json() == {
+            "detail": {
+                "error": "inference_service_unavailable",
+                "message": (
+                    "Agent 'gateway_agent' could not complete: inference service "
+                    "'colbert_pooling' is unavailable."
+                ),
+                "failure": "InferenceServiceUnavailableError",
+                "agent": "gateway_agent",
+                "service": "colbert_pooling",
+                "module": None,
+                "request_id": "req-5",
+            }
+        }
+        assert "cogniverse-colbert-pylate:8000" not in resp.text
 
     def test_process_route_500_names_stage_without_leaking_detail(self, monkeypatch):
         """An unexpected failure returns a JSON body naming agent + error type.

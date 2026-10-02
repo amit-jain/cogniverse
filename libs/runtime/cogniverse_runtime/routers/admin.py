@@ -48,6 +48,7 @@ from cogniverse_runtime.admin.profile_models import (
 )
 from cogniverse_runtime.blob_write_queue import BlobWriteQueue
 from cogniverse_runtime.harness_keys import HarnessKeyStore
+from cogniverse_runtime.http_errors import failure_response
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -206,8 +207,14 @@ async def get_system_stats(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Get stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "stats_unavailable",
+            "System stats could not be read; the runtime log names the cause.",
+            e,
+            tenant_id=tenant_id,
+            backend=backend,
+        )
 
 
 @router.post("/profiles", response_model=ProfileCreateResponse, status_code=201)
@@ -318,8 +325,15 @@ async def create_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "profile_create_failed",
+            f"Creating profile '{request.profile_name}' failed; the runtime log "
+            "names the cause.",
+            e,
+            profile_name=request.profile_name,
+            tenant_id=request.tenant_id,
+        )
 
 
 @router.get("/profiles", response_model=ProfileListResponse)
@@ -382,8 +396,14 @@ async def list_profiles(
         )
 
     except Exception as e:
-        logger.error(f"Failed to list profiles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "profile_list_failed",
+            f"Listing profiles for tenant '{tenant_id}' failed; the runtime log "
+            "names the cause.",
+            e,
+            tenant_id=tenant_id,
+        )
 
 
 @router.get("/profiles/{profile_name}", response_model=ProfileDetail)
@@ -471,8 +491,15 @@ async def get_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "profile_read_failed",
+            f"Reading profile '{profile_name}' failed; the runtime log names "
+            "the cause.",
+            e,
+            profile_name=profile_name,
+            tenant_id=tenant_id,
+        )
 
 
 @router.put("/profiles/{profile_name}", response_model=ProfileUpdateResponse)
@@ -576,8 +603,15 @@ async def update_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to update profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "profile_update_failed",
+            f"Updating profile '{profile_name}' failed; the runtime log names "
+            "the cause.",
+            e,
+            profile_name=profile_name,
+            tenant_id=request.tenant_id,
+        )
 
 
 @router.delete("/profiles/{profile_name}", response_model=ProfileDeleteResponse)
@@ -682,8 +716,15 @@ async def delete_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "profile_delete_failed",
+            f"Deleting profile '{profile_name}' failed; the runtime log names "
+            "the cause.",
+            e,
+            profile_name=profile_name,
+            tenant_id=tenant_id,
+        )
 
 
 def _catalog_profile(
@@ -803,11 +844,15 @@ async def deploy_profile_schema(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-
-        logger.error(f"Failed to deploy schema: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "schema_deploy_failed",
+            f"Deploying the schema of profile '{profile_name}' failed; the "
+            "runtime log names the cause.",
+            e,
+            profile_name=profile_name,
+            tenant_id=request.tenant_id,
+        )
 
 
 class InviteRequest(BaseModel):
@@ -925,8 +970,11 @@ async def register_messaging_user(
                 token_manager.validate_token, request.token
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=503, detail=f"registration unavailable: {exc}"
+            raise failure_response(
+                503,
+                "registration_unavailable",
+                "The invite token store did not answer; retry the registration.",
+                exc,
             ) from exc
         if not tenant_id:
             raise HTTPException(status_code=404, detail="invalid_token")
@@ -934,9 +982,12 @@ async def register_messaging_user(
         try:
             mapper = UserTenantMapper(_system_memory_manager())
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"registration unavailable: {exc}; token intact",
+            raise failure_response(
+                503,
+                "registration_unavailable",
+                "The user mapping store did not answer; the invite token is "
+                "intact, retry the registration.",
+                exc,
             ) from exc
         registered = await asyncio.to_thread(
             mapper.register_user,
@@ -981,8 +1032,12 @@ async def resolve_messaging_user(
             mapper.get_tenant_id, platform, external_user_id
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=503, detail=f"resolve unavailable: {exc}"
+        raise failure_response(
+            503,
+            "resolve_unavailable",
+            "The user mapping store did not answer; retry the lookup.",
+            exc,
+            platform=platform,
         ) from exc
     return {"tenant_id": tenant_id}
 
@@ -1588,7 +1643,7 @@ async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
     except Exception as exc:
         # The blob read raises on a store outage (never masquerades as
         # "unset"); map it to 503 rather than an opaque 500.
-        raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
+        raise _store_unavailable("pin-quota", exc, tenant_id) from exc
     return PinQuotasResponse(
         tenant_id=tenant_id,
         quotas=quotas,
@@ -1632,7 +1687,7 @@ async def set_pin_quotas(
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
+            raise _store_unavailable("pin-quota", exc, tenant_id) from exc
         merge_base = dict(current)
         if body.user is not None:
             current["user"] = body.user
@@ -1691,8 +1746,8 @@ async def set_profile_selection_ground_truth(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            503, f"profile_selection_ground_truth store unavailable: {exc}"
+        raise _store_unavailable(
+            "profile_selection_ground_truth", exc, tenant_id
         ) from exc
 
     logger.info(
@@ -1748,9 +1803,7 @@ async def set_golden_set_ground_truth(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            503, f"golden_set_ground_truth store unavailable: {exc}"
-        ) from exc
+        raise _store_unavailable("golden_set_ground_truth", exc, tenant_id) from exc
 
     logger.info(
         "Updated + persisted golden_set_ground_truth for tenant=%s with %d rows",
@@ -1802,8 +1855,8 @@ async def set_entity_extraction_ground_truth(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            503, f"entity_extraction_ground_truth store unavailable: {exc}"
+        raise _store_unavailable(
+            "entity_extraction_ground_truth", exc, tenant_id
         ) from exc
 
     logger.info(
@@ -1890,11 +1943,12 @@ def _get_pin_service(tenant_id: str, admin_overrides: Mapping[str, int] | None):
                 mgr, tenant_id, _require_config_manager(), auto_create_schema=False
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Memory backend not initialised for tenant {tenant_id}: {exc}"
-                ),
+            raise failure_response(
+                503,
+                "memory_unavailable",
+                f"Memory backend not initialised for tenant {tenant_id}.",
+                exc,
+                tenant_id=tenant_id,
             ) from exc
     if not mgr.memory:
         raise HTTPException(
@@ -2087,7 +2141,14 @@ async def promote_to_org_trunk(
     try:
         src = await asyncio.to_thread(source_mm.memory.get, memory_id)
     except Exception as exc:
-        raise HTTPException(503, f"could not read memory {memory_id}: {exc}") from exc
+        raise failure_response(
+            503,
+            "memory_unavailable",
+            f"Memory {memory_id} could not be read; retry.",
+            exc,
+            tenant_id=tenant_id,
+            memory_id=memory_id,
+        ) from exc
     row_tenant = (src or {}).get("user_id")
     if src is None or (row_tenant is not None and row_tenant != tenant_id):
         raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
@@ -2175,7 +2236,14 @@ async def endorse_memory(
     try:
         src = await asyncio.to_thread(source_mm.memory.get, memory_id)
     except Exception as exc:
-        raise HTTPException(503, f"could not read memory {memory_id}: {exc}") from exc
+        raise failure_response(
+            503,
+            "memory_unavailable",
+            f"Memory {memory_id} could not be read; retry.",
+            exc,
+            tenant_id=tenant_id,
+            memory_id=memory_id,
+        ) from exc
     row_tenant = (src or {}).get("user_id")
     if src is None or (row_tenant is not None and row_tenant != tenant_id):
         raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
@@ -2200,7 +2268,14 @@ async def endorse_memory(
             metadata=new_metadata,
         )
     except Exception as exc:
-        raise HTTPException(503, f"trust update failed: {exc}") from exc
+        raise failure_response(
+            503,
+            "memory_unavailable",
+            f"The trust update of memory {memory_id} failed; retry.",
+            exc,
+            tenant_id=tenant_id,
+            memory_id=memory_id,
+        ) from exc
 
     logger.info(
         "Endorsed memory tenant=%s memory_id=%s by=%s/%s -> score=%.3f n=%d",
@@ -2273,7 +2348,7 @@ async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
     except Exception as exc:
         # The blob read raises on a store outage (never masquerades as "no
         # selection"); map it to 503 rather than an opaque 500.
-        raise HTTPException(503, f"signature-variant store unavailable: {exc}") from exc
+        raise _store_unavailable("signature-variant", exc, tenant_id) from exc
     return SignatureVariantResponse(
         tenant_id=tenant_id,
         selections=selections,
@@ -2310,9 +2385,7 @@ async def set_signature_variant(
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(
-                503, f"signature-variant store unavailable: {exc}"
-            ) from exc
+            raise _store_unavailable("signature-variant", exc, tenant_id) from exc
         merge_base = dict(selections)
         selections[agent_type] = body.variant_id
         _signature_variant_overrides[key] = selections
@@ -2497,6 +2570,27 @@ class HarnessKeyCreateRequest(BaseModel):
         return value
 
 
+def _store_unavailable(store: str, exc: Exception, tenant_id: str):
+    """503 for a tenant artifact store that did not answer."""
+    return failure_response(
+        503,
+        "store_unavailable",
+        f"The {store} store did not answer; retry.",
+        exc,
+        store=store,
+        tenant_id=tenant_id,
+    )
+
+
+def _harness_key_store_unavailable(exc: ConfigStoreUnavailableError):
+    return failure_response(
+        503,
+        "harness_key_store_unavailable",
+        "The harness key store did not answer; retry.",
+        exc,
+    )
+
+
 @router.post("/harness/keys")
 async def create_harness_key(
     request: HarnessKeyCreateRequest,
@@ -2510,7 +2604,7 @@ async def create_harness_key(
             request.name,
         )
     except ConfigStoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _harness_key_store_unavailable(exc) from exc
 
 
 @router.get("/harness/keys")
@@ -2535,7 +2629,7 @@ async def list_harness_keys(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ConfigStoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _harness_key_store_unavailable(exc) from exc
 
 
 @router.delete("/harness/keys/{key_hash}")
@@ -2550,7 +2644,7 @@ async def revoke_harness_key(
         )
         return {"revoked": revoked, "key_hash": key_hash}
     except ConfigStoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _harness_key_store_unavailable(exc) from exc
 
 
 @router.post("/graph/merge-article-nodes")

@@ -1316,10 +1316,13 @@ async def test_profile_failures_leave_real_minio_and_redis_unchanged(
     assert unavailable.status_code == 503
     assert unavailable.json() == {
         "detail": {
+            "error": "upload_profile_unavailable",
             "message": (
-                "upload profile configuration unavailable for tenant "
-                f"{tenant!r}: Vespa config visit documents must be a list"
-            )
+                f"Upload profile configuration is unavailable for tenant "
+                f"'{tenant}'; retry."
+            ),
+            "failure": "ValueError",
+            "tenant_id": tenant,
         }
     }
     assert object_inventory() == objects_before
@@ -1415,13 +1418,16 @@ async def test_redis_failure_after_real_minio_upload_keeps_truthful_side_effects
     assert response.status_code == 503
     assert response.json() == {
         "detail": {
+            "error": "ingest_queue_unavailable",
             "message": (
-                "ingest queue unavailable: Error 111 connecting to "
-                f"127.0.0.1:{closed_redis_port}. Connect call failed "
-                f"('127.0.0.1', {closed_redis_port})."
-            )
+                "The ingest queue did not answer; the upload is stored, retry "
+                "to enqueue it."
+            ),
+            "failure": "ConnectionError",
+            "tenant_id": tenant,
         }
     }
+    assert str(closed_redis_port) not in response.text
     digest = hashlib.sha256(video_bytes).hexdigest()
     expected_key = f"{tenant}/{digest}.mp4"
     objects_after = {

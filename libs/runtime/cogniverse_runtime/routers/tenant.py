@@ -26,6 +26,7 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
+from cogniverse_runtime.http_errors import failure_response, upstream_rejection
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 logger = logging.getLogger(__name__)
@@ -222,11 +223,12 @@ def _get_memory_manager(tenant_id: str):
         try:
             lazy_init_memory(mgr, tenant_id, _require_config_manager())
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Memory backend not initialised for tenant {tenant_id}: {exc}"
-                ),
+            raise failure_response(
+                503,
+                "memory_unavailable",
+                f"Memory backend not initialised for tenant {tenant_id}.",
+                exc,
+                tenant_id=tenant_id,
             ) from exc
     if not mgr.memory:
         raise HTTPException(
@@ -532,24 +534,22 @@ async def _submit_cron_workflow(manifest: dict) -> None:
             headers=_argo_auth_headers(),
         )
     except Exception as exc:
-        logger.error("Failed to submit CronWorkflow %s to Argo: %s", name, exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Argo unreachable while scheduling job {name}: {exc}",
+        raise failure_response(
+            503,
+            "argo_unavailable",
+            f"Argo did not answer while scheduling job {name}; retry.",
+            exc,
+            job=name,
         ) from exc
 
     if response.status_code not in (200, 201):
-        logger.error(
-            "Argo CronWorkflow submit failed (%s): %s",
-            response.status_code,
-            response.text[:500],
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Argo rejected CronWorkflow {name}: "
-                f"HTTP {response.status_code} {response.text[:200]}"
-            ),
+        raise upstream_rejection(
+            503,
+            "argo_rejected",
+            f"Argo rejected CronWorkflow {name} (HTTP {response.status_code}).",
+            upstream_status=response.status_code,
+            upstream_body=response.text,
+            job=name,
         )
 
     logger.info("Submitted CronWorkflow: %s", name)
@@ -570,24 +570,23 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
             headers=_argo_auth_headers(),
         )
     except Exception as exc:
-        logger.error("Failed to delete CronWorkflow %s from Argo: %s", name, exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Argo unreachable while deleting job {name}: {exc}",
+        raise failure_response(
+            503,
+            "argo_unavailable",
+            f"Argo did not answer while deleting job {name}; retry.",
+            exc,
+            job=name,
         ) from exc
 
     if response.status_code not in (200, 404):
-        logger.error(
-            "Argo CronWorkflow delete failed (%s): %s",
-            response.status_code,
-            response.text[:500],
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Argo rejected CronWorkflow delete for {name}: "
-                f"HTTP {response.status_code} {response.text[:200]}"
-            ),
+        raise upstream_rejection(
+            503,
+            "argo_rejected",
+            f"Argo rejected the delete of CronWorkflow {name} "
+            f"(HTTP {response.status_code}).",
+            upstream_status=response.status_code,
+            upstream_body=response.text,
+            job=name,
         )
 
     logger.info("Deleted CronWorkflow: %s", name)
@@ -697,16 +696,16 @@ async def _submit_workflow(manifest: dict) -> dict:
             headers=_argo_auth_headers(),
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Argo API unreachable: {exc}"
+        raise failure_response(
+            502, "argo_unavailable", "The Argo API did not answer; retry.", exc
         ) from exc
     if response.status_code not in (200, 201):
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Argo Workflow submit failed ({response.status_code}): "
-                f"{response.text[:500]}"
-            ),
+        raise upstream_rejection(
+            502,
+            "argo_rejected",
+            f"Argo rejected the Workflow submit (HTTP {response.status_code}).",
+            upstream_status=response.status_code,
+            upstream_body=response.text,
         )
     return response.json()
 
@@ -820,9 +819,14 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     # Argo assigns the final name after generateName expansion.
     workflow_name = response.get("metadata", {}).get("name", "")
     if not workflow_name:
+        logger.error("Argo returned no workflow name: %s", response)
         raise HTTPException(
             status_code=502,
-            detail=f"Argo returned no workflow name: {response}",
+            detail={
+                "error": "argo_no_workflow_name",
+                "message": "Argo accepted the submission but returned no "
+                "workflow name.",
+            },
         )
     return ManualOptimizeResponse(
         workflow_name=workflow_name,
@@ -897,15 +901,23 @@ async def _argo_get_workflow_data(workflow_name: str, tenant_id: str) -> Dict[st
             headers=_argo_auth_headers(),
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Argo API unreachable: {exc}"
+        raise failure_response(
+            502,
+            "argo_unavailable",
+            "The Argo API did not answer; retry.",
+            exc,
+            workflow=workflow_name,
         ) from exc
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Workflow not found")
     if response.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Argo API error ({response.status_code}): {response.text[:500]}",
+        raise upstream_rejection(
+            502,
+            "argo_rejected",
+            f"Argo answered HTTP {response.status_code} for workflow {workflow_name}.",
+            upstream_status=response.status_code,
+            upstream_body=response.text,
+            workflow=workflow_name,
         )
     data = response.json()
     _assert_workflow_belongs_to_tenant(data, tenant_id)
@@ -1061,8 +1073,13 @@ async def list_optimization_runs(
         )
         listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
     except ArgoListUnavailableError as exc:
-        logger.error("Argo list failed for tenant %s: %s", tenant_id, exc)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise failure_response(
+            503,
+            "argo_unavailable",
+            f"Argo could not list the workflows of tenant {tenant_id}; retry.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
 
     by_name: Dict[str, Dict[str, Any]] = {}
     for item in listed:
@@ -1124,18 +1141,24 @@ async def _argo_workflow_action(
             headers=_argo_auth_headers(),
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Argo API unreachable during {verb}: {exc}",
+        raise failure_response(
+            502,
+            "argo_unavailable",
+            f"The Argo API did not answer the {verb}; retry.",
+            exc,
+            workflow=workflow_name,
         ) from exc
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Workflow not found")
     if response.status_code not in (200, 201):
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Argo {verb} failed ({response.status_code}): {response.text[:500]}"
-            ),
+        raise upstream_rejection(
+            502,
+            "argo_rejected",
+            f"Argo rejected the {verb} of workflow {workflow_name} "
+            f"(HTTP {response.status_code}).",
+            upstream_status=response.status_code,
+            upstream_body=response.text,
+            workflow=workflow_name,
         )
     return response.json()
 

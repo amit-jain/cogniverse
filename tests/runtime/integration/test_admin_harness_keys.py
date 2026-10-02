@@ -171,8 +171,14 @@ async def test_dead_port_routes_and_resolution_report_cause():
             )
         assert [r.status_code for r in responses] == [503, 503, 503]
         for response in responses:
-            assert "127.0.0.1" in response.json()["detail"]
-            assert "29071" in response.json()["detail"]
+            assert response.json() == {
+                "detail": {
+                    "error": "harness_key_store_unavailable",
+                    "message": "The harness key store did not answer; retry.",
+                    "failure": "ConfigStoreUnavailableError",
+                }
+            }
+            assert "29071" not in response.text
         with pytest.raises(ConfigStoreUnavailableError, match="29071"):
             await asyncio.to_thread(keys(store).resolve, "unknown")
     finally:
@@ -351,7 +357,14 @@ async def test_pause_mid_request_reports_503(store, key_vespa, monkeypatch):
             )
         assert [r.status_code for r in results[:3]] == [503, 503, 503]
         for response in results[:3]:
-            assert str(key_vespa["http_port"]) in response.json()["detail"]
+            assert response.json() == {
+                "detail": {
+                    "error": "harness_key_store_unavailable",
+                    "message": "The harness key store did not answer; retry.",
+                    "failure": "ConfigStoreUnavailableError",
+                }
+            }
+            assert str(key_vespa["http_port"]) not in response.text
         assert type(results[3]) is ConfigStoreUnavailableError
         assert str(key_vespa["http_port"]) in str(results[3])
     finally:
@@ -412,7 +425,18 @@ async def test_tenant_delete_revokes_before_metadata_removal(
         monkeypatch.setattr(store, "put_immutable_config", fail)
         failed = await client.delete(f"/admin/tenants/{tenant}")
         assert failed.status_code == 503
-        assert failed.json() == {"detail": "revocation disconnected"}
+        assert failed.json() == {
+            "detail": {
+                "error": "harness_key_store_unavailable",
+                "message": (
+                    "The harness key store did not answer while deleting tenant "
+                    f"{tenant}:{tenant}; the tenant is retained, retry the delete."
+                ),
+                "failure": "ConfigStoreUnavailableError",
+                "tenant_id": f"{tenant}:{tenant}",
+            }
+        }
+        assert "revocation disconnected" not in failed.text
         retained = await client.get(f"/admin/tenants/{tenant}")
         assert retained.status_code == 200
         assert retained.json()["tenant_full_id"] == f"{tenant}:{tenant}"

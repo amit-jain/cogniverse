@@ -18,6 +18,7 @@ from cogniverse_foundation.config.lm_endpoint_availability import (
     lm_endpoint_availability,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_runtime.http_errors import record_failure
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,15 @@ async def _backend_reachable(
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{base_url}/ApplicationStatus", timeout=timeout)
     except (httpx.HTTPError, OSError) as exc:
-        return False, f"backend unreachable at {base_url}: {exc}"
+        # The reason is served on unauthenticated probes, so it names the
+        # failure type only; the URL and error text go to the log.
+        logger.warning("Backend probe of %s failed: %s", base_url, exc)
+        return False, f"backend unreachable ({type(exc).__name__})"
     if resp.status_code != 200:
-        return False, f"backend at {base_url} returned HTTP {resp.status_code}"
+        logger.warning(
+            "Backend probe of %s returned HTTP %s", base_url, resp.status_code
+        )
+        return False, f"backend returned HTTP {resp.status_code}"
     return True, ""
 
 
@@ -169,13 +176,14 @@ async def health_check(request: Request) -> Any:
         backends = backend_registry.list_backends()
         agents = agent_registry.list_agents()
     except Exception as exc:
-        logger.warning("Health check could not assemble system status: %s", exc)
+        record_failure(exc, "system_status_unavailable", level=logging.WARNING)
         return JSONResponse(
             status_code=503,
             content={
                 "status": "unhealthy",
                 "service": "cogniverse-runtime",
-                "reason": str(exc),
+                "reason": "system status could not be assembled",
+                "failure": type(exc).__name__,
             },
         )
 

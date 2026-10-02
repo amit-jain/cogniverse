@@ -405,9 +405,12 @@ def test_get_pin_service_surfaces_lazy_init_failure(monkeypatch):
         admin_router._get_pin_service("acme:prod", None)
 
     assert captured.value.status_code == 503
-    assert captured.value.detail == (
-        "Memory backend not initialised for tenant acme:prod: denseon missing"
-    )
+    assert captured.value.detail == {
+        "error": "memory_unavailable",
+        "message": "Memory backend not initialised for tenant acme:prod.",
+        "failure": "RuntimeError",
+        "tenant_id": "acme:prod",
+    }
 
 
 class _StubStatsBackend:
@@ -634,7 +637,16 @@ class TestEndorseMemoryRoute:
             json={"endorser_role": "user", "actor_id": "ops"},
         )
         assert resp.status_code == 503
-        assert "vespa down" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "memory_unavailable",
+                "message": "Memory mem-1 could not be read; retry.",
+                "failure": "ConnectionError",
+                "tenant_id": "acme:prod",
+                "memory_id": "mem-1",
+            }
+        }
+        assert "vespa down" not in resp.text
 
 
 @pytest.mark.unit

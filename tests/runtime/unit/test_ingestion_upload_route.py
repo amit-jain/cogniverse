@@ -36,6 +36,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _SOURCE_URL = "s3://bucket/acme/v.mp4"
 _TENANT_DEFAULT_PROFILE = "tenant_video_chunked"
+_REAL_UPLOAD_BYTES = minio_client.upload_bytes
 _EXPLICIT_PROFILE = "explicit_video_frames"
 _EXPLICIT_DOCUMENT_PROFILE = "explicit_document_pages"
 _EXPLICIT_AUDIO_PROFILE = "explicit_audio_segments"
@@ -355,10 +356,10 @@ def test_lost_status_stream_during_wait_returns_503(upload_client, monkeypatch):
     assert resp.status_code == 503, resp.text
     assert resp.json() == {
         "detail": {
-            "message": (
-                "No status events for ingest ing-5 within 60s: the status stream "
-                "is missing or expired, so its state cannot be reported"
-            )
+            "error": "ingest_status_unknown",
+            "message": "The ingest's status stream is gone; its state is unknown.",
+            "failure": "StatusStreamUnavailable",
+            "tenant_id": "acme:acme",
         }
     }
 
@@ -394,6 +395,35 @@ def test_minio_outage_returns_503_not_500(upload_client, monkeypatch):
     assert resp.status_code == 503, resp.text
     assert "object store" in resp.json()["detail"]["message"]
     # The object never made it to the queue.
+    assert captured == {}
+
+
+def test_missing_object_store_credentials_name_the_settings_to_set(
+    upload_client, monkeypatch
+):
+    """SystemConfig advertises MinIO but this process has none of its
+    credentials: a typed 503 naming the settings to set, before any write."""
+    client, captured, _ = upload_client
+    monkeypatch.setattr(minio_client, "upload_bytes", _REAL_UPLOAD_BYTES)
+    monkeypatch.setenv("MINIO_DEFAULT_BUCKET", "uploads")
+    for name in ("MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    resp = _post(client)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": {
+            "error": "object_store_unconfigured",
+            "message": (
+                "The object store is advertised but this runtime is missing one "
+                "of MINIO_DEFAULT_BUCKET, MINIO_ENDPOINT, MINIO_ACCESS_KEY and "
+                "MINIO_SECRET_KEY; enable minio in the chart values or set them."
+            ),
+            "failure": "RuntimeError",
+            "tenant_id": "acme:acme",
+        }
+    }
     assert captured == {}
 
 
@@ -486,12 +516,16 @@ def test_config_store_outage_precedes_object_and_queue_writes(
     assert resp.status_code == 503, resp.text
     assert resp.json() == {
         "detail": {
+            "error": "upload_profile_unavailable",
             "message": (
-                "upload profile configuration unavailable for tenant "
-                "'acme:acme': configuration store refused the read"
-            )
+                "Upload profile configuration is unavailable for tenant "
+                "'acme:acme'; retry."
+            ),
+            "failure": "ConnectionError",
+            "tenant_id": "acme:acme",
         }
     }
+    assert "refused the read" not in resp.text
     assert state["uploads"] == []
     assert state["enqueued"] == []
     assert captured == {}

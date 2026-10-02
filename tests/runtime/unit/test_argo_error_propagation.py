@@ -99,8 +99,14 @@ async def test_submit_cron_workflow_raises_on_4xx(
     manifest = _build_manifest()
     with pytest.raises(HTTPException) as excinfo:
         await tenant_router._submit_cron_workflow(manifest)
+    name = manifest["metadata"]["name"]
     assert excinfo.value.status_code == 503
-    assert "Argo rejected" in excinfo.value.detail
+    assert excinfo.value.detail == {
+        "error": "argo_rejected",
+        "message": f"Argo rejected CronWorkflow {name} (HTTP 422).",
+        "upstream_status": 422,
+        "job": name,
+    }
 
 
 @pytest.mark.asyncio
@@ -112,8 +118,14 @@ async def test_submit_cron_workflow_raises_on_connection_error(
     manifest = _build_manifest()
     with pytest.raises(HTTPException) as excinfo:
         await tenant_router._submit_cron_workflow(manifest)
+    name = manifest["metadata"]["name"]
     assert excinfo.value.status_code == 503
-    assert "Argo unreachable" in excinfo.value.detail
+    assert excinfo.value.detail == {
+        "error": "argo_unavailable",
+        "message": f"Argo did not answer while scheduling job {name}; retry.",
+        "failure": "ConnectionError",
+        "job": name,
+    }
 
 
 @pytest.mark.asyncio
@@ -378,10 +390,15 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
         with pytest.raises(HTTPException) as failure:
             await tenant_router.create_job("acme:production", self._body())
 
-        assert failure.value.status_code == 503
-        assert failure.value.detail.startswith("Argo rejected CronWorkflow delete for ")
-        assert [call[0] for call in client.calls] == ["POST", "DELETE"]
         name = client.submitted[0]["cronWorkflow"]["metadata"]["name"]
+        assert failure.value.status_code == 503
+        assert failure.value.detail == {
+            "error": "argo_rejected",
+            "message": f"Argo rejected the delete of CronWorkflow {name} (HTTP 500).",
+            "upstream_status": 500,
+            "job": name,
+        }
+        assert [call[0] for call in client.calls] == ["POST", "DELETE"]
         orphan_records = [
             record
             for record in caplog.records
@@ -391,8 +408,9 @@ class TestFailedJobCommitLeavesNoLiveSchedule:
             f"Job {name.rsplit('-', 1)[-1]} for tenant acme:production failed to "
             "commit (ConnectionError('config store unreachable')) and its "
             f"CronWorkflow {name} in namespace argo could not be removed "
-            "(HTTPException(status_code=503, detail='Argo rejected CronWorkflow "
-            f"delete for {name}: HTTP 500 rejected by argo')): "
+            "(HTTPException(status_code=503, detail={'error': 'argo_rejected', "
+            f"'message': 'Argo rejected the delete of CronWorkflow {name} "
+            f"(HTTP 500).', 'upstream_status': 500, 'job': '{name}'}})): "
             "the schedule is still firing"
         ]
 

@@ -154,7 +154,16 @@ async def test_failed_write_surfaces_on_read_as_503(gated_app):
 
     response = await _request(app, "get", f"/admin/tenants/{TENANT}/pin_quotas")
     assert response.status_code == 503
-    assert "phoenix write path down" in response.json()["detail"]
+    assert response.json() == {
+        "detail": {
+            "error": "store_unavailable",
+            "message": "The pin-quota store did not answer; retry.",
+            "failure": "BlobWriteFailed",
+            "store": "pin-quota",
+            "tenant_id": TENANT,
+        }
+    }
+    assert "phoenix write path down" not in response.text
 
 
 @pytest.mark.asyncio

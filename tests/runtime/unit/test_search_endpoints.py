@@ -626,7 +626,19 @@ class TestSearchEndpoint:
                 "/search", json={"query": "cats", "tenant_id": "acme"}
             )
         assert resp.status_code == 503, resp.text
-        assert "soft timeout" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "search_degraded",
+                "message": (
+                    "The search backend answered with degraded coverage; retry "
+                    "the search."
+                ),
+                "failure": "VespaSearchDegraded",
+                "profile": "video_colpali_smol500_mv_frame",
+                "strategy": "default",
+            }
+        }
+        assert "soft timeout" not in resp.text
 
     def test_org_id_combined_into_canonical_tenant(self, search_client):
         """A separately-supplied org_id must combine with a simple tenant_id
@@ -900,7 +912,55 @@ class TestSearchEndpoint:
             "/search", json={"query": "test", "tenant_id": "test:unit"}
         )
         assert resp.status_code == 500
-        assert "Backend unavailable" in resp.json()["detail"]
+        assert resp.json() == {
+            "detail": {
+                "error": "search_failed",
+                "message": "Search failed; the runtime log names the cause.",
+                "failure": "RuntimeError",
+                "profile": None,
+                "strategy": "default",
+            }
+        }
+        assert "Backend unavailable" not in resp.text
+
+    @pytest.mark.parametrize(
+        ("request_fields", "subject"),
+        [
+            ({"strategy": None}, "Search"),
+            (
+                {"profile": "video_colpali_smol500_mv_frame", "strategy": None},
+                "Search with profile 'video_colpali_smol500_mv_frame'",
+            ),
+            ({"strategy": "bm25_only"}, "Search with strategy 'bm25_only'"),
+        ],
+    )
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_rejected_search_names_only_what_the_request_set(
+        self, mock_service_cls, search_client, request_fields, subject
+    ):
+        """A rejected search names the profile and strategy it was given and
+        never renders an absent one as 'None'."""
+        mock_service_cls.side_effect = ValueError("unknown profile at /etc/x")
+
+        resp = search_client.post(
+            "/search",
+            json={"query": "test", "tenant_id": "test:unit", **request_fields},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json() == {
+            "detail": {
+                "error": "invalid_search_request",
+                "message": (
+                    f"{subject} was rejected; GET /search/profiles and GET "
+                    "/search/strategies list what this tenant accepts."
+                ),
+                "failure": "ValueError",
+                "profile": request_fields.get("profile"),
+                "strategy": request_fields["strategy"],
+            }
+        }
+        assert "/etc/x" not in resp.text
 
     @patch("cogniverse_runtime.routers.search.SearchService")
     def test_search_with_session_id(self, mock_service_cls, search_client):
@@ -974,10 +1034,27 @@ class TestSearchStreaming:
             if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
 
-        # status event + error event
-        assert len(events) == 2
-        assert events[1]["type"] == "error"
-        assert "encoder crashed" in events[1]["error"]
+        # status event + error event, built from typed fields only
+        assert events[0]["type"] == "status"
+        message = (
+            "Search with profile 'video_colpali_smol500_mv_frame' failed; the "
+            "runtime log names the cause."
+        )
+        assert events[1:] == [
+            {
+                "type": "error",
+                "error": message,
+                "error_type": "RuntimeError",
+                "detail": {
+                    "error": "search_failed",
+                    "message": message,
+                    "failure": "RuntimeError",
+                    "profile": "video_colpali_smol500_mv_frame",
+                    "strategy": "default",
+                },
+            }
+        ]
+        assert "encoder crashed" not in resp.text
 
 
 # ── POST /search/rerank ──────────────────────────────────────────────────
@@ -1019,6 +1096,35 @@ class TestRerankEndpoint:
         # Unknown strategy → 400 from the endpoint (before import failure)
         assert resp.status_code == 400
         assert "Unknown strategy" in resp.json()["detail"]
+
+    def test_rerank_backend_failure_is_a_typed_500(self, search_client):
+        """A rerank that fails server-side answers with typed fields, never
+        the exception text (which can name the reranker's endpoint)."""
+        with patch(
+            "cogniverse_agents.search.rerank_service.rerank_result_dicts",
+            side_effect=RuntimeError("reranker at http://reranker:9000 refused"),
+        ):
+            resp = search_client.post(
+                "/search/rerank",
+                json={
+                    "tenant_id": "test_tenant",
+                    "query": "test",
+                    "results": [{"id": "1", "score": 0.5}],
+                    "strategy": "learned",
+                },
+            )
+        assert resp.status_code == 500
+        assert resp.json() == {
+            "detail": {
+                "error": "rerank_failed",
+                "message": (
+                    "Rerank with strategy 'learned' failed; the runtime log "
+                    "names the cause."
+                ),
+                "failure": "RuntimeError",
+            }
+        }
+        assert "reranker:9000" not in resp.text
 
     def test_rerank_missing_tenant_id(self, search_client):
         """POST /search/rerank without tenant_id returns 400 (not 500)."""

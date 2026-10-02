@@ -178,12 +178,21 @@ async def generate_synthetic_data(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=504,
-            detail=f"profile_selection timeout: {e}",
+            status_code=504, detail=_profile_selection_timeout(e)
         ) from e
     except Exception as e:
         logger.error(f"Error generating synthetic data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+def _profile_selection_timeout(exc: TimeoutError) -> dict:
+    """The 504 body for a profile-selection budget overrun; the exception
+    text stays in the log."""
+    return {
+        "error": "profile_selection_timeout",
+        "message": "Profile selection did not finish within its time budget.",
+        "failure": type(exc).__name__,
+    }
 
 
 @router.get("/optimizers")
@@ -403,8 +412,7 @@ async def generate_batch_synthetic_data(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=504,
-            detail=f"profile_selection timeout: {e}",
+            status_code=504, detail=_profile_selection_timeout(e)
         ) from e
     except Exception as e:
         logger.error(f"Error in batch generation: {e}", exc_info=True)

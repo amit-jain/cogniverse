@@ -174,7 +174,15 @@ async def test_create_tenant_preserves_pending_schemas_after_deploy_failure(
         await tenant_manager.create_tenant(request)
 
     assert exc.value.status_code == 500
-    assert exc.value.detail == "schema validation failed"
+    assert exc.value.detail == {
+        "error": "tenant_create_failed",
+        "message": (
+            "Creating tenant acme:prod failed; the runtime log names the cause."
+        ),
+        "failure": "RuntimeError",
+        "tenant_id": "acme:prod",
+    }
+    assert str(exc.value.__context__) == "schema validation failed"
     assert backend.schema_registry.calls == [
         ("acme:prod", ["video_colpali_smol500_mv_frame", "document_visual"]),
     ]
@@ -390,7 +398,15 @@ async def test_create_tenant_does_not_retry_a_peer_deletion(
         )
 
     assert caught.value.status_code == 500
-    assert caught.value.detail == str(conflict)
+    assert caught.value.detail == {
+        "error": "tenant_create_failed",
+        "message": (
+            "Creating tenant acme:prod failed; the runtime log names the cause."
+        ),
+        "failure": "SchemaRevisionConflictError",
+        "tenant_id": "acme:prod",
+    }
+    assert caught.value.__context__ is conflict
     assert backend.schema_registry.calls == [
         ("acme:prod", list(tenant_manager_mod.TENANT_BASE_SCHEMAS)),
     ]

@@ -579,7 +579,15 @@ class TestStatusApiRedisOutage:
         ) as client:
             response = await client.get("/ingestion/job-1/status")
         assert response.status_code == 503
-        assert "status store unavailable" in response.json()["detail"]
+        assert response.json() == {
+            "detail": {
+                "error": "ingest_status_store_unavailable",
+                "message": "The ingestion status store did not answer; retry.",
+                "failure": "ConnectionError",
+                "ingest_id": "job-1",
+            }
+        }
+        assert "29071" not in response.text
 
     @pytest.mark.asyncio
     async def test_events_route_maps_redis_outage_to_503(self, monkeypatch):
@@ -594,7 +602,15 @@ class TestStatusApiRedisOutage:
         ) as client:
             response = await client.get("/ingestion/job-1/events")
         assert response.status_code == 503
-        assert "status store unavailable" in response.json()["detail"]
+        assert response.json() == {
+            "detail": {
+                "error": "ingest_status_store_unavailable",
+                "message": "The ingestion status store did not answer; retry.",
+                "failure": "ConnectionError",
+                "ingest_id": "job-1",
+            }
+        }
+        assert "29071" not in response.text
 
 
 async def _graph_incomplete_processor(job: IngestJob) -> dict:

@@ -61,6 +61,7 @@ from cogniverse_runtime.admin.models import (
     TenantTier,
 )
 from cogniverse_runtime.harness_keys import HarnessKeyStore
+from cogniverse_runtime.http_errors import failure_response
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
@@ -384,8 +385,14 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to create organization: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "organization_create_failed",
+            f"Creating organization {request.org_id} failed; the runtime log "
+            "names the cause.",
+            e,
+            org_id=request.org_id,
+        )
 
 
 @router.get("/organizations", response_model=OrganizationListResponse)
@@ -427,8 +434,12 @@ async def list_organizations() -> OrganizationListResponse:
             )
 
     except Exception as e:
-        logger.error(f"Failed to list organizations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "organization_list_failed",
+            "Listing organizations failed; the runtime log names the cause.",
+            e,
+        )
 
 
 @router.get("/organizations/{org_id}", response_model=Organization)
@@ -581,8 +592,13 @@ async def delete_organization(org_id: str) -> Dict:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to delete organization {org_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "organization_delete_failed",
+            f"Deleting organization {org_id} failed; the runtime log names the cause.",
+            e,
+            org_id=org_id,
+        )
 
 
 # ============================================================================
@@ -756,8 +772,14 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to create tenant: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "tenant_create_failed",
+            f"Creating tenant {request.tenant_id} failed; the runtime log names "
+            "the cause.",
+            e,
+            tenant_id=request.tenant_id,
+        )
 
 
 @router.get("/organizations/{org_id}/tenants", response_model=TenantListResponse)
@@ -795,8 +817,14 @@ async def list_tenants_for_org(org_id: str) -> TenantListResponse:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to list tenants for {org_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "tenant_list_failed",
+            f"Listing the tenants of organization {org_id} failed; the runtime "
+            "log names the cause.",
+            e,
+            org_id=org_id,
+        )
 
 
 async def list_organizations_internal() -> List[str]:
@@ -1032,8 +1060,14 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete tenant {tenant_full_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise failure_response(
+            500,
+            "tenant_delete_failed",
+            f"Deleting tenant {tenant_full_id} failed; the runtime log names the "
+            "cause.",
+            e,
+            tenant_id=tenant_full_id,
+        )
 
 
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
@@ -1082,7 +1116,14 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                 HarnessKeyStore(config_manager.store).revoke_tenant, canonical_tid
             )
         except ConfigStoreUnavailableError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise failure_response(
+                503,
+                "harness_key_store_unavailable",
+                f"The harness key store did not answer while deleting tenant "
+                f"{canonical_tid}; the tenant is retained, retry the delete.",
+                exc,
+                tenant_id=canonical_tid,
+            ) from exc
 
         if tenant:
             # delete_metadata_document reports a non-200 as False without raising.
@@ -1220,6 +1261,11 @@ _EMPTY_TENANT_ORPHAN_SELECTION = (
 )
 
 
+def _reconcile_unavailable(message: str, exc: Exception):
+    """503 for an orphan reconciliation that cannot read the state it needs."""
+    return failure_response(503, "reconcile_unavailable", message, exc)
+
+
 def _live_tenant_ids(backend: Backend) -> set:
     """Canonical ids of every tenant that still has a tenant_metadata record.
 
@@ -1233,13 +1279,10 @@ def _live_tenant_ids(backend: Backend) -> set:
             hits=_TENANT_SWEEP_HITS,
         )
     except Exception as exc:
-        logger.error(f"Tenant registry read failed during reconciliation: {exc}")
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Cannot read the tenant registry; refusing to reconcile orphans "
-                f"because every schema would read as a tenant-orphan: {exc}"
-            ),
+        raise _reconcile_unavailable(
+            "Cannot read the tenant registry; refusing to reconcile orphans "
+            "because every schema would read as a tenant-orphan.",
+            exc,
         ) from exc
 
     if len(documents) >= _TENANT_SWEEP_HITS:
@@ -1331,29 +1374,25 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
                 schema_manager.list_deployed_document_types(raise_on_failure=True)
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Cannot enumerate deployed schemas during reconciliation: {exc}",
+            raise _reconcile_unavailable(
+                "Cannot enumerate deployed schemas during reconciliation.", exc
             ) from exc
         try:
             # Strict: a cached view could list a peer's newly registered
             # schema as an orphan.
             registry_infos = list(schema_registry._get_all_schemas(strict=True) or [])
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Cannot read the schema registry during reconciliation: {exc}",
+            raise _reconcile_unavailable(
+                "Cannot read the schema registry during reconciliation.", exc
             ) from exc
         registered = {info.full_schema_name for info in registry_infos}
         try:
             phantom = _phantom_document_type()
         except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Cannot read the system config naming the application during "
-                    f"reconciliation: {exc}"
-                ),
+            raise _reconcile_unavailable(
+                "Cannot read the system config naming the application during "
+                "reconciliation.",
+                exc,
             ) from exc
 
         # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
@@ -1381,13 +1420,11 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
         try:
             reserved = set(schema_registry.reserved_schemas(deployed))
         except RegistryStorageError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Cannot read schema deployment intents; refusing to reconcile "
-                    "orphans because a mid-deploy schema would be indistinguishable "
-                    f"from an orphan: {exc}"
-                ),
+            raise _reconcile_unavailable(
+                "Cannot read schema deployment intents; refusing to reconcile "
+                "orphans because a mid-deploy schema would be indistinguishable "
+                "from an orphan.",
+                exc,
             ) from exc
 
         orphans = sorted(
@@ -1435,9 +1472,8 @@ def _list_orphan_schemas(include_document_counts: bool = False) -> Dict[str, lis
                         if type(count) is not int or count < 0:
                             raise ValueError(f"Invalid document count: {count!r}")
                     except Exception as exc:
-                        raise HTTPException(
-                            status_code=503,
-                            detail=f"Cannot count documents in orphan schema {name}: {exc}",
+                        raise _reconcile_unavailable(
+                            f"Cannot count documents in orphan schema {name}.", exc
                         ) from exc
                     details.append(
                         {
