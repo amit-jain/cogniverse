@@ -24,6 +24,7 @@ on:
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
+      - 'libs/runtime/Dockerfile'
   pull_request:
     branches: [main]
     paths:
@@ -48,6 +49,8 @@ on:
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
+      # test_runtime_env_chart.py reads the runtime image's command.
+      - 'libs/runtime/Dockerfile'
 
 jobs:
   chart-validation:
