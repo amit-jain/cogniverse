@@ -14,6 +14,7 @@ to the store, including the canonical tenant id used for the config lookup.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,16 +26,19 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import BackendProfileWrite, ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _FIXED_CREATED_AT = datetime(2026, 1, 2, 3, 4, 5)
 _STORE_VERSION = 7
+# The backend config version a stub profile write reports producing.
+_WRITTEN_VERSION = 12
 
 
 def test_profile_create_example_uses_deployed_visual_encoder_contract():
@@ -68,6 +72,12 @@ def _profile(name: str, schema: str, embedding_model: str) -> BackendProfileConf
 class _FakeConfigStore:
     def __init__(self):
         self.get_config_calls = []
+        self.deletion_marker_reads = []
+
+    def get_immutable_config(self, tenant_id, scope, service, config_key):
+        # No tenant is marked deleted.
+        self.deletion_marker_reads.append((tenant_id, service, config_key))
+        return None
 
     def get_config(self, *, tenant_id, scope, service, config_key):
         self.get_config_calls.append(
@@ -112,7 +122,9 @@ class _StubConfigManager:
             "target_tenant_id": target_tenant_id,
             "service": service,
         }
-        return self.profiles.get(profile_name)
+        return BackendProfileWrite(
+            profile=self.profiles.get(profile_name), version=_WRITTEN_VERSION
+        )
 
     def delete_backend_profile(self, profile_name, tenant_id=None, service="backend"):
         self.calls["delete"] = {
@@ -122,13 +134,16 @@ class _StubConfigManager:
         }
         return True
 
-    def add_backend_profile(self, profile, tenant_id=None, service="backend"):
+    def add_backend_profile(
+        self, profile, tenant_id=None, service="backend", *, replace=True
+    ):
         self.calls["add"] = {
             "profile": profile,
             "tenant_id": tenant_id,
             "service": service,
+            "replace": replace,
         }
-        return profile
+        return BackendProfileWrite(profile=profile, version=_WRITTEN_VERSION)
 
 
 class _StubValidator:
@@ -409,7 +424,7 @@ async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
         # Field order follows the route's check order: pipeline_config first,
         # description second; strategies/model_specific were omitted.
         "updated_fields": ["pipeline_config", "description"],
-        "version": _STORE_VERSION,
+        "version": _WRITTEN_VERSION,
     }
     assert env.cm.calls["update"] == {
         "profile_name": "video_colpali",
@@ -427,7 +442,8 @@ async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
             "description": "new desc",
         }
     }
-    assert env.cm.store.get_config_calls[-1]["tenant_id"] == "acme:acme"
+    # The version is the one the update produced, not read back afterwards.
+    assert env.cm.store.get_config_calls == []
 
 
 @pytest.mark.asyncio
@@ -568,6 +584,29 @@ async def test_deploy_schema_lookup_failure_raises_500(env):
 
 
 @pytest.mark.asyncio
+async def test_deploy_whose_profile_cannot_be_read_raises_500_and_deploys_nothing(
+    env,
+):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    def unreadable(profile_name, tenant_id=None, service="backend"):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
+    env.cm.get_backend_profile = unreadable
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": True},
+    )
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "config store unreachable"}
+    assert env.backend.deploy_calls == []
+    assert env.registry.calls == []
+
+
+@pytest.mark.asyncio
 async def test_deploy_schema_already_deployed_skips_deploy(env):
     env.cm.profiles["video_colpali"] = _profile(
         "video_colpali", "video_colpali_sv", "colpali-v1.2"
@@ -620,11 +659,14 @@ async def test_create_profile_adds_profile_without_deploy(env):
         "tenant_id": "acme",
         "schema_deployed": False,
         "tenant_schema_name": None,
-        "version": _STORE_VERSION,
+        "version": _WRITTEN_VERSION,
     }
+    assert env.cm.store.get_config_calls == []
     add = env.cm.calls["add"]
     assert add["tenant_id"] == "acme"
     assert add["service"] == "backend"
+    # Create never overwrites: the uniqueness check rides the write itself.
+    assert add["replace"] is False
     persisted = add["profile"]
     assert persisted.profile_name == "new_prof"
     assert persisted.schema_name == "video_new_sv"
@@ -747,3 +789,130 @@ async def test_deploy_never_resolves_a_profile_another_tenant_stored(merged):
     assert merged.env.backend.deploy_calls == [
         {"tenant_id": "beta", "base_schema_name": "beta_only_mv", "force": False}
     ]
+
+
+class _ConflictedConfigManager(ConfigManager):
+    """A real ConfigManager whose store loses every compare-and-set."""
+
+    def __init__(self):
+        class _AlwaysContended(InMemoryConfigStore):
+            def compare_and_set_config(self, *args, **kwargs):
+                return None
+
+        super().__init__(store=_AlwaysContended())
+
+
+@pytest.mark.asyncio
+async def test_profile_writes_losing_every_compare_and_set_answer_409(env):
+    cm = _ConflictedConfigManager()
+    cm.store.set_config(
+        "acme:acme",
+        ConfigScope.BACKEND,
+        "backend",
+        "backend_config",
+        {
+            "tenant_id": "acme:acme",
+            "profiles": {"tuned": _profile("tuned", "video_tuned_sv", "m").to_dict()},
+        },
+    )
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: cm
+    conflict = (
+        "config acme:acme:backend:backend:backend_config changed under every one "
+        "of 10 compare-and-set attempts; nothing was written"
+    )
+
+    created = await _post(
+        env.app,
+        "/admin/profiles",
+        json={
+            "profile_name": "new_prof",
+            "tenant_id": "acme",
+            "schema_name": "video_new_sv",
+            "embedding_model": "colpali-v1.2",
+            "embedding_type": "single_vector",
+            "deploy_schema": False,
+        },
+    )
+    updated = await _put(
+        env.app,
+        "/admin/profiles/tuned",
+        json={"tenant_id": "acme", "description": "changed"},
+    )
+    deleted = await _delete(env.app, "/admin/profiles/tuned", tenant_id="acme")
+
+    assert [r.status_code for r in (created, updated, deleted)] == [409, 409, 409]
+    assert [r.json() for r in (created, updated, deleted)] == [{"detail": conflict}] * 3
+    history = cm.store.get_config_history(
+        "acme:acme", ConfigScope.BACKEND, "backend", "backend_config"
+    )
+    assert [entry.version for entry in history] == [1]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
+    """Both creates pass the validation read; the compare-and-set write lets
+    exactly one store the profile and answers the other 400."""
+    cm = ConfigManager(store=InMemoryConfigStore())
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: cm
+
+    def create(model: str):
+        return _post(
+            env.app,
+            "/admin/profiles",
+            json={
+                "profile_name": "dup_prof",
+                "tenant_id": "acme",
+                "schema_name": "video_dup_sv",
+                "embedding_model": model,
+                "embedding_type": "single_vector",
+                "deploy_schema": False,
+            },
+        )
+
+    first, second = await asyncio.gather(create("model-a"), create("model-b"))
+
+    statuses = [first.status_code, second.status_code]
+    assert sorted(statuses) == [201, 400]
+    loser = (first, second)[statuses.index(400)]
+    assert loser.json() == {
+        "detail": {
+            "message": "Profile validation failed",
+            "errors": ["Profile 'dup_prof' already exists for tenant 'acme:acme'"],
+        }
+    }
+    winner_model = ("model-a", "model-b")[statuses.index(201)]
+    stored = cm.store.get_config(
+        "acme:acme", ConfigScope.BACKEND, "backend", "backend_config"
+    )
+    assert stored.version == 1
+    assert stored.config_value["profiles"]["dup_prof"]["embedding_model"] == (
+        winner_model
+    )
+
+
+@pytest.mark.asyncio
+async def test_deploy_for_a_deleted_tenant_is_410_and_deploys_nothing(env):
+    env.cm.profiles["video_prism"] = _profile(
+        "video_prism", "video_prism_mv", "xclip-lvt"
+    )
+    env.backend.deployed_schemas = set()
+    deleted = SimpleNamespace(config_value={"deleted": True})
+    env.cm.store.get_immutable_config = lambda *coordinates: (
+        deleted if coordinates[3] == "acme:acme" else None
+    )
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": True},
+    )
+
+    assert resp.status_code == 410
+    assert resp.json() == {
+        "detail": (
+            "Tenant 'acme:acme' has been deleted; its schemas and memories are "
+            "not written until the tenant is created again"
+        )
+    }
+    assert env.backend.deploy_calls == []
+    assert env.registry.calls == []

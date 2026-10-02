@@ -17,7 +17,6 @@ selection HTTP route:
 from __future__ import annotations
 
 import logging
-import time
 
 import httpx
 import pytest
@@ -183,24 +182,31 @@ class TestSetVariantViaHTTP:
             assert put_resp.json() == {
                 "tenant_id": tenant_id,
                 "selections": {"query_enhancement_agent": "with_jurisdiction"},
-                "pending_write": True,
             }
 
-            # Persistence is write-behind; pending_write is the settle signal.
-            deadline = time.time() + 30
-            while True:
-                get_resp = client.get(
-                    f"/admin/tenants/{tenant_id}/signature_variants",
+            # The PUT is stored before it is answered: every GET that follows,
+            # on whichever runtime worker or replica serves it, returns it.
+            # Each GET opens its own connection so the GETs spread over the
+            # runtime's worker processes.
+            for _ in range(8):
+                get_resp = httpx.get(
+                    f"{RUNTIME}/admin/tenants/{tenant_id}/signature_variants",
+                    timeout=30.0,
                 )
                 assert get_resp.status_code == 200, get_resp.text[:300]
-                if not get_resp.json()["pending_write"]:
-                    break
-                assert time.time() < deadline, "variant write never landed"
-                time.sleep(0.2)
-            assert get_resp.json() == {
-                "tenant_id": tenant_id,
-                "selections": {"query_enhancement_agent": "with_jurisdiction"},
-                "pending_write": False,
+                assert get_resp.json() == {
+                    "tenant_id": tenant_id,
+                    "selections": {"query_enhancement_agent": "with_jurisdiction"},
+                }
+
+            # A second agent's PUT merges onto the stored selections.
+            second = client.put(
+                f"/admin/tenants/{tenant_id}/signature_variants/search_agent",
+                json={"variant_id": "default"},
+            )
+            assert second.json()["selections"] == {
+                "query_enhancement_agent": "with_jurisdiction",
+                "search_agent": "default",
             }
 
             # Empty variant_id rejected up front.

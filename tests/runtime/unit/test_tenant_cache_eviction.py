@@ -356,7 +356,7 @@ class TestArtifactManagerCache:
         assert factory("ambound:t0") is not first  # oldest was evicted
 
 
-@pytest.mark.usefixtures("harness_key_config_store")
+@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
 @pytest.mark.asyncio
 async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatch):
     """The tenant-delete path drops the deleted tenant from every registered
@@ -392,7 +392,7 @@ async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatc
     assert cache.get("delwire:b") == "gateway-agent-b"
 
 
-@pytest.mark.usefixtures("harness_key_config_store")
+@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
 @pytest.mark.asyncio
 async def test_delete_tenant_internal_cancels_the_tenants_queued_memory_writes(
     monkeypatch,

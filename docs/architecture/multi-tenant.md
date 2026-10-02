@@ -1161,7 +1161,7 @@ manager = create_default_config_manager()
 # base_tenant_id is where the base profile is read from (SYSTEM_TENANT_ID
 # for the cluster-wide default); target_tenant_id is where the merged
 # result is saved.
-merged_profile = manager.update_backend_profile(
+written = manager.update_backend_profile(
     profile_name="video_colpali_smol500_mv_frame",
     overrides={"strategies": {"segmentation": {"params": {"max_frames": 200}}}},  # 100 → 200
     base_tenant_id=SYSTEM_TENANT_ID,
@@ -1171,7 +1171,7 @@ merged_profile = manager.update_backend_profile(
 
 **Result**: Deep merge creates tenant-specific config
 ```python
-print(merged_profile.strategies)
+print(written.profile.strategies)  # written.version: acme's config version holding it
 # {'segmentation': {'class': 'FrameSegmentationStrategy', 'params': {'max_frames': 200}}}
 #   max_frames overridden (100 -> 200); 'class' inherited unchanged from system
 
@@ -1646,16 +1646,29 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    ```
 
 2. **Delete Tenant** — `DELETE /admin/tenants/{tenant_full_id}` (`delete_tenant()` /
-   `delete_tenant_internal()` in `tenant_manager.py`) is the real entry point:
-   it discovers the tenant's schemas from the registry plus any
-   canonical-suffix-matched Vespa orphans, redeploys without them (immediate
-   Vespa removal), and tombstones the `tenant_metadata` row.
+   `delete_tenant_internal()` in `tenant_manager.py`) is the real entry point.
+   In order it:
+   - marks the tenant deleted in the config store (`mark_tenant_deleted`).
+     From then on every runtime process refuses the tenant's memory writes
+     and schema deploys (`TenantDeletedError`), whatever it still holds;
+   - publishes a `tenant_deleted` cluster event and waits until every runtime
+     worker process and replica has released the tenant: the
+     `assert_tenant_exists()` cache entry, every registered per-tenant cache,
+     the warm `Mem0MemoryManager` and the tenant's queued background memory
+     writes (`release_deleted_tenant`);
+   - discovers the tenant's schemas from the registry plus any
+     canonical-suffix-matched Vespa orphans, redeploys without them (immediate
+     Vespa removal), and tombstones the `tenant_metadata` row.
    ```bash
    curl -X DELETE http://localhost:8000/admin/tenants/acme:acme
    ```
-   It also calls `invalidate_tenant_exists()` so the `assert_tenant_exists()`
-   positive-result cache (30s TTL) doesn't let a search/ingestion request
-   through against schemas that are mid-teardown.
+   The response lists the workers that released the tenant
+   (`workers_released`). A marker store that cannot be written answers 503
+   with nothing changed. A worker that does not confirm within
+   `TENANT_DELETE_ACK_TIMEOUT_S` (15 s), or a Redis that cannot carry the
+   event, answers 503 with the tenant marked and nothing dropped: its writes
+   are already refused everywhere, and the retry completes the delete. The
+   marker stays until `POST /admin/tenants` creates the tenant again.
 
    The lower-level primitive it calls internally is also usable directly for
    scripted/manual cleanup:

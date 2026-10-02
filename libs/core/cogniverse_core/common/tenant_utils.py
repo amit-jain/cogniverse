@@ -8,7 +8,8 @@ re-exported here unchanged, so every existing
 
 ``assert_tenant_exists`` and its existence cache stay here because they
 reach the tenant registry (a runtime concern), which foundation must not
-depend on.
+depend on. So do the tenant deletion markers, which every process reads
+before deploying a tenant schema or writing a tenant's memory.
 """
 
 from cogniverse_foundation.common.tenant_utils import (
@@ -33,6 +34,11 @@ __all__ = [
     "sanitize_k8s_label_value",
     "invalidate_tenant_exists",
     "assert_tenant_exists",
+    "TenantDeletedError",
+    "mark_tenant_deleted",
+    "clear_tenant_deleted",
+    "tenant_is_deleted",
+    "raise_if_tenant_deleted",
 ]
 
 
@@ -92,3 +98,64 @@ async def assert_tenant_exists(tenant_id: str) -> None:
             status_code=404,
             detail=f"Tenant '{tenant_id}' not registered",
         )
+
+
+# A deleted tenant is marked in the config store before any of its schemas are
+# dropped, and the marker is read (a point read of one document) before every
+# tenant schema deploy and every memory write, so no process can recreate the
+# tenant's state after the delete began, whatever it still holds in memory.
+TENANT_DELETIONS_SERVICE = "tenant_deletions"
+_DELETED = {"deleted": True}
+
+
+class TenantDeletedError(RuntimeError):
+    """A write or schema deploy for a tenant that has been deleted."""
+
+    def __init__(self, tenant_id: str):
+        super().__init__(
+            f"Tenant '{tenant_id}' has been deleted; its schemas and memories "
+            "are not written until the tenant is created again"
+        )
+        self.tenant_id = tenant_id
+
+
+def _deletion_coordinates(tenant_id: str):
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    return (
+        SYSTEM_TENANT_ID,
+        ConfigScope.SYSTEM,
+        TENANT_DELETIONS_SERVICE,
+        canonical_tenant_id(tenant_id),
+    )
+
+
+def mark_tenant_deleted(store, tenant_id: str) -> None:
+    """Durably mark ``tenant_id`` deleted; marking it again is a no-op.
+
+    A store failure raises, with nothing marked.
+    """
+    store.put_immutable_config(*_deletion_coordinates(tenant_id), dict(_DELETED))
+
+
+def clear_tenant_deleted(store, tenant_id: str) -> bool:
+    """Remove the deletion marker so the tenant can be created again.
+
+    Returns False when the tenant was not marked deleted.
+    """
+    return store.delete_config(*_deletion_coordinates(tenant_id))
+
+
+def tenant_is_deleted(store, tenant_id: str) -> bool:
+    """Whether ``tenant_id`` is marked deleted, read from the store now.
+
+    A store outage raises: an unreadable marker is never taken for "not
+    deleted".
+    """
+    return store.get_immutable_config(*_deletion_coordinates(tenant_id)) is not None
+
+
+def raise_if_tenant_deleted(store, tenant_id: str) -> None:
+    """Raise :class:`TenantDeletedError` when ``tenant_id`` is marked deleted."""
+    if tenant_is_deleted(store, tenant_id):
+        raise TenantDeletedError(canonical_tenant_id(tenant_id))

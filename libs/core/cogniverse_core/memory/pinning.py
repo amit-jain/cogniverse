@@ -110,7 +110,7 @@ class PinQuotas:
         """Resolve effective quotas from caller-supplied admin overrides.
 
         Order of precedence (highest first):
-          1. ``admin_overrides`` — the durable per-tenant quota blob.
+          1. ``admin_overrides`` — the stored per-tenant pin-quota record.
           2. ``TenantConfig.metadata['pin_quota']``.
           3. Dataclass defaults.
         """

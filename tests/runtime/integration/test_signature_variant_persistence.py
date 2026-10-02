@@ -1,435 +1,456 @@
-"""Signature-variant selections must persist and reach every replica.
+"""Admin pin-quota and signature-variant writes reach every process intact.
 
-A PUT of a tenant's per-agent variant wrote only the process dict of the
-replica that served it — lost on restart and invisible to the dispatcher on
-every other replica, while the route returned 200 as if applied. These drive
-the REAL admin route against a REAL Phoenix container: a PUT persists the blob,
-a cold replica reads it back, and the dispatcher's resolver returns the exact
-persisted variant.
+Each process holds its own admin router state and its own config-store
+session. These stand independent router copies — each wired to its own real
+Vespa session, as two worker processes are — on one Vespa and pin that a PUT
+answered by one is what the other reads, that concurrent PUTs on either never
+erase each other's fields, and that a store failing mid-PUT answers 503 with
+nothing written.
 """
 
 from __future__ import annotations
+
+import asyncio
+import importlib.util
+import logging
+import sys
+import threading
+import uuid
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import admin as admin_router
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.http_fault_proxy import InterceptFaultProxy
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-TENANT = "sigvar-persist:sigvar-persist"
+KINDS = ["pin_quotas", "signature_variants"]
+INITIAL = {
+    "pin_quotas": {"user": 1, "tenant_admin": 2, "org_admin": -1},
+    "signature_variants": {"search_agent": "initial"},
+}
+# (path suffix, body, field it sets) for three distinct partial PUTs per kind.
+PUTS = {
+    "pin_quotas": [
+        ("", {"user": 7}, ("user", 7)),
+        ("", {"tenant_admin": 9}, ("tenant_admin", 9)),
+        ("", {"org_admin": 12}, ("org_admin", 12)),
+    ],
+    "signature_variants": [
+        ("/search_agent", {"variant_id": "search-v2"}, ("search_agent", "search-v2")),
+        (
+            "/summarizer_agent",
+            {"variant_id": "summary-v3"},
+            ("summarizer_agent", "summary-v3"),
+        ),
+        (
+            "/detailed_report_agent",
+            {"variant_id": "report-v4"},
+            ("detailed_report_agent", "report-v4"),
+        ),
+    ],
+}
+FIELD = {"pin_quotas": "quotas", "signature_variants": "selections"}
+
+
+def _tenant() -> str:
+    name = f"sigvarpersist{uuid.uuid4().hex[:8]}"
+    return f"{name}:{name}"
+
+
+def _session(port: int, host: str = "http://localhost") -> VespaConfigStore:
+    return VespaConfigStore(backend_url=host, backend_port=port)
+
+
+def _record(store: VespaConfigStore, tenant: str, kind: str):
+    return store.get_config(tenant, ConfigScope.SYSTEM, "admin_overrides", kind)
+
+
+def _seed(store: VespaConfigStore, tenant: str, kind: str) -> None:
+    store.set_config(
+        tenant, ConfigScope.SYSTEM, "admin_overrides", kind, dict(INITIAL[kind])
+    )
+
+
+def _with(kind: str, *sets) -> dict:
+    return {**INITIAL[kind], **dict(sets)}
 
 
 @pytest.fixture
-def real_admin(telemetry_manager_with_phoenix, monkeypatch):
-    provider = telemetry_manager_with_phoenix.get_provider(tenant_id=TENANT)
-    monkeypatch.setattr(
-        admin_router,
-        "_build_artifact_manager",
-        lambda key: ArtifactManager(provider, tenant_id=key),
-    )
-    admin_router._reset_admin_overrides_for_tests()
-    yield
-    admin_router._reset_admin_overrides_for_tests()
+def store(vespa_instance):
+    store = _session(vespa_instance["http_port"])
+    yield store
+    store.close()
 
 
-async def _put(app, tenant, agent, variant):
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://t"
-    ) as client:
-        return await client.put(
-            f"/admin/tenants/{tenant}/signature_variants/{agent}",
-            json={"variant_id": variant},
-        )
-
-
-@pytest.mark.asyncio
-async def test_variant_persists_and_resolves_on_cold_replica(real_admin):
-    app = FastAPI()
-    app.include_router(admin_router.router, prefix="/admin")
-
-    resp = await _put(app, TENANT, "search_agent", "search_v2")
-    assert resp.status_code == 200
-    assert resp.json()["selections"]["search_agent"] == "search_v2"
-
-    # Land the write-behind persist, then cold replica: cache cleared. It
-    # must resolve the persisted variant from the durable blob, not fall
-    # back to the default.
-    await admin_router._blob_write_queue.flush()
-    admin_router._reset_admin_overrides_for_tests()
-    loaded = await admin_router.load_signature_variants(TENANT)
-    assert loaded == {"search_agent": "search_v2"}
-
-    # The dispatcher's resolver (the real consumer) reads the warmed cache.
-    assert (
-        AgentDispatcher._resolve_signature_variant(TENANT, "search_agent")
-        == "search_v2"
-    )
-    # An agent the tenant never selected still resolves to the default.
-    assert (
-        AgentDispatcher._resolve_signature_variant(TENANT, "summarizer_agent")
-        == "default"
-    )
-
-
-@pytest.mark.asyncio
-async def test_second_agent_selection_merges_not_replaces(real_admin):
-    app = FastAPI()
-    app.include_router(admin_router.router, prefix="/admin")
-
-    await _put(app, TENANT, "search_agent", "search_v2")
-    resp = await _put(app, TENANT, "summarizer_agent", "sum_v3")
-    assert resp.status_code == 200
-
-    await admin_router._blob_write_queue.flush()
-    admin_router._reset_admin_overrides_for_tests()
-    loaded = await admin_router.load_signature_variants(TENANT)
-    assert loaded == {"search_agent": "search_v2", "summarizer_agent": "sum_v3"}
+def _load_replica(store: VespaConfigStore):
+    name = f"cogniverse_runtime.routers.state_replica_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(name, admin_router.__file__)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    module.set_config_manager(ConfigManager(store=store))
+    return module
 
 
 @pytest.fixture
-def replicas(phoenix_container):
-    """Independent router module state against one real Phoenix server."""
-    import importlib.util
-    import sys
-    import uuid
-
-    modules = []
-    for index in range(2):
-        name = f"cogniverse_runtime.routers.state_replica_{uuid.uuid4().hex}_{index}"
-        spec = importlib.util.spec_from_file_location(name, admin_router.__file__)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        module.set_phoenix_endpoints(
-            phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
-        )
-        modules.append(module)
+def replicas(vespa_instance):
+    """Independent admin router state, each on its own config-store session."""
+    sessions = [_session(vespa_instance["http_port"]) for _ in range(2)]
+    modules = [_load_replica(session) for session in sessions]
     yield modules
-    for module in modules:
-        module._reset_admin_overrides_for_tests()
+    for module, session in zip(modules, sessions):
         sys.modules.pop(module.__name__)
+        session.close()
 
 
-def _replica_client(module):
+@pytest.fixture
+def dispatching_replica(vespa_instance):
+    """The admin router the dispatcher reads, on its own session."""
+    previous = admin_router._config_manager
+    session = _session(vespa_instance["http_port"])
+    admin_router.set_config_manager(ConfigManager(store=session))
+    yield admin_router
+    admin_router.set_config_manager(previous)
+    session.close()
+
+
+def _client(module):
     app = FastAPI()
     app.include_router(module.router, prefix="/admin")
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://replica")
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
-async def test_warm_replica_partial_put_preserves_other_replica_fields(replicas, kind):
-    import json
-    import uuid
+class _Overlay:
+    """The artefact manager the dispatcher builds its overlay from."""
 
-    tenant = f"prodfixstate:t{uuid.uuid4().hex}"
-    first, second = replicas
-    manager = first._build_artifact_manager(tenant)
-    initial = (
-        {"user": 1, "tenant_admin": 2, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "initial"}
+    async def load_for_request(self, agent_name, *, request_seed, variant_id):
+        return {
+            "prompts": None,
+            "served_from": "default",
+            "version": None,
+            "variant_id": variant_id,
+        }
+
+
+async def _served_variant(agent_name: str, tenant: str) -> dict:
+    dispatcher = object.__new__(AgentDispatcher)
+    dispatcher._artifact_manager_factory = lambda tenant_id: _Overlay()
+    overlay = await dispatcher.resolve_artefact_for_request(
+        agent_name, tenant, "seed-1"
     )
-    await manager.save_blob("config", kind, json.dumps(initial))
+    return {
+        "variant_id": overlay["variant_id"],
+        "variant_lookup_status": overlay["variant_lookup_status"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_variant_put_on_one_replica_is_served_by_another(
+    replicas, dispatching_replica, store
+):
+    tenant = _tenant()
+    writer, _ = replicas
+    async with _client(writer) as client:
+        resp = await client.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "search_v2"},
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "tenant_id": tenant,
+        "selections": {"search_agent": "search_v2"},
+    }
+
+    # The dispatcher on another process (cold) serves the stored variant.
+    assert await _served_variant("search_agent", tenant) == {
+        "variant_id": "search_v2",
+        "variant_lookup_status": "loaded",
+    }
+    # An agent the tenant never selected still resolves to the default.
+    assert await _served_variant("summarizer_agent", tenant) == {
+        "variant_id": "default",
+        "variant_lookup_status": "loaded",
+    }
+    stored = _record(store, tenant, "signature_variants")
+    assert (stored.version, stored.config_value) == (1, {"search_agent": "search_v2"})
+
+
+@pytest.mark.asyncio
+async def test_a_warm_dispatcher_serves_another_replicas_put_within_the_bound(
+    replicas, dispatching_replica, monkeypatch
+):
+    """A selection this process already serves is re-read once it is
+    SIGNATURE_VARIANT_REFRESH_S old: the next request starts the refresh and
+    the one after serves the other replica's PUT."""
+    from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        admin_router,
+        "_signature_variant_cache",
+        RefreshingCache(
+            name="signature-variants",
+            refresh_after_s=admin_router.SIGNATURE_VARIANT_REFRESH_S,
+            max_staleness_s=admin_router.SIGNATURE_VARIANT_MAX_STALENESS_S,
+            max_entries=16,
+            clock=lambda: clock["now"],
+        ),
+    )
+    tenant = _tenant()
+    writer, _ = replicas
+    async with _client(writer) as client:
+        await client.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "v1"},
+        )
+        assert (await _served_variant("search_agent", tenant))["variant_id"] == "v1"
+        await client.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "v2"},
+        )
+
+    clock["now"] += admin_router.SIGNATURE_VARIANT_REFRESH_S - 0.5
+    assert (await _served_variant("search_agent", tenant))["variant_id"] == "v1"
+    clock["now"] += 0.5
+    # This request starts the background refresh and is answered from memory.
+    assert (await _served_variant("search_agent", tenant))["variant_id"] == "v1"
+    for thread in threading.enumerate():
+        if thread.name == "signature-variants-refresh":
+            thread.join(timeout=30)
+    assert (await _served_variant("search_agent", tenant))["variant_id"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_a_put_on_this_replica_is_served_by_its_dispatcher_at_once(
+    dispatching_replica,
+):
+    tenant = _tenant()
+    async with _client(dispatching_replica) as client:
+        await client.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "v1"},
+        )
+        assert (await _served_variant("search_agent", tenant))["variant_id"] == "v1"
+        await client.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "v2"},
+        )
+
+    assert (await _served_variant("search_agent", tenant))["variant_id"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_second_agent_selection_merges_not_replaces(replicas, store):
+    tenant = _tenant()
+    first, second = replicas
+    async with _client(first) as a, _client(second) as b:
+        await a.put(
+            f"/admin/tenants/{tenant}/signature_variants/search_agent",
+            json={"variant_id": "search_v2"},
+        )
+        resp = await b.put(
+            f"/admin/tenants/{tenant}/signature_variants/summarizer_agent",
+            json={"variant_id": "sum_v3"},
+        )
+        read_on_first = await a.get(f"/admin/tenants/{tenant}/signature_variants")
+
+    expected = {"search_agent": "search_v2", "summarizer_agent": "sum_v3"}
+    assert resp.status_code == 200
+    assert resp.json()["selections"] == expected
+    assert read_on_first.json() == {"tenant_id": tenant, "selections": expected}
+    assert _record(store, tenant, "signature_variants").config_value == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", KINDS)
+async def test_warm_replica_partial_put_preserves_other_replica_fields(
+    replicas, store, kind
+):
+    tenant = _tenant()
+    first, second = replicas
+    _seed(store, tenant, kind)
     path = f"/admin/tenants/{tenant}/{kind}"
-    async with _replica_client(first) as a, _replica_client(second) as b:
+    (first_suffix, first_body, first_set), (second_suffix, second_body, second_set) = (
+        PUTS[kind][:2]
+    )
+    async with _client(first) as a, _client(second) as b:
         warm = await b.get(path)
         assert warm.status_code == 200
-        field = "quotas" if kind == "pin_quotas" else "selections"
-        assert warm.json()[field] == initial
-        first_path = path if kind == "pin_quotas" else path + "/search_agent"
-        second_path = path if kind == "pin_quotas" else path + "/summarizer_agent"
-        response = await a.put(
-            first_path,
-            json={"user": 7} if kind == "pin_quotas" else {"variant_id": "search-v2"},
-        )
+        assert warm.json()[FIELD[kind]] == INITIAL[kind]
+        response = await a.put(path + first_suffix, json=first_body)
         assert response.status_code == 200
-        await first._blob_write_queue.flush()
-        response = await b.put(
-            second_path,
-            json={"tenant_admin": 9}
-            if kind == "pin_quotas"
-            else {"variant_id": "summary-v3"},
-        )
+        assert response.json()[FIELD[kind]] == _with(kind, first_set)
+        response = await b.put(path + second_suffix, json=second_body)
         assert response.status_code == 200
-        expected = (
-            {"user": 7, "tenant_admin": 9, "org_admin": -1}
-            if kind == "pin_quotas"
-            else {"search_agent": "search-v2", "summarizer_agent": "summary-v3"}
-        )
-        assert response.json() == {
-            "tenant_id": tenant,
-            field: expected,
-            "pending_write": True,
-        }
-        await second._blob_write_queue.flush()
-        assert json.loads(await manager.load_blob("config", kind)) == expected
+        expected = _with(kind, first_set, second_set)
+        assert response.json() == {"tenant_id": tenant, FIELD[kind]: expected}
+
+    stored = _record(store, tenant, kind)
+    assert (stored.version, stored.config_value) == (3, expected)
+
+
+class _InterleavedStore(VespaConfigStore):
+    """A real session whose first ``hold`` reads of the record wait on a shared
+    barrier, so PUTs on different replicas all read the same version before
+    any of them writes."""
+
+    def __init__(self, port: int, barrier: threading.Barrier, kind: str) -> None:
+        super().__init__(backend_url="http://localhost", backend_port=port)
+        self._barrier = barrier
+        self._kind = kind
+        self.held = 0
+
+    def get_config(self, tenant_id, scope, service, config_key, version=None):
+        entry = super().get_config(tenant_id, scope, service, config_key, version)
+        if config_key == self._kind and self.held == 0:
+            self.held = 1
+            self._barrier.wait(timeout=30)
+        return entry
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
-async def test_sequential_puts_keep_a_peer_field_whose_persist_has_not_landed(
-    replicas, kind
+@pytest.mark.parametrize("kind", KINDS)
+async def test_concurrent_puts_on_three_replicas_each_keep_their_field(
+    vespa_instance, store, kind
 ):
-    """The second PUT lands after the first replica's persist is still queued.
-
-    Both PUTs are strictly sequential — the first replica answered 200 before
-    the second was issued — but the first replica's write-behind persist has
-    not reached the store, so the second replica's merge base cannot contain
-    it. The field each PUT changed is replayed when that PUT is persisted, so
-    neither erases the other.
-    """
-    import asyncio
-    import json
-    import uuid
-
-    from cogniverse_runtime.blob_write_queue import BlobWriteQueue
-
-    tenant = f"prodfixstate:t{uuid.uuid4().hex}"
-    first, second = replicas
-    manager = first._build_artifact_manager(tenant)
-    initial = (
-        {"user": 1, "tenant_admin": 2, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "initial"}
-    )
-    await manager.save_blob("config", kind, json.dumps(initial))
+    """Three replicas read the same stored version, then all write: two lose
+    the compare-and-set, re-read and merge, so every field lands."""
+    tenant = _tenant()
+    _seed(store, tenant, kind)
+    barrier = threading.Barrier(3)
+    sessions = [
+        _InterleavedStore(vespa_instance["http_port"], barrier, kind) for _ in range(3)
+    ]
+    modules = [_load_replica(session) for session in sessions]
     path = f"/admin/tenants/{tenant}/{kind}"
-    field = "quotas" if kind == "pin_quotas" else "selections"
-
-    persist = asyncio.Event()
-    applier = first._apply_blob_write
-
-    async def gated_apply(*args):
-        await persist.wait()
-        await applier(*args)
-
-    first._blob_write_queue = BlobWriteQueue(gated_apply)
-
-    async with _replica_client(first) as a, _replica_client(second) as b:
-        assert (await b.get(path)).json()[field] == initial
-        first_path = path if kind == "pin_quotas" else path + "/search_agent"
-        second_path = path if kind == "pin_quotas" else path + "/summarizer_agent"
-
-        accepted = await a.put(
-            first_path,
-            json={"user": 7} if kind == "pin_quotas" else {"variant_id": "search-v2"},
+    try:
+        clients = [_client(module) for module in modules]
+        responses = await asyncio.gather(
+            *[
+                client.put(path + suffix, json=body)
+                for client, (suffix, body, _) in zip(clients, PUTS[kind])
+            ]
         )
-        assert accepted.status_code == 200
-        assert accepted.json() == {
-            "tenant_id": tenant,
-            field: (
-                {"user": 7, "tenant_admin": 2, "org_admin": -1}
-                if kind == "pin_quotas"
-                else {"search_agent": "search-v2"}
-            ),
-            "pending_write": True,
-        }
-        # Nothing of the first PUT has reached the store yet.
-        assert json.loads(await manager.load_blob("config", kind)) == initial
+        for client in clients:
+            await client.aclose()
+    finally:
+        for module, session in zip(modules, sessions):
+            sys.modules.pop(module.__name__)
+            session.close()
 
-        peer = await b.put(
-            second_path,
-            json={"tenant_admin": 9}
-            if kind == "pin_quotas"
-            else {"variant_id": "summary-v3"},
-        )
-        assert peer.status_code == 200
-        await second._blob_write_queue.flush()
-
-        persist.set()
-        await first._blob_write_queue.flush()
-
-    expected = (
-        {"user": 7, "tenant_admin": 9, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "search-v2", "summarizer_agent": "summary-v3"}
-    )
-    assert json.loads(await manager.load_blob("config", kind)) == expected
-    assert first._blob_write_queue.status() == {"pending": 0, "failed": []}
-    assert second._blob_write_queue.status() == {"pending": 0, "failed": []}
+    expected = _with(kind, *[field for _, _, field in PUTS[kind]])
+    assert [session.held for session in sessions] == [1, 1, 1]
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    assert [response.json()[FIELD[kind]] for response in responses].count(expected) == 1
+    stored = _record(store, tenant, kind)
+    assert (stored.version, stored.config_value) == (4, expected)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
-async def test_partial_put_serializes_fresh_read_and_pending_overlay(
-    replicas, phoenix_container, kind
+@pytest.mark.parametrize("kind", KINDS)
+async def test_concurrent_puts_on_one_replica_each_keep_their_field(
+    replicas, store, kind
 ):
-    import asyncio
-    import json
-    import threading
-    import uuid
-
-    from tests.utils.http_fault_proxy import InterceptFaultProxy
-
-    tenant = f"prodfixstate:t{uuid.uuid4().hex}"
-    first, second = replicas
-    manager = first._build_artifact_manager(tenant)
-    initial = (
-        {"user": 1, "tenant_admin": 2, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "initial"}
-    )
-    await manager.save_blob("config", kind, json.dumps(initial))
+    tenant = _tenant()
+    _seed(store, tenant, kind)
+    replica, _ = replicas
     path = f"/admin/tenants/{tenant}/{kind}"
-    async with _replica_client(second) as client:
-        assert (await client.get(path)).status_code == 200
-        remote = dict(initial)
-        remote["user" if kind == "pin_quotas" else "search_agent"] = (
-            7 if kind == "pin_quotas" else "search-v2"
+    async with _client(replica) as client:
+        responses = await asyncio.gather(
+            *[client.put(path + suffix, json=body) for suffix, body, _ in PUTS[kind]]
         )
-        await manager.save_blob("config", kind, json.dumps(remote))
-        entered, release = threading.Event(), threading.Event()
-        with InterceptFaultProxy(phoenix_container["http_endpoint"]) as proxy:
+        read_back = await client.get(path)
 
-            def intercept(method, path, body):
-                if method == "GET" and not entered.is_set():
-                    entered.set()
-                    if not release.wait(15):
-                        return 504, {"error": "read barrier expired"}
-                return None
-
-            proxy.intercept = intercept
-            second.set_phoenix_endpoints(proxy.url, phoenix_container["grpc_endpoint"])
-            first_path = path if kind == "pin_quotas" else path + "/summarizer_agent"
-            second_path = (
-                path if kind == "pin_quotas" else path + "/detailed_report_agent"
-            )
-            request = asyncio.create_task(
-                client.put(
-                    first_path,
-                    json={"tenant_admin": 9}
-                    if kind == "pin_quotas"
-                    else {"variant_id": "summary-v3"},
-                )
-            )
-            sibling = None
-            try:
-                assert await asyncio.to_thread(entered.wait, 3) is True
-                sibling = asyncio.create_task(
-                    client.put(
-                        second_path,
-                        json={"org_admin": 12}
-                        if kind == "pin_quotas"
-                        else {"variant_id": "report-v4"},
-                    )
-                )
-                await asyncio.sleep(0)
-                assert sibling.done() is False
-                release.set()
-                responses = await asyncio.gather(request, sibling)
-                assert [response.status_code for response in responses] == [200, 200]
-                await second._blob_write_queue.flush()
-            finally:
-                release.set()
-                await asyncio.gather(
-                    request, *([sibling] if sibling else []), return_exceptions=True
-                )
-                await second._blob_write_queue.flush()
-    expected = (
-        {"user": 7, "tenant_admin": 9, "org_admin": 12}
-        if kind == "pin_quotas"
-        else {
-            "search_agent": "search-v2",
-            "summarizer_agent": "summary-v3",
-            "detailed_report_agent": "report-v4",
-        }
-    )
-    assert json.loads(await manager.load_blob("config", kind)) == expected
+    expected = _with(kind, *[field for _, _, field in PUTS[kind]])
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    assert read_back.json() == {"tenant_id": tenant, FIELD[kind]: expected}
+    stored = _record(store, tenant, kind)
+    assert (stored.version, stored.config_value) == (4, expected)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["pin_quotas", "signature_variants"])
-async def test_warm_partial_put_read_failure_returns_503_without_mutation(
-    replicas, phoenix_container, kind
+@pytest.mark.parametrize("kind", KINDS)
+async def test_a_put_the_store_cannot_complete_answers_503_and_writes_nothing(
+    vespa_instance, store, kind, caplog
 ):
-    import json
-    import uuid
-
-    from tests.utils.http_fault_proxy import InterceptFaultProxy
-
-    tenant = f"prodfixstate:t{uuid.uuid4().hex}"
-    first, second = replicas
-    manager = first._build_artifact_manager(tenant)
-    initial = (
-        {"user": 1, "tenant_admin": 2, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "initial"}
-    )
-    await manager.save_blob("config", kind, json.dumps(initial))
+    """A PUT is answered only once it is stored: an unreadable store and a
+    refused write both answer a typed 503, the stored record is unchanged,
+    and the next PUT after recovery merges onto it. The store's error goes
+    to the runtime log, not the body."""
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
+    tenant = _tenant()
+    _seed(store, tenant, kind)
     path = f"/admin/tenants/{tenant}/{kind}"
-    async with _replica_client(second) as client:
-        assert (await client.get(path)).status_code == 200
-        with InterceptFaultProxy(phoenix_container["http_endpoint"]) as proxy:
-            proxy.intercept = lambda method, path, body: (
-                503,
-                {"error": "store offline"},
-            )
-            second.set_phoenix_endpoints(proxy.url, phoenix_container["grpc_endpoint"])
-            response = await client.put(
-                path if kind == "pin_quotas" else path + "/summarizer_agent",
-                json={"user": 7}
-                if kind == "pin_quotas"
-                else {"variant_id": "summary-v3"},
-            )
-            try:
-                assert response.status_code == 503
-                prefix = "pin-quota" if kind == "pin_quotas" else "signature-variant"
-                assert response.json() == {
-                    "detail": {
-                        "error": "store_unavailable",
-                        "message": f"The {prefix} store did not answer; retry.",
-                        "failure": "DatasetStoreUnavailableError",
-                        "store": prefix,
-                        "tenant_id": tenant,
-                    }
-                }
-                assert "store offline" not in response.text
-                assert second._blob_write_queue.status() == {"pending": 0, "failed": []}
-            finally:
+    prefix = "pin-quota" if kind == "pin_quotas" else "signature-variant"
+    (first_suffix, first_body, first_set), (second_suffix, second_body, second_set) = (
+        PUTS[kind][:2]
+    )
+    with InterceptFaultProxy(
+        f"http://localhost:{vespa_instance['http_port']}"
+    ) as proxy:
+        session = _session(proxy.port, host="http://127.0.0.1")
+        replica = _load_replica(session)
+        try:
+            async with _client(replica) as client:
+                proxy.intercept = lambda method, url, body: (
+                    503,
+                    {"message": "store offline"},
+                )
+                unreadable = await client.put(path + first_suffix, json=first_body)
+                assert _record(store, tenant, kind).version == 1
+
+                proxy.intercept = lambda method, url, body: (
+                    (503, {"message": "write refused"})
+                    if method in ("POST", "PUT")
+                    else None
+                )
+                refused = await client.put(path + first_suffix, json=first_body)
+                served_while_refusing = await client.get(path)
+
                 proxy.intercept = None
-                await second._blob_write_queue.flush()
-    assert json.loads(await manager.load_blob("config", kind)) == initial
-    with InterceptFaultProxy(phoenix_container["http_endpoint"]) as proxy:
-        proxy.intercept = lambda method, path, body: (
-            (503, {"error": "publication refused"})
-            if method == "POST" and path.startswith("/v1/datasets/upload")
-            else None
-        )
-        second.set_phoenix_endpoints(proxy.url, phoenix_container["grpc_endpoint"])
-        async with _replica_client(second) as client:
-            accepted = await client.put(
-                path if kind == "pin_quotas" else path + "/search_agent",
-                json={"user": 7}
-                if kind == "pin_quotas"
-                else {"variant_id": "search-v2"},
-            )
-            assert accepted.status_code == 200
-            assert accepted.json()["pending_write"] is True
-            await second._blob_write_queue.flush()
-            assert second._blob_write_queue.status() == {
-                "pending": 0,
-                "failed": [(tenant, "config", kind)],
+                recovered = await client.put(path + second_suffix, json=second_body)
+        finally:
+            sys.modules.pop(replica.__name__)
+            session.close()
+
+    def unavailable(failure):
+        return {
+            "detail": {
+                "error": "store_unavailable",
+                "message": f"The {prefix} store did not answer; retry.",
+                "failure": failure,
+                "store": prefix,
+                "tenant_id": tenant,
             }
-            failed_read = await client.get(path)
-            assert failed_read.status_code == 503
-            proxy.intercept = None
-            recovered = await client.put(
-                path if kind == "pin_quotas" else path + "/summarizer_agent",
-                json={"tenant_admin": 9}
-                if kind == "pin_quotas"
-                else {"variant_id": "summary-v3"},
-            )
-            assert recovered.status_code == 200
-            await second._blob_write_queue.flush()
-    expected = (
-        {"user": 7, "tenant_admin": 9, "org_admin": -1}
-        if kind == "pin_quotas"
-        else {"search_agent": "search-v2", "summarizer_agent": "summary-v3"}
-    )
-    assert json.loads(await manager.load_blob("config", kind)) == expected
-    assert second._blob_write_queue.status() == {"pending": 0, "failed": []}
+        }
+
+    assert unreadable.status_code == 503
+    assert unreadable.json() == unavailable("ConfigStoreUnavailableError")
+    assert refused.status_code == 503
+    assert refused.json() == unavailable("VespaError")
+    unreadable_cause, refused_cause = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ]
+    assert unreadable_cause.startswith(
+        "store_unavailable: ConfigStoreUnavailableError: Failed to read Vespa "
+        "config visit after 5 attempts over "
+    ), unreadable_cause
+    assert refused_cause == "store_unavailable: VespaError: write refused"
+    assert served_while_refusing.json() == {
+        "tenant_id": tenant,
+        FIELD[kind]: INITIAL[kind],
+    }
+    assert recovered.status_code == 200
+    assert recovered.json()[FIELD[kind]] == _with(kind, second_set)
+    assert first_set not in recovered.json()[FIELD[kind]].items()
+    stored = _record(store, tenant, kind)
+    assert (stored.version, stored.config_value) == (2, _with(kind, second_set))

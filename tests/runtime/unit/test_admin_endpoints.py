@@ -21,33 +21,18 @@ from cogniverse_runtime.routers import admin as admin_router
 
 
 @pytest.fixture(autouse=True)
-def _stub_pin_quota_store(monkeypatch):
-    """Pin/promote enforcement now warms quotas from the durable artifact store
-    (real Phoenix in prod). These in-process route tests have no Phoenix, so
-    stub the factory with an in-memory blob store — the quota values are not
-    what these tests assert (the store round-trip is covered by
-    test_pin_quota_enforcement_reads_blob.py). Tests that need specific quota
-    values override this in their own body."""
+def _stub_pin_quota_store():
+    """Pin/promote enforcement reads quotas from the admin config store (real
+    Vespa in prod). These in-process route tests wire an in-memory store — the
+    quota values are not what these tests assert (the store round-trip is
+    covered by test_pin_quota_enforcement_reads_blob.py)."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
 
-    class _InMemoryAM:
-        _blobs: dict = {}
-
-        def __init__(self, tenant):
-            self._tenant = tenant
-
-        async def load_blob(self, kind, key):
-            return self._blobs.get((self._tenant, kind, key))
-
-        async def save_blob(self, kind, key, raw):
-            self._blobs[(self._tenant, kind, key)] = raw
-
-    _InMemoryAM._blobs = {}
-    monkeypatch.setattr(
-        admin_router, "_build_artifact_manager", lambda key: _InMemoryAM(key)
-    )
-    admin_router._reset_admin_overrides_for_tests()
+    previous = admin_router._config_manager
+    admin_router.set_config_manager(ConfigManager(store=InMemoryConfigStore()))
     yield
-    admin_router._reset_admin_overrides_for_tests()
+    admin_router.set_config_manager(previous)
 
 
 def _make_stub_manager_class(delete_results=None):
@@ -850,7 +835,9 @@ class TestSessionRoutes:
         assert mgr.tenant_id == "acme:prod"
         assert mgr.drop_calls == ["sess-9"]
 
-    def test_close_session_sweeps_warm_tenants(self, client, monkeypatch):
+    def test_close_session_sweeps_warm_tenants(
+        self, client, monkeypatch, in_process_cluster_events
+    ):
         stub_cls = self._stub_manager_cls(monkeypatch, {"chat_turn": 2})
         warm_a = stub_cls("acme:prod")
         warm_b = stub_cls("beta:beta")
@@ -866,8 +853,40 @@ class TestSessionRoutes:
             "acme:prod": {"chat_turn": 2},
             "beta:beta": {"chat_turn": 2},
         }
+        assert body["skipped_tenants"] == []
+        assert body["workers"] == ["unit-worker"]
         assert warm_a.drop_calls == ["sess-9"]
         assert warm_b.drop_calls == ["sess-9"]
+        assert in_process_cluster_events.published == [
+            ("session_closed", {"session_id": "sess-9"})
+        ]
+
+    def test_close_session_without_the_channel_is_503(self, client, monkeypatch):
+        monkeypatch.setattr(admin_router, "_cluster_events", None)
+
+        resp = client.post("/admin/sessions/sess-9/close")
+
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "session close: cluster events are not wired"}
+
+    def test_close_session_a_worker_did_not_confirm_is_503(self, client, monkeypatch):
+        from cogniverse_runtime.cluster_events import ClusterEventIncomplete
+
+        class _OneWorkerSilent:
+            async def publish(self, kind, payload, *, timeout_s):
+                raise ClusterEventIncomplete(
+                    kind, 2, {"worker-a": {"per_tenant": {}, "skipped_tenants": []}}, {}
+                )
+
+        monkeypatch.setattr(admin_router, "_cluster_events", _OneWorkerSilent())
+
+        resp = client.post("/admin/sessions/sess-9/close")
+
+        assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": "session sess-9 close incomplete: 1 of 2 workers handled "
+            "'session_closed'; 1 did not answer"
+        }
 
 
 @pytest.mark.unit

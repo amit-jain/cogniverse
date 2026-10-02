@@ -8,7 +8,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 
 - **Runtime profile creation** without code deployment
 - **Multi-tenant isolation** for SaaS deployments
-- **Concurrent access** with proper locking
+- **Concurrent access** from every worker process and replica, with compare-and-set writes
 - **Version control** for configuration changes
 - **Schema deployment automation** via API
 
@@ -103,13 +103,12 @@ Centralized configuration manager with:
 - Profile CRUD operations
 - Deep merge for tenant overrides
 
-**Thread Safety:**
+**Concurrent writes:**
 ```python
 class ConfigManager:
     def __init__(
         self,
         store: ConfigStore,
-        profile_change_listener: Optional[ProfileChangeListener] = None,
         scoped_config_refresh_s: float = 5.0,
         scoped_config_max_staleness_s: float = 60.0,
         system_config_refresh_s: float = 5.0,
@@ -118,51 +117,55 @@ class ConfigManager:
         if store is None:
             raise ValueError("store is required")
         self.store = store
-        self._backend_lock = threading.Lock()  # Protects read-modify-write
-        self._profile_change_lock = threading.RLock()  # Orders persistence + notification
-        self._profile_change_listener = profile_change_listener
 
-    def add_backend_profile(self, profile, tenant_id=None, service="backend"):
+    def add_backend_profile(self, profile, tenant_id=None, service="backend", *, replace=True):
         tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
-        with self._profile_change_lock:
-            with self._backend_lock:  # Atomic read-modify-write
-                backend_config = self._stored_backend_config(tenant_id, service)
-                backend_config.add_profile(profile)
-                self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
-            # _backend_lock is released before listener work; the outer lock
-            # keeps concurrent persistence and notifications in the same order.
-            self._notify_profile_change("added", profile.profile_name, profile.to_dict())
+
+        def add(backend_config):
+            if not replace and profile.profile_name in backend_config.profiles:
+                raise BackendProfileExistsError(...)
+            backend_config.add_profile(profile)
+
+        # Compare-and-set read-modify-write of the stored backend config.
+        self._update_backend_config(tenant_id, service, add)
 ```
 
-**Why Locking?**
+**Why compare-and-set?**
 
-Without locks, concurrent operations have a race condition:
+Every runtime worker process and replica writes the same per-tenant backend
+config, and without a conditional write concurrent changes race:
 
 ```python
-# Thread 1: Reads config (profiles: A, B)
-# Thread 2: Reads config (profiles: A, B)
-# Thread 1: Adds profile C → Writes (profiles: A, B, C)
-# Thread 2: Adds profile D → Writes (profiles: A, B, D)
+# Process 1: Reads config (profiles: A, B)
+# Process 2: Reads config (profiles: A, B)
+# Process 1: Adds profile C → Writes (profiles: A, B, C)
+# Process 2: Adds profile D → Writes (profiles: A, B, D)
 # Result: Profile C is LOST!
 ```
 
-The `_backend_lock` ensures:
+`_update_backend_config` runs the change through `ConfigStore.update_config`,
+which writes with `compare_and_set_config` against the version it read:
 
-1. Thread 1 acquires lock
-2. Thread 1 reads, modifies, writes
-3. Thread 1 releases lock
-4. Thread 2 acquires lock (sees profiles A, B, C)
-5. Thread 2 reads, modifies, writes (profiles: A, B, C, D)
+1. Process 1 and process 2 both read version n (profiles: A, B)
+2. Process 1 writes version n + 1 (profiles: A, B, C)
+3. Process 2's write of version n + 1 is refused
+4. Process 2 re-reads version n + 1 and re-applies its change
+5. Process 2 writes version n + 2 (profiles: A, B, C, D)
 6. Both profiles persist correctly
 
-The read inside the lock goes to the store, not the scoped-config cache. A held
-copy can predate a write made by another process (another worker or pod), and
-writing a change back over it would drop that write.
+The read goes to the store, not the scoped-config cache. A change that leaves
+the stored config as it was writes nothing. A writer that loses every attempt
+raises `ConfigWriteConflictError` and writes nothing.
 
-The outer `_profile_change_lock` covers add, partial update, and delete. It
-keeps each persisted change adjacent to its live-backend notification, so an
-older slow notification cannot overtake and replace a newer profile. Listener
-errors remain isolated: the persisted change succeeds and the error is logged.
+**How a write reaches searches:** the store is the only copy. The shared
+search backend resolves the querying tenant's profiles per request through
+`get_config` (the shipped catalog, the system tenant's stored profiles and the
+tenant's own) and merges them into a local copy of the profiles it was built
+with, so one tenant's profile is never visible to another. The writing
+process's `ConfigManager` drops its held copy on the write, so its next search
+sees the change at once; every other process and replica sees it within
+`scoped_config_max_staleness_s` (60 s by default; about
+`scoped_config_refresh_s`, 5 s, for a tenant searched continuously).
 
 **BackendConfig:**
 
@@ -319,7 +322,8 @@ class ProfileValidator:
     def validate_profile(
         self, profile: BackendProfileConfig, tenant_id: str, is_update: bool = False
     ) -> List[str]:
-        """Validate complete profile"""
+        """Validate complete profile; the uniqueness check reads the tenant's
+        stored backend config, not the manager's held copy"""
         errors = []
         if not is_update:
             errors.extend(self._validate_uniqueness(profile, tenant_id))
@@ -446,60 +450,52 @@ flowchart TB
     User["<span style='color:#000'>1. User fills form - Dashboard</span>"]
     API["<span style='color:#000'>2. POST /admin/profiles</span>"]
     Router["<span style='color:#000'>3. Admin Router - Validate</span>"]
-    ConfigMgr["<span style='color:#000'>4. ConfigManager - Lock/Read/Write</span>"]
+    ConfigMgr["<span style='color:#000'>4. ConfigManager - Compare-and-set Read/Modify/Write</span>"]
     Store["<span style='color:#000'>5. ConfigStore - Version/Persist</span>"]
-    Propagate["<span style='color:#000'>6. Propagate to cached search backends<br/>(profile_change_listener →<br/>BackendRegistry.add_profile_to_backends →<br/>VespaSearchBackend.add_profile)</span>"]
-    Release["<span style='color:#000'>7. Release Lock</span>"]
-    Response["<span style='color:#000'>8. 201 Created</span>"]
-    Success["<span style='color:#000'>9. Success Message</span>"]
+    Response["<span style='color:#000'>6. 201 Created</span>"]
+    Success["<span style='color:#000'>7. Success Message</span>"]
+    Search["<span style='color:#000'>Searches resolve the tenant's<br/>stored profiles per request</span>"]
 
     User --> API
     API --> Router
     Router --> ConfigMgr
     ConfigMgr --> Store
-    Store --> Propagate
-    Propagate --> Release
-    Release --> Response
+    Store --> Response
     Response --> Success
+    Store -.-> Search
 
     style User fill:#90caf9,stroke:#1565c0,color:#000
     style API fill:#90caf9,stroke:#1565c0,color:#000
     style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ConfigMgr fill:#ffcc80,stroke:#ef6c00,color:#000
     style Store fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Propagate fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Release fill:#ffcc80,stroke:#ef6c00,color:#000
     style Response fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Success fill:#90caf9,stroke:#1565c0,color:#000
+    style Search fill:#a5d6a7,stroke:#388e3c,color:#000
 
-    linkStyle 0,1,2,3,4,5,6,7 stroke:#000,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6 stroke:#000,stroke-width:2px
 ```
 
 ### Concurrent Updates Flow
 
 ```mermaid
 sequenceDiagram
-    participant T1 as Thread 1
-    participant Lock as Backend Lock
+    participant P1 as Process 1
     participant Store as ConfigStore
-    participant T2 as Thread 2
+    participant P2 as Process 2
 
-    T1->>Lock: Acquire lock
-    activate Lock
-    T1->>Store: Read config
-    Store-->>T1: Version 1
-    T2->>Lock: Try acquire (BLOCKED)
-    T1->>Store: Write version 2
-    T1->>Lock: Release lock
-    deactivate Lock
-
-    Lock->>T2: Lock acquired
-    activate Lock
-    T2->>Store: Read config
-    Store-->>T2: Version 2
-    T2->>Store: Write version 3
-    T2->>Lock: Release lock
-    deactivate Lock
+    P1->>Store: Read config
+    Store-->>P1: Version 1
+    P2->>Store: Read config
+    Store-->>P2: Version 1
+    P1->>Store: compare_and_set(expected 1)
+    Store-->>P1: Version 2 written
+    P2->>Store: compare_and_set(expected 1)
+    Store-->>P2: Refused (version 2 stored)
+    P2->>Store: Re-read config, re-apply change
+    Store-->>P2: Version 2
+    P2->>Store: compare_and_set(expected 2)
+    Store-->>P2: Version 3 written
 ```
 
 ### Schema Deployment Flow
@@ -773,14 +769,14 @@ def test_client(self, vespa_instance, temp_schema_dir: Path):
 
 ### Write Performance
 
-- **Single write**: Backend-dependent; a Vespa write is a `_get_latest_version` query followed by `feed_data_point` plus a `_prune_old_versions` cleanup query (three round-trips), not benchmarked in this codebase
-- **Concurrent writes**: Serialized via `ConfigManager._backend_lock` (a single process-local `threading.Lock`), no deadlocks
+- **Single write**: Backend-dependent; a Vespa profile write is a document read of the stored config, the compare-and-set's own read, a conditional `feed_data_point`, a confirming read and a `_prune_old_versions` cleanup query, not benchmarked in this codebase
+- **Concurrent writes**: Compare-and-set across every process and replica; a writer that loses re-reads and retries with backoff, up to `CONFIG_UPDATE_MAX_ATTEMPTS`
 - **Version pruning overhead**: Each `set_config` call also prunes versions beyond `keep_versions` (default 10) for that config_id
 
 ### Concurrency Limits
 
 - **Read throughput**: Unlimited concurrent readers (backend-dependent)
-- **Write throughput**: Limited by `_backend_lock` (one writer at a time, per process — the lock does not coordinate across separate runtime pods)
+- **Write throughput**: One committed write per backend-config version; concurrent writers to one tenant's config retry until theirs lands
 
 ### Scaling Considerations
 

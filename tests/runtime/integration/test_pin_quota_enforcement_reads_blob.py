@@ -1,62 +1,78 @@
-"""Pin-quota enforcement must read the durable Phoenix-backed blob.
+"""Pin-quota enforcement must read the stored config record.
 
-Enforcement resolves quotas through PinQuotas.for_tenant, which reads a
-process-local override cache. That cache is only warmed by a pin-quota GET/PUT
-on the same replica, so a replica that never served one enforced hardcoded
-defaults and ignored an admin PUT persisted by another replica. These drive the
-REAL admin routes against a REAL Phoenix container (the store the pin-quota blob
-persists through) — a PUT persists the blob, a cold reader reads it back, and
-the resolved quotas equal the exact persisted values.
+Enforcement resolves quotas through PinQuotas.for_tenant from the record
+``_load_pin_quotas`` reads. A process that answers from anything it holds in
+memory enforces a stale or default quota after another process's PUT. These
+drive the REAL admin routes against a REAL Vespa config store — a PUT stores
+the record, a reader wired to another store session reads it back, and the
+resolved quotas equal the exact stored values.
 """
 
 from __future__ import annotations
 
-import pytest
+import uuid
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+import httpx
+import pytest
+from fastapi import FastAPI
+
 from cogniverse_core.memory.pinning import PinQuotas
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin as admin_router
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-TENANT = "pinq-enforce:pinq-enforce"
+
+@pytest.fixture
+def tenant() -> str:
+    name = f"pinqenforce{uuid.uuid4().hex[:8]}"
+    return f"{name}:{name}"
+
+
+def _session(vespa_instance) -> VespaConfigStore:
+    return VespaConfigStore(
+        backend_url="http://localhost", backend_port=vespa_instance["http_port"]
+    )
 
 
 @pytest.fixture
-def real_artifact_backed_admin(telemetry_manager_with_phoenix, monkeypatch):
-    """Point the admin router's artifact factory at a REAL ArtifactManager
-    wired to the REAL Phoenix container (not a stub) and clear the process cache
-    so each test starts from a cold replica."""
-    provider = telemetry_manager_with_phoenix.get_provider(tenant_id=TENANT)
+def admin_on_vespa(vespa_instance):
+    """This process's admin router on its own real config-store session."""
+    previous = admin_router._config_manager
+    store = _session(vespa_instance)
+    admin_router.set_config_manager(ConfigManager(store=store))
+    yield store
+    admin_router.set_config_manager(previous)
+    store.close()
 
-    def _factory(key: str):
-        return ArtifactManager(provider, tenant_id=key)
 
-    monkeypatch.setattr(admin_router, "_build_artifact_manager", _factory)
-    admin_router._reset_admin_overrides_for_tests()
-    yield
-    admin_router._reset_admin_overrides_for_tests()
+@pytest.fixture
+def peer(vespa_instance):
+    """The admin routes as another process serves them: its own session."""
+    store = _session(vespa_instance)
+    yield store
+    store.close()
+
+
+def _record(store: VespaConfigStore, tenant: str):
+    return store.get_config(tenant, ConfigScope.SYSTEM, "admin_overrides", "pin_quotas")
 
 
 @pytest.mark.asyncio
-async def test_cold_replica_enforces_persisted_quotas(real_artifact_backed_admin):
-    # An admin PUT persists the quota blob to real Phoenix.
-    key = admin_router.canonical_tenant_id(TENANT)
-    am = admin_router._build_artifact_manager(key)
-    import json
-
-    await am.save_blob(
-        admin_router._PIN_QUOTA_BLOB_KIND,
-        admin_router._PIN_QUOTA_BLOB_KEY,
-        json.dumps({"user": 3, "tenant_admin": 7, "org_admin": -1}),
+async def test_cold_replica_enforces_stored_quotas(admin_on_vespa, peer, tenant):
+    peer.set_config(
+        tenant,
+        ConfigScope.SYSTEM,
+        "admin_overrides",
+        "pin_quotas",
+        {"user": 3, "tenant_admin": 7, "org_admin": -1},
     )
 
-    # A cold replica (cache cleared) enforces a pin — it must read the persisted
-    # blob, not fall back to hardcoded defaults.
-    admin_router._reset_admin_overrides_for_tests()
-    loaded = await admin_router._load_pin_quotas(TENANT)
+    loaded = await admin_router._load_pin_quotas(tenant)
 
-    quotas = PinQuotas.for_tenant(TENANT, admin_overrides=loaded)
+    quotas = PinQuotas.for_tenant(tenant, admin_overrides=loaded)
     assert loaded == {"user": 3, "tenant_admin": 7, "org_admin": -1}
     assert quotas.user == 3
     assert quotas.tenant_admin == 7
@@ -64,19 +80,12 @@ async def test_cold_replica_enforces_persisted_quotas(real_artifact_backed_admin
 
 
 @pytest.mark.asyncio
-async def test_defaults_when_no_blob_persisted(real_artifact_backed_admin):
-    # A tenant whose blob was never written (distinct from the TENANT other
-    # tests persist to the shared module-scoped Phoenix): enforcement resolves
-    # the dataclass defaults, and must not cache them under the tenant key (so a
-    # later PUT is still picked up).
-    unwritten = "pinq-empty:pinq-empty"
-    loaded = await admin_router._load_pin_quotas(unwritten)
+async def test_defaults_when_no_record_stored(admin_on_vespa, tenant):
+    loaded = await admin_router._load_pin_quotas(tenant)
+
     assert loaded == admin_router._default_pin_quotas()
-    assert (
-        admin_router.canonical_tenant_id(unwritten)
-        not in admin_router._pin_quota_overrides
-    )
-    quotas = PinQuotas.for_tenant(unwritten, admin_overrides=loaded)
+    assert _record(admin_on_vespa, tenant) is None
+    quotas = PinQuotas.for_tenant(tenant, admin_overrides=loaded)
     assert (quotas.user, quotas.tenant_admin, quotas.org_admin) == (
         50,
         500,
@@ -85,38 +94,40 @@ async def test_defaults_when_no_blob_persisted(real_artifact_backed_admin):
 
 
 @pytest.mark.asyncio
-async def test_cache_rereads_persisted_blob_after_ttl(
-    real_artifact_backed_admin, monkeypatch
+async def test_another_processs_put_is_enforced_on_the_next_read(
+    admin_on_vespa, peer, tenant
 ):
-    """The write-through cache is TTL-bounded: a blob updated by another replica
-    (persisted straight to the real store) converges here after the TTL rather
-    than being masked forever."""
-    import json
+    """Nothing is held in memory: a PUT stored by another process is what
+    the very next enforcement here reads."""
+    app = FastAPI()
+    app.include_router(admin_router.router, prefix="/admin")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin"
+    ) as client:
+        first = await client.put(
+            f"/admin/tenants/{tenant}/pin_quotas", json={"user": 1, "tenant_admin": 1}
+        )
+        assert first.json()["quotas"] == {"user": 1, "tenant_admin": 1, "org_admin": -1}
+        assert (await admin_router._load_pin_quotas(tenant))["user"] == 1
 
-    key = admin_router.canonical_tenant_id(TENANT)
-    am = admin_router._build_artifact_manager(key)
+        peer.update_config(
+            tenant,
+            ConfigScope.SYSTEM,
+            "admin_overrides",
+            "pin_quotas",
+            lambda entry: {**entry.config_value, "user": 9},
+        )
 
-    clock = {"now": 1000.0}
-    monkeypatch.setattr(admin_router.time, "monotonic", lambda: clock["now"])
+        assert (await admin_router._load_pin_quotas(tenant))["user"] == 9
+        served = await client.get(f"/admin/tenants/{tenant}/pin_quotas")
 
-    await am.save_blob(
-        admin_router._PIN_QUOTA_BLOB_KIND,
-        admin_router._PIN_QUOTA_BLOB_KEY,
-        json.dumps({"user": 1, "tenant_admin": 1, "org_admin": -1}),
+    assert served.status_code == 200
+    assert served.json() == {
+        "tenant_id": tenant,
+        "quotas": {"user": 9, "tenant_admin": 1, "org_admin": -1},
+    }
+    stored = _record(peer, tenant)
+    assert (stored.version, stored.config_value) == (
+        2,
+        {"user": 9, "tenant_admin": 1, "org_admin": -1},
     )
-    assert (await admin_router._load_pin_quotas(TENANT))["user"] == 1
-
-    # Another replica overwrites the persisted blob.
-    await am.save_blob(
-        admin_router._PIN_QUOTA_BLOB_KIND,
-        admin_router._PIN_QUOTA_BLOB_KEY,
-        json.dumps({"user": 9, "tenant_admin": 9, "org_admin": -1}),
-    )
-
-    # Within the TTL: this replica still serves its cached value.
-    clock["now"] = 1000.0 + admin_router._PIN_QUOTA_CACHE_TTL_S - 1
-    assert (await admin_router._load_pin_quotas(TENANT))["user"] == 1
-
-    # Past the TTL: it re-reads the real store and converges.
-    clock["now"] = 1000.0 + admin_router._PIN_QUOTA_CACHE_TTL_S + 1
-    assert (await admin_router._load_pin_quotas(TENANT))["user"] == 9

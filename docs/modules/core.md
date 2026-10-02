@@ -54,7 +54,7 @@ All concrete agent implementations (OrchestratorAgent, SearchAgent, etc.) inheri
 
 `cogniverse_core/conversation.py` — `ConversationStore`: per-context conversation turns in Mem0, keyed by `(tenant_id, context_id)`, stored verbatim and retrieved by metadata filter. `get_history` treats every stored row as untrusted — a row whose metadata is not a dict, or whose `seq` is not a number, is skipped rather than allowed to crash the read, so one malformed row can never drop a context's whole history. The agent dispatcher uses it to load/save history around each agent call so callers (the messaging gateway) need no Mem0 connection; the load is time-bounded on the reply path (`CONVERSATION_LOAD_TIMEOUT_S`) so a hung Mem0 degrades to no-history rather than stalling the reply, and the save runs off the reply path on a per-context chain bounded by `CONVERSATION_SAVE_TIMEOUT_S`. A turn is two appends, so the second one can fail with the first already durable: `is_transient_turn_write_error(exc)` types a failure the write never got a verdict for (transport, timeout, a retryable status) apart from one the backend refused, and `store_missing_assistant_marker(context_id, cause)` writes the `assistant_missing` row that takes a lost reply's place, carrying the failure's type name and none of its message. `get_history` renders only `RENDERED_TURN_ROLES` (`user`, `assistant`), so a marker never reaches an agent as a reply and the user turn it belongs to reads as unanswered; `get_missing_assistant_markers(context_id)` returns those markers for the context, oldest first.
 
-`cogniverse_core/messaging_auth.py` — `InviteTokenManager` (invite tokens in the system config store, canonicalized through the ConfigManager) and `UserTenantMapper` (Telegram-user→tenant mappings in the Mem0 system partition). Lives in core so both the messaging gateway and the runtime's registration routes share one implementation.
+`cogniverse_core/messaging_auth.py` — `InviteTokenManager` (invite tokens in the system config store, canonicalized through the ConfigManager; a token is claimed for one external user and consumed with compare-and-set writes, so it is redeemed once across processes) and `UserTenantMapper` (Telegram-user→tenant mappings in the Mem0 system partition). Lives in core so both the messaging gateway and the runtime's registration routes share one implementation.
 
 
 ```text
@@ -98,7 +98,7 @@ cogniverse_core/
 │   ├── models/                  # Model loaders (see Model Loaders section)
 │   ├── media/                   # Media access abstraction (see Media Access section)
 │   ├── utils/                   # Utility functions (see Utility Modules section)
-│   ├── tenant_utils.py          # Re-exports foundation tenant helpers; hosts assert_tenant_exists
+│   ├── tenant_utils.py          # Re-exports foundation tenant helpers; hosts assert_tenant_exists and tenant deletion markers
 │   ├── dspy_module_registry.py  # Re-exports foundation DSPyModuleRegistry / DSPyOptimizerRegistry
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin
 │   ├── health_mixin.py          # Health check mixin
@@ -1643,7 +1643,7 @@ microseconds, or nanoseconds; normalization preserves dates before 1970.
 | `Retention` | Behaviour |
 |---|---|
 | `PERMANENT` | Never auto-deleted. |
-| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)`. Two HTTP endpoints reach it: `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}` (single tenant) and `POST /admin/sessions/{session_id}/close` (fan-out across every warm tenant — the gateway's logout / disconnect hook). Writes MUST carry `metadata["session_id"]` (promoted to a fast-search Vespa field at insert time, so `drop_session` filters the store server-side instead of scanning the tenant's memories) or the schema rejects them, AND the kind's `pinnable_by` must be `Pinnable.NOBODY` (the schema constructor refuses any other value, since pinning a session memory and then losing it on session close would be a foot-gun). The default registry ships `kind="session_scratch"` for this. |
+| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)`. Two HTTP endpoints reach it: `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}` (single tenant) and `POST /admin/sessions/{session_id}/close` (fan-out across every warm tenant of every runtime worker process — the gateway's logout / disconnect hook). Writes MUST carry `metadata["session_id"]` (promoted to a fast-search Vespa field at insert time, so `drop_session` filters the store server-side instead of scanning the tenant's memories) or the schema rejects them, AND the kind's `pinnable_by` must be `Pinnable.NOBODY` (the schema constructor refuses any other value, since pinning a session memory and then losing it on session close would be a foot-gun). The default registry ships `kind="session_scratch"` for this. |
 | `EPHEMERAL_DAYS(N)` | Soft-deleted (`metadata.archived=true`) when `created_at` is older than `N` days; hard-deleted at `2N` days. Restoreable via the admin restore endpoint inside the soft-delete window. |
 | `SCHEMA_DRIVEN` | Defers to the schema's `cleanup_hook` callable. |
 

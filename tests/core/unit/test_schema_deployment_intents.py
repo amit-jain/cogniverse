@@ -22,6 +22,11 @@ class Store:
                 return None
             return SimpleNamespace(config_value=copy.deepcopy(row[0]), version=row[1])
 
+    def get_immutable_config(self, tenant_id, scope, service, config_key):
+        return self.get_config(
+            tenant_id=tenant_id, scope=scope, service=service, config_key=config_key
+        )
+
     def compare_and_set_config(self, *, expected_version, **kwargs):
         with self.lock:
             key = (kwargs["tenant_id"], kwargs["service"], kwargs["config_key"])

@@ -2,10 +2,10 @@
 
 Drives the REAL admin router over ASGITransport with a real in-memory
 ConfigStore and a partition-faithful Mem0 double. The contract under test:
-validate → register → consume ordering (a failed registration never burns
-the token), 404 for a bad token, 503 with the token intact on any backend
-outage, null-only-when-genuinely-unregistered resolve, and single-use
-under concurrent registration attempts.
+claim → register → consume ordering (a failed registration keeps the token
+for the user who claimed it), 404 for a bad token or one another user
+claimed, 503 on any backend outage, null-only-when-genuinely-unregistered
+resolve, and single-use under concurrent registration attempts.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin as admin_router
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -73,14 +74,13 @@ class _OutageStore(InMemoryConfigStore):
 
 
 class _BarrierOnValidateStore(InMemoryConfigStore):
-    """Blocks the two DIFFERENT-token validate reads on one 2-party barrier.
+    """Blocks the two DIFFERENT-token claim reads on one 2-party barrier.
 
-    Per-token locks let the two registrations run concurrently, so both
-    validate threads reach the barrier and pass. A single process-global lock
-    would serialize them: the second registration can't start its validate
-    until the first fully finishes, so only one thread reaches the barrier and
-    it trips ``BrokenBarrierError`` after the timeout — turning the parallel
-    case into a 503. Armed only after minting so mint reads don't trip it.
+    Registrations for different tokens run concurrently, so both claim
+    threads reach the barrier and pass. Anything serializing them would let
+    only one thread reach the barrier, and it trips ``BrokenBarrierError``
+    after the timeout — turning the parallel case into a 503. Armed only
+    after minting so mint reads don't trip it.
     """
 
     def __init__(self, barrier: threading.Barrier):
@@ -233,60 +233,142 @@ async def test_resolve_unregistered_is_null_but_outage_is_503(harness):
         assert outage.status_code == 503
 
 
+def _token_record(cm, token):
+    return cm.get_config_value(
+        tenant_id="_system",
+        scope=ConfigScope.SYSTEM,
+        service="messaging_gateway",
+        config_key=f"invite_token_{token}",
+    )
+
+
+def _mapped_users(memory):
+    return [
+        row["metadata"]["external_user_id"]
+        for rows in memory.store.values()
+        for row in rows
+        if row["metadata"].get("type") == "user_mapping"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_concurrent_registers_consume_the_token_once(harness):
-    """Two racers, one token: exactly one 200, the loser gets 404, and
-    exactly one mapping is stored."""
+    """Eight racers, one token: exactly one 200, every loser gets 404, and
+    exactly the winner's mapping is stored."""
     app, cm, memory = harness
+    racers = [str(user) for user in range(40, 48)]
     async with _client(app) as client:
         token = await _mint(client)
 
-        r1, r2 = await asyncio.gather(
-            client.post(
-                "/admin/messaging/register",
-                json={
-                    "platform": "telegram",
-                    "external_user_id": "42",
-                    "token": token,
-                },
-            ),
-            client.post(
-                "/admin/messaging/register",
-                json={
-                    "platform": "telegram",
-                    "external_user_id": "43",
-                    "token": token,
-                },
-            ),
+        responses = await asyncio.gather(
+            *[
+                client.post(
+                    "/admin/messaging/register",
+                    json={
+                        "platform": "telegram",
+                        "external_user_id": user,
+                        "token": token,
+                    },
+                )
+                for user in racers
+            ]
         )
-        statuses = sorted([r1.status_code, r2.status_code])
-        assert statuses == [200, 404]
+        statuses = [response.status_code for response in responses]
+        assert sorted(statuses) == [200] + [404] * (len(racers) - 1)
+        winner = racers[statuses.index(200)]
+        assert responses[statuses.index(200)].json() == {"tenant_id": "acme:alice"}
 
-        mappings = [
-            row
-            for rows in memory.store.values()
-            for row in rows
-            if row["metadata"].get("type") == "user_mapping"
-        ]
-        assert len(mappings) == 1
+        assert _mapped_users(memory) == [winner]
 
-    # The winner resolves; validate agrees the token is spent.
+    record = _token_record(cm, token)
+    assert record["used"] is True
+    assert record["claimed_by"] == {"platform": "telegram", "external_user_id": winner}
     assert InviteTokenManager(cm).validate_token(token) is None
 
 
 @pytest.mark.asyncio
+async def test_a_failed_registration_keeps_the_token_for_its_user(harness):
+    """The user whose mapping write failed keeps the token: every other user
+    is refused, and the same user's retry completes the registration."""
+    app, cm, memory = harness
+    async with _client(app) as client:
+        token = await _mint(client)
+        memory.fail_writes = True
+        failed = await client.post(
+            "/admin/messaging/register",
+            json={"platform": "telegram", "external_user_id": "42", "token": token},
+        )
+        memory.fail_writes = False
+        other = await client.post(
+            "/admin/messaging/register",
+            json={"platform": "telegram", "external_user_id": "43", "token": token},
+        )
+        retry = await client.post(
+            "/admin/messaging/register",
+            json={"platform": "telegram", "external_user_id": "42", "token": token},
+        )
+
+    assert failed.status_code == 503
+    assert failed.json() == {
+        "detail": (
+            "registration unavailable: mapping store failed; token held for this user"
+        )
+    }
+    assert other.status_code == 404
+    assert retry.status_code == 200
+    assert retry.json() == {"tenant_id": "acme:alice"}
+    assert _mapped_users(memory) == ["42"]
+    assert _token_record(cm, token)["used"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_consume_still_registers_and_refuses_other_users(harness):
+    """A consume write that fails after the mapping landed answers 200: the
+    user is registered, and the token stays claimed by them, so no other
+    user can redeem it."""
+    app, cm, memory = harness
+    store = cm.store
+    async with _client(app) as client:
+        token = await _mint(client)
+        real_compare_and_set = store.compare_and_set_config
+
+        def refuse_consume(*args, **kwargs):
+            value = args[4] if len(args) > 4 else kwargs["config_value"]
+            if value.get("used"):
+                raise ConnectionError("config store unreachable")
+            return real_compare_and_set(*args, **kwargs)
+
+        store.compare_and_set_config = refuse_consume
+        registered = await client.post(
+            "/admin/messaging/register",
+            json={"platform": "telegram", "external_user_id": "42", "token": token},
+        )
+        store.compare_and_set_config = real_compare_and_set
+        other = await client.post(
+            "/admin/messaging/register",
+            json={"platform": "telegram", "external_user_id": "43", "token": token},
+        )
+
+    assert registered.status_code == 200
+    assert registered.json() == {"tenant_id": "acme:alice"}
+    assert other.status_code == 404
+    assert _mapped_users(memory) == ["42"]
+    record = _token_record(cm, token)
+    assert record["used"] is False
+    assert record["claimed_by"] == {"platform": "telegram", "external_user_id": "42"}
+
+
+@pytest.mark.asyncio
 async def test_different_tokens_register_in_parallel():
-    """Registrations for DIFFERENT tokens must not convoy behind one global
-    lock. Both validate reads meet on a 2-party barrier; the per-token lock
-    lets them run concurrently so both pass and return 200. A single global
-    lock would serialize them and the barrier would trip (503)."""
+    """Registrations for DIFFERENT tokens must not convoy behind one another.
+    Both claim reads meet on a 2-party barrier, so both pass and return 200
+    only when they run concurrently; serialized, the barrier trips (503)."""
     barrier = threading.Barrier(2)
     store = _BarrierOnValidateStore(barrier)
     store.initialize()
     cm = ConfigManager(store=store)
     memory = _PartitionedMemory()
     admin_router.set_system_memory_factory(lambda: memory)
-    admin_router._register_locks.clear()
 
     app = FastAPI()
     app.include_router(admin_router.router, prefix="/admin")
@@ -323,7 +405,6 @@ async def test_different_tokens_register_in_parallel():
         assert rb.json()["tenant_id"] == "beta:bob"
     finally:
         admin_router.set_system_memory_factory(None)
-        admin_router._register_locks.clear()
 
 
 def test_resolve_finds_mapping_beyond_the_hundred_row_page(harness):

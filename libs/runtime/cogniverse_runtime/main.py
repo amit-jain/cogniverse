@@ -652,9 +652,9 @@ def reaffirm_system_profiles(config_manager, config: dict) -> None:
     needs one — is what keeps a serving request from rewriting the system
     tenant's backend config, which every new tenant then rewrote again.
 
-    The add fans through the profile-change listener into every cached search
-    backend. ``wiki_semantic`` is READ from the loaded config dict (the same
-    source the search backend resolves profiles from) — a hardcoded copy here
+    Every tenant's search resolves them from the system tenant per request.
+    ``wiki_semantic`` is READ from the loaded config dict (the same source the
+    search backend resolves profiles from) — a hardcoded copy here
     drifted from config.json silently — and raises when missing, because wiki
     search cannot resolve without it. The memory profile is not a shipped
     ingestion profile: ``build_memory_profile`` owns its shape, the same
@@ -1082,16 +1082,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     raise
                 await asyncio.sleep(CONFIG_STORE_REPROBE_INTERVAL_S)
 
-    # Wire profile-change propagation: when /admin/profiles adds or removes
-    # a backend profile, push the update into live search-backend instances
-    # via BackendRegistry so the change is queryable without a pod restart.
-    def _profile_change_listener(event: str, profile_name: str, profile_config) -> None:
-        if event == "added" and profile_config is not None:
-            BackendRegistry.add_profile_to_backends(profile_name, profile_config)
-        elif event == "removed":
-            BackendRegistry.remove_profile_from_backends(profile_name)
-
-    config_manager.set_profile_change_listener(_profile_change_listener)
     # SystemConfig is cluster-wide, not user-tenant-specific; scope it under
     # the reserved SYSTEM_TENANT_ID so it can't collide with a user tenant.
     config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
@@ -1427,10 +1417,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # WikiManager.search can resolve via the shared profile registry.
         # Schema deploy and profile registration are separate concerns in
         # VespaSearchBackend — Mem0 does the same thing in
-        # memory/manager.py for "agent_memories". The profile_change_listener
-        # wired above fans this into every cached search backend. The
-        # registration itself is cluster-wide (all tenants see the same
-        # profile shape), so it lives under SYSTEM_TENANT_ID.
+        # memory/manager.py for "agent_memories". The registration itself is
+        # cluster-wide (all tenants see the same profile shape), so it lives
+        # under SYSTEM_TENANT_ID, which every tenant's search merges per
+        # request.
         try:
             reaffirm_system_profiles(config_manager, config)
             logger.info("Wiki backend profile registered")
@@ -1728,6 +1718,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
+    # Tenant deletes and session closes reach every worker process and
+    # replica through Redis, and each waits for every worker to act on it.
+    from cogniverse_runtime.cluster_events import ClusterEvents
+
+    cluster_events = ClusterEvents(
+        redis_url,
+        replica_id,
+        {
+            "tenant_deleted": tenant_manager.release_deleted_tenant,
+            "session_closed": admin.sweep_closed_session,
+        },
+    )
+    await cluster_events.start()
+    tenant_manager.set_cluster_events(cluster_events)
+    admin.set_cluster_events(cluster_events)
+    app.state.cluster_events = cluster_events
+    logger.info("Cluster events subscribed as %s", replica_id)
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1775,16 +1782,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if startup_deploy is not None:
             startup_deploy.cancel()
             await asyncio.gather(startup_deploy, return_exceptions=True)
-    # Accepted admin config-blob writes are write-behind; land them before
-    # teardown so a PUT moments before SIGTERM is not lost.
-    from cogniverse_runtime.routers.admin import drain_blob_writes
     from cogniverse_runtime.routers.agents import drain_conversation_saves
 
-    await drain_blob_writes()
     # Conversation turns persist off the reply path; land the in-flight ones
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
+    tenant_manager.set_cluster_events(None)
+    admin.set_cluster_events(None)
+    await cluster_events.close()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 

@@ -75,7 +75,7 @@ libs/foundation/cogniverse_foundation/config/
 
 # Configuration storage is provided by:
 libs/sdk/cogniverse_sdk/interfaces/
-    └── config_store.py              # ConfigStore ABC, ConfigScope, ConfigEntry, ConfigStoreUnavailableError
+    └── config_store.py              # ConfigStore ABC, ConfigScope, ConfigEntry, ConfigStoreUnavailableError, ConfigWriteConflictError
 
 libs/vespa/cogniverse_vespa/config/
     └── config_store.py              # VespaConfigStore implementation
@@ -939,6 +939,10 @@ Beyond the four functions above, `tenant_utils` exports:
 | `sanitize_k8s_label_value(value)` | function | Makes a value legal as a Kubernetes label value (`([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]`, ≤63 chars): unsupported chars (e.g. the `:` in a canonical tenant_id) become `-`, edges are trimmed, empty results fall back to `"unknown"` (`"acme:acme"` → `"acme-acme"`). Shared by the tenant router's Argo CronWorkflow labels and `quality_monitor`'s optimization-workflow labels; the raw tenant_id still travels via CLI args / workflow parameters wherever the exact value matters. |
 | `invalidate_tenant_exists(tenant_id)` | function | Drops a tenant from the positive-only existence cache after deletion, so a deleted tenant doesn't keep passing `assert_tenant_exists` for the remainder of the TTL. |
 | `assert_tenant_exists(tenant_id)` | async function | Raises `HTTPException(404)` if `tenant_id` was never registered (looked up via `TenantManager.get_tenant_internal`). `SYSTEM_TENANT_ID` bypasses the check. Positive results are cached for 30 seconds since this runs on every search/ingestion/graph request. |
+| `mark_tenant_deleted(store, tenant_id)` | function | Writes the tenant's deletion marker (an immutable config record: `SYSTEM_TENANT_ID`, `ConfigScope.SYSTEM`, service `tenant_deletions`, key the canonical tenant id). Idempotent. The tenant delete writes it before dropping anything. |
+| `tenant_is_deleted(store, tenant_id)` / `raise_if_tenant_deleted(store, tenant_id)` | functions | Read the marker from the store now (one document point read); the second raises `TenantDeletedError`. A store outage raises rather than reading as "not deleted". `SchemaRegistry.deploy_schemas` checks it before deciding and again under the deploy lease before activating, and `Mem0MemoryManager.add_memory` / `update_memory` / `restore_archived_memory` check it before writing, so no process recreates a deleted tenant's schemas or memories. |
+| `clear_tenant_deleted(store, tenant_id)` | function | Removes the marker; tenant create calls it before deploying the tenant's schemas. Returns `False` when the tenant was not marked. |
+| `TenantDeletedError` | exception | A write or schema deploy for a tenant marked deleted; the admin deploy route answers it with 410. |
 
 ```python
 from dataclasses import dataclass

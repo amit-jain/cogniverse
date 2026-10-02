@@ -10,6 +10,7 @@ import re
 import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from cogniverse_core.common.tenant_utils import TenantDeletedError
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.exceptions import (
     SchemaChangeRefusedError,
@@ -1263,15 +1264,21 @@ class VespaBackend(Backend):
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
 
-        except (BackendDeploymentError, SchemaRevisionConflictError, LeaseWaitTimeout):
+        except (
+            BackendDeploymentError,
+            SchemaRevisionConflictError,
+            LeaseWaitTimeout,
+            TenantDeletedError,
+        ):
             # A data-loss refusal (unregistered, unreconstructable schemas that
             # a redeploy would destroy) is NOT a transient failure — surface it
             # so the caller does not mistake it for a retryable False and force
             # the destructive deploy. A registry revision conflict names the
             # peer revision the caller must see. A peer holding the deploy
             # lease for the whole wait deployed nothing here; it surfaces as
-            # itself so the caller can retry. Transient failures still return
-            # False.
+            # itself so the caller can retry. A tenant deleted since the
+            # deploy was decided is refused for good. Transient failures still
+            # return False.
             raise
         except Exception as e:
             logger.error(f"Failed to deploy schemas: {e}")
@@ -2266,28 +2273,6 @@ class VespaBackend(Backend):
 
         # Basic health check
         return self.schema_manager is not None
-
-    # Keep self.config["profiles"] and the owned VespaSearchBackend's
-    # in-memory dict in sync so runtime-added profiles are visible to
-    # both the ingestion path (reads config directly) and the search
-    # path (reads via VespaSearchBackend.profiles).
-
-    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
-        """Register a profile at runtime; mirror into owned search backend."""
-        if hasattr(self, "config") and isinstance(self.config, dict):
-            profiles = self.config.setdefault("profiles", {})
-            profiles[profile_name] = dict(profile_config)
-        if self._vespa_search_backend is not None:
-            self._vespa_search_backend.add_profile(profile_name, profile_config)
-
-    def remove_profile(self, profile_name: str) -> None:
-        """Unregister a profile at runtime."""
-        if hasattr(self, "config") and isinstance(self.config, dict):
-            profiles = self.config.get("profiles")
-            if isinstance(profiles, dict):
-                profiles.pop(profile_name, None)
-        if self._vespa_search_backend is not None:
-            self._vespa_search_backend.remove_profile(profile_name)
 
     @property
     def profiles(self) -> Dict[str, Any]:

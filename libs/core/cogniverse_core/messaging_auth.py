@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, canonical_tenant_id
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,14 @@ def _mapping_session_key(platform: str, external_user_id: str) -> str:
 
 
 class InviteTokenManager:
-    """Manages invite tokens for Telegram user registration."""
+    """Manages invite tokens for Telegram user registration.
+
+    A token is redeemed in two compare-and-set steps on its config record,
+    so every process and replica agrees on who redeemed it: ``claim_token``
+    binds an unused token to one external user, and ``mark_token_used``
+    consumes it for that user. Only the bound user can complete or retry a
+    redemption; every other user is refused from the moment of the claim.
+    """
 
     def __init__(self, config_manager):
         self.config_manager = config_manager
@@ -57,9 +64,9 @@ class InviteTokenManager:
         return token
 
     def validate_token(self, token: str) -> Optional[str]:
-        """Validate an invite token and return the tenant_id if valid.
+        """Return the tenant_id of a token no user has claimed or used.
 
-        Returns None if the token is unknown, expired, or already used.
+        Returns None if the token is unknown, expired, claimed or used.
         Raises on a config-store outage — flattening that to None told the
         user their perfectly good token was invalid. Reads through the
         ConfigManager so the lookup key gets the same tenant
@@ -72,10 +79,85 @@ class InviteTokenManager:
             service="messaging_gateway",
             config_key=f"invite_token_{token}",
         )
-
-        if value is None:
+        if value is None or value.get("claimed_by") is not None:
             return None
+        return self._redeemable_tenant(token, value)
 
+    def claim_token(
+        self, token: str, platform: str, external_user_id: str
+    ) -> Optional[str]:
+        """Bind an unused token to one external user; return its tenant_id.
+
+        Returns None if the token is unknown, expired, used, or bound to a
+        different user. A token already bound to this user returns its
+        tenant_id again, so a registration that failed after the claim can
+        be retried by the same user. Raises on a config-store outage and on
+        ``ConfigWriteConflictError``.
+        """
+        claimant = _claimant(platform, external_user_id)
+        claimed: dict = {}
+
+        def claim(entry):
+            claimed.clear()
+            if entry is None:
+                return None
+            value = entry.config_value
+            holder = value.get("claimed_by")
+            if holder is not None and holder != claimant:
+                logger.warning(f"Token claimed by another user: {token[:8]}...")
+                return None
+            tenant_id = self._redeemable_tenant(token, value)
+            if tenant_id is None:
+                return None
+            claimed["tenant_id"] = tenant_id
+            if holder == claimant:
+                return None
+            return {
+                **value,
+                "claimed_by": claimant,
+                "claimed_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        self.config_manager.store.update_config(*_token_coordinates(token), claim)
+        return claimed.get("tenant_id")
+
+    def mark_token_used(self, token: str, platform: str, external_user_id: str) -> bool:
+        """Consume a token this user claimed, after their mapping is stored.
+
+        Returns False when the write fails or the token is not bound to this
+        user — logged; the user is already registered at that point, so a
+        failure here must not undo the registration. The token stays bound to
+        this user, so no other user can redeem it either way.
+        """
+        claimant = _claimant(platform, external_user_id)
+        consumed: dict = {}
+
+        def consume(entry):
+            consumed.clear()
+            if entry is None or entry.config_value.get("claimed_by") != claimant:
+                return None
+            consumed["ok"] = True
+            if entry.config_value.get("used"):
+                return None
+            return {
+                **entry.config_value,
+                "used": True,
+                "used_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        try:
+            self.config_manager.store.update_config(*_token_coordinates(token), consume)
+        except Exception as e:
+            logger.error(f"Failed to mark token as used: {e}")
+            return False
+        if not consumed:
+            logger.error(f"Token {token[:8]}... is not claimed by this user")
+            return False
+        return True
+
+    @staticmethod
+    def _redeemable_tenant(token: str, value: dict) -> Optional[str]:
+        """The token's tenant_id unless it is used or expired."""
         if value.get("used"):
             logger.warning(f"Token already used: {token[:8]}...")
             return None
@@ -91,30 +173,19 @@ class InviteTokenManager:
 
         return value.get("tenant_id")
 
-    def mark_token_used(self, token: str, tenant_id: str) -> bool:
-        """Mark a token as used after successful registration.
 
-        Returns False when the write fails — the token stays live until it
-        expires; the user is already registered at that point, so a failure
-        here must not undo the registration, only be logged.
-        """
-        try:
-            self.config_manager.set_config_value(
-                tenant_id="_system",
-                scope=ConfigScope.SYSTEM,
-                service="messaging_gateway",
-                config_key=f"invite_token_{token}",
-                config_value={
-                    "tenant_id": tenant_id,
-                    "token": token,
-                    "used": True,
-                    "used_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Failed to mark token as used: {e}")
-            return False
+def _claimant(platform: str, external_user_id: str) -> dict:
+    return {"platform": platform, "external_user_id": str(external_user_id)}
+
+
+def _token_coordinates(token: str) -> tuple:
+    """Store coordinates of a token record, as generate_token writes it."""
+    return (
+        canonical_tenant_id("_system"),
+        ConfigScope.SYSTEM,
+        "messaging_gateway",
+        f"invite_token_{token}",
+    )
 
 
 class UserTenantMapper:

@@ -47,26 +47,6 @@ def leased_backend(resolve: Callable[[], Any]) -> Iterator[Any]:
                 return
 
 
-class ProfileFanoutError(RuntimeError):
-    """One or more cached backends rejected a profile add/remove.
-
-    Carries the per-backend failures so a partial fanout is never reported
-    as success: a backend that missed the profile cannot serve it, and a
-    backend that missed a removal keeps serving a profile config says is
-    gone.
-    """
-
-    def __init__(self, action: str, profile_name: str, failures: Dict[str, str]):
-        self.action = action
-        self.profile_name = profile_name
-        self.failures = dict(failures)
-        detail = "; ".join(f"{key}: {message}" for key, message in failures.items())
-        super().__init__(
-            f"{action} of profile {profile_name!r} failed on "
-            f"{len(failures)} backend(s): {detail}"
-        )
-
-
 class BackendBindingConflictError(RuntimeError):
     """A cached backend was requested with dependencies reading another source.
 
@@ -613,77 +593,6 @@ class BackendRegistry:
         # so the next backend build binds a live one.
         cls._shared_schema_registry = None
         logger.info("Cleared all backend instances")
-
-    @classmethod
-    def _fan_out(cls, method: str, profile_name: str, **kwargs):
-        """Apply ``method`` to every cached search/ingestion backend.
-
-        Every backend is attempted before any failure surfaces, so one
-        broken instance cannot stop the others from converging.
-        """
-        updated = 0
-        failures: Dict[str, str] = {}
-        for key in cls._backend_instances.keys():
-            if not key.startswith("search_") and not key.startswith("backend_"):
-                continue
-            instance = cls._backend_instances.get(key)
-            if instance is None:
-                continue
-            try:
-                if kwargs:
-                    getattr(instance, method)(profile_name, kwargs["profile_config"])
-                else:
-                    getattr(instance, method)(profile_name)
-                updated += 1
-            except Exception as exc:
-                logger.error(
-                    "%s(%s) failed on backend %s: %s", method, profile_name, key, exc
-                )
-                failures[key] = f"{type(exc).__name__}: {exc}"
-        return updated, failures
-
-    @classmethod
-    def add_profile_to_backends(
-        cls, profile_name: str, profile_config: Dict[str, Any]
-    ) -> int:
-        """Fan a new profile out to every cached search/ingestion backend.
-
-        Called by `ConfigManager.add_backend_profile` through its
-        `profile_change_listener` so runtime profile additions become
-        queryable without a pod restart. Every SearchBackend implements
-        `add_profile` via the interface (default no-op), so no feature
-        detection is needed here.
-
-        Returns:
-            Number of backends updated.
-
-        Raises:
-            ProfileFanoutError: One or more backends rejected the profile.
-        """
-        updated, failures = cls._fan_out(
-            "add_profile", profile_name, profile_config=profile_config
-        )
-        if failures:
-            raise ProfileFanoutError("add_profile", profile_name, failures)
-        if updated:
-            logger.info(
-                "Propagated profile '%s' to %d cached backend(s)",
-                profile_name,
-                updated,
-            )
-        return updated
-
-    @classmethod
-    def remove_profile_from_backends(cls, profile_name: str) -> int:
-        """Remove a profile from every cached search/ingestion backend.
-
-        Raises:
-            ProfileFanoutError: One or more backends rejected the removal.
-        """
-        updated, failures = cls._fan_out("remove_profile", profile_name)
-        if failures:
-            raise ProfileFanoutError("remove_profile", profile_name, failures)
-        return updated
 
     @classmethod
     def is_registered(cls, name: str, backend_type: str = "any") -> bool:

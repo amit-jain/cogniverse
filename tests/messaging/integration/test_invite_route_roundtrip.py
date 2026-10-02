@@ -73,5 +73,7 @@ async def test_route_minted_token_is_single_use(invite_app, config_manager):
 
     manager = InviteTokenManager(config_manager)
     assert manager.validate_token(token) == "acme:alice"
-    manager.mark_token_used(token, "acme:alice")
+    assert manager.claim_token(token, "telegram", "42") == "acme:alice"
+    assert manager.mark_token_used(token, "telegram", "42") is True
     assert manager.validate_token(token) is None
+    assert manager.claim_token(token, "telegram", "42") is None

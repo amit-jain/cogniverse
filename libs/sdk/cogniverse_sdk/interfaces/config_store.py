@@ -5,11 +5,13 @@ Defines the interface for configuration storage backends.
 Supports multiple implementations: SQLite, Vespa, Elasticsearch, etc.
 """
 
+import random
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Hashable, List, Optional
+from typing import Any, Callable, Dict, Hashable, List, Optional
 
 
 class ConfigScope(Enum):
@@ -163,6 +165,26 @@ class ConfigStoreUnavailableError(RuntimeError):
     catch it silently."""
 
 
+class ConfigWriteConflictError(RuntimeError):
+    """A read-modify-write lost its compare-and-set to concurrent writers on
+    every attempt. Nothing was written by the call that raised it."""
+
+    def __init__(self, config_id: str, attempts: int):
+        super().__init__(
+            f"config {config_id} changed under every one of {attempts} "
+            "compare-and-set attempts; nothing was written"
+        )
+        self.config_id = config_id
+        self.attempts = attempts
+
+
+# Read-modify-write attempts before ConfigWriteConflictError, and the full-
+# jitter backoff between them: uniform in [0, min(cap, base * 2**(n-1))].
+CONFIG_UPDATE_MAX_ATTEMPTS = 10
+CONFIG_UPDATE_BACKOFF_BASE_S = 0.05
+CONFIG_UPDATE_BACKOFF_CAP_S = 1.0
+
+
 class ConfigStore(ABC):
     """
     Abstract interface for configuration storage
@@ -241,6 +263,60 @@ class ConfigStore(ABC):
         propagate to the caller rather than returning None.
         """
         pass
+
+    def update_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        update: Callable[[Optional[ConfigEntry]], Optional[Dict[str, Any]]],
+        *,
+        max_attempts: int = CONFIG_UPDATE_MAX_ATTEMPTS,
+    ) -> Optional[ConfigEntry]:
+        """Read-modify-write one config through ``compare_and_set_config``.
+
+        ``update`` receives the latest entry (None when the key is absent)
+        and returns the value to write, or None to leave the config as it
+        is. A write that loses to a concurrent writer re-reads the entry and
+        calls ``update`` again, so ``update`` must derive its result from the
+        entry it is given and nothing it saw on an earlier call.
+
+        Returns the written entry, or the entry ``update`` declined to change
+        (None when absent). Raises ConfigWriteConflictError once
+        ``max_attempts`` writes have all lost; storage failures and anything
+        ``update`` raises propagate, with nothing written.
+        """
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        for attempt in range(1, max_attempts + 1):
+            current = self.get_config(tenant_id, scope, service, config_key)
+            value = update(current)
+            if value is None:
+                return current
+            written = self.compare_and_set_config(
+                tenant_id,
+                scope,
+                service,
+                config_key,
+                value,
+                expected_version=0 if current is None else current.version,
+            )
+            if written is not None:
+                return written
+            if attempt < max_attempts:
+                time.sleep(
+                    random.uniform(
+                        0,
+                        min(
+                            CONFIG_UPDATE_BACKOFF_CAP_S,
+                            CONFIG_UPDATE_BACKOFF_BASE_S * 2 ** (attempt - 1),
+                        ),
+                    )
+                )
+        raise ConfigWriteConflictError(
+            f"{tenant_id}:{scope.value}:{service}:{config_key}", max_attempts
+        )
 
     @abstractmethod
     def get_config(

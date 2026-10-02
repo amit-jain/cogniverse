@@ -180,11 +180,6 @@ class Backend(IngestionBackend, SearchBackend):
     # health_check() -> bool
     # get_embedding_requirements(schema_name) -> Dict[str, Any]
 
-    # Inherited from SearchBackend (concrete no-ops - override to support
-    # runtime profile mutation without a restart):
-    # add_profile(profile_name, profile_config) -> None
-    # remove_profile(profile_name) -> None
-
     # Inherited from IngestionBackend (abstract - must implement):
     # ingest_documents(documents, schema_name, operation_type="feed") -> Dict[str, Any]
     # ingest_stream(documents, schema_name) -> Iterator[Dict[str, Any]]
@@ -783,8 +778,6 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
-- `add_profile(profile_name, profile_config)`: Required runtime registration of a new ranking/retrieval profile
-- `remove_profile(profile_name)`: Required runtime removal of a ranking/retrieval profile
 
 **Methods (IngestionBackend):**
 
@@ -819,11 +812,15 @@ cogniverse_sdk/
 - `ConfigStore`: Abstract config storage with version history
 - `ConfigScope`: Enum for config scope (SYSTEM, AGENT, ROUTING, TELEMETRY, SCHEMA, BACKEND)
 - `ConfigEntry`: Dataclass for configuration entry with version
+- `ConfigStoreUnavailableError`: a read the store could not answer within its retry budget
+- `ConfigWriteConflictError`: an `update_config` whose every compare-and-set lost to a concurrent writer (`config_id`, `attempts`); nothing was written
 
 **Methods:**
 
 - `initialize()`: Initialize the configuration store
 - `set_config(tenant_id, scope, service, config_key, config_value)`: Set config with versioning
+- `compare_and_set_config(tenant_id, scope, service, config_key, config_value, *, expected_version)`: Append exactly the next version, or `None` on contention
+- `update_config(tenant_id, scope, service, config_key, update, *, max_attempts=CONFIG_UPDATE_MAX_ATTEMPTS)`: Read-modify-write through `compare_and_set_config` (concrete on the ABC)
 - `get_config(tenant_id, scope, service, config_key, version)`: Get config (optionally by version)
 - `get_config_history(tenant_id, scope, service, config_key, limit)`: Get version history
 - `list_configs(tenant_id, scope, service)`: List configs with filters
@@ -1417,6 +1414,18 @@ same revision. It returns the new `ConfigEntry` when confirmed current, or
 `None` on contention, including a write superseded before confirmation. Callers
 reread before retrying. Successful writes follow the store's history retention
 policy. Negative expected versions raise `ValueError`; storage failures propagate.
+
+`update_config(tenant_id, scope, service, config_key, update)` is the
+read-modify-write built on it, concrete on the ABC so every store has it.
+`update(entry)` receives the latest entry (`None` when absent) and returns the
+value to write, or `None` to leave the config as it is. When the
+compare-and-set loses, the entry is re-read and `update` runs again on it, with
+full-jitter backoff between attempts (`CONFIG_UPDATE_BACKOFF_BASE_S` 0.05 s
+doubling, capped at `CONFIG_UPDATE_BACKOFF_CAP_S` 1 s). It returns the written
+entry or the one `update` declined to change, and raises
+`ConfigWriteConflictError` once `CONFIG_UPDATE_MAX_ATTEMPTS` (10) attempts have
+all lost; storage failures and whatever `update` raises propagate with nothing
+written. Writers on different processes or replicas each keep their change.
 
 **Selected interface methods (cogniverse_sdk):**
 ```python

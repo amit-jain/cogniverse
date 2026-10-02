@@ -307,8 +307,10 @@ class TestConfigManagerBackendMethods:
             profile_name="new_profile", schema_name="new_schema"
         )
 
-        config_manager.add_backend_profile(profile, tenant_id="test_tenant")
+        written = config_manager.add_backend_profile(profile, tenant_id="test_tenant")
 
+        # The tenant's first stored backend config holds it.
+        assert (written.profile, written.version) == (profile, 1)
         retrieved = config_manager.get_backend_profile(
             "new_profile", tenant_id="test_tenant"
         )
@@ -334,8 +336,9 @@ class TestConfigManagerBackendMethods:
             target_tenant_id="acme",
         )
 
-        assert updated.embedding_model == "acme/custom-model"
-        assert updated.schema_name == "base_schema"  # Unchanged
+        assert updated.profile.embedding_model == "acme/custom-model"
+        assert updated.profile.schema_name == "base_schema"  # Unchanged
+        assert updated.version == 1  # acme's first stored backend config
 
         # Verify it was saved to acme tenant
         acme_profile = config_manager.get_backend_profile(

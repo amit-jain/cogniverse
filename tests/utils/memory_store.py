@@ -282,14 +282,20 @@ class InMemoryConfigStore(ImmutableConfigStore):
         service: str,
         config_key: str,
     ) -> bool:
-        """Delete all versions of a configuration entry."""
+        """Delete all versions of a configuration entry.
+
+        Version-one immutable records share the coordinates' documents in
+        VespaConfigStore, so they are deleted with them here too.
+        """
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
+        immutable_key = (tenant_id, scope, service, config_key)
 
         with self._lock:
-            if config_id in self._storage:
-                del self._storage[config_id]
-                return True
-            return False
+            deleted = self._storage.pop(config_id, None) is not None
+            if self._immutable.pop(immutable_key, None) is not None:
+                self._immutable_order.remove(immutable_key)
+                deleted = True
+            return deleted
 
     def export_configs(
         self,

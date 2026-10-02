@@ -7,10 +7,13 @@ schemas the delete has to drop. Every schema left behind is carried by
 every later application package, and its documents stay readable under a
 tenant id that no longer resolves.
 
-The ordering under test is data-and-schema first, tenant record last:
-each step that fails leaves the tenant record present, so the delete is
-retryable and the residue is observable through the tenant registry.
-There is no ``deleting`` state to reconcile.
+The ordering under test is deletion marker first, then data and schema,
+tenant record last: from the marker on, every process refuses the tenant's
+memory writes and schema deploys, and each later step that fails leaves the
+tenant record present, so the delete is retryable and the residue is
+observable through the tenant registry. Every worker process, each with its
+own cluster-events subscription, releases what it holds for the tenant
+before anything is dropped.
 """
 
 from __future__ import annotations
@@ -18,7 +21,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import multiprocessing
+import os
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -32,9 +38,11 @@ from requests.exceptions import ConnectionError
 from vespa.application import Vespa
 from vespa.exceptions import VespaError
 
+from cogniverse_core.common.tenant_utils import TenantDeletedError, tenant_is_deleted
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.admin.models import CreateTenantRequest
+from cogniverse_runtime.cluster_events import ClusterEvents
 
 pytestmark = pytest.mark.integration
 
@@ -66,15 +74,33 @@ MEMORIES = (
 
 
 @pytest.fixture
-def wired_tenant_manager(config_manager, schema_loader):
-    """tenant_manager wired to the test Vespa, module seams restored after."""
+async def cluster_events(workflow_state_redis_url):
+    """This process as one runtime worker on its own cluster-events channel."""
+    events = ClusterEvents(
+        workflow_state_redis_url,
+        f"test-worker-{os.getpid()}",
+        {"tenant_deleted": tm.release_deleted_tenant},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+    )
+    await events.start()
+    yield events
+    await events.close()
+
+
+@pytest.fixture
+def wired_tenant_manager(config_manager, schema_loader, cluster_events):
+    """tenant_manager wired to the test Vespa and this process's cluster-events
+    channel, module seams restored after."""
     previous_config_manager = tm._config_manager
     previous_schema_loader = tm._schema_loader
+    previous_cluster_events = tm._cluster_events
     tm.set_config_manager(config_manager)
     tm.set_schema_loader(schema_loader)
+    tm.set_cluster_events(cluster_events)
     yield tm
     tm.set_config_manager(previous_config_manager)
     tm.set_schema_loader(previous_schema_loader)
+    tm.set_cluster_events(previous_cluster_events)
     BackendRegistry.get_instance().clear_instances()
 
 
@@ -330,10 +356,12 @@ async def test_schema_removal_failure_retains_tenant_record_and_documents(
         ]
 
     # Tenant record survives, so the delete is observably incomplete and
-    # retryable through the same route.
+    # retryable through the same route; the tenant stays marked deleted, so
+    # its writes are refused meanwhile.
     retained = await tm.get_tenant_internal(tenant_id)
     assert retained.tenant_full_id == tenant_id
     assert retained.status == "active"
+    assert tenant_is_deleted(tm._config_manager.store, tenant_id) is True
 
     # Schemas and memories are untouched.
     deployed = set(
@@ -417,6 +445,8 @@ async def test_delete_without_a_tenant_record_or_schemas_is_a_404(
         await tm.delete_tenant_internal(tenant_id)
     assert exc.value.status_code == 404
     assert exc.value.detail == f"Tenant {tenant_id} not found"
+    # Nothing existed, so the id is not left marked deleted.
+    assert tenant_is_deleted(tm._config_manager.store, tenant_id) is False
 
 
 @pytest.mark.asyncio
@@ -707,3 +737,355 @@ async def test_organization_delete_refusal_retains_parent_until_confirmed(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def _deployed_for(tenant_id: str) -> list[str]:
+    """The tenant's schemas Vespa serves right now."""
+    suffix = "_" + tenant_id.replace(":", "_")
+    return sorted(
+        name
+        for name in tm.get_backend().schema_manager.list_deployed_document_types(
+            raise_on_failure=True
+        )
+        if name.endswith(suffix)
+    )
+
+
+def _deleted_message(tenant_id: str) -> str:
+    return (
+        f"Tenant '{tenant_id}' has been deleted; its schemas and memories are "
+        "not written until the tenant is created again"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_tenants_schemas_are_never_deployed_again_until_it_is_recreated(
+    wired_tenant_manager, vespa_instance, cluster_events
+):
+    tenant_id = _unique_tenant()
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert result["workers_released"] == [cluster_events.worker_id]
+    assert sorted(result["deleted_schemas"]) == sorted(_schema_names(tenant_id))
+    store = tm._config_manager.store
+    assert tenant_is_deleted(store, tenant_id) is True
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    # A write's first feed builds the ingestion client, which deploys the
+    # schema it feeds when missing: refused for a deleted tenant.
+    with pytest.raises(TenantDeletedError) as caught:
+        backend.prepare_ingestion("agent_memories")
+    assert str(caught.value) == _deleted_message(tenant_id)
+    assert _deployed_for(tenant_id) == []
+
+    recreated = await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    try:
+        assert recreated.schemas_deployed == ["provenance"]
+        assert tenant_is_deleted(store, tenant_id) is False
+        assert _deployed_for(tenant_id) == [_schema_names(tenant_id)[1]]
+    finally:
+        await tm.delete_tenant_internal(tenant_id)
+
+
+class _WarmMemory:
+    """Stands in for a warm tenant's Mem0 client: a deleted tenant's write is
+    refused before Mem0 is reached, so any call here fails the test."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"Mem0 reached for a deleted tenant: {name}")
+
+
+def _peer_worker(
+    redis_url, channel, vespa_port, tenant_id, ready, release, report
+) -> None:
+    """Another runtime worker process: a warm manager for the tenant, one of
+    its memory writes running and one queued behind it."""
+    import asyncio
+    import threading
+
+    from cogniverse_agents.background_memory_writes import (
+        get_background_memory_writer,
+    )
+    from cogniverse_core.common.tenant_utils import TenantDeletedError
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.cluster_events import ClusterEvents
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    async def run():
+        store = VespaConfigStore(
+            backend_url="http://localhost", backend_port=vespa_port
+        )
+        manager = Mem0MemoryManager(tenant_id)
+        manager._provenance_lease_store = store
+        manager.memory = _WarmMemory()
+        events = ClusterEvents(
+            redis_url,
+            "worker-b",
+            {"tenant_deleted": tenant_manager.release_deleted_tenant},
+            channel=channel,
+        )
+        await events.start()
+        writer = get_background_memory_writer()
+        running = threading.Event()
+        outcomes = {"queued_ran": False}
+
+        def running_write():
+            running.set()
+            release.wait(300)
+            try:
+                manager.add_memory("written after the delete", tenant_id, "agent")
+                outcomes["running"] = "written"
+            except TenantDeletedError as exc:
+                outcomes["running"] = f"refused: {exc}"
+
+        def queued_write():
+            outcomes["queued_ran"] = True
+
+        writer.submit(running_write, tenant_id=tenant_id, agent_name="running")
+        writer.submit(
+            lambda: release.wait(300), tenant_id="other:other", agent_name="x"
+        )
+        writer.submit(queued_write, tenant_id=tenant_id, agent_name="queued")
+        assert running.wait(30)
+        ready.set()
+        await asyncio.to_thread(release.wait, 300)
+        outcomes["drained"] = await writer.drain(60)
+        outcomes["manager_held"] = (
+            Mem0MemoryManager._instances.get(tenant_id) is not None
+        )
+        backend = BackendRegistry.get_instance().get_ingestion_backend(
+            "vespa",
+            tenant_id=tenant_id,
+            config_manager=ConfigManager(store=store),
+            schema_loader=FilesystemSchemaLoader("configs/schemas"),
+        )
+        try:
+            backend.prepare_ingestion("agent_memories")
+            outcomes["new_write"] = "deployed"
+        except TenantDeletedError as exc:
+            outcomes["new_write"] = f"refused: {exc}"
+        await events.close()
+        report.put(outcomes)
+
+    asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_a_delete_on_one_process_refuses_another_processs_queued_and_new_writes(
+    wired_tenant_manager, vespa_instance, cluster_events, workflow_state_redis_url
+):
+    """Worker B holds the tenant warm, with a memory write running and one
+    queued. The delete served by this process reaches B before anything is
+    dropped: the queued write never runs, the running one is refused when it
+    writes, and B's first-feed deploy for the tenant is refused — nothing of
+    the tenant comes back."""
+    tenant_id = _unique_tenant()
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+    context = multiprocessing.get_context("spawn")
+    ready, release, report = context.Event(), context.Event(), context.Queue()
+    peer = context.Process(
+        target=_peer_worker,
+        args=(
+            workflow_state_redis_url,
+            cluster_events.channel,
+            vespa_instance["http_port"],
+            tenant_id,
+            ready,
+            release,
+            report,
+        ),
+    )
+    peer.start()
+    try:
+        assert await asyncio.to_thread(ready.wait, 120) is True
+        result = await tm.delete_tenant_internal(tenant_id)
+        release.set()
+        outcomes = await asyncio.to_thread(report.get, True, 300)
+        await asyncio.to_thread(peer.join, 60)
+    finally:
+        release.set()
+        if peer.is_alive():
+            peer.kill()
+
+    assert result["workers_released"] == sorted([cluster_events.worker_id, "worker-b"])
+    assert outcomes == {
+        "queued_ran": False,
+        "running": f"refused: {_deleted_message(tenant_id)}",
+        "drained": True,
+        "manager_held": False,
+        "new_write": f"refused: {_deleted_message(tenant_id)}",
+    }
+    assert peer.exitcode == 0
+    assert _deployed_for(tenant_id) == []
+    assert await tm.get_tenant_internal(tenant_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_delete_whose_marker_cannot_be_written_changes_nothing(
+    wired_tenant_manager, vespa_instance, monkeypatch
+):
+    from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    tenant_id = _unique_tenant()
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+    held = register_tenant_cache(TenantLRUCache(capacity=4))
+    held.set(tenant_id, "gateway-agent")
+    store = tm._config_manager.store
+
+    def unavailable(*args, **kwargs):
+        raise ConfigStoreUnavailableError("config store did not answer")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "put_immutable_config", unavailable)
+        with pytest.raises(HTTPException) as caught:
+            await tm.delete_tenant_internal(tenant_id)
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail == (
+        f"tenant {tenant_id} not deleted: deletion marker store unavailable: "
+        "config store did not answer"
+    )
+    # Nothing was released or dropped: no worker was told.
+    assert held.get(tenant_id) == "gateway-agent"
+    assert tenant_is_deleted(store, tenant_id) is False
+    assert _deployed_for(tenant_id) == sorted(_schema_names(tenant_id))
+    assert (await tm.get_tenant_internal(tenant_id)).tenant_full_id == tenant_id
+
+    await tm.delete_tenant_internal(tenant_id)
+    assert _deployed_for(tenant_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_delete_no_worker_could_confirm_keeps_the_tenant_and_refuses_its_writes(
+    wired_tenant_manager, vespa_instance, owned_redis
+):
+    """With the channel down the delete reports 503, not success: the tenant
+    is marked, so every process already refuses its writes, its schemas and
+    record stay for the retry, and the retry completes once the channel is
+    back."""
+    tenant_id = _unique_tenant()
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+    events = ClusterEvents(
+        owned_redis["url"],
+        "worker-a",
+        {"tenant_deleted": tm.release_deleted_tenant},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+        redis_timeout_s=2,
+    )
+    await events.start()
+    tm.set_cluster_events(events)
+    subprocess.run(
+        ["docker", "pause", owned_redis["name"]],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    try:
+        with pytest.raises(HTTPException) as caught:
+            await tm.delete_tenant_internal(tenant_id)
+    finally:
+        subprocess.run(
+            ["docker", "unpause", owned_redis["name"]],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail.startswith(
+        f"tenant {tenant_id} is marked deleted and its writes are refused, but "
+        "not every runtime worker released it (cluster events: cannot publish "
+        "'tenant_deleted': "
+    )
+    assert caught.value.detail.endswith("); retry the delete")
+    store = tm._config_manager.store
+    assert tenant_is_deleted(store, tenant_id) is True
+    assert _deployed_for(tenant_id) == sorted(_schema_names(tenant_id))
+    assert (await tm.get_tenant_internal(tenant_id)).tenant_full_id == tenant_id
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    with pytest.raises(TenantDeletedError):
+        backend.schema_registry.deploy_schema(
+            tenant_id=tenant_id, base_schema_name="agent_memories", force=True
+        )
+
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+    finally:
+        await events.close()
+    assert result["workers_released"] == ["worker-a"]
+    assert sorted(result["deleted_schemas"]) == sorted(_schema_names(tenant_id))
+    assert _deployed_for(tenant_id) == []
+    assert await tm.get_tenant_internal(tenant_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_delete_landing_after_a_deploy_decided_stops_it_under_the_lease(
+    wired_tenant_manager, monkeypatch
+):
+    """A delete on another process marks the tenant after this deploy passed
+    its first check: the re-check under the deploy lease, before activation,
+    refuses it, and the schema never appears."""
+    from cogniverse_core.common.tenant_utils import mark_tenant_deleted
+
+    tenant_id = _unique_tenant()
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    provenance_schema = _schema_names(tenant_id)[1]
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    registry = backend.schema_registry
+    confirm = registry.confirm_decided_revisions
+    confirmed = []
+
+    def delete_lands_first(definitions):
+        mark_tenant_deleted(tm._config_manager.store, tenant_id)
+        confirmed.append(sorted(definition["name"] for definition in definitions))
+        return confirm(definitions)
+
+    monkeypatch.setattr(registry, "confirm_decided_revisions", delete_lands_first)
+    try:
+        with pytest.raises(TenantDeletedError) as caught:
+            await asyncio.to_thread(
+                registry.deploy_schema,
+                tenant_id=tenant_id,
+                base_schema_name="agent_memories",
+            )
+        assert str(caught.value) == _deleted_message(tenant_id)
+        assert confirmed == [[_schema_names(tenant_id)[0]]]
+        assert _deployed_for(tenant_id) == [provenance_schema]
+    finally:
+        monkeypatch.undo()
+        result = await tm.delete_tenant_internal(tenant_id)
+    assert result["deleted_schemas"] == [provenance_schema]
+    assert _deployed_for(tenant_id) == []

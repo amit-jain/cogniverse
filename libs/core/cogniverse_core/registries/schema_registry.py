@@ -14,7 +14,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, canonical_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    SYSTEM_TENANT_ID,
+    TenantDeletedError,
+    canonical_tenant_id,
+    raise_if_tenant_deleted,
+)
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
     RegistryConflictError,
@@ -813,6 +818,9 @@ class SchemaRegistry:
         if duplicates:
             raise ValueError(f"Duplicate base schema names: {duplicates}")
         tenant_id = canonical_tenant_id(tenant_id)
+        # A deleted tenant's schemas are never deployed again until the tenant
+        # is created again; re-checked under the deploy lease before activation.
+        raise_if_tenant_deleted(self._config_manager.store, tenant_id)
         names = [f"{base}_{tenant_id.replace(':', '_')}" for base in base_schema_names]
 
         def load_definition(base, name):
@@ -984,7 +992,10 @@ class SchemaRegistry:
                     raise BackendDeploymentError(f"Backend failed to deploy {subject}")
             except Exception as exc:
                 activated = isinstance(exc, SchemaConvergenceError)
-                if isinstance(exc, (SchemaRevisionConflictError, LeaseWaitTimeout)):
+                if isinstance(
+                    exc,
+                    (SchemaRevisionConflictError, LeaseWaitTimeout, TenantDeletedError),
+                ):
                     deployment_error = exc
                 else:
                     error_type = (
@@ -1073,8 +1084,21 @@ class SchemaRegistry:
         from must still find that revision stored. A peer's tombstone or
         registration since is authoritative, so the deploy raises
         :class:`SchemaRevisionConflictError` instead of activating over it.
+        A requested schema of a tenant marked deleted raises
+        :class:`TenantDeletedError`: a tenant delete marks the tenant before it
+        takes this lease to drop the schemas, so a deploy reaching activation
+        after the mark never recreates them.
         """
 
+        requested_tenants = sorted(
+            {
+                canonical_tenant_id(definition["tenant_id"])
+                for definition in schema_definitions
+                if "registry_version" in definition
+            }
+        )
+        for tenant_id in requested_tenants:
+            raise_if_tenant_deleted(self._config_manager.store, tenant_id)
         for definition in schema_definitions:
             if "registry_version" not in definition:
                 continue

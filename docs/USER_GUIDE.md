@@ -833,7 +833,7 @@ flowchart TD
     BOT["<span style='color:#000'>Telegram Bot API<br/>(webhook / polling)</span>"]
     GW["<span style='color:#000'>MessagingGateway</span>"]
     CR["<span style='color:#000'>command_router<br/>parse_message()</span>"]
-    AUTH["<span style='color:#000'>InviteTokenManager<br/>validate_token()</span>"]
+    AUTH["<span style='color:#000'>InviteTokenManager<br/>claim_token()</span>"]
     UM["<span style='color:#000'>UserTenantMapper<br/>get_tenant_id()</span>"]
     CM["<span style='color:#000'>ConversationManager<br/>get_history() / store_turn()</span>"]
     RC["<span style='color:#000'>RuntimeClient<br/>POST /agents/{name}/process</span>"]
@@ -879,9 +879,11 @@ sequenceDiagram
 
     USR->>BOT: /start abc123...
     BOT->>GW: Update (start command + token)
-    GW->>GW: InviteTokenManager.validate_token()
-    GW->>MEM: UserTenantMapper.register_user()
-    GW->>GW: InviteTokenManager.mark_token_used()
+    GW->>RT: POST /admin/messaging/register<br/>{platform, external_user_id, token}
+    RT->>RT: InviteTokenManager.claim_token()
+    RT->>MEM: UserTenantMapper.register_user()
+    RT->>RT: InviteTokenManager.mark_token_used()
+    RT-->>GW: {tenant_id}
     GW-->>USR: "Registered as acme_corp."
 
     USR->>BOT: /search machine learning tutorial

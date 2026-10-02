@@ -1,9 +1,9 @@
 """Admin signature-variant route logic (canonicalization, merge, validation).
 
 GET/PUT ``/admin/tenants/{t}/signature_variants`` route serialization and
-validation, driven in-process with an in-memory artifact-store double so the
-route logic runs without Docker. The real Phoenix persistence round-trip +
-cold-replica dispatcher resolution live in
+validation, driven in-process with the in-memory config store so the route
+logic runs without Docker. The real Vespa persistence round-trip +
+cross-process dispatcher resolution live in
 tests/runtime/integration/test_signature_variant_persistence.py. Both the write
 and the read canonicalize the tenant id, so a selection stored for one spelling
 resolves for the canonical form.
@@ -15,36 +15,27 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
-class _InMemoryArtifactManager:
-    """Per-tenant in-memory blob store double for the route-logic unit tests."""
-
-    def __init__(self, blobs: dict, tenant: str):
-        self._blobs = blobs
-        self._tenant = tenant
-
-    async def save_blob(self, kind: str, key: str, raw: str) -> None:
-        self._blobs[(self._tenant, kind, key)] = raw
-
-    async def load_blob(self, kind: str, key: str):
-        return self._blobs.get((self._tenant, kind, key))
+@pytest.fixture
+def store():
+    previous = admin._config_manager
+    store = InMemoryConfigStore()
+    admin.set_config_manager(ConfigManager(store=store))
+    yield store
+    admin.set_config_manager(previous)
 
 
 @pytest.fixture
-def client(monkeypatch) -> TestClient:
+def client(store) -> TestClient:
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    blobs: dict = {}
-    monkeypatch.setattr(
-        admin,
-        "_build_artifact_manager",
-        lambda key: _InMemoryArtifactManager(blobs, key),
-    )
-    admin._reset_admin_overrides_for_tests()
     return TestClient(app)
 
 
@@ -97,3 +88,34 @@ class TestSignatureVariantEndpoints:
         canonical = client.get("/admin/tenants/acme:acme/signature_variants").json()
         assert raw["selections"] == {"search_agent": "with_jurisdiction"}
         assert canonical["selections"] == {"search_agent": "with_jurisdiction"}
+
+    def test_put_stores_the_record_under_the_canonical_tenant(
+        self, client: TestClient, store
+    ):
+        resp = client.put(
+            "/admin/tenants/acme/signature_variants/search_agent",
+            json={"variant_id": "with_jurisdiction"},
+        )
+        again = client.put(
+            "/admin/tenants/acme/signature_variants/search_agent",
+            json={"variant_id": "with_jurisdiction"},
+        )
+
+        assert resp.json() == {
+            "tenant_id": "acme",
+            "selections": {"search_agent": "with_jurisdiction"},
+        }
+        assert again.json() == resp.json()
+        history = store.get_config_history(
+            "acme:acme", ConfigScope.SYSTEM, "admin_overrides", "signature_variants"
+        )
+        # A PUT that changes nothing writes no new version.
+        assert [(e.version, e.config_value) for e in history] == [
+            (1, {"search_agent": "with_jurisdiction"})
+        ]
+        assert (
+            store.get_config(
+                "acme", ConfigScope.SYSTEM, "admin_overrides", "signature_variants"
+            )
+            is None
+        )

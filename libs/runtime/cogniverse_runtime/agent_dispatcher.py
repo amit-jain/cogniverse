@@ -44,6 +44,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.telemetry.providers.base import (
     DatasetStoreUnavailableError,
 )
+from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ def _store_failure_status(exc: BaseException) -> str:
     """``store_unavailable`` for a store that could not answer, else ``error``."""
     return (
         ARTIFACT_LOAD_STORE_UNAVAILABLE
-        if isinstance(exc, DatasetStoreUnavailableError)
+        if isinstance(exc, (DatasetStoreUnavailableError, ConfigStoreUnavailableError))
         else ARTIFACT_LOAD_ERROR
     )
 
@@ -1280,9 +1281,11 @@ class AgentDispatcher:
         The variant lookup is reported separately in
         ``variant_lookup_status``: it reads the admin config store, which is
         wired independently of the artefact manager, and a tenant's canary
-        split must keep running when only that read is unavailable. The served
-        variant is then whatever this replica last cached (``default`` when it
-        has cached nothing), and the status says the selection is unconfirmed.
+        split must keep running when only that read is unavailable. The
+        selection is served from this process's memory within the admin
+        router's ``SIGNATURE_VARIANT_MAX_STALENESS_S``; past that, a store
+        that cannot answer serves ``default`` and the status says the
+        selection is unconfirmed.
         """
         if self._artifact_manager_factory is None:
             return None
@@ -1292,27 +1295,25 @@ class AgentDispatcher:
             return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
 
         # Consumer for PUT /admin/tenants/{t}/signature_variants/{agent};
-        # falls back to default when no admin selection exists. Warm the
-        # blob-backed cache first (TTL-bounded) so the selection an admin
-        # persisted reaches this replica, not just the one that served the PUT.
-        variant_lookup_status = ARTIFACT_LOAD_LOADED
-        try:
-            from cogniverse_runtime.routers.admin import load_signature_variants
+        # default when no admin selection exists.
+        from cogniverse_agents.optimizer.signature_variants import DEFAULT_VARIANT_ID
+        from cogniverse_runtime.routers.admin import cached_signature_variants
 
-            await load_signature_variants(tenant_id)
-        except ImportError as exc:
-            logger.debug("signature-variant cache warm skipped: %s", exc)
+        variant_lookup_status = ARTIFACT_LOAD_LOADED
+        variant_id = DEFAULT_VARIANT_ID
+        try:
+            selections = await cached_signature_variants(tenant_id)
+            variant_id = selections.get(agent_name) or DEFAULT_VARIANT_ID
         except Exception as exc:
             variant_lookup_status = _store_failure_status(exc)
             logger.warning(
                 "Signature-variant lookup for agent=%s tenant=%s failed (%s) — "
-                "serving the last cached selection: %s",
+                "serving the default variant: %s",
                 agent_name,
                 tenant_id,
                 variant_lookup_status,
                 exc,
             )
-        variant_id = self._resolve_signature_variant(tenant_id, agent_name)
 
         try:
             overlay = await am.load_for_request(
@@ -1450,33 +1451,6 @@ class AgentDispatcher:
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
         with provider.session_context(session_id):
             yield
-
-    @staticmethod
-    def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
-        """Read the tenant's selected variant for an agent from admin overrides.
-
-        Falls back to ``DEFAULT_VARIANT_ID`` when no admin PUT has set one.
-        Lazy import — admin lives in the runtime layer, this dispatcher
-        also lives there but we keep the import local so test setups
-        that don't load admin still work.
-        """
-        from cogniverse_agents.optimizer.signature_variants import (
-            DEFAULT_VARIANT_ID,
-        )
-
-        try:
-            from cogniverse_runtime.routers.admin import (
-                _signature_variant_overrides as _admin_overrides,
-            )
-        except Exception:
-            return DEFAULT_VARIANT_ID
-
-        # Canonicalize the key so a variant set via admin PUT resolves here
-        # regardless of whether the tenant arrived as simple ('acme') or
-        # colon ('acme:acme') form — the admin endpoints (which canonicalize
-        # their sibling routes) store under the canonical key too.
-        per_tenant = _admin_overrides.get(canonical_tenant_id(tenant_id)) or {}
-        return per_tenant.get(agent_name) or DEFAULT_VARIANT_ID
 
     async def dispatch(
         self,
