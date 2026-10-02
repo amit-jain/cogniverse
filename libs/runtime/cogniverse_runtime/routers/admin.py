@@ -31,7 +31,10 @@ from cogniverse_agents.optimizer.profile_selection_ground_truth import (
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import (
+    BackendProfileExistsError,
+    ConfigManager,
+)
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.profile_models import (
@@ -48,7 +51,10 @@ from cogniverse_runtime.admin.profile_models import (
 )
 from cogniverse_runtime.blob_write_queue import BlobWriteQueue
 from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+from cogniverse_sdk.interfaces.config_store import (
+    ConfigStoreUnavailableError,
+    ConfigWriteConflictError,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -234,7 +240,8 @@ async def create_profile(
 
     Raises:
         HTTPException 400: Validation errors
-        HTTPException 409: Profile already exists
+        HTTPException 409: Concurrent writes to the tenant's backend config
+            outlasted every compare-and-set attempt
         HTTPException 500: Creation or deployment failed
     """
     try:
@@ -251,21 +258,39 @@ async def create_profile(
             model_specific=request.model_specific,
         )
 
-        validation_errors = validator.validate_profile(
-            profile, tenant_id=request.tenant_id, is_update=False
-        )
-        if validation_errors:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Profile validation failed",
-                    "errors": validation_errors,
-                },
+        def _validate_and_add() -> None:
+            # Config-store reads and a compare-and-set write that retries
+            # with backoff under contention: off the serving loop.
+            validation_errors = validator.validate_profile(
+                profile, tenant_id=request.tenant_id, is_update=False
             )
+            if validation_errors:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Profile validation failed",
+                        "errors": validation_errors,
+                    },
+                )
 
-        config_manager.add_backend_profile(
-            profile, tenant_id=request.tenant_id, service="backend"
-        )
+            try:
+                config_manager.add_backend_profile(
+                    profile,
+                    tenant_id=request.tenant_id,
+                    service="backend",
+                    replace=False,
+                )
+            except BackendProfileExistsError as exc:
+                # Another create of this name landed after the validation read.
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Profile validation failed",
+                        "errors": [str(exc)],
+                    },
+                ) from exc
+
+        await asyncio.to_thread(_validate_and_add)
 
         schema_deployed = False
         tenant_schema_name = None
@@ -317,6 +342,8 @@ async def create_profile(
 
     except HTTPException:
         raise
+    except ConfigWriteConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to create profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -500,9 +527,14 @@ async def update_profile(
     Raises:
         HTTPException 400: Invalid update (trying to update immutable fields)
         HTTPException 404: Profile not found
+        HTTPException 409: Concurrent writes to the tenant's backend config
+            outlasted every compare-and-set attempt
         HTTPException 500: Update operation failed
     """
-    try:
+
+    def _update() -> List[str]:
+        """The profile update's config-store reads and compare-and-set write,
+        which retries with backoff under contention: off the serving loop."""
         profile = config_manager.get_backend_profile(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
@@ -554,6 +586,10 @@ async def update_profile(
             target_tenant_id=request.tenant_id,
             service="backend",
         )
+        return updated_fields
+
+    try:
+        updated_fields = await asyncio.to_thread(_update)
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
@@ -575,6 +611,8 @@ async def update_profile(
 
     except HTTPException:
         raise
+    except ConfigWriteConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to update profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -605,7 +643,9 @@ async def delete_profile(
 
     Raises:
         HTTPException 404: Profile not found
-        HTTPException 409: Cannot delete schema (other profiles using it)
+        HTTPException 409: Cannot delete schema (other profiles using it), or
+            concurrent writes to the tenant's backend config outlasted every
+            compare-and-set attempt
         HTTPException 500: Deletion failed
     """
 
@@ -681,6 +721,8 @@ async def delete_profile(
 
     except HTTPException:
         raise
+    except ConfigWriteConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to delete profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))

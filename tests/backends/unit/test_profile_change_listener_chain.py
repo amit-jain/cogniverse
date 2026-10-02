@@ -22,32 +22,7 @@ from cogniverse_core.registries.backend_registry import (
 )
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
-
-
-class _InMemoryStore:
-    """Minimal ConfigStore stub that keeps configs in a dict."""
-
-    def __init__(self) -> None:
-        self._data: dict[tuple, dict] = {}
-        self._version = 0
-
-    def get_config(self, tenant_id, scope, service, config_key):
-        entry = self._data.get((tenant_id, scope, service, config_key))
-        if entry is None:
-            return None
-        # ConfigStore returns an object with `.config_value` and `.version`.
-        # Mock one for our purposes.
-        return MagicMock(config_value=entry["value"], version=entry["version"])
-
-    def set_config(
-        self, tenant_id, scope, service, config_key, config_value, **_kwargs
-    ):
-        self._version += 1
-        self._data[(tenant_id, scope, service, config_key)] = {
-            "value": config_value,
-            "version": self._version,
-        }
-        return MagicMock(version=self._version)
+from tests.utils.memory_store import InMemoryConfigStore
 
 
 @pytest.fixture
@@ -67,7 +42,7 @@ def test_add_backend_profile_propagates_to_cached_search_backend(
     fake_backend.remove_profile = MagicMock()
     BackendRegistry._backend_instances.set("search_vespa", fake_backend)
 
-    store = _InMemoryStore()
+    store = InMemoryConfigStore()
 
     # Wire the same listener main.py wires at startup.
     def listener(event, name, cfg):
@@ -103,7 +78,7 @@ def test_delete_backend_profile_propagates_removal(clean_backend_registry):
     fake_backend.remove_profile = MagicMock()
     BackendRegistry._backend_instances.set("search_vespa", fake_backend)
 
-    store = _InMemoryStore()
+    store = InMemoryConfigStore()
 
     def listener(event, name, cfg):
         if event == "added" and cfg is not None:
@@ -132,7 +107,7 @@ def test_listener_exception_does_not_break_add_backend_profile(
     clean_backend_registry,
 ):
     """A faulty listener must not corrupt ConfigManager behavior."""
-    store = _InMemoryStore()
+    store = InMemoryConfigStore()
 
     def bad_listener(event, name, cfg):
         raise RuntimeError("intentional")

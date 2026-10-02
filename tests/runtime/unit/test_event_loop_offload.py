@@ -231,6 +231,55 @@ async def test_admin_schema_deploy_offloaded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_profile_create_and_update_offloaded():
+    """A profile write is a compare-and-set read-modify-write that re-reads
+    and backs off while other processes write the same backend config; run
+    inline it froze every request on the API loop for the whole retry."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin.profile_models import (
+        ProfileCreateRequest,
+        ProfileUpdateRequest,
+    )
+    from cogniverse_runtime.routers import admin
+
+    cm = MagicMock()
+    cm.add_backend_profile = _blocking(0.3)
+    cm.update_backend_profile = _blocking(0.3)
+    cm.get_backend_profile.return_value = SimpleNamespace(schema_name="s")
+    cm.store.get_config.return_value = None
+    validator = MagicMock()
+    validator.validate_profile.return_value = []
+    validator.validate_update_fields.return_value = []
+
+    created = await _ticks_during(
+        lambda: admin.create_profile(
+            ProfileCreateRequest(
+                profile_name="p",
+                tenant_id="acme:acme",
+                schema_name="s",
+                embedding_model="m",
+                embedding_type="single_vector",
+            ),
+            config_manager=cm,
+            schema_loader=MagicMock(),
+            validator=validator,
+        )
+    )
+    updated = await _ticks_during(
+        lambda: admin.update_profile(
+            "p",
+            ProfileUpdateRequest(tenant_id="acme:acme", description="d"),
+            config_manager=cm,
+            validator=validator,
+        )
+    )
+
+    assert created >= 15, f"event loop starved during profile create: {created}"
+    assert updated >= 15, f"event loop starved during profile update: {updated}"
+
+
+@pytest.mark.asyncio
 async def test_coding_sandbox_exec_offloaded():
     """CodingAgent._execute_in_sandbox runs the sync gRPC sandbox exec (and the
     connectivity probe) off the loop. Run inline, the write+run execs (up to

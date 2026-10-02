@@ -75,7 +75,7 @@ libs/foundation/cogniverse_foundation/config/
 
 # Configuration storage is provided by:
 libs/sdk/cogniverse_sdk/interfaces/
-    └── config_store.py              # ConfigStore ABC, ConfigScope, ConfigEntry, ConfigStoreUnavailableError
+    └── config_store.py              # ConfigStore ABC, ConfigScope, ConfigEntry, ConfigStoreUnavailableError, ConfigWriteConflictError
 
 libs/vespa/cogniverse_vespa/config/
     └── config_store.py              # VespaConfigStore implementation

@@ -39,6 +39,10 @@ ProfileChangeListener = Callable[[str, str, Optional[Dict[str, Any]]], None]
 SCOPED_CONFIG_MAX_ENTRIES = 512
 
 
+class BackendProfileExistsError(ValueError):
+    """A create-only profile add found the profile already stored."""
+
+
 class ConfigManager:
     """
     Centralized configuration manager with multi-tenant support and caching.
@@ -97,7 +101,6 @@ class ConfigManager:
             raise ValueError("store is required")
 
         self.store = store
-        self._backend_lock = threading.Lock()
         self._profile_change_lock = threading.RLock()
         self._profile_change_listener = profile_change_listener
         # System config doesn't change after the runtime applies its env
@@ -589,12 +592,7 @@ class ConfigManager:
         return self._backend_config_from(value, tenant_id, service)
 
     def _stored_backend_config(self, tenant_id: str, service: str) -> BackendConfig:
-        """The tenant's backend config as the store holds it now.
-
-        The base of every profile read-modify-write: a held copy may predate
-        another process's write, and writing back a change over it would drop
-        that write.
-        """
+        """The tenant's backend config as the store holds it now."""
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager._stored_backend_config"
         )
@@ -602,6 +600,45 @@ class ConfigManager:
             ConfigScope.BACKEND, tenant_id, service, "backend_config"
         )
         return self._backend_config_from(value, tenant_id, service)
+
+    def _update_backend_config(
+        self,
+        tenant_id: str,
+        service: str,
+        change: Callable[[BackendConfig], None],
+    ) -> bool:
+        """Apply ``change`` to the stored backend config with compare-and-set.
+
+        Every profile change is a read-modify-write of the tenant's whole
+        backend config, and other processes write it too: ``change`` runs on
+        the config as the store holds it, and again on the newer one each
+        time a concurrent write lands first, so no process's change is
+        overwritten. Returns False when ``change`` left the config as stored,
+        in which case nothing is written. Raises ``ConfigWriteConflictError``
+        when every attempt lost, and storage failures, with nothing written.
+        """
+
+        changed = False
+
+        def update(entry):
+            nonlocal changed
+            config = self._backend_config_from(
+                entry.config_value if entry is not None else None, tenant_id, service
+            )
+            config.tenant_id = tenant_id
+            # Deep: a profile merge rewrites nested dicts in place.
+            before = copy.deepcopy(config.to_dict())
+            change(config)
+            after = config.to_dict()
+            changed = after != before
+            return after if changed else None
+
+        self.store.update_config(
+            tenant_id, ConfigScope.BACKEND, service, "backend_config", update
+        )
+        if changed:
+            self._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
+        return changed
 
     @staticmethod
     def _backend_config_from(
@@ -679,6 +716,8 @@ class ConfigManager:
         profile: BackendProfileConfig,
         tenant_id: str = None,
         service: str = "backend",
+        *,
+        replace: bool = True,
     ) -> BackendProfileConfig:
         """
         Add or update a backend profile for tenant.
@@ -690,6 +729,10 @@ class ConfigManager:
             profile: BackendProfileConfig instance
             tenant_id: Tenant identifier (required)
             service: Service name
+            replace: When False, raise ``BackendProfileExistsError`` if the
+                stored config already holds a profile of this name; checked
+                in the same compare-and-set as the write, so of concurrent
+                creators on any process exactly one succeeds.
 
         Returns:
             Updated BackendProfileConfig
@@ -697,17 +740,21 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.add_backend_profile"
         )
-        with self._profile_change_lock:
-            with self._backend_lock:
-                backend_config = self._stored_backend_config(tenant_id, service)
-                backend_config.add_profile(profile)
-                self.set_backend_config(
-                    backend_config, tenant_id=tenant_id, service=service
-                )
 
-                logger.info(
-                    f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
+        def add(backend_config: BackendConfig) -> None:
+            if not replace and profile.profile_name in backend_config.profiles:
+                raise BackendProfileExistsError(
+                    f"Profile '{profile.profile_name}' already exists for "
+                    f"tenant '{tenant_id}'"
                 )
+            backend_config.add_profile(profile)
+
+        with self._profile_change_lock:
+            written = self._update_backend_config(tenant_id, service, add)
+            logger.info(
+                f"{'Added' if written else 'Already held'} backend profile "
+                f"'{profile.profile_name}' for {tenant_id}:{service}"
+            )
 
             profile_dict = (
                 profile.to_dict()
@@ -757,24 +804,36 @@ class ConfigManager:
         """
         if target_tenant_id is None:
             target_tenant_id = base_tenant_id
+        base_tenant_id = require_tenant_id(
+            base_tenant_id, source="ConfigManager.update_backend_profile"
+        )
+        target_tenant_id = require_tenant_id(
+            target_tenant_id, source="ConfigManager.update_backend_profile"
+        )
 
         with self._profile_change_lock:
-            with self._backend_lock:
-                # Get base profile (may be from default tenant or another tenant)
-                base_config = self._stored_backend_config(base_tenant_id, service)
-                merged_profile = base_config.merge_profile(profile_name, overrides)
+            # Another tenant's base is read once; the target's own profile is
+            # merged on every compare-and-set attempt, so a concurrent change
+            # to it is the base this update overrides.
+            base_config = (
+                None
+                if base_tenant_id == target_tenant_id
+                else self._stored_backend_config(base_tenant_id, service)
+            )
+            merged: Dict[str, BackendProfileConfig] = {}
 
-                # Save to target tenant
-                target_config = self._stored_backend_config(target_tenant_id, service)
-                target_config.add_profile(merged_profile)
-                self.set_backend_config(
-                    target_config, tenant_id=target_tenant_id, service=service
-                )
+            def merge(target_config: BackendConfig) -> None:
+                source = target_config if base_config is None else base_config
+                merged["profile"] = source.merge_profile(profile_name, overrides)
+                target_config.add_profile(merged["profile"])
 
-                logger.info(
-                    f"Updated backend profile '{profile_name}' for "
-                    f"{target_tenant_id}:{service} (based on {base_tenant_id})"
-                )
+            self._update_backend_config(target_tenant_id, service, merge)
+            merged_profile = merged["profile"]
+
+            logger.info(
+                f"Updated backend profile '{profile_name}' for "
+                f"{target_tenant_id}:{service} (based on {base_tenant_id})"
+            )
 
             self._notify_profile_change(
                 "added",
@@ -823,27 +882,20 @@ class ConfigManager:
             tenant_id, source="ConfigManager.delete_backend_profile"
         )
         with self._profile_change_lock:
-            with self._backend_lock:
-                backend_config = self._stored_backend_config(tenant_id, service)
-
-                # Check if profile exists
-                if profile_name not in backend_config.profiles:
-                    logger.warning(
-                        f"Profile '{profile_name}' not found for {tenant_id}:{service}"
-                    )
-                    return False
-
-                # Remove profile
-                del backend_config.profiles[profile_name]
-
-                # Save updated config
-                self.set_backend_config(
-                    backend_config, tenant_id=tenant_id, service=service
+            deleted = self._update_backend_config(
+                tenant_id,
+                service,
+                lambda backend_config: backend_config.profiles.pop(profile_name, None),
+            )
+            if not deleted:
+                logger.warning(
+                    f"Profile '{profile_name}' not found for {tenant_id}:{service}"
                 )
+                return False
 
-                logger.info(
-                    f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
-                )
+            logger.info(
+                f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
+            )
             self._notify_profile_change("removed", profile_name, None)
         return True
 

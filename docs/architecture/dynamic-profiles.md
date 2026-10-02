@@ -103,7 +103,7 @@ Centralized configuration manager with:
 - Profile CRUD operations
 - Deep merge for tenant overrides
 
-**Thread Safety:**
+**Concurrent writes:**
 ```python
 class ConfigManager:
     def __init__(
@@ -116,51 +116,55 @@ class ConfigManager:
         if store is None:
             raise ValueError("store is required")
         self.store = store
-        self._backend_lock = threading.Lock()  # Protects read-modify-write
         self._profile_change_lock = threading.RLock()  # Orders persistence + notification
         self._profile_change_listener = profile_change_listener
 
-    def add_backend_profile(self, profile, tenant_id=None, service="backend"):
+    def add_backend_profile(self, profile, tenant_id=None, service="backend", *, replace=True):
         tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
+
+        def add(backend_config):
+            if not replace and profile.profile_name in backend_config.profiles:
+                raise BackendProfileExistsError(...)
+            backend_config.add_profile(profile)
+
         with self._profile_change_lock:
-            with self._backend_lock:  # Atomic read-modify-write
-                backend_config = self._stored_backend_config(tenant_id, service)
-                backend_config.add_profile(profile)
-                self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
-            # _backend_lock is released before listener work; the outer lock
-            # keeps concurrent persistence and notifications in the same order.
+            # Compare-and-set read-modify-write of the stored backend config.
+            self._update_backend_config(tenant_id, service, add)
             self._notify_profile_change("added", profile.profile_name, profile.to_dict())
 ```
 
-**Why Locking?**
+**Why compare-and-set?**
 
-Without locks, concurrent operations have a race condition:
+Every runtime worker process and replica writes the same per-tenant backend
+config, and without a conditional write concurrent changes race:
 
 ```python
-# Thread 1: Reads config (profiles: A, B)
-# Thread 2: Reads config (profiles: A, B)
-# Thread 1: Adds profile C → Writes (profiles: A, B, C)
-# Thread 2: Adds profile D → Writes (profiles: A, B, D)
+# Process 1: Reads config (profiles: A, B)
+# Process 2: Reads config (profiles: A, B)
+# Process 1: Adds profile C → Writes (profiles: A, B, C)
+# Process 2: Adds profile D → Writes (profiles: A, B, D)
 # Result: Profile C is LOST!
 ```
 
-The `_backend_lock` ensures:
+`_update_backend_config` runs the change through `ConfigStore.update_config`,
+which writes with `compare_and_set_config` against the version it read:
 
-1. Thread 1 acquires lock
-2. Thread 1 reads, modifies, writes
-3. Thread 1 releases lock
-4. Thread 2 acquires lock (sees profiles A, B, C)
-5. Thread 2 reads, modifies, writes (profiles: A, B, C, D)
+1. Process 1 and process 2 both read version n (profiles: A, B)
+2. Process 1 writes version n + 1 (profiles: A, B, C)
+3. Process 2's write of version n + 1 is refused
+4. Process 2 re-reads version n + 1 and re-applies its change
+5. Process 2 writes version n + 2 (profiles: A, B, C, D)
 6. Both profiles persist correctly
 
-The read inside the lock goes to the store, not the scoped-config cache. A held
-copy can predate a write made by another process (another worker or pod), and
-writing a change back over it would drop that write.
+The read goes to the store, not the scoped-config cache. A change that leaves
+the stored config as it was writes nothing. A writer that loses every attempt
+raises `ConfigWriteConflictError` and writes nothing.
 
-The outer `_profile_change_lock` covers add, partial update, and delete. It
-keeps each persisted change adjacent to its live-backend notification, so an
-older slow notification cannot overtake and replace a newer profile. Listener
-errors remain isolated: the persisted change succeeds and the error is logged.
+The `_profile_change_lock` covers add, partial update, and delete within one
+process. It keeps each persisted change adjacent to its live-backend
+notification, so an older slow notification cannot overtake and replace a
+newer profile. Listener errors remain isolated: the persisted change succeeds
+and the error is logged.
 
 **BackendConfig:**
 
@@ -771,14 +775,14 @@ def test_client(self, vespa_instance, temp_schema_dir: Path):
 
 ### Write Performance
 
-- **Single write**: Backend-dependent; a Vespa write is a `_get_latest_version` query followed by `feed_data_point` plus a `_prune_old_versions` cleanup query (three round-trips), not benchmarked in this codebase
-- **Concurrent writes**: Serialized via `ConfigManager._backend_lock` (a single process-local `threading.Lock`), no deadlocks
+- **Single write**: Backend-dependent; a Vespa profile write is a document read of the stored config, the compare-and-set's own read, a conditional `feed_data_point`, a confirming read and a `_prune_old_versions` cleanup query, not benchmarked in this codebase
+- **Concurrent writes**: Compare-and-set across every process and replica; a writer that loses re-reads and retries with backoff, up to `CONFIG_UPDATE_MAX_ATTEMPTS`
 - **Version pruning overhead**: Each `set_config` call also prunes versions beyond `keep_versions` (default 10) for that config_id
 
 ### Concurrency Limits
 
 - **Read throughput**: Unlimited concurrent readers (backend-dependent)
-- **Write throughput**: Limited by `_backend_lock` (one writer at a time, per process — the lock does not coordinate across separate runtime pods)
+- **Write throughput**: One committed write per backend-config version; concurrent writers to one tenant's config retry until theirs lands
 
 ### Scaling Considerations
 

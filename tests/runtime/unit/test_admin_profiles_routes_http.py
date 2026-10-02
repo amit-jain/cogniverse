@@ -14,6 +14,7 @@ to the store, including the canonical tenant id used for the config lookup.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -122,11 +124,14 @@ class _StubConfigManager:
         }
         return True
 
-    def add_backend_profile(self, profile, tenant_id=None, service="backend"):
+    def add_backend_profile(
+        self, profile, tenant_id=None, service="backend", *, replace=True
+    ):
         self.calls["add"] = {
             "profile": profile,
             "tenant_id": tenant_id,
             "service": service,
+            "replace": replace,
         }
         return profile
 
@@ -593,6 +598,8 @@ async def test_create_profile_adds_profile_without_deploy(env):
     add = env.cm.calls["add"]
     assert add["tenant_id"] == "acme"
     assert add["service"] == "backend"
+    # Create never overwrites: the uniqueness check rides the write itself.
+    assert add["replace"] is False
     persisted = add["profile"]
     assert persisted.profile_name == "new_prof"
     assert persisted.schema_name == "video_new_sv"
@@ -715,3 +722,102 @@ async def test_deploy_never_resolves_a_profile_another_tenant_stored(merged):
     assert merged.env.backend.deploy_calls == [
         {"tenant_id": "beta", "base_schema_name": "beta_only_mv", "force": False}
     ]
+
+
+class _ConflictedConfigManager(ConfigManager):
+    """A real ConfigManager whose store loses every compare-and-set."""
+
+    def __init__(self):
+        class _AlwaysContended(InMemoryConfigStore):
+            def compare_and_set_config(self, *args, **kwargs):
+                return None
+
+        super().__init__(store=_AlwaysContended())
+
+
+@pytest.mark.asyncio
+async def test_profile_writes_losing_every_compare_and_set_answer_409(env):
+    cm = _ConflictedConfigManager()
+    cm.store.set_config(
+        "acme:acme",
+        ConfigScope.BACKEND,
+        "backend",
+        "backend_config",
+        {
+            "tenant_id": "acme:acme",
+            "profiles": {"tuned": _profile("tuned", "video_tuned_sv", "m").to_dict()},
+        },
+    )
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: cm
+    conflict = (
+        "config acme:acme:backend:backend:backend_config changed under every one "
+        "of 10 compare-and-set attempts; nothing was written"
+    )
+
+    created = await _post(
+        env.app,
+        "/admin/profiles",
+        json={
+            "profile_name": "new_prof",
+            "tenant_id": "acme",
+            "schema_name": "video_new_sv",
+            "embedding_model": "colpali-v1.2",
+            "embedding_type": "single_vector",
+            "deploy_schema": False,
+        },
+    )
+    updated = await _put(
+        env.app,
+        "/admin/profiles/tuned",
+        json={"tenant_id": "acme", "description": "changed"},
+    )
+    deleted = await _delete(env.app, "/admin/profiles/tuned", tenant_id="acme")
+
+    assert [r.status_code for r in (created, updated, deleted)] == [409, 409, 409]
+    assert [r.json() for r in (created, updated, deleted)] == [{"detail": conflict}] * 3
+    history = cm.store.get_config_history(
+        "acme:acme", ConfigScope.BACKEND, "backend", "backend_config"
+    )
+    assert [entry.version for entry in history] == [1]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
+    """Both creates pass the validation read; the compare-and-set write lets
+    exactly one store the profile and answers the other 400."""
+    cm = ConfigManager(store=InMemoryConfigStore())
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: cm
+
+    def create(model: str):
+        return _post(
+            env.app,
+            "/admin/profiles",
+            json={
+                "profile_name": "dup_prof",
+                "tenant_id": "acme",
+                "schema_name": "video_dup_sv",
+                "embedding_model": model,
+                "embedding_type": "single_vector",
+                "deploy_schema": False,
+            },
+        )
+
+    first, second = await asyncio.gather(create("model-a"), create("model-b"))
+
+    statuses = [first.status_code, second.status_code]
+    assert sorted(statuses) == [201, 400]
+    loser = (first, second)[statuses.index(400)]
+    assert loser.json() == {
+        "detail": {
+            "message": "Profile validation failed",
+            "errors": ["Profile 'dup_prof' already exists for tenant 'acme:acme'"],
+        }
+    }
+    winner_model = ("model-a", "model-b")[statuses.index(201)]
+    stored = cm.store.get_config(
+        "acme:acme", ConfigScope.BACKEND, "backend", "backend_config"
+    )
+    assert stored.version == 1
+    assert stored.config_value["profiles"]["dup_prof"]["embedding_model"] == (
+        winner_model
+    )
