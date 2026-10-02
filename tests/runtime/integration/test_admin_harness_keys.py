@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.routers import admin
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
@@ -364,7 +365,7 @@ async def test_pause_mid_request_reports_503(store, key_vespa, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tenant_delete_revokes_before_metadata_removal(
-    store, key_vespa, monkeypatch
+    store, key_vespa, monkeypatch, workflow_state_redis_url
 ):
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.unified_config import BackendConfig
@@ -393,6 +394,14 @@ async def test_tenant_delete_revokes_before_metadata_removal(
     backend.schema_manager.backend_port = key_vespa["config_port"]
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
     monkeypatch.setattr(tm, "_config_manager", cm)
+    events = ClusterEvents(
+        workflow_state_redis_url,
+        "harness-key-test-worker",
+        {"tenant_deleted": tm.release_deleted_tenant},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+    )
+    await events.start()
+    monkeypatch.setattr(tm, "_cluster_events", events)
     app = FastAPI()
     app.include_router(tm.router, prefix="/admin")
     tenant = "delete" + uuid.uuid4().hex[:8]
@@ -406,8 +415,11 @@ async def test_tenant_delete_revokes_before_metadata_removal(
         record = await asyncio.to_thread(keys(store).create, tenant, "editor")
         original = store.put_immutable_config
 
-        def fail(*args, **kwargs):
-            raise ConfigStoreUnavailableError("revocation disconnected")
+        def fail(tenant_id, scope, service, config_key, config_value):
+            # Only the revocation write fails; the deletion marker lands.
+            if service == "harness_key_revocations":
+                raise ConfigStoreUnavailableError("revocation disconnected")
+            return original(tenant_id, scope, service, config_key, config_value)
 
         monkeypatch.setattr(store, "put_immutable_config", fail)
         failed = await client.delete(f"/admin/tenants/{tenant}")
@@ -426,6 +438,7 @@ async def test_tenant_delete_revokes_before_metadata_removal(
             ).HarnessKeyNotFoundError
         ):
             await asyncio.to_thread(keys(store).resolve, record["key"])
+    await events.close()
 
 
 def test_revoke_uses_one_write_and_one_confirmation(store, monkeypatch):

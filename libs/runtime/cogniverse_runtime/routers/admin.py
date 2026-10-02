@@ -27,7 +27,11 @@ from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     canonicalize_profile_selection_ground_truth_rows,
     serialize_profile_selection_ground_truth_rows,
 )
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    TenantDeletedError,
+    canonical_tenant_id,
+    raise_if_tenant_deleted,
+)
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
@@ -766,6 +770,7 @@ async def deploy_profile_schema(
 
     Raises:
         HTTPException 404: Profile not found
+        HTTPException 410: The tenant has been deleted
         HTTPException 500: Deployment failed
     """
     try:
@@ -785,6 +790,9 @@ async def deploy_profile_schema(
                 detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
             )
 
+        await asyncio.to_thread(
+            raise_if_tenant_deleted, config_manager.store, request.tenant_id
+        )
         backend_registry = BackendRegistry.get_instance()
         backend = backend_registry.get_ingestion_backend(
             "vespa",
@@ -832,6 +840,8 @@ async def deploy_profile_schema(
                 deployed_at=datetime.now(timezone.utc).isoformat(),
             )
 
+        except TenantDeletedError as e:
+            raise HTTPException(status_code=410, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Schema deployment failed: {e}")
             return SchemaDeploymentResponse(
@@ -846,6 +856,8 @@ async def deploy_profile_schema(
 
     except HTTPException:
         raise
+    except TenantDeletedError as e:
+        raise HTTPException(status_code=410, detail=str(e)) from e
     except Exception as e:
         import traceback
 
@@ -1276,70 +1288,115 @@ async def admin_drop_session(tenant_id: str, session_id: str):
     }
 
 
-@router.post("/sessions/{session_id}/close")
-async def admin_close_session(session_id: str):
-    """Fan-out session close: drop the session across every warm tenant.
+# Delivers a session close to every runtime worker process; wired at startup.
+_cluster_events = None
 
-    A user session can write EPHEMERAL_SESSION memories under any tenant
-    the request touched. On session close (logout, ws-disconnect, idle
-    timeout) the gateway POSTs here once and the runtime sweeps every
-    warm ``Mem0MemoryManager`` calling ``drop_session(session_id)``.
+# How long a session close waits for every worker to sweep its warm tenants.
+SESSION_CLOSE_ACK_TIMEOUT_S = 60.0
 
-    Tenants that have already been evicted from the warm LRU are skipped
-    — their next access will deserialise from Vespa and the
-    EPHEMERAL_SESSION rows still exist there. The next request that warms
-    the manager and triggers a session-close webhook will sweep them.
-    Operators who need a guaranteed sweep can call the per-tenant DELETE
-    endpoint with the known tenant id; this fan-out is best-effort over
-    the warm set.
+
+def set_cluster_events(cluster_events) -> None:
+    """Wire the channel a session close reaches every worker process through."""
+    global _cluster_events
+    _cluster_events = cluster_events
+
+
+def sweep_closed_session(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop a closed session's memories from this process's warm tenants.
+
+    The ``session_closed`` cluster-event handler, run on every worker.
     """
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.memory.schema import build_default_registry
 
+    session_id = payload["session_id"]
+    registry = build_default_registry()
+    per_tenant: Dict[str, Dict[str, int]] = {}
+    skipped: List[str] = []
+    for mgr in list(Mem0MemoryManager._instances.values()):
+        tenant_id = getattr(mgr, "tenant_id", None) or "unknown"
+        if not getattr(mgr, "memory", None):
+            skipped.append(tenant_id)
+            continue
+        try:
+            deleted = mgr.drop_session(session_id, registry)
+        except Exception as exc:
+            logger.warning(
+                "drop_session failed for tenant %s session %s: %s",
+                tenant_id,
+                session_id,
+                exc,
+            )
+            skipped.append(tenant_id)
+            continue
+        if deleted:
+            per_tenant[tenant_id] = deleted
+    return {"per_tenant": per_tenant, "skipped_tenants": skipped}
+
+
+@router.post("/sessions/{session_id}/close")
+async def admin_close_session(session_id: str):
+    """Fan-out session close: drop the session across every warm tenant of
+    every runtime worker process.
+
+    A user session can write EPHEMERAL_SESSION memories under any tenant
+    the request touched, on whichever worker served it. On session close
+    (logout, ws-disconnect, idle timeout) the gateway POSTs here once; the
+    close reaches every worker, and each sweeps its warm
+    ``Mem0MemoryManager`` instances calling ``drop_session(session_id)``.
+    The answer waits for every worker's sweep and sums them; a worker that
+    does not confirm within ``SESSION_CLOSE_ACK_TIMEOUT_S``, or a channel
+    that is down, answers 503 and the close can be retried.
+
+    Tenants that are warm on no worker are skipped — their next access will
+    deserialise from Vespa and the EPHEMERAL_SESSION rows still exist there.
+    The next request that warms the manager and triggers a session-close
+    webhook will sweep them. Operators who need a guaranteed sweep can call
+    the per-tenant DELETE endpoint with the known tenant id.
+    """
+    from cogniverse_runtime.cluster_events import ClusterEventError
+
     if not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id must be non-empty")
+    if _cluster_events is None:
+        raise HTTPException(
+            status_code=503, detail="session close: cluster events are not wired"
+        )
+    try:
+        swept = await _cluster_events.publish(
+            "session_closed",
+            {"session_id": session_id},
+            timeout_s=SESSION_CLOSE_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"session {session_id} close incomplete: {exc}"
+        ) from exc
 
-    registry = build_default_registry()
-
-    def _sweep() -> tuple[Dict[str, Dict[str, int]], int, List[str]]:
-        per_tenant: Dict[str, Dict[str, int]] = {}
-        total = 0
-        skipped: List[str] = []
-        for mgr in list(Mem0MemoryManager._instances.values()):
-            tenant_id = getattr(mgr, "tenant_id", None) or "unknown"
-            if not getattr(mgr, "memory", None):
-                skipped.append(tenant_id)
-                continue
-            try:
-                deleted = mgr.drop_session(session_id, registry)
-            except Exception as exc:
-                logger.warning(
-                    "drop_session failed for tenant %s session %s: %s",
-                    tenant_id,
-                    session_id,
-                    exc,
-                )
-                skipped.append(tenant_id)
-                continue
-            if deleted:
-                per_tenant[tenant_id] = deleted
-                total += sum(deleted.values())
-        return per_tenant, total, skipped
-
-    per_tenant, total, skipped = await asyncio.to_thread(_sweep)
+    per_tenant: Dict[str, Dict[str, int]] = {}
+    skipped: set = set()
+    for result in swept.values():
+        for tenant_id, deleted in result["per_tenant"].items():
+            merged = per_tenant.setdefault(tenant_id, {})
+            for kind, count in deleted.items():
+                merged[kind] = merged.get(kind, 0) + count
+        skipped.update(result["skipped_tenants"])
+    total = sum(sum(deleted.values()) for deleted in per_tenant.values())
 
     logger.info(
-        "Admin close_session(%s) swept %d warm tenants, deleted %d memories",
+        "Admin close_session(%s) swept %d workers, deleted %d memories in %d tenants",
         session_id,
-        len(per_tenant),
+        len(swept),
         total,
+        len(per_tenant),
     )
     return {
         "status": "closed",
         "session_id": session_id,
         "per_tenant": per_tenant,
         "total_deleted": total,
-        "skipped_tenants": skipped,
+        "skipped_tenants": sorted(skipped),
+        "workers": sorted(swept),
     }
 
 

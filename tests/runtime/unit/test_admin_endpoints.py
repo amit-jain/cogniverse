@@ -823,7 +823,9 @@ class TestSessionRoutes:
         assert mgr.tenant_id == "acme:prod"
         assert mgr.drop_calls == ["sess-9"]
 
-    def test_close_session_sweeps_warm_tenants(self, client, monkeypatch):
+    def test_close_session_sweeps_warm_tenants(
+        self, client, monkeypatch, in_process_cluster_events
+    ):
         stub_cls = self._stub_manager_cls(monkeypatch, {"chat_turn": 2})
         warm_a = stub_cls("acme:prod")
         warm_b = stub_cls("beta:beta")
@@ -839,8 +841,40 @@ class TestSessionRoutes:
             "acme:prod": {"chat_turn": 2},
             "beta:beta": {"chat_turn": 2},
         }
+        assert body["skipped_tenants"] == []
+        assert body["workers"] == ["unit-worker"]
         assert warm_a.drop_calls == ["sess-9"]
         assert warm_b.drop_calls == ["sess-9"]
+        assert in_process_cluster_events.published == [
+            ("session_closed", {"session_id": "sess-9"})
+        ]
+
+    def test_close_session_without_the_channel_is_503(self, client, monkeypatch):
+        monkeypatch.setattr(admin_router, "_cluster_events", None)
+
+        resp = client.post("/admin/sessions/sess-9/close")
+
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "session close: cluster events are not wired"}
+
+    def test_close_session_a_worker_did_not_confirm_is_503(self, client, monkeypatch):
+        from cogniverse_runtime.cluster_events import ClusterEventIncomplete
+
+        class _OneWorkerSilent:
+            async def publish(self, kind, payload, *, timeout_s):
+                raise ClusterEventIncomplete(
+                    kind, 2, {"worker-a": {"per_tenant": {}, "skipped_tenants": []}}, {}
+                )
+
+        monkeypatch.setattr(admin_router, "_cluster_events", _OneWorkerSilent())
+
+        resp = client.post("/admin/sessions/sess-9/close")
+
+        assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": "session sess-9 close incomplete: 1 of 2 workers handled "
+            "'session_closed'; 1 did not answer"
+        }
 
 
 @pytest.mark.unit

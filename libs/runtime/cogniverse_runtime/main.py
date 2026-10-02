@@ -1718,6 +1718,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     replica_id = (
         f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     )
+    # Tenant deletes and session closes reach every worker process and
+    # replica through Redis, and each waits for every worker to act on it.
+    from cogniverse_runtime.cluster_events import ClusterEvents
+
+    cluster_events = ClusterEvents(
+        redis_url,
+        replica_id,
+        {
+            "tenant_deleted": tenant_manager.release_deleted_tenant,
+            "session_closed": admin.sweep_closed_session,
+        },
+    )
+    await cluster_events.start()
+    tenant_manager.set_cluster_events(cluster_events)
+    admin.set_cluster_events(cluster_events)
+    app.state.cluster_events = cluster_events
+    logger.info("Cluster events subscribed as %s", replica_id)
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1775,6 +1792,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so the last answered turn is still in history after a restart.
     await drain_conversation_saves()
     await a2a_protocol.close()
+    tenant_manager.set_cluster_events(None)
+    admin.set_cluster_events(None)
+    await cluster_events.close()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 

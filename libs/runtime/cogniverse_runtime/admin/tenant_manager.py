@@ -42,6 +42,8 @@ from requests import exceptions as requests_exceptions
 from cogniverse_core.common.tenant_utils import (
     SYSTEM_TENANT_ID,
     canonical_tenant_id,
+    clear_tenant_deleted,
+    mark_tenant_deleted,
     parse_tenant_id,
 )
 from cogniverse_core.memory.manager import (
@@ -60,6 +62,7 @@ from cogniverse_runtime.admin.models import (
     TenantListResponse,
     TenantTier,
 )
+from cogniverse_runtime.cluster_events import ClusterEventError, ClusterEvents
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
@@ -80,6 +83,11 @@ app = FastAPI(
 _config_manager = None  # For test injection
 _schema_loader: SchemaLoader = None  # For dependency injection
 _backend: Backend | None = None  # Injected metadata backend; bypasses the registry
+# Delivers a tenant delete to every runtime worker process; wired at startup.
+_cluster_events: ClusterEvents | None = None
+
+# How long a tenant delete waits for every worker to release the tenant.
+TENANT_DELETE_ACK_TIMEOUT_S = 15.0
 
 # Built once for processes that never inject one (standalone CLIs). The
 # registry refuses a cached backend to a requester carrying a different
@@ -92,6 +100,47 @@ def set_config_manager(config_manager):
     """Set ConfigManager for this module (for tests)"""
     global _config_manager
     _config_manager = config_manager
+
+
+def set_cluster_events(cluster_events: ClusterEvents | None) -> None:
+    """Wire the channel a tenant delete reaches every worker process through."""
+    global _cluster_events
+    _cluster_events = cluster_events
+
+
+def release_deleted_tenant(payload: Dict) -> Dict:
+    """Drop everything this process holds for a deleted tenant.
+
+    The ``tenant_deleted`` cluster-event handler, run on every worker: the
+    existence cache entry, every registered per-tenant cache (agents, graph
+    and artifact managers), the tenant's warm memory manager, and its queued
+    background memory writes. A write already running finishes against the
+    deletion marker and is refused there.
+    """
+    from cogniverse_agents.background_memory_writes import (
+        get_background_memory_writer,
+    )
+    from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_foundation.caching import evict_tenant_from_registered_caches
+
+    tenant_id = canonical_tenant_id(payload["tenant_id"])
+    invalidate_tenant_exists(tenant_id)
+    cache_entries = evict_tenant_from_registered_caches(tenant_id)
+    org_id, tenant_name = tenant_id.split(":", 1)
+    # Managers are keyed by the id their callers passed; "acme" names "acme:acme".
+    keys = {tenant_id, payload["tenant_id"]} | (
+        {org_id} if org_id == tenant_name else set()
+    )
+    memory_managers = sum(
+        Mem0MemoryManager._instances.pop(key) is not None for key in keys
+    )
+    cancelled = get_background_memory_writer().cancel_tenant(tenant_id)
+    return {
+        "cache_entries": cache_entries,
+        "memory_managers": memory_managers,
+        "queued_memory_writes_cancelled": cancelled,
+    }
 
 
 def set_schema_loader(schema_loader: SchemaLoader) -> None:
@@ -668,6 +717,14 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                     )
                 org_created = True
 
+            # A tenant id deleted earlier is free again once created: its
+            # deletion marker would refuse the schema deploys below.
+            await asyncio.to_thread(
+                clear_tenant_deleted,
+                (_config_manager or _default_config_manager()).store,
+                tenant_full_id,
+            )
+
             # Deploy schemas for tenant via Backend.
             base_schemas = request.base_schemas or list(TENANT_BASE_SCHEMAS)
 
@@ -1015,14 +1072,21 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
 
     WARNING: This removes all data for the tenant!
 
+    The tenant is marked deleted before anything is dropped, so from the
+    first step on every runtime process refuses its memory writes and schema
+    deploys, and every worker process releases what it holds for it before
+    the schemas go. The marker stays until the tenant is created again.
+
     Args:
         tenant_full_id: Full tenant ID (org:tenant)
 
     Returns:
-        Deletion summary
+        Deletion summary, with the workers that released the tenant
 
     Raises:
         HTTPException 404: Tenant not found
+        HTTPException 503: The marker could not be written, or not every
+            worker confirmed it released the tenant; retry the delete
         HTTPException 500: Deletion failed
     """
     try:
@@ -1051,9 +1115,41 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
 
     if _config_manager is None:
         raise RuntimeError("Tenant ConfigManager is not configured")
+    if _cluster_events is None:
+        raise RuntimeError("Tenant deletes need the cluster events channel wired")
     config_manager = _config_manager
     canonical_tid = canonical_tenant_id(tenant_full_id)
     tenant = await get_tenant_internal(canonical_tid)
+
+    # Mark first: from here every process refuses the tenant's memory writes
+    # and schema deploys, so nothing the delete drops below can be recreated.
+    try:
+        await asyncio.to_thread(
+            mark_tenant_deleted, config_manager.store, canonical_tid
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"tenant {canonical_tid} not deleted: deletion marker store "
+            f"unavailable: {exc}",
+        ) from exc
+    # Every worker releases what it holds for the tenant (cached agents, warm
+    # memory managers, queued memory writes) before anything is dropped. A
+    # worker that cannot confirm it fails the delete: the tenant stays marked,
+    # so its writes stay refused everywhere, and a retry completes the delete.
+    try:
+        released = await _cluster_events.publish(
+            "tenant_deleted",
+            {"tenant_id": canonical_tid},
+            timeout_s=TENANT_DELETE_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"tenant {canonical_tid} is marked deleted and its writes are "
+            f"refused, but not every runtime worker released it ({exc}); retry "
+            "the delete",
+        ) from exc
 
     with metadata_backend() as backend:
         schema_manager = backend.schema_manager
@@ -1073,6 +1169,10 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         # up — they're created by /ingestion/upload auto-deploy bypassing
         # tenant create, and accumulate every test run without this branch.
         if not tenant and not deleted_schemas:
+            # Nothing existed to delete: the tenant id stays free to use.
+            await asyncio.to_thread(
+                clear_tenant_deleted, config_manager.store, canonical_tid
+            )
             raise HTTPException(
                 status_code=404, detail=f"Tenant {canonical_tid} not found"
             )
@@ -1115,20 +1215,6 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                         ),
                     )
 
-        from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
-        from cogniverse_foundation.caching import evict_tenant_from_registered_caches
-
-        invalidate_tenant_exists(canonical_tid)
-        # Drop the tenant's cached per-tenant state (gateway agents, graph
-        # managers, artifact managers) so a deleted tenant releases its memory
-        # now instead of lingering until LRU pressure evicts it.
-        evict_tenant_from_registered_caches(canonical_tid)
-        # Queued memory writes would otherwise land after the delete.
-        from cogniverse_agents.background_memory_writes import (
-            get_background_memory_writer,
-        )
-
-        get_background_memory_writer().cancel_tenant(canonical_tid)
         tenant_full_id = canonical_tid  # for the logger.info + return below
 
         # Tenant create auto-creates the org; deleting the org's last tenant
@@ -1174,6 +1260,7 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             "schemas_deleted": len(deleted_schemas),
             "deleted_schemas": deleted_schemas,
             "organization_deleted": organization_deleted,
+            "workers_released": sorted(released),
         }
 
 

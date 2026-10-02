@@ -375,6 +375,123 @@ class TestInviteAcrossWorkers:
         assert record["used"] is False
 
 
+def _worker_pids(worker_ids) -> list[int]:
+    """The process ids in cluster-event worker ids (``host:pid:suffix``)."""
+    return sorted(int(worker_id.split(":")[-2]) for worker_id in worker_ids)
+
+
+def _tenant_schemas_in_vespa(config_port: int, tenant_id: str) -> list[str]:
+    """The tenant's document types the Vespa config server has deployed."""
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    suffix = "_" + tenant_id.replace(":", "_")
+    manager = VespaSchemaManager(
+        backend_endpoint="http://localhost", backend_port=config_port
+    )
+    return sorted(
+        name
+        for name in manager.list_deployed_document_types(raise_on_failure=True)
+        if name.endswith(suffix)
+    )
+
+
+class TestTenantDeleteAcrossWorkers:
+    def test_a_tenant_deleted_on_one_worker_is_refused_on_the_other(
+        self, runtime, vespa_instance, store
+    ):
+        name = f"workersdel{uuid.uuid4().hex[:8]}"
+        tenant = f"{name}:{name}"
+        first, second = runtime.workers
+        pinned = _pinned(runtime, 1)
+        try:
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/tenants",
+                {
+                    "tenant_id": tenant,
+                    "created_by": "worker-test",
+                    "base_schemas": ["provenance"],
+                },
+            )
+        finally:
+            _close(pinned)
+        assert created[0] == 200, created
+        assert created[1]["schemas_deployed"] == ["provenance"]
+        assert _tenant_schemas_in_vespa(vespa_instance["config_port"], tenant) == [
+            f"provenance_{name}_{name}"
+        ]
+
+        pinned = _pinned(runtime, 1)
+        try:
+            deleted = _request(pinned[first][0], "DELETE", f"/admin/tenants/{tenant}")
+            refused = _request(
+                pinned[second][0],
+                "POST",
+                "/admin/profiles/video_colpali_smol500_mv_frame/deploy",
+                {"tenant_id": tenant, "force": True},
+            )
+        finally:
+            _close(pinned)
+
+        assert deleted[0] == 200, deleted
+        assert deleted[1]["status"] == "deleted"
+        assert deleted[1]["deleted_schemas"] == [f"provenance_{name}_{name}"]
+        # Both worker processes released the tenant before anything dropped.
+        assert _worker_pids(deleted[1]["workers_released"]) == sorted(runtime.workers)
+        assert refused == (
+            410,
+            {
+                "detail": (
+                    f"Tenant '{tenant}' has been deleted; its schemas and "
+                    "memories are not written until the tenant is created again"
+                )
+            },
+        )
+        assert _tenant_schemas_in_vespa(vespa_instance["config_port"], tenant) == []
+        assert store.get_immutable_config(
+            "__system__", ConfigScope.SYSTEM, "tenant_deletions", tenant
+        ).config_value == {"deleted": True}
+
+
+class TestSessionCloseAcrossWorkers:
+    def test_a_session_close_is_swept_by_every_worker_of_every_replica(
+        self, tmp_path, owned_redis, vespa_instance
+    ):
+        """Two runtimes of their own on one Redis, as two replicas are: no
+        earlier request has warmed a memory manager on any of their workers,
+        and a close on one replica is answered by all four workers."""
+        session_id = f"sess-{uuid.uuid4().hex[:8]}"
+        redis_url = owned_redis["url"]
+        with (
+            _runtime(tmp_path, redis_url, "replica_a") as (process_a, log_a, port_a),
+            _runtime(tmp_path, redis_url, "replica_b") as (process_b, log_b, _),
+        ):
+            replica_a = SimpleNamespace(port=port_a, workers=_serving(process_a, log_a))
+            replica_b_workers = _serving(process_b, log_b)
+            pinned = _pinned(replica_a, 1)
+            try:
+                status, body = _request(
+                    pinned[replica_a.workers[0]][0],
+                    "POST",
+                    f"/admin/sessions/{session_id}/close",
+                )
+            finally:
+                _close(pinned)
+
+        assert status == 200, body
+        assert _worker_pids(body.pop("workers")) == sorted(
+            replica_a.workers + replica_b_workers
+        )
+        assert body == {
+            "status": "closed",
+            "session_id": session_id,
+            "per_tenant": {},
+            "total_deleted": 0,
+            "skipped_tenants": [],
+        }
+
+
 class TestProfileRecreateAcrossWorkers:
     def test_a_profile_deleted_on_one_worker_can_be_created_again_on_the_other(
         self, runtime

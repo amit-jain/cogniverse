@@ -6,12 +6,14 @@ Tests organization and tenant CRUD operations against the project-wide
 """
 
 import logging
+import uuid
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
+from cogniverse_runtime.cluster_events import ClusterEvents
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
@@ -125,7 +127,7 @@ class TestTenantManagerAPI:
         yield config_manager
 
     @pytest.fixture
-    def test_client(self, vespa_backend, config_manager):
+    def test_client(self, vespa_backend, config_manager, workflow_state_redis_url):
         """Create function-scoped test client reusing backend from config_manager"""
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -158,8 +160,22 @@ class TestTenantManagerAPI:
         tenant_manager.set_config_manager(config_manager)
         tenant_manager.set_schema_loader(schema_loader)
 
-        client = TestClient(tenant_manager.app)
-        yield client
+        # This process is the one worker on its own cluster-events channel,
+        # started on the client's event loop so tenant deletes reach it.
+        events = ClusterEvents(
+            workflow_state_redis_url,
+            "tenant-manager-test-worker",
+            {"tenant_deleted": tenant_manager.release_deleted_tenant},
+            channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+        )
+        with TestClient(tenant_manager.app) as client:
+            client.portal.call(events.start)
+            tenant_manager.set_cluster_events(events)
+            try:
+                yield client
+            finally:
+                tenant_manager.set_cluster_events(None)
+                client.portal.call(events.close)
 
         # Cleanup after each test to prevent state leakage
         logger.info("Cleaning up test_client fixture")

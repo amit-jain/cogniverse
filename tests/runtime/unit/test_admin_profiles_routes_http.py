@@ -70,6 +70,12 @@ def _profile(name: str, schema: str, embedding_model: str) -> BackendProfileConf
 class _FakeConfigStore:
     def __init__(self):
         self.get_config_calls = []
+        self.deletion_marker_reads = []
+
+    def get_immutable_config(self, tenant_id, scope, service, config_key):
+        # No tenant is marked deleted.
+        self.deletion_marker_reads.append((tenant_id, service, config_key))
+        return None
 
     def get_config(self, *, tenant_id, scope, service, config_key):
         self.get_config_calls.append(
@@ -821,3 +827,31 @@ async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
     assert stored.config_value["profiles"]["dup_prof"]["embedding_model"] == (
         winner_model
     )
+
+
+@pytest.mark.asyncio
+async def test_deploy_for_a_deleted_tenant_is_410_and_deploys_nothing(env):
+    env.cm.profiles["video_prism"] = _profile(
+        "video_prism", "video_prism_mv", "xclip-lvt"
+    )
+    env.backend.deployed_schemas = set()
+    deleted = SimpleNamespace(config_value={"deleted": True})
+    env.cm.store.get_immutable_config = lambda *coordinates: (
+        deleted if coordinates[3] == "acme:acme" else None
+    )
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": True},
+    )
+
+    assert resp.status_code == 410
+    assert resp.json() == {
+        "detail": (
+            "Tenant 'acme:acme' has been deleted; its schemas and memories are "
+            "not written until the tenant is created again"
+        )
+    }
+    assert env.backend.deploy_calls == []
+    assert env.registry.calls == []

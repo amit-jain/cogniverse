@@ -768,3 +768,50 @@ def admin_phoenix_endpoints(phoenix_container):
     )
     yield phoenix_container
     admin._phoenix_endpoints = previous
+
+
+@pytest.fixture
+def owned_redis():
+    """A Redis container this test owns, so it may be paused."""
+    import os
+    import socket
+    import subprocess
+    import time
+    import uuid
+
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    name = f"cluster-events-redis-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            ping = subprocess.run(
+                ["docker", "exec", name, "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+            )
+            if ping.stdout.strip() == "PONG":
+                break
+            time.sleep(0.25)
+        yield {"url": f"redis://127.0.0.1:{port}/0", "name": name}
+    finally:
+        subprocess.run(["docker", "unpause", name], capture_output=True, timeout=30)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)

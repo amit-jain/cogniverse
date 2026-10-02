@@ -104,6 +104,10 @@ def mock_config_manager():
     store.set_config.side_effect = _set
     store.list_all_configs.side_effect = _list
     store.get_config.side_effect = _get
+    # Version-one records (tenant deletion markers) read from the same rows.
+    store.get_immutable_config.side_effect = lambda *coordinates: _get(
+        **dict(zip(("tenant_id", "scope", "service", "config_key"), coordinates))
+    )
 
     config_manager = MagicMock()
     config_manager.store = store
@@ -382,6 +386,66 @@ class TestSchemaRegistryDeployment:
                 backend=mock_backend,
                 schema_loader=None,  # No loader - should fail at construction
             )
+
+
+class TestDeletedTenantDeploys:
+    """A tenant marked deleted gets no schema deployed, whichever side of the
+    deploy decision the delete lands on."""
+
+    @staticmethod
+    def _mark_deleted(config_manager, tenant_id):
+        config_manager.store.set_config(
+            tenant_id="__system__",
+            scope=ConfigScope.SYSTEM,
+            service="tenant_deletions",
+            config_key=tenant_id,
+            config_value={"deleted": True},
+        )
+
+    def test_a_deleted_tenant_is_refused_before_anything_is_journaled(
+        self, schema_registry, mock_backend, mock_config_manager
+    ):
+        from cogniverse_core.common.tenant_utils import TenantDeletedError
+
+        self._mark_deleted(mock_config_manager, "acme:acme")
+
+        with pytest.raises(TenantDeletedError) as caught:
+            schema_registry.deploy_schema("acme", "test_schema")
+
+        assert caught.value.tenant_id == "acme:acme"
+        mock_backend.deploy_schemas.assert_not_called()
+        assert mock_config_manager.store.compare_and_set_config.call_args_list == []
+
+    def test_a_delete_landing_after_the_decision_is_refused_under_the_lease(
+        self, schema_registry, mock_backend, mock_config_manager
+    ):
+        """The marker is re-read under the backend's deploy lease, before it
+        activates: a delete that marked the tenant after this deploy decided
+        stops it there."""
+        from cogniverse_core.common.tenant_utils import TenantDeletedError
+
+        activated = []
+
+        def deploy_under_lease(schemas):
+            self._mark_deleted(mock_config_manager, "acme:acme")
+            schema_registry.confirm_decided_revisions(schemas)
+            activated.append([schema["name"] for schema in schemas])
+            return True
+
+        mock_backend.deploy_schemas.side_effect = deploy_under_lease
+
+        with pytest.raises(TenantDeletedError) as caught:
+            schema_registry.deploy_schema("acme", "test_schema")
+
+        assert caught.value.tenant_id == "acme:acme"
+        assert activated == []
+        writes = mock_config_manager.store.compare_and_set_config.call_args_list
+        # The journaled intent is retired; no registration was written.
+        assert [call.kwargs["service"] for call in writes] == [
+            "schema_deployment_intents",
+            "schema_deployment_intents",
+        ]
+        assert writes[1].kwargs["config_value"]["state"] == "absent"
 
 
 class TestSchemaRegistryTracking:

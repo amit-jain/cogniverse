@@ -3,14 +3,19 @@ through real FastAPI → real Mem0 → real Vespa."""
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.routers import admin
 
 pytestmark = pytest.mark.integration
+
+WORKER_ID = "session-test-worker"
 
 
 def _seed_session_memory(
@@ -40,11 +45,27 @@ def _seed_permanent_memory(
 
 
 @pytest.fixture
-def admin_session_client(memory_manager):
+def admin_session_client(memory_manager, workflow_state_redis_url):
+    """The admin routes, with this process as the one worker on its own
+    cluster-events channel, started on the client's event loop."""
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
-    yield TestClient(app), memory_manager
+    events = ClusterEvents(
+        workflow_state_redis_url,
+        WORKER_ID,
+        {"session_closed": admin.sweep_closed_session},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+    )
+    previous = admin._cluster_events
+    with TestClient(app) as client:
+        client.portal.call(events.start)
+        admin.set_cluster_events(events)
+        try:
+            yield client, memory_manager
+        finally:
+            admin.set_cluster_events(previous)
+            client.portal.call(events.close)
     try:
         memory_manager.clear_agent_memory(
             memory_manager.tenant_id, "session_scratch_writer"
@@ -119,6 +140,7 @@ class TestFanoutCloseEndpoint:
         assert tenant in body["per_tenant"], body
         assert body["per_tenant"][tenant] == {"session_scratch": 2}
         assert body["total_deleted"] == 2
+        assert body["workers"] == [WORKER_ID]
 
         surviving = {
             m["id"] for m in mm.get_all_memories(tenant, "session_scratch_writer")
@@ -133,3 +155,4 @@ class TestFanoutCloseEndpoint:
         body = resp.json()
         assert body["total_deleted"] == 0
         assert body["per_tenant"] == {}
+        assert body["workers"] == [WORKER_ID]

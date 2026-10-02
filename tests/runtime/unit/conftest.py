@@ -40,3 +40,37 @@ def harness_key_config_store(monkeypatch):
     monkeypatch.setattr(tenant_manager, "_config_manager", ConfigManager(store=store))
     assert tenant_manager._config_manager.store is store
     return store
+
+
+class InProcessClusterEvents:
+    """The cluster-events channel with this process as its only worker: each
+    event runs its handler here and answers as one acknowledgement."""
+
+    worker_id = "unit-worker"
+
+    def __init__(self, handlers):
+        self._handlers = handlers
+        self.published: list = []
+
+    async def publish(self, kind, payload, *, timeout_s):
+        import asyncio
+
+        self.published.append((kind, payload))
+        return {self.worker_id: await asyncio.to_thread(self._handlers[kind], payload)}
+
+
+@pytest.fixture
+def in_process_cluster_events(monkeypatch):
+    """Wire tenant deletes and session closes to an in-process channel."""
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.routers import admin
+
+    events = InProcessClusterEvents(
+        {
+            "tenant_deleted": tenant_manager.release_deleted_tenant,
+            "session_closed": admin.sweep_closed_session,
+        }
+    )
+    monkeypatch.setattr(tenant_manager, "_cluster_events", events)
+    monkeypatch.setattr(admin, "_cluster_events", events)
+    return events

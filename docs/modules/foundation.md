@@ -1062,9 +1062,9 @@ cache (keyed `(tenant, agent_name)`; both capacity 64) in
 `agent_dispatcher.py`, the per-tenant `GraphManager` cache (capacity 64) in
 `main.py`, and the per-tenant `ArtifactManager` cache (capacity 64) in
 `routers/agents.py` — and calls
-`evict_tenant_from_registered_caches` from `delete_tenant_internal` so a
-deleted tenant's cached state is released as part of the delete, not left
-to linger.
+`evict_tenant_from_registered_caches` from `release_deleted_tenant`, the
+handler every runtime worker process runs for a tenant delete, so a deleted
+tenant's cached state is released as part of the delete, not left to linger.
 
 ### Refreshing values off the request thread
 

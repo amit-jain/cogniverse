@@ -98,7 +98,7 @@ cogniverse_core/
 │   ├── models/                  # Model loaders (see Model Loaders section)
 │   ├── media/                   # Media access abstraction (see Media Access section)
 │   ├── utils/                   # Utility functions (see Utility Modules section)
-│   ├── tenant_utils.py          # Re-exports foundation tenant helpers; hosts assert_tenant_exists
+│   ├── tenant_utils.py          # Re-exports foundation tenant helpers; hosts assert_tenant_exists and tenant deletion markers
 │   ├── dspy_module_registry.py  # Re-exports foundation DSPyModuleRegistry / DSPyOptimizerRegistry
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin
 │   ├── health_mixin.py          # Health check mixin
@@ -1569,7 +1569,7 @@ microseconds, or nanoseconds; normalization preserves dates before 1970.
 | `Retention` | Behaviour |
 |---|---|
 | `PERMANENT` | Never auto-deleted. |
-| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)`. Two HTTP endpoints reach it: `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}` (single tenant) and `POST /admin/sessions/{session_id}/close` (fan-out across every warm tenant — the gateway's logout / disconnect hook). Writes MUST carry `metadata["session_id"]` (promoted to a fast-search Vespa field at insert time, so `drop_session` filters the store server-side instead of scanning the tenant's memories) or the schema rejects them, AND the kind's `pinnable_by` must be `Pinnable.NOBODY` (the schema constructor refuses any other value, since pinning a session memory and then losing it on session close would be a foot-gun). The default registry ships `kind="session_scratch"` for this. |
+| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)`. Two HTTP endpoints reach it: `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}` (single tenant) and `POST /admin/sessions/{session_id}/close` (fan-out across every warm tenant of every runtime worker process — the gateway's logout / disconnect hook). Writes MUST carry `metadata["session_id"]` (promoted to a fast-search Vespa field at insert time, so `drop_session` filters the store server-side instead of scanning the tenant's memories) or the schema rejects them, AND the kind's `pinnable_by` must be `Pinnable.NOBODY` (the schema constructor refuses any other value, since pinning a session memory and then losing it on session close would be a foot-gun). The default registry ships `kind="session_scratch"` for this. |
 | `EPHEMERAL_DAYS(N)` | Soft-deleted (`metadata.archived=true`) when `created_at` is older than `N` days; hard-deleted at `2N` days. Restoreable via the admin restore endpoint inside the soft-delete window. |
 | `SCHEMA_DRIVEN` | Defers to the schema's `cleanup_hook` callable. |
 

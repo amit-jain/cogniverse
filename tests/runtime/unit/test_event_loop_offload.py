@@ -207,6 +207,7 @@ async def test_admin_schema_deploy_offloaded(monkeypatch):
 
     cm = MagicMock()
     cm.get_backend_profile.return_value = SimpleNamespace(schema_name="wiki_pages")
+    cm.store.get_immutable_config.return_value = None  # tenant not deleted
 
     backend = MagicMock()
     backend.schema_exists.return_value = False
@@ -586,7 +587,9 @@ async def test_admin_drop_session_offloaded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_close_session_sweep_offloaded(monkeypatch):
+async def test_admin_close_session_sweep_offloaded(
+    monkeypatch, in_process_cluster_events
+):
     from types import SimpleNamespace
 
     from cogniverse_runtime.routers import admin

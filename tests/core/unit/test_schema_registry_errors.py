@@ -17,8 +17,11 @@ def test_deploy_schema_load_failure_raises_typed_chained_error():
     loader = MagicMock()
     cause = FileNotFoundError("no such schema: video_missing")
     loader.load_schema.side_effect = cause
+    config_manager = MagicMock()
+    # No tenant deletion marker stored.
+    config_manager.store.get_immutable_config.return_value = None
     registry = SchemaRegistry(
-        config_manager=MagicMock(), backend=MagicMock(), schema_loader=loader
+        config_manager=config_manager, backend=MagicMock(), schema_loader=loader
     )
     registry.schema_exists = MagicMock(return_value=False)
 

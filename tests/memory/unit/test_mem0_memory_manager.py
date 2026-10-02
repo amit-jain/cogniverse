@@ -1926,3 +1926,83 @@ class TestUpdateValidatesProvenanceBeforeWriting:
         manager.memory.update.assert_not_called()
         manager._provenance_store.attach.assert_not_called()
         manager._provenance_store.delete.assert_not_called()
+
+
+class TestDeletedTenantWrites:
+    """A tenant marked deleted gets no memory written by any manager this
+    process still holds for it."""
+
+    TENANT = "deletedwrites:deletedwrites"
+
+    def _manager(self, *, deleted: bool):
+        from cogniverse_core.common.tenant_utils import mark_tenant_deleted
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        Mem0MemoryManager._instances.pop(self.TENANT, None)
+        manager = Mem0MemoryManager(tenant_id=self.TENANT)
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+        manager.memory = MagicMock()
+        manager._provenance_store = MagicMock()
+        manager._provenance_lease_store = InMemoryConfigStore()
+        manager._resolve_backend = MagicMock(
+            side_effect=AssertionError("a backend was resolved for the write")
+        )
+        if deleted:
+            mark_tenant_deleted(manager._provenance_lease_store, self.TENANT)
+        return manager
+
+    @staticmethod
+    def _message(tenant):
+        return (
+            f"Tenant '{tenant}' has been deleted; its schemas and memories are "
+            "not written until the tenant is created again"
+        )
+
+    def test_add_update_and_restore_are_refused_before_touching_mem0(self):
+        from cogniverse_core.common.tenant_utils import TenantDeletedError
+
+        manager = self._manager(deleted=True)
+        calls = [
+            lambda: manager.add_memory(
+                content="c", tenant_id=self.TENANT, agent_name="a", infer=False
+            ),
+            lambda: manager.update_memory(
+                memory_id="m1", content="c", tenant_id=self.TENANT, agent_name="a"
+            ),
+            lambda: manager.restore_archived_memory("m1"),
+        ]
+        messages = []
+        for call in calls:
+            with pytest.raises(TenantDeletedError) as caught:
+                call()
+            messages.append(str(caught.value))
+
+        assert messages == [self._message(self.TENANT)] * 3
+        assert manager.memory.method_calls == []
+        assert manager._resolve_backend.call_count == 0
+
+    def test_a_tenant_not_marked_writes_through(self):
+        manager = self._manager(deleted=False)
+        manager.memory.add.return_value = {"results": [{"id": "m1", "event": "ADD"}]}
+
+        manager.add_memory(
+            content="kept", tenant_id=self.TENANT, agent_name="a", infer=False
+        )
+
+        assert manager.memory.add.call_count == 1
+
+    def test_an_unreadable_marker_refuses_the_write(self):
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+        manager = self._manager(deleted=False)
+
+        def unreadable(*coordinates):
+            raise ConfigStoreUnavailableError("config store did not answer")
+
+        manager._provenance_lease_store.get_immutable_config = unreadable
+
+        with pytest.raises(ConfigStoreUnavailableError):
+            manager.add_memory(
+                content="c", tenant_id=self.TENANT, agent_name="a", infer=False
+            )
+        assert manager.memory.method_calls == []

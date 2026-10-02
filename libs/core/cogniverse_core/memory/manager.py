@@ -26,6 +26,7 @@ from mem0 import Memory
 from cogniverse_core.common.tenant_utils import (
     SYSTEM_TENANT_ID,
     canonical_tenant_id,
+    raise_if_tenant_deleted,
 )
 from cogniverse_core.memory._timestamps import to_epoch_seconds
 from cogniverse_core.registries.backend_registry import leased_backend
@@ -671,9 +672,14 @@ class Mem0MemoryManager:
         metadata: Optional[Dict[str, Any]] = None,
         infer: bool = True,
     ) -> Optional[str]:
-        """Add a memory while serializing its primary and provenance writes."""
+        """Add a memory while serializing its primary and provenance writes.
+
+        Raises ``TenantDeletedError`` for a tenant marked deleted, before
+        anything is written or deployed.
+        """
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
+        self._refuse_deleted_tenant()
 
         # schema enforcement. When a registry is wired, every write
         # is checked against the schema for the metadata.kind:
@@ -1054,6 +1060,18 @@ class Mem0MemoryManager:
         lease = getattr(self._provenance_lease_local, "lease", None)
         if lease is not None:
             lease.ensure_owned()
+
+    def _refuse_deleted_tenant(self) -> None:
+        """Raise ``TenantDeletedError`` when this manager's tenant was deleted.
+
+        Read from the config store on every write: a manager another process's
+        delete left warm here, and a write queued before that delete, are
+        refused rather than feeding (and so redeploying) the dropped schemas.
+        A store outage raises.
+        """
+        store = getattr(self, "_provenance_lease_store", None)
+        if store is not None:
+            raise_if_tenant_deleted(store, self._storage_tenant_id)
 
     def _prepare_indexed_writes(self) -> None:
         """Ensure the memory and provenance schemas can be fed, before the lease.
@@ -1914,6 +1932,7 @@ class Mem0MemoryManager:
         """
         if not self.memory:
             return False
+        self._refuse_deleted_tenant()
         self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._restore_archived_memory(memory_id)
@@ -1969,6 +1988,7 @@ class Mem0MemoryManager:
         # update can prove it has no indexed row to keep consistent. Updates
         # are off the hot path; provenance-free adds keep their lease-free
         # path.
+        self._refuse_deleted_tenant()
         self._prepare_indexed_writes()
         with self._provenance_write_ownership():
             return self._update_memory(
