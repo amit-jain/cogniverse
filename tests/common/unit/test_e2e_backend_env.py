@@ -50,7 +50,17 @@ def test_refuses_a_url_it_cannot_split():
     assert "VESPA_URL" in str(excinfo.value)
 
 
-def test_export_publishes_the_live_endpoint_not_the_dead_sentinel(monkeypatch):
+@pytest.fixture
+def isolated_environ(monkeypatch):
+    """A copy of the environment for the test: export_backend_env writes
+    os.environ itself, and a value it adds to the real environment would
+    point every later test in the session at the live cluster's Vespa."""
+    monkeypatch.setattr(backend_env.os, "environ", dict(backend_env.os.environ))
+
+
+def test_export_publishes_the_live_endpoint_not_the_dead_sentinel(
+    monkeypatch, isolated_environ
+):
     monkeypatch.delenv("TEST_BACKEND_URL", raising=False)
     monkeypatch.delenv("TEST_BACKEND_PORT", raising=False)
     monkeypatch.setenv("VESPA_URL", "http://localhost:33080")
@@ -60,7 +70,7 @@ def test_export_publishes_the_live_endpoint_not_the_dead_sentinel(monkeypatch):
     assert backend_env.os.environ["TEST_BACKEND_PORT"] != DEAD_SENTINEL
 
 
-def test_export_does_not_override_an_explicit_value(monkeypatch):
+def test_export_does_not_override_an_explicit_value(monkeypatch, isolated_environ):
     monkeypatch.setenv("TEST_BACKEND_URL", "http://explicit")
     monkeypatch.setenv("TEST_BACKEND_PORT", "44444")
     monkeypatch.setenv("VESPA_URL", "http://localhost:33080")
