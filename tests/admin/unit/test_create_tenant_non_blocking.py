@@ -8,8 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.admin.models import CreateTenantRequest
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -31,6 +33,9 @@ async def test_create_tenant_keeps_loop_responsive_during_deploy(monkeypatch):
         schema_registry=SimpleNamespace(deploy_schemas=deploy),
     )
     monkeypatch.setattr(tenant_manager, "get_backend", lambda: fake)
+    monkeypatch.setattr(
+        tenant_manager, "_config_manager", ConfigManager(store=InMemoryConfigStore())
+    )
     bases = ["agent_memories", "provenance", "wiki_pages"]
     creation = asyncio.create_task(
         tenant_manager.create_tenant(
