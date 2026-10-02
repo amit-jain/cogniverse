@@ -451,14 +451,14 @@ async def test_the_startup_migration_retries_a_held_lease_and_names_a_refused_te
     peer = SchemaDeployLease(store, heartbeat=True)
     assert peer.acquire() is peer
     monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 2.0)
-    monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 1.0)
+    monkeypatch.setattr(runtime_main, "SCHEMA_MIGRATION_RETRY_SECONDS", 1.0)
     caplog.set_level("INFO", logger=runtime_main.logger.name)
 
     def ours(record) -> bool:
         return record.name == runtime_main.logger.name
 
     migration = asyncio.create_task(
-        runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
+        runtime_main._migrate_drifted_schemas(lambda: registry)
     )
     try:
         async with asyncio.timeout(60):
@@ -480,13 +480,13 @@ async def test_the_startup_migration_retries_a_held_lease_and_names_a_refused_te
         if ours(record) and record.levelname == "WARNING"
     ]
     assert warnings == [
-        "Migration of drifted provenance schemas did not get the deployment lease "
+        "Migration of drifted schemas did not get the deployment lease "
         f"(Vespa deployment lease still held by {peer.holder!r} after 2.0s; "
         "refusing to replace the application package concurrently with another "
         "deployer); retrying in 1s"
     ]
     [redeployed] = [
-        record.args[1]
+        record.args[0]
         for record in caplog.records
         if ours(record) and record.levelname == "INFO"
     ]
@@ -501,7 +501,7 @@ async def test_the_startup_migration_retries_a_held_lease_and_names_a_refused_te
     ]
     assert len(refusals) == 1
     assert refusals[0].startswith(
-        f"Migration of drifted provenance schemas could not redeploy {refused_schema} "
+        f"Migration of drifted schemas could not redeploy {refused_schema} "
         f"for tenant {refused}: "
     )
     assert "Vespa refused the application package" in refusals[0]

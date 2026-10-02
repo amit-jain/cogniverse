@@ -248,7 +248,7 @@ helm upgrade cogniverse ./charts/cogniverse \
   --values values.prod.yaml
 ```
 
-Three behaviors to know during a rollout — each is deliberate and easy
+Four behaviors to know during a rollout — each is deliberate and easy
 to misread as a failure:
 
 **Preflight: confirm the cluster has no orphan schemas.**
@@ -277,6 +277,20 @@ startup succeeds. `Running` + `0/1 Ready` inside that window is normal;
 deleting the pod to "unstick" it restarts convergence from zero.
 Investigate the pod logs only once the budget is exhausted and the
 probe itself has restarted the pod.
+
+**Tenant schemas move to the release's definitions after startup.** Once
+a runtime pod has started, it redeploys every tenant schema registered with
+a definition other than the one the release ships in `configs/schemas/`,
+one application package per tenant, while it already serves. A change Vespa
+refuses without a validation override stays unapplied and is reported. Once
+the rollout has replaced every pod, an empty `drifted` list means every
+tenant runs the shipped definitions:
+
+```bash
+curl -s "$RUNTIME_URL/admin/schemas/drift" | jq .
+```
+
+See [Schema changes in a release](multi-tenant-ops.md#schema-changes-in-a-release).
 
 **Worker restarts spend a job's redelivery budget.** Killing an
 ingestion worker mid-job — which every rollout does — strands the job

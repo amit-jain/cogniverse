@@ -124,13 +124,16 @@ flowchart TD
 
 ### Detailed Processing Steps:
 
-1. **Schema Deployment** (First time or schema updates):
+1. **Schema Deployment** (first time for a tenant):
    ```bash
    RUNTIME_URL=http://localhost:8080
    curl -sfX POST "$RUNTIME_URL/admin/profiles/<profile>/deploy" \
      -H 'Content-Type: application/json' \
      -d '{"tenant_id": "<tenant>"}'
    ```
+   - A changed file in `configs/schemas/` reaches tenants that already have
+     the schema at runtime startup, through the
+     [schema drift migration](../modules/core.md#schema-drift-migration)
    - Reads the schema JSON from `configs/schemas/` via `FilesystemSchemaLoader`
    - Deploys via `SchemaRegistry.deploy_schema` so the package is the
      union of the new schema + everything already live in the cluster

@@ -419,6 +419,12 @@ RuntimeError: Schema deployment failed
 Mismatch between code expectations and deployed schema.
 
 **Solution:**
+
+`GET /admin/schemas/drift` lists tenant schemas still on a definition other
+than the shipped one, and the reason Vespa refused any the startup migration
+could not redeploy (see
+[Schema changes in a release](multi-tenant-ops.md#schema-changes-in-a-release)).
+
 ```bash
 # Re-deploy schema for the affected tenant
 RUNTIME_URL=http://localhost:8000

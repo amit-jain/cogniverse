@@ -5,17 +5,21 @@ Facade over ConfigManager that provides schema-specific operations.
 Ensures all schemas are tracked and can be redeployed together.
 """
 
+import hashlib
+import json
 import logging
 import threading
 import weakref
-from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
 
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, canonical_tenant_id
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
     RegistryConflictError,
     RegistryStorageError,
+    SchemaChangeRefusedError,
     SchemaConvergenceError,
     SchemaLoadError,
     SchemaRegistryInitializationError,
@@ -27,6 +31,8 @@ from cogniverse_core.registries.schema_deploy_lease import (
 )
 from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
 from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_sdk.interfaces.schema_loader import SchemaNotFoundException
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +40,9 @@ _SCHEMA_INTENT_GRACE_S = 90
 
 # ConfigStore service the registry rows and the deployment journal live under.
 SCHEMA_REGISTRY_SERVICE = "schema_registry"
+# ConfigStore service, under the system tenant, holding one record per tenant
+# schema whose redeploy to the shipped definition the backend refused.
+SCHEMA_REFUSALS_SERVICE = "schema_migration_refusals"
 
 # Age at which a DeployedSchemaNames entry is re-read on a background thread
 # while it keeps answering.
@@ -47,12 +56,18 @@ DEPLOYED_SCHEMAS_MAX_TENANTS = 512
 
 def _same_definition(stored: str, shipped: str) -> bool:
     """Whether a registered schema definition matches the shipped one."""
-    import json
-
     try:
         return json.loads(stored) == json.loads(shipped)
     except (TypeError, ValueError):
         return False
+
+
+def _definition_digest(definition: str) -> str:
+    """SHA-256 of a schema definition's canonical JSON."""
+    canonical = json.dumps(
+        json.loads(definition), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -68,12 +83,26 @@ class SchemaInfo:
 
 
 @dataclass(frozen=True)
-class DriftedSchemaFailure:
-    """One tenant's drifted schema whose redeploy failed."""
+class SchemaRefusal:
+    """A tenant schema whose redeploy to the shipped definition the backend
+    refused (``SchemaChangeRefusedError``); nothing of it was applied."""
 
     tenant_id: str
+    base_schema_name: str
     schema_name: str
     error: str
+    refused_at: str
+
+
+@dataclass(frozen=True)
+class DriftedSchema:
+    """A registered tenant schema whose definition differs from the shipped
+    one, with the refusal recorded for redeploying it to that definition."""
+
+    tenant_id: str
+    base_schema_name: str
+    schema_name: str
+    refusal: Optional[SchemaRefusal]
 
 
 @dataclass(frozen=True)
@@ -81,9 +110,120 @@ class DriftedSchemaRedeploy:
     """Outcome of :meth:`SchemaRegistry.redeploy_drifted_schemas`."""
 
     redeployed: List[str]
-    failed: List[DriftedSchemaFailure]
+    refused: List[SchemaRefusal]
     # Drifted schemas left undeployed because the caller asked to stop.
     skipped: List[str] = field(default_factory=list)
+
+
+def _schema_info(row: Dict[str, Any]) -> SchemaInfo:
+    return SchemaInfo(
+        tenant_id=row["tenant_id"],
+        base_schema_name=row["base_schema_name"],
+        full_schema_name=row["full_schema_name"],
+        schema_definition=row["schema_definition"],
+        config=row.get("config", {}),
+        deployment_time=row["deployment_time"],
+    )
+
+
+def _read_registered_schemas(config_manager) -> Dict[tuple, SchemaInfo]:
+    """Every tenant's registered schema, keyed by (tenant, base schema).
+
+    Raises SchemaRegistryInitializationError when storage cannot be read.
+    """
+    try:
+        rows = config_manager.store.list_all_configs(
+            scope=ConfigScope.SCHEMA, service=SCHEMA_REGISTRY_SERVICE
+        )
+    except Exception as exc:
+        message = (
+            "Cannot initialize SchemaRegistry: failed to read schema storage: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        logger.error(message)
+        raise SchemaRegistryInitializationError(message) from exc
+    return {
+        (row.config_value["tenant_id"], row.config_value["base_schema_name"]): (
+            _schema_info(row.config_value)
+        )
+        for row in rows
+        if not row.config_value.get("deleted", False)
+    }
+
+
+def _shipped_definition(schema_loader, info: SchemaInfo) -> Optional[str]:
+    """The definition ``schema_loader`` ships for ``info``'s base schema,
+    named for its tenant, or None when the loader does not ship it."""
+    try:
+        definition = schema_loader.load_schema(info.base_schema_name)
+    except SchemaNotFoundException:
+        return None
+    return json.dumps({**definition, "name": info.full_schema_name})
+
+
+def _drifted(infos: List[SchemaInfo], schema_loader) -> List[Tuple[SchemaInfo, str]]:
+    """Each registered schema whose definition differs from the one
+    ``schema_loader`` ships, with that shipped definition named for it.
+
+    A schema the loader does not ship has nothing to differ from and is left
+    out; any other loader failure raises.
+    """
+    drifted = []
+    for info in infos:
+        shipped = _shipped_definition(schema_loader, info)
+        if shipped is not None and not _same_definition(
+            info.schema_definition, shipped
+        ):
+            drifted.append((info, shipped))
+    return drifted
+
+
+def drifted_schemas(config_manager, schema_loader) -> List[DriftedSchema]:
+    """Every registered tenant schema whose definition differs from the one
+    ``schema_loader`` ships, ordered by tenant and schema name.
+
+    Each carries the refusal the drift migration recorded for redeploying it
+    to this shipped definition. Without one, the migration has not reached
+    it yet, or what it was refused was another shipped definition. A storage
+    read failure raises, never an empty listing.
+    """
+    registered = _read_registered_schemas(config_manager).values()
+    try:
+        records = config_manager.store.list_configs(
+            tenant_id=SYSTEM_TENANT_ID,
+            scope=ConfigScope.SCHEMA,
+            service=SCHEMA_REFUSALS_SERVICE,
+        )
+    except Exception as exc:
+        raise RegistryStorageError(
+            f"Cannot read schema migration refusals: {type(exc).__name__}: {exc}"
+        ) from exc
+    refusals = {record.config_key: record.config_value for record in records}
+    listed = []
+    for info, shipped in _drifted(list(registered), schema_loader):
+        record = refusals.get(info.full_schema_name)
+        refusal = None
+        if (
+            record is not None
+            and record["tenant_id"] == info.tenant_id
+            and record["definition_sha256"] == _definition_digest(shipped)
+        ):
+            refusal = SchemaRefusal(
+                tenant_id=record["tenant_id"],
+                base_schema_name=record["base_schema_name"],
+                schema_name=record["schema_name"],
+                error=record["error"],
+                refused_at=record["refused_at"],
+            )
+        listed.append(
+            DriftedSchema(
+                tenant_id=info.tenant_id,
+                base_schema_name=info.base_schema_name,
+                schema_name=info.full_schema_name,
+                refusal=refusal,
+            )
+        )
+    return sorted(listed, key=lambda drifted: (drifted.tenant_id, drifted.schema_name))
 
 
 def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[str]:
@@ -290,48 +430,12 @@ class SchemaRegistry:
             SchemaRegistryInitializationError: If storage cannot be read
         """
         with SchemaRegistry._storage_read_lock:
-            try:
-                # Load all schemas across all tenants using generic ConfigManager methods
-                from cogniverse_sdk.interfaces.config_store import ConfigScope
-
-                all_schema_data = self._config_manager.store.list_all_configs(
-                    scope=ConfigScope.SCHEMA,
-                    service=SCHEMA_REGISTRY_SERVICE,
-                )
-            except Exception as exc:
-                message = (
-                    "Cannot initialize SchemaRegistry: failed to read schema storage: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                logger.error(message)
-                raise SchemaRegistryInitializationError(message) from exc
-
-            # Rebuild into a fresh dict so a peer's deletions are reflected on
-            # reload; swap in only after a successful load so a failure falls
-            # back to the existing cache rather than wiping it.
-            loaded: Dict[tuple, SchemaInfo] = {}
-            for entry in all_schema_data:
-                schema_data = entry.config_value
-                # Skip deleted schemas
-                if schema_data.get("deleted", False):
-                    continue
-
-                tenant_id = schema_data["tenant_id"]
-                base_schema_name = schema_data["base_schema_name"]
-                key = (tenant_id, base_schema_name)
-
-                loaded[key] = SchemaInfo(
-                    tenant_id=tenant_id,
-                    base_schema_name=base_schema_name,
-                    full_schema_name=schema_data["full_schema_name"],
-                    schema_definition=schema_data["schema_definition"],
-                    config=schema_data.get("config", {}),
-                    deployment_time=schema_data["deployment_time"],
-                )
-
+            # A fresh dict so a peer's deletions are reflected on reload,
+            # swapped in only after a successful load so a failure keeps the
+            # existing cache rather than wiping it.
+            loaded = _read_registered_schemas(self._config_manager)
             self._schemas = loaded
             logger.info(f"Loaded {len(loaded)} schemas from storage")
-            return
 
     def register_schema(
         self,
@@ -364,10 +468,8 @@ class SchemaRegistry:
                 config={"profile": "video_colpali_smol500_mv_frame"}
             )
         """
-        from datetime import datetime, timezone
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         # Canonicalize so register/lookup/deploy paths converge on the
         # same storage key (matches deploy_schema's canonicalization).
@@ -521,83 +623,150 @@ class SchemaRegistry:
 
     def redeploy_drifted_schemas(
         self,
-        base_schema_name: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> DriftedSchemaRedeploy:
-        """Redeploy every tenant's ``base_schema_name`` registered with a
-        definition other than the one the schema loader ships.
+        """Redeploy every tenant schema registered with a definition other
+        than the one the schema loader ships.
 
         A release that changes a shipped schema otherwise leaves each tenant's
         copy to whichever request first ensures it, which then redeploys the
-        application package from the request path. Runs the normal deploy for
-        each drifted tenant, so the redeploy is decided again from the stored
-        row under the deploy lock, and only while that row is registered: a
-        tenant whose schema a peer deleted since the listing is skipped, not
-        deployed again. A tenant whose redeploy is refused (a revision conflict
-        or a backend refusal) is logged and reported in ``failed``, and the
-        remaining tenants are still redeployed; any other error propagates,
-        including the ``LeaseWaitTimeout`` of a deploy lease a peer held for
-        the whole wait, which is nothing to record against a tenant.
-        ``should_stop`` is asked before each tenant's redeploy; once it
-        answers True no further redeploy starts, and the tenants left are
-        reported in ``skipped``.
+        application package from the request path. A schema the loader does
+        not ship is left alone. Each drifted tenant gets one normal deploy of
+        all its drifted schemas, under the backend's deployment lease from the
+        decision through the registration: which schemas still differ is read
+        again from the stored rows inside the lease, so one a peer redeployed
+        or deleted meanwhile is not deployed, and no other deployer builds a
+        package from the registry while this tenant's new definitions are live
+        but not yet registered. A package the backend refuses
+        (``SchemaChangeRefusedError``) is deployed again one schema at a time,
+        so the tenant's other schemas still land; each schema refused on its
+        own is left as it is, logged, recorded under the
+        ``SCHEMA_REFUSALS_SERVICE`` of the system tenant (read by
+        :func:`drifted_schemas`) and reported in ``refused``. Any other error
+        propagates, including the ``LeaseWaitTimeout`` of a lease a peer held
+        for the whole wait, and nothing is recorded against a tenant for it:
+        a later call reads the drift again. ``should_stop`` is asked before
+        each tenant's redeploy; once it answers True no further redeploy
+        starts, and the drifted schemas left are reported in ``skipped``.
         """
-        import json
-
-        drifted = []
-        for info in self._get_all_schemas(strict=True):
-            if info.base_schema_name != base_schema_name:
-                continue
-            shipped = self._schema_loader.load_schema(base_schema_name)
-            shipped["name"] = info.full_schema_name
-            if not _same_definition(info.schema_definition, json.dumps(shipped)):
-                drifted.append(info)
+        by_tenant: Dict[str, List[str]] = {}
+        for info, _ in _drifted(
+            self._get_all_schemas(strict=True), self._schema_loader
+        ):
+            by_tenant.setdefault(info.tenant_id, []).append(info.base_schema_name)
+        tenants = list(by_tenant.items())
         redeployed: List[str] = []
-        failed: List[DriftedSchemaFailure] = []
-        for position, info in enumerate(drifted):
+        refused: List[SchemaRefusal] = []
+        for position, (tenant_id, bases) in enumerate(tenants):
             if should_stop is not None and should_stop():
-                skipped = [left.full_schema_name for left in drifted[position:]]
+                skipped = [
+                    self._full_name(tenant, base)
+                    for tenant, left in tenants[position:]
+                    for base in left
+                ]
                 logger.info(
                     f"Stopped before redeploying {len(skipped)} drifted "
-                    f"'{base_schema_name}' schema(s): {skipped}"
+                    f"schema(s): {skipped}"
                 )
                 return DriftedSchemaRedeploy(
-                    redeployed=redeployed, failed=failed, skipped=skipped
+                    redeployed=redeployed, refused=refused, skipped=skipped
                 )
-            logger.info(
-                f"Redeploying '{info.full_schema_name}' to the shipped "
-                f"'{base_schema_name}' definition"
+            with self._backend.deployment_lease():
+                names, refusals = self._redeploy_drifted(tenant_id, bases)
+            redeployed.extend(names)
+            refused.extend(refusals)
+        return DriftedSchemaRedeploy(redeployed=redeployed, refused=refused)
+
+    @staticmethod
+    def _full_name(tenant_id: str, base_schema_name: str) -> str:
+        return f"{base_schema_name}_{canonical_tenant_id(tenant_id).replace(':', '_')}"
+
+    def _redeploy_drifted(
+        self, tenant_id: str, bases: List[str]
+    ) -> Tuple[List[str], List[SchemaRefusal]]:
+        """Deploy those of ``bases`` whose stored row still differs from the
+        shipped definition, as one package. Runs under the deployment lease."""
+        shipped: Dict[str, str] = {}
+        for base in bases:
+            stored = self._stored_schema(tenant_id, base)
+            if stored is None:
+                continue
+            definition = _shipped_definition(self._schema_loader, stored)
+            if definition is not None and not _same_definition(
+                stored.schema_definition, definition
+            ):
+                shipped[base] = definition
+        if not shipped:
+            return [], []
+        drifted = list(shipped)
+        logger.info(
+            f"Redeploying {[self._full_name(tenant_id, base) for base in drifted]} "
+            f"for tenant '{tenant_id}' to the shipped definitions"
+        )
+        try:
+            return (
+                self.deploy_schemas(tenant_id, drifted, require_registered=True),
+                [],
             )
-            try:
-                redeployed.extend(
-                    self.deploy_schemas(
-                        info.tenant_id, [base_schema_name], require_registered=True
-                    )
-                )
-            except (SchemaRevisionConflictError, BackendDeploymentError) as exc:
-                if (
-                    isinstance(exc, SchemaRevisionConflictError)
-                    and exc.peer_revision == "tombstone"
-                    and not exc.activated
-                ):
-                    logger.info(
-                        f"'{info.full_schema_name}' was deleted by another process "
-                        f"before its redeploy activated; skipped"
-                    )
-                    continue
-                logger.warning(
-                    f"Redeploy of '{info.full_schema_name}' for tenant "
-                    f"'{info.tenant_id}' failed; continuing with the remaining "
-                    f"tenants: {exc}"
-                )
-                failed.append(
-                    DriftedSchemaFailure(
-                        tenant_id=info.tenant_id,
-                        schema_name=info.full_schema_name,
-                        error=str(exc),
-                    )
-                )
-        return DriftedSchemaRedeploy(redeployed=redeployed, failed=failed)
+        except SchemaChangeRefusedError as exc:
+            if len(drifted) > 1:
+                redeployed: List[str] = []
+                refused: List[SchemaRefusal] = []
+                for base in drifted:
+                    names, refusals = self._redeploy_drifted(tenant_id, [base])
+                    redeployed.extend(names)
+                    refused.extend(refusals)
+                return redeployed, refused
+            return [], [self._record_refusal(tenant_id, drifted[0], shipped, exc)]
+        except SchemaRevisionConflictError as exc:
+            if exc.peer_revision != "tombstone" or exc.activated:
+                raise
+            logger.info(
+                f"'{exc.schema_name}' was deleted by another process before its "
+                f"redeploy activated; skipped"
+            )
+            left = [
+                base
+                for base in drifted
+                if self._full_name(tenant_id, base) != exc.schema_name
+            ]
+            return self._redeploy_drifted(tenant_id, left) if left else ([], [])
+
+    def _record_refusal(
+        self,
+        tenant_id: str,
+        base_schema_name: str,
+        shipped: Dict[str, str],
+        exc: SchemaChangeRefusedError,
+    ) -> SchemaRefusal:
+        refusal = SchemaRefusal(
+            tenant_id=canonical_tenant_id(tenant_id),
+            base_schema_name=base_schema_name,
+            schema_name=self._full_name(tenant_id, base_schema_name),
+            error=str(exc),
+            refused_at=datetime.now(timezone.utc).isoformat(),
+        )
+        logger.warning(
+            f"Redeploy of '{refusal.schema_name}' for tenant '{refusal.tenant_id}' "
+            f"was refused and is left as it is: {exc}"
+        )
+        try:
+            self._config_manager.store.set_config(
+                tenant_id=SYSTEM_TENANT_ID,
+                scope=ConfigScope.SCHEMA,
+                service=SCHEMA_REFUSALS_SERVICE,
+                config_key=refusal.schema_name,
+                config_value={
+                    **asdict(refusal),
+                    "definition_sha256": _definition_digest(shipped[base_schema_name]),
+                },
+            )
+        except Exception as store_exc:
+            raise RegistryStorageError(
+                f"Cannot record the refused redeploy of {refusal.schema_name!r}: "
+                f"{type(store_exc).__name__}: {store_exc}"
+            ) from store_exc
+        return refusal
 
     def deploy_schema(
         self,
@@ -624,16 +793,14 @@ class SchemaRegistry:
         tombstone when read under the deploy lock is skipped and left out of
         the result; a tombstone landing later is refused by the revision fence.
         A registered schema whose stored definition differs from the one the
-        schema loader supplies is redeployed with the loaded definition.
+        schema loader supplies is redeployed with the loaded definition; its
+        registration keeps the stored ``config`` unless one is passed.
         All intents stay pending until every registration succeeds. The backend
         owns package reconstruction and the single convergence wait.
         """
-        import json
         from collections import Counter
-        from datetime import datetime, timezone
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         self._validate_tenant_id(tenant_id)
         if not base_schema_names:
@@ -778,6 +945,8 @@ class SchemaRegistry:
                     registration = intent["registration"]
                 else:
                     decided_versions[name] = stored.version
+                    if config is None:
+                        registration["config"] = stored.config_value.get("config", {})
                 registrations.append(registration)
             if not registrations:
                 return result()
@@ -815,10 +984,15 @@ class SchemaRegistry:
                     raise BackendDeploymentError(f"Backend failed to deploy {subject}")
             except Exception as exc:
                 activated = isinstance(exc, SchemaConvergenceError)
-                deployment_error = (
-                    exc
-                    if isinstance(exc, (SchemaRevisionConflictError, LeaseWaitTimeout))
-                    else BackendDeploymentError(
+                if isinstance(exc, (SchemaRevisionConflictError, LeaseWaitTimeout)):
+                    deployment_error = exc
+                else:
+                    error_type = (
+                        SchemaChangeRefusedError
+                        if isinstance(exc, SchemaChangeRefusedError)
+                        else BackendDeploymentError
+                    )
+                    deployment_error = error_type(
                         f"Backend deployment failed for {subject}: {exc}. "
                         + (
                             "The schema is live; its registration completes by recovery."
@@ -826,7 +1000,6 @@ class SchemaRegistry:
                             else "The durable definition is retained for late activation."
                         )
                     )
-                )
                 if not activated:
                     for intent in intents.values():
                         try:
@@ -879,7 +1052,6 @@ class SchemaRegistry:
     def _peer_revision(self, tenant_id: str, base_schema_name: str) -> str:
         """``"tombstone"`` when the stored row is a deletion, else
         ``"registration"``."""
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         stored = self._config_manager.store.get_config(
             tenant_id=canonical_tenant_id(tenant_id),
@@ -902,7 +1074,6 @@ class SchemaRegistry:
         registration since is authoritative, so the deploy raises
         :class:`SchemaRevisionConflictError` instead of activating over it.
         """
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         for definition in schema_definitions:
             if "registry_version" not in definition:
@@ -1102,7 +1273,6 @@ class SchemaRegistry:
         outage raises (strict mode) — an outage must never read as "not
         deployed".
         """
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         tenant_id = canonical_tenant_id(tenant_id)
         try:
@@ -1124,15 +1294,7 @@ class SchemaRegistry:
         if stored is None or stored.config_value.get("deleted", False):
             self._schemas.pop(key, None)
             return None
-        row = stored.config_value
-        info = SchemaInfo(
-            tenant_id=row["tenant_id"],
-            base_schema_name=row["base_schema_name"],
-            full_schema_name=row["full_schema_name"],
-            schema_definition=row["schema_definition"],
-            config=row.get("config", {}),
-            deployment_time=row["deployment_time"],
-        )
+        info = _schema_info(stored.config_value)
         self._schemas[key] = info
         return info
 
@@ -1153,10 +1315,8 @@ class SchemaRegistry:
             # Unregister from registry
             registry.unregister_schema("test_tenant", "video_colpali_smol500_mv_frame")
         """
-        from datetime import datetime, timezone
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
-        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         # Canonicalize so register/deploy/exists/unregister all converge
         # on the same storage key.

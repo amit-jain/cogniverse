@@ -17,8 +17,8 @@ import pytest
 from fastapi import FastAPI
 
 from cogniverse_core.registries.schema_registry import (
-    DriftedSchemaFailure,
     DriftedSchemaRedeploy,
+    SchemaRefusal,
 )
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime import main as runtime_main
@@ -265,15 +265,25 @@ class _MigratingRegistry:
         self._outcomes = outcomes
         self.calls: list = []
 
-    def redeploy_drifted_schemas(self, base_schema_name: str, should_stop=None):
+    def redeploy_drifted_schemas(self, should_stop=None):
         import threading
 
-        self.calls.append((base_schema_name, threading.get_ident()))
+        self.calls.append(threading.get_ident())
         self.should_stop = should_stop
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
+
+
+def _refusal(tenant_id: str, schema_name: str, error: str) -> SchemaRefusal:
+    return SchemaRefusal(
+        tenant_id=tenant_id,
+        base_schema_name=schema_name.rsplit("_", 2)[0],
+        schema_name=schema_name,
+        error=error,
+        refused_at="2026-10-02T00:00:00+00:00",
+    )
 
 
 @pytest.mark.asyncio
@@ -286,24 +296,27 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
         [
             TimeoutError(_LEASE_HELD),
             DriftedSchemaRedeploy(
-                redeployed=["provenance_acme_acme"],
-                failed=[
-                    DriftedSchemaFailure(
-                        tenant_id="globex:globex",
-                        schema_name="provenance_globex_globex",
-                        error="peer deleted provenance_globex_globex",
+                redeployed=[
+                    "provenance_acme_acme",
+                    "video_colpali_smol500_mv_frame_acme_acme",
+                ],
+                refused=[
+                    _refusal(
+                        "globex:globex",
+                        "document_text_globex_globex",
+                        "Vespa refused the application package: field-type-change",
                     )
                 ],
             ),
         ]
     )
-    monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
+    monkeypatch.setattr(runtime_main, "SCHEMA_MIGRATION_RETRY_SECONDS", 0.05)
 
     with caplog.at_level("INFO", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
+        await runtime_main._migrate_drifted_schemas(lambda: registry)
 
-    assert [base for base, _ in registry.calls] == ["provenance", "provenance"]
-    assert all(thread != threading.get_ident() for _, thread in registry.calls)
+    assert len(registry.calls) == 2
+    assert all(thread != threading.get_ident() for thread in registry.calls)
     assert [
         (record.levelname, record.getMessage())
         for record in caplog.records
@@ -311,19 +324,19 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
     ] == [
         (
             "WARNING",
-            "Migration of drifted provenance schemas did not get the deployment "
-            f"lease ({_LEASE_HELD}); retrying in 0s",
+            "Migration of drifted schemas did not get the deployment lease "
+            f"({_LEASE_HELD}); retrying in 0s",
         ),
         (
             "INFO",
-            "Migration of drifted provenance schemas redeployed "
-            "['provenance_acme_acme']",
+            "Migration of drifted schemas redeployed ['provenance_acme_acme', "
+            "'video_colpali_smol500_mv_frame_acme_acme']",
         ),
         (
             "ERROR",
-            "Migration of drifted provenance schemas could not redeploy "
-            "provenance_globex_globex for tenant globex:globex: peer deleted "
-            "provenance_globex_globex",
+            "Migration of drifted schemas could not redeploy "
+            "document_text_globex_globex for tenant globex:globex: Vespa refused "
+            "the application package: field-type-change",
         ),
     ]
 
@@ -331,71 +344,146 @@ async def test_the_schema_migration_waits_out_a_held_lease_off_the_loop(
 def _migration_failures():
     from cogniverse_core.registries.exceptions import (
         BackendDeploymentError,
+        SchemaRegistryInitializationError,
         SchemaRevisionConflictError,
     )
 
     return [
         RuntimeError("Vespa refused the application package"),
-        BackendDeploymentError("Vespa refused the application package"),
+        BackendDeploymentError(
+            "Cannot enumerate Vespa-deployed schemas before deploy: connection refused"
+        ),
         SchemaRevisionConflictError(
             "provenance_acme_acme", "tombstone", activated=True
         ),
+        SchemaRegistryInitializationError("failed to read schema storage"),
     ]
 
 
 @pytest.mark.parametrize(
     "failure",
     _migration_failures(),
-    ids=["runtime", "backend-deployment", "tombstone-after-activation"],
+    ids=[
+        "runtime",
+        "backend-deployment",
+        "tombstone-after-activation",
+        "registry-storage",
+    ],
 )
 @pytest.mark.asyncio
-async def test_a_failed_schema_migration_is_logged_not_raised(caplog, failure):
-    registry = _MigratingRegistry([failure])
+async def test_a_failed_schema_migration_is_run_again_until_one_completes(
+    monkeypatch, caplog, failure
+):
+    """A run that did not complete is logged with its error and run again;
+    the runtime's task never ends with the failure."""
+    registry = _MigratingRegistry(
+        [failure, failure, DriftedSchemaRedeploy(redeployed=[], refused=[])]
+    )
+    monkeypatch.setattr(runtime_main, "SCHEMA_MIGRATION_RETRY_SECONDS", 0.05)
 
-    with caplog.at_level("ERROR", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(lambda: registry, "provenance")
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(lambda: registry)
 
-    assert len(registry.calls) == 1
+    assert len(registry.calls) == 3
+    retried = (
+        "WARNING",
+        "Migration of drifted schemas did not complete "
+        f"({type(failure).__name__}: {failure}); retrying in 0s",
+        failure,
+    )
     assert [
-        (record.getMessage(), record.exc_info[1])
+        (
+            record.levelname,
+            record.getMessage(),
+            record.exc_info[1] if record.exc_info else None,
+        )
         for record in caplog.records
         if record.name == runtime_main.logger.name
     ] == [
-        (
-            "Migration of drifted provenance schemas failed; the next runtime "
-            "start runs it again",
-            failure,
-        )
+        retried,
+        retried,
+        ("INFO", "Migration of drifted schemas redeployed []", None),
     ]
 
 
 @pytest.mark.asyncio
-async def test_a_registry_that_cannot_be_resolved_is_logged_not_raised(caplog):
+async def test_a_registry_that_cannot_be_resolved_is_resolved_again(
+    monkeypatch, caplog
+):
     """Resolving the system backend runs inside the background migration,
-    off the loop, so its failure never reaches startup."""
+    off the loop, so its failure never reaches startup: the next run resolves
+    it again."""
     import threading
 
     failure = RuntimeError("backend config store unreachable")
+    registry = _MigratingRegistry(
+        [DriftedSchemaRedeploy(redeployed=["provenance_acme_acme"], refused=[])]
+    )
     threads = []
 
-    def unresolvable():
+    def resolvable_second_time():
         threads.append(threading.get_ident())
-        raise failure
+        if len(threads) == 1:
+            raise failure
+        return registry
 
-    with caplog.at_level("ERROR", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(unresolvable, "provenance")
+    monkeypatch.setattr(runtime_main, "SCHEMA_MIGRATION_RETRY_SECONDS", 0.05)
 
-    assert threads != [threading.get_ident()]
-    assert len(threads) == 1
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(resolvable_second_time)
+
+    assert threading.get_ident() not in threads
+    assert len(threads) == 2
+    assert len(registry.calls) == 1
     assert [
-        (record.getMessage(), record.exc_info[1])
+        (
+            record.getMessage(),
+            record.exc_info[1] if record.exc_info else None,
+        )
         for record in caplog.records
         if record.name == runtime_main.logger.name
     ] == [
         (
-            "Migration of drifted provenance schemas failed; the next runtime "
-            "start runs it again",
+            "Migration of drifted schemas did not complete (RuntimeError: backend "
+            "config store unreachable); retrying in 0s",
             failure,
+        ),
+        ("Migration of drifted schemas redeployed ['provenance_acme_acme']", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_stop_set_while_a_run_is_retried_starts_no_further_run(
+    monkeypatch, caplog
+):
+    """Shutdown sets the stop between attempts: the attempt that failed is
+    logged and no further run starts."""
+    import threading
+
+    stop = threading.Event()
+    failure = RuntimeError("config server unreachable")
+
+    class _StoppedMeanwhile(_MigratingRegistry):
+        def redeploy_drifted_schemas(self, should_stop=None):
+            stop.set()
+            return super().redeploy_drifted_schemas(should_stop=should_stop)
+
+    registry = _StoppedMeanwhile([failure])
+    monkeypatch.setattr(runtime_main, "SCHEMA_MIGRATION_RETRY_SECONDS", 0.05)
+
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(lambda: registry, stop)
+
+    assert len(registry.calls) == 1
+    assert [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name == runtime_main.logger.name
+    ] == [
+        (
+            "WARNING",
+            "Migration of drifted schemas did not complete (RuntimeError: config "
+            "server unreachable); retrying in 0s",
         )
     ]
 
@@ -501,16 +589,14 @@ async def test_a_stopped_migration_reports_the_schemas_it_left(caplog):
         [
             DriftedSchemaRedeploy(
                 redeployed=["provenance_acme_acme"],
-                failed=[],
-                skipped=["provenance_globex_globex"],
+                refused=[],
+                skipped=["video_colpali_smol500_mv_frame_globex_globex"],
             )
         ]
     )
 
     with caplog.at_level("INFO", logger=runtime_main.logger.name):
-        await runtime_main._migrate_drifted_schemas(
-            lambda: registry, "provenance", stop
-        )
+        await runtime_main._migrate_drifted_schemas(lambda: registry, stop)
 
     assert registry.should_stop == stop.is_set
     assert [
@@ -518,7 +604,8 @@ async def test_a_stopped_migration_reports_the_schemas_it_left(caplog):
         for record in caplog.records
         if record.name == runtime_main.logger.name
     ] == [
-        "Migration of drifted provenance schemas redeployed ['provenance_acme_acme']",
-        "Migration of drifted provenance schemas stopped before redeploying "
-        "['provenance_globex_globex']; the next runtime start redeploys them",
+        "Migration of drifted schemas redeployed ['provenance_acme_acme']",
+        "Migration of drifted schemas stopped before redeploying "
+        "['video_colpali_smol500_mv_frame_globex_globex']; the next runtime "
+        "start redeploys them",
     ]

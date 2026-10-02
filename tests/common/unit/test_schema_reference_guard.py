@@ -290,6 +290,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Injected active video profile",
         "video_custom_mv_frame",
     ),
+    "tests/runtime/unit/test_main_startup_schema_removal.py": (
+        "Tenant schema names in fabricated drift migration outcomes",
+        "document_text_globex_globex video_colpali_smol500_mv_frame_acme_acme video_colpali_smol500_mv_frame_globex_globex",
+    ),
     "tests/synthetic/unit/test_agent_inference.py": (
         "Injected modality classification input",
         "alpha opaque segments",

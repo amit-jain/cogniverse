@@ -39,6 +39,15 @@ class BackendDeploymentError(SchemaDeploymentError):
     pass
 
 
+class SchemaChangeRefusedError(BackendDeploymentError):
+    """The backend validated the package and refused a change it carries.
+
+    Nothing was activated, and the same package is refused again until the
+    change itself is dealt with: in Vespa, a change that needs a validation
+    override, such as a field type or indexing change that requires a refeed.
+    """
+
+
 class SchemaConvergenceError(BackendDeploymentError):
     """The config server activated the package, but the generation did not
     reach every service, or a new schema refused a feed, inside the budget.

@@ -676,9 +676,10 @@ convergence, and registers every schema. It returns full names in request order;
 already registered schemas require no activation unless `force=True`. A
 registered schema whose stored definition differs from the definition the
 schema loader supplies is redeployed with the loaded one in the same package
-and its registry row replaced; a change Vespa refuses raises
-`BackendDeploymentError` naming the schema and Vespa's reason, and the row
-keeps the definition that is live. Empty and
+and its registry row replaced, keeping the row's `config` unless one is
+passed; a change Vespa refuses raises
+`SchemaChangeRefusedError` (a `BackendDeploymentError`) naming the schema and
+Vespa's reason, and the row keeps the definition that is live. Empty and
 duplicate name lists are rejected. Intents become complete only after every
 registration succeeds, so a partial registration leaves the whole new batch
 reserved for recovery. `deploy_schema()` delegates to this path with one name.
@@ -796,6 +797,54 @@ the durable record remains available for recovery. `records()` reads current jou
 at most one attempt per record per invocation. Each failed recovery raises
 `RegistryStorageError` with schema context; a fourth attempt is refused.
 There is no background retry loop. Journal history uses ConfigStore retention.
+
+#### Schema drift migration
+
+A tenant's *registered definition* is the `schema_definition` JSON in its
+registry row (`SCHEMA` scope, `schema_registry` service, key
+`schema_<base>`): the shipped schema file with `name` set to the tenant's
+full schema name, as it was when the tenant last deployed it. Nothing writes a
+tenant-specific definition; a profile's `schema_config` is stored with the
+profile and never changes the definition. A registered schema *drifts* when
+its definition, compared as parsed JSON, differs from the one the schema
+loader ships today with the same name; a base schema the loader does not ship
+has nothing to drift from. A deploy compares the stored row with the shipped
+definition, so whichever request first ensures a drifted schema redeploys it
+from the request path; the runtime's startup migration does it first.
+
+`SchemaRegistry.redeploy_drifted_schemas(should_stop=None)` redeploys every
+drifted schema, one normal deploy per drifted tenant carrying all of that
+tenant's drifted schemas. Each tenant's deploy runs inside
+`backend.deployment_lease()` from the decision through the registration:
+which of its schemas still differ is read again from the stored rows inside
+the lease, so a schema another process redeployed or deleted meanwhile is not
+deployed, and no other deployer builds a package from the registry while the
+tenant's new definitions are live but not yet registered. Only the drifted
+schemas change: the package carries every other schema from its registry row,
+so other tenants' schemas and the tenant's current ones deploy as they are, a
+schema whose base the loader does not ship (one deployed from another schema
+directory) is left alone, and each re-registration keeps its row's `config`.
+A package Vespa refuses (`SchemaChangeRefusedError`) is deployed again one
+schema at a time, so the tenant's other schemas still land; a schema refused
+on its own is left as it is, live definition, registry row and documents
+alike, logged at WARNING and recorded under the system tenant (`SCHEMA` scope,
+`schema_migration_refusals` service, keyed by full schema name, with the
+SHA-256 of the definition it was refused); every later run attempts it
+again and records the refusal again. A peer's deletion landing before
+activation drops that schema from the tenant's deploy. Any other error
+propagates, including the `LeaseWaitTimeout` (a `TimeoutError`) of a lease a
+peer held for the whole wait, and nothing is recorded against a tenant for
+it. `should_stop` is asked before each tenant's redeploy; once it answers
+True no further redeploy starts. It returns a `DriftedSchemaRedeploy`:
+`redeployed` holds the full names it deployed, `refused` one
+`SchemaRefusal(tenant_id, base_schema_name, schema_name, error, refused_at)`
+per refused schema, and `skipped` the drifted schemas a stop left.
+
+`drifted_schemas(config_manager, schema_loader)` lists every drifted schema as
+a `DriftedSchema(tenant_id, base_schema_name, schema_name, refusal)`, ordered
+by tenant and schema name. `refusal` is the recorded refusal when it was
+recorded for the definition shipped now, else `None`: the migration has not
+reached the schema yet. A registry or refusal read failure raises.
 
 ### AdapterStoreRegistry / WorkflowStoreRegistry
 
@@ -1420,23 +1469,9 @@ migration or bulk sweep is required — the next `attach` or an explicit
 which the row is checked like any other. `primary_provenance_digest` always
 returns 64 hex characters, so an empty digest is unambiguously a legacy row and
 never a real mismatch.
-The provenance schema gained the `primary_digest` field in the same change.
-`SchemaRegistry.redeploy_drifted_schemas("provenance")` redeploys every
-tenant's registered provenance schema whose stored definition differs from
-the shipped one, one normal deploy per drifted tenant; an up-to-date schema is
-left alone. Each deploy runs with `require_registered=True`, so a tenant whose
-schema a peer deleted after the listing is skipped rather than deployed and
-registered again. It returns a `DriftedSchemaRedeploy`: `redeployed` holds the
-full names it redeployed and `failed` one `DriftedSchemaFailure(tenant_id,
-schema_name, error)` per tenant whose redeploy was refused by a revision
-conflict or the backend. Those are logged at WARNING and the remaining tenants
-are still redeployed; any other error propagates. An optional `should_stop`
-callable is asked before each tenant's redeploy: once it answers True no
-further redeploy starts, and the drifted schemas left are returned in
-`skipped`. That includes a `LeaseWaitTimeout` (a
-`TimeoutError`) when a peer holds the deploy lease for the whole wait:
-`VespaBackend.deploy_schemas` and `SchemaRegistry.deploy_schemas` pass it
-through unwrapped instead of reporting a failed deploy, so the caller can retry.
+The provenance schema gained the `primary_digest` field in the same change;
+a tenant's provenance schema registered before it is redeployed by the
+[schema drift migration](#schema-drift-migration).
 Concurrent external changes inside repair are retried up to the requested bound
 and then raise `ProvenanceRepairConflictError`.
 

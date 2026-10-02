@@ -369,6 +369,48 @@ schema_manager.delete_tenant_schemas("acme:prod")
 schema_manager.delete_tenant_schemas_bulk(["acme:prod", "globex:dev"])
 ```
 
+### Schema changes in a release
+
+A release that changes a file in `configs/schemas/` reaches tenants that
+already have the schema through the runtime's startup migration (see
+[Schema drift migration](../modules/core.md#schema-drift-migration)). Once a
+runtime pod has started, it redeploys every tenant schema whose registered
+definition differs from the shipped one, one application package per drifted
+tenant; runtimes starting together redeploy each tenant once. Its log lines
+start with `Migration of drifted schemas`:
+
+- `redeployed [...]` (INFO) — the run completed; the names it deployed.
+- `did not get the deployment lease` / `did not complete (...)` (WARNING) —
+  the run is retried every 30 s, for example while the config server is down.
+- `could not redeploy <schema> for tenant <tenant>: <reason>` (ERROR) — Vespa
+  refused the change. Nothing of it was applied: the schema keeps its live and
+  registered definition and its documents. The runtime never adds a Vespa
+  validation override. A change refused this way (a field type or indexing
+  change) needs the tenant's schema dropped and its documents fed again.
+
+Which tenant schemas still differ from the shipped definitions, with Vespa's
+reason for each refused one (read-only):
+
+```bash
+curl -s "$RUNTIME_URL/admin/schemas/drift" | jq .
+```
+
+An empty `drifted` list means every tenant runs the shipped definitions. An
+entry with `"refusal": null` has not been migrated yet: the migration is still
+running or retrying. A pod of the previous release redeploys its own shipped
+definition when a request first ensures a schema, so check again once the
+rollout has replaced every pod; a restart of one runtime pod runs the
+migration again.
+
+The live definition of one tenant schema, read from the Vespa config server
+(read-only; `19071` is the config server port, `33071` on the k3d cluster's
+host mapping):
+
+```bash
+CONFIG_SERVER=http://localhost:19071
+curl -s "$CONFIG_SERVER/application/v2/tenant/default/application/default/environment/prod/region/default/instance/default/content/schemas/<schema>.sd"
+```
+
 ---
 
 ## Orphan reconciliation

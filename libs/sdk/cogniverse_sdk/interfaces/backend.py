@@ -7,7 +7,7 @@ to integrate with the Cogniverse system.
 
 from abc import ABC, abstractmethod
 from threading import Lock
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, ContextManager, Dict, Iterator, List, Optional
 
 from cogniverse_sdk.document import Document, SearchResult
 
@@ -373,6 +373,18 @@ class Backend(IngestionBackend, SearchBackend):
     # ============================================================================
     # Schema Management Operations
     # ============================================================================
+
+    @abstractmethod
+    def deployment_lease(self) -> ContextManager[Any]:
+        """
+        Hold the lease that serialises schema deployment across processes.
+
+        Reentrant on the calling thread: ``deploy_schemas`` called while it is
+        held runs under it instead of taking it again, so a caller can keep
+        every other deployer out from its deploy decision through the
+        registration that follows the deploy.
+        """
+        pass
 
     @abstractmethod
     def deploy_schemas(self, schema_definitions: List[Dict[str, Any]]) -> bool:

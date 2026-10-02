@@ -194,6 +194,7 @@ class Backend(IngestionBackend, SearchBackend):
     # validate_schema(schema_name) -> bool
 
     # Schema management (abstract - must implement):
+    # deployment_lease() -> ContextManager
     # deploy_schemas(schema_definitions) -> bool
     # delete_schema(schema_name, tenant_id) -> List[str]
     # schema_exists(schema_name, tenant_id) -> bool
@@ -798,6 +799,7 @@ cogniverse_sdk/
 **Methods (Backend — schema management and metadata ops):**
 
 - `_initialize_backend(config)`: Abstract backend-specific connection/client setup; concurrent calls on one instance invoke it once after a successful initialization, while a raised exception leaves initialization retryable
+- `deployment_lease()`: Context manager holding the lease that serialises schema deployment across processes; reentrant on the calling thread, so `deploy_schemas` called inside it runs under it and the caller keeps it through the registration that follows
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
 - `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists

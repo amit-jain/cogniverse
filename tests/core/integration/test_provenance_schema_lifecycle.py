@@ -214,12 +214,14 @@ def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
     current_row = _schema_row(store, current)
     deploys.clear()
 
-    migrated = writer.schema_registry.redeploy_drifted_schemas("provenance")
+    migrated = writer.schema_registry.redeploy_drifted_schemas()
 
     assert schema in migrated.redeployed
     assert current_schema not in migrated.redeployed
-    assert all(name.startswith("provenance_") for name in migrated.redeployed)
-    assert [f for f in migrated.failed if f.tenant_id in {tenant, current}] == []
+    assert [
+        name for name in migrated.redeployed if name in {schema, current_schema}
+    ] == [schema]
+    assert [f for f in migrated.refused if f.tenant_id in {tenant, current}] == []
     assert ("registry", tenant, ["provenance"]) in deploys
     assert ("registry", current, ["provenance"]) not in deploys
     assert _schema_row(store, current).version == current_row.version
@@ -233,8 +235,8 @@ def test_the_migration_redeploys_a_pre_digest_provenance_schema_once(
     assert indexed.primary_digest == "b" * 64
     deploys.clear()
 
-    again = writer.schema_registry.redeploy_drifted_schemas("provenance")
-    assert (again.redeployed, again.failed) == ([], [])
+    again = writer.schema_registry.redeploy_drifted_schemas()
+    assert (again.redeployed, again.refused) == ([], [])
     assert deploys == []
 
 
@@ -281,10 +283,10 @@ def test_the_migration_does_not_redeploy_a_schema_a_peer_deleted_meanwhile(
     registry.deploy_schemas = deploy_for_tenant
     writer.deploy_schemas = activate_after_a_peer_delete
 
-    migrated = registry.redeploy_drifted_schemas("provenance")
+    migrated = registry.redeploy_drifted_schemas()
 
     assert schema not in migrated.redeployed
-    assert [f for f in migrated.failed if f.tenant_id == tenant] == []
+    assert [f for f in migrated.refused if f.tenant_id == tenant] == []
     assert for_tenant["calls"][0] == ("registry", tenant, ["provenance"])
     if peer_deletes == "before_the_decision":
         assert for_tenant["calls"] == [("registry", tenant, ["provenance"])]
@@ -430,12 +432,12 @@ def test_the_migration_continues_past_a_tenant_whose_redeploy_fails(
     registry.deploy_schemas = record_visits
     deploys.clear()
 
-    result = registry.redeploy_drifted_schemas("provenance")
+    result = registry.redeploy_drifted_schemas()
 
     assert [tenant for tenant in visited if tenant in rank] == [first, refused, last]
     assert {first_schema, last_schema} <= set(result.redeployed)
     assert refused_schema not in result.redeployed
-    failures = [f for f in result.failed if f.schema_name == refused_schema]
+    failures = [f for f in result.refused if f.schema_name == refused_schema]
     assert [(f.tenant_id, f.schema_name) for f in failures] == [
         (refused, refused_schema)
     ]
@@ -457,7 +459,8 @@ def test_a_deploy_lease_held_by_a_peer_stops_the_migration_with_its_timeout(
 ):
     """A lease wait that runs out is not a tenant's failure: it escapes the
     migration unwrapped, so the runtime's retry-on-TimeoutError runs, and no
-    tenant is recorded as failed or touched."""
+    tenant is recorded as refused or touched. The lease is taken before a
+    tenant's redeploy is decided, so no deploy was attempted."""
     from cogniverse_core.registries import schema_deploy_lease
     from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
 
@@ -484,22 +487,22 @@ def test_a_deploy_lease_held_by_a_peer_stops_the_migration_with_its_timeout(
     monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 2.0)
     try:
         with pytest.raises(TimeoutError) as caught:
-            registry.redeploy_drifted_schemas("provenance")
+            registry.redeploy_drifted_schemas()
     finally:
         peer.release()
 
     assert str(caught.value).startswith(
         f"Vespa deployment lease still held by {peer.holder!r} after 2.0s"
     )
-    assert len(attempts) == 1
+    assert attempts == []
     for tenant in tenants:
         assert _schema_row(store, tenant).version == versions[tenant]
     monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 120.0)
 
-    retried = registry.redeploy_drifted_schemas("provenance")
+    retried = registry.redeploy_drifted_schemas()
 
     assert set(schemas) <= set(retried.redeployed)
-    assert [f for f in retried.failed if f.tenant_id in tenants] == []
+    assert [f for f in retried.refused if f.tenant_id in tenants] == []
 
 
 def test_a_stop_set_during_the_migration_starts_no_further_redeploy(
@@ -540,11 +543,11 @@ def test_a_stop_set_during_the_migration_starts_no_further_redeploy(
     registry.deploy_schemas = stop_during_the_first
     deploys.clear()
 
-    result = registry.redeploy_drifted_schemas("provenance", should_stop=stop.is_set)
+    result = registry.redeploy_drifted_schemas(should_stop=stop.is_set)
 
     assert started == [tenants[0]]
     assert result.redeployed == [schemas[0]]
-    assert result.failed == []
+    assert result.refused == []
     assert result.skipped[:2] == schemas[1:]
     for tenant in tenants[1:]:
         assert _schema_row(store, tenant).version == versions[tenant]

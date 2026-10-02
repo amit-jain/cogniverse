@@ -810,6 +810,66 @@ async def deploy_profile_schema(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SchemaRefusalInfo(BaseModel):
+    error: str
+    refused_at: str
+
+
+class DriftedSchemaInfo(BaseModel):
+    tenant_id: str
+    base_schema_name: str
+    schema_name: str
+    refusal: Optional[SchemaRefusalInfo]
+
+
+class SchemaDriftResponse(BaseModel):
+    drifted: List[DriftedSchemaInfo]
+
+
+@router.get("/schemas/drift", response_model=SchemaDriftResponse)
+async def list_schema_drift(
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
+) -> SchemaDriftResponse:
+    """Tenant schemas registered with a definition other than the shipped one.
+
+    The startup migration redeploys each of them. One whose redeploy the
+    backend refused carries that refusal; one without a refusal has not been
+    migrated yet. 503 when the schema registry or the recorded refusals
+    cannot be read.
+    """
+    from cogniverse_core.registries.exceptions import (
+        RegistryStorageError,
+        SchemaRegistryInitializationError,
+    )
+    from cogniverse_core.registries.schema_registry import drifted_schemas
+
+    try:
+        drifted = await asyncio.to_thread(
+            drifted_schemas, config_manager, schema_loader
+        )
+    except (RegistryStorageError, SchemaRegistryInitializationError) as exc:
+        logger.error(f"Schema drift listing failed: {exc}")
+        raise HTTPException(
+            status_code=503, detail=f"Schema registry unavailable: {exc}"
+        )
+    return SchemaDriftResponse(
+        drifted=[
+            DriftedSchemaInfo(
+                tenant_id=entry.tenant_id,
+                base_schema_name=entry.base_schema_name,
+                schema_name=entry.schema_name,
+                refusal=None
+                if entry.refusal is None
+                else SchemaRefusalInfo(
+                    error=entry.refusal.error, refused_at=entry.refusal.refused_at
+                ),
+            )
+            for entry in drifted
+        ]
+    )
+
+
 class InviteRequest(BaseModel):
     tenant_id: str
     expires_in_hours: int = 24
