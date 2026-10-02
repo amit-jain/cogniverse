@@ -56,23 +56,23 @@ SHIPPED_PROFILES = json.loads(Path("configs/config.json").read_text())["backend"
 ]
 DIM = 320
 
-# The binary MaxSim the ColQwen3 schemas ship, and the one they shipped before
-# it: each query token scored 1/(1+h) of its nearest patch instead of 1-2h/320.
+# A query token's binary MaxSim against its nearest patch as the ColQwen3
+# schemas ship it, 1-2h/320, and as they shipped it before, 1/(1+h). A rank
+# profile sums it over the query tokens or averages it (the fused hybrids).
 SHIPPED_BINARY_MAXSIM = re.compile(
-    r"sum\(1 - 2 \* reduce\(sum\(hamming\(query\(qtb\), attribute\((\w+)\)\), v\), "
-    r"min, patch\) / 320, querytoken\)"
+    r"1 - 2 \* reduce\(sum\(hamming\(query\(qtb\), attribute\((\w+)\)\), v\), "
+    r"min, patch\) / 320"
 )
 OLDER_BINARY_MAXSIM = (
-    r"sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(\1)), v)), max, patch), "
-    r"querytoken)"
+    r"reduce(1/(1+ sum(hamming(query(qtb), attribute(\1)), v)), max, patch)"
 )
 SHIPPED_FRAME_EXPRESSION = (
-    "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), "
-    "min, patch) / 320, querytoken)"
+    "1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), "
+    "min, patch) / 320"
 )
 OLDER_FRAME_EXPRESSION = (
-    "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), "
-    "max, patch), querytoken)"
+    "reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), "
+    "max, patch)"
 )
 CONFIG_SERVER_SCHEMAS = (
     "/application/v2/tenant/default/application/default/environment/prod/region/"
@@ -131,8 +131,9 @@ class _OnlyShips(FilesystemSchemaLoader):
 
 
 def test_the_older_frame_definition_differs_only_in_its_binary_maxsim():
-    """The fixture's older release is exactly the pre-change frame schema:
-    the seven rank profiles scoring binary MaxSim, and nothing else."""
+    """The fixture's older release differs from the shipped frame schema in
+    the per-token binary MaxSim of the seven rank profiles that score it, and
+    nothing else."""
     shipped = _shipped(FRAME)
     older = _older_rank_profiles(_shipped(FRAME))
 
