@@ -23,6 +23,8 @@ from fastapi.testclient import TestClient
 import cogniverse_vespa.backend  # noqa: F401
 from cogniverse_runtime.routers import health
 
+pytestmark = pytest.mark.usefixtures("no_injected_agent_registry")
+
 
 class _NoAgents:
     """A registry serving no agents."""

@@ -32,7 +32,7 @@ from tests.runtime.unit.test_health_backend_reachability import (
 )
 from tests.utils.modal_app import ModalApp
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_injected_agent_registry")]
 
 MODEL = "openai/google/gemma-4-e4b-it"
 NOT_SERVING_REASON = (

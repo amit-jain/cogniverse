@@ -30,6 +30,22 @@ def _default_telemetry_singleton():
 
 
 @pytest.fixture
+def no_injected_agent_registry():
+    """Run with no registry injected into the agents router, then restore it.
+
+    /health prefers the registry injected into the agents router over the one
+    it builds itself. A registry an earlier test left there answers instead of
+    the one a test patches in, and its clients may belong to a closed loop."""
+    from cogniverse_runtime.routers import agents as agents_router
+
+    saved = (agents_router._agent_registry, agents_router._dispatcher)
+    agents_router._agent_registry = None
+    agents_router._dispatcher = None
+    yield
+    agents_router._agent_registry, agents_router._dispatcher = saved
+
+
+@pytest.fixture
 def harness_key_config_store(monkeypatch):
     """Bind tenant retirement to an in-memory credential store."""
     from cogniverse_foundation.config.manager import ConfigManager

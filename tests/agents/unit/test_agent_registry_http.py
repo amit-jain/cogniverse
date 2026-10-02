@@ -18,6 +18,18 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
 
 
+@pytest.fixture(autouse=True)
+def _restore_agents_router():
+    """Tests here inject a registry into the module-global agents router; put
+    back what was there, so no later test reads a registry whose clients belong
+    to this test's closed event loop."""
+    from cogniverse_runtime.routers import agents as agents_router
+
+    saved = (agents_router._agent_registry, agents_router._dispatcher)
+    yield
+    agents_router._agent_registry, agents_router._dispatcher = saved
+
+
 def _shared_store(redis_url: str) -> RedisAgentRegistryStore:
     """A registration store of its own on the test-owned Redis; its client
     connects on the loop that first uses it."""
