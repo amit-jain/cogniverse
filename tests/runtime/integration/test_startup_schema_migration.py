@@ -559,6 +559,63 @@ class _OperatorRelease(_OlderRelease):
 
 
 @pytest.mark.asyncio
+async def test_a_tenant_marked_deleted_is_left_undeployed_and_the_rest_migrate(
+    migration_vespa, caplog
+):
+    """A tenant whose delete has not completed stays marked deleted with its
+    schemas still registered. The migration never redeploys them, and the
+    other drifted tenants still migrate in the same run."""
+    from cogniverse_core.common.tenant_utils import (
+        clear_tenant_deleted,
+        mark_tenant_deleted,
+    )
+    from cogniverse_core.registries import schema_registry as schema_registry_module
+
+    connect, manager, ports = migration_vespa
+    run = uuid.uuid4().hex[:10]
+    gone, kept = f"migdel_{run}:gone", f"migdel_{run}:kept"
+    older = _OlderRelease({FRAME: _older_rank_profiles})
+    owners = {tenant: connect(tenant, older) for tenant in (gone, kept)}
+    schemas = {
+        tenant: owners[tenant].schema_registry.deploy_schema(tenant, FRAME)
+        for tenant in owners
+    }
+    ours = set(schemas.values())
+    try:
+        mark_tenant_deleted(manager.store, gone)
+        registry = connect(kept).schema_registry
+        caplog.set_level("INFO", logger=schema_registry_module.logger.name)
+
+        result = await asyncio.to_thread(registry.redeploy_drifted_schemas)
+
+        assert [name for name in result.redeployed if name in ours] == [schemas[kept]]
+        assert [name for name in result.deleted if name in ours] == [schemas[gone]]
+        assert [r for r in result.refused if r.schema_name in ours] == []
+        assert _registered_definition(manager, kept, FRAME) == _named(
+            _shipped(FRAME), schemas[kept]
+        )
+        assert _registered_definition(manager, gone, FRAME) == _named(
+            _older_rank_profiles(_shipped(FRAME)), schemas[gone]
+        )
+        assert _live_sd(ports, schemas[kept]).count(SHIPPED_FRAME_EXPRESSION) == 7
+        assert _live_sd(ports, schemas[gone]).count(OLDER_FRAME_EXPRESSION) == 7
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == schema_registry_module.logger.name
+            and gone in record.getMessage()
+            and "marked deleted" in record.getMessage()
+        ] == [
+            f"Tenant '{gone}' is marked deleted; its drifted schemas "
+            f"{[schemas[gone]]} are left undeployed"
+        ]
+    finally:
+        clear_tenant_deleted(manager.store, gone)
+        for tenant, owner in owners.items():
+            owner.schema_manager.delete_schema(tenant, FRAME)
+
+
+@pytest.mark.asyncio
 async def test_the_migration_changes_only_the_drifted_definitions(migration_vespa):
     """A tenant carries a drifted schema registered with a config, a current
     schema and a schema of its own that this runtime does not ship; a

@@ -854,14 +854,19 @@ alike, logged at WARNING and recorded under the system tenant (`SCHEMA` scope,
 `schema_migration_refusals` service, keyed by full schema name, with the
 SHA-256 of the definition it was refused); every later run attempts it
 again and records the refusal again. A peer's deletion landing before
-activation drops that schema from the tenant's deploy. Any other error
+activation drops that schema from the tenant's deploy. A tenant marked
+deleted (see `mark_tenant_deleted`), whose delete has not completed, is never
+redeployed: `deploy_schemas` refuses it with `TenantDeletedError`, its
+drifted schemas are left as they are and the other tenants still migrate.
+Any other error
 propagates, including the `LeaseWaitTimeout` (a `TimeoutError`) of a lease a
 peer held for the whole wait, and nothing is recorded against a tenant for
 it. `should_stop` is asked before each tenant's redeploy; once it answers
 True no further redeploy starts. It returns a `DriftedSchemaRedeploy`:
 `redeployed` holds the full names it deployed, `refused` one
 `SchemaRefusal(tenant_id, base_schema_name, schema_name, error, refused_at)`
-per refused schema, and `skipped` the drifted schemas a stop left.
+per refused schema, `skipped` the drifted schemas a stop left, and `deleted`
+those of tenants marked deleted.
 
 `drifted_schemas(config_manager, schema_loader)` lists every drifted schema as
 a `DriftedSchema(tenant_id, base_schema_name, schema_name, refusal)`, ordered

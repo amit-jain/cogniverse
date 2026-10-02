@@ -286,9 +286,10 @@ async def _migrate_drifted_schemas(
     lease held by a peer for the whole wait, the config server or the config
     store unreachable, a peer's registration racing a redeploy — is logged
     and run again every ``SCHEMA_MIGRATION_RETRY_SECONDS`` until one does.
-    A completed run logs the schemas it redeployed and, at ERROR, each tenant
-    schema whose redeploy the backend refused. Once ``stop`` is set no
-    further run or tenant redeploy starts.
+    A completed run logs the schemas it redeployed, those of tenants marked
+    deleted that it left undeployed and, at ERROR, each tenant schema whose
+    redeploy the backend refused. Once ``stop`` is set no further run or
+    tenant redeploy starts.
     """
     while stop is None or not stop.is_set():
         try:
@@ -320,6 +321,12 @@ async def _migrate_drifted_schemas(
                     "Migration of drifted schemas stopped before redeploying %s; "
                     "the next runtime start redeploys them",
                     result.skipped,
+                )
+            if result.deleted:
+                logger.info(
+                    "Migration of drifted schemas left %s undeployed: their "
+                    "tenant is marked deleted",
+                    result.deleted,
                 )
             for refusal in result.refused:
                 logger.error(

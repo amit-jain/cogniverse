@@ -118,6 +118,8 @@ class DriftedSchemaRedeploy:
     refused: List[SchemaRefusal]
     # Drifted schemas left undeployed because the caller asked to stop.
     skipped: List[str] = field(default_factory=list)
+    # Drifted schemas left undeployed because their tenant is marked deleted.
+    deleted: List[str] = field(default_factory=list)
 
 
 def _schema_info(row: Dict[str, Any]) -> SchemaInfo:
@@ -650,9 +652,12 @@ class SchemaRegistry:
         :func:`drifted_schemas`) and reported in ``refused``. Any other error
         propagates, including the ``LeaseWaitTimeout`` of a lease a peer held
         for the whole wait, and nothing is recorded against a tenant for it:
-        a later call reads the drift again. ``should_stop`` is asked before
-        each tenant's redeploy; once it answers True no further redeploy
-        starts, and the drifted schemas left are reported in ``skipped``.
+        a later call reads the drift again. A tenant marked deleted, whose
+        delete has not completed, is never redeployed: ``deploy_schemas``
+        refuses it, its drifted schemas are reported in ``deleted`` and the
+        other tenants still migrate. ``should_stop`` is asked before each
+        tenant's redeploy; once it answers True no further redeploy starts,
+        and the drifted schemas left are reported in ``skipped``.
         """
         by_tenant: Dict[str, List[str]] = {}
         for info, _ in _drifted(
@@ -662,6 +667,7 @@ class SchemaRegistry:
         tenants = list(by_tenant.items())
         redeployed: List[str] = []
         refused: List[SchemaRefusal] = []
+        deleted: List[str] = []
         for position, (tenant_id, bases) in enumerate(tenants):
             if should_stop is not None and should_stop():
                 skipped = [
@@ -674,13 +680,27 @@ class SchemaRegistry:
                     f"schema(s): {skipped}"
                 )
                 return DriftedSchemaRedeploy(
-                    redeployed=redeployed, refused=refused, skipped=skipped
+                    redeployed=redeployed,
+                    refused=refused,
+                    skipped=skipped,
+                    deleted=deleted,
                 )
-            with self._backend.deployment_lease():
-                names, refusals = self._redeploy_drifted(tenant_id, bases)
+            try:
+                with self._backend.deployment_lease():
+                    names, refusals = self._redeploy_drifted(tenant_id, bases)
+            except TenantDeletedError:
+                left = [self._full_name(tenant_id, base) for base in bases]
+                logger.info(
+                    f"Tenant '{canonical_tenant_id(tenant_id)}' is marked deleted; "
+                    f"its drifted schemas {left} are left undeployed"
+                )
+                deleted.extend(left)
+                continue
             redeployed.extend(names)
             refused.extend(refusals)
-        return DriftedSchemaRedeploy(redeployed=redeployed, refused=refused)
+        return DriftedSchemaRedeploy(
+            redeployed=redeployed, refused=refused, deleted=deleted
+        )
 
     @staticmethod
     def _full_name(tenant_id: str, base_schema_name: str) -> str:

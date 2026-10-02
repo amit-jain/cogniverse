@@ -581,6 +581,34 @@ async def test_a_bad_a2a_setting_stops_startup_before_any_side_effect(
 
 
 @pytest.mark.asyncio
+async def test_a_migration_reports_the_schemas_of_tenants_marked_deleted(caplog):
+    registry = _MigratingRegistry(
+        [
+            DriftedSchemaRedeploy(
+                redeployed=["provenance_acme_acme"],
+                refused=[],
+                deleted=["video_colpali_smol500_mv_frame_globex_globex"],
+            )
+        ]
+    )
+
+    with caplog.at_level("INFO", logger=runtime_main.logger.name):
+        await runtime_main._migrate_drifted_schemas(lambda: registry)
+
+    assert len(registry.calls) == 1
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == runtime_main.logger.name
+    ] == [
+        "Migration of drifted schemas redeployed ['provenance_acme_acme']",
+        "Migration of drifted schemas left "
+        "['video_colpali_smol500_mv_frame_globex_globex'] undeployed: their "
+        "tenant is marked deleted",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_stopped_migration_reports_the_schemas_it_left(caplog):
     import threading
 
