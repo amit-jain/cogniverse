@@ -606,6 +606,17 @@ class _Store:
         self.rows.append((seq, {"role": role, "content": content}))
 
 
+async def _until_the_agent_runs(turn: asyncio.Task, at_agent: asyncio.Event) -> None:
+    """Wait for ``turn`` to reach its agent. A dispatch that ends before it
+    raises its own error here instead of leaving the wait open."""
+    reached = asyncio.ensure_future(at_agent.wait())
+    done, _ = await asyncio.wait({turn, reached}, return_when=asyncio.FIRST_COMPLETED)
+    if reached not in done:
+        reached.cancel()
+        await turn
+        raise AssertionError("the turn ended without reaching its agent")
+
+
 async def _dispatch(dispatcher, query, context_id="ctx"):
     return await dispatcher.dispatch(
         agent_name="search_agent",
@@ -667,7 +678,7 @@ class TestManagedTurnsAgainstTheLedger:
             _ledger(redis, _prefix("conversation")), store, {"q": held_reply}, calls
         )
         turn = asyncio.create_task(_dispatch(dispatcher, "q"))
-        await at_agent.wait()
+        await _until_the_agent_runs(turn, at_agent)
         subprocess.run(
             ["docker", "pause", pausable_redis["container"]],
             check=True,
@@ -830,8 +841,8 @@ class TestManagedTurnsAgainstTheLedger:
             asyncio.create_task(_dispatch(first, "one")),
             asyncio.create_task(_dispatch(second, "two")),
         ]
-        await at_agent["one"].wait()
-        await at_agent["two"].wait()
+        await _until_the_agent_runs(turns[0], at_agent["one"])
+        await _until_the_agent_runs(turns[1], at_agent["two"])
         answer["one"].set()
         await turns[0]
         answer["two"].set()
