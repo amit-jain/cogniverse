@@ -322,17 +322,10 @@
         {
           "name": "text_sim",
           "expression": "nativeRank(video_title, audio_transcript)"
-        },
-        {
-          "name": "text_bm25",
-          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_bm25",
-      "second_phase": {
-        "expression": "visual_sim_binary + text_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim_binary + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     },
     {
@@ -351,17 +344,10 @@
         {
           "name": "text_sim",
           "expression": "nativeRank(video_title, audio_transcript)"
-        },
-        {
-          "name": "text_bm25",
-          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_bm25",
-      "second_phase": {
-        "expression": "visual_sim_float + text_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim_float + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     },
     {
@@ -422,17 +408,10 @@
         {
           "name": "text_sim_no_desc",
           "expression": "nativeRank(video_title, audio_transcript)"
-        },
-        {
-          "name": "text_bm25_no_desc",
-          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_bm25_no_desc",
-      "second_phase": {
-        "expression": "visual_sim_binary + text_sim_no_desc",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim_binary + text_sim_no_desc",
+      "candidates": "text_matches",
       "timeout": 2.0
     },
     {
@@ -451,17 +430,10 @@
         {
           "name": "text_sim_no_desc",
           "expression": "nativeRank(video_title, audio_transcript)"
-        },
-        {
-          "name": "text_bm25_no_desc",
-          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_bm25_no_desc",
-      "second_phase": {
-        "expression": "visual_sim_float + text_sim_no_desc",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim_float + text_sim_no_desc",
+      "candidates": "text_matches",
       "timeout": 2.0
     }
   ],

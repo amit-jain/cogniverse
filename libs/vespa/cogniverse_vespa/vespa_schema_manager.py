@@ -188,7 +188,6 @@ class VespaSchemaManager:
                 Function,
                 RankProfile,
                 Schema,
-                SecondPhaseRanking,
             )
 
             schema_objects = []
@@ -265,11 +264,7 @@ class VespaSchemaManager:
                                     expression="nativeRank(image_description)",
                                 ),
                             ],
-                            first_phase="bm25(image_description)",
-                            second_phase=SecondPhaseRanking(
-                                expression="visual_sim + text_sim",
-                                rerank_count=100,
-                            ),
+                            first_phase="visual_sim + text_sim",
                         ),
                     ],
                 )
@@ -351,7 +346,7 @@ class VespaSchemaManager:
                         RankProfile(
                             name="transcript_search", first_phase="bm25(transcript)"
                         ),
-                        # Hybrid: BM25 recall -> semantic + text reranking
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_audio",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
@@ -366,11 +361,7 @@ class VespaSchemaManager:
                                     name="text_sim", expression="nativeRank(transcript)"
                                 ),
                             ],
-                            first_phase="bm25(transcript)",
-                            second_phase=SecondPhaseRanking(
-                                expression="semantic_sim + text_sim",
-                                rerank_count=100,
-                            ),
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )
@@ -539,7 +530,7 @@ class VespaSchemaManager:
                             inputs=[("query(q)", "tensor<float>(d[768])")],
                             first_phase="closeness(field, document_embedding)",
                         ),
-                        # Hybrid: BM25 recall -> semantic + text reranking
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_bm25_semantic",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
@@ -554,11 +545,7 @@ class VespaSchemaManager:
                                     name="text_sim", expression="nativeRank(full_text)"
                                 ),
                             ],
-                            first_phase="bm25(full_text)",
-                            second_phase=SecondPhaseRanking(
-                                expression="semantic_sim + text_sim",
-                                rerank_count=100,
-                            ),
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )

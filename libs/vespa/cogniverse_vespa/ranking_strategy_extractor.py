@@ -39,6 +39,12 @@ _ALL_STRATEGIES_CACHE: Dict[
 _ALL_STRATEGIES_LOCK = threading.Lock()
 
 
+# A rank profile declaring ``"candidates": TEXT_MATCH_CANDIDATES`` ranks the
+# documents that match the query text and no others, even when its first
+# phase also scores an embedding.
+TEXT_MATCH_CANDIDATES = "text_matches"
+
+
 class SearchStrategyType(Enum):
     """Types of search strategies"""
 
@@ -60,6 +66,7 @@ class RankingStrategyInfo:
     nearestneighbor_field: Optional[str] = None
     nearestneighbor_tensor: Optional[str] = None
     first_phase_embedding_field: Optional[str] = None
+    text_candidates_only: bool = False
     embedding_field: Optional[str] = None
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
@@ -133,6 +140,20 @@ class RankingStrategyExtractor:
             or "text" in profile_name.lower().split("_")
         )
 
+        candidates = profile.get("candidates")
+        if candidates not in (None, TEXT_MATCH_CANDIDATES):
+            raise ValueError(
+                f"Rank profile '{profile_name}' declares candidates "
+                f"{candidates!r}; the only declarable candidate set is "
+                f"{TEXT_MATCH_CANDIDATES!r}"
+            )
+        text_candidates_only = candidates == TEXT_MATCH_CANDIDATES
+        if text_candidates_only and not needs_text_query:
+            raise ValueError(
+                f"Rank profile '{profile_name}' ranks text matches only but "
+                "reads no query text"
+            )
+
         if needs_text_query and not (needs_float_embeddings or needs_binary_embeddings):
             strategy_type = SearchStrategyType.PURE_TEXT
         elif (
@@ -167,7 +188,7 @@ class RankingStrategyExtractor:
                 if ann_field
                 else None
             )
-            if cell is not None:
+            if cell is not None and not text_candidates_only:
                 want_int8 = cell == "int8"
                 for input_name, input_type in inputs.items():
                     if ("int8" in input_type) == want_int8:
@@ -216,6 +237,7 @@ class RankingStrategyExtractor:
             nearestneighbor_field=nearestneighbor_field,
             nearestneighbor_tensor=nearestneighbor_tensor,
             first_phase_embedding_field=first_phase_embedding_field,
+            text_candidates_only=text_candidates_only,
             embedding_field=embedding_field,
             query_tensor_name=query_tensor_name,
             timeout=profile.get("timeout", 2.0),
@@ -428,6 +450,7 @@ def save_ranking_strategies(
                 "nearestneighbor_field": strategy_info.nearestneighbor_field,
                 "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
                 "first_phase_embedding_field": strategy_info.first_phase_embedding_field,
+                "text_candidates_only": strategy_info.text_candidates_only,
                 "embedding_field": strategy_info.embedding_field,
                 "query_tensor_name": strategy_info.query_tensor_name,
                 "timeout": strategy_info.timeout,

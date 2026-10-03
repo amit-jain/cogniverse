@@ -1806,18 +1806,21 @@ hybrid that retrieves through `nearestNeighbor` matches
 neighbours and every document holding a query term are candidates, each with
 its full text features.
 
-The text-first `hybrid_bm25_*` profiles match the text only. BM25 picks the
-best 100 text matches per content node and the second phase reranks them by
-the same visual score plus `nativeRank`. On `video_xclip_sv_chunk_6s` they
+The text-first `hybrid_bm25_*` profiles rank the documents that match the
+query text, and no others, by the same visual score plus `nativeRank` in one
+phase. Their rank profile declares `"candidates": "text_matches"`, which the
+`RankingStrategyExtractor` reports as `text_candidates_only`: the backend then
+matches `userInput(@userQuery)` although the first phase scores an embedding,
+and never adds a `nearestNeighbor` term. On `video_xclip_sv_chunk_6s` they
 compute the visual score from the stored vector, as their query carries no
 `nearestNeighbor` term.
 
 > **Where a strategy's phase order lives.** The ranking phases
 > (`first_phase` / `second_phase`) that define a strategy's actual behavior are
 > authoritative in the schema's `rank_profiles` (the schema JSON). By naming
-> convention `hybrid_binary_bm25*` ranks by binary visual similarity plus text
-> in one phase and `hybrid_bm25_binary*` ranks the text/BM25 phase first and
-> reranks by binary visual similarity plus text.
+> convention `hybrid_binary_bm25*` ranks every document by binary visual
+> similarity plus text and `hybrid_bm25_binary*` ranks the text matches alone by
+> the same sum.
 > `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
 > phase-agnostic metadata (which embeddings/tensors each strategy needs) —
 > `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,

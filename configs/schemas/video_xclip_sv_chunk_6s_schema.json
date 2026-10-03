@@ -297,17 +297,10 @@
         {
           "name": "text_sim",
           "expression": "nativeRank(video_title)"
-        },
-        {
-          "name": "text_bm25",
-          "expression": "bm25(video_title)"
         }
       ],
-      "first_phase": "text_bm25",
-      "second_phase": {
-        "expression": "visual_sim + text_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     },
     {
@@ -326,17 +319,10 @@
         {
           "name": "text_sim",
           "expression": "nativeRank(video_title)"
-        },
-        {
-          "name": "text_bm25",
-          "expression": "bm25(video_title)"
         }
       ],
-      "first_phase": "text_bm25",
-      "second_phase": {
-        "expression": "visual_sim + text_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     }
   ],

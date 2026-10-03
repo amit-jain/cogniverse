@@ -10,8 +10,7 @@ which 100 frames the float second phase may rerank.
 The visual-first hybrids rank every frame by that MaxSim averaged over the
 query tokens plus the frame's ``nativeRank`` for the query text, so a frame
 without a text match keeps its visual score. The text-first hybrids rank the
-frames holding a query term: BM25 picks the best 100 and the same sum reranks
-them.
+frames the query text matches, and no others, by the same sum.
 
 The corpus is the ten-video ActivityNet frame index of the
 ``flywheel_org:production`` tenant, recorded with ``RECORD_GOLDEN=1`` together
@@ -53,7 +52,11 @@ from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 from cogniverse_vespa.ingestion_client import document_namespace
-from cogniverse_vespa.search_backend import VespaSearchBackend
+from cogniverse_vespa.search_backend import (
+    VespaSearchBackend,
+    _source_collapse_fetch_limit,
+    _source_collapse_oversample,
+)
 from tests.utils.vespa_test_helpers import make_config_manager, schema_tensor_dim
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
@@ -833,20 +836,20 @@ TEXT_FIRST_ORDER = {
         "people shoveling": [
             "v_-pkfcMUIEMo",
             "v_-IMXSEIabMM",
-            "v_-MbZ-W0AbN0",
             "v_-uJnucdW6DY",
             "v_-D1gdv_gQyw",
-            "v_-cAcA8dO7kA",
+            "v_-MbZ-W0AbN0",
             "v_-nl4G-00PtA",
+            "v_-cAcA8dO7kA",
             "v_-HpCLXdtcas",
         ],
         "a fire starter": [
             "v_-D1gdv_gQyw",
             "v_-uJnucdW6DY",
-            "v_-MbZ-W0AbN0",
-            "v_-HpCLXdtcas",
             "v_-nl4G-00PtA",
+            "v_-MbZ-W0AbN0",
             "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
         ],
         "catching": ["v_-uJnucdW6DY", "v_-HpCLXdtcas"],
     },
@@ -854,20 +857,20 @@ TEXT_FIRST_ORDER = {
         "people shoveling": [
             "v_-pkfcMUIEMo",
             "v_-IMXSEIabMM",
-            "v_-MbZ-W0AbN0",
             "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
+            "v_-nl4G-00PtA",
             "v_-D1gdv_gQyw",
             "v_-cAcA8dO7kA",
-            "v_-nl4G-00PtA",
             "v_-HpCLXdtcas",
         ],
         "a fire starter": [
             "v_-D1gdv_gQyw",
             "v_-uJnucdW6DY",
             "v_-MbZ-W0AbN0",
-            "v_-HpCLXdtcas",
             "v_-nl4G-00PtA",
             "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
         ],
         "catching": ["v_-uJnucdW6DY", "v_-HpCLXdtcas"],
     },
@@ -875,20 +878,20 @@ TEXT_FIRST_ORDER = {
         "people shoveling": [
             "v_-IMXSEIabMM",
             "v_-pkfcMUIEMo",
-            "v_-HpCLXdtcas",
-            "v_-nl4G-00PtA",
-            "v_-MbZ-W0AbN0",
-            "v_-cAcA8dO7kA",
             "v_-uJnucdW6DY",
             "v_-D1gdv_gQyw",
+            "v_-MbZ-W0AbN0",
+            "v_-cAcA8dO7kA",
+            "v_-nl4G-00PtA",
+            "v_-HpCLXdtcas",
         ],
         "a fire starter": [
             "v_-D1gdv_gQyw",
             "v_-uJnucdW6DY",
-            "v_-HpCLXdtcas",
             "v_-nl4G-00PtA",
             "v_-MbZ-W0AbN0",
             "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
         ],
         "catching": ["v_-uJnucdW6DY", "v_-HpCLXdtcas"],
     },
@@ -896,20 +899,20 @@ TEXT_FIRST_ORDER = {
         "people shoveling": [
             "v_-IMXSEIabMM",
             "v_-pkfcMUIEMo",
-            "v_-HpCLXdtcas",
-            "v_-nl4G-00PtA",
-            "v_-MbZ-W0AbN0",
-            "v_-cAcA8dO7kA",
             "v_-uJnucdW6DY",
+            "v_-MbZ-W0AbN0",
             "v_-D1gdv_gQyw",
+            "v_-nl4G-00PtA",
+            "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
         ],
         "a fire starter": [
             "v_-D1gdv_gQyw",
             "v_-uJnucdW6DY",
-            "v_-HpCLXdtcas",
-            "v_-nl4G-00PtA",
             "v_-MbZ-W0AbN0",
+            "v_-nl4G-00PtA",
             "v_-cAcA8dO7kA",
+            "v_-HpCLXdtcas",
         ],
         "catching": ["v_-uJnucdW6DY", "v_-HpCLXdtcas"],
     },
@@ -974,30 +977,63 @@ TEXT_FIRST_TOP_HIT = {
 }
 
 
+def _text_first_matches(ranked_frames, query: str, strategy: str) -> set[str]:
+    """The frames the strategy's production query matches: its own YQL and
+    fetch limit, every match listed through a grouping, as source search
+    sends it with no plain hits."""
+    search, tenant, vectors = ranked_frames
+    schema_name = f"{BASE_SCHEMA}_{tenant.replace(':', '_')}"
+    fetch_limit = _source_collapse_fetch_limit(
+        10, _source_collapse_oversample(SHIPPED_PROFILE)
+    )
+    body = search._build_query(
+        query,
+        vectors[query],
+        search._load_ranking_strategies()[BASE_SCHEMA][strategy],
+        strategy,
+        schema_name,
+        fetch_limit,
+        {},
+        "text-matches",
+    )
+    body["yql"] += (
+        f" | all(group(video_id) max({RECORDED_FRAME_COUNT}) "
+        f"each(max({RECORDED_FRAME_COUNT}) each(output(summary()))))"
+    )
+    response = requests.post(
+        f"{search.backend_url}:{search.backend_port}/search/",
+        json={**body, "hits": 0, "grouping.globalMaxGroups": -1},
+        timeout=60,
+    ).json()
+    matched = set()
+    for root in response["root"].get("children", []):
+        for group_list in root.get("children", []):
+            for group in group_list.get("children", []):
+                for hit_list in group.get("children", []):
+                    for hit in hit_list.get("children", []):
+                        matched.add(hit["fields"]["documentid"].split("::", 1)[1])
+    return matched
+
+
 def _text_first_fused(corpus, ranked_frames, query: str, strategy: str) -> dict:
-    """Each text match's MaxSim, averaged over the query tokens, plus its
-    nativeRank: the score the second phase gives it."""
+    """Each matched frame's MaxSim, averaged over the query tokens, plus its
+    nativeRank: the score the strategy gives it."""
+    matched = _text_first_matches(ranked_frames, query, strategy)
     native = {
         h["fields"]["documentid"].split("::", 1)[1]: h["fields"]["rankfeatures"][
             "nativeRank"
         ]
         for h in _strategy_hits(ranked_frames, query, strategy)
     }
+    assert matched <= set(native), f"{query!r}: matches without a nativeRank"
     vectors = _query_vectors(corpus)[query]
     max_sim = _binary_max_sim if "binary" in strategy else _float_max_sim
     return {
         str(doc_id): max_sim(vectors, _frame_patches(corpus, i)) / len(vectors)
         + native[str(doc_id)]
         for i, doc_id in enumerate(corpus["doc_ids"])
-        if str(doc_id) in native
+        if str(doc_id) in matched
     }
-
-
-def _rerank_window() -> int:
-    (profile,) = [
-        p for p in _schema_json()["rank_profiles"] if p["name"] == "hybrid_bm25_float"
-    ]
-    return profile["second_phase"]["rerank_count"]
 
 
 class TestTextFirstFusionOnColQwen3Frames:
@@ -1013,61 +1049,31 @@ class TestTextFirstFusionOnColQwen3Frames:
 
     @pytest.mark.parametrize("query", PINNED_QUERIES)
     @pytest.mark.parametrize("strategy", TEXT_FIRST_STRATEGIES[:2])
-    def test_reranked_videos_score_their_fused_frame(
+    def test_every_video_scores_its_best_text_match_fused_score(
         self, ranked_frames, corpus, query, strategy
     ):
-        """The videos ranked by the second phase come first, each scoring its
-        frame's MaxSim, averaged over the query tokens, plus its nativeRank;
-        every video after them scores below the last of them."""
+        """Over the frames the query text matches: the visual MaxSim from the
+        recorded patches, averaged over the query tokens, plus Vespa's
+        nativeRank of the frame decides each video's score and best frame."""
         fused = _text_first_fused(corpus, ranked_frames, query, strategy)
-
-        results = _search(ranked_frames, query, strategy)
-
-        reranked = [
-            r
-            for r in results
-            if abs(r.score - fused.get(r.document.id, np.inf)) <= 1e-5
-        ]
-        assert [r.document.id for r in results[: len(reranked)]] == [
-            r.document.id for r in reranked
-        ]
-        assert [r.score for r in reranked] == sorted(
-            (r.score for r in reranked), reverse=True
-        )
-        assert [
-            r.document.id
-            for r in results[len(reranked) :]
-            if r.score >= reranked[-1].score
-        ] == []
-        assert (
-            _ranked_videos(reranked)
-            == TEXT_FIRST_ORDER[strategy][query][: len(reranked)]
-        )
-
-    @pytest.mark.parametrize("strategy", TEXT_FIRST_STRATEGIES[:2])
-    def test_a_query_with_fewer_matches_than_the_window_reranks_them_all(
-        self, ranked_frames, corpus, strategy
-    ):
-        """'catching' matches fewer frames than the second phase reranks, so
-        every video holding a match scores its best match's fused score."""
-        fused = _text_first_fused(corpus, ranked_frames, "catching", strategy)
-        assert len(fused) < _rerank_window()
         best = {}
         for i, doc_id in enumerate(corpus["doc_ids"]):
             key = _video_key(str(corpus["video_titles"][i]))
-            score = fused.get(str(doc_id), -np.inf)
-            if score > best.get(key, (-np.inf, ""))[0]:
-                best[key] = (score, str(doc_id))
+            if fused.get(str(doc_id), -np.inf) > best.get(key, (-np.inf, ""))[0]:
+                best[key] = (fused[str(doc_id)], str(doc_id))
 
-        results = _search(ranked_frames, "catching", strategy)
+        results = _search(ranked_frames, query, strategy)
 
-        matched = sorted(
-            (v for v in best if best[v][0] > -np.inf), key=lambda v: -best[v][0]
+        assert (
+            _ranked_videos(results)
+            == sorted(best, key=lambda v: -best[v][0])[: len(results)]
         )
-        assert _ranked_videos(results) == matched
-        assert [r.document.id for r in results] == [best[v][1] for v in matched]
+        assert [r.document.id for r in results] == [
+            best[_video_key(r.document.metadata["video_title"])][1] for r in results
+        ]
         assert [r.score for r in results] == pytest.approx(
-            [best[v][0] for v in matched], abs=1e-5
+            [best[_video_key(r.document.metadata["video_title"])][0] for r in results],
+            abs=1e-5,
         )
 
 

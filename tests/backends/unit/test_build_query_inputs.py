@@ -249,6 +249,7 @@ def _hybrid_query(
     query_text: str,
     first_phase_embedding_field: str | None,
     filters: dict | None = None,
+    text_candidates_only: bool = False,
 ) -> dict:
     return backend._build_query(
         query_text=query_text,
@@ -256,6 +257,7 @@ def _hybrid_query(
         rank_config={
             "needs_text_query": True,
             "first_phase_embedding_field": first_phase_embedding_field,
+            "text_candidates_only": text_candidates_only,
         },
         ranking_profile="hybrid_float_bm25",
         schema_name="video_frame_acme_acme",
@@ -318,6 +320,46 @@ def test_text_first_hybrid_matches_text(backend: VespaSearchBackend) -> None:
         "select * from video_frame_acme_acme where userInput(@userQuery)"
     )
     assert params["userQuery"] == "man shoveling snow"
+
+
+def test_text_matches_only_hybrid_matches_text_though_it_scores_an_embedding(
+    backend: VespaSearchBackend,
+) -> None:
+    """A hybrid that ranks text matches only matches the query text even
+    though its first phase scores the embedding, with or without filters,
+    and finds nothing without text."""
+    params = _hybrid_query(
+        backend,
+        query_text="man shoveling snow",
+        first_phase_embedding_field="embedding",
+        text_candidates_only=True,
+    )
+    filtered = _hybrid_query(
+        backend,
+        query_text="man shoveling snow",
+        first_phase_embedding_field="embedding",
+        text_candidates_only=True,
+        filters={"video_id": "v1"},
+    )
+    empty = _hybrid_query(
+        backend,
+        query_text="",
+        first_phase_embedding_field="embedding",
+        text_candidates_only=True,
+    )
+
+    assert params["yql"] == (
+        "select * from video_frame_acme_acme where userInput(@userQuery)"
+    )
+    assert params["userQuery"] == "man shoveling snow"
+    assert filtered["yql"] == (
+        "select * from video_frame_acme_acme where userInput(@userQuery) "
+        'AND video_id contains "v1"'
+    )
+    assert (empty["yql"], empty["userQuery"]) == (
+        "select * from video_frame_acme_acme where userInput(@userQuery)",
+        "",
+    )
 
 
 def _nearest_neighbor_hybrid_query(

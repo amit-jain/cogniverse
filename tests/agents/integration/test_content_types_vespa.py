@@ -841,7 +841,7 @@ IN_CODE_TEXT_FIRST_HYBRIDS = {
 
 class TestInCodeTextFirstHybrids:
     """The text-first hybrids of the in-code content type schemas rank their
-    BM25 text matches by the visual or semantic similarity plus nativeRank.
+    text matches by the visual or semantic similarity plus nativeRank.
 
     Each gets two documents holding the query term in its text field with
     different embeddings, and one without the term: the two text matches come

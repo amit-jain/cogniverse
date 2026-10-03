@@ -12,9 +12,9 @@ in its first phase:
 - a dense binary vector: the angular closeness ``1/(1 + θ)`` with the angle
   estimated from the Hamming distance as ``θ = πh/bits``.
 
-A text-first hybrid (``hybrid_bm25_*``) matches the query text only. BM25 picks
-the best 100 text matches per content node and its second phase reranks them
-by the same sum of visual similarity and ``nativeRank``.
+A text-first hybrid (``hybrid_bm25_*``, ``"candidates": "text_matches"``)
+ranks the documents matching the query text, and no others, by the same sum
+of visual similarity and ``nativeRank``.
 
 Each profile is searched through ``VespaSearchBackend``. A visual-first hybrid
 gets two documents holding the same embedding, one of whose text fields carry
@@ -112,27 +112,26 @@ def _hybrids(schemas_dir: Path) -> list[tuple[str, dict, object]]:
 
 
 def _fused_hybrids(schemas_dir: Path = SCHEMAS_DIR) -> list[tuple[str, str]]:
-    """Every (schema, profile) whose first phase sums an embedding similarity
-    and a nativeRank text score."""
+    """Every (schema, profile) that ranks every document by the sum of an
+    embedding similarity and a nativeRank text score in its first phase."""
     return [
         (base, profile["name"])
         for base, profile, info in _hybrids(schemas_dir)
         if info.first_phase_embedding_field
+        and not info.text_candidates_only
         and _is_fused(_phase_terms(profile, "first_phase"))
     ]
 
 
 def _text_first_hybrids(schemas_dir: Path = SCHEMAS_DIR) -> list[tuple[str, str]]:
-    """Every (schema, profile) that matches the text, picks its candidates by
-    BM25 alone and reranks them by an embedding similarity plus nativeRank."""
+    """Every (schema, profile) that ranks the text matches alone by the sum of
+    an embedding similarity and a nativeRank text score in its first phase."""
     return [
         (base, profile["name"])
         for base, profile, info in _hybrids(schemas_dir)
-        if not info.first_phase_embedding_field
-        and all(
-            term.startswith("bm25(") for term in _phase_terms(profile, "first_phase")
-        )
-        and _is_fused(_phase_terms(profile, "second_phase"))
+        if info.text_candidates_only
+        and info.first_phase_embedding_field
+        and _is_fused(_phase_terms(profile, "first_phase"))
     ]
 
 
@@ -179,7 +178,7 @@ def test_every_visual_first_hybrid_fuses_with_native_rank():
     assert _fused_hybrids() == FUSED_HYBRIDS
 
 
-def test_every_text_first_hybrid_reranks_with_native_rank():
+def test_every_text_first_hybrid_ranks_text_matches_with_native_rank():
     assert _text_first_hybrids() == TEXT_FIRST_HYBRIDS
 
 
@@ -224,14 +223,14 @@ def test_a_hybrid_reranking_by_text_alone_is_not_fused(tmp_path):
     ]
 
 
-def test_a_text_first_hybrid_reranking_by_visual_alone_is_not_fused(tmp_path):
-    """The derivation drops a text-first hybrid whose second phase ranks its
-    text matches by the visual similarity alone."""
+def test_a_text_first_hybrid_ranking_by_visual_alone_is_not_fused(tmp_path):
+    """The derivation drops a text-first hybrid that ranks its text matches by
+    the visual similarity alone."""
     mutated = _mutated_schemas(
         tmp_path,
         "video_xclip_sv_chunk_6s",
         "hybrid_bm25_float",
-        second_phase={"expression": "visual_sim", "rerank_count": 100},
+        first_phase="visual_sim",
     )
 
     assert _text_first_hybrids(mutated) == [
@@ -239,6 +238,24 @@ def test_a_text_first_hybrid_reranking_by_visual_alone_is_not_fused(tmp_path):
         for hybrid in TEXT_FIRST_HYBRIDS
         if hybrid != ("video_xclip_sv_chunk_6s", "hybrid_bm25_float")
     ]
+
+
+def test_a_text_first_hybrid_without_its_candidate_set_is_visual_first(tmp_path):
+    """Without ``candidates: text_matches`` a fused profile ranks every
+    document, so the derivation counts it visual-first."""
+    shutil.copytree(SCHEMAS_DIR, tmp_path, dirs_exist_ok=True)
+    path = tmp_path / "video_xclip_sv_chunk_6s_schema.json"
+    schema = json.loads(path.read_text())
+    (profile,) = [
+        p for p in schema["rank_profiles"] if p["name"] == "hybrid_bm25_float"
+    ]
+    del profile["candidates"]
+    path.write_text(json.dumps(schema))
+
+    assert ("video_xclip_sv_chunk_6s", "hybrid_bm25_float") in _fused_hybrids(tmp_path)
+    assert ("video_xclip_sv_chunk_6s", "hybrid_bm25_float") not in (
+        _text_first_hybrids(tmp_path)
+    )
 
 
 def _field_type(base: str, field: str) -> str:
@@ -482,7 +499,7 @@ def _backend_search(vespa_instance, config_manager, base, request, port=None):
 
 
 @pytest.mark.parametrize(("base", "strategy"), TEXT_FIRST_HYBRIDS)
-def test_text_first_hybrid_reranks_text_matches_by_visual_plus_native_rank(
+def test_text_first_hybrid_ranks_text_matches_by_visual_plus_native_rank(
     vespa_instance, hybrid_corpus, base, strategy
 ):
     tenant, config_manager, deployed = hybrid_corpus
