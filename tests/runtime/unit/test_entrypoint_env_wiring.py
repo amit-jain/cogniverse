@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from redis.asyncio import Redis
 
 from cogniverse_agents.optimizer import dspy_agent_optimizer as dspy_optimizer
 from cogniverse_core.common.cache.backends import s3 as s3_backend
@@ -259,7 +260,9 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
 
     async def _fake_get_redis(url):
         events.append(f"redis:{url}")
-        return object()
+        # A real client that never connects: run() builds the worker's task
+        # event store on it.
+        return Redis.from_url("redis://stub")
 
     async def _fake_close_redis():
         events.append("close")

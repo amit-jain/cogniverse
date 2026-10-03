@@ -524,6 +524,33 @@ class TestSseEndpoints:
         assert seen_states == ["queued", "running", "complete"]
 
     @pytest.mark.asyncio
+    async def test_sse_ends_by_itself_at_a_cancelled_job(self, client, env_redis):
+        """``cancelled`` is terminal: the server closes the stream there."""
+        ingest_id = f"ing_{uuid.uuid4().hex[:8]}"
+        await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
+        await queue.publish_status(
+            env_redis, ingest_id, {"state": "cancelled", "reason": "operator stop"}
+        )
+
+        started = time.monotonic()
+        async with client.stream(
+            "GET", f"/ingestion/{ingest_id}/events?timeout_seconds=30"
+        ) as resp:
+            payloads = [
+                json.loads(line[len("data: ") :])
+                async for line in resp.aiter_lines()
+                if line.startswith("data: ")
+            ]
+        elapsed = time.monotonic() - started
+
+        # Closed at the terminal event, not by the 30 s idle timeout.
+        assert elapsed < 5.0, elapsed
+        assert payloads == [
+            {"state": "queued"},
+            {"state": "cancelled", "reason": "operator stop"},
+        ]
+
+    @pytest.mark.asyncio
     async def test_status_endpoint_returns_history_snapshot(self, client, env_redis):
         ingest_id = f"ing_{uuid.uuid4().hex[:8]}"
         await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
@@ -726,6 +753,20 @@ class TestWaitTimeoutRendering:
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_job_ends_the_wait(self, env_redis):
+        from cogniverse_runtime.ingestion_worker.submit_api import _wait_for_terminal
+
+        ingest_id = f"ingest_{uuid.uuid4().hex}"
+        cancelled = {"state": "cancelled", "ingest_id": ingest_id, "reason": "stop"}
+        await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
+        await queue.publish_status(env_redis, ingest_id, cancelled)
+
+        outcome = await _wait_for_terminal(env_redis, ingest_id, 30)
+
+        assert (outcome.terminal, outcome.last_event) == (cancelled, cancelled)
+        assert outcome.timed_out is False
 
     @pytest.mark.asyncio
     async def test_wait_on_a_missing_status_stream_raises(self, env_redis):

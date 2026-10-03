@@ -1169,6 +1169,116 @@ class TestTerminalCleanupBestEffort:
         assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
 
 
+class TestCancellation:
+    """A job's ingestion task is listed from submit, and a cancellation any
+    runtime process records reaches the worker that claims the job."""
+
+    async def _claim(self, redis, config):
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        jobs = await queue.claim(
+            redis, config.consumer_group, config.consumer_id, block_ms=1000
+        )
+        assert len(jobs) == 1
+        return jobs[0]
+
+    @pytest.mark.asyncio
+    async def test_a_job_cancelled_while_queued_settles_without_running(
+        self, redis, redis_container, monkeypatch
+    ):
+        from cogniverse_runtime.ingestion_worker import worker
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+        from cogniverse_runtime.task_events import INGESTION, TaskEventStore
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        src, profile, tenant = "s3://bucket/cancelled.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+        submitted = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        store = TaskEventStore(redis)
+        listed = await store.list_active(tenant)
+        cancelled = await store.cancel(INGESTION, submitted.ingest_id, "not needed")
+        job = await self._claim(redis, config)
+        ran = []
+
+        async def _processor(job):
+            ran.append(job.ingest_id)
+            return {}
+
+        monkeypatch.setattr(worker, "_task_events", store)
+        await worker._process_job(redis, job, config, processor=_processor)
+
+        assert [(row["task_id"], row["kind"]) for row in listed] == [
+            (submitted.ingest_id, INGESTION)
+        ]
+        assert cancelled == "cancelled"
+        assert ran == []
+        assert [
+            event for _, event in await queue.read_status_since(redis, job.ingest_id)
+        ] == [
+            {
+                "state": "queued",
+                "ingest_id": job.ingest_id,
+                "source_url": src,
+                "profile": profile,
+                "tenant_id": tenant,
+            },
+            {"state": "cancelled", "ingest_id": job.ingest_id, "reason": "not needed"},
+        ]
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
+        assert await redis.get(f"{idempotency.DONE_KEY_PREFIX}{sha}") is None
+        assert await queue.get_active(redis, tenant) == 0
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+        assert await queue.queue_depth(redis) == 0
+        assert await store.list_active(tenant) == []
+        assert (await store.read(job.ingest_id, kind=INGESTION, count=0)).closed
+
+    @pytest.mark.asyncio
+    async def test_a_cancellation_that_arrives_while_the_job_runs_lets_it_finish(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A queue-driven job is one video: a cancellation recorded once it
+        runs reaches its worker, and the video still completes."""
+        from cogniverse_runtime.ingestion_worker import worker
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+        from cogniverse_runtime.task_events import INGESTION, TaskEventStore
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        submitted = await enqueue_ingestion(
+            redis,
+            source_url="s3://bucket/running.mp4",
+            profile="video",
+            tenant_id="acme:acme",
+        )
+        store = TaskEventStore(redis)
+        job = await self._claim(redis, config)
+        seen = {}
+
+        async def _processor(job):
+            seen["cancel"] = await store.cancel(INGESTION, job.ingest_id, "late")
+            await store.poll_once()
+            seen["delivered"] = worker._task_events._producers[
+                job.ingest_id
+            ].cancellation_token.reason
+            return {}
+
+        monkeypatch.setattr(worker, "_task_events", store)
+        await worker._process_job(redis, job, config, processor=_processor)
+        states = [
+            event["state"]
+            for _, event in await queue.read_status_since(redis, job.ingest_id)
+        ]
+
+        assert seen == {"cancel": "cancelled", "delivered": "late"}
+        assert states == ["queued", "running", "complete"]
+        # The worker stopped holding the task's lease once the job ended.
+        assert store._producers == {}
+        assert submitted.ingest_id == job.ingest_id
+
+
 class TestColdBuildOffload:
     @pytest.mark.asyncio
     async def test_prepare_job_context_runs_off_the_event_loop(self, monkeypatch):

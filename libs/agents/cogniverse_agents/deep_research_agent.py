@@ -28,6 +28,7 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.events import current_event_queue, raise_if_cancelled
 from cogniverse_foundation.config.semantic_router import (
     routed_lm_context_for_async,
 )
@@ -219,7 +220,7 @@ class DeepResearchAgent(
             input.query, input.query
         )
 
-        self.emit_progress("decompose", "Decomposing research query...")
+        await self.report_phase("decompose", "Decomposing research query...")
 
         with await self._short_call_lm(
             input.tenant_id, call_site="deep_research_decomposition"
@@ -233,7 +234,7 @@ class DeepResearchAgent(
 
         while gaps and iteration < input.max_iterations:
             iteration += 1
-            self.emit_progress(
+            await self.report_phase(
                 "search",
                 f"Iteration {iteration}: searching {len(gaps)} sub-questions...",
             )
@@ -242,7 +243,7 @@ class DeepResearchAgent(
             all_evidence.extend(new_evidence)
             all_citations.extend(self._extract_citations(new_evidence))
 
-            self.emit_progress(
+            await self.report_phase(
                 "evaluate", f"Evaluating evidence (iteration {iteration})..."
             )
             with await self._short_call_lm(
@@ -262,7 +263,7 @@ class DeepResearchAgent(
                 "The decomposer must return at least one sub-question."
             )
 
-        self.emit_progress("synthesize", "Synthesizing research report...")
+        await self.report_phase("synthesize", "Synthesizing research report...")
         attachment_failures: List[str] = []
         summary = await self._synthesize(
             input.query, all_evidence, input.attachments, attachment_failures
@@ -278,15 +279,25 @@ class DeepResearchAgent(
         rlm_telemetry = None
 
         if self.should_use_rlm_for_query(input.rlm, evidence_context):
-            self.emit_progress("rlm_synthesis", "Synthesizing evidence with RLM...")
+            await self.report_phase(
+                "rlm_synthesis", "Synthesizing evidence with RLM..."
+            )
             logger.info(f"RLM enabled for research query: {input.query[:50]}...")
+            # The RLM's iterations report on the run's own workflow task.
+            event_queue = current_event_queue()
             try:
                 rlm_result = await asyncio.to_thread(
                     self.process_with_rlm,
                     query=input.query,
                     context=evidence_context,
                     rlm_options=input.rlm,
-                    tenant_id=input.tenant_id,
+                    tenant_id=(
+                        event_queue.tenant_id
+                        if event_queue is not None
+                        else input.tenant_id
+                    ),
+                    event_queue=event_queue,
+                    task_id=event_queue.task_id if event_queue is not None else None,
                 )
                 rlm_synthesis = rlm_result.answer
                 rlm_telemetry = self.get_rlm_telemetry(
@@ -303,6 +314,10 @@ class DeepResearchAgent(
                     "rlm_attempted": True,
                     "rlm_error": str(e),
                 }
+
+        # A cancellation that stopped the RLM, or arrived while it ran, ends
+        # the run here rather than with a report.
+        raise_if_cancelled()
 
         return DeepResearchOutput(
             summary=summary,

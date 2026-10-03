@@ -106,9 +106,9 @@ cogniverse_core/
 │   └── vlm_interface.py         # Vision Language Model interface
 ├── events/                      # Real-time event notification system (see Event System section)
 │   ├── types.py                 # Event type definitions (StatusEvent, ProgressEvent, etc.)
-│   ├── queue.py                 # EventQueue and QueueManager protocols
+│   ├── queue.py                 # EventQueue/QueueManager protocols, TaskCancelled, per-request queue binding
 │   └── backends/                # Backend implementations
-│       └── memory.py            # In-memory EventQueue backend
+│       └── memory.py            # In-process EventQueue backend
 ├── durable/                     # Durable execution for long-running workflows (see Durable Execution section)
 │   ├── pipeline_checkpoint.py   # PipelineCheckpoint / PipelineCheckpointStatus / PipelineCheckpointConfig
 │   └── pipeline_checkpoint_storage.py # PipelineCheckpointStorage (span persist + resume lookup)
@@ -997,23 +997,27 @@ their own budgets, `DOCUMENT_ENCODE_TIMEOUT_S` (120s) for a text batch and
 
 ## Event System
 
-`events/` defines the Pydantic event vocabulary and queue protocols the
-runtime uses to stream agent progress over SSE (see `AgentBase.emit_progress`
-/ `process(stream=True)`).
+`events/` defines the Pydantic event vocabulary, the queue protocols, and the
+per-request binding producers report on. The runtime's queues are Redis-backed
+(`cogniverse_runtime.task_events`, see [Events Module](./events.md)); the
+in-process ones here serve a library caller outside the runtime.
 
 ```python
-from cogniverse_core.events.types import TaskState, create_status_event
-from cogniverse_core.events.backends.memory import get_queue_manager
-
-manager = get_queue_manager()
-queue = await manager.get_or_create_queue(task_id="task-123", tenant_id="acme")
-await queue.enqueue(
-    create_status_event(
-        task_id="task-123", tenant_id="acme", state=TaskState.WORKING, message="starting"
-    )
+from cogniverse_core.events import (
+    InMemoryEventQueue,
+    TaskCancelled,
+    bind_event_queue,
+    publish_phase,
 )
-async for event in queue.subscribe():
-    ...  # stream to the client (SSE)
+
+queue = InMemoryEventQueue(task_id="task-123", tenant_id="acme:acme")
+with bind_event_queue(queue):
+    await publish_phase("planning", "Creating execution plan...")
+    queue.cancel("operator stop")
+    try:
+        await publish_phase("execution", "Executing...")
+    except TaskCancelled as stopped:
+        print(stopped.reason)  # "operator stop"
 ```
 
 | Component | Purpose |
@@ -1021,9 +1025,15 @@ async for event in queue.subscribe():
 | `EventType`, `TaskState` | Enums for event kind and A2A task lifecycle state |
 | `StatusEvent`, `ProgressEvent`, `ArtifactEvent`, `ErrorEvent`, `CompleteEvent` | `BaseEvent` subclasses emitted during processing |
 | `EventQueue` / `QueueManager` (Protocols) | Per-task event queue and queue-lifecycle contracts |
-| `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping |
-| `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | Default in-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
+| `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping; a queue records the event loop it was created on (`loop`) so a producer on a worker thread publishes through it |
+| `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | In-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
 | `CancellationToken` (`events/queue.py`) | Cooperative cancellation signal threaded through a running task |
+| `bind_event_queue(queue)` / `current_event_queue()` | Bind the queue a request reports to (a `ContextVar`, inherited by the tasks and threads the request starts), never held on a shared agent |
+| `publish_phase(phase, message, check_cancelled=True)` | Publish a working `StatusEvent` on the bound queue (no-op without one), then raise `TaskCancelled` when the task was cancelled |
+| `raise_if_cancelled(queue=None)` / `TaskCancelled` | Stop a producer at a boundary once its task was cancelled; carries `task_id` and `reason` |
+
+`AgentBase.report_phase(phase, message)` is `emit_progress` (the streaming
+caller's progress dict) plus `publish_phase`.
 
 ---
 

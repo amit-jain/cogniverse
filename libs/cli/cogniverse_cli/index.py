@@ -239,7 +239,7 @@ def _upload_file(
             payload = status.json()
             state = payload.get("state", state)
             latest = payload.get("latest", {}) or {}
-            if state in ("complete", "failed"):
+            if state in ("complete", "failed", "cancelled"):
                 break
         time.sleep(2)
 

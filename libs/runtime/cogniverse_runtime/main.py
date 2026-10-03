@@ -1335,38 +1335,47 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     replica_id = (
         f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     )
-    # Agent registrations, annotation requests and /ingestion/start job
-    # status are shared by every worker process and replica through Redis.
+    # Agent registrations, annotation requests, /ingestion/start job status,
+    # conversation turn order and suspended /v1 turns are shared by every
+    # worker process and replica through Redis, on one client and connection
+    # pool per process.
     from cogniverse_agents.routing.annotation_queue import AnnotationQueue
-    from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
-    from cogniverse_runtime.ingestion_jobs import IngestionJobStore
-    from cogniverse_runtime.shared_state import connect_shared_state_redis
-
-    shared_state_redis = await connect_shared_state_redis(redis_url)
-    agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
-    agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
-    ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
-    # Conversation turn order and suspended /v1 turns live in the same Redis,
-    # so every worker and replica serves any session's next request.
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_PERSIST_FAILURE_CAPACITY,
         CONVERSATION_SAVE_LEASE_S,
     )
-    from cogniverse_runtime.session_state import (
-        ContinuationStore,
-        ConversationLedger,
-        open_session_redis,
+    from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
+    from cogniverse_runtime.ingestion_jobs import IngestionJobStore
+    from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
+    from cogniverse_runtime.shared_state import (
+        SHARED_STATE_REDIS_CLIENT_NAME,
+        connect_shared_state_redis,
     )
 
-    session_redis = await open_session_redis(redis_url)
+    shared_state_redis = await connect_shared_state_redis(
+        redis_url, client_name=f"{SHARED_STATE_REDIS_CLIENT_NAME}:{replica_id}"
+    )
+    agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
+    agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
+    ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
     agents.set_conversation_ledger(
         ConversationLedger(
-            session_redis,
+            shared_state_redis,
             save_lease_s=CONVERSATION_SAVE_LEASE_S,
             failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
         )
     )
-    openai_compat.set_continuation_store(ContinuationStore(session_redis))
+    openai_compat.set_continuation_store(ContinuationStore(shared_state_redis))
+    # Workflow and ingestion progress, cancellations and the active-task index
+    # (/events) live in the same Redis; this process's poller renews the leases
+    # of the tasks it runs and delivers their cancellations.
+    from cogniverse_runtime.task_events import TaskEventStore
+
+    task_events = TaskEventStore(shared_state_redis)
+    task_events.start()
+    events.set_task_event_store(task_events)
+    agents.set_task_event_store(task_events)
+    ingestion.set_task_event_store(task_events)
 
     def system_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -1644,16 +1653,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # See: charts/cogniverse/templates/optimization-workflows.yaml
     # CLI: python -m cogniverse_runtime.optimization_cli --mode once
 
-    # 11. Start the InMemoryQueueManager cleanup loop. Every search / ingestion /
-    # mem0 operation creates a task queue holding up to max_buffer_size events
-    # (~1 KB each). Without this loop, queues live forever — the suite creates
-    # thousands over a run and the runtime OOMs on the accumulated buffers.
-    from cogniverse_core.events import get_queue_manager
-
-    queue_manager = get_queue_manager()
-    await queue_manager.start_cleanup_loop(interval_seconds=60)
-    logger.info("Event queue cleanup loop started")
-
     # 12. Start the OpenShell gateway health probe (only when sandbox is not
     # disabled). Each probe records availability + latency as a Phoenix span
     # (openshell.gateway_health) so the dashboard can surface gateway state.
@@ -1864,7 +1863,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await cluster_events.close()
     agents.set_conversation_ledger(None)
     openai_compat.set_continuation_store(None)
-    await session_redis.aclose()
+    events.set_task_event_store(None)
+    agents.set_task_event_store(None)
+    ingestion.set_task_event_store(None)
+    await task_events.close()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 
@@ -1885,7 +1887,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await cert_rotator.stop()
     if lifecycle_scheduler is not None:
         await lifecycle_scheduler.stop()
-    await queue_manager.stop_cleanup_loop()
     # Tear down pooled OpenShell sessions so a restart doesn't orphan one live
     # gateway container per agent_type. close() does gateway RPCs — off the loop.
     try:

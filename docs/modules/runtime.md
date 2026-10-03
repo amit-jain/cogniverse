@@ -69,7 +69,7 @@ cogniverse_runtime/
 ├── job_executor.py                  # Background-job executor
 ├── a2a_executor.py                  # Agent-to-agent protocol executor
 ├── a2a_task_store.py                # Redis store of A2A tasks, leases and event relays
-├── shared_state.py                  # Redis client for state every process shares
+├── shared_state.py                  # The one Redis client + pool every state store uses
 ├── agent_registry_store.py          # Redis store of agent registrations
 ├── ingestion_jobs.py                # /ingestion/start job status, owner leases
 ├── memory_init.py                   # Mem0 client + per-tenant memory setup
@@ -83,6 +83,7 @@ cogniverse_runtime/
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
 ├── sandbox_pool.py                  # Capacity-bounded per-task sandbox leases
 ├── session_state.py                 # Conversation ledger + /v1 continuation store in Redis
+├── task_events.py                   # Workflow + ingestion task events, cancellation, active index in Redis
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
 ├── startup_wait.py                  # Dependency-readiness command + in-process startup wait
@@ -342,7 +343,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
 6. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
-7. Apply deployment env-var overrides to `SystemConfig`; validate the A2A settings and connect to Redis at the resolved `SystemConfig.redis_url`, so a pod that cannot use Redis fails before any deploy, probe or background loop; open the process's shared-state client on that Redis (`connect_shared_state_redis`) and give it to the agent registry (`RedisAgentRegistryStore`), the `agents` router (`AnnotationQueue`) and the `ingestion` router (`IngestionJobStore`); open the session-state client on the same Redis (`session_state.open_session_redis`) and hand the conversation ledger to the agents router and the continuation store to `/v1`; deploy metadata schemas via a system backend unless every live metadata schema already equals this build's, where a deploy that finds the deployment lease held is retried in the background every 30 s instead of failing startup; then store the overridden `SystemConfig` through `write_startup_config`. That write reads the key's latest version by visiting its stored versions, so it never depends on search coverage, and waits out a config store that does not answer (`ConfigStoreUnavailableError`, after the read's own attempts, or a transport error on the write) for `STARTUP_CONFIG_WRITE_BUDGET_S` (60 s), retrying every `STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S` with a WARNING per attempt; a store still unavailable after it fails the worker's startup with a `RuntimeError` naming the write and the last failure
+7. Apply deployment env-var overrides to `SystemConfig`; validate the A2A settings and connect to Redis at the resolved `SystemConfig.redis_url`, so a pod that cannot use Redis fails before any deploy, probe or background loop; open the process's one shared-state client and connection pool on that Redis (`connect_shared_state_redis`, `SHARED_STATE_REDIS_MAX_CONNECTIONS` = 128, its connections named `cogniverse-runtime-state:<host>:<pid>:<suffix>` in `CLIENT LIST`) and give it to every store of shared and session state: the agent registry (`RedisAgentRegistryStore`), the `agents` router (`AnnotationQueue`, the `ConversationLedger`), the `ingestion` router (`IngestionJobStore`), `/v1` (`ContinuationStore`) and the task event store (`TaskEventStore`, whose poller starts here) the `events`, `agents` and `ingestion` routers report workflows and jobs to; each store still raises its own typed error and its routes their own 503; shutdown closes the client once, after every store is released; deploy metadata schemas via a system backend unless every live metadata schema already equals this build's, where a deploy that finds the deployment lease held is retried in the background every 30 s instead of failing startup; then store the overridden `SystemConfig` through `write_startup_config`. That write reads the key's latest version by visiting its stored versions, so it never depends on search coverage, and waits out a config store that does not answer (`ConfigStoreUnavailableError`, after the read's own attempts, or a transport error on the write) for `STARTUP_CONFIG_WRITE_BUDGET_S` (60 s), retrying every `STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S` with a WARNING per attempt; a store still unavailable after it fails the worker's startup with a `RuntimeError` naming the write and the last failure
 8. Probe Phoenix reachability and validate inference services against configured profiles
 9. Wire tenant manager and the wiki/graph manager factories; affirm the system's wiki and memory backend profiles through the same `write_startup_config` wait, where a failure after it is logged as a WARNING rather than failing startup
 10. Configure DSPy LM and the synthetic data service
@@ -458,7 +459,7 @@ The server uses modular routers for different functionality:
 | `admin` | `/admin` | Tenant and profile management |
 | `knowledge` | `/admin` | Direct HTTP routes to knowledge-system agents (audit, citations, KG, federation, synthesis, temporal) |
 | `tenant_manager` | `/admin` | Tenant creation, deletion, and router-tier administration |
-| `events` | `/events` | SSE streaming for real-time notifications |
+| `events` | `/events` | Workflow and ingestion progress (SSE), cancellation and the active-task listing, from the shared task event store |
 | `synthetic` | `/synthetic` | Synthetic data generation (from `cogniverse_synthetic`) |
 | `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
@@ -916,6 +917,8 @@ curl -X POST http://localhost:8000/ingestion/start \
 ```
 Body fields mirror `IngestionRequest`: `video_dir`, `profile`, `backend` (default `"vespa"`), `tenant_id` (required), `org_id` (optional), `content_type`, `max_videos`, `batch_size` (default `10`). An `org_id` supplied alongside a simple `tenant_id` (no colon) is combined into the canonical `org:tenant` form for both the backend resolution and the background pipeline, matching `/ingestion/upload` and the search route.
 
+Before it answers, the route opens the job's ingestion task on the shared task event store (its status stream `ingest:status:<job_id>`), so the job is streamed (`/events/ingestion/{job_id}` or `/ingestion/{job_id}/events`), listed and cancelled from any process; the pipeline reports to it, a cancellation stops the pipeline before its next video, and the task ends with `complete`, `failed` or `cancelled` once the job's outcome is recorded. A task store that does not answer is a 503 `task_events_unavailable` with `job_id`, and nothing starts; a job store that does not answer after the task opened ends the task `failed`.
+
 **POST /ingestion/upload** - Upload a video to MinIO and enqueue ingestion via Redis
 ```bash
 curl -X POST "http://localhost:8000/ingestion/upload?wait=true&wait_timeout=300&force=false" \
@@ -926,7 +929,7 @@ curl -X POST "http://localhost:8000/ingestion/upload?wait=true&wait_timeout=300&
 ```
 Form fields: `file` (required), `profile` (optional), `backend` (default `"vespa"`), `tenant_id` (required — 400 if missing), `org_id` (optional). An omitted profile resolves from the canonical tenant's `backend.default_profiles.video.profile`, then `active_video_profile` — through `cogniverse_foundation.config.utils.resolve_default_profile`, the single resolver `POST /search`, `GET /search/strategies` and the dispatcher's grounding plan also call, so a tenant that named no profile ingests into the corpus it queries. The selected profile must exist in that tenant's merged profile catalog and provide processing strategies; an explicitly named profile may be of any modality, while an omitted one resolves to the tenant's default video profile. An invalid explicit profile returns 422; an empty `profile` field is dropped as an omitted form value and resolves the tenant default, while a whitespace-only one is an invalid explicit profile; an omitted profile with no default video profile returns the same 400 as `POST /search`, and other missing or unavailable profile configuration returns 503, before the file is read, stored, or queued. Query params: `wait` (default `false` — returns immediately with just `ingest_id`), `wait_timeout` (seconds, `10`-`900`, default `300`, applies only when `wait=true`), `force` (default `false`, bypasses idempotency and re-enqueues even on a cache hit).
 
-Response always includes `ingest_id`, `sha`, `state` (the status stream's newest event: `queued`|`in_flight`|`running`|`retrying`|`complete`|`failed`), `existing` (`true` on an idempotency hit, where `state` reports the existing run and its status stream is re-seeded if it has been reclaimed, so the returned `ingest_id` always resolves through `GET /ingestion/{id}/status`), `filename`, `source_url`, `wait_timed_out`. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response (200) additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). A `failed` terminal additionally carries the worker's `error` and `error_type`. When `wait_timeout` lapses first, the response is **202** with `status: "wait_timeout"`, `wait_timed_out: true`, `state` as the stream last showed it, and the `error`/`error_type` of a `retrying` job; poll `GET /ingestion/{id}/status` for the terminal. 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured, or if the job's status stream yielded no event at all during the wait (its state is unknown, never rendered as `queued`).
+Response always includes `ingest_id`, `sha`, `state` (the status stream's newest event: `queued`|`in_flight`|`running`|`retrying`|`complete`|`failed`|`cancelled`), `existing` (`true` on an idempotency hit, where `state` reports the existing run and its status stream is re-seeded if it has been reclaimed, so the returned `ingest_id` always resolves through `GET /ingestion/{id}/status`), `filename`, `source_url`, `wait_timed_out`. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response (200) additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). A `failed` terminal additionally carries the worker's `error` and `error_type`. When `wait_timeout` lapses first, the response is **202** with `status: "wait_timeout"`, `wait_timed_out: true`, `state` as the stream last showed it, and the `error`/`error_type` of a `retrying` job; poll `GET /ingestion/{id}/status` for the terminal. 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured, or if the job's status stream yielded no event at all during the wait (its state is unknown, never rendered as `queued`).
 
 **GET /ingestion/status/{job_id}** - Check processing status
 ```bash
@@ -1163,7 +1166,7 @@ nested there rather than being a top-level field of the routing response.
 
 Completed dispatch envelopes carry `answer`: the human-facing text of the turn, produced by `harness_turn.extract_answer_text` and read by the wiki auto-file hook and the harness transports. `harness_turn` derives that text from the agent's own output — nested under `result` / `orchestration_result`, or flat for the generic path — falling back to the envelope's message and hits. An error envelope raises `NoAnswerError` and is left without an `answer`, so a failure is never rendered as a reply. A generation the adapter cannot turn into the signature's outputs (any `AdapterParseError`) ends the turn as one of those error envelopes, naming the request id and — for `LMOutputIncomplete` — the fields the LM never filled, rather than an answer assembled from placeholder values. The module also holds `derive_request_seed` (the canary/variant bucket for a conversation, anchored on its first user message) and `to_openai_tool_calls`.
 
-**Server-managed conversation history.** When a dispatch carries a `context_id` and no `conversation_history` of its own (the messaging gateway), the dispatcher loads that context's recent turns from Mem0 before the agent runs and persists the user + assistant turns after. Turn order and the saves still landing live in the shared `ConversationLedger` (`cogniverse_runtime/session_state.py`) on the runtime's Redis, so every worker and replica serves any turn of any context: when a turn's answer is ready, before the reply returns, the ledger gives it a position from Redis' clock (two per turn: the user row takes the position, the reply the next) and marks it pending; the save stores the rows with those positions as their `seq`, and settles the turn when it lands or fails. A load first waits for the context's pending turns, on whichever process accepted them, bounded by `CONVERSATION_SAVE_TIMEOUT_S`, so the next turn reads the previous one; a pending turn whose process died stops holding the context at its lease, `CONVERSATION_SAVE_LEASE_S`. Rows read back in position order, so turns answered by different processes stay in the order their replies were accepted whichever save lands first. Redis is not optional on this path: an unconfigured ledger or a Redis that does not answer within `SESSION_REDIS_TIMEOUT_SECONDS` raises `SessionStateUnavailable` — before the agent runs on the load, or instead of the reply when the answer cannot be given its position — and `POST /agents/{name}/process` answers 503 `session_state_unavailable` with `agent`, `context_id` and `request_id`; nothing falls back to process memory. The Mem0 read is on the reply path and bounded by `CONVERSATION_LOAD_TIMEOUT_S` (5s; a real read measures ~0.02s) — a hung Mem0 degrades to no history and the agent still answers, and the degrade is reported: the envelope carries a `conversation` block `{"state", "turn_count", "reason"}` whose state is `loaded`, `unavailable` (the read failed; `reason` is the repr of the failure) or `incomplete` (earlier turns were still saving when the wait budget ran out; `reason` counts them), so a context with no prior turns is distinguishable from one whose turns were not read. The save is **not** on the reply path: it runs through `_spawn_background`, and separate contexts save concurrently. The assistant turn is `result["answer"]`, the rendered answer the caller was handed; an envelope with no answer persists the user turn alone. The save appends the user turn and then the assistant turn, and each append is retried on its own: `CONVERSATION_SAVE_ATTEMPTS` (4) attempts, `CONVERSATION_SAVE_RETRY_BACKOFF_S` (0.25s) doubling per retry, stopping early when the remaining budget cannot hold the next attempt plus `CONVERSATION_SAVE_STEP_RESERVE_S`. Only a failure the write never got a verdict for is retried (transport, timeout, a retryable status — `cogniverse_core.conversation.is_transient_turn_write_error`); a document the backend refused is not. An append that landed is never repeated, and the store build is not retried because a failed build leaves nothing half-written. When the assistant append is given up on, the user turn stays and a durable `assistant_missing` marker row records the failure type in the reply's place — never fabricated assistant text — so a half-turn is findable after a restart through `ConversationStore.get_missing_assistant_markers`, while the loaded history shows an unanswered user message. A save that fails or exceeds `CONVERSATION_SAVE_TIMEOUT_S` (20s; a fresh process's first save measures ~7.2s, later saves ~0.1s) records the loss in the ledger with the exception's type (its message stays in the log, since it can quote the turn): `await conversation_persist_status()` reports `{"pending": N, "failed": [(tenant_id, context_id), …]}` — `pending` this process's saves still running, `failed` every context's unrecovered loss, oldest first — and `await conversation_persist_failure(tenant_id, context_id)` returns a `ConversationPersistFailed` naming the tenant, context, `error_type` and `position`, so a lost turn is readable from any process rather than silent. A loss is recovered once a later turn of the same context lands, whichever outcome reaches Redis first; the record holds the newest `CONVERSATION_PERSIST_FAILURE_CAPACITY` contexts, evicting oldest-first, and a context's ledger state expires `CONVERSATION_STATE_RETENTION_S` (7 days) after its last turn. `drain_conversation_saves()` lands this process's in-flight saves within `CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S`; the runtime's shutdown calls it through `routers.agents.drain_conversation_saves()`.
+**Server-managed conversation history.** When a dispatch carries a `context_id` and no `conversation_history` of its own (the messaging gateway), the dispatcher loads that context's recent turns from Mem0 before the agent runs and persists the user + assistant turns after. Turn order and the saves still landing live in the shared `ConversationLedger` (`cogniverse_runtime/session_state.py`) on the runtime's Redis, so every worker and replica serves any turn of any context: when a turn's answer is ready, before the reply returns, the ledger gives it a position from Redis' clock (two per turn: the user row takes the position, the reply the next) and marks it pending; the save stores the rows with those positions as their `seq`, and settles the turn when it lands or fails. A load first waits for the context's pending turns, on whichever process accepted them, bounded by `CONVERSATION_SAVE_TIMEOUT_S`, so the next turn reads the previous one; a pending turn whose process died stops holding the context at its lease, `CONVERSATION_SAVE_LEASE_S`. Rows read back in position order, so turns answered by different processes stay in the order their replies were accepted whichever save lands first. Redis is not optional on this path: an unconfigured ledger or a Redis that does not answer within `SHARED_STATE_REDIS_TIMEOUT_SECONDS` raises `SessionStateUnavailable` — before the agent runs on the load, or instead of the reply when the answer cannot be given its position — and `POST /agents/{name}/process` answers 503 `session_state_unavailable` with `agent`, `context_id` and `request_id`; nothing falls back to process memory. The Mem0 read is on the reply path and bounded by `CONVERSATION_LOAD_TIMEOUT_S` (5s; a real read measures ~0.02s) — a hung Mem0 degrades to no history and the agent still answers, and the degrade is reported: the envelope carries a `conversation` block `{"state", "turn_count", "reason"}` whose state is `loaded`, `unavailable` (the read failed; `reason` is the repr of the failure) or `incomplete` (earlier turns were still saving when the wait budget ran out; `reason` counts them), so a context with no prior turns is distinguishable from one whose turns were not read. The save is **not** on the reply path: it runs through `_spawn_background`, and separate contexts save concurrently. The assistant turn is `result["answer"]`, the rendered answer the caller was handed; an envelope with no answer persists the user turn alone. The save appends the user turn and then the assistant turn, and each append is retried on its own: `CONVERSATION_SAVE_ATTEMPTS` (4) attempts, `CONVERSATION_SAVE_RETRY_BACKOFF_S` (0.25s) doubling per retry, stopping early when the remaining budget cannot hold the next attempt plus `CONVERSATION_SAVE_STEP_RESERVE_S`. Only a failure the write never got a verdict for is retried (transport, timeout, a retryable status — `cogniverse_core.conversation.is_transient_turn_write_error`); a document the backend refused is not. An append that landed is never repeated, and the store build is not retried because a failed build leaves nothing half-written. When the assistant append is given up on, the user turn stays and a durable `assistant_missing` marker row records the failure type in the reply's place — never fabricated assistant text — so a half-turn is findable after a restart through `ConversationStore.get_missing_assistant_markers`, while the loaded history shows an unanswered user message. A save that fails or exceeds `CONVERSATION_SAVE_TIMEOUT_S` (20s; a fresh process's first save measures ~7.2s, later saves ~0.1s) records the loss in the ledger with the exception's type (its message stays in the log, since it can quote the turn): `await conversation_persist_status()` reports `{"pending": N, "failed": [(tenant_id, context_id), …]}` — `pending` this process's saves still running, `failed` every context's unrecovered loss, oldest first — and `await conversation_persist_failure(tenant_id, context_id)` returns a `ConversationPersistFailed` naming the tenant, context, `error_type` and `position`, so a lost turn is readable from any process rather than silent. A loss is recovered once a later turn of the same context lands, whichever outcome reaches Redis first; the record holds the newest `CONVERSATION_PERSIST_FAILURE_CAPACITY` contexts, evicting oldest-first, and a context's ledger state expires `CONVERSATION_STATE_RETENTION_S` (7 days) after its last turn. `drain_conversation_saves()` lands this process's in-flight saves within `CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S`; the runtime's shutdown calls it through `routers.agents.drain_conversation_saves()`.
 
 
 `dispatch_stream(agent_name, query, context)` checks egress in a worker and
@@ -1508,34 +1511,49 @@ code.
 
 ### Events Endpoints (SSE Streaming)
 
+Every worker process and replica serves every task: events, cancellations and
+the active-task index live in the shared Redis task event store
+(`cogniverse_runtime.task_events`). An orchestration or deep-research run is a
+workflow task, named by the dispatch context's `workflow_id` or a new
+`workflow_<hex>`; an ingestion job's task is its job id.
+
 **GET /events/workflows/{workflow_id}** - Subscribe to workflow events
 ```bash
 curl -N "http://localhost:8000/events/workflows/workflow_123"
 # Returns Server-Sent Events stream:
-# data: {"event_type": "status", "state": "working", "phase": "planning"}
-# data: {"event_type": "progress", "current": 1, "total": 3}
+# data: {"type": "connected", "task_id": "workflow_123", "offset": 0, ...}
+# data: {"event_type": "status", "state": "working", "phase": "started", ...}
+# data: {"event_type": "status", "state": "working", "phase": "planning", ...}
 # ...
+# data: {"event_type": "complete", "result": {"status": "success"}, ...}
 ```
 
-**GET /events/ingestion/{job_id}** - Subscribe to ingestion job events
+**GET /events/ingestion/{job_id}** - Subscribe to ingestion job events, read
+from the job's ingestion status stream
 ```bash
-curl -N "http://localhost:8000/events/ingestion/ingestion_456"
+curl -N "http://localhost:8000/events/ingestion/<job_id>?from_offset=0"
 ```
 
-**POST /events/workflows/{workflow_id}/cancel** - Cancel a running workflow
+**POST /events/workflows/{workflow_id}/cancel** - Cancel a running workflow:
+the worker running it stops at its next phase boundary
 ```bash
 curl -X POST "http://localhost:8000/events/workflows/workflow_123/cancel" \
   -H "Content-Type: application/json" \
   -d '{"reason": "User requested cancellation"}'
 ```
 
-**POST /events/ingestion/{job_id}/cancel** - Cancel a running ingestion job
+**POST /events/ingestion/{job_id}/cancel** - Cancel a running or queued ingestion job
 
-**GET /events/queues** - List active event queues (admin)
+**GET /events/queues?tenant_id=** - A tenant's active tasks
 
-**GET /events/queues/{task_id}** - Get queue information
+**GET /events/queues/{task_id}** - A task's state
 
-See [Events Module](./events.md) for complete documentation.
+**GET /events/queues/{task_id}/offset** - The offset the task's next event takes
+
+A stream ends once its task has ended. Cancel answers 404 for no task of that
+kind and 409 for one that finished or stopped reporting; every route answers
+503 `task_events_unavailable` when the store does not answer. See
+[Events Module](./events.md) for complete documentation.
 
 ---
 
@@ -1739,12 +1757,13 @@ run under `RuntimeWorkerSupervisor`:
 
 Each worker is a separate process with its own memory and in-process state:
 caches. A follow-up request that reaches another worker does not see them.
-Agent registrations, annotation requests and `/ingestion/start` job status are
-kept in Redis through one bounded client per process
-(`cogniverse_runtime/shared_state.py`, five-second command timeout), and
-server-managed conversation order and `/v1` continuations through
-`session_state`, so every worker and replica serves the same ones and a
-follow-up turn may reach any worker.
+Agent registrations, annotation requests, `/ingestion/start` job status,
+server-managed conversation order, `/v1` continuations and workflow and
+ingestion task events are kept in Redis through one bounded client and
+connection pool per process (`cogniverse_runtime/shared_state.py`,
+five-second command timeout), so every worker and replica serves the same
+ones, a follow-up turn may reach any worker, and a task is streamed or
+cancelled from any worker.
 
 ### Docker
 

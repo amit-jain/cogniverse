@@ -244,3 +244,41 @@ def test_gliner_url_reaches_the_doc_extractor(
     assert summary["files_found"] == 1
     assert summary["graph_errors"] == 0
     assert summary["graph_nodes"] == 0
+
+
+def test_a_cancelled_ingest_ends_the_poll_as_an_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_console: io.StringIO,
+) -> None:
+    """``cancelled`` is terminal: the poll stops at the first one instead of
+    waiting out its budget, and the file is an error, not indexed."""
+    (tmp_path / "a.py").write_text("x = 1\n")
+    polls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ingestion/upload":
+            return httpx.Response(202, json={"ingest_id": "i-c", "state": "queued"})
+        if request.url.path == "/ingestion/i-c/status":
+            polls.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={"state": "cancelled", "latest": {"reason": "operator stop"}},
+            )
+        if request.url.path == "/graph/upsert":
+            return httpx.Response(200, json={"nodes_upserted": 0, "edges_upserted": 0})
+        return httpx.Response(404, text=f"unexpected path {request.url.path}")
+
+    _mount_httpx(monkeypatch, handler)
+
+    summary = index_cli.index_files(
+        root=tmp_path,
+        content_type="code",
+        tenant_id="acme:acme",
+        runtime_url="http://runtime.test",
+    )
+
+    assert polls == ["/ingestion/i-c/status"]
+    assert summary["files_indexed"] == 0
+    assert summary["errors"] == 1
+    assert "did not complete: state='cancelled'" in capture_console.getvalue()

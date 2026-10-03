@@ -154,7 +154,8 @@ async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> WaitOutcome:
     """Long-poll the status stream until a terminal event is observed or
-    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed}``.
+    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed,
+    cancelled}``.
 
     On timeout the outcome carries the newest event the stream held, so the
     caller reports what the worker was actually doing. Raises
@@ -175,7 +176,7 @@ async def _wait_for_terminal(
         for message_id, event in events:
             last_id = message_id
             last_event = event
-            if event.get("state") in ("complete", "failed"):
+            if event.get("state") in queue.TERMINAL_STATUS_STATES:
                 return WaitOutcome(terminal=event, last_event=event)
     if last_event is None:
         raise StatusStreamUnavailable(
@@ -214,6 +215,39 @@ async def _restore_status_trail(
             "existing": True,
         },
     )
+
+
+async def _register_queued_task(
+    redis: aioredis.Redis, ingest_id: str, tenant_id: str
+) -> None:
+    """List the queued job as an active ingestion task, so it is cancellable
+    before a worker claims it.
+
+    The job is already queued: a worker that claims it records the task
+    itself, so a registration the store refuses is logged, not raised.
+    """
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_runtime.task_events import (
+        TaskAlreadyExists,
+        TaskEventStore,
+        TaskEventsUnavailable,
+    )
+
+    try:
+        await TaskEventStore(redis).register_queued(
+            ingest_id, canonical_tenant_id(tenant_id)
+        )
+    except TaskAlreadyExists:
+        # A worker claimed the job first and recorded its task.
+        pass
+    except TaskEventsUnavailable as exc:
+        logger.warning(
+            "Queued ingest %s not listed as an active task until a worker "
+            "claims it: %s (cause: %r)",
+            ingest_id,
+            exc,
+            exc.__cause__,
+        )
 
 
 async def enqueue_ingestion(
@@ -391,6 +425,7 @@ async def enqueue_ingestion(
         profile,
         source_url,
     )
+    await _register_queued_task(redis, ingest_id, tenant_id)
 
     if not wait:
         return EnqueueResult(

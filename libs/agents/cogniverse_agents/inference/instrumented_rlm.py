@@ -145,6 +145,10 @@ def _close_run_span(scope: Any, exc: Optional[BaseException]) -> None:
         logger.debug("%s span not closed: %s", RLM_RUN_SPAN_NAME, close_exc)
 
 
+# How long the offloaded RLM waits for one event to reach its queue.
+_THREAD_EMIT_TIMEOUT_S = 30.0
+
+
 class RLMCancelledError(Exception):
     """Raised when RLM is cancelled via CancellationToken."""
 
@@ -222,15 +226,17 @@ class InstrumentedRLM(TolerantRLM):
         self._background_tasks: set[asyncio.Task] = set()
 
     def _emit_sync(self, build_event: Callable[[], Any]) -> None:
-        """Emit an event synchronously (fire-and-forget in background).
+        """Emit an event from the synchronous RLM loop.
 
         The event is BUILT only once there is somewhere to send it: every event
         type requires a task id and a tenant id, and those exist only alongside
         a queue, so building one unconditionally raises and takes the RLM call
         down with it.
 
-        Attempts to enqueue the event in the current async loop. Silently skips
-        if no loop is running.
+        On a thread running an event loop the enqueue runs in the background.
+        On a worker thread (the RLM is offloaded) it runs on the loop the queue
+        was created on, and the RLM waits for it, so an enqueue that fails
+        fails the RLM call. Without either loop the event is skipped.
         """
         if not self._event_queue or not self._task_id:
             return
@@ -238,13 +244,23 @@ class InstrumentedRLM(TolerantRLM):
         event = build_event()
         try:
             loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
             task = loop.create_task(self._event_queue.enqueue(event))
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
-        except RuntimeError:
-            # No running event loop - skip event emission
-            # This can happen in sync contexts
-            logger.debug("No async loop available for event emission, skipping")
+            return
+        queue_loop = getattr(self._event_queue, "loop", None)
+        if (
+            isinstance(queue_loop, asyncio.AbstractEventLoop)
+            and queue_loop.is_running()
+        ):
+            asyncio.run_coroutine_threadsafe(
+                self._event_queue.enqueue(event), queue_loop
+            ).result(timeout=_THREAD_EMIT_TIMEOUT_S)
+            return
+        logger.debug("No async loop available for event emission, skipping")
 
     def _check_cancelled(self) -> None:
         """Check if cancelled and raise RLMCancelledError if so.

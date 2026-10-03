@@ -27,6 +27,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.ingestion_jobs import IngestionJobStore
 from cogniverse_runtime.routers import ingestion as ingestion_router
+from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = pytest.mark.integration
 
@@ -91,10 +92,18 @@ def start_client(
         FilesystemSchemaLoader(Path("configs/schemas"))
     )
     redis = Redis.from_url(shared_state_redis_url, decode_responses=True)
-    previous_store = ingestion_router._job_store
+    previous = ingestion_router._job_store, ingestion_router._task_event_store
     ingestion_router.set_job_store(
         IngestionJobStore(
             redis, owner="test", key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}"
+        )
+    )
+    events_prefix = f"test:task-events:{uuid.uuid4().hex}"
+    ingestion_router.set_task_event_store(
+        TaskEventStore(
+            redis,
+            key_prefix=events_prefix,
+            ingestion_stream_prefix=f"{events_prefix}:ingest:",
         )
     )
     try:
@@ -102,7 +111,7 @@ def start_client(
             yield client
             client.portal.call(redis.aclose)
     finally:
-        ingestion_router._job_store = previous_store
+        ingestion_router._job_store, ingestion_router._task_event_store = previous
 
     tenant_utils._TENANT_EXISTS_CACHE.pop(COMBINED_TENANT, None)
 

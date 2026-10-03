@@ -1235,8 +1235,12 @@ class VideoIngestionPipeline:
         Returns:
             Dict with job_id and list of results for each video
         """
-        # Generate job_id for this batch
-        self.job_id = f"ingestion_{uuid.uuid4().hex[:8]}"
+        # The batch's job id: the task its event queue reports on, else new.
+        self.job_id = (
+            self.event_queue.task_id
+            if self.event_queue is not None
+            else f"ingestion_{uuid.uuid4().hex[:8]}"
+        )
         start_time = time.time()
 
         # An empty batch is "nothing to do", not a failure — short-circuit
