@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 
 import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
 from cogniverse_runtime.cluster_events import ClusterEvents
+from cogniverse_runtime.shared_state import connect_shared_state_redis
+from cogniverse_runtime.task_events import TaskEventStore
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
@@ -171,11 +173,26 @@ class TestTenantManagerAPI:
         with TestClient(tenant_manager.app) as client:
             client.portal.call(events.start)
             tenant_manager.set_cluster_events(events)
+            # Tenant deletes cancel the tenant's tasks through a store whose
+            # client lives on the client's event loop, under keys of its own.
+            redis = client.portal.call(
+                connect_shared_state_redis, workflow_state_redis_url
+            )
+            prefix = f"test:task-events:{uuid.uuid4().hex}"
+            tenant_manager.set_task_event_store(
+                TaskEventStore(
+                    redis,
+                    key_prefix=prefix,
+                    ingestion_stream_prefix=f"{prefix}:ingest:",
+                )
+            )
             try:
                 yield client
             finally:
                 tenant_manager.set_cluster_events(None)
+                tenant_manager.set_task_event_store(None)
                 client.portal.call(events.close)
+                client.portal.call(redis.aclose)
 
         # Cleanup after each test to prevent state leakage
         logger.info("Cleaning up test_client fixture")

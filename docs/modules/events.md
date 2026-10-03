@@ -141,8 +141,9 @@ Every change is one Lua script that reads Redis' own clock.
 | `register_queued(task_id, tenant_id)` | Records a submitted queue-driven ingestion job, leased `QUEUED_INGESTION_LEASE_S` (6h) while it waits for a worker |
 | `attach(kind, task_id, tenant_id)` | Takes over the lease of a registered task this process now runs (recording it if absent); `None` once it ended |
 | `cancel(kind, task_id, reason)` | Records a cancellation: returns `cancelled`, `missing`, `finished` or `stopped` |
+| `cancel_tenant(tenant_id, reason)` | Records a cancellation on every running or queued task of the tenant in one script and returns their ids, oldest first (a task already cancelled keeps its first reason); prunes ended and silent ones from the tenant's index. The tenant delete calls it |
 | `read(task_id, kind=, after_offset=, subscriber=)` | The task's state and the events after an offset, registering a subscriber |
-| `list_active(tenant_id)` | The tenant's running or queued tasks; prunes ended and silent ones |
+| `list_active(tenant_id)` | The tenant's running or queued tasks, the tenant named in either form (`acme` is `acme:acme`); prunes ended and silent ones |
 | `start()` / `close()` | Runs / stops the process's poller |
 
 **Offsets.** An event's offset is its position among every event the task ever

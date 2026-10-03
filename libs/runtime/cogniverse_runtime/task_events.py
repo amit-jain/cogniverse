@@ -251,6 +251,35 @@ return 'cancelled'
 """
 )
 
+# Record a cancellation on every task of a tenant still running or queued,
+# as _CANCEL_SCRIPT does for one; prunes those that ended or stopped
+# reporting. ARGV: prefix, ingestion stream prefix, tenant, reason, terminal
+# states.
+_CANCEL_TENANT_SCRIPT = (
+    _LUA_COMMON
+    + """
+local prefix, ingest, tenant, reason = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
+local terminal = terminal_set(ARGV[5])
+local active = prefix .. ':active:' .. tenant
+local now = now_ms()
+local out = {}
+for _, id in ipairs(redis.call('ZRANGE', active, 0, -1)) do
+  local task = task_key(prefix, id)
+  local h = redis.call('HMGET', task, 'kind', 'closed', 'cancelled', 'lease_until')
+  if h[1] and h[2] ~= '1' and tonumber(h[4] or '0') >= now
+      and not ended(h[1], events_key(prefix, ingest, h[1], id), terminal) then
+    if h[3] ~= '1' then
+      redis.call('HSET', task, 'cancelled', '1', 'cancel_reason', reason, 'cancelled_ms', now)
+    end
+    table.insert(out, id)
+  else
+    redis.call('ZREM', active, id)
+  end
+end
+return out
+"""
+)
+
 # Renew this process's leases at half their length and read their
 # cancellations. ARGV: prefix, lease ms, active set retention ms, task ids...
 _POLL_SCRIPT = (
@@ -549,6 +578,7 @@ class TaskEventStore:
         self._open = redis.register_script(_OPEN_SCRIPT)
         self._append = redis.register_script(_APPEND_SCRIPT)
         self._cancel = redis.register_script(_CANCEL_SCRIPT)
+        self._cancel_tenant = redis.register_script(_CANCEL_TENANT_SCRIPT)
         self._poll = redis.register_script(_POLL_SCRIPT)
         self._read = redis.register_script(_READ_SCRIPT)
         self._list = redis.register_script(_LIST_SCRIPT)
@@ -701,6 +731,22 @@ class TaskEventStore:
             self._terminal,
         )
 
+    async def cancel_tenant(self, tenant_id: str, reason: str) -> List[str]:
+        """Record a cancellation on every task of the tenant still running or
+        queued, as ``cancel`` does for one; returns their ids, oldest first.
+        A task already cancelled keeps its first reason and is returned."""
+        tenant_id = canonical_tenant_id(tenant_id)
+        return list(
+            await self._run(
+                self._cancel_tenant,
+                f"cancel the tasks of tenant {tenant_id}",
+                self._ingest,
+                tenant_id,
+                reason,
+                self._terminal,
+            )
+        )
+
     async def read(
         self,
         task_id: str,
@@ -763,6 +809,7 @@ class TaskEventStore:
 
     async def list_active(self, tenant_id: str) -> List[Dict[str, Any]]:
         """The tenant's tasks that are running or queued, oldest first."""
+        tenant_id = canonical_tenant_id(tenant_id)
         flat = await self._run(
             self._list,
             f"list the active tasks of tenant {tenant_id}",

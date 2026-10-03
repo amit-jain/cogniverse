@@ -72,6 +72,7 @@ from cogniverse_runtime.admin.models import (
 from cogniverse_runtime.cluster_events import ClusterEventError, ClusterEvents
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.task_events import TaskEventStore, TaskEventsUnavailable
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
@@ -93,6 +94,9 @@ _schema_loader: SchemaLoader = None  # For dependency injection
 _backend: Backend | None = None  # Injected metadata backend; bypasses the registry
 # Delivers a tenant delete to every runtime worker process; wired at startup.
 _cluster_events: ClusterEvents | None = None
+# Where a tenant delete cancels the tenant's running and queued tasks; wired
+# at startup.
+_task_events: TaskEventStore | None = None
 
 # How long a tenant delete waits for every worker to release the tenant.
 TENANT_DELETE_ACK_TIMEOUT_S = 15.0
@@ -118,6 +122,13 @@ def set_cluster_events(cluster_events: ClusterEvents | None) -> None:
     """Wire the channel a tenant delete reaches every worker process through."""
     global _cluster_events
     _cluster_events = cluster_events
+
+
+def set_task_event_store(task_events: TaskEventStore | None) -> None:
+    """Wire the task event store a tenant delete cancels the tenant's
+    running and queued tasks through."""
+    global _task_events
+    _task_events = task_events
 
 
 def release_deleted_tenant(payload: Dict) -> Dict:
@@ -1171,8 +1182,9 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
 
     The tenant is marked deleted before anything is dropped, so from the
     first step on every runtime process refuses its memory writes and schema
-    deploys, and every worker process releases what it holds for it before
-    the schemas go. The marker stays until the tenant is created again.
+    deploys, every worker process releases what it holds for it and its
+    running and queued tasks are cancelled before the schemas go. The marker
+    stays until the tenant is created again.
     Creates and deletes of one tenant run one at a time, and a delete removes
     the tenant it found when it arrived.
 
@@ -1295,6 +1307,28 @@ def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], boo
     return found, deleted
 
 
+async def _cancel_tenant_tasks(tenant_id: str) -> tuple[list[str], bool]:
+    """Cancel every running and queued task of a deleted tenant. Returns the
+    ids cancelled and whether the store answered. Nothing raises: a store
+    that does not answer is logged at ERROR naming the tenant."""
+    try:
+        cancelled = await _task_events.cancel_tenant(
+            tenant_id, f"tenant {tenant_id} was deleted"
+        )
+    except TaskEventsUnavailable as exc:
+        logger.error(
+            f"Cannot cancel the tasks of deleted tenant {tenant_id} "
+            f"({type(exc).__name__}: {exc}); the delete stays pending and its "
+            "retry, or the next create of the tenant, cancels them"
+        )
+        return [], False
+    if cancelled:
+        logger.info(
+            f"Cancelled the tasks {sorted(cancelled)} of deleted tenant {tenant_id}"
+        )
+    return cancelled, True
+
+
 class TenantRecordRetained(RuntimeError):
     """The ``tenant_metadata`` delete did not confirm and the record is
     still present."""
@@ -1411,6 +1445,8 @@ async def _delete_tenant(
     """
     if _cluster_events is None:
         raise RuntimeError("Tenant deletes need the cluster events channel wired")
+    if _task_events is None:
+        raise RuntimeError("Tenant deletes need the task event store wired")
     store = config_manager.store
 
     # Mark first: from here every process refuses the tenant's memory writes
@@ -1444,6 +1480,10 @@ async def _delete_tenant(
             "delete.",
             exc,
         ) from exc
+    # Its running and queued tasks are cancelled wherever they run: a workflow
+    # stops at its next phase, an ingestion run before its next video, and a
+    # queued ingestion job settles cancelled without running.
+    tasks_cancelled, tasks_settled = await _cancel_tenant_tasks(canonical_tid)
 
     with metadata_backend() as backend:
         schema_manager = backend.schema_manager
@@ -1466,7 +1506,13 @@ async def _delete_tenant(
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
         # tenant create, and accumulate every test run without this branch.
-        if not tenant and not deleted_schemas and not state_rows:
+        if (
+            not tenant
+            and not deleted_schemas
+            and not state_rows
+            and not tasks_cancelled
+            and tasks_settled
+        ):
             # Nothing existed to delete: the tenant id stays free to use.
             await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
             return None
@@ -1545,11 +1591,12 @@ async def _delete_tenant(
                 )
 
         # Every step has completed, unless some of the tenant's state could not
-        # be deleted: the delete then stays pending, and its retry or the next
-        # create of the tenant deletes the rest. A failure to record completion
-        # leaves it pending too, so the next create runs its steps again.
+        # be deleted or its tasks not cancelled: the delete then stays pending,
+        # and its retry or the next create of the tenant finishes it. A failure
+        # to record completion leaves it pending too, so the next create runs
+        # its steps again.
         try:
-            if state_deleted:
+            if state_deleted and tasks_settled:
                 await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
         except Exception as exc:
             logger.error(

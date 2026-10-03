@@ -1457,14 +1457,15 @@ async def test_a_refusal_that_cannot_be_removed_is_left_for_the_next_run(
 
 
 @pytest.fixture
-async def wire_tenant_manager(workflow_state_redis_url):
+async def wire_tenant_manager(workflow_state_redis_url, shared_state_redis):
     """``wire(config_manager, schema_loader)``: tenant_manager deleting through
     that store and loader, with this process as the one runtime worker on its
-    own cluster-events channel. Returns the worker id; module seams restored
-    after."""
+    own cluster-events channel and a task event store of its own. Returns the
+    worker id; module seams restored after."""
     from cogniverse_core.registries.backend_registry import BackendRegistry
     from cogniverse_runtime.admin import tenant_manager as tm
     from cogniverse_runtime.cluster_events import ClusterEvents
+    from cogniverse_runtime.task_events import TaskEventStore
 
     events = ClusterEvents(
         workflow_state_redis_url,
@@ -1473,7 +1474,18 @@ async def wire_tenant_manager(workflow_state_redis_url):
         channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
     )
     await events.start()
-    previous = (tm._config_manager, tm._schema_loader, tm._cluster_events)
+    prefix = f"test:task-events:{uuid.uuid4().hex}"
+    task_events = TaskEventStore(
+        shared_state_redis,
+        key_prefix=prefix,
+        ingestion_stream_prefix=f"{prefix}:ingest:",
+    )
+    previous = (
+        tm._config_manager,
+        tm._schema_loader,
+        tm._cluster_events,
+        tm._task_events,
+    )
 
     def wire(config_manager, schema_loader):
         # A backend is bound to the store it was built with.
@@ -1481,12 +1493,14 @@ async def wire_tenant_manager(workflow_state_redis_url):
         tm.set_config_manager(config_manager)
         tm.set_schema_loader(schema_loader)
         tm.set_cluster_events(events)
+        tm.set_task_event_store(task_events)
         return events.worker_id
 
     yield wire
     tm.set_config_manager(previous[0])
     tm.set_schema_loader(previous[1])
     tm.set_cluster_events(previous[2])
+    tm.set_task_event_store(previous[3])
     BackendRegistry.get_instance().clear_instances()
     await events.close()
 

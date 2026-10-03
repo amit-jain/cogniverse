@@ -1802,6 +1802,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     await cluster_events.start()
     tenant_manager.set_cluster_events(cluster_events)
+    tenant_manager.set_task_event_store(task_events)
     admin.set_cluster_events(cluster_events)
     app.state.cluster_events = cluster_events
     logger.info("Cluster events subscribed as %s", replica_id)
@@ -1859,6 +1860,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await drain_conversation_saves()
     await a2a_protocol.close()
     tenant_manager.set_cluster_events(None)
+    tenant_manager.set_task_event_store(None)
     admin.set_cluster_events(None)
     await cluster_events.close()
     agents.set_conversation_ledger(None)

@@ -17,6 +17,7 @@ from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.routers import admin
+from cogniverse_runtime.task_events import TaskEventStore
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStoreUnavailableError,
@@ -378,7 +379,7 @@ async def test_pause_mid_request_reports_503(store, key_vespa, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tenant_delete_revokes_before_metadata_removal(
-    store, key_vespa, monkeypatch, workflow_state_redis_url
+    store, key_vespa, monkeypatch, workflow_state_redis_url, shared_state_redis
 ):
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.unified_config import BackendConfig
@@ -415,6 +416,16 @@ async def test_tenant_delete_revokes_before_metadata_removal(
     )
     await events.start()
     monkeypatch.setattr(tm, "_cluster_events", events)
+    prefix = f"test:task-events:{uuid.uuid4().hex}"
+    monkeypatch.setattr(
+        tm,
+        "_task_events",
+        TaskEventStore(
+            shared_state_redis,
+            key_prefix=prefix,
+            ingestion_stream_prefix=f"{prefix}:ingest:",
+        ),
+    )
     app = FastAPI()
     app.include_router(tm.router, prefix="/admin")
     tenant = "delete" + uuid.uuid4().hex[:8]

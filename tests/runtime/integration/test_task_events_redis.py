@@ -267,6 +267,96 @@ class TestCancellation:
         assert read.cancel_reason in reasons
         assert read.cancelled is True
 
+    async def test_cancelling_a_tenant_cancels_its_running_and_queued_tasks(
+        self, shared_state_redis
+    ):
+        store = _store(shared_state_redis, producer_lease_s=1.0, poll_interval_s=0.1)
+        silent = await store.open_task(WORKFLOW, "silent", TENANT)
+        silent.release()
+        await asyncio.sleep(1.2)
+        running = await store.open_task(WORKFLOW, "running", TENANT)
+        await store.register_queued("queued", TENANT)
+        await store.open_task(WORKFLOW, "first", TENANT)
+        await store.cancel(WORKFLOW, "first", "operator")
+        ended = await store.open_task(WORKFLOW, "ended", TENANT)
+        await ended.finish(create_complete_event("ended", TENANT, result={}))
+        # A queue worker ends a job by its status stream's terminal entry.
+        await store.register_queued("job-done", TENANT)
+        await shared_state_redis.xadd(
+            f"{store._ingest}job-done", {"data": json.dumps({"state": "complete"})}
+        )
+        other = await store.open_task(WORKFLOW, "other", "other:other")
+
+        # "acme" names "acme:acme".
+        cancelled = await store.cancel_tenant("acme", "tenant deleted")
+        await store.poll_once()
+        reads = {
+            task: await store.read(task, count=0)
+            for task in ("silent", "running", "queued", "first", "ended", "job-done")
+        }
+        active = await shared_state_redis.zrange(
+            f"{store._prefix}:active:{TENANT}", 0, -1
+        )
+
+        assert sorted(cancelled) == ["first", "queued", "running"]
+        assert {
+            task: (read.cancelled, read.cancel_reason) for task, read in reads.items()
+        } == {
+            "silent": (False, None),
+            "running": (True, "tenant deleted"),
+            "queued": (True, "tenant deleted"),
+            "first": (True, "operator"),
+            "ended": (False, None),
+            "job-done": (False, None),
+        }
+        assert running.cancellation_token.reason == "tenant deleted"
+        assert other.cancellation_token.is_cancelled is False
+        assert (await store.read("other", count=0)).cancelled is False
+        # Tasks that ended or stopped reporting leave the tenant's index.
+        assert sorted(active) == ["first", "queued", "running"]
+        assert await store.cancel_tenant(TENANT, "again") == cancelled
+        # The listing names the tenant the way the cancel does.
+        assert [row["task_id"] for row in await store.list_active("acme")] == [
+            row["task_id"] for row in await store.list_active(TENANT)
+        ]
+        assert {row["tenant_id"] for row in await store.list_active("acme")} == {TENANT}
+
+    async def test_a_tenant_cancel_racing_opens_cancels_exactly_what_it_reports(
+        self, shared_state_redis, shared_state_redis_url
+    ):
+        """Processes open tasks of the tenant and of another tenant while one
+        cancels the tenant: the tasks it reports are exactly the tenant's
+        tasks that read cancelled, and the other tenant's are untouched."""
+        prefix = _prefix()
+        outcomes = _run_processes(
+            _open_or_cancel_tenant_at_once, (shared_state_redis_url, prefix)
+        )
+        store = _store(shared_state_redis, prefix)
+        opened = [
+            task for kind, tasks in outcomes if kind == "opened" for task in tasks
+        ]
+        (reported,) = [tasks for kind, tasks in outcomes if kind == "cancelled"]
+        reads = {task: await store.read(task, count=0) for task in opened}
+
+        assert len(opened) == (PROCESSES - 1) * EVENTS_PER_PROCESS
+        assert len(reported) == len(set(reported))
+        assert set(reported) == {
+            task
+            for task, read in reads.items()
+            if read.cancelled and read.tenant_id == TENANT
+        }
+        assert {task for task, read in reads.items() if read.tenant_id != TENANT} == {
+            task for task in opened if task.startswith("other-")
+        }
+        assert all(
+            not read.cancelled for read in reads.values() if read.tenant_id != TENANT
+        )
+        assert all(
+            read.cancel_reason == "tenant deleted"
+            for read in reads.values()
+            if read.cancelled
+        )
+
 
 class TestConcurrentProducers:
     async def test_concurrent_appends_from_processes_get_every_offset_once(
@@ -1175,6 +1265,7 @@ class TestOutages:
             "read": lambda: store.read("wf", kind=WORKFLOW),
             "leave": lambda: store.leave("wf", "reader"),
             "list": lambda: store.list_active(TENANT),
+            "cancel_tenant": lambda: store.cancel_tenant(TENANT, "deleted"),
         }
         raised = {}
         for name, call in calls.items():
@@ -1194,6 +1285,10 @@ class TestOutages:
             "leave": (f"{unavailable}: leave task wf", RedisConnectionError),
             "list": (
                 f"{unavailable}: list the active tasks of tenant {TENANT}",
+                RedisConnectionError,
+            ),
+            "cancel_tenant": (
+                f"{unavailable}: cancel the tasks of tenant {TENANT}",
                 RedisConnectionError,
             ),
         }
@@ -1298,6 +1393,29 @@ def _cancel_at_once(redis_url, prefix, task_id, index, barrier, results):
         barrier.wait(timeout=60)
         reason = f"canceller-{index}"
         return await store.cancel(WORKFLOW, task_id, reason), reason
+
+    results.put(_in_process(redis_url, run))
+
+
+def _open_or_cancel_tenant_at_once(redis_url, prefix, index, barrier, results):
+    """The last process cancels the tenant; every other one opens tasks,
+    alternating between the tenant and another tenant."""
+
+    async def run(redis):
+        store = _store(redis, prefix)
+        barrier.wait(timeout=60)
+        if index == PROCESSES - 1:
+            await asyncio.sleep(0.005)
+            return "cancelled", await store.cancel_tenant(TENANT, "tenant deleted")
+        opened = []
+        for task in range(EVENTS_PER_PROCESS):
+            if task % 2:
+                task_id, tenant = f"other-{index}-{task}", "other:other"
+            else:
+                task_id, tenant = f"own-{index}-{task}", TENANT
+            await store.open_task(WORKFLOW, task_id, tenant)
+            opened.append(task_id)
+        return "opened", opened
 
     results.put(_in_process(redis_url, run))
 

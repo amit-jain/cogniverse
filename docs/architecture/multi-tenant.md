@@ -1656,6 +1656,12 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
      `assert_tenant_exists()` cache entry, every registered per-tenant cache,
      the warm `Mem0MemoryManager` and the tenant's queued background memory
      writes (`release_deleted_tenant`);
+   - cancels the tenant's running and queued tasks wherever they run
+     (`TaskEventStore.cancel_tenant`): a workflow stops at its next phase, an
+     ingestion run before its next video, and a queued ingestion job settles
+     cancelled without running. A task event store that does not answer is
+     logged at ERROR and the delete stays pending, so its retry or the next
+     create of the tenant cancels them;
    - discovers the tenant's schemas from the registry plus any
      canonical-suffix-matched Vespa orphans, redeploys without them (immediate
      Vespa removal), deletes every config-store row of the tenant — registry

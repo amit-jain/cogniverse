@@ -45,6 +45,7 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.admin.models import CreateTenantRequest
 from cogniverse_runtime.cluster_events import ClusterEvents
+from cogniverse_runtime.task_events import INGESTION, WORKFLOW, TaskEventStore
 
 pytestmark = pytest.mark.integration
 
@@ -89,20 +90,36 @@ async def cluster_events(workflow_state_redis_url):
     await events.close()
 
 
+def _task_event_store(redis, prefix: str) -> TaskEventStore:
+    return TaskEventStore(
+        redis, key_prefix=prefix, ingestion_stream_prefix=f"{prefix}:ingest:"
+    )
+
+
 @pytest.fixture
-def wired_tenant_manager(config_manager, schema_loader, cluster_events):
-    """tenant_manager wired to the test Vespa and this process's cluster-events
-    channel, module seams restored after."""
+async def task_events(shared_state_redis):
+    """The task event store tenant deletes cancel the tenant's tasks through,
+    under keys of its own."""
+    return _task_event_store(shared_state_redis, f"test:task-events:{uuid.uuid4().hex}")
+
+
+@pytest.fixture
+def wired_tenant_manager(config_manager, schema_loader, cluster_events, task_events):
+    """tenant_manager wired to the test Vespa, this process's cluster-events
+    channel and a task event store, module seams restored after."""
     previous_config_manager = tm._config_manager
     previous_schema_loader = tm._schema_loader
     previous_cluster_events = tm._cluster_events
+    previous_task_events = tm._task_events
     tm.set_config_manager(config_manager)
     tm.set_schema_loader(schema_loader)
     tm.set_cluster_events(cluster_events)
+    tm.set_task_event_store(task_events)
     yield tm
     tm.set_config_manager(previous_config_manager)
     tm.set_schema_loader(previous_schema_loader)
     tm.set_cluster_events(previous_cluster_events)
+    tm.set_task_event_store(previous_task_events)
     BackendRegistry.get_instance().clear_instances()
 
 
@@ -1891,7 +1908,192 @@ async def test_tenant_rows_the_delete_cannot_remove_are_removed_by_its_retry_or_
     ] == []
 
 
-def _deleting_peer(redis_url, channel, vespa_port, tenant_id, report) -> None:
+async def _create_tenant_with_tasks(tenant_id: str, store: TaskEventStore):
+    """A tenant with a workflow running on this process, an ingestion job
+    queued for it, and a workflow that already ended; returns the running
+    workflow's queue."""
+    from cogniverse_core.events import create_complete_event
+
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id, created_by="task-test", base_schemas=["provenance"]
+        )
+    )
+    running = await store.open_task(WORKFLOW, f"wf-{tenant_id}", tenant_id)
+    await store.register_queued(f"job-{tenant_id}", tenant_id)
+    ended = await store.open_task(WORKFLOW, f"wf-ended-{tenant_id}", tenant_id)
+    await ended.finish(
+        create_complete_event(f"wf-ended-{tenant_id}", tenant_id, result={})
+    )
+    return running
+
+
+async def _cancellations(store: TaskEventStore, tenant_id: str) -> dict:
+    """Each of ``_create_tenant_with_tasks``'s tasks: cancelled, and why."""
+    reads = {
+        task: await store.read(task, count=0)
+        for task in (
+            f"wf-{tenant_id}",
+            f"job-{tenant_id}",
+            f"wf-ended-{tenant_id}",
+        )
+    }
+    return {task: (read.cancelled, read.cancel_reason) for task, read in reads.items()}
+
+
+@pytest.mark.asyncio
+async def test_a_delete_cancels_the_tenants_running_and_queued_tasks(
+    wired_tenant_manager, task_events, caplog
+):
+    """The tenant's running workflow and its queued ingestion job are
+    cancelled, each with the delete as the reason, and the running one learns
+    it on its process's next poll; its ended workflow and another tenant's
+    task are left as they are. Nothing of the tenant stays listed active once
+    its workflow ends."""
+    from cogniverse_core.events import create_complete_event
+
+    tenant_id = _unique_tenant()
+    peer = _unique_tenant()
+    caplog.set_level(logging.INFO, logger=tm.logger.name)
+    running = await _create_tenant_with_tasks(tenant_id, task_events)
+    other = await task_events.open_task(WORKFLOW, f"wf-{peer}", peer)
+    # This process's poller keeps its tasks leased while the delete runs.
+    task_events.start()
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+        await task_events.poll_once()
+    finally:
+        await task_events.close()
+
+    reason = f"tenant {tenant_id} was deleted"
+    assert result["status"] == "deleted"
+    assert await _cancellations(task_events, tenant_id) == {
+        f"wf-{tenant_id}": (True, reason),
+        f"job-{tenant_id}": (True, reason),
+        f"wf-ended-{tenant_id}": (False, None),
+    }
+    assert (
+        running.cancellation_token.is_cancelled,
+        running.cancellation_token.reason,
+    ) == (
+        True,
+        reason,
+    )
+    assert other.cancellation_token.is_cancelled is False
+    assert (await task_events.read(f"wf-{peer}", count=0)).cancelled is False
+    assert (
+        f"Cancelled the tasks ['job-{tenant_id}', 'wf-{tenant_id}'] of deleted "
+        f"tenant {tenant_id}"
+    ) in [record.getMessage() for record in caplog.records]
+    assert sorted(
+        (row["task_id"], row["kind"], row["is_cancelled"])
+        for row in await task_events.list_active(tenant_id)
+    ) == [(f"job-{tenant_id}", INGESTION, True), (f"wf-{tenant_id}", WORKFLOW, True)]
+    await running.finish(create_complete_event(f"wf-{tenant_id}", tenant_id, result={}))
+    assert [row["task_id"] for row in await task_events.list_active(tenant_id)] == [
+        f"job-{tenant_id}"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", ["retry", "create"])
+async def test_tasks_the_delete_cannot_cancel_are_cancelled_by_its_retry_or_a_create(
+    wired_tenant_manager, cluster_events, own_redis, caplog, finish
+):
+    """The task event store does not answer. The delete still drops the
+    tenant and answers that it is deleted, logs at ERROR that its tasks were
+    not cancelled, and stays pending; once the store answers, its retry, or a
+    create of the tenant, cancels them and completes it."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
+
+    url, pause, resume = own_redis
+    redis = await connect_shared_state_redis(url, timeout_seconds=1.0)
+    store = _task_event_store(redis, f"test:task-events:{uuid.uuid4().hex}")
+    tm.set_task_event_store(store)
+    config_store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    try:
+        await _create_tenant_with_tasks(tenant_id, store)
+        store.start()
+        pause()
+        try:
+            result = await tm.delete_tenant_internal(tenant_id)
+        finally:
+            resume()
+        logged = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == tm.logger.name and record.levelno == logging.ERROR
+        ]
+        uncancelled = await _cancellations(store, tenant_id)
+        pending = tenant_delete_pending(config_store, tenant_id)
+        caplog.clear()
+        if finish == "retry":
+            finished = await tm.delete_tenant_internal(tenant_id)
+            assert finished == {
+                "status": "deleted",
+                "tenant_full_id": tenant_id,
+                "schemas_deleted": 0,
+                "deleted_schemas": [],
+                "organization_deleted": False,
+                "workers_released": [cluster_events.worker_id],
+            }
+            assert (
+                tenant_is_deleted(config_store, tenant_id),
+                tenant_delete_pending(config_store, tenant_id),
+            ) == (True, False)
+        else:
+            created = await tm.create_tenant(
+                CreateTenantRequest(
+                    tenant_id=tenant_id,
+                    created_by="recreate-test",
+                    base_schemas=["provenance"],
+                )
+            )
+            assert created.created_by == "recreate-test"
+            assert tenant_is_deleted(config_store, tenant_id) is False
+        cancelled = await _cancellations(store, tenant_id)
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == tm.logger.name and record.levelno == logging.ERROR
+        ] == []
+    finally:
+        if finish == "create":
+            await tm.delete_tenant_internal(tenant_id)
+        await store.close()
+        await redis.aclose()
+
+    assert (result["status"], result["deleted_schemas"]) == (
+        "deleted",
+        [_schema_names(tenant_id)[1]],
+    )
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot cancel the tasks of deleted tenant {tenant_id}"
+    ]
+    assert logged[0].endswith(
+        "; the delete stays pending and its retry, or the next create of the "
+        "tenant, cancels them"
+    ), logged
+    assert pending is True
+    assert uncancelled == {
+        f"wf-{tenant_id}": (False, None),
+        f"job-{tenant_id}": (False, None),
+        f"wf-ended-{tenant_id}": (False, None),
+    }
+    reason = f"tenant {tenant_id} was deleted"
+    assert cancelled == {
+        f"wf-{tenant_id}": (True, reason),
+        f"job-{tenant_id}": (True, reason),
+        f"wf-ended-{tenant_id}": (False, None),
+    }
+
+
+def _deleting_peer(
+    redis_url, channel, task_prefix, vespa_port, tenant_id, report
+) -> None:
     """Another runtime process serving a delete of the tenant."""
     import asyncio
 
@@ -1899,6 +2101,7 @@ def _deleting_peer(redis_url, channel, vespa_port, tenant_id, report) -> None:
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_runtime.admin import tenant_manager
     from cogniverse_runtime.cluster_events import ClusterEvents
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
     async def run():
@@ -1915,17 +2118,24 @@ def _deleting_peer(redis_url, channel, vespa_port, tenant_id, report) -> None:
         )
         await events.start()
         tenant_manager.set_cluster_events(events)
+        redis = await connect_shared_state_redis(redis_url)
+        tenant_manager.set_task_event_store(_task_event_store(redis, task_prefix))
         try:
             report.put(await tenant_manager.delete_tenant_internal(tenant_id))
         finally:
             await events.close()
+            await redis.aclose()
 
     asyncio.run(run())
 
 
 @pytest.mark.asyncio
 async def test_a_deploy_refused_by_a_delete_that_landed_after_its_decision_leaves_no_row(
-    wired_tenant_manager, vespa_instance, cluster_events, workflow_state_redis_url
+    wired_tenant_manager,
+    vespa_instance,
+    cluster_events,
+    task_events,
+    workflow_state_redis_url,
 ):
     """A deploy of a new schema journals its intent; then another process
     serves the tenant's whole delete before the deploy takes the deployment
@@ -1965,6 +2175,7 @@ async def test_a_deploy_refused_by_a_delete_that_landed_after_its_decision_leave
             args=(
                 workflow_state_redis_url,
                 cluster_events.channel,
+                task_events._prefix,
                 vespa_instance["http_port"],
                 tenant_id,
                 report,
