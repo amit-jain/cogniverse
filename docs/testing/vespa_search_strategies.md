@@ -68,14 +68,14 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 
 **Strategy**: `hybrid_bm25_binary`
 - **Purpose**: Text-first with visual validation
-- **Method**: Text matches only, ranked in one phase by binary MaxSim averaged over the query tokens plus `nativeRank` of the text fields
+- **Method**: The matches weakAnd keeps for the query text, ranked in one phase by binary MaxSim averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings (binary)
 - **Speed**: Fast
 - **Use Case**: Text-heavy queries with visual validation
 
 **Strategy**: `hybrid_bm25_float`
 - **Purpose**: Text-first with precise reranking
-- **Method**: Text matches only, ranked in one phase by float MaxSim averaged over the query tokens plus `nativeRank` of the text fields
+- **Method**: The matches weakAnd keeps for the query text, ranked in one phase by float MaxSim averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings
 - **Speed**: Medium
 - **Use Case**: Text-heavy queries with precise visual reranking
@@ -185,7 +185,7 @@ All BM25 strategies use fieldsets to search across:
 - **Second phase**: Reranking top candidates (default: top 100, from each rank profile's `second-phase.rerank-count`)
 - **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming`): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
 - **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`, `hybrid_acoustic_bm25`): one phase, a visual score plus `nativeRank` of the profile's text fields. The visual score is the MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) on a multi-vector schema, and the dense `closeness` on a single-vector one; X-CLIP's `hybrid_binary_bm25` estimates the angular closeness from the Hamming distance of the 768-bit codes, `1/(1 + πh/768)`.
-- **Text-first hybrid** (`hybrid_bm25_*`, `"candidates": "text_matches"`): the text matches only, ranked in one phase by the same visual score plus `nativeRank`
+- **Text-first hybrid** (`hybrid_bm25_*`, `"candidates": "text_matches"`): the matches weakAnd keeps for the query text, ranked in one phase by the same visual score plus `nativeRank`. Like `bm25_only`, that set depends on the order the documents were fed and on the request's hit count
 
 ### Strategy Extraction & Runtime Resolution
 `cogniverse_vespa.ranking_strategy_extractor.RankingStrategyExtractor` reads each schema's `rank_profiles` JSON and derives, per profile, a `RankingStrategyInfo` dataclass: `strategy_type` (`SearchStrategyType.PURE_VISUAL` / `PURE_TEXT` / `HYBRID`, inferred from whether the profile's inputs/first-phase expression reference float or int8 tensors and `bm25`/`nativeRank`/`userInput`), `needs_float_embeddings`, `needs_binary_embeddings`, `needs_text_query`, `text_candidates_only` (the profile declares `"candidates": "text_matches"`: only text matches are ranked and no `nearestNeighbor` term is added), whether it uses `nearestNeighbor` (single-vector LVT schemas only — patch-based schemas rank with MaxSim over all patches instead), and the concrete embedding field name (parsed from `attribute(...)`/`closeness(field, ...)` in the profile's expressions).

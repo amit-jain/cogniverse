@@ -1809,7 +1809,7 @@ Every hybrid that retrieves through `nearestNeighbor` matches
 neighbours and every document holding a query term are candidates, each with
 its full text features.
 
-The text-first `hybrid_bm25_*` profiles rank the documents that match the
+The text-first `hybrid_bm25_*` profiles rank the matches weakAnd keeps for the
 query text, and no others, by the same visual score plus `nativeRank` in one
 phase. Their rank profile declares `"candidates": "text_matches"`, which the
 `RankingStrategyExtractor` reports as `text_candidates_only`: the backend then
@@ -1817,6 +1817,15 @@ matches `userInput(@userQuery)` although the first phase scores an embedding,
 and never adds a `nearestNeighbor` term. On `video_xclip_sv_chunk_6s` they
 compute the visual score from the stored vector, as their query carries no
 `nearestNeighbor` term.
+
+`bm25_only`, `bm25_no_description` and the text-first hybrids match
+`userInput(@userQuery)`, Vespa's weakAnd: it walks the matching documents in
+the order they were first indexed and skips those that cannot beat its running
+threshold, so they rank the matches weakAnd keeps, not every document holding a
+query term. That set depends on the order the documents were fed and on the
+request's hit count: a source-grouped search sends `hits=0` and keeps weakAnd's
+default target, while a request for more hits than there are matches keeps them
+all.
 
 > **Where a strategy's phase order lives.** The ranking phases
 > (`first_phase` / `second_phase`) that define a strategy's actual behavior are
