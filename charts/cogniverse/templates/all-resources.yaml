@@ -1643,9 +1643,12 @@ spec:
       # Waiting here leaves readiness and liveness untouched — both are
       # measured from the main container's start, so the pod keeps its full
       # cold-start grace and never reports unhealthy while it waits.
+      # The gate runs from the chart's pinned curl image, never a cogniverse
+      # image: a runtime release must leave this pod's template unchanged,
+      # since any change restarts the pod and reloads its model.
       - name: startup-gate
-        image: "{{ $warmImage.repository }}:{{ $warmImage.tag }}"
-        imagePullPolicy: {{ $warmImage.pullPolicy }}
+        image: {{ include "cogniverse.curlImage" $ | quote }}
+        imagePullPolicy: IfNotPresent
         env:
         - name: GATE_URL
           value: "http://{{ $fullName }}-{{ $predecessor | kebabcase }}:{{ $predecessorCfg.service.port }}/health"
@@ -1654,32 +1657,25 @@ spec:
         command: ["sh", "-c"]
         args:
         - |
-          set -eu
-          python - <<'PY'
-          import os
-          import time
-          import urllib.error
-          import urllib.request
-
-          url = os.environ["GATE_URL"]
-          deadline = time.monotonic() + float(os.environ["GATE_DEADLINE_SECONDS"])
-          while True:
-              try:
-                  with urllib.request.urlopen(url, timeout=5) as response:
-                      if response.status == 200:
-                          print(f"{url} is serving; starting model load", flush=True)
-                          break
-              except (urllib.error.URLError, OSError) as exc:
-                  print(f"waiting on {url}: {exc}", flush=True)
-              if time.monotonic() >= deadline:
-                  # Pacing deadline, not a dependency assertion: these models
-                  # are independent services and the order exists only to
-                  # spread GPU reservation. Starting on deadline keeps one
-                  # wedged model from stranding every model behind it.
-                  print(f"{url} did not answer before the pacing deadline", flush=True)
-                  break
-              time.sleep(5)
-          PY
+          set -u
+          deadline=$(( $(date +%s) + GATE_DEADLINE_SECONDS ))
+          while :; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$GATE_URL")
+            if [ "$status" = "200" ]; then
+              echo "$GATE_URL is serving; starting model load"
+              break
+            fi
+            echo "waiting on $GATE_URL: HTTP $status"
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              # Pacing deadline, not a dependency assertion: these models
+              # are independent services and the order exists only to
+              # spread GPU reservation. Starting on deadline keeps one
+              # wedged model from stranding every model behind it.
+              echo "$GATE_URL did not answer before the pacing deadline"
+              break
+            fi
+            sleep 5
+          done
         resources:
           limits:
             cpu: "500m"

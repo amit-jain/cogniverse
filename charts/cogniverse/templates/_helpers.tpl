@@ -89,6 +89,15 @@ Return the proper image name
 {{- end -}}
 
 {{/*
+The small fixed image the chart runs curl from: the init Jobs and every
+inference pod's startup gate. Pinned, so a release of any cogniverse image
+never changes the pods that use it.
+*/}}
+{{- define "cogniverse.curlImage" -}}
+curlimages/curl:8.14.1
+{{- end -}}
+
+{{/*
 LLM endpoint URL. The chart talks to every LLM backend through the
 OpenAI-compatible HTTP shape (``/v1/chat/completions``,
 ``/v1/embeddings``); modern Ollama, vLLM, and external SaaS providers

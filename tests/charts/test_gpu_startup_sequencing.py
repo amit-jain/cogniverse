@@ -1,7 +1,10 @@
 """GPU model startup pacing rendered by the Helm chart."""
 
+import re
 import shutil
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -197,12 +200,254 @@ def test_default_values_pace_nothing():
     )
 
 
-def test_gate_polls_until_the_predecessor_answers_then_stops_waiting():
-    gate = _gate(_inference_deployments()["vllm_llm_student"])
+CURL_IMAGE = "curlimages/curl:8.14.1"
+"""The small image the chart's Jobs already run curl from."""
 
-    assert gate["command"] == ["sh", "-c"]
-    script = gate["args"][0]
-    assert "urllib.request.urlopen(url, timeout=5)" in script
-    assert "if response.status == 200:" in script
-    assert "if time.monotonic() >= deadline:" in script
-    assert "time.sleep(5)" in script
+PROD_SECRETS = (
+    "--set",
+    "minio.rootPassword=overlay-secret",
+    "--set",
+    "openshell.server.sshHandshakeSecret=overlay-secret",
+    "--set",
+    "phoenix.postgres.auth.password=overlay-secret",
+    "--set",
+    "redis.auth.password=overlay-secret",
+)
+
+STACKS = {
+    "default": (),
+    "rocm": ("-f", str(CHART_PATH / "values.rocm.yaml")),
+    "k3s+rocm": (
+        "-f",
+        str(CHART_PATH / "values.k3s.yaml"),
+        "-f",
+        str(CHART_PATH / "values.rocm.yaml"),
+    ),
+    "k3s+rocm+modal": (
+        "-f",
+        str(CHART_PATH / "values.k3s.yaml"),
+        "-f",
+        str(CHART_PATH / "values.rocm.yaml"),
+        *MODAL_LLM_VALUES,
+    ),
+    "prod": ("-f", str(CHART_PATH / "values.prod.yaml"), *PROD_SECRETS),
+}
+
+
+def _render_deployment_texts(stack: str, runtime_tag: str) -> dict[str, tuple]:
+    """Each rendered Deployment's component and exact text, by name, with
+    every runtime image tag the chart can resolve set to ``runtime_tag``."""
+    command = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        "--set",
+        "runtime.backend=rocm",
+        *STACKS[stack],
+    ]
+    for key in (
+        "runtime.image.tag",
+        "runtime.imagesByBackend.rocm.tag",
+        "runtime.imagesByBackend.cuda.tag",
+        "runtime.imagesByBackend.cpu.tag",
+    ):
+        command.extend(["--set", f"{key}={runtime_tag}"])
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"helm template failed (exit {result.returncode}):\n{result.stderr}"
+    )
+    texts = {}
+    for chunk in result.stdout.split("\n---\n"):
+        document = yaml.safe_load(chunk)
+        if document and document.get("kind") == "Deployment":
+            component = document["metadata"]["labels"]["app.kubernetes.io/component"]
+            texts[document["metadata"]["name"]] = (component, chunk)
+    return texts
+
+
+@pytest.mark.parametrize("stack", sorted(STACKS))
+def test_a_runtime_release_leaves_every_inference_deployment_byte_identical(stack):
+    """A new runtime image must never change a model pod's template: the
+    change would restart it and reload its weights onto the GPU."""
+    before = _render_deployment_texts(stack, "release-a")
+    after = _render_deployment_texts(stack, "release-b")
+
+    # The tag change took effect: the runtime itself renders differently.
+    assert before["cogniverse-runtime"][1] != after["cogniverse-runtime"][1]
+    inference = sorted(
+        name
+        for name, (component, _) in before.items()
+        if component.startswith("inference-")
+    )
+    assert inference != []
+    assert [name for name in inference if before[name] != after[name]] == []
+
+
+def test_the_release_check_covers_gated_model_pods():
+    """The invariant above is only worth its name if gated pods are in it."""
+    gated = {
+        stack: sorted(
+            name
+            for name, deployment in _inference_deployments(*STACKS[stack]).items()
+            if _gate(deployment) is not None
+        )
+        for stack in ("rocm", "k3s+rocm", "k3s+rocm+modal")
+    }
+
+    assert gated == {
+        "rocm": [
+            "code_colbert_pylate",
+            "colbert_pylate",
+            "denseon",
+            "vllm_asr",
+            "vllm_colpali",
+            "vllm_llm_student",
+        ],
+        "k3s+rocm": [
+            "code_colbert_pylate",
+            "colbert_pylate",
+            "denseon",
+            "vllm_asr",
+            "vllm_colpali",
+            "vllm_llm_student",
+        ],
+        "k3s+rocm+modal": ["code_colbert_pylate", "colbert_pylate", "denseon"],
+    }
+
+
+def test_the_gate_runs_from_the_curl_image_the_jobs_already_pull():
+    documents = _render(*MODAL_LLM_VALUES)
+    schema_job = next(
+        d
+        for d in documents
+        if d["kind"] == "Job"
+        and d["metadata"]["name"] == "cogniverse-schema-deployment"
+    )
+    gates = {
+        name: (gate["image"], gate["imagePullPolicy"], gate["command"])
+        for name, deployment in _inference_deployments(*MODAL_LLM_VALUES).items()
+        if (gate := _gate(deployment)) is not None
+    }
+
+    assert schema_job["spec"]["template"]["spec"]["containers"][0]["image"] == (
+        CURL_IMAGE
+    )
+    assert gates == {
+        name: (CURL_IMAGE, "IfNotPresent", ["sh", "-c"])
+        for name in ("denseon", "colbert_pylate", "code_colbert_pylate")
+    }
+
+
+def test_the_air_gap_mirror_lists_the_gate_image():
+    """mirror-third-party.yml copies every quoted ``image:`` of the k3s render
+    that is not a cogniverse image; a gated model pod cannot start where the
+    gate's image was never mirrored."""
+    rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "cogniverse",
+            str(CHART_PATH),
+            "-f",
+            str(CHART_PATH / "values.k3s.yaml"),
+            "--set",
+            "argo-workflows.crds.install=false",
+            "--set",
+            "runtime.qualityMonitor.tenantId=mirror",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    mirrored = {
+        image
+        for image in re.findall(r'image: "([^"]+)"', rendered)
+        if not image.startswith("cogniverse/")
+    }
+
+    assert CURL_IMAGE in mirrored
+
+
+class _Predecessor(BaseHTTPRequestHandler):
+    """A predecessor whose /health answers each status in turn, then 200."""
+
+    statuses: list[int] = []
+    seen: list[str] = []
+
+    def do_GET(self):
+        type(self).seen.append(self.path)
+        status = type(self).statuses.pop(0) if type(self).statuses else 200
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def _run_gate(gate_url: str, deadline_seconds: int) -> subprocess.CompletedProcess:
+    """Run the rendered gate exactly as the kubelet would: its image, its
+    command as the entrypoint, its args and its environment."""
+    gate = _gate(_inference_deployments(*MODAL_LLM_VALUES)["denseon"])
+    return subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "host",
+            "--entrypoint",
+            gate["command"][0],
+            "-e",
+            f"GATE_URL={gate_url}",
+            "-e",
+            f"GATE_DEADLINE_SECONDS={deadline_seconds}",
+            gate["image"],
+            *gate["command"][1:],
+            *gate["args"],
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+
+@pytest.mark.requires_docker
+def test_the_gate_starts_the_model_on_an_exact_200_from_its_predecessor():
+    _Predecessor.statuses = [503, 204]
+    _Predecessor.seen = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Predecessor)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/health"
+    try:
+        gate = _run_gate(url, deadline_seconds=600)
+    finally:
+        server.shutdown()
+
+    assert gate.returncode == 0, gate.stderr
+    assert gate.stdout.splitlines() == [
+        f"waiting on {url}: HTTP 503",
+        f"waiting on {url}: HTTP 204",
+        f"{url} is serving; starting model load",
+    ]
+    assert _Predecessor.seen == ["/health", "/health", "/health"]
+
+
+@pytest.mark.requires_docker
+def test_the_gate_starts_the_model_at_its_deadline_when_nothing_answers():
+    probe = ThreadingHTTPServer(("127.0.0.1", 0), _Predecessor)
+    url = f"http://127.0.0.1:{probe.server_address[1]}/health"
+    probe.server_close()  # nothing listens on this port any more
+
+    gate = _run_gate(url, deadline_seconds=1)
+
+    assert gate.returncode == 0, gate.stderr
+    assert gate.stdout.splitlines() == [
+        f"waiting on {url}: HTTP 000",
+        f"waiting on {url}: HTTP 000",
+        f"{url} did not answer before the pacing deadline",
+    ]

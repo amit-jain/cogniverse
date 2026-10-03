@@ -753,9 +753,17 @@ inferenceStartup:
 - Waiting happens in an init container, so readiness and liveness —
   both measured from the main container's start — are unaffected, and
   a waiting pod never reports unhealthy.
+- The gate polls `/health` every 5 s with curl from `curlimages/curl:8.14.1`,
+  the image the chart's init Jobs use, and starts the model on an HTTP 200.
+  No cogniverse image is involved, so a runtime release leaves every gated
+  model pod's template unchanged and its model loaded. Air-gapped clusters
+  mirror the image with the rest of the third-party set.
 - Weight downloads run in the `model-warm` init container ahead of the
   gate; they touch network and disk rather than the GPU, so they still
-  run concurrently across pods.
+  run concurrently across pods. `model-warm` runs from the runtime image
+  (it needs `boto3` and `huggingface_hub`), so with
+  `hfCache.persistence.enabled` a runtime release does change, and
+  restart, the inference pods.
 - Position N gives up after `N x perLinkTimeoutSeconds`. The deadline
   scales with position because all init containers start together, so a
   flat deadline would release the whole tail of the chain at once. A
