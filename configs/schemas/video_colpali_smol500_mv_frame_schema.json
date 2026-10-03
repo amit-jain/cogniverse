@@ -327,16 +327,20 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
+          "expression": "reduce(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, avg, querytoken)"
         },
         {
           "name": "text_sim",
+          "expression": "nativeRank(video_title, segment_description, audio_transcript)"
+        },
+        {
+          "name": "text_bm25",
           "expression": "bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_sim",
+      "first_phase": "text_bm25",
       "second_phase": {
-        "expression": "visual_sim_binary",
+        "expression": "visual_sim_binary + text_sim",
         "rerank_count": 100
       },
       "timeout": 2.0
@@ -352,16 +356,20 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+          "expression": "reduce(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), avg, querytoken)"
         },
         {
           "name": "text_sim",
+          "expression": "nativeRank(video_title, segment_description, audio_transcript)"
+        },
+        {
+          "name": "text_bm25",
           "expression": "bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_sim",
+      "first_phase": "text_bm25",
       "second_phase": {
-        "expression": "visual_sim_float",
+        "expression": "visual_sim_float + text_sim",
         "rerank_count": 100
       },
       "timeout": 2.0
@@ -419,16 +427,20 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, querytoken)"
+          "expression": "reduce(1 - 2 * reduce(sum(hamming(query(qtb), attribute(embedding_binary)), v), min, patch) / 320, avg, querytoken)"
         },
         {
           "name": "text_sim_no_desc",
+          "expression": "nativeRank(video_title, audio_transcript)"
+        },
+        {
+          "name": "text_bm25_no_desc",
           "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_sim_no_desc",
+      "first_phase": "text_bm25_no_desc",
       "second_phase": {
-        "expression": "visual_sim_binary",
+        "expression": "visual_sim_binary + text_sim_no_desc",
         "rerank_count": 100
       },
       "timeout": 2.0
@@ -444,16 +456,20 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+          "expression": "reduce(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), avg, querytoken)"
         },
         {
           "name": "text_sim_no_desc",
+          "expression": "nativeRank(video_title, audio_transcript)"
+        },
+        {
+          "name": "text_bm25_no_desc",
           "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_sim_no_desc",
+      "first_phase": "text_bm25_no_desc",
       "second_phase": {
-        "expression": "visual_sim_float",
+        "expression": "visual_sim_float + text_sim_no_desc",
         "rerank_count": 100
       },
       "timeout": 2.0

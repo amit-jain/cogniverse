@@ -115,6 +115,18 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
     )
 
 
+def _angular_closeness(query: str, field: str, dim: str) -> str:
+    """``closeness(field, <field>)`` under the angular metric, computed from
+    the attribute, so it also scores documents that no nearestNeighbor term
+    retrieved."""
+    cosine = (
+        f"sum(query({query}) * attribute({field}), {dim}) / "
+        f"sqrt(sum(query({query}) * query({query}), {dim}) * "
+        f"sum(attribute({field}) * attribute({field}), {dim}))"
+    )
+    return f"1 / (1 + acos(min(1, max(-1, {cosine}))))"
+
+
 class VespaSchemaManager:
     """Deploy and manage Vespa schemas, including per-tenant lifecycle."""
 
@@ -243,9 +255,19 @@ class VespaSchemaManager:
                         RankProfile(
                             name="hybrid_image",
                             inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
+                            functions=[
+                                Function(
+                                    name="visual_sim",
+                                    expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                                ),
+                                Function(
+                                    name="text_sim",
+                                    expression="nativeRank(image_description)",
+                                ),
+                            ],
                             first_phase="bm25(image_description)",
                             second_phase=SecondPhaseRanking(
-                                expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                                expression="visual_sim + text_sim",
                                 rerank_count=100,
                             ),
                         ),
@@ -329,13 +351,24 @@ class VespaSchemaManager:
                         RankProfile(
                             name="transcript_search", first_phase="bm25(transcript)"
                         ),
-                        # Hybrid: BM25 + semantic embeddings
+                        # Hybrid: BM25 recall -> semantic + text reranking
                         RankProfile(
                             name="hybrid_audio",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "semantic_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(transcript)"
+                                ),
+                            ],
                             first_phase="bm25(transcript)",
                             second_phase=SecondPhaseRanking(
-                                expression="closeness(field, semantic_embedding)",
+                                expression="semantic_sim + text_sim",
                                 rerank_count=100,
                             ),
                         ),
@@ -506,13 +539,24 @@ class VespaSchemaManager:
                             inputs=[("query(q)", "tensor<float>(d[768])")],
                             first_phase="closeness(field, document_embedding)",
                         ),
-                        # Hybrid: BM25 recall -> semantic re-ranking
+                        # Hybrid: BM25 recall -> semantic + text reranking
                         RankProfile(
                             name="hybrid_bm25_semantic",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "document_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(full_text)"
+                                ),
+                            ],
                             first_phase="bm25(full_text)",
                             second_phase=SecondPhaseRanking(
-                                expression="closeness(field, document_embedding)",
+                                expression="semantic_sim + text_sim",
                                 rerank_count=100,
                             ),
                         ),

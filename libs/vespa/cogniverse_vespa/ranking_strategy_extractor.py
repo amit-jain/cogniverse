@@ -330,8 +330,8 @@ class RankingStrategyExtractor:
             "phased": "Two-phase ranking: binary first, float reranking",
             "hybrid_float_bm25": "Combined visual (float) and text search",
             "hybrid_binary_bm25": "Combined visual (binary) and text search",
-            "hybrid_bm25_binary": "Text-first search with visual reranking",
-            "hybrid_bm25_float": "Text-first search with visual reranking",
+            "hybrid_bm25_binary": "Text-first search reranked by visual and text",
+            "hybrid_bm25_float": "Text-first search reranked by visual and text",
         }
 
         # Check for no_description variant

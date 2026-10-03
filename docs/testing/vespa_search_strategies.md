@@ -68,14 +68,14 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 
 **Strategy**: `hybrid_bm25_binary`
 - **Purpose**: Text-first with visual validation
-- **Method**: BM25 first phase, binary visual reranking
+- **Method**: Text matches only; BM25 picks the best 100, reranked by binary MaxSim averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings (binary)
 - **Speed**: Fast
 - **Use Case**: Text-heavy queries with visual validation
 
 **Strategy**: `hybrid_bm25_float`
 - **Purpose**: Text-first with precise reranking
-- **Method**: BM25 first phase, float visual reranking
+- **Method**: Text matches only; BM25 picks the best 100, reranked by float MaxSim averaged over the query tokens plus `nativeRank` of the text fields
 - **Requirements**: Text query + visual embeddings
 - **Speed**: Medium
 - **Use Case**: Text-heavy queries with precise visual reranking
@@ -97,14 +97,14 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 
 **Strategy**: `hybrid_bm25_binary_no_description`
 - **Purpose**: Text-first without descriptions
-- **Method**: BM25 on title/transcript, binary visual reranking
+- **Method**: As `hybrid_bm25_binary`, with BM25 and `nativeRank` of title and transcript only
 - **Requirements**: Text query + visual embeddings (binary)
 - **Speed**: Fast
 - **Use Case**: Text-first search excluding descriptions
 
 **Strategy**: `hybrid_bm25_float_no_description`
 - **Purpose**: Text-first without descriptions, precise reranking
-- **Method**: BM25 on title/transcript, float visual reranking
+- **Method**: As `hybrid_bm25_float`, with BM25 and `nativeRank` of title and transcript only
 - **Requirements**: Text query + visual embeddings
 - **Speed**: Medium
 - **Use Case**: Text-first with precise visual reranking, no descriptions
@@ -183,9 +183,9 @@ All BM25 strategies use fieldsets to search across:
 ### Ranking Phases
 - **First phase**: Initial candidate selection
 - **Second phase**: Reranking top candidates (default: top 100, from each rank profile's `second-phase.rerank-count`)
-- **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming`, and `visual_sim_binary` in the text-first hybrids): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
-- **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`): one phase, the visual MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) plus `nativeRank` of the profile's text fields.
-- **Text-first hybrid** (`hybrid_bm25_*`): BM25 first phase over the text matches, visual MaxSim second phase over the top 100
+- **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming`): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
+- **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`, `hybrid_acoustic_bm25`): one phase, a visual score plus `nativeRank` of the profile's text fields. The visual score is the MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) on a multi-vector schema, and the dense `closeness` on a single-vector one; X-CLIP's `hybrid_binary_bm25` estimates the angular closeness from the Hamming distance of the 768-bit codes, `1/(1 + πh/768)`.
+- **Text-first hybrid** (`hybrid_bm25_*`): text matches only; BM25 first phase, then the top 100 reranked by the same visual score plus `nativeRank`
 
 ### Strategy Extraction & Runtime Resolution
 `cogniverse_vespa.ranking_strategy_extractor.RankingStrategyExtractor` reads each schema's `rank_profiles` JSON and derives, per profile, a `RankingStrategyInfo` dataclass: `strategy_type` (`SearchStrategyType.PURE_VISUAL` / `PURE_TEXT` / `HYBRID`, inferred from whether the profile's inputs/first-phase expression reference float or int8 tensors and `bm25`/`userInput`), `needs_float_embeddings`, `needs_binary_embeddings`, `needs_text_query`, whether it uses `nearestNeighbor` (single-vector LVT schemas only — patch-based schemas rank with MaxSim over all patches instead), and the concrete embedding field name (parsed from `attribute(...)`/`closeness(field, ...)` in the profile's expressions).

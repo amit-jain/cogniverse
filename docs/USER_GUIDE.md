@@ -295,8 +295,8 @@ strategies = [
     "phased",              # Two-phase: binary retrieval, float reranking
     "hybrid_float_bm25",   # Visual + text hybrid (best overall accuracy)
     "hybrid_binary_bm25",  # Fast hybrid (binary visual + text)
-    "hybrid_bm25_binary",  # Text-first with binary visual rerank
-    "hybrid_bm25_float",   # Text-first with precise float rerank
+    "hybrid_bm25_binary",  # Text-first, binary visual + text rerank
+    "hybrid_bm25_float",   # Text-first, float visual + text rerank
     # plus the "_no_description" hybrid variants for ColPali/ColQwen schemas
 ]
 

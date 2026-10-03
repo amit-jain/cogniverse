@@ -194,19 +194,27 @@ def _normalized_profile(profile: dict) -> dict:
 def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
     """A ``hybrid_binary_bm25*`` profile ranks every segment by binary MaxSim
     plus text in its first phase and a ``hybrid_bm25_binary*`` profile
-    text-first; the ``_no_description`` pair were once byte-identical (both
+    text-first, BM25 picking the candidates its second phase ranks by the same
+    sum; the ``_no_description`` pair were once byte-identical (both
     text-first), silently giving hybrid_binary_bm25_no_description the wrong
     phase order."""
     profiles = _rank_profiles(_REPO_ROOT / schema)
-    for suffix, text in (("", "text_sim"), ("_no_description", "text_sim_no_desc")):
+    for suffix, text, bm25 in (
+        ("", "text_sim", "text_bm25"),
+        ("_no_description", "text_sim_no_desc", "text_bm25_no_desc"),
+    ):
         binary_first = profiles[f"hybrid_binary_bm25{suffix}"]
         text_first = profiles[f"hybrid_bm25_binary{suffix}"]
         assert binary_first["first_phase"] == f"visual_sim_binary + {text}", (
             f"hybrid_binary_bm25{suffix} must rank binary MaxSim plus text first"
         )
-        assert "text_sim" in json.dumps(text_first["first_phase"]), (
+        assert text_first["first_phase"] == bm25, (
             f"hybrid_bm25_binary{suffix} must rank text/bm25 first"
         )
+        assert text_first["second_phase"] == {
+            "expression": f"visual_sim_binary + {text}",
+            "rerank_count": 100,
+        }, f"hybrid_bm25_binary{suffix} must rerank by binary MaxSim plus text"
         assert binary_first["first_phase"] != text_first["first_phase"], (
             f"opposite-named hybrid profiles must differ (suffix={suffix!r})"
         )
@@ -651,14 +659,80 @@ _FIRST_PHASE_EMBEDDING_FIELDS = {
     },
     "audio_content": {
         "hybrid_semantic_bm25": "semantic_embedding_binary",
+        "hybrid_acoustic_bm25": "acoustic_embedding",
         "transcript_search": None,
     },
     "video_xclip_sv_chunk_6s": {
         "hybrid_float_bm25": "embedding",
         "hybrid_binary_bm25": "embedding_binary",
         "hybrid_bm25_float": None,
+        "hybrid_bm25_binary": None,
     },
 }
+
+
+@pytest.mark.unit
+def test_hybrid_descriptions_name_what_ranks_them():
+    strategies = RankingStrategyExtractor().extract_from_schema(
+        _REPO_ROOT
+        / "configs"
+        / "schemas"
+        / "video_colpali_smol500_mv_frame_schema.json"
+    )
+
+    assert {
+        name: strategies[name].description
+        for name in (
+            "hybrid_float_bm25",
+            "hybrid_binary_bm25",
+            "hybrid_bm25_float",
+            "hybrid_bm25_binary",
+            "hybrid_bm25_binary_no_description",
+        )
+    } == {
+        "hybrid_float_bm25": "Combined visual (float) and text search",
+        "hybrid_binary_bm25": "Combined visual (binary) and text search",
+        "hybrid_bm25_float": "Text-first search reranked by visual and text",
+        "hybrid_bm25_binary": "Text-first search reranked by visual and text",
+        "hybrid_bm25_binary_no_description": (
+            "Text-first search reranked by visual and text (excluding descriptions)"
+        ),
+    }
+
+
+@pytest.mark.unit
+def test_single_vector_hybrids_retrieve_as_their_first_phase_scores():
+    """The fused dense hybrids keep nearestNeighbor retrieval on the field
+    their first phase scores; the text-first ones retrieve by text."""
+    schemas = _REPO_ROOT / "configs" / "schemas"
+    xclip = RankingStrategyExtractor().extract_from_schema(
+        schemas / "video_xclip_sv_chunk_6s_schema.json"
+    )
+    audio = RankingStrategyExtractor().extract_from_schema(
+        schemas / "audio_content_schema.json"
+    )
+
+    assert {
+        name: (
+            info.use_nearestneighbor,
+            info.nearestneighbor_field,
+            info.nearestneighbor_tensor,
+            info.needs_text_query,
+        )
+        for name, info in (
+            ("hybrid_float_bm25", xclip["hybrid_float_bm25"]),
+            ("hybrid_binary_bm25", xclip["hybrid_binary_bm25"]),
+            ("hybrid_bm25_float", xclip["hybrid_bm25_float"]),
+            ("hybrid_bm25_binary", xclip["hybrid_bm25_binary"]),
+            ("hybrid_acoustic_bm25", audio["hybrid_acoustic_bm25"]),
+        )
+    } == {
+        "hybrid_float_bm25": (True, "embedding", "qt", True),
+        "hybrid_binary_bm25": (True, "embedding_binary", "qtb", True),
+        "hybrid_bm25_float": (False, None, None, True),
+        "hybrid_bm25_binary": (False, None, None, True),
+        "hybrid_acoustic_bm25": (True, "acoustic_embedding", "acoustic_query", True),
+    }
 
 
 @pytest.mark.unit

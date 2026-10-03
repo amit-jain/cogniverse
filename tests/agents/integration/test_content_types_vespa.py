@@ -10,6 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
@@ -803,6 +804,102 @@ class TestContentTypeVespaSchemas:
             print("✅ Ingested document found in text search results")
         else:
             print("⚠️  No search results found (document may not be indexed yet)")
+
+
+# Vespa's nativeRank of a text field holding the one query term once, first.
+TERM_NATIVE_RANK = 0.3818623835995125
+
+
+def _image_case():
+    query = np.zeros((1024, 320), np.float32)
+    query[0, 0] = 1.0
+    near = np.zeros((1024, 320), np.float32)
+    near[0, 0] = 0.75
+    far = np.zeros((1024, 320), np.float32)
+    far[0, 0] = 0.25
+    # The max over aligned rows of their dot product with the query rows.
+    return query, near, far, 0.75, 0.25
+
+
+def _semantic_case():
+    query = np.zeros(768, np.float32)
+    query[:2] = [1.0, 1.0]
+    near = np.zeros(768, np.float32)
+    near[0] = 1.0
+    far = np.zeros(768, np.float32)
+    far[2] = 1.0
+    # Angular closeness 1/(1 + angle): 45 and 90 degrees from the query.
+    return query, near, far, 1 / (1 + np.pi / 4), 1 / (1 + np.pi / 2)
+
+
+IN_CODE_TEXT_FIRST_HYBRIDS = {
+    "hybrid_image": ("image_content", "image_description", "colpali_embedding"),
+    "hybrid_audio": ("audio_content", "transcript", "semantic_embedding"),
+    "hybrid_bm25_semantic": ("document_text", "full_text", "document_embedding"),
+}
+
+
+class TestInCodeTextFirstHybrids:
+    """The text-first hybrids of the in-code content type schemas rank their
+    BM25 text matches by the visual or semantic similarity plus nativeRank.
+
+    Each gets two documents holding the query term in its text field with
+    different embeddings, and one without the term: the two text matches come
+    back, each scored by its own similarity plus its nativeRank."""
+
+    @pytest.mark.parametrize("profile", sorted(IN_CODE_TEXT_FIRST_HYBRIDS))
+    def test_text_matches_rank_by_similarity_plus_native_rank(
+        self, test_vespa_manager, profile
+    ):
+        import requests
+
+        schema, text_field, embedding_field = IN_CODE_TEXT_FIRST_HYBRIDS[profile]
+        query, near, far, near_score, far_score = (
+            _image_case() if profile == "hybrid_image" else _semantic_case()
+        )
+        docs = {
+            f"{profile}_near": (near, "kestrel harbour notes"),
+            f"{profile}_far": (far, "kestrel harbour notes"),
+            f"{profile}_textless": (near, "harbour notes"),
+        }
+        base = f"{test_vespa_manager['base_url']}/document/v1/hybridtest/{schema}"
+        for doc_id, (embedding, text) in docs.items():
+            response = requests.post(
+                f"{base}/docid/{doc_id}",
+                json={
+                    "fields": {text_field: text, embedding_field: embedding.tolist()}
+                },
+                timeout=30,
+            )
+            assert response.status_code == 200, response.text
+        try:
+            response = requests.post(
+                f"{test_vespa_manager['base_url']}/search/",
+                json={
+                    "yql": (
+                        f"select * from {schema} where "
+                        f'{{defaultIndex: "{text_field}"}}userInput(@userQuery)'
+                    ),
+                    "userQuery": "kestrel",
+                    "ranking": profile,
+                    "input.query(q)": query.tolist(),
+                    "hits": 10,
+                },
+                timeout=30,
+            )
+        finally:
+            for doc_id in docs:
+                requests.delete(f"{base}/docid/{doc_id}", timeout=30)
+
+        assert response.status_code == 200, response.text
+        hits = response.json()["root"]["children"]
+        assert [h["id"].rsplit("::", 1)[1] for h in hits] == [
+            f"{profile}_near",
+            f"{profile}_far",
+        ]
+        assert [h["relevance"] for h in hits] == pytest.approx(
+            [near_score + TERM_NATIVE_RANK, far_score + TERM_NATIVE_RANK], abs=1e-6
+        )
 
 
 if __name__ == "__main__":

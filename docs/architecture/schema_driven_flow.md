@@ -233,8 +233,9 @@ flowchart TD
   - Visual-first hybrids on patch/token models match every document with
     `rank(true, {grammar: "any"}userInput(@userQuery))` and rank by visual
     MaxSim plus `nativeRank` of the text fields
-  - Text-first hybrids (`hybrid_bm25_*`) match `userInput` and rerank by
-    embeddings
+  - Text-first hybrids (`hybrid_bm25_*`) match `userInput`, pick the best 100
+    text matches by BM25 and rerank them by the same visual score plus
+    `nativeRank`
 
 - **Text-Only** (bm25_only):
   - Only uses `userInput`, no embeddings needed
@@ -264,8 +265,8 @@ flowchart TD
 | float_binary | - | ✓/✓ | ✓/✓ | ✓* | Float primary, binary fallback |
 | hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Float MaxSim plus text `nativeRank` in one phase over every document |
 | hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Binary MaxSim plus text `nativeRank` in one phase over every document |
-| hybrid_bm25_float | ✓ | ✓ | - | - | Same fields as hybrid_float_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
-| hybrid_bm25_binary | ✓ | - | ✓ | - | Same fields as hybrid_binary_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
+| hybrid_bm25_float | ✓ | ✓ | - | - | Text matches only: BM25 picks the top 100, reranked by float similarity plus `nativeRank`; not nearestNeighbor-eligible |
+| hybrid_bm25_binary | ✓ | - | ✓ | - | Text matches only: BM25 picks the top 100, reranked by binary similarity plus `nativeRank`; not nearestNeighbor-eligible |
 | phased | ✓ | ✓ | ✓ | ✓* | Two-phase: binary → float |
 
 *nearestNeighbor used by single-vector schemas (detected via `_sv_` or `_lvt_` token in the schema name, e.g., `video_xclip_sv_chunk_6s`), and only for the profile names the extractor recognizes as nearestNeighbor-eligible (the `default` and `hybrid_bm25_*` profiles above always use tensor ranking, even on single-vector schemas).

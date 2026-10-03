@@ -1796,19 +1796,28 @@ rank every document in one phase by a visual score plus a text score:
 For them `VespaSearchBackend` matches every document with
 `rank(true, {grammar: "any"}userInput(@userQuery))`: the query terms only rank,
 a document without a text match keeps its visual score, and each document's
-text match counts in full. On the single-vector `video_xclip_sv_chunk_6s`
-schema, `hybrid_float_bm25` adds `closeness` to `nativeRank`. Every hybrid
-that retrieves through `nearestNeighbor` matches
+text match counts in full. On the single-vector schemas the visual score is
+the dense similarity: `hybrid_float_bm25` on `video_xclip_sv_chunk_6s` adds the
+angular `closeness` to `nativeRank`, `hybrid_binary_bm25` the same closeness
+estimated from the Hamming distance `h` of the 768-bit codes, `1/(1 + πh/768)`,
+and `hybrid_acoustic_bm25` on `audio_content` the acoustic `closeness`. Every
+hybrid that retrieves through `nearestNeighbor` matches
 `({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`: the nearest
 neighbours and every document holding a query term are candidates, each with
-its full text features. The text-first `hybrid_bm25_*` profiles retrieve by
-text, rank by BM25 and rerank the top 100 by visual similarity.
+its full text features.
+
+The text-first `hybrid_bm25_*` profiles match the text only. BM25 picks the
+best 100 text matches per content node and the second phase reranks them by
+the same visual score plus `nativeRank`. On `video_xclip_sv_chunk_6s` they
+compute the visual score from the stored vector, as their query carries no
+`nearestNeighbor` term.
 
 > **Where a strategy's phase order lives.** The ranking phases
 > (`first_phase` / `second_phase`) that define a strategy's actual behavior are
 > authoritative in the schema's `rank_profiles` (the schema JSON). By naming
 > convention `hybrid_binary_bm25*` ranks by binary visual similarity plus text
-> in one phase and `hybrid_bm25_binary*` ranks the text/BM25 phase first.
+> in one phase and `hybrid_bm25_binary*` ranks the text/BM25 phase first and
+> reranks by binary visual similarity plus text.
 > `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
 > phase-agnostic metadata (which embeddings/tensors each strategy needs) —
 > `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,
