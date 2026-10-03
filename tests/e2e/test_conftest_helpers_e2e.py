@@ -67,6 +67,7 @@ _NEW_PREFIXES = (
     "smk2_",
     "mschema_",
     "teardown_",
+    "prode2epipe_",
 )
 
 # The pre-existing prefixes the conftest had before this change. Recorded
@@ -158,6 +159,8 @@ def _collection_item(path: Path, test_name: str, fixturenames: tuple[str, ...]):
         fspath=path,
         fixturenames=fixturenames,
         nodeid=f"{path.as_posix()}::{test_name}",
+        # An unmarked item: the hook asks every item for its teacher marker.
+        get_closest_marker=lambda name: None,
     )
 
 
