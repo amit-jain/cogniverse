@@ -558,6 +558,7 @@ async def upload_video(
     try:
         result = await enqueue_ingestion(
             redis,
+            task_events=get_task_event_store(),
             source_url=source_url,
             profile=resolved_profile,
             tenant_id=upload_tenant_id,

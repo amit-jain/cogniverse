@@ -25,6 +25,7 @@ from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcess
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _process_job
+from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = pytest.mark.integration
 
@@ -195,6 +196,7 @@ async def run_job(redis, pipeline, video):
     config.job_deadline_s = 30
     submitted = await enqueue_ingestion(
         redis,
+        task_events=TaskEventStore(redis),
         source_url=video.as_uri(),
         profile="transcription",
         tenant_id=pipeline.tenant_id,
@@ -226,6 +228,7 @@ async def test_asr_failure_fails_job_and_allows_plain_resubmission(
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None
     retried = await enqueue_ingestion(
         job_redis,
+        task_events=TaskEventStore(job_redis),
         source_url=video.as_uri(),
         profile="transcription",
         tenant_id=pipeline.tenant_id,

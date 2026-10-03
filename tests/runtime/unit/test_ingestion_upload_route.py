@@ -79,6 +79,9 @@ def upload_client(monkeypatch):
         return None
 
     monkeypatch.setattr(ingestion_router, "assert_tenant_exists", _tenant_ok)
+    # The process's task event store, which the route hands to the submit.
+    task_events = object()
+    monkeypatch.setattr(ingestion_router, "_task_event_store", task_events)
     captured: dict = {}
     state = {
         "result": EnqueueResult(
@@ -93,6 +96,7 @@ def upload_client(monkeypatch):
         "profile_threads": [],
         "tenant_defaults": {"acme:acme": _TENANT_DEFAULT_PROFILE},
         "uploads": [],
+        "task_events": task_events,
     }
 
     def _upload(content, **kwargs):
@@ -169,7 +173,7 @@ def _post(client, query="", data=None):
 
 
 def test_async_default_returns_queued_envelope(upload_client):
-    client, captured, _ = upload_client
+    client, captured, state = upload_client
 
     resp = _post(client)
 
@@ -188,6 +192,7 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert captured["force"] is False
     assert captured["wait_timeout"] == 300
     assert captured["profile"] == _TENANT_DEFAULT_PROFILE
+    assert captured["task_events"] is state["task_events"]
 
 
 @pytest.mark.parametrize(

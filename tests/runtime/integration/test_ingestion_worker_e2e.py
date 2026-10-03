@@ -38,6 +38,7 @@ from cogniverse_runtime.ingestion_worker.submit_api import (
     enqueue_ingestion,
 )
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
+from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -215,6 +216,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fake.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -246,10 +248,14 @@ class TestEnqueueAndWorker:
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
-            first = await enqueue_ingestion(env_redis, **kwargs)
+            first = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            second = await enqueue_ingestion(env_redis, **kwargs)
+            second = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             assert second.existing is True
             assert second.ingest_id == first.ingest_id
             assert second.sha == first.sha
@@ -273,10 +279,14 @@ class TestEnqueueAndWorker:
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
-            first = await enqueue_ingestion(env_redis, **kwargs)
+            first = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            second = await enqueue_ingestion(env_redis, **kwargs, force=True)
+            second = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs, force=True
+            )
             assert second.existing is False
             assert second.ingest_id != first.ingest_id
         finally:
@@ -291,6 +301,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/bad.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -325,6 +336,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -351,6 +363,7 @@ class TestEnqueueAndWorker:
             # Resubmit (no force) must re-enqueue, not dedupe to the failed run.
             second = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -370,6 +383,7 @@ class TestEnqueueAndWorker:
         try:
             submission = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/missing-generator.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -415,6 +429,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/sync.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -441,6 +456,7 @@ class TestBackpressure:
         for i in range(5):
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -449,6 +465,7 @@ class TestBackpressure:
         with pytest.raises(BackpressureError) as exc:
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -460,6 +477,7 @@ class TestBackpressure:
         # Other tenant unaffected
         other = await enqueue_ingestion(
             env_redis,
+            task_events=TaskEventStore(env_redis),
             source_url="s3://bucket/other.mp4",
             profile="video_colpali_smol500_mv_frame",
             tenant_id="other",
@@ -472,6 +490,7 @@ class TestBackpressure:
         for i in range(3):
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id=f"t{i}",
@@ -480,6 +499,7 @@ class TestBackpressure:
         with pytest.raises(BackpressureError) as exc:
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="t4",
@@ -665,6 +685,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/graph-stalls.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -712,6 +733,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/slow.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -741,6 +763,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fast.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",

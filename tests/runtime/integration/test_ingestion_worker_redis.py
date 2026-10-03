@@ -27,6 +27,7 @@ import pytest
 
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
+from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -481,7 +482,11 @@ class TestEnqueueCompensation:
         monkeypatch.setattr(queue, "submit", _boom)
         with pytest.raises(ConnectionError, match="reset on xadd"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
 
         # The orphaned inflight key must be gone — a retry must not see it.
@@ -490,7 +495,11 @@ class TestEnqueueCompensation:
         # A retry (submit restored) actually enqueues and lands on the stream.
         monkeypatch.setattr(queue, "submit", real_submit)
         result = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert result.existing is False
         assert result.state == "queued"
@@ -527,7 +536,11 @@ class TestEnqueueCompensation:
 
         monkeypatch.setattr(redis, "pipeline", _pipeline_dropping_reply)
         result = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         monkeypatch.setattr(redis, "pipeline", real_pipeline)
 
@@ -547,7 +560,11 @@ class TestEnqueueCompensation:
 
         # A resubmit finds the real in-flight run and enqueues no duplicate.
         resubmit = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert resubmit.existing is True
         assert resubmit.ingest_id == result.ingest_id
@@ -582,7 +599,11 @@ class TestEnqueueCompensation:
         monkeypatch.setattr(redis, "pipeline", _pipeline_never_commits)
         with pytest.raises(ConnectionError, match="before EXEC"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
         monkeypatch.setattr(redis, "pipeline", real_pipeline)
 
@@ -594,7 +615,11 @@ class TestEnqueueCompensation:
 
         # A retry re-enqueues a real job that lands on the stream.
         result = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert result.existing is False
         assert result.state == "queued"
@@ -609,7 +634,11 @@ class TestEnqueueCompensation:
         src, profile, tenant = "s3://bucket/submitted.mp4", "video", "acme:acme"
         sha = idempotency.compute_sha(src, profile, tenant)
         await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert await idempotency.is_submitted(redis, sha) is True
 
@@ -638,7 +667,11 @@ class TestEnqueueCompensation:
         sha = idempotency.compute_sha(src, profile, tenant)
 
         first = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert first.existing is False
         # Written inside the submit transaction, atomically with the XADD.
@@ -647,7 +680,11 @@ class TestEnqueueCompensation:
         depth_after_first = await queue.queue_depth(redis)
 
         second = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert second.existing is True
         assert second.ingest_id == first.ingest_id
@@ -676,7 +713,11 @@ class TestEnqueueCompensation:
         )
 
         result = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
 
         assert result.existing is False, "phantom returned instead of re-enqueue"
@@ -706,7 +747,11 @@ class TestEnqueueCompensation:
         )
 
         result = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
 
         assert result.existing is True
@@ -741,7 +786,11 @@ class TestEnqueueCompensation:
         monkeypatch.setattr(queue, "decrement_active", _recording_decrement)
         with pytest.raises(ConnectionError, match="reset on incr"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
 
         assert await idempotency.get_existing_ingest_id(redis, sha) is None
@@ -773,7 +822,11 @@ class TestEnqueueCompensation:
         monkeypatch.setattr(queue, "decrement_active", _boom_decrement)
         with pytest.raises(ConnectionError, match="xadd reset"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
 
         assert await idempotency.get_existing_ingest_id(redis, sha) is None
@@ -807,7 +860,11 @@ class TestDedupeStatusSurface:
         sha = idempotency.compute_sha(src, profile, tenant)
 
         first = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         assert first.existing is False
         depth_after_first = await queue.queue_depth(redis)
@@ -819,7 +876,11 @@ class TestDedupeStatusSurface:
         assert await redis.delete(f"ingest:status:{first.ingest_id}") == 1
 
         second = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
 
         assert second.existing is True
@@ -851,7 +912,11 @@ class TestDedupeStatusSurface:
         sha = idempotency.compute_sha(src, profile, tenant)
 
         first = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         await idempotency.mark_done(
             redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
@@ -859,7 +924,11 @@ class TestDedupeStatusSurface:
         await idempotency.clear_inflight(redis, sha)
 
         second = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
 
         assert second.ingest_id == first.ingest_id
@@ -889,7 +958,11 @@ class TestDedupeStatusSurface:
         sha = idempotency.compute_sha(src, profile, tenant)
 
         first = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         depth_after_first = await queue.queue_depth(redis)
         await idempotency.mark_done(
@@ -904,7 +977,11 @@ class TestDedupeStatusSurface:
         async def _resubmit():
             await rendezvous.wait()
             return await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
 
         results = await asyncio.gather(*(_resubmit() for _ in range(racers)))
@@ -940,7 +1017,11 @@ class TestDedupeStatusSurface:
         sha = idempotency.compute_sha(src, profile, tenant)
 
         first = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         await idempotency.mark_done(
             redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
@@ -954,7 +1035,11 @@ class TestDedupeStatusSurface:
         monkeypatch.setattr(queue, "publish_status_if_absent", _boom_restore)
         with pytest.raises(ConnectionError, match="status stream eval reset"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
 
         assert await idempotency.get_done_ingest_id(redis, sha) == first.ingest_id
@@ -985,7 +1070,11 @@ class TestSubmitActiveCounterOrdering:
 
         monkeypatch.setattr(queue, "submit", submit_then_worker_decrement)
         await enqueue_ingestion(
-            redis, source_url="s3://b/v.mp4", profile="video", tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url="s3://b/v.mp4",
+            profile="video",
+            tenant_id=tenant,
         )
         # increment(->1) must precede submit's decrement(->0): net 0, not 1.
         assert await queue.get_active(redis, tenant) == 0
@@ -1008,7 +1097,11 @@ class TestSubmitActiveCounterOrdering:
         monkeypatch.setattr(queue, "submit", _boom)
         with pytest.raises(ConnectionError, match="xadd reset"):
             await enqueue_ingestion(
-                redis, source_url=src, profile=profile, tenant_id=tenant
+                redis,
+                task_events=TaskEventStore(redis),
+                source_url=src,
+                profile=profile,
+                tenant_id=tenant,
             )
         assert await queue.get_active(redis, tenant) == 0
         assert await idempotency.get_existing_ingest_id(redis, sha) is None
@@ -1024,7 +1117,11 @@ class TestSubmitActiveCounterOrdering:
 
         tenant = "acme:acme"
         result = await enqueue_ingestion(
-            redis, source_url="s3://b/v.mp4", profile="video", tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url="s3://b/v.mp4",
+            profile="video",
+            tenant_id=tenant,
         )
         assert await queue.get_active(redis, tenant) == 1
 
@@ -1194,7 +1291,11 @@ class TestCancellation:
         src, profile, tenant = "s3://bucket/cancelled.mp4", "video", "acme:acme"
         sha = idempotency.compute_sha(src, profile, tenant)
         submitted = await enqueue_ingestion(
-            redis, source_url=src, profile=profile, tenant_id=tenant
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url=src,
+            profile=profile,
+            tenant_id=tenant,
         )
         store = TaskEventStore(redis)
         listed = await store.list_active(tenant)
@@ -1249,6 +1350,7 @@ class TestCancellation:
         config = worker.WorkerConfig()
         submitted = await enqueue_ingestion(
             redis,
+            task_events=TaskEventStore(redis),
             source_url="s3://bucket/running.mp4",
             profile="video",
             tenant_id="acme:acme",
@@ -1391,6 +1493,7 @@ class TestSubmitIdempotencyRace:
             *[
                 submit_api.enqueue_ingestion(
                     redis,
+                    task_events=TaskEventStore(redis),
                     source_url="s3://b/dup.mp4",
                     profile="video",
                     tenant_id="acme:acme",
@@ -2046,6 +2149,7 @@ class TestEnqueueDedupWait:
 
         first = await enqueue_ingestion(
             redis,
+            task_events=TaskEventStore(redis),
             source_url="s3://b/dedup.mp4",
             profile="video",
             tenant_id="acme",
@@ -2069,6 +2173,7 @@ class TestEnqueueDedupWait:
 
         second = await enqueue_ingestion(
             redis,
+            task_events=TaskEventStore(redis),
             source_url="s3://b/dedup.mp4",
             profile="video",
             tenant_id="acme",
@@ -2091,14 +2196,22 @@ class TestEnqueueDedupWait:
         from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 
         first = await enqueue_ingestion(
-            redis, source_url="s3://b/fast.mp4", profile="video", tenant_id="acme"
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url="s3://b/fast.mp4",
+            profile="video",
+            tenant_id="acme",
         )
         sha = idempotency.compute_sha("s3://b/fast.mp4", "video", "acme")
         await idempotency.mark_done(redis, sha, first.ingest_id, ttl_seconds=60)
         await idempotency.clear_inflight(redis, sha)
 
         second = await enqueue_ingestion(
-            redis, source_url="s3://b/fast.mp4", profile="video", tenant_id="acme"
+            redis,
+            task_events=TaskEventStore(redis),
+            source_url="s3://b/fast.mp4",
+            profile="video",
+            tenant_id="acme",
         )
         assert second.existing is True
         assert second.state == "complete"

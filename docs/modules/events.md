@@ -236,7 +236,10 @@ An ingestion job's events are its status stream `ingest:status:<id>`, the one
   submit. The worker that claims the job attaches to it for the run: a job
   cancelled while queued settles as `cancelled` without running (its inflight
   marker cleared, its tenant slot released, its entry acked); a job is one video,
-  so a cancellation that arrives once it runs lets it finish.
+  so a cancellation that arrives once it runs lets it finish. The submit
+  (`enqueue_ingestion(redis, task_events=...)`) registers the task in the task
+  event store its caller passes: the runtime's per-process store, on its
+  shared-state client.
 
 `/events/ingestion/{job_id}` reports each status entry as a task event: an entry
 carrying the pipeline's event reports that event; otherwise `queued` maps to a

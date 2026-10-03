@@ -19,11 +19,14 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import redis.asyncio as aioredis
 
 from cogniverse_runtime.ingestion_worker import backpressure, idempotency, queue
+
+if TYPE_CHECKING:
+    from cogniverse_runtime.task_events import TaskEventStore
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +221,7 @@ async def _restore_status_trail(
 
 
 async def _register_queued_task(
-    redis: aioredis.Redis, ingest_id: str, tenant_id: str
+    task_events: "TaskEventStore", ingest_id: str, tenant_id: str
 ) -> None:
     """List the queued job as an active ingestion task, so it is cancellable
     before a worker claims it.
@@ -229,14 +232,11 @@ async def _register_queued_task(
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
     from cogniverse_runtime.task_events import (
         TaskAlreadyExists,
-        TaskEventStore,
         TaskEventsUnavailable,
     )
 
     try:
-        await TaskEventStore(redis).register_queued(
-            ingest_id, canonical_tenant_id(tenant_id)
-        )
+        await task_events.register_queued(ingest_id, canonical_tenant_id(tenant_id))
     except TaskAlreadyExists:
         # A worker claimed the job first and recorded its task.
         pass
@@ -253,6 +253,7 @@ async def _register_queued_task(
 async def enqueue_ingestion(
     redis: aioredis.Redis,
     *,
+    task_events: "TaskEventStore",
     source_url: str,
     profile: str,
     tenant_id: str,
@@ -261,6 +262,9 @@ async def enqueue_ingestion(
     wait_timeout: int = 300,
 ) -> EnqueueResult:
     """Enqueue an ingestion or return the existing run.
+
+    A new job is listed as a queued ingestion task in ``task_events``, the
+    calling process's task event store.
 
     Raises ``BackpressureError`` when either backpressure axis is
     exceeded. Caller (the HTTP route) maps it to 429.
@@ -425,7 +429,7 @@ async def enqueue_ingestion(
         profile,
         source_url,
     )
-    await _register_queued_task(redis, ingest_id, tenant_id)
+    await _register_queued_task(task_events, ingest_id, tenant_id)
 
     if not wait:
         return EnqueueResult(
