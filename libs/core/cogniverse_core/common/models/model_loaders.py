@@ -40,6 +40,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     decode_audio,
     lenient_chunk_answer,
     response_format,
+    sampling_fields,
     transcribe_in_chunks,
 )
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
@@ -979,19 +980,20 @@ class RemoteWhisperLoader(ModelLoader):
                 """Transcribe an audio file via vLLM /v1/audio/transcriptions.
 
                 Mirrors the OpenAI Whisper API contract: multipart upload
-                with ``file``, ``model``, optional ``language``, one
-                ``verbose_json`` request per chunk of at most 30 s. Returns
-                ``text``, ``language``, ``duration`` and ``segments``; a
-                chunk carrying sound that keeps coming back empty, the last
-                time asked without timestamps, raises
-                ``EmptyTranscriptError``.
+                with ``file``, ``model``, optional ``language``, a
+                ``verbose_json`` and a ``json`` request per chunk of at most
+                30 s. Returns ``text``, ``language``, ``duration`` and
+                ``segments``; a chunk whose text keeps coming back empty or as
+                a repetition loop raises ``EmptyTranscriptError`` or
+                ``GarbledTranscriptError``.
                 """
                 name = Path(audio_path).name
 
-                def transcribe_chunk(chunk, chunk_language, timestamps):
+                def transcribe_chunk(chunk, chunk_language, timestamps, temperature):
                     data: Dict[str, Any] = {
                         "model": self.model_name,
                         "response_format": response_format(timestamps),
+                        **sampling_fields(temperature),
                     }
                     if chunk_language:
                         data["language"] = chunk_language

@@ -325,7 +325,10 @@ reshape), matching DenseOn's dense-retrieval semantics.
 vLLM's stock CPU and ROCm images don't ship the `[audio]` extras, so
 the chart's pod template runs `pip install soundfile librosa` at
 startup before exec-ing `vllm serve`. The endpoint is
-`/v1/audio/transcriptions` (OpenAI-compatible multipart upload).
+`/v1/audio/transcriptions` (OpenAI-compatible multipart upload). The remote
+clients send each 30 s chunk twice (`verbose_json` for timings, `json` for
+text), plus one request per answer that comes back empty or as a repetition
+loop, so a transcription costs two requests per chunk at least.
 
 ### CLAP acoustic embeddings (`clap_embed` sidecar)
 
