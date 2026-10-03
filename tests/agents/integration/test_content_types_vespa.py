@@ -256,14 +256,9 @@ class TestContentTypeVespaSchemas:
         if embeddings_np.ndim == 3 and embeddings_np.shape[0] == 1:
             embeddings_np = embeddings_np[0]
 
-        # Pad or truncate to exactly 1024 patches
-        if embeddings_np.shape[0] < 1024:
-            padding = np.zeros((1024 - embeddings_np.shape[0], embeddings_np.shape[1]))
-            embeddings_np = np.vstack([embeddings_np, padding])
-        elif embeddings_np.shape[0] > 1024:
-            embeddings_np = embeddings_np[:1024]
-
-        colpali_embedding = embeddings_np.tolist()
+        colpali_embedding = {
+            "blocks": {str(i): patch.tolist() for i, patch in enumerate(embeddings_np)}
+        }
         print(f"✅ Generated embedding shape: {embeddings_np.shape}")
 
         sample_image = {
@@ -811,14 +806,27 @@ TERM_NATIVE_RANK = 0.3818623835995125
 
 
 def _image_case():
-    query = np.zeros((1024, 320), np.float32)
+    query = np.zeros((2, 320), np.float32)
     query[0, 0] = 1.0
-    near = np.zeros((1024, 320), np.float32)
+    query[1, 1] = 0.5
+    near = np.zeros((2, 320), np.float32)
     near[0, 0] = 0.75
-    far = np.zeros((1024, 320), np.float32)
-    far[0, 0] = 0.25
-    # The max over aligned rows of their dot product with the query rows.
-    return query, near, far, 0.75, 0.25
+    near[1, :2] = [0.125, 0.25]
+    # MaxSim averaged over the query tokens: (0.75 + 0.125) / 2 and, for the
+    # negated patches, (-0.125 + 0) / 2.
+    return query, near, -near, 0.4375, -0.0625
+
+
+def _tensor(base, profile, embedding):
+    if profile != "hybrid_image":
+        return embedding.tolist()
+    return {"blocks": {str(i): row.tolist() for i, row in enumerate(embedding)}}
+
+
+def _query_input(profile, query):
+    if profile != "hybrid_image":
+        return {"input.query(q)": query.tolist()}
+    return {"input.query(qt)": {str(i): row.tolist() for i, row in enumerate(query)}}
 
 
 def _semantic_case():
@@ -867,7 +875,10 @@ class TestInCodeTextFirstHybrids:
             response = requests.post(
                 f"{base}/docid/{doc_id}",
                 json={
-                    "fields": {text_field: text, embedding_field: embedding.tolist()}
+                    "fields": {
+                        text_field: text,
+                        embedding_field: _tensor(schema, profile, embedding),
+                    }
                 },
                 timeout=30,
             )
@@ -882,7 +893,7 @@ class TestInCodeTextFirstHybrids:
                     ),
                     "userQuery": "kestrel",
                     "ranking": profile,
-                    "input.query(q)": query.tolist(),
+                    **_query_input(profile, query),
                     "hits": 10,
                 },
                 timeout=30,
@@ -900,6 +911,47 @@ class TestInCodeTextFirstHybrids:
         assert [h["relevance"] for h in hits] == pytest.approx(
             [near_score + TERM_NATIVE_RANK, far_score + TERM_NATIVE_RANK], abs=1e-6
         )
+
+    def test_image_similarity_is_maxsim_over_patches(self, test_vespa_manager):
+        """``colpali_similarity`` sums, over the query tokens, each token's
+        best dot product with a stored patch: (0.75 + 0.125) for the stored
+        patches, wherever the best patch sits."""
+        import requests
+
+        query, near, _, _, _ = _image_case()
+        stored = near[::-1].copy()
+        base = f"{test_vespa_manager['base_url']}/document/v1/hybridtest/image_content"
+        response = requests.post(
+            f"{base}/docid/maxsim_doc",
+            json={
+                "fields": {
+                    "image_id": "maxsim_doc",
+                    "colpali_embedding": _tensor(
+                        "image_content", "hybrid_image", stored
+                    ),
+                }
+            },
+            timeout=30,
+        )
+        assert response.status_code == 200, response.text
+        try:
+            response = requests.post(
+                f"{test_vespa_manager['base_url']}/search/",
+                json={
+                    "yql": 'select * from image_content where image_id contains "maxsim_doc"',
+                    "ranking": "colpali_similarity",
+                    **_query_input("hybrid_image", query),
+                    "hits": 10,
+                },
+                timeout=30,
+            )
+        finally:
+            requests.delete(f"{base}/docid/maxsim_doc", timeout=30)
+
+        assert response.status_code == 200, response.text
+        hits = response.json()["root"]["children"]
+        assert [h["id"].rsplit("::", 1)[1] for h in hits] == ["maxsim_doc"]
+        assert hits[0]["relevance"] == pytest.approx(0.875, abs=1e-6)
 
 
 if __name__ == "__main__":

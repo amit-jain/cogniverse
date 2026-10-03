@@ -115,6 +115,13 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
     )
 
 
+# Float MaxSim per query token over the in-code image schema's patches.
+_IMAGE_MAX_SIM = (
+    "reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), "
+    "max, patch)"
+)
+
+
 def _angular_closeness(query: str, field: str, dim: str) -> str:
     """``closeness(field, <field>)`` under the angular metric, computed from
     the attribute, so it also scores documents that no nearestNeighbor term
@@ -236,28 +243,32 @@ class VespaSchemaManager:
                                 type="array<string>",
                                 indexing=["summary", "attribute"],
                             ),
-                            # ColPali multi-vector embedding (same as video frames)
+                            # ColPali multi-vector embedding, mapped per patch
+                            # as in configs/schemas/image_colpali_mv_schema.json.
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<float>(x[1024],d[320])",
+                                type="tensor<bfloat16>(patch{}, v[320])",
                                 indexing=["attribute"],
-                                attribute=["distance-metric:prenormalized-angular"],
                             ),
                         ]
                     ),
                     rank_profiles=[
                         RankProfile(
                             name="colpali_similarity",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
-                            first_phase="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
+                            first_phase=f"sum({_IMAGE_MAX_SIM}, querytoken)",
                         ),
                         RankProfile(
                             name="hybrid_image",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
                             functions=[
                                 Function(
                                     name="visual_sim",
-                                    expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                                    expression=f"reduce({_IMAGE_MAX_SIM}, avg, querytoken)",
                                 ),
                                 Function(
                                     name="text_sim",
