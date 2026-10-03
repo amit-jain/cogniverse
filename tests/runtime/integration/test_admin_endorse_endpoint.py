@@ -29,7 +29,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def endorse_client(memory_manager, admin_phoenix_endpoints):
+def endorse_client(memory_manager, admin_phoenix_endpoints, config_manager):
     """Mount the admin router. Wire the knowledge_registry onto the
     runtime conftest's memory_manager so writes auto-attach trust —
     the conftest fixture initialises Mem0 without a registry by
@@ -40,7 +40,14 @@ def endorse_client(memory_manager, admin_phoenix_endpoints):
     memory_manager._knowledge_registry = build_default_registry()
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    yield TestClient(app, raise_server_exceptions=False), memory_manager
+    # The endorse route builds the tenant's PinService, whose quotas are read
+    # from the config store the admin router is wired to.
+    previous = admin._config_manager
+    admin.set_config_manager(config_manager)
+    try:
+        yield TestClient(app, raise_server_exceptions=False), memory_manager
+    finally:
+        admin._config_manager = previous
     try:
         memory_manager.clear_agent_memory(memory_manager.tenant_id, "h9_endorse")
     except Exception:
