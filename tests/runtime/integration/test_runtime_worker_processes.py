@@ -27,9 +27,11 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import pytest
+import redis
 
 from cogniverse_core.conversation import CONVERSATION_AGENT_NAME
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
@@ -39,7 +41,10 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     AnswerGrounding,
 )
-from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
+from cogniverse_runtime.shared_state import (
+    SHARED_STATE_REDIS_CLIENT_NAME,
+    SHARED_STATE_REDIS_TIMEOUT_SECONDS,
+)
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.docker_utils import generate_unique_ports
@@ -422,6 +427,45 @@ def _conversation_rows(
     return sorted(rows, key=lambda row: float(row["metadata"]["seq"]))
 
 
+def _conversation_tenant(shared_vespa) -> tuple[str, str]:
+    """A tenant of its own whose memory schema is deployed, and whose one
+    profile embeds through DenseOn but whose schema is never deployed; returns
+    the tenant and the summarizer's fixed answer for it."""
+    tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
+    config_manager = make_config_manager(shared_vespa)
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant_id,
+        base_schema_name="agent_memories",
+        config_manager=config_manager,
+    )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            UNDEPLOYED_PROFILE,
+            {
+                **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
+                "inference_services": {"embedding": "denseon"},
+            },
+        ),
+        tenant_id=tenant_id,
+    )
+    expected_answer = AnswerGrounding(
+        hits=[],
+        state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+        undeployed_profiles=(UNDEPLOYED_PROFILE,),
+    ).unanswerable_text(tenant_id)
+    return tenant_id, expected_answer
+
+
+def _turn(tenant_id: str, context_id: str, query: str) -> dict:
+    return {
+        "agent_name": "summarizer_agent",
+        "query": query,
+        "context": {"tenant_id": tenant_id},
+        "context_id": context_id,
+    }
+
+
 class TestConversationAcrossWorkers:
     def test_each_turn_reads_the_turns_the_other_worker_answered(
         self, tmp_path, redis_url, vespa_instance, shared_vespa, shared_denseon
@@ -429,31 +473,7 @@ class TestConversationAcrossWorkers:
         """Consecutive turns of one context alternate between the workers; each
         reads every turn answered before it, though the reply before it came
         back while that turn's save was still landing on the other worker."""
-        # A tenant of its own: its memory schema is deployed, and its one
-        # profile embeds through DenseOn but its schema is never deployed.
-        tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
-        config_manager = make_config_manager(shared_vespa)
-        deploy_tenant_schema(
-            shared_vespa,
-            tenant_id=tenant_id,
-            base_schema_name="agent_memories",
-            config_manager=config_manager,
-        )
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(
-                UNDEPLOYED_PROFILE,
-                {
-                    **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
-                    "inference_services": {"embedding": "denseon"},
-                },
-            ),
-            tenant_id=tenant_id,
-        )
-        expected_answer = AnswerGrounding(
-            hits=[],
-            state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
-            undeployed_profiles=(UNDEPLOYED_PROFILE,),
-        ).unanswerable_text(tenant_id)
+        tenant_id, expected_answer = _conversation_tenant(shared_vespa)
         context_id = f"workers-{uuid.uuid4().hex}"
         # Three turns cover both directions (first to second worker and back)
         # and stay below the turn count that files a wiki page.
@@ -474,12 +494,7 @@ class TestConversationAcrossWorkers:
                     status, body = _post(
                         connection,
                         "/agents/summarizer_agent/process",
-                        {
-                            "agent_name": "summarizer_agent",
-                            "query": query,
-                            "context": {"tenant_id": tenant_id},
-                            "context_id": context_id,
-                        },
+                        _turn(tenant_id, context_id, query),
                     )
                 finally:
                     connection.close()
@@ -526,6 +541,102 @@ class TestConversationAcrossWorkers:
         assert [
             later - earlier >= 2 for earlier, later in zip(seqs[0::2], seqs[2::2])
         ] == [True] * (len(queries) - 1)
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
+def _replica_ids(log: Path) -> list[str]:
+    announced = "Cluster events subscribed as "
+    return sorted(
+        record[len(announced) :]
+        for record in _records(log, MAIN_LOGGER, "INFO")
+        if record.startswith(announced)
+    )
+
+
+def _state_connections(redis_url: str) -> dict[str, int]:
+    """Connections per shared-state client name, from Redis' CLIENT LIST."""
+    observer = redis.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        names = [row["name"] for row in observer.client_list()]
+    finally:
+        observer.close()
+    return dict(
+        Counter(
+            name
+            for name in names
+            if name.startswith(f"{SHARED_STATE_REDIS_CLIENT_NAME}:")
+        )
+    )
+
+
+class TestOneStateClientPerWorker:
+    def test_every_state_store_of_a_worker_uses_its_one_connection(
+        self, tmp_path, own_redis, vespa_instance, shared_vespa, shared_denseon
+    ):
+        """Agent registrations and conversation turn order come from one
+        connection pool per worker: after startup, and after requests that use
+        the registry and the conversation ledger one after another on each
+        worker, every worker holds exactly one connection under its name."""
+        url, _, _ = own_redis
+        tenant_id, expected_answer = _conversation_tenant(shared_vespa)
+        context_id = f"pool-{uuid.uuid4().hex}"
+        agent = f"pool_agent_{uuid.uuid4().hex[:8]}"
+        env = {
+            "INFERENCE_SERVICE_URLS": json.dumps({"denseon": shared_denseon}),
+            "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+        }
+        with _runtime(tmp_path, url, extra_env=env) as (process, log, port):
+            workers = _serving(process, log)
+            replicas = _replica_ids(log)
+            at_start = _state_connections(url)
+            senders = [_Worker(port, pid, workers) for pid in workers]
+            registered = senders[0](
+                "POST",
+                "/agents/register",
+                {"name": agent, "url": "http://pool:9000", "capabilities": ["pool"]},
+            )
+            seen = [send("GET", f"/agents/{agent}")[0] for send in senders]
+            turns = [
+                send(
+                    "POST",
+                    "/agents/summarizer_agent/process",
+                    _turn(tenant_id, context_id, f"summarize turn {index}"),
+                )
+                for index, send in enumerate(senders)
+            ]
+            connection = _connection_to(port, workers[0], workers)
+            try:
+                deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
+                rows = _conversation_rows(connection, tenant_id, context_id)
+                while len(rows) < 2 * WORKERS and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    rows = _conversation_rows(connection, tenant_id, context_id)
+            finally:
+                connection.close()
+            after = _state_connections(url)
+
+        one_each = {
+            f"{SHARED_STATE_REDIS_CLIENT_NAME}:{replica}": 1 for replica in replicas
+        }
+        assert len(one_each) == WORKERS
+        assert at_start == one_each
+        assert after == one_each
+        assert registered[0] == 201
+        assert seen == [200] * WORKERS
+        assert [status for status, _ in turns] == [200] * WORKERS
+        assert [body["conversation"] for _, body in turns] == [
+            {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 2 * index,
+                "reason": None,
+            }
+            for index in range(WORKERS)
+        ]
+        assert [body["answer"] for _, body in turns] == [expected_answer] * WORKERS
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+        ] * WORKERS
         assert _records(log, CLI_LOGGER, "ERROR") == []
 
 

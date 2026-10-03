@@ -1,10 +1,14 @@
 """The Redis client behind state every runtime process shares.
 
-Agent registrations, annotation requests and ``/ingestion/start`` job status
-live in Redis so every worker process and replica serves the same ones. One
-client per process carries them, with every command, connect and wait for a
-pooled connection bounded, so a Redis that stops answering fails the request
-instead of hanging it.
+Agent registrations, annotation requests, ``/ingestion/start`` job status,
+conversation turn order and suspended ``/v1`` turns live in Redis so every
+worker process and replica serves the same ones. One client and connection
+pool per process carries all of them, with every command, connect and wait
+for a pooled connection bounded, so a Redis that stops answering fails the
+request instead of hanging it. Its connections carry the client name it was
+opened with in Redis' ``CLIENT LIST``; the runtime names them
+``SHARED_STATE_REDIS_CLIENT_NAME`` followed by ``:`` and the process's replica
+id.
 """
 
 from __future__ import annotations
@@ -15,7 +19,8 @@ from redis.asyncio import BlockingConnectionPool, Redis
 from redis.exceptions import RedisError
 
 SHARED_STATE_REDIS_TIMEOUT_SECONDS = 5.0
-SHARED_STATE_REDIS_MAX_CONNECTIONS = 64
+SHARED_STATE_REDIS_MAX_CONNECTIONS = 128
+SHARED_STATE_REDIS_CLIENT_NAME = "cogniverse-runtime-state"
 _HEALTH_CHECK_INTERVAL_SECONDS = 30
 
 
@@ -46,8 +51,12 @@ async def connect_shared_state_redis(
     *,
     timeout_seconds: float = SHARED_STATE_REDIS_TIMEOUT_SECONDS,
     max_connections: int = SHARED_STATE_REDIS_MAX_CONNECTIONS,
+    client_name: str = SHARED_STATE_REDIS_CLIENT_NAME,
 ) -> Redis:
-    """Connect to ``redis_url`` and ping it before any request is served."""
+    """Connect to ``redis_url`` and ping it before any request is served.
+
+    Every connection of the pool registers ``client_name`` with Redis.
+    """
     if not redis_url.strip():
         raise ValueError("redis_url must be non-empty")
     if timeout_seconds <= 0:
@@ -64,6 +73,7 @@ async def connect_shared_state_redis(
             socket_connect_timeout=timeout_seconds,
             socket_keepalive=True,
             health_check_interval=_HEALTH_CHECK_INTERVAL_SECONDS,
+            client_name=client_name,
         )
     )
     try:

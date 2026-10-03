@@ -6,9 +6,11 @@
 * ``ContinuationStore`` holds a suspended ``/v1`` turn's state until its tool
   results come back, readable once from any process.
 
-Every command, connect and wait for a pooled connection is bounded by the
-client's timeout. An unreachable or silent Redis raises
-``SessionStateUnavailable``; nothing falls back to process memory.
+Both run on the process's shared-state client
+(``shared_state.connect_shared_state_redis``), so every command, connect and
+wait for a pooled connection is bounded by its timeout. An unreachable or
+silent Redis raises ``SessionStateUnavailable``; nothing falls back to process
+memory.
 """
 
 from __future__ import annotations
@@ -19,15 +21,8 @@ import json
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from redis.asyncio import BlockingConnectionPool, Redis
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
-
-from cogniverse_runtime.shared_state import redacted_redis_url
-
-# Bound on one Redis command, a connect, and the wait for a pooled connection.
-SESSION_REDIS_TIMEOUT_SECONDS = 5.0
-SESSION_REDIS_MAX_CONNECTIONS = 64
-_HEALTH_CHECK_INTERVAL_SECONDS = 30
 
 CONVERSATION_KEY_PREFIX = "cogniverse:conversation"
 CONTINUATION_KEY_PREFIX = "cogniverse:continuation"
@@ -67,38 +62,6 @@ class ConversationPersistFailed(Exception):
         self.context_id = context_id
         self.error_type = error_type
         self.position = position
-
-
-async def open_session_redis(
-    redis_url: str,
-    *,
-    timeout_seconds: float = SESSION_REDIS_TIMEOUT_SECONDS,
-    max_connections: int = SESSION_REDIS_MAX_CONNECTIONS,
-) -> Redis:
-    """Connect to Redis and confirm it answers."""
-    if not redis_url.strip():
-        raise ValueError("redis_url must be non-empty")
-    client = Redis.from_pool(
-        BlockingConnectionPool.from_url(
-            redis_url,
-            decode_responses=True,
-            max_connections=max_connections,
-            timeout=timeout_seconds,
-            socket_timeout=timeout_seconds,
-            socket_connect_timeout=timeout_seconds,
-            socket_keepalive=True,
-            health_check_interval=_HEALTH_CHECK_INTERVAL_SECONDS,
-        )
-    )
-    try:
-        await client.ping()
-    except RedisError as exc:
-        await client.aclose()
-        raise SessionStateUnavailable(
-            f"session state store unavailable: connect to "
-            f"{redacted_redis_url(redis_url)}"
-        ) from exc
-    return client
 
 
 def _digest(*parts: str) -> str:

@@ -52,11 +52,12 @@ def _serve_turns(vespa_ports, denseon_url, redis_url, prefix, barrier, conn):
         CONVERSATION_SAVE_LEASE_S,
         AgentDispatcher,
     )
-    from cogniverse_runtime.session_state import ConversationLedger, open_session_redis
+    from cogniverse_runtime.session_state import ConversationLedger
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
 
     async def main():
         mm = _build_manager(shared_memory_vespa=vespa_ports, shared_denseon=denseon_url)
-        redis = await open_session_redis(redis_url)
+        redis = await connect_shared_state_redis(redis_url)
         dispatcher = AgentDispatcher(
             agent_registry=MagicMock(),
             config_manager=MagicMock(),

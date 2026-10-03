@@ -1055,6 +1055,22 @@ runtime's conversation ledger (`cogniverse_runtime/session_state.py`) updates a
 context's turn clock, its pending saves and the shared lost-turn record in one
 Lua script, and Redis Cluster refuses a script whose keys span hash slots.
 
+Each runtime worker reaches its shared and session state (agent registrations,
+annotations, `/ingestion/start` jobs, conversation order and `/v1` continuations)
+through one client and connection pool of at most 128
+connections, named `cogniverse-runtime-state:<pod>:<pid>:<suffix>`; the A2A task
+store and the cluster-events channel hold their own connections. To count a
+pod's state connections:
+
+```bash
+kubectl -n cogniverse exec deploy/cogniverse-redis -- redis-cli CLIENT LIST \
+  | grep -o 'name=cogniverse-runtime-state:[^ ]*' | sort | uniq -c
+```
+
+Each worker shows one name. Its count is one after startup and grows to the
+most commands the worker has had in flight at once (pooled connections stay
+open), never past 128.
+
 ### Backup & Restore
 
 **Backup:**

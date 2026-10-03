@@ -37,11 +37,11 @@ from cogniverse_core.conversation import (
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
 from cogniverse_runtime.session_state import (
-    SESSION_REDIS_TIMEOUT_SECONDS,
     ConversationLedger,
     ConversationPersistFailed,
     SessionStateUnavailable,
 )
+from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from cogniverse_runtime.sandbox_manager import SandboxManager
@@ -124,7 +124,9 @@ CONVERSATION_PERSIST_FAILURE_CAPACITY = 256
 # How long a turn stays pending in the shared ledger: its save budget plus one
 # Redis command to settle it. A turn whose process died before settling it
 # stops holding the context's next turn once this lapses.
-CONVERSATION_SAVE_LEASE_S = CONVERSATION_SAVE_TIMEOUT_S + SESSION_REDIS_TIMEOUT_SECONDS
+CONVERSATION_SAVE_LEASE_S = (
+    CONVERSATION_SAVE_TIMEOUT_S + SHARED_STATE_REDIS_TIMEOUT_SECONDS
+)
 
 # Shutdown waits longer than one save lease, so a save accepted as shutdown
 # begins still lands and settles.

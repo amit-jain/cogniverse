@@ -1204,9 +1204,9 @@ def workflow_store(telemetry_manager_with_phoenix, workflow_state_redis_url):
 @pytest.fixture
 async def session_redis(workflow_state_redis_url):
     """A client on the test Redis, opened the way the runtime opens its own."""
-    from cogniverse_runtime.session_state import open_session_redis
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
 
-    client = await open_session_redis(workflow_state_redis_url)
+    client = await connect_shared_state_redis(workflow_state_redis_url)
     try:
         yield client
     finally:

@@ -59,7 +59,8 @@ def _serve(redis_url: str, prefix: str, port: int) -> None:
     from cogniverse_runtime.agent_dispatcher import AgentDispatcher
     from cogniverse_runtime.config_loader import ConfigLoader
     from cogniverse_runtime.routers import openai_compat
-    from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
+    from cogniverse_runtime.session_state import ContinuationStore
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
     from tests.runtime.integration.test_openai_compat_endpoint import _AGENT_CLASSES
     from tests.utils.memory_store import InMemoryConfigStore
 
@@ -84,7 +85,7 @@ def _serve(redis_url: str, prefix: str, port: int) -> None:
 
     @asynccontextmanager
     async def lifespan(_app):
-        redis = await open_session_redis(redis_url)
+        redis = await connect_shared_state_redis(redis_url)
         openai_compat.set_continuation_store(
             ContinuationStore(redis, key_prefix=prefix)
         )

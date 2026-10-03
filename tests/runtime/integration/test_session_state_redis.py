@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -28,9 +29,27 @@ from redis.asyncio import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationPriority,
+    AnnotationRequest,
+)
+from cogniverse_agents.routing.annotation_queue import (
+    AnnotationQueue,
+    AnnotationQueueUnavailableError,
+)
+from cogniverse_core.registries.agent_registry import (
+    AgentRegistryUnavailableError,
+    RegistryVersion,
+)
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_HISTORY_INCOMPLETE,
     AgentDispatcher,
+)
+from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
+from cogniverse_runtime.ingestion_jobs import (
+    IngestionJobStore,
+    IngestionJobStoreUnavailableError,
 )
 from cogniverse_runtime.routers import agents as agents_router
 from cogniverse_runtime.routers import openai_compat
@@ -39,7 +58,10 @@ from cogniverse_runtime.session_state import (
     ConversationLedger,
     ConversationPersistFailed,
     SessionStateUnavailable,
-    open_session_redis,
+)
+from cogniverse_runtime.shared_state import (
+    SharedStateUnavailableError,
+    connect_shared_state_redis,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
@@ -393,7 +415,7 @@ def _run_processes(target, args):
 
 def _accept_in_process(redis_url, prefix, tenant, context_id, barrier, results):
     async def run():
-        redis = await open_session_redis(redis_url)
+        redis = await connect_shared_state_redis(redis_url)
         try:
             ledger = _ledger(redis, prefix)
             barrier.wait(timeout=60)
@@ -411,7 +433,7 @@ def _accept_in_process(redis_url, prefix, tenant, context_id, barrier, results):
 
 def _pop_in_process(redis_url, prefix, tenant, barrier, results):
     async def run():
-        redis = await open_session_redis(redis_url)
+        redis = await connect_shared_state_redis(redis_url)
         try:
             store = ContinuationStore(redis, key_prefix=prefix)
             barrier.wait(timeout=60)
@@ -428,17 +450,208 @@ def _pop_in_process(redis_url, prefix, tenant, barrier, results):
     results.put(asyncio.run(run()))
 
 
+def _annotation(span_id: str) -> AnnotationRequest:
+    return AnnotationRequest(
+        span_id=span_id,
+        timestamp=datetime(2026, 9, 1, 11, 0, tzinfo=timezone.utc),
+        query="find clips of animals",
+        chosen_agent="search_agent",
+        routing_confidence=0.42,
+        outcome=RoutingOutcome.AMBIGUOUS,
+        priority=AnnotationPriority.MEDIUM,
+        reason="one client",
+        context={},
+    )
+
+
+def _state_stores(redis) -> dict:
+    """Every store the runtime hands its one shared-state client."""
+    return {
+        "registry": RedisAgentRegistryStore(redis, key_prefix=_prefix("registry")),
+        "annotations": AnnotationQueue(redis, key_prefix=_prefix("annotations")),
+        "jobs": IngestionJobStore(redis, owner="owner", key_prefix=_prefix("jobs")),
+        "ledger": _ledger(redis, _prefix("conversation")),
+        "continuations": ContinuationStore(redis, key_prefix=_prefix("continuation")),
+    }
+
+
+class TestOneClientServesEveryStateStore:
+    """The runtime opens one shared-state client per process and gives it to
+    the shared stores and the session stores alike."""
+
+    OPERATIONS_PER_STORE = 8
+    POOL_SIZE = 3
+
+    async def test_concurrent_operations_of_every_store_share_one_bounded_pool(
+        self, workflow_state_redis_url
+    ):
+        name = f"test-state-{uuid.uuid4().hex}"
+        redis = await connect_shared_state_redis(
+            workflow_state_redis_url, max_connections=self.POOL_SIZE, client_name=name
+        )
+        observer = Redis.from_url(workflow_state_redis_url, decode_responses=True)
+        stores = _state_stores(redis)
+        count = self.OPERATIONS_PER_STORE
+        await stores["continuations"].put(
+            TENANT, "agent", "seed", ["c1"], {"plan": "resume"}
+        )
+        operations = (
+            [
+                lambda i=i: stores["registry"].register(
+                    f"agent-{i}", {"url": f"http://agent-{i}:9000"}
+                )
+                for i in range(count)
+            ]
+            + [
+                lambda i=i: stores["annotations"].enqueue(_annotation(f"span-{i}"))
+                for i in range(count)
+            ]
+            + [lambda i=i: stores["jobs"].create(f"job-{i}") for i in range(count)]
+            + [lambda: stores["ledger"].accept(TENANT, "ctx") for _ in range(count)]
+            + [
+                lambda: stores["continuations"].pop(TENANT, "agent", "seed", ["c1"])
+                for _ in range(count)
+            ]
+        )
+        barrier = asyncio.Barrier(len(operations))
+
+        async def at_once(operation):
+            await barrier.wait()
+            return await operation()
+
+        try:
+            results = await asyncio.gather(*(at_once(op) for op in operations))
+            snapshot = await stores["registry"].snapshot()
+            jobs = [await stores["jobs"].get(f"job-{i}") for i in range(count)]
+            spans = [
+                (await stores["annotations"].get(f"span-{i}")).span_id
+                for i in range(count)
+            ]
+            connections = [
+                row for row in await observer.client_list() if row["name"] == name
+            ]
+        finally:
+            await redis.aclose()
+            await observer.aclose()
+
+        registered, enqueued, created, accepted, popped = (
+            results[i * count : (i + 1) * count] for i in range(5)
+        )
+        assert registered == [None] * count
+        assert snapshot.registered == {
+            f"agent-{i}": {"url": f"http://agent-{i}:9000"} for i in range(count)
+        }
+        assert enqueued == [True] * count
+        assert spans == [f"span-{i}" for i in range(count)]
+        assert [job["status"] for job in created] == ["started"] * count
+        assert jobs == created
+        assert len(set(accepted)) == count
+        ordered = sorted(accepted)
+        assert [b - a >= 2 for a, b in zip(ordered, ordered[1:])] == [True] * (
+            count - 1
+        )
+        assert sorted(popped, key=lambda state: state is not None) == [None] * (
+            count - 1
+        ) + [{"plan": "resume"}]
+        # Forty operations at once waited on the pool rather than opening a
+        # connection each.
+        assert len(connections) == self.POOL_SIZE
+
+    async def test_a_paused_redis_fails_every_store_with_its_own_error(
+        self, pausable_redis
+    ):
+        redis = await connect_shared_state_redis(
+            pausable_redis["url"], timeout_seconds=PAUSED_TIMEOUT_S
+        )
+        stores = _state_stores(redis)
+        calls = {
+            "registry": lambda: stores["registry"].version(),
+            "annotations": lambda: stores["annotations"].get("span-1"),
+            "jobs": lambda: stores["jobs"].get("job-1"),
+            "ledger": lambda: stores["ledger"].accept(TENANT, "ctx"),
+            "continuations": lambda: stores["continuations"].pop(
+                TENANT, "agent", "seed", ["c1"]
+            ),
+        }
+        subprocess.run(
+            ["docker", "pause", pausable_redis["container"]],
+            check=True,
+            capture_output=True,
+        )
+        raised = {}
+        try:
+            for store, call in calls.items():
+                with pytest.raises(Exception) as failure:
+                    await call()
+                raised[store] = (
+                    type(failure.value),
+                    str(failure.value),
+                    type(failure.value.__cause__),
+                )
+        finally:
+            subprocess.run(
+                ["docker", "unpause", pausable_redis["container"]],
+                check=True,
+                capture_output=True,
+            )
+        try:
+            recovered = {store: await call() for store, call in calls.items()}
+            pending = await stores["ledger"].pending(TENANT, "ctx")
+        finally:
+            await redis.aclose()
+
+        assert raised == {
+            "registry": (
+                AgentRegistryUnavailableError,
+                "shared agent registry unavailable: read version",
+                RedisTimeoutError,
+            ),
+            "annotations": (
+                AnnotationQueueUnavailableError,
+                "annotation queue unavailable: get span span-1",
+                RedisTimeoutError,
+            ),
+            "jobs": (
+                IngestionJobStoreUnavailableError,
+                "ingestion job store unavailable: read job job-1",
+                RedisTimeoutError,
+            ),
+            "ledger": (
+                SessionStateUnavailable,
+                "session state store unavailable: accept a turn of context ctx",
+                RedisTimeoutError,
+            ),
+            "continuations": (
+                SessionStateUnavailable,
+                "session state store unavailable: resume the suspended turn of agent",
+                RedisTimeoutError,
+            ),
+        }
+        # The same client serves every store again once Redis answers.
+        assert {
+            store: value for store, value in recovered.items() if store != "ledger"
+        } == {
+            "registry": RegistryVersion(epoch="", counter=0),
+            "annotations": None,
+            "jobs": None,
+            "continuations": None,
+        }
+        assert pending == [recovered["ledger"]]
+
+
 class TestOutages:
     async def test_opening_an_unreachable_redis_names_it_without_credentials(self):
+        """The stores run on the process's shared-state client; opening it on
+        a Redis nothing answers names the Redis without its credentials."""
         port = _free_port()
 
-        with pytest.raises(SessionStateUnavailable) as refused:
-            await open_session_redis(
+        with pytest.raises(SharedStateUnavailableError) as refused:
+            await connect_shared_state_redis(
                 f"redis://cogniverse:s3cret@127.0.0.1:{port}/0", timeout_seconds=1.0
             )
 
         assert str(refused.value) == (
-            f"session state store unavailable: connect to redis://127.0.0.1:{port}/0"
+            f"shared state Redis unavailable at redis://127.0.0.1:{port}/0"
         )
         assert type(refused.value.__cause__) is RedisConnectionError
 
@@ -526,7 +739,7 @@ class TestOutages:
     ):
         """A Redis that stops answering raises within the command bound rather
         than hanging the turn."""
-        redis = await open_session_redis(
+        redis = await connect_shared_state_redis(
             pausable_redis["url"], timeout_seconds=PAUSED_TIMEOUT_S
         )
         ledger = _ledger(redis, _prefix("conversation"))
@@ -663,7 +876,7 @@ class TestManagedTurnsAgainstTheLedger:
     ):
         """The answer exists but its turn cannot be ordered: the dispatch
         raises rather than reply with a turn no one will store."""
-        redis = await open_session_redis(
+        redis = await connect_shared_state_redis(
             pausable_redis["url"], timeout_seconds=PAUSED_TIMEOUT_S
         )
         store, calls = _Store(), []
@@ -709,7 +922,7 @@ class TestManagedTurnsAgainstTheLedger:
         """The rows landed but Redis missed the settle: the loss of the settle
         is logged with the turn's position, and the context's next turn is held
         only until the turn's lease lapses."""
-        redis = await open_session_redis(
+        redis = await connect_shared_state_redis(
             pausable_redis["url"], timeout_seconds=PAUSED_TIMEOUT_S
         )
         write = threading.Event()
