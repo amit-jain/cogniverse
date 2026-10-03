@@ -653,7 +653,7 @@ def _check_recording(recording: dict) -> None:
         },
     }
     answers = recording["answers"]
-    assert len(answers) == 17
+    assert len(answers) == 18
     body_keys = {
         response_format(True): {"duration", "language", "segments", "text", "words"},
         response_format(False): {"text", "usage"},
@@ -717,7 +717,7 @@ def test_the_compression_ratio_is_the_one_the_server_reports():
         for answer in answers.values()
         for segment in answer["body"].get("segments") or []
     ]
-    assert len(segments) == 22
+    assert len(segments) == 23
     assert [compression_ratio(s["text"]) for s in segments] == [
         s["compression_ratio"] for s in segments
     ]
@@ -1189,4 +1189,35 @@ def test_segment_times_past_the_chunk_are_clamped_to_it(caplog):
     assert (clamp_to_duration(18.0, 18.5), clamp_to_duration(18.5, 18.5)) == (
         18.0,
         18.5,
+    )
+
+
+def test_no_segment_reaches_into_the_next_chunk():
+    # The live server timed big_buck_bunny_clip chunk 2 (59.2-88.4 s) to
+    # 29.98 s, 59.2-89.18 s in the clip, past the next chunk's start.
+    recorded = _recording()["answers"][
+        "live/big_buck_bunny_clip/2/verbose_json/past_duration"
+    ]["body"]
+    audio = _noise(45.0)
+    audio[467200:468800] = 0
+    first, second = split_for_whisper(audio)
+    assert (first.end_s, second.start_s) == (29.2, 29.2)
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        if not timestamps:
+            return ChunkTranscript(text=" Thank you.", language=None, segments=[])
+        if chunk.index == 0:
+            return ChunkTranscript(
+                text=recorded["text"], language="en", segments=recorded["segments"]
+            )
+        return ChunkTranscript(
+            text=" Thank you.",
+            language="en",
+            segments=_segments((0.0, 2.0, " Thank you.")),
+        )
+
+    transcript = _transcribe(audio, server)
+
+    assert transcript["segments"] == _segments(
+        (0.0, 29.2, "Thank you."), (29.2, 29.2 + 2.0, "Thank you.")
     )

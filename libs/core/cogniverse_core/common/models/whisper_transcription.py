@@ -203,11 +203,18 @@ def align_text(
     first, between two that do not meet, after the last), gets a segment
     spanning that gap; elsewhere it joins the segment before it (the first
     segment at the start). Without timed segments the text is one segment
-    spanning the chunk.
+    spanning the chunk. No segment runs past ``duration``, so none reaches
+    into the next chunk.
     """
     joiner = "" if no_space else " "
     words = _units(text, no_space)
-    spans = [(float(s["start"]), float(s["end"])) for s in timed]
+    spans = [
+        (
+            clamp_to_duration(float(s["start"]), duration),
+            clamp_to_duration(float(s["end"]), duration),
+        )
+        for s in timed
+    ]
     timed_units = [
         (unit, index)
         for index, segment in enumerate(timed)

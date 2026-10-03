@@ -843,11 +843,11 @@ class TestAudioAnalysisAgent:
             return {
                 "text": f"transcript-{index}",
                 "language": "en",
-                "duration": str(index + 0.5),
+                "duration": "1.0",
                 "segments": [
                     {
                         "start": 0.0,
-                        "end": index + 0.5,
+                        "end": (index + 1) / 10,
                         "text": f"transcript-{index}",
                     }
                 ],
@@ -884,7 +884,7 @@ class TestAudioAnalysisAgent:
             [
                 {
                     "start": 0.0,
-                    "end": index + 0.5,
+                    "end": (index + 1) / 10,
                     "text": f"transcript-{index}",
                 }
             ]

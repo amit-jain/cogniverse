@@ -2183,7 +2183,8 @@ temperature)` sends one request with `response_format(timestamps)` and
   timed answer lacks gets a segment spanning the untimed gap it falls in
   (before the first segment, between two that do not meet, after the last), or
   else joins the segment before it. With no timed segments the text is one
-  segment spanning the chunk.
+  segment spanning the chunk. No segment runs past the chunk's duration, so
+  none reaches into the next chunk.
 - An answer is unusable when it is a repetition loop (`compression_ratio(text)`
   above `GARBLED_COMPRESSION_RATIO`, 2.4) or empty for a chunk whose loudest
   25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
