@@ -599,7 +599,8 @@ class AudioAnalysisAgent(
         """POST audio multipart to vLLM ``/v1/audio/transcriptions``.
 
         The audio is decoded to 16 kHz mono and each chunk of at most 30 s
-        is sent with timestamps, then without. A timestamped response must
+        is sent with timestamps, then, unless the timed segments reach its
+        end, without. A timestamped response must
         include typed text, language, duration, and timestamped segments;
         empty ``segments`` remain valid for a silent chunk. An untimed
         response must include typed text. A chunk whose untimed text keeps

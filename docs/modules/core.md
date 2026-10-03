@@ -2166,13 +2166,16 @@ temperature)` sends one request with `response_format(timestamps)` and
 - `split_for_whisper(samples)` cuts where vLLM's Whisper server cuts a long
   file: audio of at most 30 s is one chunk; longer audio is cut every 30 s at
   the start of the quietest 0.1 s window in the chunk's last second.
-- Each chunk is asked twice: `verbose_json` for timings, then `json` for
-  text, so a transcription costs two ASR requests per 30 s chunk plus one per
-  answer asked again. vLLM builds a `verbose_json` transcript only from text
-  between two adjacent timestamp tokens: a decode with no such pair comes back
-  empty, text after the last pair is dropped, and a decode ending on a pair
-  before the end of the chunk leaves the rest undecoded. The `json` answer keeps
-  the whole decode.
+- Each chunk is asked for `verbose_json` (timings). vLLM builds that transcript
+  only from text between two adjacent timestamp tokens: a decode with no such
+  pair comes back empty, text after the last pair is dropped, and a decode
+  ending on a pair before the end of the chunk leaves the rest undecoded. A
+  timed answer whose segments run to the chunk's end (`reaches_chunk_end`:
+  the last end within one 0.02 s timestamp step of it, since chunk lengths
+  are no multiple of the step) lost nothing and is kept as it is. Otherwise
+  the chunk is also asked for `json`, which keeps the whole decode, so a
+  transcription costs one or two ASR requests per 30 s chunk plus one per
+  answer asked again.
 - `align_text(text, timed, duration, *, no_space=False)` times the `json`
   words with the `verbose_json` segments. Words are compared case- and
   punctuation-blind (characters for `ja` and `zh`). A json word matching a
@@ -2190,7 +2193,8 @@ temperature)` sends one request with `response_format(timestamps)` and
   25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
   unusable without segments. An unusable answer is asked again at the next of
   `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
-  is 6). When no `json` answer is usable, the chunk raises
+  is 6). When neither a `json` answer nor a timed answer running to the end
+  is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
   (`source`, `chunk_index`, `start_s`, `end_s`, `loudest_frame_dbfs`,

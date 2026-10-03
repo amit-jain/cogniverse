@@ -98,21 +98,21 @@ def test_both_remote_calls_carry_the_bearer(monkeypatch):
     transcript = _processor(MODAL)._transcribe_remote(Path("clip.mp4"), "clip")
 
     bearer = {"Authorization": "Bearer real-bearer"}
-    assert calls == [("GET", f"{MODAL}/v1/models", bearer)] + [
+    assert calls == [
+        ("GET", f"{MODAL}/v1/models", bearer),
         (
             "POST",
             f"{MODAL}/v1/audio/transcriptions",
             bearer,
             {
                 "model": "openai/whisper-large-v3",
-                "response_format": response_format,
+                "response_format": "verbose_json",
                 "language": "en",
                 "temperature": "0.0",
                 "seed": "0",
             },
             ["file"],
-        )
-        for response_format in ("verbose_json", "json")
+        ),
     ]
     assert transcript == {
         "video_id": "clip",

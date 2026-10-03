@@ -1360,7 +1360,7 @@ class TestAudioAnalysisAgent:
             monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
             result = await agent.transcribe_audio(f"file://{clip}")
 
-        assert len(captured_requests) == 4
+        assert len(captured_requests) == 2
         assert result.segments == [
             {"start": 0.0, "end": 29.5, "text": "29.5000s"},
             {"start": 29.5, "end": 45.0, "text": "15.5000s"},

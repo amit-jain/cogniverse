@@ -1500,9 +1500,10 @@ Transcribe audio with caching support.
 
 With an `endpoint`, the audio is decoded to 16 kHz mono and cut where vLLM's
 Whisper server cuts a long file (at most 30 s, at the quietest 0.1 s window of
-the chunk's last second). Each chunk is sent twice, with timestamps
-(`verbose_json`) and without (`json`): the text comes from the `json` answer,
-timed by the `verbose_json` segments (`whisper_transcription.align_text` in
+the chunk's last second). Each chunk is sent with timestamps
+(`verbose_json`); unless its timed segments run to the end of the chunk, it is
+also sent without (`json`), and the text comes from the `json` answer, timed by
+the `verbose_json` segments (`whisper_transcription.align_text` in
 [core.md](core.md)). The language the first chunk is answered in is sent with
 every later request. Segment times count from the start of the file. An answer
 that is a repetition loop, or empty for a chunk whose loudest 25 ms frame

@@ -369,7 +369,7 @@ class TestColdAsrEndpointDiscovery:
 
         transcript = processor._transcribe_remote(Path("clip.mp4"), "clip")
 
-        assert server.transcribe_models_seen == ["openai/whisper-large-v3-turbo"] * 2
+        assert server.transcribe_models_seen == ["openai/whisper-large-v3-turbo"]
         assert transcript == {
             "video_id": "clip",
             "video_path": "clip.mp4",

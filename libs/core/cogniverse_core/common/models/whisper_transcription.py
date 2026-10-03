@@ -2,21 +2,22 @@
 
 The client splits the audio into the chunks vLLM's Whisper server would cut
 itself (at most 30 s, each cut at the quietest 0.1 s window of the chunk's last
-second) and sends each chunk twice: ``verbose_json`` for timings and ``json``
-for text. vLLM builds a ``verbose_json`` transcript only from text between two
-adjacent timestamp tokens: a decode with no such pair comes back empty, text
-decoded after the last pair is dropped, and a decode that ends on a pair before
-the end of the chunk leaves the rest undecoded. The ``json`` answer keeps the
-whole decode, and ``align_text`` times its words with the ``verbose_json``
-segments.
+second) and asks each chunk for ``verbose_json`` (timings). vLLM builds that
+transcript only from text between two adjacent timestamp tokens: a decode with
+no such pair comes back empty, text decoded after the last pair is dropped, and
+a decode that ends on a pair before the end of the chunk leaves the rest
+undecoded. Unless the timed segments run to the end of the chunk, the chunk is
+also asked for ``json``, which keeps the whole decode, and ``align_text`` times
+its words with the timed segments.
 
 An answer that is a repetition loop (compression ratio above
 ``GARBLED_COMPRESSION_RATIO``), or empty for a chunk whose loudest 25 ms frame
 reaches ``SILENCE_FLOOR_DBFS``, is asked again at the next of
-``FALLBACK_TEMPERATURES``. A chunk whose ``json`` answer is never usable raises
-``GarbledTranscriptError`` (some answer looped) or ``EmptyTranscriptError``; one
-whose ``verbose_json`` answer is never usable keeps its text as one segment
-spanning the chunk. A silent chunk may come back empty.
+``FALLBACK_TEMPERATURES``. A chunk with no usable ``json`` answer and no usable
+timed answer running to its end raises ``GarbledTranscriptError`` (some answer
+looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is never
+usable keeps its text as one segment spanning the chunk. A silent chunk may
+come back empty.
 """
 
 from __future__ import annotations
@@ -277,6 +278,22 @@ def align_text(
     ]
 
 
+def reaches_chunk_end(segments: List[Dict[str, Any]], duration: float) -> bool:
+    """Whether timed segments run to the end of a chunk of ``duration`` s.
+
+    vLLM drops only text decoded after the last timestamp pair, so such an
+    answer lost nothing and needs no json answer. The last timestamp can fall
+    short of the end by less than ``TIMESTAMP_STEP_S``, since chunk lengths
+    are not multiples of it; recorded answers end at or past the end, or at
+    least 0.5 s short of it.
+    """
+    return (
+        bool(segments)
+        and duration - max(float(segment["end"]) for segment in segments)
+        < TIMESTAMP_STEP_S
+    )
+
+
 def clamp_to_duration(seconds: float, duration: float) -> float:
     """``seconds`` capped at ``duration``, logging the original at DEBUG."""
     if seconds <= duration:
@@ -523,12 +540,17 @@ def _transcribe_checked(
         )
         return False
 
+    duration = len(chunk.samples) / WHISPER_SAMPLE_RATE
+    complete = False
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
         if timed is None:
             answer = transcribe_chunk(chunk, named, True, temperature)
             named = answer.language or named
             if usable(answer, True, attempt):
                 timed = answer
+                complete = reaches_chunk_end(timed.segments, duration)
+        if untimed is None and complete:
+            break
         if untimed is None:
             answer = transcribe_chunk(chunk, named, False, temperature)
             if usable(answer, False, attempt):
@@ -536,7 +558,7 @@ def _transcribe_checked(
         if untimed is not None and timed is not None:
             break
 
-    if untimed is None:
+    if untimed is None and not complete:
         if loops:
             raise GarbledTranscriptError(
                 source,
@@ -555,9 +577,9 @@ def _transcribe_checked(
             TRANSCRIBE_ATTEMPTS,
         )
     text, segments = align_text(
-        untimed.text,
+        untimed.text if untimed is not None else timed.text,
         timed.segments if timed is not None else [],
-        len(chunk.samples) / WHISPER_SAMPLE_RATE,
+        duration,
         no_space=(named or "").lower() in NO_SPACE_LANGUAGES,
     )
     return ChunkTranscript(text=text, language=named, segments=segments)

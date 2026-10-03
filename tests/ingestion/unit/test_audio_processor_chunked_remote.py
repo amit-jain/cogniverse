@@ -60,7 +60,8 @@ class _Whisper:
     empty 200 the cluster's server gives; ``always_empty`` ones never recover;
     ``timestamped_empty`` ones are empty whenever timestamps are asked for;
     ``untimed_loop`` ones answer a repetition loop whenever asked without;
-    ``untimed_unavailable`` ones answer 503 when asked without.
+    ``untimed_unavailable`` ones answer 503 when asked without;
+    ``timed_to_end`` ones are timed to the end of the chunk.
     """
 
     def __init__(
@@ -70,12 +71,14 @@ class _Whisper:
         timestamped_empty=(),
         untimed_loop=(),
         untimed_unavailable=(),
+        timed_to_end=(),
     ) -> None:
         self.empty_first = set(empty_first)
         self.always_empty = set(always_empty)
         self.timestamped_empty = set(timestamped_empty)
         self.untimed_loop = set(untimed_loop)
         self.untimed_unavailable = set(untimed_unavailable)
+        self.timed_to_end = set(timed_to_end)
         self.requests: list[tuple[str, float, str | None, bytes]] = []
         self.formats: list[tuple[str, float, str, float]] = []
         self._answered: set[tuple[str, float]] = set()
@@ -143,6 +146,9 @@ class _Whisper:
             )
             self._answered.add(key)
         duration = len(samples) / RATE
+        # Timed text stops a second short of the chunk's end, so the chunk is
+        # asked without timestamps too, unless the chunk is timed to its end.
+        end = duration if key in self.timed_to_end else duration - 1.0
         text = "" if empty else f" {name}-{start:g}"
         if timed == "json":
             if key in self.untimed_unavailable:
@@ -152,9 +158,7 @@ class _Whisper:
             "text": text,
             "language": "en",
             "duration": str(duration),
-            "segments": (
-                [{"start": 0.0, "end": duration, "text": text}] if text else []
-            ),
+            "segments": ([{"start": 0.0, "end": end, "text": text}] if text else []),
         }
 
     def __enter__(self) -> "_Whisper":
@@ -230,8 +234,8 @@ def test_an_empty_answer_for_a_chunk_is_asked_again_and_the_transcript_is_whole(
         "duration": 45.0,
         "full_text": "spoken-0 spoken-29.5",
         "segments": [
-            {"start": 0.0, "end": 29.5, "text": "spoken-0"},
-            {"start": 29.5, "end": 45.0, "text": "spoken-29.5"},
+            {"start": 0.0, "end": 28.5, "text": "spoken-0"},
+            {"start": 29.5, "end": 44.0, "text": "spoken-29.5"},
         ],
     }
     written = json.loads(
@@ -372,6 +376,22 @@ def test_a_chunk_that_never_decodes_with_timestamps_keeps_its_untimed_text(
     ] + [("spoken", 29.5, V, t) for t in FALLBACK_TEMPERATURES[1:]]
     assert transcript["full_text"] == "spoken-0 spoken-29.5"
     assert transcript["segments"] == [
-        {"start": 0.0, "end": 29.5, "text": "spoken-0"},
+        {"start": 0.0, "end": 28.5, "text": "spoken-0"},
         {"start": 29.5, "end": 45.0, "text": "spoken-29.5"},
+    ]
+
+
+def test_a_chunk_timed_to_its_end_is_not_asked_without_timestamps(tmp_path):
+    clip = _clip(tmp_path, "spoken")
+    with _Whisper(timed_to_end=[("spoken", 0.0)]) as whisper:
+        transcript = _processor(whisper.url).transcribe_audio(clip, tmp_path)
+
+    assert whisper.formats == [
+        ("spoken", 0.0, V, 0.0),
+        ("spoken", 29.5, V, 0.0),
+        ("spoken", 29.5, J, 0.0),
+    ]
+    assert transcript["segments"] == [
+        {"start": 0.0, "end": 29.5, "text": "spoken-0"},
+        {"start": 29.5, "end": 44.0, "text": "spoken-29.5"},
     ]

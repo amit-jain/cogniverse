@@ -2620,7 +2620,8 @@ clip with CLAP and searches `acoustic_embedding`.
 `transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
 local path, decodes it to 16 kHz mono and POSTs it multipart to
 `{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
-Whisper), each chunk of at most 30 s with timestamps and without, through
+Whisper), each chunk of at most 30 s with timestamps and, unless the timed
+segments run to the end of the chunk, without, through
 `cogniverse_core.common.models.whisper_transcription`: the text comes from the
 untimed answer, timed by the timed answer's segments; an empty or looping
 answer is asked again at the next sampling temperature, and a chunk whose

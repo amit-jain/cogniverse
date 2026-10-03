@@ -38,6 +38,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     lenient_chunk_answer,
     loudest_frame_dbfs,
     pcm16_wav_samples,
+    reaches_chunk_end,
     response_format,
     sampling_fields,
     split_for_whisper,
@@ -812,14 +813,21 @@ def test_text_after_a_decode_that_stopped_early_is_kept():
     )
 
 
-def test_timed_text_a_json_answer_stopped_short_of_is_kept():
-    replay = _Replay(
-        ["live/IMXSEIabMM/1/verbose_json"], ["live/IMXSEIabMM/1/json/stopped_early"]
+def _aligned(timed: str, untimed: str) -> tuple[str, list[dict]]:
+    answers = _recording()["answers"]
+    return align_text(
+        answers[untimed]["body"]["text"],
+        answers[timed]["body"]["segments"],
+        answers[timed]["chunk_len_s"],
     )
 
-    transcript = _replay("live/IMXSEIabMM/1/verbose_json", replay)
 
-    assert transcript["segments"] == _segments(
+def test_timed_text_a_json_answer_stopped_short_of_is_kept():
+    _, segments = _aligned(
+        "live/IMXSEIabMM/1/verbose_json", "live/IMXSEIabMM/1/json/stopped_early"
+    )
+
+    assert segments == _segments(
         (
             0.0,
             7.0,
@@ -867,27 +875,13 @@ def test_a_json_answer_that_spent_its_tokens_elsewhere_keeps_the_timed_text():
     )
 
 
-def test_a_live_json_loop_is_asked_again_until_a_temperature_breaks_it():
-    replay = _Replay(
-        ["live/IMXSEIabMM/3/verbose_json"],
-        [
-            "live/IMXSEIabMM/3/json/loop_t0.0",
-            "live/IMXSEIabMM/3/json/loop_t0.2",
-            "live/IMXSEIabMM/3/json/loop_t0.4",
-            "live/IMXSEIabMM/3/json/t0.6",
-        ],
+def test_the_json_answer_a_live_loop_broke_into_is_timed_by_the_timed_answer():
+    text, segments = _aligned(
+        "live/IMXSEIabMM/3/verbose_json", "live/IMXSEIabMM/3/json/t0.6"
     )
 
-    transcript = _replay("live/IMXSEIabMM/3/verbose_json", replay)
-
-    assert replay.requests == [
-        ("verbose_json", 0.0),
-        ("json", 0.0),
-        ("json", 0.2),
-        ("json", 0.4),
-        ("json", 0.6),
-    ]
-    assert transcript["segments"] == _segments(
+    assert text == " ".join(segment["text"] for segment in segments)
+    assert segments == _segments(
         (
             0.0,
             7.0,
@@ -1221,3 +1215,70 @@ def test_no_segment_reaches_into_the_next_chunk():
     assert transcript["segments"] == _segments(
         (0.0, 29.2, "Thank you."), (29.2, 29.2 + 2.0, "Thank you.")
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "live/IMXSEIabMM/0/verbose_json",
+        "live/IMXSEIabMM/1/verbose_json",
+        "live/IMXSEIabMM/3/verbose_json",
+        "live/vnSFKJNB94/3/verbose_json/past_duration",
+    ],
+)
+def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
+    # The json answers recorded for these chunks loop, stop early or spend
+    # their tokens elsewhere; none is asked.
+    replay = _Replay([name], [])
+    answer = _recording()["answers"][name]
+
+    transcript = _replay(name, replay)
+
+    duration = answer["chunk_len_s"]
+    assert replay.requests == [("verbose_json", 0.0)]
+    assert transcript["segments"] == [
+        {
+            "start": segment["start"],
+            "end": min(segment["end"], duration),
+            "text": " ".join(segment["text"].split()),
+        }
+        for segment in answer["body"]["segments"]
+    ]
+
+
+def test_running_to_the_chunk_end_allows_less_than_one_timestamp_step():
+    # 18.769625 s is no multiple of 0.02 s; the last timestamp a decode
+    # covering it can give is 18.76 s.
+    audio = _noise(18.769625)
+    assert len(audio) == 300314
+    to_end = _Server(timed={0: [[(0.0, 18.76, " all of it")]]}, text={0: []})
+    short = _Server(
+        timed={0: [[(0.0, 18.26, " most of it")]]}, text={0: [" most of it here"]}
+    )
+
+    assert _transcribe(audio, to_end)["full_text"] == "all of it"
+    assert _transcribe(audio, short)["full_text"] == "most of it here"
+    assert to_end.requests == [(0, "en", "verbose_json", 0.0)]
+    assert short.requests == [(0, "en", "verbose_json", 0.0), (0, "en", "json", 0.0)]
+    assert (
+        reaches_chunk_end(_segments((0.0, 18.76, "a")), 18.769625),
+        reaches_chunk_end(_segments((0.0, 18.749, "a")), 18.769625),
+        reaches_chunk_end([], 18.769625),
+    ) == (True, False, False)
+
+
+def test_a_looping_timed_answer_running_to_the_end_is_asked_again():
+    audio = _noise(10.0)
+    server = _Server(
+        timed={0: [[(0.0, 10.0, LOOP)], [(0.0, 10.0, " Go! Stop cooking.")]]},
+        text={0: [" Go! Stop cooking."]},
+    )
+
+    transcript = _transcribe(audio, server)
+
+    assert server.requests == [
+        (0, "en", "verbose_json", 0.0),
+        (0, "en", "json", 0.0),
+        (0, "en", "verbose_json", 0.2),
+    ]
+    assert transcript["segments"] == _segments((0.0, 10.0, "Go! Stop cooking."))

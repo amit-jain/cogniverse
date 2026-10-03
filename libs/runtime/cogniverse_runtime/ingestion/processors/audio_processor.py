@@ -298,7 +298,8 @@ class AudioProcessor(BaseProcessor):
         vLLM's Whisper endpoint rejects raw video containers ("Invalid
         or unsupported audio file") and requires 16 kHz mono PCM. We
         extract the audio stream via pyav and resample on the fly, then
-        send each chunk of at most 30 s with timestamps and without. A chunk
+        send each chunk of at most 30 s with timestamps and, unless the timed
+        segments reach its end, without. A chunk
         whose untimed text keeps coming back empty or as a repetition loop
         raises ``EmptyTranscriptError`` or ``GarbledTranscriptError``.
         """

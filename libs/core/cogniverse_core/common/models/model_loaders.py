@@ -981,8 +981,8 @@ class RemoteWhisperLoader(ModelLoader):
 
                 Mirrors the OpenAI Whisper API contract: multipart upload
                 with ``file``, ``model``, optional ``language``, a
-                ``verbose_json`` and a ``json`` request per chunk of at most
-                30 s. Returns ``text``, ``language``, ``duration`` and
+                ``verbose_json`` request per chunk of at most 30 s and a
+                ``json`` one unless the timed segments reach its end. Returns ``text``, ``language``, ``duration`` and
                 ``segments``; a chunk whose text keeps coming back empty or as
                 a repetition loop raises ``EmptyTranscriptError`` or
                 ``GarbledTranscriptError``.
