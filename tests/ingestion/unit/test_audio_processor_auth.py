@@ -108,6 +108,8 @@ def test_both_remote_calls_carry_the_bearer(monkeypatch):
                 "model": "openai/whisper-large-v3",
                 "response_format": "verbose_json",
                 "language": "en",
+                "temperature": "0.0",
+                "seed": "0",
             },
             ["file"],
         ),

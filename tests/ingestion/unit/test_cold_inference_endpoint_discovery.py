@@ -377,5 +377,5 @@ class TestColdAsrEndpointDiscovery:
             "language": "en",
             "duration": 2.0,
             "full_text": "hello cold world",
-            "segments": [{"start": 0.0, "end": 2.0, "text": "hello cold"}],
+            "segments": [{"start": 0.0, "end": 2.0, "text": "hello cold world"}],
         }

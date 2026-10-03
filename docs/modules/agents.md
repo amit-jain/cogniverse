@@ -2620,14 +2620,19 @@ clip with CLAP and searches `acoustic_embedding`.
 `transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
 local path, decodes it to 16 kHz mono and POSTs it multipart to
 `{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
-Whisper), one chunk of at most 30 s per request, through
-`cogniverse_core.common.models.whisper_transcription`: an empty answer for a
-chunk carrying sound is asked again, the third time without timestamps, and
-raises `EmptyTranscriptError` if that is empty too. The merged answer is mapped
-to a `TranscriptionResult(text, segments, language, confidence)`.
+Whisper), each chunk of at most 30 s with timestamps and, unless the timed
+segments run to the end of the chunk, without, through
+`cogniverse_core.common.models.whisper_transcription`: the text comes from the
+untimed answer, timed by the timed answer's segments; an empty or looping
+answer is asked again at the next sampling temperature, and a chunk whose
+untimed text never comes back usable raises `EmptyTranscriptError` or
+`GarbledTranscriptError`. The merged answer is mapped to a
+`TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds
-before checking segment bounds.
+before checking segment bounds. A segment time past `duration` (Whisper times
+text into the padding after short audio) is clamped to it and logged at DEBUG
+with the original value.
 
 `whisper_endpoint` and `whisper_model` are fields on `AudioAnalysisDeps`.
 The runtime populates `whisper_endpoint` from

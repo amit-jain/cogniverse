@@ -7,14 +7,16 @@ driving a transcription through ``AudioProcessor`` (remote endpoint
 mode) end-to-end. Catches contract drift between vLLM versions, model
 loading regressions, and OpenAI-compat response-shape changes.
 
-The processor sends long audio one chunk per request; the server's own
+The processor asks each chunk with timestamps and without; the server's own
 transcript of the whole file pins that the chunks are the ones it cuts. That
-transcript also shows the defect the chunking guards against: the server
-decodes the clip's first chunk without timestamp tokens every time, so its
-whole-file answer has no text for it, and the processor recovers that text
-by asking for the chunk without timestamps. A proxy in front of the server
-blanks chosen answers the way the cluster's ROCm server does (HTTP 200, empty
-text, no segments) to pin the retry and the failure.
+transcript also shows the text the server loses: whisper-tiny decodes the
+clip's first chunk without timestamp tokens and stops its timed decode of the
+second at 18 s, so the whole-file answer has nothing for the first chunk and
+nothing after 18 s of the second; the processor keeps that text from the
+untimed answers. A proxy in front of the server records every request and
+rewrites chosen answers the way the cluster's ROCm server answers some (HTTP
+200 with an empty transcript, or a repetition loop) to pin the retry and the
+failure.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import re
 import shutil
 import threading
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -33,9 +36,12 @@ import pytest
 import requests
 
 from cogniverse_core.common.models.whisper_transcription import (
+    FALLBACK_TEMPERATURES,
     TRANSCRIBE_ATTEMPTS,
+    compression_ratio,
     pcm16_wav_samples,
     split_for_whisper,
+    wav_bytes,
 )
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
@@ -108,8 +114,7 @@ def test_audio_processor_remote_against_real_vllm(vllm_asr_url, tmp_path):
     assert written.exists(), "AudioProcessor must persist the transcript JSON"
 
 
-# 126 s of English speech: five chunks, the first of which whisper-tiny on the
-# CPU server decodes without timestamps.
+# 126 s of English speech: five chunks.
 SPEECH_CLIP = (
     Path(__file__).resolve().parents[3]
     / "data"
@@ -118,7 +123,12 @@ SPEECH_CLIP = (
     / "sample_videos"
     / "v_-IMXSEIabMM.mp4"
 )
+# Bells and clicks; whisper-tiny answers its first chunk's untimed request with
+# "[Bell]" repeated to the token limit.
+BELLS_CLIP = SPEECH_CLIP.with_name("v_-vnSFKJNB94.mp4")
 MODEL = "openai/whisper-tiny"
+LOOP = " Over and over and over." * 30
+V, J = "verbose_json", "json"
 
 
 def _processor(endpoint: str) -> AudioProcessor:
@@ -141,40 +151,22 @@ def whole_file_answer(vllm_asr_url):
     return audio, response.json()
 
 
-@pytest.fixture(scope="module")
-def dropped_chunk_text(vllm_asr_url, whole_file_answer):
-    """The server's answer without timestamps for chunk 0, asked as the
-    processor's last attempt asks it."""
-    audio, _ = whole_file_answer
-    chunk = split_for_whisper(pcm16_wav_samples(audio))[0]
-    response = requests.post(
-        f"{vllm_asr_url}/v1/audio/transcriptions",
-        data={"model": MODEL, "response_format": "json"},
-        files={"file": ("chunk.wav", chunk.wav(), "audio/wav")},
-        timeout=600,
-    )
-    response.raise_for_status()
-    return response.json()["text"]
+_FIELD = re.compile(
+    rb'name="(response_format|temperature|language)"\r\n\r\n([^\r]*)\r\n'
+)
 
 
-def _expected_text(dropped_chunk_text: str, whole: dict) -> str:
-    """The whole-file transcript with chunk 0's text in front of it."""
-    return " ".join([dropped_chunk_text, whole["text"]]).strip()
+class _Proxy:
+    """Forwards to the real server and records each transcription request's
+    ``(response_format, temperature)`` and its answer; ``rewrite(number,
+    fields)`` returns replacement text for chosen answers (their segments are
+    emptied)."""
 
-
-_RESPONSE_FORMAT = re.compile(rb'name="response_format"\r\n\r\n([a-z_]+)\r\n')
-
-
-class _BlankingProxy:
-    """Forwards to the real server, answering chosen transcriptions empty.
-
-    ``formats`` records each transcription request's ``response_format``.
-    """
-
-    def __init__(self, upstream: str, blank) -> None:
-        self.posts = 0
-        self.blanked: list[int] = []
-        self.formats: list[str] = []
+    def __init__(self, upstream: str, rewrite=lambda number, fields: None) -> None:
+        self.requests: list[tuple[str, float]] = []
+        self.languages: list[str | None] = []
+        self.answers: list[dict] = []
+        self.rewritten: list[int] = []
         proxy = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -192,16 +184,24 @@ class _BlankingProxy:
                 )
                 content = response.content
                 if method == "POST":
-                    number = proxy.posts
-                    proxy.posts += 1
-                    proxy.formats.append(
-                        _RESPONSE_FORMAT.search(body).group(1).decode()
+                    fields = {
+                        key.decode(): value.decode()
+                        for key, value in _FIELD.findall(body)
+                    }
+                    number = len(proxy.requests)
+                    proxy.requests.append(
+                        (fields["response_format"], float(fields["temperature"]))
                     )
-                    if blank(number):
-                        proxy.blanked.append(number)
-                        answer = response.json()
-                        answer.update(text="", segments=[])
+                    proxy.languages.append(fields.get("language"))
+                    answer = response.json()
+                    text = rewrite(number, fields)
+                    if text is not None:
+                        proxy.rewritten.append(number)
+                        answer["text"] = text
+                        if "segments" in answer:
+                            answer["segments"] = []
                         content = json.dumps(answer).encode()
+                    proxy.answers.append(answer)
                 self.send_response(response.status_code)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(content)))
@@ -221,7 +221,7 @@ class _BlankingProxy:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.server.server_port}"
 
-    def __enter__(self) -> "_BlankingProxy":
+    def __enter__(self) -> "_Proxy":
         self.thread.start()
         return self
 
@@ -231,61 +231,178 @@ class _BlankingProxy:
         self.thread.join(timeout=5)
 
 
-def test_chunked_transcript_is_the_servers_whole_file_transcript_and_the_chunk_it_drops(
-    vllm_asr_url, whole_file_answer, dropped_chunk_text, tmp_path
+# whisper-tiny on the CPU server: chunk 0's timed decode has no timestamp
+# pair until temperature 0.6; every other chunk answers both requests at 0.0.
+SPEECH_REQUESTS = [(V, 0.0), (J, 0.0), (V, 0.2), (V, 0.4), (V, 0.6)] + [
+    (V, 0.0),
+    (J, 0.0),
+] * 4
+
+
+def test_each_chunk_keeps_its_untimed_text_timed_by_its_timed_answer(
+    vllm_asr_url, whole_file_answer, tmp_path
 ):
     audio, whole = whole_file_answer
     chunks = split_for_whisper(pcm16_wav_samples(audio))
     assert len(chunks) == 5
     # The server times each chunk's segments from chunk index x 30 s: its
-    # whole-file answer has text for chunks 1-4 and none for chunk 0.
-    answered = {int(segment["start"] // 30) for segment in whole["segments"]}
-    assert sorted(answered) == [1, 2, 3, 4]
-
-    transcript = _processor(vllm_asr_url).transcribe_audio(SPEECH_CLIP, tmp_path)
-
-    assert "error" not in transcript, transcript.get("error")
-    assert transcript["full_text"] == _expected_text(dropped_chunk_text, whole)
-    assert transcript["language"] == whole["language"]
-    assert transcript["duration"] == float(whole["duration"])
-    assert transcript["segments"][0] == {
-        "start": 0.0,
-        "end": chunks[0].end_s,
-        "text": dropped_chunk_text.strip(),
-    }
-    assert [segment["text"] for segment in transcript["segments"][1:]] == [
-        segment["text"].strip() for segment in whole["segments"]
+    # whole-file answer has no text for chunk 0, and none after 18 s of chunk 1.
+    assert sorted({int(segment["start"] // 30) for segment in whole["segments"]}) == [
+        1,
+        2,
+        3,
+        4,
     ]
-    # Each segment sits inside the chunk that produced it, timed from where
-    # that chunk starts in the clip.
-    bounds = [(chunk.start_s, chunk.end_s) for chunk in chunks]
-    for segment in transcript["segments"]:
-        assert any(
-            start <= segment["start"] <= segment["end"] <= end + 0.02
-            for start, end in bounds
-        ), segment
+    assert [
+        (segment["start"], segment["end"])
+        for segment in whole["segments"]
+        if 30.0 <= segment["start"] < 60.0
+    ] == [(30.0, 48.0)]
 
-
-def test_an_empty_answer_from_the_server_is_asked_again_and_the_text_is_whole(
-    vllm_asr_url, whole_file_answer, dropped_chunk_text, tmp_path
-):
-    _, whole = whole_file_answer
-    # Requests 0-2 are chunk 0's; request 3 is chunk 1's first attempt.
-    with _BlankingProxy(vllm_asr_url, blank=lambda number: number == 3) as proxy:
+    with _Proxy(vllm_asr_url) as proxy:
         transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
     assert "error" not in transcript, transcript.get("error")
-    assert transcript["full_text"] == _expected_text(dropped_chunk_text, whole)
-    assert (proxy.posts, proxy.blanked) == (8, [3])
-    assert (
-        proxy.formats == ["verbose_json", "verbose_json", "json"] + ["verbose_json"] * 5
+    assert proxy.requests == SPEECH_REQUESTS
+    assert proxy.languages == [None] + ["en"] * (len(SPEECH_REQUESTS) - 1)
+    assert transcript["language"] == whole["language"] == "en"
+    assert transcript["duration"] == float(whole["duration"])
+    assert [
+        (round(segment["start"], 2), round(segment["end"], 2))
+        for segment in transcript["segments"]
+    ] == [
+        (0.0, 14.8),
+        (14.8, 22.88),
+        (22.88, 29.8),
+        (29.8, 47.8),
+        (47.8, 58.8),
+        (58.8, 65.6),
+        (66.24, 71.92),
+        (71.92, 77.2),
+        (77.2, 82.32),
+        (82.32, 87.52),
+        (87.52, 88.6),
+        (88.6, 101.6),
+        (101.6, 110.6),
+        (110.6, 117.6),
+        (118.1, 124.1),
+    ]
+    texts = [segment["text"] for segment in transcript["segments"]]
+    assert transcript["full_text"] == " ".join(texts)
+    assert texts[0] == (
+        "When a big snowstorm strikes at some point, we're going to have to dig out "
+        "from under it. But snow shoveling injuries land thousands of people in "
+        "the emergency room each year. And 96% of them happen at home."
     )
+    # Chunk 1's timed decode stopped at 18 s; the rest is its untimed text,
+    # which the server's whole-file answer does not have.
+    assert texts[4] == (
+        "- Sprayne strains and fractures are always near the top of the list of "
+        "snow shoveling related injuries. They're usually caused by slipping and "
+        "twisting. Over exertion is also considered a common cause"
+    )
+    assert "Sprayne strains" not in whole["text"]
+
+
+def test_an_empty_timed_answer_is_asked_again_at_the_next_temperature(
+    vllm_asr_url, tmp_path
+):
+    # Request 5 is chunk 1's timed request.
+    with _Proxy(
+        vllm_asr_url, rewrite=lambda number, fields: "" if number == 5 else None
+    ) as proxy:
+        transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
+
+    assert "error" not in transcript, transcript.get("error")
+    assert proxy.rewritten == [5]
+    assert proxy.requests == SPEECH_REQUESTS[:7] + [(V, 0.2)] + SPEECH_REQUESTS[7:]
+    # The timed answer at 0.2 also stops at 18 s, so the untimed text after it
+    # fills the rest of chunk 1 as before.
+    assert [
+        segment for segment in transcript["segments"] if 47.0 < segment["start"] < 58.8
+    ] == [
+        {
+            "start": 29.8 + 18.0,
+            "end": 29.8 + 29.0,
+            "text": "- Sprayne strains and fractures are always near the top of the "
+            "list of snow shoveling related injuries. They're usually caused by "
+            "slipping and twisting. Over exertion is also considered a common cause",
+        }
+    ]
+
+
+def test_a_chunk_never_timed_keeps_its_untimed_text_as_one_segment(
+    vllm_asr_url, tmp_path
+):
+    chunk = split_for_whisper(
+        pcm16_wav_samples(AudioProcessor._extract_audio_wav(SPEECH_CLIP))
+    )[1]
+    # Chunk 1's requests are 5 (timed), 6 (untimed) and 7-11 (timed again).
+    timed_for_chunk_1 = {5, 7, 8, 9, 10, 11}
+
+    def blank_chunk_1_timed(number, fields):
+        if number in timed_for_chunk_1 and fields["response_format"] == V:
+            return ""
+        return None
+
+    with _Proxy(vllm_asr_url, rewrite=blank_chunk_1_timed) as proxy:
+        transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
+
+    assert "error" not in transcript, transcript.get("error")
+    assert proxy.requests[5:12] == [(V, 0.0), (J, 0.0)] + [
+        (V, t) for t in FALLBACK_TEMPERATURES[1:]
+    ]
+    untimed = proxy.answers[6]["text"]
+    assert [
+        segment
+        for segment in transcript["segments"]
+        if chunk.start_s <= segment["start"] < chunk.end_s
+    ] == [
+        {
+            "start": chunk.start_s,
+            "end": chunk.start_s + len(chunk.samples) / 16000,
+            "text": " ".join(untimed.split()),
+        }
+    ]
+
+
+def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
+    vllm_asr_url, tmp_path
+):
+    chunk = split_for_whisper(
+        pcm16_wav_samples(AudioProcessor._extract_audio_wav(SPEECH_CLIP))
+    )[1]
+
+    def loop_after_chunk_0(number, fields):
+        return LOOP if number >= 5 and fields["response_format"] == J else None
+
+    with _Proxy(vllm_asr_url, rewrite=loop_after_chunk_0) as proxy:
+        transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
+
+    ratios = ", ".join([f"{compression_ratio(LOOP):.2f}"] * TRANSCRIBE_ATTEMPTS)
+    assert transcript == {
+        "video_id": SPEECH_CLIP.stem,
+        "error": (
+            f"{SPEECH_CLIP}: chunk 1 ({chunk.start_s:.2f}-{chunk.end_s:.2f}s) came "
+            f"back unusable on all {TRANSCRIBE_ATTEMPTS} attempts: "
+            f"{TRANSCRIBE_ATTEMPTS} repetition loops (compression ratio {ratios}, "
+            "above 2.4) and 0 empty"
+        ),
+        "full_text": "",
+        "segments": [],
+    }
+    assert proxy.requests == SPEECH_REQUESTS[:5] + [(V, 0.0)] + [
+        (J, t) for t in FALLBACK_TEMPERATURES
+    ]
+    assert not (
+        tmp_path / "transcripts" / f"{SPEECH_CLIP.stem}_transcript.json"
+    ).exists()
 
 
 def test_a_server_answering_empty_for_speech_fails_the_transcription(
     vllm_asr_url, tmp_path
 ):
-    with _BlankingProxy(vllm_asr_url, blank=lambda number: True) as proxy:
+    with _Proxy(vllm_asr_url, rewrite=lambda number, fields: "") as proxy:
         transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
     assert set(transcript) == {"video_id", "error", "full_text", "segments"}
@@ -295,41 +412,48 @@ def test_a_server_answering_empty_for_speech_fails_the_transcription(
         "carries sound but came back with an empty transcript on all "
         f"{TRANSCRIBE_ATTEMPTS} attempts"
     )
-    assert proxy.posts == TRANSCRIBE_ATTEMPTS
+    assert proxy.requests == [(fmt, t) for t in FALLBACK_TEMPERATURES for fmt in (V, J)]
 
 
-def test_a_chunk_blank_whenever_timestamped_keeps_the_servers_untimed_text(
-    vllm_asr_url, whole_file_answer, tmp_path
+def test_a_real_loop_is_asked_again_and_never_reaches_the_transcript(
+    vllm_asr_url, tmp_path
 ):
-    audio, whole = whole_file_answer
-    chunk = split_for_whisper(pcm16_wav_samples(audio))[1]
-    untimed = requests.post(
-        f"{vllm_asr_url}/v1/audio/transcriptions",
-        data={"model": MODEL, "response_format": "json", "language": whole["language"]},
-        files={"file": ("chunk.wav", chunk.wav(), "audio/wav")},
-        timeout=600,
-    ).json()["text"]
+    chunk = split_for_whisper(
+        pcm16_wav_samples(AudioProcessor._extract_audio_wav(BELLS_CLIP))
+    )[0]
+    clip = tmp_path / "bells.wav"
+    clip.write_bytes(wav_bytes(chunk.samples))
 
-    # Requests 0-2 are chunk 0's; requests 3 and 4 are chunk 1's timestamped
-    # attempts, and request 5 asks without timestamps and is answered by the
-    # server.
-    with _BlankingProxy(vllm_asr_url, blank=lambda number: number in (3, 4)) as proxy:
-        transcript = _processor(proxy.url).transcribe_audio(SPEECH_CLIP, tmp_path)
+    with _Proxy(vllm_asr_url) as proxy:
+        transcript = _processor(proxy.url).transcribe_audio(clip, tmp_path)
 
     assert "error" not in transcript, transcript.get("error")
-    assert [
-        segment
-        for segment in transcript["segments"]
-        if chunk.start_s <= segment["start"] < chunk.end_s
-    ] == [
-        {
-            "start": chunk.start_s,
-            "end": chunk.start_s + (chunk.end_s - chunk.start_s),
-            "text": untimed.strip(),
-        }
-    ]
-    assert (proxy.posts, proxy.blanked) == (9, [3, 4])
-    assert (
-        proxy.formats
-        == ["verbose_json", "verbose_json", "json"] * 2 + ["verbose_json"] * 3
+    assert proxy.requests == [(V, 0.0), (J, 0.0), (J, 0.2)]
+    looped = proxy.answers[1]["text"]
+    assert compression_ratio(looped) > 2.4
+    assert proxy.answers[2]["text"] == " [Bell]"
+    assert (transcript["full_text"], transcript["segments"]) == (
+        "[Bell]",
+        [{"start": 0.0, "end": 2.0, "text": "[Bell]"}],
     )
+
+
+def test_concurrent_transcriptions_through_one_processor_match_a_lone_one(
+    vllm_asr_url, tmp_path
+):
+    alone = _processor(vllm_asr_url).transcribe_audio(SPEECH_CLIP, tmp_path / "alone")
+    processor = _processor(vllm_asr_url)
+    ready = threading.Barrier(3)
+
+    def run(index: int) -> dict:
+        ready.wait(timeout=30)
+        return processor.transcribe_audio(SPEECH_CLIP, tmp_path / f"run{index}")
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        together = list(pool.map(run, range(3)))
+
+    assert "error" not in alone, alone.get("error")
+    for transcript in together:
+        assert {
+            key: transcript[key] for key in transcript if key != "transcription_time"
+        } == {key: alone[key] for key in alone if key != "transcription_time"}

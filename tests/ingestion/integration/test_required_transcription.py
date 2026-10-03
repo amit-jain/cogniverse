@@ -16,6 +16,7 @@ from redis.exceptions import ConnectionError
 
 from cogniverse_core.common.models.whisper_transcription import (
     TRANSCRIBE_ATTEMPTS,
+    compression_ratio,
     pcm16_wav_samples,
     split_for_whisper,
 )
@@ -106,10 +107,15 @@ def failing_asr():
         thread.join(5)
 
 
-@pytest.fixture
-def empty_asr():
+LOOP = " I'm gonna do it!" * 40
+
+
+@pytest.fixture(params=["", LOOP], ids=["empty", "loop"])
+def unusable_asr(request):
     """Answers every transcription the way the cluster's ROCm Whisper answers
-    some: HTTP 200, an empty transcript and no segments."""
+    some: HTTP 200 with an empty transcript, or a repetition loop, and no
+    segments."""
+    text = request.param
     posts: list[int] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -125,7 +131,7 @@ def empty_asr():
             self.rfile.read(int(self.headers["Content-Length"]))
             posts.append(len(posts))
             body = json.dumps(
-                {"text": "", "language": "en", "duration": "1.0", "segments": []}
+                {"text": text, "language": "en", "duration": "1.0", "segments": []}
             ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -137,7 +143,7 @@ def empty_asr():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}", posts
+        yield f"http://127.0.0.1:{server.server_port}", posts, text
     finally:
         server.shutdown()
         server.server_close()
@@ -295,10 +301,10 @@ async def test_local_transcription_failure_fails_the_job(job_redis, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_empty_answer_for_sound_fails_the_job_after_every_attempt(
-    job_redis, empty_asr, tmp_path
+async def test_an_unusable_answer_for_sound_fails_the_job_after_every_attempt(
+    job_redis, unusable_asr, tmp_path
 ):
-    endpoint, posts = empty_asr
+    endpoint, posts, text = unusable_asr
     video = tmp_path / "spoken.mp4"
     make_video(video, audio=True)
     pipeline = transcription_pipeline(tmp_path, endpoint)
@@ -308,19 +314,29 @@ async def test_an_empty_answer_for_sound_fails_the_job_after_every_attempt(
     (chunk,) = split_for_whisper(
         pcm16_wav_samples(AudioProcessor._extract_audio_wav(video))
     )
+    if text:
+        ratios = ", ".join([f"{compression_ratio(text):.2f}"] * TRANSCRIBE_ATTEMPTS)
+        reason = (
+            f"(0.00-{chunk.end_s:.2f}s) came back unusable on all "
+            f"{TRANSCRIBE_ATTEMPTS} attempts: {TRANSCRIBE_ATTEMPTS} repetition "
+            f"loops (compression ratio {ratios}, above 2.4) and 0 empty"
+        )
+    else:
+        reason = (
+            f"(0.00-{chunk.end_s:.2f}s, loudest frame "
+            f"{chunk.loudest_frame_dbfs:.1f} dBFS) carries sound but came back "
+            f"with an empty transcript on all {TRANSCRIBE_ATTEMPTS} attempts"
+        )
     assert failed["status"] == "failed"
     assert failed["error_context"]["stage"] == "transcription"
     assert failed["error"] == (
-        f"Required transcription failed: {video}: chunk 0 "
-        f"(0.00-{chunk.end_s:.2f}s, loudest frame {chunk.loudest_frame_dbfs:.1f} "
-        "dBFS) carries sound but came back with an empty transcript on all "
-        f"{TRANSCRIBE_ATTEMPTS} attempts (Context: content_path={video}, "
-        "stage=transcription, profile=transcription)"
+        f"Required transcription failed: {video}: chunk 0 {reason} (Context: "
+        f"content_path={video}, stage=transcription, profile=transcription)"
     )
-    assert len(posts) == TRANSCRIBE_ATTEMPTS
+    assert len(posts) == 2 * TRANSCRIBE_ATTEMPTS
 
     submitted, events = await run_job(job_redis, pipeline, video)
     assert [event["state"] for event in events] == ["queued", "running", "failed"]
     assert events[-1]["error_type"] == "IngestPipelineError"
-    assert len(posts) == 2 * TRANSCRIBE_ATTEMPTS
+    assert len(posts) == 4 * TRANSCRIBE_ATTEMPTS
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None

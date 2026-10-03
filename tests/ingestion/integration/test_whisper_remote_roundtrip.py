@@ -137,11 +137,11 @@ class _WhisperStub(BaseHTTPRequestHandler):
         resp = {
             "text": "hello world",
             "language": captured.get("language") or "en",
-            "duration": 1.5,
+            "duration": 0.2,
             "model": captured.get("model", "openai/whisper-large-v3-turbo"),
             "segments": [
-                {"start": 0.0, "end": 0.7, "text": "hello"},
-                {"start": 0.7, "end": 1.5, "text": " world"},
+                {"start": 0.0, "end": 0.08, "text": "hello"},
+                {"start": 0.08, "end": 0.16, "text": " world"},
             ],
         }
         payload = json.dumps(resp).encode()
@@ -189,18 +189,28 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
 
     transcript = processor.transcribe_audio(audio_path, output_dir=tmp_path)
 
-    assert len(stub.captured_requests) == 1
-    sent = stub.captured_requests[0]
-    assert "file" in sent and isinstance(sent["file"], dict), (
-        "remote path must POST the audio as a multipart 'file' part"
-    )
-    posted = sent["file"]["bytes"]
+    assert [
+        {key: value for key, value in sent.items() if key != "file"}
+        for sent in stub.captured_requests
+    ] == [
+        {
+            "model": "openai/whisper-large-v3-turbo",
+            "response_format": response_format,
+            "language": "en",
+            "temperature": "0.0",
+            "seed": "0",
+        }
+        for response_format in ("verbose_json", "json")
+    ]
+    assert [set(sent) for sent in stub.captured_requests] == [
+        {"file", "model", "response_format", "language", "temperature", "seed"}
+    ] * 2
+    first, second = (sent["file"] for sent in stub.captured_requests)
+    assert first == second
+    assert first["filename"] == "clip.wav"
+    posted = first["bytes"]
     assert posted[:4] == b"RIFF" and len(posted) > 44, (
         "remote path must POST re-encoded 16 kHz mono PCM WAV bytes"
-    )
-    assert sent.get("model"), "model id must be present in form data"
-    assert sent.get("language") == "en", (
-        "non-auto language hint must be forwarded; auto must be omitted"
     )
 
     assert transcript["full_text"] == "hello world"
@@ -209,8 +219,8 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
     # The length of the audio sent, as the server measures it too.
     assert transcript["duration"] == 0.2
     assert len(transcript["segments"]) == 2
-    assert transcript["segments"][0] == {"start": 0.0, "end": 0.7, "text": "hello"}
-    assert transcript["segments"][1] == {"start": 0.7, "end": 1.5, "text": "world"}
+    assert transcript["segments"][0] == {"start": 0.0, "end": 0.08, "text": "hello"}
+    assert transcript["segments"][1] == {"start": 0.08, "end": 0.16, "text": "world"}
 
     written = Path(tmp_path) / "transcripts" / "clip_transcript.json"
     assert written.exists()

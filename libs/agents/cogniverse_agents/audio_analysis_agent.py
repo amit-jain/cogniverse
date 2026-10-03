@@ -28,8 +28,10 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.whisper_transcription import (
     AudioChunk,
     ChunkTranscript,
+    clamp_to_duration,
     decode_audio,
     response_format,
+    sampling_fields,
     transcribe_in_chunks,
 )
 from cogniverse_core.registries.backend_registry import (
@@ -344,10 +346,8 @@ def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:
                 f"{segment_path}.end",
                 "must be greater than or equal to start",
             )
-        if end > duration:
-            raise _remote_contract_error(
-                url, f"{segment_path}.end", "must not exceed $.duration"
-            )
+        start = clamp_to_duration(start, duration)
+        end = clamp_to_duration(end, duration)
         segment_text = _required_remote_field(raw_segment, "text", url, segment_path)
         if not isinstance(segment_text, str):
             raise _remote_contract_error(
@@ -598,13 +598,14 @@ class AudioAnalysisAgent(
     ) -> Dict[str, Any]:
         """POST audio multipart to vLLM ``/v1/audio/transcriptions``.
 
-        The audio is decoded to 16 kHz mono and sent one chunk of at most
-        30 s per request. A timestamped response must include typed text,
-        language, duration, and timestamped segments; empty ``segments``
-        remain valid for a silent chunk. A chunk carrying sound that comes
-        back empty is asked again, the last time without timestamps (whose
-        response must include typed text), and then raises
-        ``EmptyTranscriptError``.
+        The audio is decoded to 16 kHz mono and each chunk of at most 30 s
+        is sent with timestamps, then, unless the timed segments reach its
+        end, without. A timestamped response must
+        include typed text, language, duration, and timestamped segments;
+        empty ``segments`` remain valid for a silent chunk. An untimed
+        response must include typed text. A chunk whose untimed text keeps
+        coming back empty or as a repetition loop raises
+        ``EmptyTranscriptError`` or ``GarbledTranscriptError``.
         """
         import requests
 
@@ -612,12 +613,16 @@ class AudioAnalysisAgent(
         samples = decode_audio(audio_path)
 
         def transcribe_chunk(
-            chunk: AudioChunk, chunk_language: Optional[str], timestamps: bool
+            chunk: AudioChunk,
+            chunk_language: Optional[str],
+            timestamps: bool,
+            temperature: float,
         ) -> ChunkTranscript:
             audio_bytes = chunk.wav()
             data: Dict[str, Any] = {
                 "model": self._whisper_model,
                 "response_format": response_format(timestamps),
+                **sampling_fields(temperature),
             }
             if chunk_language:
                 data["language"] = chunk_language

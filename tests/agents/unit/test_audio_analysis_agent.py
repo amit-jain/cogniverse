@@ -7,6 +7,7 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 import asyncio
 import io
 import json
+import logging
 import re
 import threading
 import wave
@@ -768,17 +769,26 @@ class TestAudioAnalysisAgent:
             agent._whisper_endpoint = base_url
             result = await agent.transcribe_audio(f"file://{clip}")
 
-        assert len(captured_requests) == 1
-        request = captured_requests[0]
-        assert request["path"] == "/v1/audio/transcriptions"
-        assert request["authorization"] == f"Bearer {token}"
-        assert str(request["content_type"]).startswith("multipart/form-data; boundary=")
-        request_body = request["body"]
-        assert isinstance(request_body, bytes)
-        assert b'filename="audio.wav"' in request_body
-        assert clip_bytes in request_body
-        assert b'name="model"\r\n\r\nopenai/whisper-large-v3-turbo' in request_body
-        assert b'name="response_format"\r\n\r\nverbose_json' in request_body
+        assert len(captured_requests) == 2
+        for request, response_format in zip(
+            captured_requests, (b"verbose_json", b"json")
+        ):
+            assert request["path"] == "/v1/audio/transcriptions"
+            assert request["authorization"] == f"Bearer {token}"
+            assert str(request["content_type"]).startswith(
+                "multipart/form-data; boundary="
+            )
+            request_body = request["body"]
+            assert isinstance(request_body, bytes)
+            assert b'filename="audio.wav"' in request_body
+            assert clip_bytes in request_body
+            assert b'name="model"\r\n\r\nopenai/whisper-large-v3-turbo' in request_body
+            assert (
+                b'name="response_format"\r\n\r\n' + response_format + b"\r\n"
+                in request_body
+            )
+            assert b'name="temperature"\r\n\r\n0.0\r\n' in request_body
+            assert b'name="seed"\r\n\r\n0\r\n' in request_body
         with pytest.raises(TypeError):
             agent._whisper_headers["Authorization"] = "Bearer replacement"
         assert token not in repr(agent.deps)
@@ -833,11 +843,11 @@ class TestAudioAnalysisAgent:
             return {
                 "text": f"transcript-{index}",
                 "language": "en",
-                "duration": str(index + 0.5),
+                "duration": "1.0",
                 "segments": [
                     {
                         "start": 0.0,
-                        "end": index + 0.5,
+                        "end": (index + 1) / 10,
                         "text": f"transcript-{index}",
                     }
                 ],
@@ -874,13 +884,26 @@ class TestAudioAnalysisAgent:
             [
                 {
                     "start": 0.0,
-                    "end": index + 0.5,
+                    "end": (index + 1) / 10,
                     "text": f"transcript-{index}",
                 }
             ]
             for index in range(request_count)
         ]
-        assert len(captured_requests) == request_count
+        assert len(captured_requests) == 2 * request_count
+        assert sorted(
+            (
+                re.search(rb'filename="clip-(\d+)\.wav"', request["body"]).group(1),
+                re.search(
+                    rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
+                ).group(1),
+            )
+            for request in captured_requests
+        ) == sorted(
+            (str(index).encode(), response_format)
+            for index in range(request_count)
+            for response_format in (b"verbose_json", b"json")
+        )
         assert {request["path"] for request in captured_requests} == {
             "/v1/audio/transcriptions"
         }
@@ -1042,15 +1065,6 @@ class TestAudioAnalysisAgent:
                     "text": "ok",
                     "language": "en",
                     "duration": "1.0",
-                    "segments": [{"start": 0.0, "end": 1.1, "text": "ok"}],
-                },
-                "$.segments[0].end: must not exceed $.duration",
-            ),
-            (
-                {
-                    "text": "ok",
-                    "language": "en",
-                    "duration": "1.0",
                     "segments": [{"start": 0.0, "end": 1.0}],
                 },
                 "$.segments[0].text: field is required",
@@ -1085,6 +1099,61 @@ class TestAudioAnalysisAgent:
         assert f"{base_url}/v1/audio/transcriptions" in str(caught.value)
 
     @pytest.mark.asyncio
+    async def test_a_segment_timed_past_the_chunk_is_clamped_to_it(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # Recorded from the live server (v_-vnSFKJNB94 chunk 3): "Thank you."
+        # timed to 29.98 s on an 18.77 s chunk.
+        recorded = {
+            "duration": "18.769625",
+            "language": "en",
+            "text": " Thank you.",
+            "segments": [
+                {
+                    "id": 0,
+                    "avg_logprob": -1.0546308162622153,
+                    "compression_ratio": 0.5789473684210527,
+                    "end": 29.98,
+                    "no_speech_prob": None,
+                    "seek": 0,
+                    "start": 0.0,
+                    "temperature": 0.0,
+                    "text": " Thank you.",
+                    "tokens": [1044, 291, 13],
+                }
+            ],
+            "words": None,
+        }
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip, seconds=float(recorded["duration"]))
+
+        def answer(body: bytes) -> dict:
+            if b'name="response_format"\r\n\r\njson\r\n' in body:
+                return {"text": recorded["text"]}
+            return recorded
+
+        with _transcription_server(answer) as (base_url, _):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            with caplog.at_level(
+                logging.DEBUG,
+                logger="cogniverse_core.common.models.whisper_transcription",
+            ):
+                result = await agent.transcribe_audio(f"file://{clip}")
+
+        assert (result.text, result.segments) == (
+            "Thank you.",
+            [{"start": 0.0, "end": 18.769625, "text": "Thank you."}],
+        )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_core.common.models.whisper_transcription"
+        ] == ["segment time 29.98s is past the chunk's 18.77s; clamped"]
+
+    @pytest.mark.asyncio
     async def test_remote_transcription_rejects_non_json_success_response(
         self, tmp_path, monkeypatch
     ):
@@ -1105,16 +1174,9 @@ class TestAudioAnalysisAgent:
         assert f"{base_url}/v1/audio/transcriptions" in str(caught.value)
 
     @pytest.mark.asyncio
-    async def test_transcribe_audio_sidecar_empty_segments_surfaced(
+    async def test_a_timed_answer_without_segments_leaves_the_text_spanning_the_chunk(
         self, tmp_path, monkeypatch
     ):
-        """Empty segments from vLLM are returned as-is, not synthesised.
-
-        vLLM may return ``segments=[]`` for very short audio. Synthesising a
-        single segment to "always have something" hides the producer's
-        actual output from downstream consumers; the test pins the surface-
-        the-truth behaviour.
-        """
         clip = tmp_path / "audio.wav"
         _write_tone(clip)
 
@@ -1125,7 +1187,7 @@ class TestAudioAnalysisAgent:
             "segments": [],
         }
 
-        with _transcription_server(response) as (base_url, _):
+        with _transcription_server(response) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
                 base_url, "Bearer remote-whisper-secret"
             )
@@ -1133,7 +1195,13 @@ class TestAudioAnalysisAgent:
             result = await agent.transcribe_audio(f"file://{clip}")
 
         assert result.text == "ok"
-        assert result.segments == []
+        assert result.segments == [{"start": 0.0, "end": 1.0, "text": "ok"}]
+        assert [
+            re.search(
+                rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
+            ).group(1)
+            for request in captured_requests
+        ] == [b"verbose_json", b"json"] + [b"verbose_json"] * 5
 
     @pytest.mark.asyncio
     async def test_an_empty_answer_for_sound_is_asked_again_for_the_same_chunk(
@@ -1143,6 +1211,7 @@ class TestAudioAnalysisAgent:
         clip_bytes = _write_tone(clip)
         answers = [
             {"text": "", "language": "en", "duration": "1.0", "segments": []},
+            {"text": " hello"},
             {
                 "text": " hello",
                 "language": "en",
@@ -1166,7 +1235,18 @@ class TestAudioAnalysisAgent:
             "en",
             [{"start": 0.0, "end": 1.0, "text": "hello"}],
         )
-        assert len(captured_requests) == 2
+        assert [
+            re.search(
+                rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
+            ).group(1)
+            for request in captured_requests
+        ] == [b"verbose_json", b"json", b"verbose_json"]
+        assert [
+            re.search(
+                rb'name="temperature"\r\n\r\n([0-9.]+)\r\n', request["body"]
+            ).group(1)
+            for request in captured_requests
+        ] == [b"0.0", b"0.0", b"0.2"]
         assert all(clip_bytes in request["body"] for request in captured_requests)
 
     @pytest.mark.asyncio
@@ -1195,7 +1275,7 @@ class TestAudioAnalysisAgent:
             "carries sound but came back with an empty transcript on all "
             f"{TRANSCRIBE_ATTEMPTS} attempts"
         )
-        assert len(captured_requests) == TRANSCRIBE_ATTEMPTS
+        assert len(captured_requests) == 2 * TRANSCRIBE_ATTEMPTS
 
     @pytest.mark.asyncio
     async def test_a_chunk_that_never_decodes_with_timestamps_keeps_untimed_text(
@@ -1226,7 +1306,7 @@ class TestAudioAnalysisAgent:
                 rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
             ).group(1)
             for request in captured_requests
-        ] == [b"verbose_json", b"verbose_json", b"json"]
+        ] == [b"verbose_json", b"json"] + [b"verbose_json"] * 5
 
     @pytest.mark.asyncio
     async def test_an_untimed_answer_without_text_is_refused_naming_the_field(
@@ -1285,7 +1365,7 @@ class TestAudioAnalysisAgent:
             {"start": 0.0, "end": 29.5, "text": "29.5000s"},
             {"start": 29.5, "end": 45.0, "text": "15.5000s"},
         ]
-        assert result.text == "29.5000s  15.5000s"
+        assert result.text == "29.5000s 15.5000s"
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)

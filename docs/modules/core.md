@@ -2176,28 +2176,65 @@ encoder) for such a model without `remote_inference_url` raises a clear
 ### Chunked Whisper transcription (whisper_transcription.py)
 
 `transcribe_in_chunks(samples, transcribe_chunk, *, language, source, logger)`
-sends 16 kHz mono PCM16 audio to an OpenAI-compatible Whisper endpoint one
-chunk per request and merges the answers into `full_text`, `language`,
-`duration` and `segments` (times from the start of the audio). Every remote
-Whisper client goes through it: `AudioProcessor`, `AudioAnalysisAgent` and
-`RemoteWhisperLoader`.
+sends 16 kHz mono PCM16 audio to an OpenAI-compatible Whisper endpoint chunk by
+chunk and merges the answers into `full_text`, `language`, `duration` and
+`segments` (times from the start of the audio). Every remote Whisper client
+goes through it: `AudioProcessor`, `AudioAnalysisAgent` and
+`RemoteWhisperLoader`. `transcribe_chunk(chunk, language, timestamps,
+temperature)` sends one request with `response_format(timestamps)` and
+`sampling_fields(temperature)` (`temperature`, and `seed` = `SAMPLING_SEED`).
 
 - `split_for_whisper(samples)` cuts where vLLM's Whisper server cuts a long
   file: audio of at most 30 s is one chunk; longer audio is cut every 30 s at
   the start of the quietest 0.1 s window in the chunk's last second.
-- With no language named, the first chunk's answer names it and every later
-  chunk is sent in it, as the server does for a whole file. Chunk texts join
-  with a space, or with nothing for `ja` and `zh`.
-- vLLM builds a `verbose_json` transcript only from text between timestamp
-  tokens, so a decode that emits none comes back as HTTP 200 with an empty
-  transcript: at random for any audio on the cluster's ROCm server, and every
-  time for some audio. A chunk whose loudest 25 ms frame reaches
-  `SILENCE_FLOOR_DBFS` (-60) and comes back empty is sent again; the last of
-  `TRANSCRIBE_ATTEMPTS` (3) requests asks for `json` (no timestamps), whose text
-  becomes one segment spanning the chunk. Still empty, it raises
-  `EmptyTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
-  `loudest_frame_dbfs`, `attempts`). A silent chunk may come back empty. A
-  request that fails is not repeated.
+- Each chunk is asked for `verbose_json` (timings). vLLM builds that transcript
+  only from text between two adjacent timestamp tokens: a decode with no such
+  pair comes back empty, text after the last pair is dropped, and a decode
+  ending on a pair before the end of the chunk leaves the rest undecoded. A
+  timed answer whose segments run to the chunk's end (`reaches_chunk_end`:
+  the last end within one 0.02 s timestamp step of it, since chunk lengths
+  are no multiple of the step) lost nothing and is kept as it is. Otherwise
+  the chunk is also asked for `json`, which keeps the whole decode, so a
+  transcription costs one or two ASR requests per 30 s chunk plus one per
+  answer asked again.
+- `align_text(text, timed, duration, *, no_space=False)` times the `json`
+  words with the `verbose_json` segments. Words are compared case- and
+  punctuation-blind (characters for `ja` and `zh`). A json word matching a
+  timed word takes its segment, and a timed word the json answer lacks stays in
+  its segment. Where the answers word the same stretch differently, the
+  rendering with more words is kept (the json one on a tie), so a json decode
+  that stops early or collapses cannot replace timed text. A json word the
+  timed answer lacks gets a segment spanning the untimed gap it falls in
+  (before the first segment, between two that do not meet, after the last), or
+  else joins the segment before it. With no timed segments the text is one
+  segment spanning the chunk. No segment runs past the chunk's duration, so
+  none reaches into the next chunk.
+- An answer is unusable when it is a repetition loop (`compression_ratio(text)`
+  above `GARBLED_COMPRESSION_RATIO`, 2.4) or empty for a chunk whose loudest
+  25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
+  unusable without segments. An unusable answer is asked again at the next of
+  `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
+  is 6). When neither a `json` answer nor a timed answer running to the end
+  is usable, the chunk raises
+  `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
+  `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
+  (`source`, `chunk_index`, `start_s`, `end_s`, `loudest_frame_dbfs`,
+  `attempts`). When no `verbose_json` answer is usable, the text spans the
+  chunk. A silent chunk may come back empty. A request that fails is not
+  repeated.
+- With no language named, the first chunk's timed answer names it and every
+  later request is sent in it, as the server does for a whole file. Chunk texts
+  join with a space, or with nothing for `ja` and `zh`.
+- `lenient_chunk_answer(body, chunk)` (the processor's and the loader's parser)
+  and the agent's strict parser clamp a segment time past the chunk's duration
+  to it with `clamp_to_duration`, which logs the original value at DEBUG:
+  Whisper times text into the padding after short audio (the live server gave
+  29.98 s on an 18.77 s chunk).
+- Limits: the loop check measures a whole answer, so a short repetition inside
+  an otherwise ordinary answer is kept (the live server's "DR. DR. DR. DR.
+  SOUDOS, ..." sat in a json answer whose ratio was 1.76). Text that both
+  answers miss over the same stretch, or that a timed answer running to the
+  chunk's end skipped, is not detected.
 - `decode_audio(path)` decodes any container's first audio stream to 16 kHz
   mono PCM16 (pyav); `pcm16_wav_samples` and `wav_bytes` convert to and from
   WAV.
