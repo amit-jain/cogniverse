@@ -26,6 +26,7 @@ _BASE_SCHEMA = "provenance"
 _PROTON_CONFIG_ID = "cogniverse_content/search/cluster.cogniverse_content/0"
 _PROTON_STATE_URL = "http://localhost:19113/state/v1/config"
 _SEARCH_DIR = "/opt/vespa/var/db/vespa/search/cluster.cogniverse_content/n0"
+_LOG_DIR = "/opt/vespa/logs/vespa"
 _TEST_FLUSH_MAXAGE_S = 20
 _TENANTS = {
     "test_metadata_bootstrap_sets_production_flush_maxage": "bootstrap",
@@ -92,8 +93,19 @@ def _effective_maxage(vespa: dict) -> int:
 
 
 def _proton_log(container: str) -> list[str]:
+    """The node's whole log, oldest line first.
+
+    logd rotates ``vespa.log`` at 10 MB into ``vespa.log-<timestamp>``, so a
+    shared Vespa that a long session keeps busy can move this test's earliest
+    lines out of the active file between its deploys.
+    """
     return _docker_exec(
-        container, "vespa-logfmt", "-l", "all", "-s", "component,message"
+        container,
+        "sh",
+        "-c",
+        f"set -e; cd {_LOG_DIR}; whole=$(mktemp); "
+        'for f in $(ls vespa.log-* 2>/dev/null | sort) vespa.log; do cat "$f" >> "$whole"; done; '
+        'vespa-logfmt -l all -s component,message "$whole"; rm -f "$whole"',
     ).splitlines()
 
 
