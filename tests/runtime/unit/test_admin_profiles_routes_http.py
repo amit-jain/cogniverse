@@ -28,7 +28,10 @@ from httpx import ASGITransport, AsyncClient
 
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.manager import BackendProfileWrite, ConfigManager
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+)
 from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -107,6 +110,12 @@ class _StubConfigManager:
             {"profile_name": profile_name, "tenant_id": tenant_id, "service": service}
         )
         return self.profiles.get(profile_name)
+
+    def get_stored_backend_config(self, tenant_id=None, service="backend"):
+        self.calls.setdefault("stored", []).append(
+            {"tenant_id": tenant_id, "service": service}
+        )
+        return BackendConfig(tenant_id=tenant_id, profiles=dict(self.profiles))
 
     def update_backend_profile(
         self,
@@ -473,6 +482,229 @@ async def test_update_profile_missing_returns_404(env):
     assert resp.json()["detail"] == "Profile 'nope' not found for tenant 'acme'"
 
 
+def _held_copy_without_the_profile(*args, **kwargs):
+    """This process's held backend config, from before another worker's
+    create: it has no profile at all."""
+    return None
+
+
+@pytest.mark.asyncio
+async def test_update_profile_decides_existence_on_the_store_not_the_held_copy(env):
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+    env.cm.get_backend_profile = _held_copy_without_the_profile
+
+    resp = await _put(
+        env.app,
+        "/admin/profiles/video_colpali",
+        json={"tenant_id": "acme", "description": "new desc"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "profile_name": "video_colpali",
+        "tenant_id": "acme",
+        "updated_fields": ["description"],
+        "version": _WRITTEN_VERSION,
+    }
+    assert env.cm.calls["stored"] == [{"tenant_id": "acme", "service": "backend"}]
+
+
+@pytest.mark.asyncio
+async def test_update_profile_deleted_before_its_write_returns_404(env):
+    from cogniverse_foundation.config.manager import BackendProfileNotFoundError
+
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+
+    def deleted_meanwhile(profile_name, overrides, **kwargs):
+        raise BackendProfileNotFoundError(
+            f"Profile '{profile_name}' not found for tenant 'acme:acme'"
+        )
+
+    env.cm.update_backend_profile = deleted_meanwhile
+
+    resp = await _put(
+        env.app,
+        "/admin/profiles/video_colpali",
+        json={"tenant_id": "acme", "description": "new desc"},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json() == {
+        "detail": "Profile 'video_colpali' not found for tenant 'acme'"
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_profile_whose_store_cannot_be_read_raises_500(env, caplog):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+
+    def unreadable(tenant_id=None, service="backend"):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
+    env.cm.get_stored_backend_config = unreadable
+
+    resp = await _put(
+        env.app,
+        "/admin/profiles/video_colpali",
+        json={"tenant_id": "acme", "description": "new desc"},
+    )
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "detail": {
+            "error": "profile_update_failed",
+            "message": "Updating profile 'video_colpali' failed; the runtime log "
+            "names the cause.",
+            "failure": "ConfigStoreUnavailableError",
+            "profile_name": "video_colpali",
+            "tenant_id": "acme",
+        }
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ] == [
+        "profile_update_failed: ConfigStoreUnavailableError: config store unreachable"
+    ]
+    assert "update" not in env.cm.calls
+
+
+@pytest.mark.asyncio
+async def test_delete_profile_decides_existence_on_the_store_not_the_held_copy(env):
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+    env.cm.get_backend_profile = _held_copy_without_the_profile
+
+    resp = await _delete(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["profile_name"], resp.json()["schema_deleted"]) == (
+        "video_colpali",
+        False,
+    )
+    assert env.cm.calls["delete"] == {
+        "profile_name": "video_colpali",
+        "tenant_id": "acme",
+        "service": "backend",
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_profile_deleted_before_its_write_returns_404(env):
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+
+    def deleted_meanwhile(profile_name, tenant_id=None, service="backend"):
+        return False
+
+    env.cm.delete_backend_profile = deleted_meanwhile
+
+    resp = await _delete(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
+
+    assert resp.status_code == 404
+    assert resp.json() == {
+        "detail": "Profile 'video_colpali' not found for tenant 'acme'"
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_schema_counts_the_stored_profiles_sharing_it(env):
+    """Another worker added a profile on the same schema; this process's held
+    list does not have it, and dropping the schema would strand it."""
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+    env.cm.profiles["video_colpali_copy"] = _profile(
+        "video_colpali_copy", "video_colpali_sv", "colpali-v1.2"
+    )
+    held = {"video_colpali": env.cm.profiles["video_colpali"]}
+    env.cm.list_backend_profiles = lambda tenant_id=None, service="backend": held
+
+    resp = await _delete(
+        env.app,
+        "/admin/profiles/video_colpali",
+        tenant_id="acme",
+        delete_schema=True,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "detail": "Cannot delete schema 'video_colpali_sv': other profiles "
+        "using it: ['video_colpali_copy']"
+    }
+    assert env.backend.deleted == []
+    assert "delete" not in env.cm.calls
+
+
+@pytest.mark.asyncio
+async def test_delete_profile_whose_store_cannot_be_read_raises_500(env, caplog):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+
+    def unreadable(tenant_id=None, service="backend"):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
+    env.cm.get_stored_backend_config = unreadable
+
+    resp = await _delete(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "detail": {
+            "error": "profile_delete_failed",
+            "message": "Deleting profile 'video_colpali' failed; the runtime log "
+            "names the cause.",
+            "failure": "ConfigStoreUnavailableError",
+            "profile_name": "video_colpali",
+            "tenant_id": "acme",
+        }
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ] == [
+        "profile_delete_failed: ConfigStoreUnavailableError: config store unreachable"
+    ]
+    assert "delete" not in env.cm.calls
+
+
+@pytest.mark.asyncio
+async def test_deploy_decides_the_profile_on_the_store_not_the_held_copy(env):
+    env.cm.profiles["video_prism"] = _profile(
+        "video_prism", "video_prism_mv", "xclip-lvt"
+    )
+    env.cm.get_backend_profile = _held_copy_without_the_profile
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": False},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["schema_name"] == "video_prism_mv"
+    assert env.backend.deploy_calls == [
+        {"tenant_id": "acme", "base_schema_name": "video_prism_mv", "force": False}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_delete_profile_without_schema_removes_config_only(env):
     env.cm.profiles["video_colpali"] = _profile(
@@ -592,10 +824,10 @@ async def test_deploy_whose_profile_cannot_be_read_raises_500_and_deploys_nothin
 
     caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
 
-    def unreadable(profile_name, tenant_id=None, service="backend"):
+    def unreadable(tenant_id=None, service="backend"):
         raise ConfigStoreUnavailableError("config store unreachable")
 
-    env.cm.get_backend_profile = unreadable
+    env.cm.get_stored_backend_config = unreadable
 
     resp = await _post(
         env.app,

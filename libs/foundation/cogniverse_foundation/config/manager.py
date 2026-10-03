@@ -41,6 +41,10 @@ class BackendProfileExistsError(ValueError):
     """A create-only profile add found the profile already stored."""
 
 
+class BackendProfileNotFoundError(ValueError):
+    """A profile update found no profile of that name stored."""
+
+
 @dataclass(frozen=True)
 class BackendProfileWrite:
     """A stored profile add or update: the profile as written, and the
@@ -557,10 +561,17 @@ class ConfigManager:
         )
         return self._backend_config_from(value, tenant_id, service)
 
-    def _stored_backend_config(self, tenant_id: str, service: str) -> BackendConfig:
-        """The tenant's backend config as the store holds it now."""
+    def get_stored_backend_config(
+        self, tenant_id: str, service: str = "backend"
+    ) -> BackendConfig:
+        """The tenant's backend config as the store holds it now.
+
+        ``get_backend_config`` serves the held copy, which may predate another
+        process's write by up to the staleness bound; a write that decides on
+        what the tenant has stored reads this instead.
+        """
         tenant_id = require_tenant_id(
-            tenant_id, source="ConfigManager._stored_backend_config"
+            tenant_id, source="ConfigManager.get_stored_backend_config"
         )
         value = self._stored_config_value(
             ConfigScope.BACKEND, tenant_id, service, "backend_config"
@@ -754,7 +765,8 @@ class ConfigManager:
             holding it
 
         Raises:
-            ValueError: If profile doesn't exist in base tenant
+            BackendProfileNotFoundError: If the profile is not stored for the
+                base tenant, checked in the same compare-and-set as the write
 
         Example:
             # Tenant "acme" wants to tweak the embedding model in a system profile
@@ -780,12 +792,16 @@ class ConfigManager:
         base_config = (
             None
             if base_tenant_id == target_tenant_id
-            else self._stored_backend_config(base_tenant_id, service)
+            else self.get_stored_backend_config(base_tenant_id, service)
         )
         merged: Dict[str, BackendProfileConfig] = {}
 
         def merge(target_config: BackendConfig) -> None:
             source = target_config if base_config is None else base_config
+            if profile_name not in source.profiles:
+                raise BackendProfileNotFoundError(
+                    f"Profile '{profile_name}' not found for tenant '{base_tenant_id}'"
+                )
             merged["profile"] = source.merge_profile(profile_name, overrides)
             target_config.add_profile(merged["profile"])
 

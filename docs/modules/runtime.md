@@ -1218,6 +1218,12 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted
+
+The update, delete and deploy routes look the profile up in the tenant's stored
+backend config (`get_stored_backend_config`), so a profile another worker or
+replica created or deleted a moment ago is found or answered 404 at once; the
+list and get routes serve the process's held copy. A profile deleted between
+the update's or delete's read and its write answers 404.
 **GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. 503 `schema_drift_unavailable` when the registry or the recorded refusals cannot be read; `failure` is `SchemaRegistryInitializationError` for the registry and `RegistryStorageError` for the refusals.
 
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)

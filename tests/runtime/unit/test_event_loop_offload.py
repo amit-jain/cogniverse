@@ -206,7 +206,9 @@ async def test_admin_schema_deploy_offloaded(monkeypatch):
     from cogniverse_runtime.routers import admin
 
     cm = MagicMock()
-    cm.get_backend_profile.return_value = SimpleNamespace(schema_name="wiki_pages")
+    cm.get_stored_backend_config.return_value.get_profile.return_value = (
+        SimpleNamespace(schema_name="wiki_pages")
+    )
     cm.store.get_immutable_config.return_value = None  # tenant not deleted
 
     backend = MagicMock()
@@ -241,16 +243,18 @@ async def test_admin_schema_deploy_target_resolution_offloaded(monkeypatch):
     from cogniverse_runtime.admin.profile_models import SchemaDeploymentRequest
     from cogniverse_runtime.routers import admin
 
-    def slow_profile(*args, **kwargs):
+    def slow_stored_config(*args, **kwargs):
         time.sleep(0.3)
-        return SimpleNamespace(schema_name="wiki_pages")
+        return SimpleNamespace(
+            get_profile=lambda name: SimpleNamespace(schema_name="wiki_pages")
+        )
 
     def slow_schema_exists(*args, **kwargs):
         time.sleep(0.3)
         return True
 
     cm = MagicMock()
-    cm.get_backend_profile = slow_profile
+    cm.get_stored_backend_config = slow_stored_config
     cm.store.get_immutable_config.return_value = None  # tenant not deleted
 
     backend = MagicMock()
@@ -343,7 +347,9 @@ async def test_admin_profile_create_and_update_offloaded():
     cm = MagicMock()
     cm.add_backend_profile = slow_write
     cm.update_backend_profile = slow_write
-    cm.get_backend_profile.return_value = SimpleNamespace(schema_name="s")
+    cm.get_stored_backend_config.return_value.get_profile.return_value = (
+        SimpleNamespace(schema_name="s")
+    )
     validator = MagicMock()
     validator.validate_profile.return_value = []
     validator.validate_update_fields.return_value = []

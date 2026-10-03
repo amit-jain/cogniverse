@@ -352,6 +352,57 @@ class TestConfigManagerBackendMethods:
         )
         assert default_profile.embedding_model == "base/model"
 
+    def test_an_update_of_a_profile_another_process_deleted_writes_nothing(
+        self, config_manager
+    ):
+        from cogniverse_foundation.config.manager import (
+            BackendProfileNotFoundError,
+            ConfigManager,
+        )
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        config_manager.add_backend_profile(
+            BackendProfileConfig(profile_name="held", schema_name="held_schema"),
+            tenant_id="acme",
+        )
+        # This manager holds the profile; another process deletes it.
+        assert (
+            config_manager.get_backend_profile("held", tenant_id="acme").schema_name
+            == "held_schema"
+        )
+        other_process = ConfigManager(store=config_manager.store)
+        assert other_process.delete_backend_profile("held", tenant_id="acme") is True
+
+        with pytest.raises(BackendProfileNotFoundError) as raised:
+            config_manager.update_backend_profile(
+                profile_name="held",
+                overrides={"description": "too late"},
+                base_tenant_id="acme",
+                target_tenant_id="acme",
+            )
+
+        assert str(raised.value) == "Profile 'held' not found for tenant 'acme:acme'"
+        stored = config_manager.store.get_config(
+            "acme:acme", ConfigScope.BACKEND, "backend", "backend_config"
+        )
+        assert (stored.version, stored.config_value["profiles"]) == (2, {})
+
+    def test_the_stored_backend_config_is_read_past_the_held_copy(self, config_manager):
+        from cogniverse_foundation.config.manager import ConfigManager
+
+        assert config_manager.get_backend_config(tenant_id="acme").profiles == {}
+        other_process = ConfigManager(store=config_manager.store)
+        other_process.add_backend_profile(
+            BackendProfileConfig(profile_name="fresh", schema_name="fresh_schema"),
+            tenant_id="acme",
+        )
+
+        # The held copy predates the other process's write; the store has it.
+        assert config_manager.get_backend_config(tenant_id="acme").profiles == {}
+        stored = config_manager.get_stored_backend_config(tenant_id="acme")
+        assert (stored.tenant_id, list(stored.profiles)) == ("acme:acme", ["fresh"])
+        assert stored.profiles["fresh"].schema_name == "fresh_schema"
+
     def test_tenant_isolation(self, config_manager):
         """Test that different tenants have isolated backend configs"""
         profile_a = BackendProfileConfig(

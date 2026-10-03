@@ -254,13 +254,14 @@ its reads carry them without writing to the store.
 | `get_telemetry_config(tenant_id="your_org:production", service="telemetry")` | Get telemetry configuration |
 | `set_telemetry_config(telemetry_config, tenant_id=None, service="telemetry")` | Set telemetry configuration |
 | `get_backend_config(tenant_id="your_org:production", service="backend")` | Get backend configuration |
+| `get_stored_backend_config(tenant_id, service="backend")` | Backend configuration as the store holds it now, past the held copy another process's write may not have reached yet; for writes that decide on what the tenant has stored |
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
 | `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
 | `add_backend_profile(profile, tenant_id="your_org:production", service="backend", *, replace=True)` | Add/update a backend profile; returns `BackendProfileWrite(profile, version)`, the version of the tenant's backend config this write produced (for an identical re-add that writes nothing, the version already holding it). `replace=False` raises `BackendProfileExistsError` when the name is already stored, checked in the same compare-and-set as the write |
-| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and returns `BackendProfileWrite` with the merged profile and the target config version the update produced |
+| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and returns `BackendProfileWrite` with the merged profile and the target config version the update produced. Raises `BackendProfileNotFoundError` when the profile is not stored for `base_tenant_id`, checked in the same compare-and-set as the write |
 | `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
-| `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
+| `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile; `False` when none was stored |
 
 The three profile writes rewrite the tenant's whole backend config, and every
 runtime process and replica writes it. Each is a compare-and-set

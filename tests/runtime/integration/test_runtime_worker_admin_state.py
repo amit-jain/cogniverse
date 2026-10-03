@@ -564,3 +564,198 @@ class TestProfileRecreateAcrossWorkers:
                 }
             },
         )
+
+
+def _profile_body(tenant: str, name: str) -> dict:
+    return {
+        "profile_name": name,
+        "tenant_id": tenant,
+        "type": "video",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "embedding_type": "multi_vector",
+        "deploy_schema": False,
+    }
+
+
+def _stored_profiles(store: VespaConfigStore, tenant: str) -> dict:
+    stored = store.get_config(tenant, ConfigScope.BACKEND, "backend", "backend_config")
+    return stored.config_value["profiles"]
+
+
+class TestProfileWritesAcrossWorkers:
+    """The other worker holds the tenant's backend config from before this
+    worker's write; a profile update or delete there decides on the store."""
+
+    def test_a_profile_created_on_one_worker_is_updated_on_the_other(
+        self, runtime, store
+    ):
+        tenant = _tenant("update")
+        first, second = runtime.workers
+        pinned = _pinned(runtime, 1)
+        try:
+            held = _request(
+                pinned[second][0], "GET", f"/admin/profiles?tenant_id={tenant}"
+            )
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "updated_profile"),
+            )
+            updated = _request(
+                pinned[second][0],
+                "PUT",
+                "/admin/profiles/updated_profile",
+                {"tenant_id": tenant, "description": "set on the other worker"},
+            )
+        finally:
+            _close(pinned)
+
+        assert held == (200, {"profiles": [], "total_count": 0, "tenant_id": tenant})
+        assert created[0] == 201, created
+        assert updated == (
+            200,
+            {
+                "profile_name": "updated_profile",
+                "tenant_id": tenant,
+                "updated_fields": ["description"],
+                "version": created[1]["version"] + 1,
+            },
+        )
+        assert (
+            _stored_profiles(store, tenant)["updated_profile"]["description"]
+            == "set on the other worker"
+        )
+
+    def test_a_profile_created_on_one_worker_is_deleted_on_the_other(
+        self, runtime, store
+    ):
+        tenant = _tenant("delete")
+        first, second = runtime.workers
+        pinned = _pinned(runtime, 1)
+        try:
+            held = _request(
+                pinned[second][0], "GET", f"/admin/profiles?tenant_id={tenant}"
+            )
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "deleted_profile"),
+            )
+            deleted = _request(
+                pinned[second][0],
+                "DELETE",
+                f"/admin/profiles/deleted_profile?tenant_id={tenant}",
+            )
+        finally:
+            _close(pinned)
+
+        assert held == (200, {"profiles": [], "total_count": 0, "tenant_id": tenant})
+        assert created[0] == 201, created
+        assert deleted[0] == 200, deleted
+        assert (deleted[1]["profile_name"], deleted[1]["tenant_id"]) == (
+            "deleted_profile",
+            tenant,
+        )
+        assert deleted[1]["schema_deleted"] is False
+        assert _stored_profiles(store, tenant) == {}
+
+    def test_a_profile_deleted_on_one_worker_is_not_found_on_the_other(
+        self, runtime, store
+    ):
+        tenant = _tenant("gone")
+        first, second = runtime.workers
+        pinned = _pinned(runtime, 1)
+        missing = {"detail": f"Profile 'gone_profile' not found for tenant '{tenant}'"}
+        try:
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "gone_profile"),
+            )
+            held = _request(
+                pinned[second][0],
+                "GET",
+                f"/admin/profiles/gone_profile?tenant_id={tenant}",
+            )
+            deleted = _request(
+                pinned[first][0],
+                "DELETE",
+                f"/admin/profiles/gone_profile?tenant_id={tenant}",
+            )
+            updated_after = _request(
+                pinned[second][0],
+                "PUT",
+                "/admin/profiles/gone_profile",
+                {"tenant_id": tenant, "description": "too late"},
+            )
+            deleted_after = _request(
+                pinned[second][0],
+                "DELETE",
+                f"/admin/profiles/gone_profile?tenant_id={tenant}",
+            )
+        finally:
+            _close(pinned)
+
+        assert (created[0], held[0], deleted[0]) == (201, 200, 200)
+        assert held[1]["profile_name"] == "gone_profile"
+        assert updated_after == (404, missing)
+        assert deleted_after == (404, missing)
+        assert _stored_profiles(store, tenant) == {}
+
+    def test_concurrent_updates_on_both_workers_after_a_create_take_consecutive_versions(
+        self, runtime, store
+    ):
+        tenant = _tenant("versions")
+        first, second = runtime.workers
+        per_worker = 4
+        readers = _pinned(runtime, 1)
+        try:
+            held = {
+                pid: _request(
+                    readers[pid][0], "GET", f"/admin/profiles?tenant_id={tenant}"
+                )
+                for pid in runtime.workers
+            }
+            created = _request(
+                readers[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "contended_profile"),
+            )
+        finally:
+            _close(readers)
+        pinned = _pinned(runtime, per_worker)
+        connections = [c for pid in runtime.workers for c in pinned[pid]]
+        try:
+            answers = _concurrently(
+                [
+                    lambda connection=connection, index=index: _request(
+                        connection,
+                        "PUT",
+                        "/admin/profiles/contended_profile",
+                        {"tenant_id": tenant, "description": f"writer {index}"},
+                    )
+                    for index, connection in enumerate(connections)
+                ]
+            )
+        finally:
+            _close(pinned)
+
+        assert held == {
+            pid: (200, {"profiles": [], "total_count": 0, "tenant_id": tenant})
+            for pid in runtime.workers
+        }
+        assert created[0] == 201, created
+        assert [status for status, _ in answers] == [200] * len(connections), answers
+        assert sorted(body["version"] for _, body in answers) == list(
+            range(created[1]["version"] + 1, created[1]["version"] + 1 + len(answers))
+        )
+        last = max(answers, key=lambda answer: answer[1]["version"])[1]
+        stored = store.get_config(
+            tenant, ConfigScope.BACKEND, "backend", "backend_config"
+        )
+        assert stored.version == last["version"]

@@ -37,6 +37,7 @@ from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 from cogniverse_foundation.config.manager import (
     BackendProfileExistsError,
+    BackendProfileNotFoundError,
     ConfigManager,
 )
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
@@ -560,18 +561,15 @@ async def update_profile(
     def _update() -> tuple[List[str], int]:
         """The updated fields and the backend config version the update
         produced. Its config-store reads and compare-and-set write, which
-        retries with backoff under contention, run off the serving loop."""
-        profile = config_manager.get_backend_profile(
-            profile_name=profile_name,
-            tenant_id=request.tenant_id,
-            service="backend",
-        )
+        retries with backoff under contention, run off the serving loop.
 
-        if not profile:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
-            )
+        Whether the profile exists is read from the store, not this process's
+        held copy, which may predate another worker's create or delete."""
+        stored = config_manager.get_stored_backend_config(
+            tenant_id=request.tenant_id, service="backend"
+        )
+        if stored.get_profile(profile_name) is None:
+            raise _profile_not_found(profile_name, request.tenant_id)
 
         overrides = {}
         updated_fields = []
@@ -605,13 +603,17 @@ async def update_profile(
                 },
             )
 
-        written = config_manager.update_backend_profile(
-            profile_name=profile_name,
-            overrides=overrides,
-            base_tenant_id=request.tenant_id,
-            target_tenant_id=request.tenant_id,
-            service="backend",
-        )
+        try:
+            written = config_manager.update_backend_profile(
+                profile_name=profile_name,
+                overrides=overrides,
+                base_tenant_id=request.tenant_id,
+                target_tenant_id=request.tenant_id,
+                service="backend",
+            )
+        except BackendProfileNotFoundError as exc:
+            # Deleted by another process between the read and the write.
+            raise _profile_not_found(profile_name, request.tenant_id) from exc
         return updated_fields, written.version
 
     try:
@@ -678,27 +680,25 @@ async def delete_profile(
         the schema goes too — a full application redeploy that retries on 409
         with sleeps and a 300s read timeout. Inline, one profile delete freezes
         every request, stream and probe on this replica for its duration.
+
+        The profile and the tenant's other profiles are read from the store,
+        not this process's held copy, which may predate another worker's
+        write.
         """
-        profile = config_manager.get_backend_profile(
-            profile_name=profile_name, tenant_id=tenant_id, service="backend"
+        stored = config_manager.get_stored_backend_config(
+            tenant_id=tenant_id, service="backend"
         )
+        profile = stored.get_profile(profile_name)
 
         if not profile:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
-            )
+            raise _profile_not_found(profile_name, tenant_id)
 
         schema_deleted = False
 
         if delete_schema:
-            all_profiles = config_manager.list_backend_profiles(
-                tenant_id=tenant_id, service="backend"
-            )
-
             other_profiles_using_schema = [
                 p_name
-                for p_name, p in all_profiles.items()
+                for p_name, p in stored.profiles.items()
                 if p_name != profile_name and p.schema_name == profile.schema_name
             ]
 
@@ -721,14 +721,13 @@ async def delete_profile(
             )
             schema_deleted = len(deleted_schemas) > 0
 
-        success = config_manager.delete_backend_profile(
+        deleted = config_manager.delete_backend_profile(
             profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
 
-        if not success:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to delete profile '{profile_name}'"
-            )
+        if not deleted:
+            # Deleted by another process between the read and the write.
+            raise _profile_not_found(profile_name, tenant_id)
         return schema_deleted
 
     try:
@@ -755,6 +754,13 @@ async def delete_profile(
             profile_name=profile_name,
             tenant_id=tenant_id,
         )
+
+
+def _profile_not_found(profile_name: str, tenant_id: str) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
+    )
 
 
 def _catalog_profile(
@@ -800,16 +806,13 @@ async def deploy_profile_schema(
     def _resolve_target():
         """The profile, the tenant's ingestion backend and whether the schema
         is deployed: config store and Vespa reads, run off the serving loop."""
-        profile = config_manager.get_backend_profile(
-            profile_name=profile_name,
-            tenant_id=request.tenant_id,
-            service="backend",
-        ) or _catalog_profile(config_manager, profile_name, request.tenant_id)
+        profile = config_manager.get_stored_backend_config(
+            tenant_id=request.tenant_id, service="backend"
+        ).get_profile(profile_name) or _catalog_profile(
+            config_manager, profile_name, request.tenant_id
+        )
         if not profile:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Profile '{profile_name}' not found for tenant '{request.tenant_id}'",
-            )
+            raise _profile_not_found(profile_name, request.tenant_id)
         raise_if_tenant_deleted(config_manager.store, request.tenant_id)
         backend = BackendRegistry.get_instance().get_ingestion_backend(
             "vespa",
