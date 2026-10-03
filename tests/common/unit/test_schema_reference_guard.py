@@ -76,7 +76,7 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/backends/unit/test_backend_config.py": (
         "Configuration serialization and tenant merge fixtures",
-        "base_schema new_schema schema1 schema2 schema_a schema_b system_schema tenant_custom_schema tenant_schema test test_schema video_profile",
+        "base_schema fresh_schema held_schema new_schema schema1 schema2 schema_a schema_b system_schema tenant_custom_schema tenant_schema test test_schema video_profile",
     ),
     "tests/backends/unit/test_backend_registry_tenant.py": (
         "Backend double profile mutation fixtures",
