@@ -7,6 +7,7 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 import asyncio
 import io
 import json
+import logging
 import re
 import threading
 import wave
@@ -1064,15 +1065,6 @@ class TestAudioAnalysisAgent:
                     "text": "ok",
                     "language": "en",
                     "duration": "1.0",
-                    "segments": [{"start": 0.0, "end": 1.1, "text": "ok"}],
-                },
-                "$.segments[0].end: must not exceed $.duration",
-            ),
-            (
-                {
-                    "text": "ok",
-                    "language": "en",
-                    "duration": "1.0",
                     "segments": [{"start": 0.0, "end": 1.0}],
                 },
                 "$.segments[0].text: field is required",
@@ -1105,6 +1097,61 @@ class TestAudioAnalysisAgent:
 
         assert len(captured_requests) == 1
         assert f"{base_url}/v1/audio/transcriptions" in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_a_segment_timed_past_the_chunk_is_clamped_to_it(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # Recorded from the live server (v_-vnSFKJNB94 chunk 3): "Thank you."
+        # timed to 29.98 s on an 18.77 s chunk.
+        recorded = {
+            "duration": "18.769625",
+            "language": "en",
+            "text": " Thank you.",
+            "segments": [
+                {
+                    "id": 0,
+                    "avg_logprob": -1.0546308162622153,
+                    "compression_ratio": 0.5789473684210527,
+                    "end": 29.98,
+                    "no_speech_prob": None,
+                    "seek": 0,
+                    "start": 0.0,
+                    "temperature": 0.0,
+                    "text": " Thank you.",
+                    "tokens": [1044, 291, 13],
+                }
+            ],
+            "words": None,
+        }
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip, seconds=float(recorded["duration"]))
+
+        def answer(body: bytes) -> dict:
+            if b'name="response_format"\r\n\r\njson\r\n' in body:
+                return {"text": recorded["text"]}
+            return recorded
+
+        with _transcription_server(answer) as (base_url, _):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            with caplog.at_level(
+                logging.DEBUG,
+                logger="cogniverse_core.common.models.whisper_transcription",
+            ):
+                result = await agent.transcribe_audio(f"file://{clip}")
+
+        assert (result.text, result.segments) == (
+            "Thank you.",
+            [{"start": 0.0, "end": 18.769625, "text": "Thank you."}],
+        )
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_core.common.models.whisper_transcription"
+        ] == ["segment time 29.98s is past the chunk's 18.77s; clamped"]
 
     @pytest.mark.asyncio
     async def test_remote_transcription_rejects_non_json_success_response(

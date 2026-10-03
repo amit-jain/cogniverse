@@ -2199,6 +2199,11 @@ temperature)` sends one request with `response_format(timestamps)` and
 - With no language named, the first chunk's timed answer names it and every
   later request is sent in it, as the server does for a whole file. Chunk texts
   join with a space, or with nothing for `ja` and `zh`.
+- `lenient_chunk_answer(body, chunk)` (the processor's and the loader's parser)
+  and the agent's strict parser clamp a segment time past the chunk's duration
+  to it with `clamp_to_duration`, which logs the original value at DEBUG:
+  Whisper times text into the padding after short audio (the live server gave
+  29.98 s on an 18.77 s chunk).
 - `decode_audio(path)` decodes any container's first audio stream to 16 kHz
   mono PCM16 (pyav); `pcm16_wav_samples` and `wav_bytes` convert to and from
   WAV.

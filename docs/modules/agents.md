@@ -2629,7 +2629,9 @@ untimed text never comes back usable raises `EmptyTranscriptError` or
 `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds
-before checking segment bounds.
+before checking segment bounds. A segment time past `duration` (Whisper times
+text into the padding after short audio) is clamped to it and logged at DEBUG
+with the original value.
 
 `whisper_endpoint` and `whisper_model` are fields on `AudioAnalysisDeps`.
 The runtime populates `whisper_endpoint` from

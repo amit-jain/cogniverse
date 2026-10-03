@@ -32,6 +32,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     EmptyTranscriptError,
     GarbledTranscriptError,
     align_text,
+    clamp_to_duration,
     compression_ratio,
     decode_audio,
     lenient_chunk_answer,
@@ -652,7 +653,7 @@ def _check_recording(recording: dict) -> None:
         },
     }
     answers = recording["answers"]
-    assert len(answers) == 16
+    assert len(answers) == 17
     body_keys = {
         response_format(True): {"duration", "language", "segments", "text", "words"},
         response_format(False): {"text", "usage"},
@@ -673,7 +674,7 @@ def _check_recording(recording: dict) -> None:
         assert set(answer) == RECORD_KEYS, name
         assert name.split("/")[:3] == [
             answer["server"],
-            answer["clip"][3:].split(".")[0],
+            answer["clip"].removeprefix("v_-").split(".")[0],
             str(answer["chunk"]),
         ], name
         assert answer["response_format"] == name.split("/")[3], name
@@ -716,7 +717,7 @@ def test_the_compression_ratio_is_the_one_the_server_reports():
         for answer in answers.values()
         for segment in answer["body"].get("segments") or []
     ]
-    assert len(segments) == 21
+    assert len(segments) == 22
     assert [compression_ratio(s["text"]) for s in segments] == [
         s["compression_ratio"] for s in segments
     ]
@@ -1170,3 +1171,22 @@ def test_a_failing_server_raises_from_the_loader_without_another_attempt(tmp_pat
         f"503 Server Error: Service Unavailable for url: {url}/v1/audio/transcriptions"
     )
     assert whisper.requests == [_loader_request("verbose_json", "0.0", "en")]
+
+
+def test_segment_times_past_the_chunk_are_clamped_to_it(caplog):
+    # The live server timed "Thank you." to 29.98 s on an 18.77 s chunk.
+    answer = _recording()["answers"]["live/vnSFKJNB94/3/verbose_json/past_duration"]
+    duration = float(answer["body"]["duration"])
+    chunk = AudioChunk(0, 0, np.zeros(round(duration * RATE), dtype=np.int16))
+
+    with caplog.at_level(logging.DEBUG, logger=whisper_transcription.__name__):
+        parsed = lenient_chunk_answer(answer["body"], chunk)
+
+    assert parsed.segments == _segments((0.0, 18.769625, "Thank you."))
+    assert [record.getMessage() for record in caplog.records] == [
+        "segment time 29.98s is past the chunk's 18.77s; clamped"
+    ]
+    assert (clamp_to_duration(18.0, 18.5), clamp_to_duration(18.5, 18.5)) == (
+        18.0,
+        18.5,
+    )

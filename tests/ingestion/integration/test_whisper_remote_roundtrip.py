@@ -137,11 +137,11 @@ class _WhisperStub(BaseHTTPRequestHandler):
         resp = {
             "text": "hello world",
             "language": captured.get("language") or "en",
-            "duration": 1.5,
+            "duration": 0.2,
             "model": captured.get("model", "openai/whisper-large-v3-turbo"),
             "segments": [
-                {"start": 0.0, "end": 0.7, "text": "hello"},
-                {"start": 0.7, "end": 1.5, "text": " world"},
+                {"start": 0.0, "end": 0.08, "text": "hello"},
+                {"start": 0.08, "end": 0.16, "text": " world"},
             ],
         }
         payload = json.dumps(resp).encode()
@@ -219,8 +219,8 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
     # The length of the audio sent, as the server measures it too.
     assert transcript["duration"] == 0.2
     assert len(transcript["segments"]) == 2
-    assert transcript["segments"][0] == {"start": 0.0, "end": 0.7, "text": "hello"}
-    assert transcript["segments"][1] == {"start": 0.7, "end": 1.5, "text": "world"}
+    assert transcript["segments"][0] == {"start": 0.0, "end": 0.08, "text": "hello"}
+    assert transcript["segments"][1] == {"start": 0.08, "end": 0.16, "text": "world"}
 
     written = Path(tmp_path) / "transcripts" / "clip_transcript.json"
     assert written.exists()

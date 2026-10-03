@@ -1109,6 +1109,41 @@
      "seconds": 29
     }
    }
+  },
+  "live/vnSFKJNB94/3/verbose_json/past_duration": {
+   "server": "live",
+   "clip": "v_-vnSFKJNB94.mp4",
+   "chunk": 3,
+   "chunk_start_s": 87.6,
+   "chunk_len_s": 18.77,
+   "response_format": "verbose_json",
+   "language": "en",
+   "temperature": 0.0,
+   "seed": null,
+   "body": {
+    "duration": "18.769625",
+    "language": "en",
+    "text": " Thank you.",
+    "segments": [
+     {
+      "id": 0,
+      "avg_logprob": -1.0546308162622153,
+      "compression_ratio": 0.5789473684210527,
+      "end": 29.98,
+      "no_speech_prob": null,
+      "seek": 0,
+      "start": 0.0,
+      "temperature": 0.0,
+      "text": " Thank you.",
+      "tokens": [
+       1044,
+       291,
+       13
+      ]
+     }
+    ],
+    "words": null
+   }
   }
  }
 }

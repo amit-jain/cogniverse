@@ -34,6 +34,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 WHISPER_SAMPLE_RATE = 16000
 # vLLM's Whisper speech-to-text config: max_audio_clip_s, overlap_chunk_second
 # and min_energy_split_window_size.
@@ -268,16 +270,29 @@ def align_text(
     ]
 
 
+def clamp_to_duration(seconds: float, duration: float) -> float:
+    """``seconds`` capped at ``duration``, logging the original at DEBUG."""
+    if seconds <= duration:
+        return seconds
+    logger.debug(
+        "segment time %.2fs is past the chunk's %.2fs; clamped", seconds, duration
+    )
+    return duration
+
+
 def lenient_chunk_answer(body: Any, chunk: AudioChunk) -> ChunkTranscript:
     """Read a ``verbose_json`` or ``json`` answer, tolerating omitted fields.
 
     An answer with text but no segments gets one segment spanning the chunk.
+    Segment times past the chunk's end, which Whisper gives for the padding
+    after short audio, are clamped to it.
     """
     text = body.get("text") or ""
+    duration = len(chunk.samples) / WHISPER_SAMPLE_RATE
     segments = [
         {
-            "start": float(segment.get("start", 0.0)),
-            "end": float(segment.get("end", 0.0)),
+            "start": clamp_to_duration(float(segment.get("start", 0.0)), duration),
+            "end": clamp_to_duration(float(segment.get("end", 0.0)), duration),
             "text": (segment.get("text") or "").strip(),
         }
         for segment in body.get("segments") or []

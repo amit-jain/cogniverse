@@ -28,6 +28,7 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.whisper_transcription import (
     AudioChunk,
     ChunkTranscript,
+    clamp_to_duration,
     decode_audio,
     response_format,
     sampling_fields,
@@ -345,10 +346,8 @@ def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:
                 f"{segment_path}.end",
                 "must be greater than or equal to start",
             )
-        if end > duration:
-            raise _remote_contract_error(
-                url, f"{segment_path}.end", "must not exceed $.duration"
-            )
+        start = clamp_to_duration(start, duration)
+        end = clamp_to_duration(end, duration)
         segment_text = _required_remote_field(raw_segment, "text", url, segment_path)
         if not isinstance(segment_text, str):
             raise _remote_contract_error(
