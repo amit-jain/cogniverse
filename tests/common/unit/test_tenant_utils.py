@@ -293,3 +293,112 @@ class TestSanitizeK8sLabelValue:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestTenantDeletionMarker:
+    """A delete marks the tenant with its delete pending and records its
+    completion; a create clears both records."""
+
+    TENANT = "acme:prod"
+
+    @staticmethod
+    def _records(store) -> dict:
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        return {
+            service: (
+                None
+                if entry is None
+                else (entry.tenant_id, entry.config_key, entry.config_value)
+            )
+            for service in ("tenant_deletions", "tenant_deletions_pending")
+            for entry in [
+                store.get_immutable_config(
+                    "__system__", ConfigScope.SYSTEM, service, "acme:prod"
+                )
+            ]
+        }
+
+    def test_a_delete_is_pending_from_its_mark_until_it_completes(self):
+        from cogniverse_core.common.tenant_utils import (
+            complete_tenant_delete,
+            mark_tenant_deleted,
+            tenant_delete_pending,
+            tenant_is_deleted,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        mark_tenant_deleted(store, "acme:prod")
+        mark_tenant_deleted(store, "acme:prod")
+
+        assert self._records(store) == {
+            "tenant_deletions": ("__system__", "acme:prod", {"deleted": True}),
+            "tenant_deletions_pending": ("__system__", "acme:prod", {"pending": True}),
+        }
+        assert (
+            tenant_is_deleted(store, self.TENANT),
+            tenant_delete_pending(store, self.TENANT),
+        ) == (True, True)
+
+        complete_tenant_delete(store, "acme:prod")
+
+        assert self._records(store) == {
+            "tenant_deletions": ("__system__", "acme:prod", {"deleted": True}),
+            "tenant_deletions_pending": None,
+        }
+        assert (
+            tenant_is_deleted(store, self.TENANT),
+            tenant_delete_pending(store, self.TENANT),
+        ) == (True, False)
+
+    def test_clearing_removes_the_marker_and_its_pending_record(self):
+        from cogniverse_core.common.tenant_utils import (
+            clear_tenant_deleted,
+            mark_tenant_deleted,
+            tenant_delete_pending,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        mark_tenant_deleted(store, "acme:prod")
+
+        assert clear_tenant_deleted(store, "acme:prod") is True
+        assert self._records(store) == {
+            "tenant_deletions": None,
+            "tenant_deletions_pending": None,
+        }
+        assert tenant_delete_pending(store, self.TENANT) is False
+        assert clear_tenant_deleted(store, "acme:prod") is False
+
+    def test_a_pending_record_without_the_marker_is_no_delete(self):
+        """The marker write fails after the pending record landed: nothing is
+        marked, and the tenant reads as neither deleted nor pending."""
+        from cogniverse_core.common.tenant_utils import (
+            mark_tenant_deleted,
+            tenant_delete_pending,
+            tenant_is_deleted,
+        )
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        put = store.put_immutable_config
+
+        def marker_unwritable(tenant_id, scope, service, config_key, config_value):
+            if service == "tenant_deletions":
+                raise ConfigStoreUnavailableError("marker write refused")
+            return put(tenant_id, scope, service, config_key, config_value)
+
+        store.put_immutable_config = marker_unwritable
+        with pytest.raises(ConfigStoreUnavailableError, match="marker write refused"):
+            mark_tenant_deleted(store, "acme:prod")
+
+        assert self._records(store) == {
+            "tenant_deletions": None,
+            "tenant_deletions_pending": ("__system__", "acme:prod", {"pending": True}),
+        }
+        assert (
+            tenant_is_deleted(store, self.TENANT),
+            tenant_delete_pending(store, self.TENANT),
+        ) == (False, False)

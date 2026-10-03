@@ -32,8 +32,8 @@ import asyncio
 import logging
 import threading
 import time
-from contextlib import contextmanager
-from typing import Annotated, Dict, Iterator, List, Optional
+from contextlib import asynccontextmanager, contextmanager
+from typing import Annotated, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -43,14 +43,20 @@ from cogniverse_core.common.tenant_utils import (
     SYSTEM_TENANT_ID,
     canonical_tenant_id,
     clear_tenant_deleted,
+    complete_tenant_delete,
     mark_tenant_deleted,
     parse_tenant_id,
+    tenant_delete_pending,
 )
 from cogniverse_core.memory.manager import (
     MEMORY_BASE_SCHEMA,
     PROVENANCE_BASE_SCHEMA,
 )
 from cogniverse_core.registries.exceptions import RegistryStorageError
+from cogniverse_core.registries.schema_deploy_lease import (
+    LeaseWaitTimeout,
+    SchemaDeployLease,
+)
 from cogniverse_core.registries.schema_registry import delete_tenant_refusals
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
@@ -90,6 +96,10 @@ _cluster_events: ClusterEvents | None = None
 
 # How long a tenant delete waits for every worker to release the tenant.
 TENANT_DELETE_ACK_TIMEOUT_S = 15.0
+
+# How long a tenant create or delete waits for another create or delete of the
+# same tenant, on any process, to finish.
+TENANT_OPERATION_WAIT_S = 600.0
 
 # Built once for processes that never inject one (standalone CLIs). The
 # registry refuses a cached backend to a requester carrying a different
@@ -238,6 +248,56 @@ def metadata_backend() -> Iterator[Backend]:
 
     with leased_backend(get_backend) as instance:
         yield instance
+
+
+def _tenant_operation_lease(store, tenant_id: str) -> SchemaDeployLease:
+    """The lease one create or delete of ``tenant_id`` holds at a time, on
+    every process and replica sharing the config store."""
+    return SchemaDeployLease(
+        store,
+        wait_seconds=TENANT_OPERATION_WAIT_S,
+        service="tenant_operation_lease",
+        config_key=tenant_id,
+        purpose=f"Tenant {tenant_id} create or delete",
+        heartbeat=True,
+    )
+
+
+@asynccontextmanager
+async def _tenant_operation(store, tenant_id: str, done: str) -> AsyncIterator[None]:
+    """Hold ``tenant_id`` for one create or delete, so creates and deletes of
+    one tenant run one at a time across every process.
+
+    A holder that keeps it for ``TENANT_OPERATION_WAIT_S`` answers 503
+    ``tenant_operation_in_progress``; a store that cannot take it answers 503
+    ``tenant_operation_unavailable``. ``done`` completes "Tenant X was not ..."
+    in those answers.
+    """
+    lease = _tenant_operation_lease(store, tenant_id)
+    try:
+        await asyncio.to_thread(lease.acquire)
+    except LeaseWaitTimeout as exc:
+        raise failure_response(
+            503,
+            "tenant_operation_in_progress",
+            f"Tenant {tenant_id} was not {done}: another create or delete of it "
+            "is still running; retry.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    except Exception as exc:
+        raise failure_response(
+            503,
+            "tenant_operation_unavailable",
+            f"Tenant {tenant_id} was not {done}: the config store did not "
+            "answer; retry.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(lease.release)
 
 
 def validate_org_id(org_id: str) -> None:
@@ -671,6 +731,9 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         HTTPException 400: Invalid tenant_id format
         HTTPException 409: Tenant already exists
         HTTPException 502: A requested schema failed to deploy (no tenant created)
+        HTTPException 503: The tenant's earlier delete is incomplete and could
+            not be finished, or another create or delete of it held it too
+            long; retry
         HTTPException 500: Creation failed
 
     Example:
@@ -691,139 +754,144 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
 
         tenant_full_id = f"{org_id}:{tenant_name}"
 
-        with metadata_backend() as backend:
-            # Check if tenant already exists
-            existing = await get_tenant_internal(tenant_full_id)
-            if existing:
-                raise HTTPException(
-                    status_code=409, detail=f"Tenant {tenant_full_id} already exists"
-                )
+        config_manager = _config_manager or _default_config_manager()
 
-            # Auto-create org if doesn't exist
-            org_created = False
-            org = await get_organization_internal(org_id)
-            if not org:
-                logger.info(
-                    f"Auto-creating organization {org_id} for tenant {tenant_full_id}"
-                )
-                org = Organization(
-                    org_id=org_id,
-                    org_name=org_id.title(),  # Use org_id as name
-                    created_at=int(time.time() * 1000),
-                    created_by=request.created_by,
-                    status="active",
-                    tenant_count=0,  # Not used, computed dynamically
-                )
-
-                success = backend.create_metadata_document(
-                    schema="organization_metadata",
-                    doc_id=org.org_id,
-                    fields={
-                        "org_id": org.org_id,
-                        "org_name": org.org_name,
-                        "created_at": org.created_at,
-                        "created_by": org.created_by,
-                        "status": org.status,
-                        "tenant_count": org.tenant_count,
-                    },
-                )
-                if not success:
+        async with _tenant_operation(config_manager.store, tenant_full_id, "created"):
+            # A delete of this tenant that did not complete is finished first,
+            # releasing it on every worker and dropping what it left.
+            await _finish_incomplete_delete(config_manager, tenant_full_id)
+            with metadata_backend() as backend:
+                # Check if tenant already exists
+                existing = await get_tenant_internal(tenant_full_id)
+                if existing:
                     raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to auto-create organization {org.org_id} in backend",
-                    )
-                org_created = True
-
-            # A tenant id deleted earlier is free again once created: its
-            # deletion marker would refuse the schema deploys below.
-            await asyncio.to_thread(
-                clear_tenant_deleted,
-                (_config_manager or _default_config_manager()).store,
-                tenant_full_id,
-            )
-
-            # Deploy schemas for tenant via Backend.
-            base_schemas = request.base_schemas or list(TENANT_BASE_SCHEMAS)
-
-            deployed_schemas: list[str] = []
-            try:
-                await _deploy_tenant_schemas_with_retry(
-                    backend, tenant_full_id, base_schemas
-                )
-                deployed_schemas.extend(base_schemas)
-
-                # Create tenant only after the schemas are live.
-                tenant = Tenant(
-                    tenant_full_id=tenant_full_id,
-                    org_id=org_id,
-                    tenant_name=tenant_name,
-                    created_at=int(time.time() * 1000),
-                    created_by=request.created_by,
-                    status="active",
-                    schemas_deployed=deployed_schemas,
-                )
-
-                # Store via Backend.
-                success = backend.create_metadata_document(
-                    schema="tenant_metadata",
-                    doc_id=tenant_full_id,
-                    fields={
-                        "tenant_full_id": tenant.tenant_full_id,
-                        "org_id": tenant.org_id,
-                        "tenant_name": tenant.tenant_name,
-                        "created_at": tenant.created_at,
-                        "created_by": tenant.created_by,
-                        "status": tenant.status,
-                        "schemas_deployed": tenant.schemas_deployed,
-                    },
-                )
-
-                if not success:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to create tenant {tenant_full_id} in backend",
+                        status_code=409,
+                        detail=f"Tenant {tenant_full_id} already exists",
                     )
 
-                logger.info(
-                    f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
-                )
-
-                return tenant
-            except Exception:
-                # Best-effort rollback keeps the create path from leaving a tenant
-                # with schemas but no metadata, or an auto-created org with no tenant.
-                schema_manager = backend.schema_manager
-                if deployed_schemas and schema_manager is None:
-                    logger.error(
-                        "Cannot roll back tenant schemas for %s: backend.schema_manager "
-                        "is unavailable after deploying %d schema(s)",
-                        tenant_full_id,
-                        len(deployed_schemas),
+                # Auto-create org if doesn't exist
+                org_created = False
+                org = await get_organization_internal(org_id)
+                if not org:
+                    logger.info(
+                        f"Auto-creating organization {org_id} for tenant {tenant_full_id}"
                     )
-                elif deployed_schemas:
-                    try:
-                        await asyncio.to_thread(
-                            schema_manager.delete_tenant_schemas, tenant_full_id
+                    org = Organization(
+                        org_id=org_id,
+                        org_name=org_id.title(),  # Use org_id as name
+                        created_at=int(time.time() * 1000),
+                        created_by=request.created_by,
+                        status="active",
+                        tenant_count=0,  # Not used, computed dynamically
+                    )
+
+                    success = backend.create_metadata_document(
+                        schema="organization_metadata",
+                        doc_id=org.org_id,
+                        fields={
+                            "org_id": org.org_id,
+                            "org_name": org.org_name,
+                            "created_at": org.created_at,
+                            "created_by": org.created_by,
+                            "status": org.status,
+                            "tenant_count": org.tenant_count,
+                        },
+                    )
+                    if not success:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to auto-create organization {org.org_id} in backend",
                         )
-                    except Exception as rollback_exc:
+                    org_created = True
+
+                # A tenant id deleted earlier is free again once created: its
+                # deletion marker would refuse the schema deploys below.
+                await asyncio.to_thread(
+                    clear_tenant_deleted, config_manager.store, tenant_full_id
+                )
+
+                # Deploy schemas for tenant via Backend.
+                base_schemas = request.base_schemas or list(TENANT_BASE_SCHEMAS)
+
+                deployed_schemas: list[str] = []
+                try:
+                    await _deploy_tenant_schemas_with_retry(
+                        backend, tenant_full_id, base_schemas
+                    )
+                    deployed_schemas.extend(base_schemas)
+
+                    # Create tenant only after the schemas are live.
+                    tenant = Tenant(
+                        tenant_full_id=tenant_full_id,
+                        org_id=org_id,
+                        tenant_name=tenant_name,
+                        created_at=int(time.time() * 1000),
+                        created_by=request.created_by,
+                        status="active",
+                        schemas_deployed=deployed_schemas,
+                    )
+
+                    # Store via Backend.
+                    success = backend.create_metadata_document(
+                        schema="tenant_metadata",
+                        doc_id=tenant_full_id,
+                        fields={
+                            "tenant_full_id": tenant.tenant_full_id,
+                            "org_id": tenant.org_id,
+                            "tenant_name": tenant.tenant_name,
+                            "created_at": tenant.created_at,
+                            "created_by": tenant.created_by,
+                            "status": tenant.status,
+                            "schemas_deployed": tenant.schemas_deployed,
+                        },
+                    )
+
+                    if not success:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to create tenant {tenant_full_id} in backend",
+                        )
+
+                    logger.info(
+                        f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
+                    )
+
+                    return tenant
+                except Exception:
+                    # Best-effort rollback keeps the create path from leaving a tenant
+                    # with schemas but no metadata, or an auto-created org with no tenant.
+                    schema_manager = backend.schema_manager
+                    if deployed_schemas and schema_manager is None:
                         logger.error(
-                            f"Failed to roll back tenant schemas for {tenant_full_id}: "
-                            f"{rollback_exc}"
+                            "Cannot roll back tenant schemas for %s: backend.schema_manager "
+                            "is unavailable after deploying %d schema(s)",
+                            tenant_full_id,
+                            len(deployed_schemas),
                         )
+                    elif deployed_schemas:
+                        try:
+                            await asyncio.to_thread(
+                                schema_manager.delete_tenant_schemas, tenant_full_id
+                            )
+                        except Exception as rollback_exc:
+                            logger.error(
+                                f"Failed to roll back tenant schemas for {tenant_full_id}: "
+                                f"{rollback_exc}"
+                            )
 
-                if org_created:
-                    try:
-                        await asyncio.to_thread(
-                            backend.delete_metadata_document,
-                            schema="organization_metadata",
-                            doc_id=org_id,
-                        )
-                    except Exception as rollback_exc:
-                        logger.error(
-                            f"Failed to roll back organization {org_id} for "
-                            f"{tenant_full_id}: {rollback_exc}"
-                        )
-                raise
+                    if org_created:
+                        try:
+                            await asyncio.to_thread(
+                                backend.delete_metadata_document,
+                                schema="organization_metadata",
+                                doc_id=org_id,
+                            )
+                        except Exception as rollback_exc:
+                            logger.error(
+                                f"Failed to roll back organization {org_id} for "
+                                f"{tenant_full_id}: {rollback_exc}"
+                            )
+                    raise
 
     except HTTPException:
         raise
@@ -1105,6 +1173,8 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
     first step on every runtime process refuses its memory writes and schema
     deploys, and every worker process releases what it holds for it before
     the schemas go. The marker stays until the tenant is created again.
+    Creates and deletes of one tenant run one at a time, and a delete removes
+    the tenant it found when it arrived.
 
     Args:
         tenant_full_id: Full tenant ID (org:tenant)
@@ -1114,8 +1184,9 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
 
     Raises:
         HTTPException 404: Tenant not found
-        HTTPException 503: The marker could not be written, or not every
-            worker confirmed it released the tenant; retry the delete
+        HTTPException 503: The marker could not be written, not every worker
+            confirmed it released the tenant, or another create or delete of
+            it held it too long; retry the delete
         HTTPException 500: Deletion failed
     """
     try:
@@ -1135,6 +1206,22 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         )
 
 
+class TenantRecordRetained(RuntimeError):
+    """The ``tenant_metadata`` delete did not confirm and the record is
+    still present."""
+
+
+# Builds the answer for a delete step that failed: (status, error code or
+# None for a plain-text detail, message, cause) -> the HTTPException raised.
+_StepFailure = Callable[[int, Optional[str], str, BaseException], HTTPException]
+
+
+def _incarnation(tenant: Optional[Tenant]) -> Optional[tuple]:
+    """Which creation of a tenant id ``tenant`` is, by its creation time;
+    None for no tenant."""
+    return None if tenant is None else (tenant.created_at,)
+
+
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """Delete a tenant's schemas and metadata.
 
@@ -1145,31 +1232,109 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     peer-tenant schema). The registry APIs canonicalize tenant ids on both
     reads and writes, so the single canonical pass is complete for any input
     form.
+
+    The delete removes the tenant it found when it arrived. It then waits for
+    the tenant (``_tenant_operation``); a create or delete that held it
+    meanwhile may have deleted that tenant, and created it again. Finding so,
+    it answers ``deleted`` with nothing dropped and leaves the tenant as it
+    is, or 404 when it found no tenant on arrival.
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
     if _config_manager is None:
         raise RuntimeError("Tenant ConfigManager is not configured")
-    if _cluster_events is None:
-        raise RuntimeError("Tenant deletes need the cluster events channel wired")
     config_manager = _config_manager
     canonical_tid = canonical_tenant_id(tenant_full_id)
-    tenant = await get_tenant_internal(canonical_tid)
+    found = await get_tenant_internal(canonical_tid)
+
+    def failed(status, error, message, exc):
+        if error is None:
+            return HTTPException(status_code=status, detail=message)
+        return failure_response(status, error, message, exc, tenant_id=canonical_tid)
+
+    async with _tenant_operation(config_manager.store, canonical_tid, "deleted"):
+        current = await get_tenant_internal(canonical_tid)
+        if _incarnation(current) != _incarnation(found):
+            if found is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Tenant {canonical_tid} not found"
+                )
+            logger.info(
+                f"The tenant {canonical_tid} this delete found was deleted by "
+                "another request while it waited; nothing dropped"
+            )
+            return {
+                "status": "deleted",
+                "tenant_full_id": canonical_tid,
+                "schemas_deleted": 0,
+                "deleted_schemas": [],
+                "organization_deleted": False,
+                "workers_released": [],
+            }
+        result = await _delete_tenant(config_manager, canonical_tid, found, failed)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
+    return result
+
+
+async def _finish_incomplete_delete(config_manager, tenant_full_id: str) -> None:
+    """Finish the tenant's delete when one began and did not complete, so a
+    create starts from a completed delete.
+
+    The delete's steps run again; each does nothing where the delete already
+    did it. A step that fails answers 503 ``tenant_delete_incomplete`` and
+    the tenant stays marked deleted.
+    """
+    if not await asyncio.to_thread(
+        tenant_delete_pending, config_manager.store, tenant_full_id
+    ):
+        return
+    message = (
+        f"Tenant {tenant_full_id} was not created: its earlier delete is "
+        "incomplete and could not be finished, so it stays marked deleted; "
+        "retry the create or the delete."
+    )
+
+    def unfinished(_status, _error, _message, exc):
+        return failure_response(
+            503, "tenant_delete_incomplete", message, exc, tenant_id=tenant_full_id
+        )
+
+    found = await get_tenant_internal(tenant_full_id)
+    logger.info(f"Finishing the incomplete delete of tenant {tenant_full_id}")
+    try:
+        await _delete_tenant(config_manager, tenant_full_id, found, unfinished)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise unfinished(503, None, message, exc) from exc
+
+
+async def _delete_tenant(
+    config_manager, canonical_tid: str, tenant: Optional[Tenant], failed: _StepFailure
+) -> Optional[Dict]:
+    """Every step of a tenant delete, in order, with the tenant held.
+
+    ``tenant`` is its record, or None for a tenant with no record. A step
+    that fails raises what ``failed`` builds for it, or its own exception.
+    Returns the deletion summary, or None when there was nothing to delete:
+    the marker is then cleared and the tenant id stays free.
+    """
+    if _cluster_events is None:
+        raise RuntimeError("Tenant deletes need the cluster events channel wired")
+    store = config_manager.store
 
     # Mark first: from here every process refuses the tenant's memory writes
     # and schema deploys, so nothing the delete drops below can be recreated.
     try:
-        await asyncio.to_thread(
-            mark_tenant_deleted, config_manager.store, canonical_tid
-        )
+        await asyncio.to_thread(mark_tenant_deleted, store, canonical_tid)
     except Exception as exc:
-        raise failure_response(
+        raise failed(
             503,
             "tenant_delete_marker_unavailable",
             f"Tenant {canonical_tid} was not deleted: the deletion marker store "
             "did not answer; retry the delete.",
             exc,
-            tenant_id=canonical_tid,
         ) from exc
     # Every worker releases what it holds for the tenant (cached agents, warm
     # memory managers, queued memory writes) before anything is dropped. A
@@ -1182,14 +1347,13 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             timeout_s=TENANT_DELETE_ACK_TIMEOUT_S,
         )
     except ClusterEventError as exc:
-        raise failure_response(
+        raise failed(
             503,
             "tenant_delete_incomplete",
             f"Tenant {canonical_tid} is marked deleted and its writes are "
             "refused, but not every runtime worker released it; retry the "
             "delete.",
             exc,
-            tenant_id=canonical_tid,
         ) from exc
 
     with metadata_backend() as backend:
@@ -1213,25 +1377,18 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         # tenant create, and accumulate every test run without this branch.
         if not tenant and not deleted_schemas:
             # Nothing existed to delete: the tenant id stays free to use.
-            await asyncio.to_thread(
-                clear_tenant_deleted, config_manager.store, canonical_tid
-            )
-            raise HTTPException(
-                status_code=404, detail=f"Tenant {canonical_tid} not found"
-            )
+            await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
+            return None
 
         try:
-            await asyncio.to_thread(
-                HarnessKeyStore(config_manager.store).revoke_tenant, canonical_tid
-            )
+            await asyncio.to_thread(HarnessKeyStore(store).revoke_tenant, canonical_tid)
         except ConfigStoreUnavailableError as exc:
-            raise failure_response(
+            raise failed(
                 503,
                 "harness_key_store_unavailable",
                 f"The harness key store did not answer while deleting tenant "
                 f"{canonical_tid}; the tenant is retained, retry the delete.",
                 exc,
-                tenant_id=canonical_tid,
             ) from exc
 
         if tenant:
@@ -1257,15 +1414,11 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                     doc_id=canonical_tid,
                 )
                 if surviving:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            f"tenant_metadata delete for {canonical_tid} did not "
-                            "confirm — tenant record retained, retry the delete"
-                        ),
+                    detail = (
+                        f"tenant_metadata delete for {canonical_tid} did not "
+                        "confirm — tenant record retained, retry the delete"
                     )
-
-        tenant_full_id = canonical_tid  # for the logger.info + return below
+                    raise failed(502, None, detail, TenantRecordRetained(detail))
 
         # Tenant create auto-creates the org; deleting the org's last tenant
         # removes it again so provision/teardown cycles don't accumulate orgs.
@@ -1300,13 +1453,24 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                     f"failed (organization {org_id} may remain): {e}"
                 )
 
+        # Every step has completed. A failure to record that leaves the delete
+        # pending, so the next create of the tenant runs its steps again.
+        try:
+            await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
+        except Exception as exc:
+            logger.error(
+                f"Tenant {canonical_tid} is deleted, but its delete could not be "
+                f"recorded complete ({type(exc).__name__}: {exc}); the next "
+                "create of it runs the delete's steps again"
+            )
+
         logger.info(
-            f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas"
+            f"Deleted tenant {canonical_tid} with {len(deleted_schemas)} schemas"
         )
 
         return {
             "status": "deleted",
-            "tenant_full_id": tenant_full_id,
+            "tenant_full_id": canonical_tid,
             "schemas_deleted": len(deleted_schemas),
             "deleted_schemas": deleted_schemas,
             "organization_deleted": organization_deleted,

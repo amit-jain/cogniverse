@@ -1659,7 +1659,8 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    - discovers the tenant's schemas from the registry plus any
      canonical-suffix-matched Vespa orphans, redeploys without them (immediate
      Vespa removal), deletes the drift migration's recorded refusals of them
-     (`delete_tenant_refusals`), and tombstones the `tenant_metadata` row.
+     (`delete_tenant_refusals`), and tombstones the `tenant_metadata` row;
+   - records the delete complete (`complete_tenant_delete`).
    ```bash
    curl -X DELETE http://localhost:8000/admin/tenants/acme:acme
    ```
@@ -1669,7 +1670,12 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    `TENANT_DELETE_ACK_TIMEOUT_S` (15 s), or a Redis that cannot carry the
    event, answers 503 with the tenant marked and nothing dropped: its writes
    are already refused everywhere, and the retry completes the delete. The
-   marker stays until `POST /admin/tenants` creates the tenant again.
+   marker stays until `POST /admin/tenants` creates the tenant again; a create
+   of a tenant whose delete is still pending finishes that delete first, and
+   answers 503 `tenant_delete_incomplete` while it cannot. Creates and deletes
+   of one tenant hold the tenant's lease in the config store and run one at a
+   time on every replica; a delete only ever removes the tenant it found when
+   it arrived.
 
    The lower-level primitive it calls internally is also usable directly for
    scripted/manual cleanup:

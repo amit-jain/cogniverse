@@ -36,8 +36,10 @@ __all__ = [
     "assert_tenant_exists",
     "TenantDeletedError",
     "mark_tenant_deleted",
+    "complete_tenant_delete",
     "clear_tenant_deleted",
     "tenant_is_deleted",
+    "tenant_delete_pending",
     "raise_if_tenant_deleted",
 ]
 
@@ -106,6 +108,11 @@ async def assert_tenant_exists(tenant_id: str) -> None:
 # tenant's state after the delete began, whatever it still holds in memory.
 TENANT_DELETIONS_SERVICE = "tenant_deletions"
 _DELETED = {"deleted": True}
+# A delete records here that it began, before it marks the tenant, and removes
+# the record once every step of it has completed: a marker without this record
+# is a completed delete.
+PENDING_TENANT_DELETIONS_SERVICE = "tenant_deletions_pending"
+_PENDING = {"pending": True}
 
 
 class TenantDeletedError(RuntimeError):
@@ -119,31 +126,48 @@ class TenantDeletedError(RuntimeError):
         self.tenant_id = tenant_id
 
 
-def _deletion_coordinates(tenant_id: str):
+def _deletion_coordinates(tenant_id: str, service: str = TENANT_DELETIONS_SERVICE):
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     return (
         SYSTEM_TENANT_ID,
         ConfigScope.SYSTEM,
-        TENANT_DELETIONS_SERVICE,
+        service,
         canonical_tenant_id(tenant_id),
     )
 
 
-def mark_tenant_deleted(store, tenant_id: str) -> None:
-    """Durably mark ``tenant_id`` deleted; marking it again is a no-op.
+def _pending_coordinates(tenant_id: str):
+    return _deletion_coordinates(tenant_id, PENDING_TENANT_DELETIONS_SERVICE)
 
-    A store failure raises, with nothing marked.
+
+def mark_tenant_deleted(store, tenant_id: str) -> None:
+    """Durably mark ``tenant_id`` deleted, its delete pending until
+    :func:`complete_tenant_delete`; marking it again is a no-op.
+
+    A store failure raises, with nothing marked: the pending record is
+    written first and means nothing without the marker.
     """
+    store.put_immutable_config(*_pending_coordinates(tenant_id), dict(_PENDING))
     store.put_immutable_config(*_deletion_coordinates(tenant_id), dict(_DELETED))
 
 
+def complete_tenant_delete(store, tenant_id: str) -> None:
+    """Record that every step of the tenant's delete has completed; the
+    marker stays until the tenant is created again. A store failure raises."""
+    store.delete_config(*_pending_coordinates(tenant_id))
+
+
 def clear_tenant_deleted(store, tenant_id: str) -> bool:
-    """Remove the deletion marker so the tenant can be created again.
+    """Remove the deletion marker, and its pending record with it, so the
+    tenant can be created again.
 
     Returns False when the tenant was not marked deleted.
     """
-    return store.delete_config(*_deletion_coordinates(tenant_id))
+    if not store.delete_config(*_deletion_coordinates(tenant_id)):
+        return False
+    store.delete_config(*_pending_coordinates(tenant_id))
+    return True
 
 
 def tenant_is_deleted(store, tenant_id: str) -> bool:
@@ -153,6 +177,15 @@ def tenant_is_deleted(store, tenant_id: str) -> bool:
     deleted".
     """
     return store.get_immutable_config(*_deletion_coordinates(tenant_id)) is not None
+
+
+def tenant_delete_pending(store, tenant_id: str) -> bool:
+    """Whether ``tenant_id`` is marked deleted and its delete has not
+    completed, read from the store now. A store outage raises."""
+    return (
+        tenant_is_deleted(store, tenant_id)
+        and store.get_immutable_config(*_pending_coordinates(tenant_id)) is not None
+    )
 
 
 def raise_if_tenant_deleted(store, tenant_id: str) -> None:

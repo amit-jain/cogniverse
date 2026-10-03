@@ -331,6 +331,11 @@ curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 
 **Warning**: This operation is **irreversible**. All tenant data is permanently deleted.
 
+A delete that answers 503 `tenant_delete_incomplete` leaves the tenant marked
+deleted, its writes refused everywhere. Retrying the delete finishes it, and so
+does creating the tenant again: `POST /admin/tenants` for it runs the delete's
+steps first and answers 503 `tenant_delete_incomplete` while one still fails.
+
 ### Error Responses
 
 All endpoints return FastAPI HTTPException responses:
