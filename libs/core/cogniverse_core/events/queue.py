@@ -12,11 +12,23 @@ Design Principles:
 - Cancellation signal for aborting long-running operations
 """
 
+import asyncio
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
 
-from cogniverse_core.events.types import TaskEvent
+from cogniverse_core.events.types import TaskEvent, TaskState, create_status_event
 
 
 class CancellationToken:
@@ -48,6 +60,19 @@ class CancellationToken:
         self._cancelled = True
         self._cancel_time = datetime.now(timezone.utc)
         self._reason = reason
+
+
+class TaskCancelled(Exception):
+    """The task a producer reports to was cancelled.
+
+    Raised at the producer's next phase boundary after the cancellation
+    reached it; the producer stops there.
+    """
+
+    def __init__(self, task_id: str, reason: Optional[str]) -> None:
+        super().__init__(f"task {task_id} was cancelled: {reason or 'no reason given'}")
+        self.task_id = task_id
+        self.reason = reason
 
 
 @runtime_checkable
@@ -238,10 +263,20 @@ class BaseEventQueue(ABC):
         self._created_at = datetime.now()
         self._cancellation_token = CancellationToken()
         self._closed = False
+        try:
+            self._loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     @property
     def task_id(self) -> str:
         return self._task_id
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The event loop the queue was created on; a producer running in a
+        worker thread publishes through it."""
+        return self._loop
 
     @property
     def tenant_id(self) -> str:
@@ -334,3 +369,58 @@ class BaseQueueManager(ABC):
     async def cleanup_expired(self) -> int:
         """Clean up expired queues"""
         ...
+
+
+# The task event queue the current request reports to. Agents serve many
+# requests from one instance, so the queue is bound per request (and inherited
+# by the tasks and threads it starts), never held on the agent.
+_CURRENT_EVENT_QUEUE: ContextVar[Optional[EventQueue]] = ContextVar(
+    "cogniverse_current_event_queue", default=None
+)
+
+
+def current_event_queue() -> Optional[EventQueue]:
+    """The event queue bound to the current request, if any."""
+    return _CURRENT_EVENT_QUEUE.get()
+
+
+@contextmanager
+def bind_event_queue(queue: EventQueue) -> Iterator[EventQueue]:
+    """Bind ``queue`` as the current request's event queue for the block."""
+    token = _CURRENT_EVENT_QUEUE.set(queue)
+    try:
+        yield queue
+    finally:
+        _CURRENT_EVENT_QUEUE.reset(token)
+
+
+def raise_if_cancelled(queue: Optional[EventQueue] = None) -> None:
+    """Raise ``TaskCancelled`` when the bound (or given) queue's task was
+    cancelled."""
+    queue = queue if queue is not None else current_event_queue()
+    if queue is not None and queue.cancellation_token.is_cancelled:
+        raise TaskCancelled(queue.task_id, queue.cancellation_token.reason)
+
+
+async def publish_phase(
+    phase: str, message: str, *, check_cancelled: bool = True
+) -> None:
+    """Publish a working-state status event for ``phase`` on the bound queue.
+
+    A no-op without a bound queue. With ``check_cancelled`` it raises
+    ``TaskCancelled`` afterwards when the task was cancelled.
+    """
+    queue = current_event_queue()
+    if queue is None:
+        return
+    await queue.enqueue(
+        create_status_event(
+            task_id=queue.task_id,
+            tenant_id=queue.tenant_id,
+            state=TaskState.WORKING,
+            phase=phase,
+            message=message,
+        )
+    )
+    if check_cancelled:
+        raise_if_cancelled(queue)

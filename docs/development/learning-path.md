@@ -367,9 +367,9 @@ Cross-cutting track for the memory/provenance/trust stack and the agents that co
 3. Files: `foundation/config/manager.py` → `foundation/config/utils.py` (`ConfigUtils._ensure_backend_config`) → `foundation/config/unified_config.py` (`BackendConfig`, `BackendProfileConfig`)
 
 ### Exercise 4: Trace Real-Time Event Flow
-1. Start: Create EventQueue for workflow
-2. Follow: Sufficiency-gate RLM promotion → Event emission → SSE subscription
-3. Files: core/events/ → agents/orchestrator_agent.py → runtime/routers/events.py
+1. Start: `AgentDispatcher.workflow_run` opens the workflow's task and binds its queue
+2. Follow: `report_phase` at each orchestrator phase → `TaskEventStore` append → SSE subscription on any worker → cancel → poller → `TaskCancelled`
+3. Files: core/events/ → runtime/agent_dispatcher.py → agents/orchestrator_agent.py → runtime/task_events.py → runtime/routers/events.py
 
 ### Exercise 5: Trace Fine-Tuning Pipeline
 1. Start: Phoenix annotations

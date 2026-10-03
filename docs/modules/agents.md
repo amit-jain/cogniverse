@@ -2839,6 +2839,15 @@ Through the runtime, `POST /agents/deep_research_agent/process` forwards
 `context.max_iterations` into `DeepResearchInput.max_iterations`; a request
 without it runs on the field default (3).
 
+**Progress and cancellation:** through the runtime a run is a workflow task
+(`context.workflow_id`, or a new id the result's `workflow_id` names), streamed
+from `/events/workflows/{workflow_id}`. The agent reports `decompose`, then
+`search` and `evaluate` each iteration, `synthesize` and `rlm_synthesis`
+(`AgentBase.report_phase`); its RLM synthesis reports on the same task. A
+cancellation stops the run at its next phase boundary, or after the RLM
+synthesis, and the dispatch answers `{"status": "cancelled", "workflow_id",
+"message"}`.
+
 **Multimodal generation (keyframe injection):**
 
 `_synthesize` flattens the nested evidence hits (`evidence[i]["results"]`) and,
@@ -4980,70 +4989,55 @@ def test_tenant_isolation(config_manager):
 
 ### Overview
 
-The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
+An `OrchestratorAgent` run reports its progress as a workflow task on the
+runtime's shared task event store, so any runtime process streams, lists and
+cancels it:
 
 - **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
-- **Automatic Event Emission**: The sufficiency-gate `InstrumentedRLM` emits Status/Progress events per REPL iteration
-- **Graceful Cancellation**: Workflows can be cancelled at phase boundaries
+- **Phase Events**: Each phase boundary is a `StatusEvent`; the sufficiency-gate `InstrumentedRLM` adds Status/Progress events per REPL iteration
+- **Graceful Cancellation**: A cancelled workflow stops at its next phase boundary
 - **Reconnection with Replay**: Clients can resume from a specific event offset
 
-### Enabling EventQueue
+### Binding
+
+One cached `OrchestratorAgent` serves every request, so its queue is bound per
+request, never held on the agent. The runtime's dispatcher binds the run's
+queue (`AgentDispatcher.workflow_run`); a caller outside the runtime binds its
+own:
 
 ```text
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_core.events import get_queue_manager
+from cogniverse_core.events import InMemoryEventQueue, bind_event_queue
 
-# Create event queue for the workflow
-manager = get_queue_manager()
-queue = await manager.create_queue("workflow_123", "tenant1")
-
-# Create orchestrator with the event queue
-orchestrator = OrchestratorAgent(
-    deps=OrchestratorDeps(),
-    registry=registry,
-    config_manager=config_manager,
-    event_queue=queue,
-)
+queue = InMemoryEventQueue(task_id="workflow_123", tenant_id="acme:acme")
+with bind_event_queue(queue):
+    output = await orchestrator.process(OrchestratorInput(query="find cats", tenant_id="acme:acme"))
+assert output.workflow_id == "workflow_123"
 ```
 
 ### Event Flow
 
-`self.event_queue` on `OrchestratorAgent` reaches two channels — there is no
-per-phase "planning"/"executing" push beyond these:
+With a bound queue the orchestrator reports (`AgentBase.report_phase`, which
+also streams each phase to a `process(stream=True)` caller):
 
-1. **Sufficiency-gate RLM promotion** (evidence too large for a single
-   `ChainOfThought` call) runs through `InstrumentedRLM(event_queue=self.event_queue, ...)`,
-   which emits its own per-iteration `StatusEvent`/`ProgressEvent` sequence.
-2. **`OrchestratorAgent._emit_event()`** is a generic hook that enqueues onto
-   `event_queue` when one is configured (no-op otherwise), for ad-hoc events —
-   the sufficiency-gate RLM is the actual workflow-level emitter today.
+1. `memory_context`, `planning`, `execution` — then `retrieval_iteration` at
+   each iteration of the retrieval loop and `executing` at each plan step —
+   `aggregating` and `complete` (`deep_synthesis` for a deep-synthesis run)
+2. The sufficiency-gate `InstrumentedRLM` (evidence too large for a single
+   `ChainOfThought` call) emits its per-iteration `StatusEvent`/`ProgressEvent`
+   sequence on the same task
 
-Per-agent progress narration (`self.emit_progress("planning", ...)`,
-`"execution"`, `"aggregating"`, `"complete"`) is a separate, dict-based
-streaming channel consumed via `process(stream=True)` — see
-[Streaming API](#streaming-api) — it does not go through this `EventQueue`.
-`ArtifactEvent` and `CompleteEvent` are defined in `cogniverse_core.events.types`
-but `OrchestratorAgent` does not emit them today; `CompleteEvent` is emitted
-by the ingestion pipeline, not the orchestrator.
-
-### Subscribing to Events
-
-```text
-# Subscribe to workflow progress
-async for event in queue.subscribe():
-    print(f"[{event.event_type}] {event.phase}: {event.message}")
-    if event.event_type == "complete":
-        break
-```
+The run takes the bound queue's task id as its `workflow_id`. The runtime ends
+the task with a `CompleteEvent`, a cancelled `StatusEvent`, or an `ErrorEvent`.
 
 ### Cancellation
 
-```text
-# Cancel a running workflow
-await manager.cancel_task("workflow_123", reason="User requested")
-
-# Orchestrator checks cancellation at phase boundaries and aborts gracefully
-```
+A cancellation of the task (`POST /events/workflows/{workflow_id}/cancel`, on any
+runtime process) reaches the process running it; the orchestrator raises
+`TaskCancelled` at its next phase boundary (every boundary but `executing` and
+`complete`, and before each group of plan steps), and the dispatch answers
+`{"status": "cancelled", "workflow_id", "message"}`. An inbound `stop` message
+(`POST /agents/{name}/message`) is separate: it ends the retrieval loop with the
+evidence gathered so far and the run completes.
 
 See [Events Module](./events.md) for complete EventQueue documentation.
 

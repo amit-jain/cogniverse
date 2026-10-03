@@ -29,6 +29,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import pytest
 import redis
@@ -48,7 +49,7 @@ from cogniverse_runtime.shared_state import (
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.docker_utils import generate_unique_ports
-from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.http_fault_proxy import HTTPFaultProxy, InterceptFaultProxy
 from tests.utils.vespa_test_helpers import (
     DegradeConfigQueries,
     deploy_tenant_schema,
@@ -640,6 +641,180 @@ class TestOneStateClientPerWorker:
         assert _records(log, CLI_LOGGER, "ERROR") == []
 
 
+def _sse_events(connection: http.client.HTTPConnection, path: str) -> list[dict]:
+    """Every ``data:`` event of the SSE stream at ``path``, read to its end."""
+    connection.request("GET", path)
+    response = connection.getresponse()
+    assert response.status == 200, response.read()
+    return [
+        json.loads(line[len(b"data: ") :])
+        for line in response
+        if line.startswith(b"data: ")
+    ]
+
+
+class TestWorkflowAcrossWorkers:
+    def test_a_workflow_is_streamed_and_cancelled_from_the_other_worker(
+        self, tmp_path, redis_url, vespa_instance, shared_vespa, shared_denseon
+    ):
+        """A deep-research run on one worker is held at its memory search (its
+        embedding request to DenseOn waits at a gate). The other worker streams
+        its events and records a cancellation; once the search returns, the
+        run stops at its next phase boundary on the first worker, and the
+        stream on the second ends with the cancellation."""
+        tenant_id, _ = _conversation_tenant(shared_vespa)
+        workflow_id = f"wf-cross-{uuid.uuid4().hex}"
+        denseon = urlsplit(shared_denseon)
+        with HTTPFaultProxy(
+            lambda path: f"{denseon.scheme}://{denseon.netloc}", hold_s=60
+        ) as proxy:
+            env = {
+                "INFERENCE_SERVICE_URLS": json.dumps(
+                    {"denseon": f"http://127.0.0.1:{proxy.port}{denseon.path}"}
+                ),
+                "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+            }
+            with _runtime(tmp_path, redis_url, extra_env=env) as (
+                process,
+                log,
+                port,
+            ):
+                workers = _serving(process, log)
+                runner, other = workers
+                proxy.arm(
+                    lambda method, path, body: (
+                        method == "POST" and path.endswith("/embeddings")
+                    )
+                )
+                answered: dict = {}
+
+                def run_workflow():
+                    connection = _connection_to(port, runner, workers)
+                    try:
+                        answered["process"] = _post(
+                            connection,
+                            "/agents/deep_research_agent/process",
+                            {
+                                "agent_name": "deep_research_agent",
+                                "query": "what changed in the demo",
+                                "context": {
+                                    "tenant_id": tenant_id,
+                                    "workflow_id": workflow_id,
+                                },
+                            },
+                        )
+                    finally:
+                        connection.close()
+
+                streamed: dict = {}
+
+                def stream_workflow():
+                    connection = _connection_to(port, other, workers)
+                    try:
+                        streamed["events"] = _sse_events(
+                            connection, f"/events/workflows/{workflow_id}"
+                        )
+                    finally:
+                        connection.close()
+
+                workflow = threading.Thread(target=run_workflow)
+                workflow.start()
+                assert proxy.entered.wait(120), (
+                    "the workflow never reached its memory search:\n"
+                    + log.read_text()[-20000:]
+                )
+                send = _Worker(port, other, workers)
+                running = send("GET", f"/events/queues/{workflow_id}")
+                reader = threading.Thread(target=stream_workflow)
+                reader.start()
+                cancelled = send(
+                    "POST",
+                    f"/events/workflows/{workflow_id}/cancel",
+                    {"reason": "operator stop"},
+                )
+
+                def runner_cancelled():
+                    return [
+                        record
+                        for record in _records(
+                            log, "cogniverse_runtime.task_events", "INFO"
+                        )
+                        if record.startswith(f"Task {workflow_id} was cancelled")
+                    ]
+
+                # The worker running the workflow picks the cancellation up
+                # while the workflow still waits at its memory search.
+                _until(
+                    runner_cancelled,
+                    process,
+                    log,
+                    30,
+                    "the cancellation reaching the running worker",
+                )
+                proxy.release.set()
+                workflow.join(120)
+                reader.join(120)
+                ended = send("GET", f"/events/queues/{workflow_id}")
+                active = send("GET", f"/events/queues?tenant_id={quote(tenant_id)}")
+
+        status, body = answered["process"]
+        message = f"Workflow {workflow_id} was cancelled: operator stop"
+        assert proxy.expired.is_set() is False
+        assert status == 200, body
+        assert {key: body[key] for key in ("status", "agent", "workflow_id")} == {
+            "status": "cancelled",
+            "agent": "deep_research_agent",
+            "workflow_id": workflow_id,
+        }
+        assert (body["message"], body["answer"]) == (message, message)
+        assert running == (
+            200,
+            {
+                "task_id": workflow_id,
+                "kind": "workflow",
+                "tenant_id": tenant_id,
+                "event_count": 1,
+                "subscriber_count": 0,
+                "is_closed": False,
+                "is_cancelled": False,
+                "created_at": running[1]["created_at"],
+            },
+        )
+        assert cancelled == (
+            200,
+            {
+                "task_id": workflow_id,
+                "cancelled": True,
+                "message": f"Workflow {workflow_id} cancellation requested",
+            },
+        )
+        events = streamed["events"]
+        assert {key: events[0][key] for key in ("type", "task_id", "offset")} == {
+            "type": "connected",
+            "task_id": workflow_id,
+            "offset": 0,
+        }
+        assert [
+            (event["event_type"], event["state"], event["phase"], event["message"])
+            for event in events[1:]
+        ] == [
+            ("status", "working", "started", "deep_research_agent started"),
+            ("status", "working", "decompose", "Decomposing research query..."),
+            ("status", "cancelled", "cancelled", "operator stop"),
+        ]
+        assert {event["task_id"] for event in events[1:]} == {workflow_id}
+        assert {key: ended[1][key] for key in ("is_closed", "is_cancelled")} == {
+            "is_closed": True,
+            "is_cancelled": True,
+        }
+        assert active == (200, [])
+        # The cancellation reached the worker running the workflow.
+        assert runner_cancelled() == [
+            f"Task {workflow_id} was cancelled: operator stop"
+        ]
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
 class TestSignals:
     def test_a_reload_signal_before_the_lifespan_handler_is_ignored(
         self, tmp_path, redis_url, vespa_instance
@@ -1158,6 +1333,83 @@ class TestSharedStateAcrossWorkers:
             },
         )
         assert first("GET", f"/ingestion/status/{job_id}") == status
+
+
+class TestIngestionEventsAcrossWorkers:
+    def test_an_ingestion_job_started_on_one_worker_streams_from_the_other(
+        self, two_workers
+    ):
+        port, workers, (first, second), tmp_path = two_workers
+        video_dir = tmp_path / "events-videos"
+        video_dir.mkdir()
+
+        started = first(
+            "POST",
+            "/ingestion/start",
+            {
+                "video_dir": str(video_dir),
+                "profile": "mp_unknown_profile",
+                "tenant_id": "__system__",
+            },
+        )
+        job_id = started[1]["job_id"]
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            info = second("GET", f"/events/queues/{job_id}")
+            if info[0] == 200 and info[1]["is_closed"]:
+                break
+            time.sleep(0.5)
+        connection = _connection_to(port, workers[1], workers)
+        try:
+            events = _sse_events(connection, f"/events/ingestion/{job_id}")
+        finally:
+            connection.close()
+
+        error = (
+            "Profile mp_unknown_profile missing 'strategies' configuration. "
+            "All profiles must use explicit strategy configuration."
+        )
+        assert info == (
+            200,
+            {
+                "task_id": job_id,
+                "kind": "ingestion",
+                "tenant_id": "__system__",
+                "event_count": 1,
+                "subscriber_count": 0,
+                "is_closed": True,
+                "is_cancelled": False,
+                "created_at": info[1]["created_at"],
+            },
+        )
+        assert events[0]["type"] == "connected"
+        assert [
+            {
+                key: event[key]
+                for key in (
+                    "event_type",
+                    "task_id",
+                    "tenant_id",
+                    "error_type",
+                    "error_message",
+                    "recoverable",
+                )
+            }
+            for event in events[1:]
+        ] == [
+            {
+                "event_type": "error",
+                "task_id": job_id,
+                "tenant_id": "__system__",
+                "error_type": "ValueError",
+                "error_message": error,
+                "recoverable": False,
+            }
+        ]
+        assert second("GET", f"/events/queues?tenant_id={quote('__system__')}") == (
+            200,
+            [],
+        )
 
 
 class TestSharedStateOutage:

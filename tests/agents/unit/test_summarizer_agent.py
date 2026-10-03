@@ -1308,6 +1308,8 @@ class TestA2AExecutorStreaming:
         # Streaming resolves the canary/variant overlay before iterating; provide
         # the async hook (no overlay here) so the path runs end to end.
         mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=None)
+        # A summarizer's run is not reported as a workflow task.
+        mock_dispatcher.is_workflow_agent.return_value = False
 
         executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
 

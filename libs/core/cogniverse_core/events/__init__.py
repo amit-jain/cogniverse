@@ -71,6 +71,11 @@ from cogniverse_core.events.queue import (
     CancellationToken,
     EventQueue,
     QueueManager,
+    TaskCancelled,
+    bind_event_queue,
+    current_event_queue,
+    publish_phase,
+    raise_if_cancelled,
 )
 from cogniverse_core.events.types import (
     ArtifactEvent,
@@ -114,6 +119,12 @@ __all__ = [
     "BaseEventQueue",
     "BaseQueueManager",
     "CancellationToken",
+    "TaskCancelled",
+    # Per-request binding
+    "bind_event_queue",
+    "current_event_queue",
+    "publish_phase",
+    "raise_if_cancelled",
     # In-memory backend
     "InMemoryEventQueue",
     "InMemoryQueueManager",

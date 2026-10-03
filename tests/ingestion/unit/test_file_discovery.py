@@ -67,6 +67,7 @@ class TestEmptyBatchDoesNotCrash:
         pipeline = object.__new__(VideoIngestionPipeline)
         pipeline.logger = logging.getLogger("test-pipeline")
         pipeline.tenant_id = "acme:acme"
+        pipeline.event_queue = None
 
         result = await pipeline.process_videos_concurrent([])
 
@@ -90,6 +91,7 @@ class TestRunIngestionRouteDiscovery:
 
         from cogniverse_runtime.ingestion_jobs import IngestionJobStore
         from cogniverse_runtime.routers import ingestion as ing
+        from cogniverse_runtime.task_events import INGESTION, TaskEventStore
 
         (tmp_path / "a.txt").write_text("hello")
 
@@ -115,14 +117,28 @@ class TestRunIngestionRouteDiscovery:
             key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}",
         )
         await store.create(job_id)
+        events_prefix = f"test:task-events:{uuid.uuid4().hex}"
+        task_events = TaskEventStore(
+            shared_state_redis,
+            key_prefix=events_prefix,
+            ingestion_stream_prefix=f"{events_prefix}:ingest:",
+        )
+        events = await task_events.open_task(INGESTION, job_id, "acme:acme")
         request = ing.IngestionRequest(
             video_dir=str(tmp_path),
             profile="document_text_semantic",
             tenant_id="acme:acme",
         )
         await ing.run_ingestion(
-            job_id, request, config_manager=None, schema_loader=None, job_store=store
+            job_id,
+            request,
+            config_manager=None,
+            schema_loader=None,
+            job_store=store,
+            events=events,
         )
+        ended = await task_events.read(job_id, kind=INGESTION)
 
         assert captured["files"] == [tmp_path]
         assert (await store.get(job_id))["status"] == "completed"
+        assert ended.closed is True

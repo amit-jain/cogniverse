@@ -28,7 +28,11 @@ from cogniverse_agents.graph.graph_schema import (
     VLM_MODALITY,
     Mention,
 )
-from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    assert_tenant_exists,
+    canonical_tenant_id,
+    require_tenant_id,
+)
 from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config, resolve_default_profile
@@ -36,6 +40,12 @@ from cogniverse_runtime.http_errors import failure_response
 from cogniverse_runtime.ingestion_jobs import (
     IngestionJobStore,
     IngestionJobStoreUnavailableError,
+)
+from cogniverse_runtime.task_events import (
+    INGESTION,
+    RedisTaskEventQueue,
+    TaskEventStore,
+    TaskEventsUnavailable,
 )
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -192,6 +202,27 @@ def get_job_store() -> IngestionJobStore:
     return _job_store
 
 
+# Job progress and cancellations every runtime process serves (injected from
+# main.py).
+_task_event_store: Optional[TaskEventStore] = None
+
+
+def set_task_event_store(store: Optional[TaskEventStore]) -> None:
+    """Inject the shared task event store ``/ingestion/start`` jobs report to."""
+    global _task_event_store
+    _task_event_store = store
+
+
+def get_task_event_store() -> TaskEventStore:
+    """The injected task event store; 503 until startup has wired it."""
+    if _task_event_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Task event store not configured; service initialising",
+        )
+    return _task_event_store
+
+
 def _should_extract_claims_for_modality(modality: str) -> bool:
     """Return True when a segment modality should reach claim extraction."""
     return modality in CLAIM_SEGMENT_MODALITIES
@@ -283,12 +314,31 @@ async def start_ingestion(
 
         job_id = str(uuid.uuid4())
 
-        # The job is recorded before it runs, so a status request on any
-        # process finds it from the moment this returns.
+        # The job's task and record exist before it runs, so a status, stream
+        # or cancel request on any process finds it from the moment this
+        # returns.
+        try:
+            events = await get_task_event_store().open_task(
+                INGESTION, job_id, canonical_tenant_id(tenant_id)
+            )
+        except TaskEventsUnavailable as exc:
+            raise failure_response(
+                503,
+                "task_events_unavailable",
+                "The task event store did not answer, so the job was not "
+                "started; retry.",
+                exc,
+                job_id=job_id,
+            ) from exc
         job_store = get_job_store()
         try:
             await job_store.create(job_id)
         except IngestionJobStoreUnavailableError as exc:
+            await _end_task(
+                events,
+                {"status": "failed", "videos_processed": 0, "errors": []},
+                type(exc).__name__,
+            )
             raise _job_store_unavailable(
                 exc,
                 job_id,
@@ -304,6 +354,7 @@ async def start_ingestion(
             config_manager=config_manager,
             schema_loader=schema_loader,
             job_store=job_store,
+            events=events,
         )
 
         return {
@@ -1479,17 +1530,57 @@ async def run_ingestion(
     config_manager: ConfigManager,
     schema_loader: SchemaLoader,
     job_store: IngestionJobStore,
+    events: RedisTaskEventQueue,
 ) -> None:
-    """Run ingestion process (background task)."""
+    """Run ingestion process (background task).
+
+    The job's events report its progress; a cancellation stops it before its
+    next video. Its task ends once the outcome is recorded.
+    """
+    failure_type: Optional[str] = None
     async with job_store.lease(job_id):
         try:
             outcome = await _ingest(
-                job_id, request, config_manager, schema_loader, job_store
+                job_id, request, config_manager, schema_loader, job_store, events
             )
         except Exception as e:
             logger.error(f"Ingestion job {job_id} failed: {e}")
             outcome = {"status": "failed", "errors": [str(e)]}
+            failure_type = type(e).__name__
         await _record_outcome(job_store, job_id, outcome)
+    await _end_task(events, outcome, failure_type)
+
+
+async def _end_task(
+    events: RedisTaskEventQueue, outcome: Dict[str, Any], failure_type: Optional[str]
+) -> None:
+    """End the job's task with its terminal status: ``cancelled``, ``failed``
+    or ``complete``, carrying the outcome. A store that cannot take it is
+    logged: the outcome is recorded, and the task reads as stopped reporting
+    once its lease lapses."""
+    status = outcome["status"]
+    fields: Dict[str, Any] = {"result": outcome}
+    if status == "cancelled":
+        state = "cancelled"
+        fields["reason"] = events.cancellation_token.reason
+    elif status == "failed":
+        state = "failed"
+        fields["error_type"] = failure_type or "IngestionFailed"
+        fields["error"] = "; ".join(outcome.get("errors") or []) or (
+            f"ingestion failed with {failure_type}"
+        )
+    else:
+        state = "complete"
+    try:
+        await events.finish_ingestion(state, **fields)
+    except Exception as exc:
+        logger.error(
+            "Ingestion job %s ended %s without its terminal event: %s (cause: %r)",
+            events.task_id,
+            state,
+            exc,
+            exc.__cause__,
+        )
 
 
 # Attempts at recording a finished job's outcome, the waits between them
@@ -1523,6 +1614,7 @@ async def _ingest(
     config_manager: ConfigManager,
     schema_loader: SchemaLoader,
     job_store: IngestionJobStore,
+    events: RedisTaskEventQueue,
 ) -> Dict[str, Any]:
     """Run the pipeline over the request's directory; return the outcome."""
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
@@ -1542,6 +1634,7 @@ async def _ingest(
         config_manager=config_manager,
         schema_loader=schema_loader,
         schema_name=request.profile,
+        event_queue=events,
     )
 
     # Discover ingestible files by the profile's content type instead of

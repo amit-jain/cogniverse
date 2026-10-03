@@ -892,8 +892,9 @@ result = submit_video_ingestion(
 `submit_video_ingestion` (`cogniverse_dashboard/ingestion.py`) returns
 `status="success"` for a job that reached `complete` having fed at least one
 document, and for an upload the runtime deduplicated onto an earlier run of the
-same bytes, profile and tenant (`deduplicated=True`). Every other outcome is
-`status="error"` carrying the reason.
+same bytes, profile and tenant (`deduplicated=True`). Every other outcome — a
+rejected upload, a `failed` or `cancelled` job, a poll that ran out of budget,
+an empty feed — is `status="error"` carrying the reason.
 
 **Available Profiles** (verified against `configs/schemas/*.json` embedding dims):
 1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)

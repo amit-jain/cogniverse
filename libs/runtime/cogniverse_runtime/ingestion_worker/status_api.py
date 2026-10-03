@@ -7,8 +7,9 @@ public URLs are:
 
 Events replay from the start of the job (so a late-connecting client
 sees the full history), then long-poll the Redis stream for new
-events. The connection closes when a terminal event (``complete`` or
-``failed``) is observed, or after ``timeout_seconds`` of inactivity.
+events. The connection closes when a terminal event (``complete``,
+``failed`` or ``cancelled``) is observed, or after ``timeout_seconds`` of
+inactivity.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ``/ingestion/{id}/events`` and ``/ingestion/{id}/status``.
 router = APIRouter()
 
-TERMINAL_STATES = {"complete", "failed"}
+TERMINAL_STATES = queue.TERMINAL_STATUS_STATES
 
 
 def _status_store_unavailable(exc: Exception, ingest_id: str):

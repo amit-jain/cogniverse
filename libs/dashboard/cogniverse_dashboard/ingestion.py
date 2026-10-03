@@ -23,7 +23,7 @@ from cogniverse_dashboard.utils.runtime_client import runtime_error_message
 DEFAULT_POLL_TIMEOUT_S = 900.0
 POLL_INTERVAL_S = 2.0
 
-TERMINAL_STATES = frozenset({"complete", "failed"})
+TERMINAL_STATES = frozenset({"complete", "failed", "cancelled"})
 
 
 class _StatusUnreadable(Exception):
@@ -136,6 +136,16 @@ def submit_video_ingestion(
             "message": (
                 f"Ingestion {ingest_id} failed: "
                 f"{latest.get('error', 'no error reported')}"
+            ),
+        }
+    if state == "cancelled":
+        return {
+            "status": "error",
+            "profile": profile,
+            "ingest_id": ingest_id,
+            "message": (
+                f"Ingestion {ingest_id} was cancelled: "
+                f"{latest.get('reason') or 'no reason given'}"
             ),
         }
     if state not in TERMINAL_STATES:

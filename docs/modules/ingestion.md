@@ -71,11 +71,11 @@ libs/runtime/cogniverse_runtime/ingestion_worker/
 
 | Module | Role |
 |---|---|
-| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which localizes the source, runs the cold builds (config manager + graph-factory install) off-loop via `asyncio.to_thread`, calls `VideoIngestionPipeline.process_video_async` from `ingestion/`, then runs the per-segment KG extraction + face pipeline + back-ref PATCH. At startup it also calls the shared `cogniverse_runtime.entrypoint_env.configure_runtime_library_defaults()` helper, which mirrors MinIO creds onto the AWS names used by fsspec and configures the S3 cache backend defaults before the first Redis read. After content feed and before graph extraction it persists `ingest:graph-pending:<message_id>`. A graph exception, partial write, cancellation, or positive finite `INGEST_GRAPH_DEADLINE_SECONDS` timeout raises the retryable, nonterminal `GraphStageIncomplete` condition and publishes `retrying` with that `error_type`, without clearing inflight state, releasing the tenant slot, or acknowledging the queue entry. When `pipeline_cache` enables `s3` without MinIO settings, startup fails fast with the same cache-backend error used by the pipeline. Terminal cleanup (mark done, clear inflight, clear graph marker, decrement active, ack) runs only after the graph completes or before durable content exists. |
+| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which localizes the source, runs the cold builds (config manager + graph-factory install) off-loop via `asyncio.to_thread`, calls `VideoIngestionPipeline.process_video_async` from `ingestion/`, then runs the per-segment KG extraction + face pipeline + back-ref PATCH. At startup it also calls the shared `cogniverse_runtime.entrypoint_env.configure_runtime_library_defaults()` helper, which mirrors MinIO creds onto the AWS names used by fsspec and configures the S3 cache backend defaults before the first Redis read. After content feed and before graph extraction it persists `ingest:graph-pending:<message_id>`. A graph exception, partial write, cancellation, or positive finite `INGEST_GRAPH_DEADLINE_SECONDS` timeout raises the retryable, nonterminal `GraphStageIncomplete` condition and publishes `retrying` with that `error_type`, without clearing inflight state, releasing the tenant slot, or acknowledging the queue entry. When `pipeline_cache` enables `s3` without MinIO settings, startup fails fast with the same cache-backend error used by the pipeline. Terminal cleanup (mark done, clear inflight, clear graph marker, decrement active, ack) runs only after the graph completes or before durable content exists. While a job runs the worker holds its ingestion task's lease on the shared task event store (`TaskEventStore.attach`, renewed by the worker's poller): a job cancelled while queued (`POST /events/ingestion/{job_id}/cancel`) settles without running — inflight cleared, graph marker cleared, tenant slot released, entry acked — and publishes `{"state": "cancelled", "reason"}`; a cancellation that arrives once the job runs lets its one video finish. |
 | `queue.py` | Redis Streams primitives (`submit`, `claim`, `ack`, `autoclaim`, `times_delivered`, active counters, status streams) + the `IngestJob` dataclass that flows through the stream. `publish_status_if_absent` seeds a status stream only when it does not exist, in one server-side step, so concurrent callers restoring a reclaimed stream write exactly one event between them and a surviving stream keeps its history. |
 | `idempotency.py` | Computes a per-file SHA at upload time; subsequent uploads of the same file return the existing `ingest_id` instead of re-running the pipeline. `force=true` query-param bypasses this. `get_done_ingest_id` distinguishes a completed run from an in-flight one for the reaper. |
-| `submit_api.py` | No router defined here — `enqueue_ingestion` is the queue-submission helper called by the `POST /ingestion/upload` handler in `routers/ingestion.py` after the route has resolved the canonical tenant's profile and uploaded the file to MinIO. Computes the idempotency SHA, marks the inflight key and increments the tenant's active counter BEFORE the job becomes claimable, enqueues an `IngestJob` on Redis; the router then returns `202 + ingest_id` (or blocks for the terminal event when `wait=true`). The XADD and the committed marker (`ingest:submitted:<sha>`) commit in one MULTI/EXEC, so a submit failure verifies that marker on a fresh read before compensating: a genuine failure clears the inflight marker and restores the counter, while a reply lost after the transaction committed (the job is durably enqueued) is treated as success — no clear, no decrement — so a resubmit cannot duplicate the job. An idempotency hit returns the existing run's `ingest_id` carrying that run's state (`complete` once the done marker is set, otherwise `in_flight`) and re-seeds its status stream when Redis has already reclaimed it — the done marker outlives the stream by days — so every `ingest_id` this helper returns is readable through `GET /ingestion/{id}/status`. |
-| `status_api.py` | `GET /ingestion/{ingest_id}/status` and `/events` — read terminal-state events from Redis Streams. |
+| `submit_api.py` | No router defined here — `enqueue_ingestion` is the queue-submission helper called by the `POST /ingestion/upload` handler in `routers/ingestion.py` after the route has resolved the canonical tenant's profile and uploaded the file to MinIO. Computes the idempotency SHA, marks the inflight key and increments the tenant's active counter BEFORE the job becomes claimable, enqueues an `IngestJob` on Redis; once the job is queued it is listed as an active ingestion task (`TaskEventStore.register_queued`; a worker that claims it first records it itself, so a refused registration is logged); the router then returns `202 + ingest_id` (or blocks for the terminal event when `wait=true`). The XADD and the committed marker (`ingest:submitted:<sha>`) commit in one MULTI/EXEC, so a submit failure verifies that marker on a fresh read before compensating: a genuine failure clears the inflight marker and restores the counter, while a reply lost after the transaction committed (the job is durably enqueued) is treated as success — no clear, no decrement — so a resubmit cannot duplicate the job. An idempotency hit returns the existing run's `ingest_id` carrying that run's state (`complete` once the done marker is set, otherwise `in_flight`) and re-seeds its status stream when Redis has already reclaimed it — the done marker outlives the stream by days — so every `ingest_id` this helper returns is readable through `GET /ingestion/{id}/status`. |
+| `status_api.py` | `GET /ingestion/{ingest_id}/status` and `/events` — read the job's status stream; `complete`, `failed` and `cancelled` are terminal (`queue.TERMINAL_STATUS_STATES`). The same stream serves `/events/ingestion/{job_id}`. |
 | `backpressure.py` | Per-tenant counter for in-flight jobs + automatic 429 when the cap is hit. |
 | `reaper.py` | A worker SIGKILLed between claim and ack strands its entry in a dead consumer's PEL — `claim()` reads only new entries, so the upload would be silently lost and XLEN would inflate until queue-depth backpressure 429s every submit. `run_reaper_once` XAUTOCLAIMs entries idle past `INGEST_REAPER_MIN_IDLE_MS` (default 5 min) and re-drives them idempotently: a sha already marked done is settled (ack + clear stale inflight and graph markers, no reprocess, no double decrement); a graph-pending entry is never dead-lettered, whatever its delivery count, and is re-driven once the hold since its last recorded failure (`ingest:graph-redrive:<message_id>`: re-drive count, time, cause) has elapsed — `INGEST_REAPER_MIN_IDLE_MS` doubled per re-drive so far, clamped at `GRAPH_REDRIVE_HOLD_CAP_MS` (6h), each re-drive logged with its number, the last cause and the next hold; anything else re-runs through `_process_job` like a fresh claim. After recovery the sweep drops consumer names idle past the same threshold that own no pending entry (`queue.prune_consumers`, one atomic script: snapshot, idle and pending checks, `XGROUP DELCONSUMER`) — every pod incarnation leaves one behind and Redis keeps them forever; the caller's own name is never dropped and a name that owns an entry is never touched. Live workers heartbeat their claim every `INGEST_HEARTBEAT_INTERVAL_SECONDS` (default 60s, XCLAIM-to-self with `justid` so the delivery counter is untouched), resetting the PEL idle clock — the min-idle threshold therefore only ever fires on entries whose owner stopped heartbeating (crashed), never on a live job whose pipeline outlives the threshold. An unmarked job redelivered more than `INGEST_REAPER_MAX_DELIVERIES` times (default 5) without completing — a pod-killing poison message — is abandoned to the `ingest:queue:dead` stream with a `failed` terminal event instead of crash-looping the ingestor; the settle (dead-stream entry, inflight clear, slot decrement) runs as one atomic exactly-once server-side step gated on an `ingest:dead:<message_id>` marker, so a crash-redelivery re-publishes the terminal and acks but can never double-free a tenant slot or duplicate the dead entry. `worker.run()` starts `reaper_loop` (interval `INGEST_REAPER_INTERVAL_SECONDS`, default 60s, first sweep after one full interval) unless `INGEST_REAPER_ENABLED=false`. |
 
@@ -746,7 +746,7 @@ def __init__(
 - `schema_loader`: SchemaLoader instance (optional, for backend operations)
 - `schema_name`: Profile name (e.g., "video_colpali_smol500_mv_frame")
 - `debug_mode`: Enable detailed logging
-- `event_queue`: Optional EventQueue for real-time progress notifications
+- `event_queue`: Optional EventQueue for real-time progress notifications; a batch's `job_id` is its task id
 - `max_concurrent`: Maximum concurrent video processing tasks (default: 3)
 
 **Key Methods**:
@@ -2308,63 +2308,51 @@ def test_colpali_embedding_generation():
 
 ### Overview
 
-The `VideoIngestionPipeline` integrates with the A2A EventQueue for real-time progress notifications. This enables:
+The `VideoIngestionPipeline` reports progress on the `EventQueue` it is built
+with. A job started with `POST /ingestion/start` reports on its ingestion task in
+the shared task event store, so any runtime process streams, lists and cancels
+it:
 
-- **Live Progress**: Monitor processing status as videos are ingested
+- **Live Progress**: `GET /events/ingestion/{job_id}` (task events) or
+  `GET /ingestion/{job_id}/events` (status entries), from any process
 - **Multiple Subscribers**: Dashboard and CLI can watch the same job
-- **Graceful Cancellation**: Stop long-running ingestion jobs cleanly
-- **Job Tracking**: Each ingestion run returns a `job_id` for subscription
-
-### Enabling EventQueue
-
-```python
-from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
-from cogniverse_core.events import get_queue_manager
-
-# Create event queue
-manager = get_queue_manager()
-queue = await manager.create_queue("ingestion_job_123", "tenant1")
-
-# Create pipeline with event queue
-pipeline = VideoIngestionPipeline(
-    tenant_id="tenant1",
-    config=PipelineConfig(video_dir=video_path, output_dir=output_path),
-    event_queue=queue,  # Real-time notifications
-)
-
-# Process videos - returns job_id
-result = await pipeline.process_videos_concurrent(video_files)
-job_id = result["job_id"]  # Use for subscription
-```
+- **Graceful Cancellation**: `POST /events/ingestion/{job_id}/cancel` stops the
+  pipeline before its next video
+- **Job Tracking**: the pipeline's `job_id` is its queue's task id
 
 ### Event Flow
 
-When ingestion runs with EventQueue configured:
+With a queue, `process_videos_concurrent` emits:
 
 1. **Job starts** → StatusEvent("working", phase="starting")
-2. **Each video** → ProgressEvent(current=N, total=total_videos)
-3. **Processing steps** → StatusEvent per step (keyframes, transcription, embeddings)
-4. **Job completes** → CompleteEvent with results summary
+2. **Each video** → ProgressEvent(current=N, total=total_videos), then a
+   StatusEvent at the video's start and a ProgressEvent at its end
+3. **A video fails** → ErrorEvent naming it
+4. **Job ends** → CompleteEvent with the results summary, or a
+   StatusEvent("cancelled") when it was cancelled
 
-### Subscribing to Progress
+On a job's ingestion task each event is stored as a status entry
+`{"state": "running", "ingest_id", "event": ...}`; the end-of-job event is held
+until `/ingestion/start` has recorded the job's outcome and is stored with the
+terminal status (`complete`, `failed` or `cancelled`).
 
-```python
-# In another process (dashboard/CLI)
-async for event in queue.subscribe():
-    if event.event_type == "progress":
-        print(f"Processing video {event.current}/{event.total}")
-    elif event.event_type == "complete":
-        print(f"Ingestion complete: {event.summary}")
-        break
-```
-
-### Cancellation
+### Pipeline Outside the Runtime
 
 ```python
-# Cancel running ingestion
-await manager.cancel_task("ingestion_job_123", reason="User cancelled")
+from cogniverse_core.events import InMemoryEventQueue
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 
-# Pipeline checks cancellation between videos and aborts gracefully
+queue = InMemoryEventQueue(task_id="ingestion_job_123", tenant_id="acme:acme")
+pipeline = VideoIngestionPipeline(
+    tenant_id="acme:acme",
+    config=PipelineConfig(video_dir=video_path, output_dir=output_path),
+    event_queue=queue,
+)
+result = await pipeline.process_videos_concurrent(video_files)
+assert result["job_id"] == "ingestion_job_123"
+
+# The pipeline checks the queue's cancellation token between videos
+queue.cancel("User cancelled")
 ```
 
 See [Events Module](./events.md) for complete EventQueue documentation.
@@ -2375,7 +2363,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 
 - **Backends Module** (`backends.md`): Vespa search integration, document feeding
 - **Common Module** (`common.md`): Model loading, configuration, output management
-- **Events Module** (`events.md`): A2A EventQueue for real-time notifications
+- **Events Module** (`events.md`): Task events, cancellation and the active-task listing
 - **System Integration** (`tests/ingestion/integration/test_end_to_end_processing.py`, `tests/e2e/test_ingestion_upload_e2e.py`, `tests/runtime/integration/test_ingestion_worker_e2e.py`): End-to-end ingestion → search testing
 
 ---
@@ -2391,7 +2379,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 - ✅ Set appropriate `max_concurrent` based on resources
 - ✅ Implement error handling and retry logic
 - ✅ Save summaries for history
-- ✅ Enable EventQueue for live progress monitoring
+- ✅ Watch long jobs on `/events/ingestion/{job_id}`
 
 ---
 

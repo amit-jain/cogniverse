@@ -25,15 +25,73 @@ from a2a.utils import get_message_text, new_agent_text_message
 from cogniverse_agents._coercion import coerce_bool, coerce_int
 from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.events import TaskCancelled
 from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
 from cogniverse_foundation.telemetry.context import request_trace_context
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher, NothingToSearch
+from cogniverse_runtime.agent_dispatcher import (
+    AgentDispatcher,
+    NothingToSearch,
+    cancelled_workflow_envelope,
+)
 from cogniverse_runtime.harness_turn import _raise_if_error
 
 logger = logging.getLogger(__name__)
 
 
 async def stream_agent_events(
+    dispatcher: AgentDispatcher,
+    agent_name: str,
+    query: str,
+    tenant_id: str,
+    context: Optional[Dict[str, Any]] = None,
+    request_seed: str = "",
+):
+    """Stream one agent's events; a workflow agent's run is reported as a
+    workflow task (``AgentDispatcher.workflow_run``).
+
+    A workflow's final or error event is delivered after its task ended, and
+    a workflow that stopped at a cancellation ends with a final event carrying
+    the cancelled-workflow result.
+    """
+    events = _agent_events(
+        dispatcher, agent_name, query, tenant_id, context, request_seed
+    )
+    if not dispatcher.is_workflow_agent(agent_name):
+        async with contextlib.aclosing(events):
+            async for event in events:
+                yield event
+        return
+    terminal: Optional[Dict[str, Any]] = None
+    try:
+        async with dispatcher.workflow_run(agent_name, context, tenant_id) as run:
+            async with contextlib.aclosing(events):
+                async for event in events:
+                    event_type = event.get("type")
+                    if (
+                        run is not None
+                        and event_type == "error"
+                        and event.get("error_type") == TaskCancelled.__name__
+                    ):
+                        raise TaskCancelled(
+                            run.workflow_id, run.queue.cancellation_token.reason
+                        )
+                    if event_type in ("final", "error"):
+                        if run is not None and event_type == "error":
+                            run.error = str(event.get("error_type") or "error")
+                        terminal = event
+                        break
+                    yield event
+    except TaskCancelled as cancelled:
+        yield {
+            "type": "final",
+            "data": cancelled_workflow_envelope(agent_name, cancelled),
+        }
+        return
+    if terminal is not None:
+        yield terminal
+
+
+async def _agent_events(
     dispatcher: AgentDispatcher,
     agent_name: str,
     query: str,

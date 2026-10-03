@@ -15,6 +15,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from redis.asyncio import Redis
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_runtime.ingestion_worker.worker import _worker_dspy_lm
@@ -238,7 +239,9 @@ class TestRunEntrypointWiring:
         from cogniverse_runtime.ingestion_worker import worker
 
         recorded = {"closed": 0}
-        fake_redis = object()
+        # A real client that never connects: run() builds the worker's task
+        # event store on it, and nothing here issues a command.
+        fake_redis = Redis.from_url("redis://testhost:6379/3")
 
         async def _fake_get_redis(url):
             recorded["get_redis_url"] = url
@@ -264,7 +267,11 @@ class TestRunEntrypointWiring:
             redis, config, stop, processor=None, telemetry_otlp_endpoint=None
         ):
             claim_call.update(
-                redis=redis, config=config, stop=stop, processor=processor
+                redis=redis,
+                config=config,
+                stop=stop,
+                processor=processor,
+                task_events=worker._task_events,
             )
 
         worker, recorded, fake_redis = self._wire(monkeypatch, _claim_loop)
@@ -293,6 +300,10 @@ class TestRunEntrypointWiring:
         assert recorded["get_redis_url"] == "redis://testhost:6379/3"
         assert claim_call["redis"] is fake_redis
         assert claim_call["processor"] is sentinel_processor
+        # Jobs claimed while it ran held their task leases on a store built on
+        # the worker's own client; the store is closed with the worker.
+        assert claim_call["task_events"]._redis is fake_redis
+        assert worker._task_events is None
 
         stop_event = claim_call["stop"]
         assert isinstance(stop_event, asyncio.Event)

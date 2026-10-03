@@ -427,8 +427,14 @@ async def get_active(redis: aioredis.Redis, tenant_id: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+STATUS_STREAM_KEY_PREFIX = "ingest:status:"
+
+# Status states after which a job's stream receives no further events.
+TERMINAL_STATUS_STATES = frozenset({"complete", "failed", "cancelled"})
+
+
 def _status_stream_key(ingest_id: str) -> str:
-    return f"ingest:status:{ingest_id}"
+    return f"{STATUS_STREAM_KEY_PREFIX}{ingest_id}"
 
 
 async def publish_status(redis: aioredis.Redis, ingest_id: str, event: dict) -> str:

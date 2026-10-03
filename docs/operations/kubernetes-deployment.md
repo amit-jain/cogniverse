@@ -1056,8 +1056,8 @@ context's turn clock, its pending saves and the shared lost-turn record in one
 Lua script, and Redis Cluster refuses a script whose keys span hash slots.
 
 Each runtime worker reaches its shared and session state (agent registrations,
-annotations, `/ingestion/start` jobs, conversation order and `/v1` continuations)
-through one client and connection pool of at most 128
+annotations, `/ingestion/start` jobs, conversation order, `/v1` continuations,
+task events) through one client and connection pool of at most 128
 connections, named `cogniverse-runtime-state:<pod>:<pid>:<suffix>`; the A2A task
 store and the cluster-events channel hold their own connections. To count a
 pod's state connections:

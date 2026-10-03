@@ -175,7 +175,7 @@ cogniverse index ./my-repo --type code --tenant acme --profile code_lateon_mv
 cogniverse index ./docs --type docs --tenant acme --gliner-url http://localhost:29007
 ```
 
-`--type code` and `--type docs` are implemented (`docs` maps each extension to its ingestion profile and runs markdown/text graph extraction); `video` is accepted but prints a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled to a terminal state, then a knowledge-graph extraction pass runs locally (tree-sitter for code, GLiNER for text) and POSTs the resulting nodes/edges to `/graph/upsert`. Per-file graph-extraction failures are counted and listed in the run summary as graph errors rather than silently producing zero nodes.
+`--type code` and `--type docs` are implemented (`docs` maps each extension to its ingestion profile and runs markdown/text graph extraction); `video` is accepted but prints a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled (`libs/cli/cogniverse_cli/index.py`) to a terminal state — `complete`, `failed` or `cancelled` — then a knowledge-graph extraction pass runs locally (tree-sitter for code, GLiNER for text) and POSTs the resulting nodes/edges to `/graph/upsert`. Per-file graph-extraction failures are counted and listed in the run summary as graph errors rather than silently producing zero nodes.
 
 An ingestion job is counted as indexed only when its terminal result reports a
 positive integer `documents_fed`. A terminal `complete` result with zero,

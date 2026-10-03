@@ -36,12 +36,20 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 from cogniverse_runtime.startup_wait import DependencyWaitAborted
+from cogniverse_runtime.task_events import (
+    INGESTION,
+    RedisTaskEventQueue,
+    TaskAlreadyExists,
+    TaskEventStore,
+    TaskEventsUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -699,7 +707,92 @@ async def _claim_heartbeat(
             )
 
 
+# The task event store this worker process holds its jobs' task leases on
+# and takes their cancellations from; ``run`` installs it.
+_task_events: Optional[TaskEventStore] = None
+
+
+async def _attach_task(job: IngestJob) -> Optional[RedisTaskEventQueue]:
+    """Lease the job's ingestion task to this process while it runs.
+
+    The queue, not the task, owns the job: a task the store cannot record is
+    logged and the job runs without a lease, listed again once the store
+    answers.
+    """
+    if _task_events is None:
+        return None
+    try:
+        return await _task_events.attach(
+            INGESTION, job.ingest_id, canonical_tenant_id(job.tenant_id)
+        )
+    except (TaskEventsUnavailable, TaskAlreadyExists) as exc:
+        logger.warning(
+            "Ingest job %s runs without its task lease: %s (cause: %r)",
+            job.ingest_id,
+            exc,
+            exc.__cause__,
+        )
+        return None
+
+
+async def _settle_cancelled(
+    redis: aioredis.Redis, job: IngestJob, config: WorkerConfig, reason: str | None
+) -> None:
+    """End a job cancelled before it started: release what its submit held,
+    then publish its ``cancelled`` terminal event."""
+    cleanup_errors: list = []
+    for name, step in (
+        ("clear_inflight", idempotency.clear_inflight(redis, job.sha)),
+        ("clear_graph_pending", _clear_graph_pending(redis, job.message_id)),
+        ("decrement_active", queue.decrement_active(redis, job.tenant_id)),
+        ("ack", queue.ack(redis, config.consumer_group, job.message_id)),
+    ):
+        try:
+            await step
+        except Exception as exc:
+            logger.exception(
+                "Cleanup step %s failed for cancelled %s", name, job.ingest_id
+            )
+            cleanup_errors.append(f"{name}: {exc}")
+    event = {"state": "cancelled", "ingest_id": job.ingest_id, "reason": reason}
+    if cleanup_errors:
+        event["cleanup_error"] = "; ".join(cleanup_errors)
+    await queue.publish_status(redis, job.ingest_id, event)
+    logger.info("Ingest job %s cancelled before it started", job.ingest_id)
+
+
 async def _process_job(
+    redis: aioredis.Redis,
+    job: IngestJob,
+    config: WorkerConfig,
+    *,
+    processor,
+    telemetry_otlp_endpoint: str | None = None,
+) -> None:
+    """Run one job, its ingestion task leased to this process while it runs.
+
+    A job whose task was cancelled before it started settles as
+    ``cancelled`` without running; a cancellation that arrives once it runs
+    lets its one video finish.
+    """
+    lease = await _attach_task(job)
+    try:
+        if lease is not None and lease.cancellation_token.is_cancelled:
+            await _settle_cancelled(redis, job, config, lease.cancellation_token.reason)
+            return
+        await _run_job(
+            redis,
+            job,
+            config,
+            processor=processor,
+            telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+        )
+    finally:
+        if lease is not None:
+            lease.release()
+
+
+async def _run_job(
     redis: aioredis.Redis,
     job: IngestJob,
     config: WorkerConfig,
@@ -1001,6 +1094,9 @@ async def run(
         return
 
     redis = await get_redis(config.redis_url)
+    global _task_events
+    _task_events = TaskEventStore(redis)
+    _task_events.start()
     if processor is None:
         processor = partial(
             _default_processor,
@@ -1037,6 +1133,8 @@ async def run(
             reaper_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reaper_task
+        await _task_events.close()
+        _task_events = None
         await close_redis()
 
 

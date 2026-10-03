@@ -1,41 +1,60 @@
 # A2A EventQueue System
 
-Real-time event notifications for orchestrator workflows and ingestion pipelines.
+Real-time progress notifications for workflows (orchestrator and deep-research
+runs) and ingestion jobs, served by every runtime process.
 
 ## Overview
 
-The EventQueue system provides A2A-compatible real-time progress notifications. It enables:
+A workflow run or an ingestion job is a **task**. Its producer reports progress
+as task events on an `EventQueue`; any runtime process can:
 
-- **Multiple subscribers**: Dashboard + CLI can watch the same workflow simultaneously
-- **Replay on reconnect**: Clients can resume from a specific offset after disconnection
-- **Graceful cancellation**: Tasks abort at phase/video boundaries
-- **Multi-tenant isolation**: Events are scoped by tenant_id
+- **Stream** a task's events (SSE), with replay from an offset on reconnect
+- **Cancel** a task: the cancellation reaches the process running it, which stops at its next phase boundary (workflows) or before its next video (ingestion)
+- **List** a tenant's active tasks, with their event and subscriber counts
+
+Tasks, events, cancellations and the active-task index live in the runtime's
+Redis (`cogniverse_runtime.task_events.TaskEventStore`), so a request reaches a
+task whichever worker process or replica serves it. A Redis error raises
+`TaskEventsUnavailable`, answered with a typed 503; nothing falls back to
+process memory.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph QueueManager["<span style='color:#000'>QueueManager<br/>(Manages lifecycle of EventQueues)</span>"]
-        Queue1["<span style='color:#000'>EventQueue<br/>workflow_123</span>"]
-        Queue2["<span style='color:#000'>EventQueue<br/>workflow_456</span>"]
-        Queue3["<span style='color:#000'>EventQueue<br/>ingestion_789</span>"]
-
-        Sub1["<span style='color:#000'>subscribe()<br/>(Dashboard)</span>"]
-        Sub2["<span style='color:#000'>subscribe()<br/>(CLI)</span>"]
-        Sub3["<span style='color:#000'>subscribe()<br/>(Monitor)</span>"]
-
-        Queue1 -- "AsyncIterator" --> Sub1
-        Queue2 -- "AsyncIterator" --> Sub2
-        Queue3 -- "AsyncIterator" --> Sub3
+    subgraph Runner["<span style='color:#000'>Process running the task</span>"]
+        Producer["<span style='color:#000'>Producer<br/>(orchestrator, deep research,<br/>ingestion pipeline)</span>"]
+        Queue["<span style='color:#000'>RedisTaskEventQueue<br/>(bound to the request)</span>"]
+        Poller["<span style='color:#000'>Poller<br/>(lease + cancellation)</span>"]
+    end
+    subgraph Redis["<span style='color:#000'>Redis</span>"]
+        Task["<span style='color:#000'>task hash<br/>(kind, tenant, state,<br/>cancellation, lease)</span>"]
+        Stream["<span style='color:#000'>event stream</span>"]
+        Active["<span style='color:#000'>tenant active set</span>"]
+    end
+    subgraph Any["<span style='color:#000'>Any runtime process</span>"]
+        Routes["<span style='color:#000'>/events routes<br/>(stream, cancel, list)</span>"]
     end
 
-    style QueueManager fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Queue1 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Queue2 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Queue3 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Sub1 fill:#90caf9,stroke:#1565c0,color:#000
-    style Sub2 fill:#90caf9,stroke:#1565c0,color:#000
-    style Sub3 fill:#90caf9,stroke:#1565c0,color:#000
+    Producer -- "enqueue / phase report" --> Queue
+    Queue -- "append script" --> Stream
+    Queue -- "append script" --> Task
+    Poller -- "renew lease, read cancellation" --> Task
+    Poller -- "cancel token" --> Queue
+    Routes -- "read / cancel / list scripts" --> Task
+    Routes --> Stream
+    Routes --> Active
+
+    style Runner fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Redis fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Any fill:#90caf9,stroke:#1565c0,color:#000
+    style Producer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Queue fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Poller fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Task fill:#ffe0b2,stroke:#ef6c00,color:#000
+    style Stream fill:#ffe0b2,stroke:#ef6c00,color:#000
+    style Active fill:#ffe0b2,stroke:#ef6c00,color:#000
+    style Routes fill:#bbdefb,stroke:#1565c0,color:#000
 ```
 
 ## Event Types
@@ -45,10 +64,10 @@ Task state transitions (A2A-compatible):
 ```python
 StatusEvent(
     task_id="workflow_123",
-    tenant_id="tenant1",
+    tenant_id="acme:acme",
     state=TaskState.WORKING,  # pending, working, input-required, completed, failed, cancelled
     phase="planning",
-    message="Planning workflow execution",
+    message="Creating execution plan...",
 )
 ```
 
@@ -57,7 +76,7 @@ Incremental progress updates:
 ```python
 ProgressEvent(
     task_id="ingestion_456",
-    tenant_id="tenant1",
+    tenant_id="acme:acme",
     current=5,
     total=10,
     percentage=50.0,
@@ -71,7 +90,7 @@ Intermediate results (A2A TaskArtifactUpdateEvent):
 ```python
 ArtifactEvent(
     task_id="workflow_123",
-    tenant_id="tenant1",
+    tenant_id="acme:acme",
     artifact_type="search_result",
     data={"results": [...]},
     is_partial=True,
@@ -83,7 +102,7 @@ Error notifications:
 ```python
 ErrorEvent(
     task_id="workflow_123",
-    tenant_id="tenant1",
+    tenant_id="acme:acme",
     error_type="ValidationError",
     error_message="Invalid input",
     recoverable=True,
@@ -95,310 +114,217 @@ Task completion:
 ```python
 CompleteEvent(
     task_id="workflow_123",
-    tenant_id="tenant1",
-    result={"answer": "..."},
-    summary="Workflow completed successfully",
+    tenant_id="acme:acme",
+    result={"status": "success"},
+    summary="Orchestrated 'find cats' via A2A pipeline",
     execution_time_seconds=10.5,
 )
 ```
 
-## Usage
+## Task Event Store
 
-### Basic Usage
+`TaskEventStore` (`libs/runtime/cogniverse_runtime/task_events.py`) runs on the
+process's shared-state Redis client (`shared_state.connect_shared_state_redis`).
+Every change is one Lua script that reads Redis' own clock.
 
-```python
-from cogniverse_core.events import (
-    get_queue_manager,
-    create_status_event,
-    create_progress_event,
-    TaskState,
-)
+| Key | Holds |
+|-----|-------|
+| `cogniverse:task-events:task:<id>` | Hash: `kind` (`workflow`/`ingestion`), `tenant_id`, `created_ms`, `closed`, `outcome`, `cancelled`, `cancel_reason`, `lease_until` |
+| `cogniverse:task-events:task:<id>:events` | A workflow's events (Redis stream, newest `WORKFLOW_EVENTS_MAXLEN` = 1000) |
+| `ingest:status:<id>` | An ingestion job's events: the status stream queue-driven ingestion writes (`STATUS_STREAM_MAXLEN`) |
+| `cogniverse:task-events:task:<id>:subscribers` | Stream readers, each leased `SUBSCRIBER_LEASE_S` (30s) past its last read |
+| `cogniverse:task-events:active:<tenant>` | The tenant's tasks that have not ended |
 
-# Get the global queue manager
-manager = get_queue_manager()
+| Store method | What it does |
+|--------------|--------------|
+| `open_task(kind, task_id, tenant_id)` | Creates a task this process runs and returns its `RedisTaskEventQueue`; `TaskAlreadyExists` when the id exists (ids are never reused) |
+| `register_queued(task_id, tenant_id)` | Records a submitted queue-driven ingestion job, leased `QUEUED_INGESTION_LEASE_S` (6h) while it waits for a worker |
+| `attach(kind, task_id, tenant_id)` | Takes over the lease of a registered task this process now runs (recording it if absent); `None` once it ended |
+| `cancel(kind, task_id, reason)` | Records a cancellation: returns `cancelled`, `missing`, `finished` or `stopped` |
+| `read(task_id, kind=, after_offset=, subscriber=)` | The task's state and the events after an offset, registering a subscriber |
+| `list_active(tenant_id)` | The tenant's running or queued tasks; prunes ended and silent ones |
+| `start()` / `close()` | Runs / stops the process's poller |
 
-# Atomically reuse or create one queue for this tenant and workflow
-queue = await manager.get_or_create_queue(
-    task_id="workflow_123",
-    tenant_id="tenant1",
-    ttl_minutes=30,
-)
+**Offsets.** An event's offset is its position among every event the task ever
+appended (Redis' `entries-added` count), so a reader resumes where it left off.
+A reader behind the retained window resumes at the oldest retained event.
 
-# Emit events
-await queue.enqueue(create_status_event(
-    task_id="workflow_123",
-    tenant_id="tenant1",
-    state=TaskState.WORKING,
-    phase="planning",
-))
+**Leases and cancellation.** The process running a task holds a lease of
+`PRODUCER_LEASE_S` (30s). Its poller runs every `POLL_INTERVAL_S` (0.5s): it
+renews the leases of its tasks at half their length and sets the cancellation
+token of each task a cancellation was recorded for. Every append also returns
+the task's cancellation, so a producer sees one at its next event at the latest.
+A task whose lease lapses before it ends **stopped reporting**: its stream ends
+with an error event, the listing drops it, and a cancel answers `stopped`.
 
-# Subscribe to events (in another coroutine)
-async for event in queue.subscribe():
-    print(f"Received: {event.event_type}")
-    if event.event_type == "complete":
-        break
-```
+**Ending.** A workflow ends when its producer appends the terminal event with
+`finish(event)`. An ingestion job ends with its terminal status
+(`finish_ingestion(state, ...)`, or the queue worker's `complete` / `failed` /
+`cancelled` status). An ended task keeps its events for its retention
+(`WORKFLOW_EVENT_RETENTION_S`, 30 minutes, for a workflow; the status stream's
+`STATUS_STREAM_TTL_SECONDS` for an ingestion job) after its last event.
 
-`get_or_create_queue()` serializes concurrent first access. A task ID cannot be
-reused by another tenant, and `enqueue()` rejects events whose task or tenant
-does not match the queue. These checks occur before the event offset advances.
+## Producers
 
-### With Orchestrator
+### Workflows
 
-```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_core.events import get_queue_manager
-from cogniverse_foundation.config.utils import create_default_config_manager
-
-# Create event queue for this workflow
-manager = get_queue_manager()
-workflow_id = "workflow_123"
-queue = await manager.create_queue(
-    task_id=workflow_id,
-    tenant_id="tenant1",
-)
-
-# Create orchestrator with event queue (config_manager and registry are REQUIRED)
-config_manager = create_default_config_manager()
-registry = AgentRegistry(tenant_id="tenant1", config_manager=config_manager)
-deps = OrchestratorDeps()
-orchestrator = OrchestratorAgent(
-    deps=deps,
-    registry=registry,
-    config_manager=config_manager,
-    event_queue=queue,  # forwarded to the sufficiency-gate RLM + the generic _emit_event hook
-)
-
-# Process query via A2A task protocol. The sufficiency-gate InstrumentedRLM
-# emits Status/ProgressEvent once evidence crosses the RLM promotion threshold.
-# See "How It Works" below for the full picture.
-input_data = OrchestratorInput(query="Find videos about cats", tenant_id="tenant1")
-result = await orchestrator._process_impl(input_data)
-```
-
-### With Ingestion Pipeline
-
-```python
-from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-from cogniverse_core.events import get_queue_manager
-from cogniverse_foundation.config.utils import create_default_config_manager
-
-# Create event queue for ingestion job
-manager = get_queue_manager()
-job_id = "ingestion_456"
-queue = await manager.create_queue(
-    task_id=job_id,
-    tenant_id="tenant1",
-)
-
-# Create pipeline with event queue
-config_manager = create_default_config_manager()
-pipeline = VideoIngestionPipeline(
-    tenant_id="tenant1",
-    config_manager=config_manager,
-    event_queue=queue,  # Events emitted automatically during processing
-)
-
-# Process videos - pipeline.job_id is set during execution
-result = await pipeline.process_videos_concurrent(video_files)
-# Subscribe to events using the job_id from queue or pipeline.job_id
-```
-
-### With RLM Inference
-
-Agents that mix in `RLMAwareMixin` (Recursive Language Model processing for
-oversized contexts) can forward an `EventQueue` into `get_rlm()`. When an
-`event_queue` is provided, `RLMInference` swaps in `InstrumentedRLM`, which
-emits `StatusEvent`/`ProgressEvent` per REPL iteration and checks the
-queue's `CancellationToken` between iterations:
-
-```python
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_core.events import get_queue_manager
-
-manager = get_queue_manager()
-task_id = "search_agent_task_1"
-queue = await manager.create_queue(task_id=task_id, tenant_id="tenant1")
-llm_config = LLMEndpointConfig(model="openai/gpt-4o")
-
-# Inside an agent mixing in RLMAwareMixin
-rlm = self.get_rlm(
-    llm_config=llm_config,
-    max_iterations=10,
-    event_queue=queue,
-    task_id=task_id,
-    tenant_id="tenant1",
-)
-result = rlm.process(query="Summarize the main findings", context=large_context_string)
-```
-
-`event_queue`/`task_id` are optional on `get_rlm()` / `RLMInference` /
-`InstrumentedRLM` — when omitted, RLM behaves like plain `dspy.RLM` with no
-event emission. `get_rlm()` always requires `tenant_id`; `RLMInference` and
-`InstrumentedRLM` require it when `event_queue` is provided (both raise
-`ValueError` otherwise, since RLM events must be tenant-scoped).
-
-### SSE Streaming (HTTP Clients)
+`AgentDispatcher.workflow_run(agent_name, context, tenant_id)` reports one
+orchestration or deep-research run as a `workflow` task. It runs around
+`_execute_orchestration_task`, `_execute_deep_research_task` and the streamed
+orchestrator (`a2a_executor.stream_agent_events`). The task id is the caller's
+`context["workflow_id"]`, or a new `workflow_<hex>`; the run's result names it
+(`orchestration_result.workflow_id`, or `workflow_id` on a deep-research
+result).
 
 ```bash
-# Subscribe to workflow events
-curl -N "http://localhost:8000/events/workflows/workflow_123"
-
-# Subscribe to ingestion events
-curl -N "http://localhost:8000/events/ingestion/ingestion_456"
-
-# Cancel a workflow
-curl -X POST "http://localhost:8000/events/workflows/workflow_123/cancel" \
+# Start a run under a known id, then stream or cancel it from any worker
+curl -X POST "http://localhost:8000/agents/orchestrator_agent/process" \
   -H "Content-Type: application/json" \
-  -d '{"reason": "User requested"}'
+  -d '{"agent_name": "orchestrator_agent", "query": "find cats",
+       "context": {"tenant_id": "acme:acme", "workflow_id": "wf-cats-1"}}'
 ```
 
-### Reconnection with Replay
+The run's queue is bound to the request (`cogniverse_core.events.bind_event_queue`),
+never held on the agent: a dispatcher serves many requests from one cached
+agent. The agent reports each phase boundary with `AgentBase.report_phase`,
+which streams the phase to a streaming caller, publishes a `StatusEvent` on the
+bound queue and raises `TaskCancelled` when the task was cancelled.
 
-```python
-# First connection - get offset
-last_offset = 0
-async for event in queue.subscribe():
-    last_offset = await queue.get_latest_offset()
-    # ... process event ...
-    if connection_lost:
-        break
+| Producer | Phases reported |
+|----------|-----------------|
+| Dispatcher | `started` when the run begins; the terminal event when it ends |
+| `OrchestratorAgent` | `memory_context`, `planning`, `execution`, `retrieval_iteration` (each iteration of the retrieval loop), `executing` (each step), `aggregating`, `complete`; `deep_synthesis` for a deep-synthesis run |
+| `DeepResearchAgent` | `decompose`, `search` and `evaluate` (each iteration), `synthesize`, `rlm_synthesis` |
+| `InstrumentedRLM` | `rlm_start`, a `ProgressEvent` per REPL iteration, `rlm_complete`, on the run's own task |
 
-# Reconnect from last offset
-async for event in queue.subscribe(from_offset=last_offset):
-    # ... resume processing ...
-```
+A cancellation is checked at each of these boundaries except `executing` and
+`complete`, and before each group of plan steps. The terminal event is:
+
+| The run | Terminal event | Dispatch result |
+|---------|----------------|-----------------|
+| returns | `CompleteEvent(result={"status": ...}, summary=message)` | the agent's result |
+| stops at a cancellation | `StatusEvent(state=cancelled, message=reason)` | `{"status": "cancelled", "agent", "workflow_id", "message": "Workflow <id> was cancelled: <reason>"}` |
+| raises | `ErrorEvent(error_type, error_message="<agent> failed with <type>", recoverable=False)` | the exception propagates |
+| loses its request first | `StatusEvent(state=cancelled, message="the request running the workflow ended before it finished")` | — |
+
+`POST /agents/{name}/process` answers a taken `workflow_id` with 409 and a store
+that does not answer with 503 `task_events_unavailable`; `/v1/chat/completions`
+answers that store's outage with 503 `service_unavailable` naming it (an SSE
+error frame when streaming). Without a configured
+store (a dispatcher built outside the runtime) a run is not reported unless the
+caller named a `workflow_id`, which then raises `TaskEventsUnavailable`.
+
+An `InstrumentedRLM` runs on a worker thread; it publishes through the event
+loop its queue was created on and waits for the append, so a refused event
+fails the RLM call.
+
+### Ingestion
+
+An ingestion job's events are its status stream `ingest:status:<id>`, the one
+`/ingestion/{id}/events` serves.
+
+- **`/ingestion/start`** opens the job's `ingestion` task before it answers and
+  hands its queue to `VideoIngestionPipeline(event_queue=...)`, whose job id is
+  the task id. The pipeline's events are stored as status entries
+  `{"state": "running", "ingest_id", "event": <task event>}`; its own
+  end-of-job event is held until the job's outcome is recorded, then stored with
+  the terminal status `complete`, `failed` or `cancelled` (with `result`, and
+  `error`/`error_type` or `reason`). A cancellation stops the pipeline before
+  its next video.
+- **Queue-driven ingestion** (`/ingestion/upload`) registers the job's task at
+  submit. The worker that claims the job attaches to it for the run: a job
+  cancelled while queued settles as `cancelled` without running (its inflight
+  marker cleared, its tenant slot released, its entry acked); a job is one video,
+  so a cancellation that arrives once it runs lets it finish.
+
+`/events/ingestion/{job_id}` reports each status entry as a task event: an entry
+carrying the pipeline's event reports that event; otherwise `queued` maps to a
+`pending` `StatusEvent`, `running` and `retrying` to `working` ones (phase =
+state, message = `error`), `complete` to a `CompleteEvent` with the entry's
+`result`, `failed` to an `ErrorEvent` (`recoverable=False`) and `cancelled` to a
+`cancelled` `StatusEvent` with the `reason`. Each event's id and timestamp come
+from its stream entry, so a replay reports the same events.
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/events/workflows/{workflow_id}` | GET | SSE stream of workflow events |
-| `/events/ingestion/{job_id}` | GET | SSE stream of ingestion events |
-| `/events/workflows/{workflow_id}/cancel` | POST | Cancel running workflow |
-| `/events/ingestion/{job_id}/cancel` | POST | Cancel running ingestion |
-| `/events/queues` | GET | List active queues (admin) |
-| `/events/queues/{task_id}` | GET | Get queue info |
-| `/events/queues/{task_id}/offset` | GET | Get current event offset |
+| `/events/workflows/{workflow_id}` | GET | SSE stream of a workflow's events |
+| `/events/ingestion/{job_id}` | GET | SSE stream of an ingestion job's events |
+| `/events/workflows/{workflow_id}/cancel` | POST | Cancel a running workflow |
+| `/events/ingestion/{job_id}/cancel` | POST | Cancel a running or queued ingestion job |
+| `/events/queues?tenant_id=` | GET | A tenant's active tasks |
+| `/events/queues/{task_id}` | GET | A task's state, while its events are retained |
+| `/events/queues/{task_id}/offset` | GET | The offset the task's next event takes |
 
-## Configuration
+**Streams** open with `{"type": "connected", "task_id", "offset", "timestamp"}`,
+deliver every event from `from_offset` on, send a `: heartbeat` comment after
+15s without one, and end once the task has ended and every event was delivered.
+A task with no queue of that kind gets one `{"type": "error", "message": "No
+active queue for task <id>"}` event; one that stops reporting ends with
+`{"type": "error", "message": "Task <id> stopped reporting before it
+finished"}`; a store lost mid-stream ends it with `{"type": "stream_error",
+"message", "failure"}`. A reader counts as a subscriber until its stream ends.
 
-### Queue Manager
+**Cancel** answers 200 `{"task_id", "cancelled": true, "message": "<Workflow|Ingestion
+job> <id> cancellation requested"}`, 404 for no task of that kind, and 409 for a
+task that already finished or stopped reporting.
+
+**Queue info** is `{"task_id", "kind", "tenant_id", "event_count",
+"subscriber_count", "is_closed", "is_cancelled", "created_at"}`.
+
+Every route answers a store that does not answer with 503
+`{"error": "task_events_unavailable", "message": "The task event store did not
+answer; retry.", "failure": "TaskEventsUnavailable"}` (plus `task_id`), before
+any stream starts.
+
+```bash
+curl -N "http://localhost:8000/events/workflows/wf-cats-1"
+curl -N "http://localhost:8000/events/ingestion/<job_id>?from_offset=3"
+curl -X POST "http://localhost:8000/events/workflows/wf-cats-1/cancel" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "User requested"}'
+curl "http://localhost:8000/events/queues?tenant_id=acme:acme"
+```
+
+## In-Process Queues
+
+`cogniverse_core.events` also ships `InMemoryEventQueue` and
+`InMemoryQueueManager` (`get_queue_manager()` / `reset_queue_manager()`), one
+process's queues for a library caller outside the runtime; the runtime does not
+use them.
 
 ```python
-manager = InMemoryQueueManager(
-    default_ttl_minutes=30,    # Event TTL (default 30 min)
-    max_buffer_size=1000,      # Max events per queue
+from cogniverse_core.events import (
+    InMemoryEventQueue,
+    TaskState,
+    bind_event_queue,
+    create_status_event,
+    publish_phase,
 )
 
-# Start cleanup loop (optional)
-await manager.start_cleanup_loop(interval_seconds=60)
-```
+queue = InMemoryEventQueue(task_id="workflow_123", tenant_id="acme:acme")
+with bind_event_queue(queue):
+    await publish_phase("planning", "Creating execution plan...")
 
-`cogniverse_runtime.main` starts this cleanup loop automatically on app
-startup via `get_queue_manager()` + `start_cleanup_loop(interval_seconds=60)`.
-Every search/ingestion/mem0 operation creates a queue holding up to
-`max_buffer_size` events; without the loop, closed/expired queues are never
-evicted and the runtime accumulates buffers until it OOMs.
-
-### Queue Options
-
-```python
-queue = await manager.create_queue(
-    task_id="workflow_123",
-    tenant_id="tenant1",
-    ttl_minutes=60,  # Override default TTL
-)
-```
-
-## Cancellation
-
-```python
-# Via queue manager
-await manager.cancel_task("workflow_123", reason="User requested")
-
-# Via queue directly
-queue.cancel("Timeout exceeded")
-
-# Check in producer
-if queue.cancellation_token.is_cancelled:
-    # Clean up and stop
-    pass
-```
-
-## Backend Options
-
-### In-Memory (Default)
-- Single-pod deployments
-- Development/testing
-- No persistence (events lost on restart)
-
-### Redis Pub/Sub (Future)
-- Multi-pod production
-- No long-term persistence needed
-- Fast real-time notification
-
-### Related but Separate: Queue-Driven Ingestion Events
-
-When `REDIS_URL` is set, `/ingestion/{ingest_id}/events` (mounted from
-`cogniverse_runtime.ingestion_worker.status_api`) streams SSE events for the
-Redis-queue-backed ingestion path from a Redis stream directly — it does
-**not** use `cogniverse_core.events`/`EventQueue`/`InMemoryQueueManager` at
-all. It is a distinct mechanism with its own replay semantics
-(`last-event-id` query param, not `from_offset`). Don't confuse it with the
-`/events/ingestion/{job_id}` endpoint documented above, which streams from an
-in-memory `EventQueue` for the in-process (non-Redis) ingestion pipeline.
-
-## Workflow Event Emission
-
-`OrchestratorAgent` pushes real-time `StatusEvent`/`ProgressEvent` notifications onto the `EventQueue` it was constructed with. Two channels reach that queue.
-
-### How It Works
-
-1. **Sufficiency-gate RLM**: the orchestrator forwards its `event_queue` into the sufficient-context-gate `InstrumentedRLM` (used once accumulated evidence crosses the RLM promotion threshold in the iterative retrieval loop), which emits `StatusEvent`/`ProgressEvent` per REPL iteration. The orchestrator also signals `event_queue.cancel()` when an inbound `"stop"` message is drained, so any `InstrumentedRLM` running inside a sub-agent's chain observes cancellation at its next iteration.
-2. **`OrchestratorAgent._emit_event()`** is a generic hook (`enqueue` if `event_queue` is configured, no-op otherwise) available for emitting ad-hoc events, but it is not currently called from the planning/execution/completion boundaries of `_process_impl` — the sufficiency-gate RLM is the actual workflow-level emitter today.
-
-### Event Flow
-
-```mermaid
-flowchart TD
-    Start["<span style='color:#000'>Workflow Execution</span>"]
-
-    Iteration["<span style='color:#000'>Iterative retrieval loop<br/>(sufficiency gate)</span>"]
-    RLMPromotion{"<span style='color:#000'>Evidence exceeds<br/>RLM promotion threshold?</span>"}
-    RLMEvent["<span style='color:#000'>InstrumentedRLM emits<br/>StatusEvent + ProgressEvent<br/>per REPL iteration</span>"]
-
-    TaskGroups["<span style='color:#000'>Task groups execute<br/>(progress via emit_progress<br/>dict stream, not EventQueue)</span>"]
-
-    Completion["<span style='color:#000'>Completion</span>"]
-
-    Start --> Iteration
-    Iteration --> RLMPromotion
-    RLMPromotion -- "yes" --> RLMEvent
-    RLMEvent --> TaskGroups
-    RLMPromotion -- "no" --> TaskGroups
-    TaskGroups --> Completion
-
-    style Start fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Iteration fill:#a5d6a7,stroke:#388e3c,color:#000
-    style RLMPromotion fill:#a5d6a7,stroke:#388e3c,color:#000
-    style RLMEvent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style TaskGroups fill:#81d4fa,stroke:#0288d1,color:#000
-    style Completion fill:#a5d6a7,stroke:#388e3c,color:#000
+await queue.close()
+async for event in queue.subscribe():
+    print(event.event_type, event.phase)
 ```
 
 ## Testing
 
 ```bash
-# Run all event tests
+# Store, producers, routes and the cross-process cases, against real Redis
+uv run pytest tests/runtime/integration/test_task_events_redis.py \
+  tests/runtime/unit/test_events_sse_stream.py \
+  tests/runtime/unit/test_events_cancel_happy_path.py -v
+
+# Two uvicorn workers: a workflow streamed and cancelled from the other worker
+uv run pytest "tests/runtime/integration/test_runtime_worker_processes.py::TestWorkflowAcrossWorkers" -v
+
+# Event types and the in-process queues
 uv run pytest tests/events/ -v
-
-# Unit tests only
-uv run pytest tests/events/unit/ -v
-
-# Integration tests only
-uv run pytest tests/events/integration/ -v
 ```
 
 ## Files
@@ -406,14 +332,19 @@ uv run pytest tests/events/integration/ -v
 | File | Description |
 |------|-------------|
 | `libs/core/cogniverse_core/events/types.py` | Event type definitions |
-| `libs/core/cogniverse_core/events/queue.py` | EventQueue/QueueManager protocols |
-| `libs/core/cogniverse_core/events/backends/memory.py` | In-memory backend |
-| `libs/runtime/cogniverse_runtime/routers/events.py` | SSE streaming endpoints |
-| `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` | `VideoIngestionPipeline` — emits events during video ingestion |
-| `libs/agents/cogniverse_agents/orchestrator_agent.py` | `OrchestratorAgent` — accepts `event_queue`, emits workflow events |
-| `libs/agents/cogniverse_agents/mixins/rlm_aware_mixin.py` | `RLMAwareMixin.get_rlm()` — wires `event_queue` into RLM inference |
-| `libs/agents/cogniverse_agents/inference/rlm_inference.py` | `RLMInference` — forwards `event_queue` to `InstrumentedRLM` |
-| `libs/agents/cogniverse_agents/inference/instrumented_rlm.py` | `InstrumentedRLM` — emits Status/Progress events per REPL iteration |
-| `tests/events/unit/test_event_queue.py` | Unit tests for event types, `InMemoryEventQueue`, `InMemoryQueueManager`, tenant isolation |
-| `tests/events/unit/test_event_queue_integration.py` | Unit-level integration tests for queue wiring |
-| `tests/events/integration/test_event_queue_real.py` | Real-boundary integration tests |
+| `libs/core/cogniverse_core/events/queue.py` | `EventQueue`/`QueueManager` protocols, `TaskCancelled`, the per-request binding (`bind_event_queue`, `current_event_queue`, `publish_phase`, `raise_if_cancelled`) |
+| `libs/core/cogniverse_core/events/backends/memory.py` | In-process queues |
+| `libs/runtime/cogniverse_runtime/task_events.py` | `TaskEventStore`, `RedisTaskEventQueue`, the ingestion status mapping |
+| `libs/runtime/cogniverse_runtime/routers/events.py` | SSE, cancel and queue endpoints |
+| `libs/runtime/cogniverse_runtime/agent_dispatcher.py` | `AgentDispatcher.workflow_run` — reports orchestration and deep-research runs |
+| `libs/core/cogniverse_core/agents/base.py` | `AgentBase.report_phase` |
+| `libs/agents/cogniverse_agents/orchestrator_agent.py` | `OrchestratorAgent` — reports its phases on the bound queue |
+| `libs/agents/cogniverse_agents/deep_research_agent.py` | `DeepResearchAgent` — reports its phases on the bound queue |
+| `libs/agents/cogniverse_agents/inference/instrumented_rlm.py` | `InstrumentedRLM` — Status/Progress events per REPL iteration |
+| `libs/runtime/cogniverse_runtime/routers/ingestion.py` | `/ingestion/start` jobs' tasks |
+| `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` | `VideoIngestionPipeline` — emits events during ingestion |
+| `libs/runtime/cogniverse_runtime/ingestion_worker/` | Queue-driven jobs: registered at submit, attached and cancelled by the worker |
+| `tests/runtime/integration/test_task_events_redis.py` | Store, workflow runs, process route, threaded RLM, concurrency and outages |
+| `tests/runtime/unit/test_events_sse_stream.py` | SSE routes |
+| `tests/runtime/unit/test_events_cancel_happy_path.py` | Cancel and queue routes |
+| `tests/events/unit/test_event_queue.py` | Event types and the in-process queues |

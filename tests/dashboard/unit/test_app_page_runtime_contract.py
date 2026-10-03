@@ -375,6 +375,37 @@ def test_failed_ingestion_is_reported_as_failure_not_a_success_banner(page, runt
     assert app.session_state["processing_results"][0]["status"] == "error"
 
 
+def test_a_cancelled_job_ends_the_poll_and_is_reported_as_cancelled(runtime):
+    """``cancelled`` is terminal: the poll stops at it instead of waiting out
+    its budget, and the outcome names the reason."""
+    runtime.status_script["ingest-0"] = [
+        {"state": "queued", "latest": {"state": "queued"}},
+        {
+            "state": "cancelled",
+            "latest": {"state": "cancelled", "reason": "operator stop"},
+        },
+    ]
+    with httpx.Client() as client:
+        outcome = submit_video_ingestion(
+            client,
+            runtime.url,
+            filename=VIDEO_NAME,
+            content=VIDEO_BYTES,
+            content_type="video/mp4",
+            profile=DEFAULT_PROFILE,
+            tenant_id="acme:a",
+            sleep=lambda _seconds: None,
+        )
+
+    assert runtime.status_polls == ["ingest-0", "ingest-0"]
+    assert outcome == {
+        "status": "error",
+        "profile": DEFAULT_PROFILE,
+        "ingest_id": "ingest-0",
+        "message": "Ingestion ingest-0 was cancelled: operator stop",
+    }
+
+
 def test_rejected_upload_names_the_http_failure_and_never_polls(page, runtime):
     runtime.upload_response = {
         "status": 503,

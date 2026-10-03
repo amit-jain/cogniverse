@@ -1874,6 +1874,10 @@ multiTenant:
 #   - Conversations: server-managed turn order and pending saves, and
 #     suspended /v1 tool-call turns. Their Lua scripts span several keys, so
 #     this stays a single Redis, never Redis Cluster.
+#   - Task events (/events): workflow progress streams, cancellations, the
+#     leases of the processes running tasks and each tenant's active tasks,
+#     under ``cogniverse:task-events:``; an ingestion job's events are its
+#     ``ingest:status:<id>`` stream.
 #   - Approval and workflow writes: locks and replacement records.
 # AOF on so a pod restart doesn't lose in-flight queue entries or task state.
 redis:

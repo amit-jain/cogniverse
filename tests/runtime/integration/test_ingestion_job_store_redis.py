@@ -7,6 +7,7 @@ runtime process: it shares nothing with the job's owner but Redis.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from unittest.mock import MagicMock
@@ -20,6 +21,7 @@ from cogniverse_runtime.ingestion_jobs import (
     IngestionJobStoreUnavailableError,
 )
 from cogniverse_runtime.shared_state import connect_shared_state_redis
+from cogniverse_runtime.task_events import INGESTION, TaskEventStore
 
 pytestmark = [
     pytest.mark.integration,
@@ -286,6 +288,12 @@ class TestOutcomeWrite:
         operator = await connect_shared_state_redis(url)
         store = IngestionJobStore(client, owner="owner", key_prefix=prefix)
         await store.create("job-1")
+        task_events = TaskEventStore(
+            client,
+            key_prefix=f"{prefix}:task-events",
+            ingestion_stream_prefix=f"{prefix}:ingest:",
+        )
+        events = await task_events.open_task(INGESTION, "job-1", "acme:acme")
         accepting = asyncio.Event()
 
         async def accept_writes_again():
@@ -323,15 +331,21 @@ class TestOutcomeWrite:
                 config_manager=MagicMock(),
                 schema_loader=MagicMock(),
                 job_store=store,
+                events=events,
             )
             elapsed = asyncio.get_running_loop().time() - started
             record = await store.get("job-1")
+            ended = await task_events.read("job-1", kind=INGESTION)
         finally:
             await operator.config_set("maxmemory", "0")
             await client.aclose()
             await operator.aclose()
 
         assert accepting.is_set()
+        # The job's task ends after its outcome is recorded.
+        assert [json.loads(data)["state"] for _, _, data in ended.events] == [
+            "complete"
+        ]
         # Refused at once and after one second; accepted after three.
         assert 3.0 <= elapsed < 5.0, elapsed
         assert record == {

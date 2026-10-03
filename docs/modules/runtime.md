@@ -83,6 +83,7 @@ cogniverse_runtime/
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
 ├── sandbox_pool.py                  # Capacity-bounded per-task sandbox leases
 ├── session_state.py                 # Conversation ledger + /v1 continuation store in Redis
+├── task_events.py                   # Workflow + ingestion task events, cancellation, active index in Redis
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
 ├── startup_wait.py                  # Dependency-readiness command + in-process startup wait
@@ -342,7 +343,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
 6. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
-7. Apply deployment env-var overrides to `SystemConfig`; validate the A2A settings and connect to Redis at the resolved `SystemConfig.redis_url`, so a pod that cannot use Redis fails before any deploy, probe or background loop; open the process's one shared-state client and connection pool on that Redis (`connect_shared_state_redis`, `SHARED_STATE_REDIS_MAX_CONNECTIONS` = 128, its connections named `cogniverse-runtime-state:<host>:<pid>:<suffix>` in `CLIENT LIST`) and give it to every store of shared and session state: the agent registry (`RedisAgentRegistryStore`), the `agents` router (`AnnotationQueue`, the `ConversationLedger`), the `ingestion` router (`IngestionJobStore`) and `/v1` (`ContinuationStore`); each store still raises its own typed error and its routes their own 503; shutdown closes the client once, after every store is released; deploy metadata schemas via a system backend unless every live metadata schema already equals this build's, where a deploy that finds the deployment lease held is retried in the background every 30 s instead of failing startup; then store the overridden `SystemConfig` through `write_startup_config`. That write reads the key's latest version by visiting its stored versions, so it never depends on search coverage, and waits out a config store that does not answer (`ConfigStoreUnavailableError`, after the read's own attempts, or a transport error on the write) for `STARTUP_CONFIG_WRITE_BUDGET_S` (60 s), retrying every `STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S` with a WARNING per attempt; a store still unavailable after it fails the worker's startup with a `RuntimeError` naming the write and the last failure
+7. Apply deployment env-var overrides to `SystemConfig`; validate the A2A settings and connect to Redis at the resolved `SystemConfig.redis_url`, so a pod that cannot use Redis fails before any deploy, probe or background loop; open the process's one shared-state client and connection pool on that Redis (`connect_shared_state_redis`, `SHARED_STATE_REDIS_MAX_CONNECTIONS` = 128, its connections named `cogniverse-runtime-state:<host>:<pid>:<suffix>` in `CLIENT LIST`) and give it to every store of shared and session state: the agent registry (`RedisAgentRegistryStore`), the `agents` router (`AnnotationQueue`, the `ConversationLedger`), the `ingestion` router (`IngestionJobStore`), `/v1` (`ContinuationStore`) and the task event store (`TaskEventStore`, whose poller starts here) the `events`, `agents` and `ingestion` routers report workflows and jobs to; each store still raises its own typed error and its routes their own 503; shutdown closes the client once, after every store is released; deploy metadata schemas via a system backend unless every live metadata schema already equals this build's, where a deploy that finds the deployment lease held is retried in the background every 30 s instead of failing startup; then store the overridden `SystemConfig` through `write_startup_config`. That write reads the key's latest version by visiting its stored versions, so it never depends on search coverage, and waits out a config store that does not answer (`ConfigStoreUnavailableError`, after the read's own attempts, or a transport error on the write) for `STARTUP_CONFIG_WRITE_BUDGET_S` (60 s), retrying every `STARTUP_CONFIG_WRITE_RETRY_INTERVAL_S` with a WARNING per attempt; a store still unavailable after it fails the worker's startup with a `RuntimeError` naming the write and the last failure
 8. Probe Phoenix reachability and validate inference services against configured profiles
 9. Wire tenant manager and the wiki/graph manager factories; affirm the system's wiki and memory backend profiles through the same `write_startup_config` wait, where a failure after it is logged as a WARNING rather than failing startup
 10. Configure DSPy LM and the synthetic data service
@@ -458,7 +459,7 @@ The server uses modular routers for different functionality:
 | `admin` | `/admin` | Tenant and profile management |
 | `knowledge` | `/admin` | Direct HTTP routes to knowledge-system agents (audit, citations, KG, federation, synthesis, temporal) |
 | `tenant_manager` | `/admin` | Tenant creation, deletion, and router-tier administration |
-| `events` | `/events` | SSE streaming for real-time notifications |
+| `events` | `/events` | Workflow and ingestion progress (SSE), cancellation and the active-task listing, from the shared task event store |
 | `synthetic` | `/synthetic` | Synthetic data generation (from `cogniverse_synthetic`) |
 | `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
@@ -915,6 +916,8 @@ curl -X POST http://localhost:8000/ingestion/start \
 ```
 Body fields mirror `IngestionRequest`: `video_dir`, `profile`, `backend` (default `"vespa"`), `tenant_id` (required), `org_id` (optional), `content_type`, `max_videos`, `batch_size` (default `10`). An `org_id` supplied alongside a simple `tenant_id` (no colon) is combined into the canonical `org:tenant` form for both the backend resolution and the background pipeline, matching `/ingestion/upload` and the search route.
 
+Before it answers, the route opens the job's ingestion task on the shared task event store (its status stream `ingest:status:<job_id>`), so the job is streamed (`/events/ingestion/{job_id}` or `/ingestion/{job_id}/events`), listed and cancelled from any process; the pipeline reports to it, a cancellation stops the pipeline before its next video, and the task ends with `complete`, `failed` or `cancelled` once the job's outcome is recorded. A task store that does not answer is a 503 `task_events_unavailable` with `job_id`, and nothing starts; a job store that does not answer after the task opened ends the task `failed`.
+
 **POST /ingestion/upload** - Upload a video to MinIO and enqueue ingestion via Redis
 ```bash
 curl -X POST "http://localhost:8000/ingestion/upload?wait=true&wait_timeout=300&force=false" \
@@ -925,7 +928,7 @@ curl -X POST "http://localhost:8000/ingestion/upload?wait=true&wait_timeout=300&
 ```
 Form fields: `file` (required), `profile` (optional), `backend` (default `"vespa"`), `tenant_id` (required — 400 if missing), `org_id` (optional). An omitted profile resolves from the canonical tenant's `backend.default_profiles.video.profile`, then `active_video_profile` — through `cogniverse_foundation.config.utils.resolve_default_profile`, the single resolver `POST /search`, `GET /search/strategies` and the dispatcher's grounding plan also call, so a tenant that named no profile ingests into the corpus it queries. The selected profile must exist in that tenant's merged profile catalog and provide processing strategies; an explicitly named profile may be of any modality, while an omitted one resolves to the tenant's default video profile. An invalid explicit profile returns 422; an empty `profile` field is dropped as an omitted form value and resolves the tenant default, while a whitespace-only one is an invalid explicit profile; an omitted profile with no default video profile returns the same 400 as `POST /search`, and other missing or unavailable profile configuration returns 503, before the file is read, stored, or queued. Query params: `wait` (default `false` — returns immediately with just `ingest_id`), `wait_timeout` (seconds, `10`-`900`, default `300`, applies only when `wait=true`), `force` (default `false`, bypasses idempotency and re-enqueues even on a cache hit).
 
-Response always includes `ingest_id`, `sha`, `state` (the status stream's newest event: `queued`|`in_flight`|`running`|`retrying`|`complete`|`failed`), `existing` (`true` on an idempotency hit, where `state` reports the existing run and its status stream is re-seeded if it has been reclaimed, so the returned `ingest_id` always resolves through `GET /ingestion/{id}/status`), `filename`, `source_url`, `wait_timed_out`. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response (200) additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). A `failed` terminal additionally carries the worker's `error` and `error_type`. When `wait_timeout` lapses first, the response is **202** with `status: "wait_timeout"`, `wait_timed_out: true`, `state` as the stream last showed it, and the `error`/`error_type` of a `retrying` job; poll `GET /ingestion/{id}/status` for the terminal. 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured, or if the job's status stream yielded no event at all during the wait (its state is unknown, never rendered as `queued`).
+Response always includes `ingest_id`, `sha`, `state` (the status stream's newest event: `queued`|`in_flight`|`running`|`retrying`|`complete`|`failed`|`cancelled`), `existing` (`true` on an idempotency hit, where `state` reports the existing run and its status stream is re-seeded if it has been reclaimed, so the returned `ingest_id` always resolves through `GET /ingestion/{id}/status`), `filename`, `source_url`, `wait_timed_out`. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response (200) additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). A `failed` terminal additionally carries the worker's `error` and `error_type`. When `wait_timeout` lapses first, the response is **202** with `status: "wait_timeout"`, `wait_timed_out: true`, `state` as the stream last showed it, and the `error`/`error_type` of a `retrying` job; poll `GET /ingestion/{id}/status` for the terminal. 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured, or if the job's status stream yielded no event at all during the wait (its state is unknown, never rendered as `queued`).
 
 **GET /ingestion/status/{job_id}** - Check processing status
 ```bash
@@ -1507,34 +1510,49 @@ code.
 
 ### Events Endpoints (SSE Streaming)
 
+Every worker process and replica serves every task: events, cancellations and
+the active-task index live in the shared Redis task event store
+(`cogniverse_runtime.task_events`). An orchestration or deep-research run is a
+workflow task, named by the dispatch context's `workflow_id` or a new
+`workflow_<hex>`; an ingestion job's task is its job id.
+
 **GET /events/workflows/{workflow_id}** - Subscribe to workflow events
 ```bash
 curl -N "http://localhost:8000/events/workflows/workflow_123"
 # Returns Server-Sent Events stream:
-# data: {"event_type": "status", "state": "working", "phase": "planning"}
-# data: {"event_type": "progress", "current": 1, "total": 3}
+# data: {"type": "connected", "task_id": "workflow_123", "offset": 0, ...}
+# data: {"event_type": "status", "state": "working", "phase": "started", ...}
+# data: {"event_type": "status", "state": "working", "phase": "planning", ...}
 # ...
+# data: {"event_type": "complete", "result": {"status": "success"}, ...}
 ```
 
-**GET /events/ingestion/{job_id}** - Subscribe to ingestion job events
+**GET /events/ingestion/{job_id}** - Subscribe to ingestion job events, read
+from the job's ingestion status stream
 ```bash
-curl -N "http://localhost:8000/events/ingestion/ingestion_456"
+curl -N "http://localhost:8000/events/ingestion/<job_id>?from_offset=0"
 ```
 
-**POST /events/workflows/{workflow_id}/cancel** - Cancel a running workflow
+**POST /events/workflows/{workflow_id}/cancel** - Cancel a running workflow:
+the worker running it stops at its next phase boundary
 ```bash
 curl -X POST "http://localhost:8000/events/workflows/workflow_123/cancel" \
   -H "Content-Type: application/json" \
   -d '{"reason": "User requested cancellation"}'
 ```
 
-**POST /events/ingestion/{job_id}/cancel** - Cancel a running ingestion job
+**POST /events/ingestion/{job_id}/cancel** - Cancel a running or queued ingestion job
 
-**GET /events/queues** - List active event queues (admin)
+**GET /events/queues?tenant_id=** - A tenant's active tasks
 
-**GET /events/queues/{task_id}** - Get queue information
+**GET /events/queues/{task_id}** - A task's state
 
-See [Events Module](./events.md) for complete documentation.
+**GET /events/queues/{task_id}/offset** - The offset the task's next event takes
+
+A stream ends once its task has ended. Cancel answers 404 for no task of that
+kind and 409 for one that finished or stopped reporting; every route answers
+503 `task_events_unavailable` when the store does not answer. See
+[Events Module](./events.md) for complete documentation.
 
 ---
 
@@ -1739,11 +1757,12 @@ run under `RuntimeWorkerSupervisor`:
 Each worker is a separate process with its own memory and in-process state:
 caches. A follow-up request that reaches another worker does not see them.
 Agent registrations, annotation requests, `/ingestion/start` job status,
-server-managed conversation order and `/v1` continuations are kept in Redis
-through one bounded client and connection pool per process
-(`cogniverse_runtime/shared_state.py`, five-second command timeout), so every
-worker and replica serves the same ones and a follow-up turn may reach any
-worker.
+server-managed conversation order, `/v1` continuations and workflow and
+ingestion task events are kept in Redis through one bounded client and
+connection pool per process (`cogniverse_runtime/shared_state.py`,
+five-second command timeout), so every worker and replica serves the same
+ones, a follow-up turn may reach any worker, and a task is streamed or
+cancelled from any worker.
 
 ### Docker
 
