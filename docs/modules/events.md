@@ -240,6 +240,13 @@ An ingestion job's events are its status stream `ingest:status:<id>`, the one
   (`enqueue_ingestion(redis, task_events=...)`) registers the task in the task
   event store its caller passes: the runtime's per-process store, on its
   shared-state client.
+- A cancellation lands between videos, never inside one: a video whose
+  transcription is being asked again (up to `TRANSCRIBE_ATTEMPTS` per chunk)
+  makes all its attempts first. A chunk that stays unusable fails its video;
+  a `/ingestion/start` run reports it as an `ErrorEvent`
+  (`ContentProcessingError`, `recoverable=True`, the message naming the chunk
+  and why), and a queue-driven job ends with a `failed` status reported as an
+  `ErrorEvent` (`IngestPipelineError`, `recoverable=False`, the same message).
 
 `/events/ingestion/{job_id}` reports each status entry as a task event: an entry
 carrying the pipeline's event reports that event; otherwise `queued` maps to a

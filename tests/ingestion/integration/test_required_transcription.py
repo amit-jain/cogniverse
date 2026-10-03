@@ -25,7 +25,7 @@ from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcess
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _process_job
-from cogniverse_runtime.task_events import TaskEventStore
+from cogniverse_runtime.task_events import INGESTION, TaskEventStore, stream_event
 
 pytestmark = pytest.mark.integration
 
@@ -303,17 +303,8 @@ async def test_local_transcription_failure_fails_the_job(job_redis, tmp_path):
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None
 
 
-@pytest.mark.asyncio
-async def test_an_unusable_answer_for_sound_fails_the_job_after_every_attempt(
-    job_redis, unusable_asr, tmp_path
-):
-    endpoint, posts, text = unusable_asr
-    video = tmp_path / "spoken.mp4"
-    make_video(video, audio=True)
-    pipeline = transcription_pipeline(tmp_path, endpoint)
-
-    failed = await pipeline.process_video_async_with_strategies(video)
-
+def unusable_failure(video: Path, text: str) -> str:
+    """The pipeline's error for ``video`` when every answer is ``text``."""
     (chunk,) = split_for_whisper(
         pcm16_wav_samples(AudioProcessor._extract_audio_wav(video))
     )
@@ -330,12 +321,26 @@ async def test_an_unusable_answer_for_sound_fails_the_job_after_every_attempt(
             f"{chunk.loudest_frame_dbfs:.1f} dBFS) carries sound but came back "
             f"with an empty transcript on all {TRANSCRIBE_ATTEMPTS} attempts"
         )
-    assert failed["status"] == "failed"
-    assert failed["error_context"]["stage"] == "transcription"
-    assert failed["error"] == (
+    return (
         f"Required transcription failed: {video}: chunk 0 {reason} (Context: "
         f"content_path={video}, stage=transcription, profile=transcription)"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_answer_for_sound_fails_the_job_after_every_attempt(
+    job_redis, unusable_asr, tmp_path
+):
+    endpoint, posts, text = unusable_asr
+    video = tmp_path / "spoken.mp4"
+    make_video(video, audio=True)
+    pipeline = transcription_pipeline(tmp_path, endpoint)
+
+    failed = await pipeline.process_video_async_with_strategies(video)
+
+    assert failed["status"] == "failed"
+    assert failed["error_context"]["stage"] == "transcription"
+    assert failed["error"] == unusable_failure(video, text)
     assert len(posts) == 2 * TRANSCRIBE_ATTEMPTS
 
     submitted, events = await run_job(job_redis, pipeline, video)
@@ -343,3 +348,129 @@ async def test_an_unusable_answer_for_sound_fails_the_job_after_every_attempt(
     assert events[-1]["error_type"] == "IngestPipelineError"
     assert len(posts) == 4 * TRANSCRIBE_ATTEMPTS
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None
+
+
+def _error_events(task_id, read):
+    """The error events among a task's events, as the event routes serve
+    them."""
+    events = [
+        stream_event(INGESTION, task_id, read.tenant_id, entry_id, data)
+        for _, entry_id, data in read.events
+    ]
+    return [
+        {
+            key: event[key]
+            for key in ("event_type", "error_type", "error_message", "recoverable")
+        }
+        for event in events
+        if event["event_type"] == "error"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_answer_reaches_the_task_events_as_an_error_event(
+    job_redis, unusable_asr, tmp_path, monkeypatch
+):
+    """Both ingestion paths report the chunk that came back unusable on every
+    attempt through the job's task events: a queue-driven job ends with an
+    error event carrying the worker's failure, and a /ingestion/start run
+    reports the video's error event before its end."""
+    from cogniverse_runtime.ingestion_worker import worker
+
+    endpoint, _, text = unusable_asr
+    video = tmp_path / "spoken.mp4"
+    make_video(video, audio=True)
+    pipeline = transcription_pipeline(tmp_path, endpoint)
+    store = TaskEventStore(job_redis)
+    monkeypatch.setattr(worker, "_task_events", store)
+
+    submitted, _ = await run_job(job_redis, pipeline, video)
+    queued = await store.read(submitted.ingest_id, kind=INGESTION)
+
+    started = await store.open_task(INGESTION, "start-job", pipeline.tenant_id)
+    pipeline.event_queue = started
+    batch = await pipeline.process_videos_concurrent([video])
+    await started.finish_ingestion("complete", result={})
+    run = await store.read("start-job", kind=INGESTION)
+
+    failure = unusable_failure(video, text)
+    assert queued.closed is True
+    assert _error_events(submitted.ingest_id, queued) == [
+        {
+            "event_type": "error",
+            "error_type": "IngestPipelineError",
+            "error_message": failure,
+            "recoverable": False,
+        }
+    ]
+    assert (batch["successful"], batch["failed"]) == (0, 1)
+    assert _error_events("start-job", run) == [
+        {
+            "event_type": "error",
+            "error_type": "ContentProcessingError",
+            "error_message": failure,
+            "recoverable": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_a_videos_retries_stops_before_the_next_video(
+    job_redis, unusable_asr, tmp_path
+):
+    """A cancellation recorded while the first video's chunk is being asked
+    again lets that video finish its attempts, and the run stops before the
+    second video asks the server anything."""
+    endpoint, posts, text = unusable_asr
+    first, second = tmp_path / "first.mp4", tmp_path / "second.mp4"
+    make_video(first, audio=True)
+    make_video(second, audio=True)
+    pipeline = transcription_pipeline(tmp_path, endpoint)
+    store = TaskEventStore(job_redis, poll_interval_s=0.05)
+    started = await store.open_task(INGESTION, "cancel-job", pipeline.tenant_id)
+    pipeline.event_queue = started
+    store.start()
+
+    async def cancel_on_first_request():
+        while not posts:
+            await asyncio.sleep(0.01)
+        return len(posts), await store.cancel(INGESTION, "cancel-job", "operator")
+
+    try:
+        canceller = asyncio.create_task(cancel_on_first_request())
+        batch = await pipeline.process_videos_concurrent(
+            [first, second], max_concurrent=1
+        )
+        requests_before_cancel, cancelled = await canceller
+        await started.finish_ingestion(
+            "cancelled", reason=started.cancellation_token.reason
+        )
+    finally:
+        await store.close()
+    run = await store.read("cancel-job", kind=INGESTION)
+    last = stream_event(
+        INGESTION, "cancel-job", run.tenant_id, run.events[-1][1], run.events[-1][2]
+    )
+
+    assert cancelled == "cancelled"
+    assert requests_before_cancel < 2 * TRANSCRIBE_ATTEMPTS
+    # The first video made every attempt; the second asked nothing.
+    assert len(posts) == 2 * TRANSCRIBE_ATTEMPTS
+    assert [(r["video_path"], r["status"]) for r in batch["results"]] == [
+        (str(first), "failed"),
+        (str(second), "cancelled"),
+    ]
+    assert batch["results"][0]["error"] == unusable_failure(first, text)
+    assert (last["event_type"], last["state"], last["message"]) == (
+        "status",
+        "cancelled",
+        "Ingestion cancelled: 0 completed, 1 cancelled",
+    )
+    assert _error_events("cancel-job", run) == [
+        {
+            "event_type": "error",
+            "error_type": "ContentProcessingError",
+            "error_message": unusable_failure(first, text),
+            "recoverable": True,
+        }
+    ]
