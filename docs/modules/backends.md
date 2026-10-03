@@ -1800,8 +1800,9 @@ text match counts in full. On the single-vector schemas the visual score is
 the dense similarity: `hybrid_float_bm25` on `video_xclip_sv_chunk_6s` adds the
 angular `closeness` to `nativeRank`, `hybrid_binary_bm25` the same closeness
 estimated from the Hamming distance `h` of the 768-bit codes, `1/(1 + πh/768)`,
-and `hybrid_acoustic_bm25` on `audio_content` the acoustic `closeness`. Every
-hybrid that retrieves through `nearestNeighbor` matches
+and `hybrid_acoustic_bm25` on `audio_content` the acoustic `closeness`; the
+`hybrid` profile of `agent_memories` adds `closeness` to `nativeRank(text)`.
+Every hybrid that retrieves through `nearestNeighbor` matches
 `({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`: the nearest
 neighbours and every document holding a query term are candidates, each with
 its full text features.

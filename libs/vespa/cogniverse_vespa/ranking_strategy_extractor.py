@@ -131,9 +131,11 @@ class RankingStrategyExtractor:
         else:
             first_phase_expr = str(first_phase)
 
+        expanded_first_phase = self._expanded_first_phase(profile)
         needs_text_query = (
             "bm25" in profile_name.lower()
-            or "bm25(" in first_phase_expr
+            or "bm25(" in expanded_first_phase
+            or "nativeRank(" in expanded_first_phase
             or "userInput" in first_phase_expr
             # Token match — a bare substring test classified any name merely
             # embedding the letters (e.g. "context_boost") as text-seeking.
@@ -247,16 +249,10 @@ class RankingStrategyExtractor:
             schema_name=schema_name,
         )
 
-    def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
-        """Embedding attribute the FIRST phase scores against, or None.
-
-        Resolves profile-function indirection (``first_phase: visual_sim``
-        with ``visual_sim = closeness(field, embedding)``) by substituting
-        function bodies, then extracts the closeness/attribute reference.
-        Only the first phase matters — it drives retrieval; a second-phase
-        vector rerank on top of a bm25 first phase must not switch retrieval
-        to ANN.
-        """
+    @staticmethod
+    def _expanded_first_phase(profile: Dict[str, Any]) -> str:
+        """The first-phase expression with every profile function substituted
+        by its body (``visual_sim + text_sim`` -> the two bodies)."""
         functions = {
             f.get("name", ""): f.get("expression", "")
             for f in profile.get("functions", [])
@@ -275,6 +271,19 @@ class RankingStrategyExtractor:
             if expanded == expr:
                 break
             expr = expanded
+        return expr
+
+    def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
+        """Embedding attribute the FIRST phase scores against, or None.
+
+        Resolves profile-function indirection (``first_phase: visual_sim``
+        with ``visual_sim = closeness(field, embedding)``) by substituting
+        function bodies, then extracts the closeness/attribute reference.
+        Only the first phase matters — it drives retrieval; a second-phase
+        vector rerank on top of a bm25 first phase must not switch retrieval
+        to ANN.
+        """
+        expr = self._expanded_first_phase(profile)
 
         m = re.search(r"closeness\(field,\s*(\w+)\)", expr)
         if m:

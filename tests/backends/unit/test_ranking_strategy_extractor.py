@@ -21,6 +21,7 @@ import pytest
 
 from cogniverse_vespa.ranking_strategy_extractor import (
     RankingStrategyExtractor,
+    SearchStrategyType,
     extract_all_ranking_strategies,
 )
 
@@ -773,6 +774,33 @@ def _text_match_profile(**overrides):
         "candidates": "text_matches",
         **overrides,
     }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema", "text_score"), [("agent_memories", "nativeRank(text)")]
+)
+def test_a_native_rank_hybrid_reads_the_query_text(schema, text_score):
+    """A hybrid whose only text score is nativeRank still needs the query
+    text: without it the backend sends no terms and the hybrid ranks by
+    closeness alone, exactly as semantic_search."""
+    path = _REPO_ROOT / "configs" / "schemas" / f"{schema}_schema.json"
+    (profile,) = [
+        p
+        for p in json.loads(path.read_text())["rank_profiles"]
+        if p["name"] == "hybrid"
+    ]
+    info = RankingStrategyExtractor().extract_from_schema(path)["hybrid"]
+
+    assert profile["first_phase"]["expression"] == (
+        f"closeness(field, embedding) + {text_score}"
+    )
+    assert (
+        info.needs_text_query,
+        info.strategy_type,
+        info.use_nearestneighbor,
+        info.nearestneighbor_field,
+    ) == (True, SearchStrategyType.HYBRID, True, "embedding")
 
 
 @pytest.mark.unit

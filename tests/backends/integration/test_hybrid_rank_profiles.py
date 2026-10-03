@@ -136,6 +136,7 @@ def _text_first_hybrids(schemas_dir: Path = SCHEMAS_DIR) -> list[tuple[str, str]
 
 
 FUSED_HYBRIDS = [
+    ("agent_memories", "hybrid"),
     ("audio_content", "hybrid_semantic_bm25"),
     ("audio_content", "hybrid_acoustic_bm25"),
     ("code_lateon_mv", "hybrid_float_bm25"),
@@ -266,7 +267,7 @@ def _field_type(base: str, field: str) -> str:
 
 
 def _width(tensor_type: str) -> int:
-    return int(re.search(r"v\[(\d+)\]", tensor_type).group(1))
+    return int(re.search(r"\w+\[(\d+)\]", tensor_type).group(1))
 
 
 def _text_fields(base: str) -> list[str]:
