@@ -295,9 +295,15 @@ def reaches_chunk_end(segments: List[Dict[str, Any]], duration: float) -> bool:
 
 
 def clamp_to_duration(seconds: float, duration: float) -> float:
-    """``seconds`` capped at ``duration``, logging the original at DEBUG."""
+    """``seconds`` capped at ``duration``, logging the original at DEBUG when
+    it is past by half a timestamp step or more. vLLM computes timestamps as
+    ``0.02 * n``, which can land a float's rounding past an equal duration
+    (``0.02 * 1470`` is 29.400000000000002 against 29.4).
+    """
     if seconds <= duration:
         return seconds
+    if seconds - duration < TIMESTAMP_STEP_S / 2:
+        return duration
     logger.debug(
         "segment time %.2fs is past the chunk's %.2fs; clamped", seconds, duration
     )
