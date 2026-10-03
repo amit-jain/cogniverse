@@ -39,6 +39,12 @@ _ALL_STRATEGIES_CACHE: Dict[
 _ALL_STRATEGIES_LOCK = threading.Lock()
 
 
+# A rank profile declaring ``"candidates": TEXT_MATCH_CANDIDATES`` ranks the
+# documents that match the query text and no others, even when its first
+# phase also scores an embedding.
+TEXT_MATCH_CANDIDATES = "text_matches"
+
+
 class SearchStrategyType(Enum):
     """Types of search strategies"""
 
@@ -60,6 +66,7 @@ class RankingStrategyInfo:
     nearestneighbor_field: Optional[str] = None
     nearestneighbor_tensor: Optional[str] = None
     first_phase_embedding_field: Optional[str] = None
+    text_candidates_only: bool = False
     embedding_field: Optional[str] = None
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
@@ -124,14 +131,30 @@ class RankingStrategyExtractor:
         else:
             first_phase_expr = str(first_phase)
 
+        expanded_first_phase = self._expanded_first_phase(profile)
         needs_text_query = (
             "bm25" in profile_name.lower()
-            or "bm25(" in first_phase_expr
+            or "bm25(" in expanded_first_phase
+            or "nativeRank(" in expanded_first_phase
             or "userInput" in first_phase_expr
             # Token match — a bare substring test classified any name merely
             # embedding the letters (e.g. "context_boost") as text-seeking.
             or "text" in profile_name.lower().split("_")
         )
+
+        candidates = profile.get("candidates")
+        if candidates not in (None, TEXT_MATCH_CANDIDATES):
+            raise ValueError(
+                f"Rank profile '{profile_name}' declares candidates "
+                f"{candidates!r}; the only declarable candidate set is "
+                f"{TEXT_MATCH_CANDIDATES!r}"
+            )
+        text_candidates_only = candidates == TEXT_MATCH_CANDIDATES
+        if text_candidates_only and not needs_text_query:
+            raise ValueError(
+                f"Rank profile '{profile_name}' ranks text matches only but "
+                "reads no query text"
+            )
 
         if needs_text_query and not (needs_float_embeddings or needs_binary_embeddings):
             strategy_type = SearchStrategyType.PURE_TEXT
@@ -167,7 +190,7 @@ class RankingStrategyExtractor:
                 if ann_field
                 else None
             )
-            if cell is not None:
+            if cell is not None and not text_candidates_only:
                 want_int8 = cell == "int8"
                 for input_name, input_type in inputs.items():
                     if ("int8" in input_type) == want_int8:
@@ -216,6 +239,7 @@ class RankingStrategyExtractor:
             nearestneighbor_field=nearestneighbor_field,
             nearestneighbor_tensor=nearestneighbor_tensor,
             first_phase_embedding_field=first_phase_embedding_field,
+            text_candidates_only=text_candidates_only,
             embedding_field=embedding_field,
             query_tensor_name=query_tensor_name,
             timeout=profile.get("timeout", 2.0),
@@ -225,16 +249,10 @@ class RankingStrategyExtractor:
             schema_name=schema_name,
         )
 
-    def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
-        """Embedding attribute the FIRST phase scores against, or None.
-
-        Resolves profile-function indirection (``first_phase: visual_sim``
-        with ``visual_sim = closeness(field, embedding)``) by substituting
-        function bodies, then extracts the closeness/attribute reference.
-        Only the first phase matters — it drives retrieval; a second-phase
-        vector rerank on top of a bm25 first phase must not switch retrieval
-        to ANN.
-        """
+    @staticmethod
+    def _expanded_first_phase(profile: Dict[str, Any]) -> str:
+        """The first-phase expression with every profile function substituted
+        by its body (``visual_sim + text_sim`` -> the two bodies)."""
         functions = {
             f.get("name", ""): f.get("expression", "")
             for f in profile.get("functions", [])
@@ -253,6 +271,19 @@ class RankingStrategyExtractor:
             if expanded == expr:
                 break
             expr = expanded
+        return expr
+
+    def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
+        """Embedding attribute the FIRST phase scores against, or None.
+
+        Resolves profile-function indirection (``first_phase: visual_sim``
+        with ``visual_sim = closeness(field, embedding)``) by substituting
+        function bodies, then extracts the closeness/attribute reference.
+        Only the first phase matters — it drives retrieval; a second-phase
+        vector rerank on top of a bm25 first phase must not switch retrieval
+        to ANN.
+        """
+        expr = self._expanded_first_phase(profile)
 
         m = re.search(r"closeness\(field,\s*(\w+)\)", expr)
         if m:
@@ -330,8 +361,8 @@ class RankingStrategyExtractor:
             "phased": "Two-phase ranking: binary first, float reranking",
             "hybrid_float_bm25": "Combined visual (float) and text search",
             "hybrid_binary_bm25": "Combined visual (binary) and text search",
-            "hybrid_bm25_binary": "Text-first search with visual reranking",
-            "hybrid_bm25_float": "Text-first search with visual reranking",
+            "hybrid_bm25_binary": "Text-first search reranked by visual and text",
+            "hybrid_bm25_float": "Text-first search reranked by visual and text",
         }
 
         # Check for no_description variant
@@ -428,6 +459,7 @@ def save_ranking_strategies(
                 "nearestneighbor_field": strategy_info.nearestneighbor_field,
                 "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
                 "first_phase_embedding_field": strategy_info.first_phase_embedding_field,
+                "text_candidates_only": strategy_info.text_candidates_only,
                 "embedding_field": strategy_info.embedding_field,
                 "query_tensor_name": strategy_info.query_tensor_name,
                 "timeout": strategy_info.timeout,

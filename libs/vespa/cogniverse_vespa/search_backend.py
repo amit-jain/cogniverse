@@ -1767,7 +1767,9 @@ class VespaSearchBackend(SearchBackend):
             logger.info(f"[{correlation_id}] Applying filters: {filter_conditions}")
 
         # Build YQL based on strategy configuration
-        embedding_first = bool(rank_config.get("first_phase_embedding_field"))
+        embedding_first = bool(
+            rank_config.get("first_phase_embedding_field")
+        ) and not rank_config.get("text_candidates_only")
         if rank_config.get("use_nearestneighbor"):
             # Use nearestNeighbor for visual search
             nn_field = rank_config.get("nearestneighbor_field", "embedding")
@@ -1816,7 +1818,8 @@ class VespaSearchBackend(SearchBackend):
             # every document and uses the text only to rank; without text it
             # takes the embedding-only branch below. The ranking terms are
             # OR'ed: weakAnd would skip documents below its running threshold
-            # and leave their text features unset.
+            # and leave their text features unset. A hybrid that ranks text
+            # matches only matches the text, whatever its first phase scores.
             base_where = (
                 'rank(true, {grammar: "any"}userInput(@userQuery))'
                 if embedding_first
@@ -2545,6 +2548,7 @@ class VespaSearchBackend(SearchBackend):
                         "first_phase_embedding_field": (
                             strategy_info.first_phase_embedding_field
                         ),
+                        "text_candidates_only": strategy_info.text_candidates_only,
                         "embedding_field": strategy_info.embedding_field,
                         "query_tensor_name": strategy_info.query_tensor_name,
                         "timeout": strategy_info.timeout,

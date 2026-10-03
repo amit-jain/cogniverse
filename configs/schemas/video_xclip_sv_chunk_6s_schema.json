@@ -271,14 +271,14 @@
       "functions": [
         {
           "name": "visual_sim",
-          "expression": "closeness(field, embedding_binary)"
+          "expression": "1 / (1 + 3.141592653589793 * sum(hamming(query(qtb), attribute(embedding_binary)), v) / 768)"
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title)"
+          "expression": "nativeRank(video_title)"
         }
       ],
-      "first_phase": "visual_sim + 0.1 * text_sim",
+      "first_phase": "visual_sim + text_sim",
       "timeout": 2.0
     },
     {
@@ -292,18 +292,15 @@
       "functions": [
         {
           "name": "visual_sim",
-          "expression": "closeness(field, embedding_binary)"
+          "expression": "1 / (1 + 3.141592653589793 * sum(hamming(query(qtb), attribute(embedding_binary)), v) / 768)"
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title)"
+          "expression": "nativeRank(video_title)"
         }
       ],
-      "first_phase": "text_sim",
-      "second_phase": {
-        "expression": "visual_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     },
     {
@@ -317,18 +314,15 @@
       "functions": [
         {
           "name": "visual_sim",
-          "expression": "closeness(field, embedding)"
+          "expression": "1 / (1 + acos(min(1, max(-1, sum(query(qt) * attribute(embedding), v) / sqrt(sum(query(qt) * query(qt), v) * sum(attribute(embedding) * attribute(embedding), v))))))"
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title)"
+          "expression": "nativeRank(video_title)"
         }
       ],
-      "first_phase": "text_sim",
-      "second_phase": {
-        "expression": "visual_sim",
-        "rerank_count": 100
-      },
+      "first_phase": "visual_sim + text_sim",
+      "candidates": "text_matches",
       "timeout": 2.0
     }
   ],

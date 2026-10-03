@@ -233,8 +233,9 @@ flowchart TD
   - Visual-first hybrids on patch/token models match every document with
     `rank(true, {grammar: "any"}userInput(@userQuery))` and rank by visual
     MaxSim plus `nativeRank` of the text fields
-  - Text-first hybrids (`hybrid_bm25_*`) match `userInput` and rerank by
-    embeddings
+  - Text-first hybrids (`hybrid_bm25_*`) declare `"candidates": "text_matches"`:
+    they match `userInput` and rank the text matches by the same visual score
+    plus `nativeRank`
 
 - **Text-Only** (bm25_only):
   - Only uses `userInput`, no embeddings needed
@@ -264,8 +265,8 @@ flowchart TD
 | float_binary | - | ✓/✓ | ✓/✓ | ✓* | Float primary, binary fallback |
 | hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Float MaxSim plus text `nativeRank` in one phase over every document |
 | hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Binary MaxSim plus text `nativeRank` in one phase over every document |
-| hybrid_bm25_float | ✓ | ✓ | - | - | Same fields as hybrid_float_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
-| hybrid_bm25_binary | ✓ | - | ✓ | - | Same fields as hybrid_binary_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
+| hybrid_bm25_float | ✓ | ✓ | - | - | Text matches only, ranked by float similarity plus `nativeRank`; not nearestNeighbor-eligible |
+| hybrid_bm25_binary | ✓ | - | ✓ | - | Text matches only, ranked by binary similarity plus `nativeRank`; not nearestNeighbor-eligible |
 | phased | ✓ | ✓ | ✓ | ✓* | Two-phase: binary → float |
 
 *nearestNeighbor used by single-vector schemas (detected via `_sv_` or `_lvt_` token in the schema name, e.g., `video_xclip_sv_chunk_6s`), and only for the profile names the extractor recognizes as nearestNeighbor-eligible (the `default` and `hybrid_bm25_*` profiles above always use tensor ranking, even on single-vector schemas).
@@ -423,6 +424,8 @@ strategies = extractor.extract_from_schema(
 # - use_nearestneighbor: bool
 # - nearestneighbor_field: Optional[str]
 # - nearestneighbor_tensor: Optional[str]
+# - first_phase_embedding_field: Optional[str]  # embedding the first phase scores
+# - text_candidates_only: bool  # "candidates": "text_matches" in the profile
 # - embedding_field: Optional[str]
 # - query_tensor_name: Optional[str]
 # - timeout: float
@@ -727,11 +730,11 @@ if strategy_info.use_nearestneighbor:
 elif strategy_info.strategy_type.value == "pure_visual":
     # Patch embedding - use tensor ranking expression
     yql = "where true"  # Ranking handled by first-phase expression
-elif strategy_info.first_phase_embedding_field:
+elif strategy_info.first_phase_embedding_field and not strategy_info.text_candidates_only:
     # Visual-first hybrid - every document, query terms only rank
     yql = 'where rank(true, {grammar: "any"}userInput(@userQuery))'
 else:
-    # Text search
+    # Text search, and text-first hybrids ranking the text matches only
     yql = "where userInput(@userQuery)"
 ```
 

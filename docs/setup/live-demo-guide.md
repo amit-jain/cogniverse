@@ -327,9 +327,9 @@ The system supports 9 ranking strategies, from simple keyword matching to hybrid
 | `float_binary` | Float query, binary index | Speed/accuracy balance |
 | `phased` | Binary retrieval → float reranking | Optimized two-phase |
 | `hybrid_float_bm25` | Visual + text hybrid | Best overall accuracy |
-| `hybrid_bm25_float` | Text-first + precise float rerank | Text-heavy queries |
+| `hybrid_bm25_float` | Text matches ranked by float visual + text | Text-heavy queries |
 | `hybrid_binary_bm25` | Fast hybrid (binary visual + text) | Low-latency hybrid |
-| `hybrid_bm25_binary` | Text-first + binary visual rerank | Fast text-first hybrid |
+| `hybrid_bm25_binary` | Text matches ranked by binary visual + text | Fast text-first hybrid |
 
 ### Run the Comprehensive Query Test
 

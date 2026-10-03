@@ -21,6 +21,7 @@ import pytest
 
 from cogniverse_vespa.ranking_strategy_extractor import (
     RankingStrategyExtractor,
+    SearchStrategyType,
     extract_all_ranking_strategies,
 )
 
@@ -193,23 +194,25 @@ def _normalized_profile(profile: dict) -> dict:
 @pytest.mark.parametrize("schema", _HYBRID_SCHEMAS)
 def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
     """A ``hybrid_binary_bm25*`` profile ranks every segment by binary MaxSim
-    plus text in its first phase and a ``hybrid_bm25_binary*`` profile
-    text-first; the ``_no_description`` pair were once byte-identical (both
-    text-first), silently giving hybrid_binary_bm25_no_description the wrong
-    phase order."""
+    plus text and a ``hybrid_bm25_binary*`` profile ranks the text matches
+    alone by the same sum; the ``_no_description`` pair were once
+    byte-identical, silently giving hybrid_binary_bm25_no_description the
+    wrong candidate set."""
     profiles = _rank_profiles(_REPO_ROOT / schema)
     for suffix, text in (("", "text_sim"), ("_no_description", "text_sim_no_desc")):
         binary_first = profiles[f"hybrid_binary_bm25{suffix}"]
         text_first = profiles[f"hybrid_bm25_binary{suffix}"]
         assert binary_first["first_phase"] == f"visual_sim_binary + {text}", (
-            f"hybrid_binary_bm25{suffix} must rank binary MaxSim plus text first"
+            f"hybrid_binary_bm25{suffix} must rank binary MaxSim plus text"
         )
-        assert "text_sim" in json.dumps(text_first["first_phase"]), (
-            f"hybrid_bm25_binary{suffix} must rank text/bm25 first"
+        assert "candidates" not in binary_first, (
+            f"hybrid_binary_bm25{suffix} must rank every segment"
         )
-        assert binary_first["first_phase"] != text_first["first_phase"], (
-            f"opposite-named hybrid profiles must differ (suffix={suffix!r})"
-        )
+        assert (text_first["first_phase"], text_first["candidates"]) == (
+            f"visual_sim_binary + {text}",
+            "text_matches",
+        ), f"hybrid_bm25_binary{suffix} must rank the text matches alone"
+        assert "second_phase" not in text_first
 
 
 @pytest.mark.unit
@@ -606,17 +609,16 @@ def test_substring_text_in_name_does_not_classify_text(tmp_path):
     assert s.strategy_type is SearchStrategyType.PURE_VISUAL
 
 
-# Visual-first hybrids score every document by an embedding in their first
-# phase, so retrieval must not be narrowed to text matches; text-first
-# hybrids and text strategies retrieve by text.
+# The embedding each hybrid's first phase scores; text strategies score none.
+# Whether retrieval is narrowed to text matches is text_candidates_only.
 _FIRST_PHASE_EMBEDDING_FIELDS = {
     "video_colpali_smol500_mv_frame": {
         "hybrid_float_bm25": "embedding",
         "hybrid_binary_bm25": "embedding_binary",
         "hybrid_float_bm25_no_description": "embedding",
         "hybrid_binary_bm25_no_description": "embedding_binary",
-        "hybrid_bm25_float": None,
-        "hybrid_bm25_binary": None,
+        "hybrid_bm25_float": "embedding",
+        "hybrid_bm25_binary": "embedding_binary",
         "bm25_only": None,
         "float_float": "embedding",
     },
@@ -625,8 +627,8 @@ _FIRST_PHASE_EMBEDDING_FIELDS = {
         "hybrid_binary_bm25": "embedding_binary",
         "hybrid_float_bm25_no_description": "embedding",
         "hybrid_binary_bm25_no_description": "embedding_binary",
-        "hybrid_bm25_float": None,
-        "hybrid_bm25_binary": None,
+        "hybrid_bm25_float": "embedding",
+        "hybrid_bm25_binary": "embedding_binary",
     },
     "image_colpali_mv": {
         "hybrid_float_bm25": "embedding",
@@ -651,14 +653,227 @@ _FIRST_PHASE_EMBEDDING_FIELDS = {
     },
     "audio_content": {
         "hybrid_semantic_bm25": "semantic_embedding_binary",
+        "hybrid_acoustic_bm25": "acoustic_embedding",
         "transcript_search": None,
     },
     "video_xclip_sv_chunk_6s": {
         "hybrid_float_bm25": "embedding",
         "hybrid_binary_bm25": "embedding_binary",
-        "hybrid_bm25_float": None,
+        "hybrid_bm25_float": "embedding",
+        "hybrid_bm25_binary": "embedding_binary",
     },
 }
+
+
+@pytest.mark.unit
+def test_hybrid_descriptions_name_what_ranks_them():
+    strategies = RankingStrategyExtractor().extract_from_schema(
+        _REPO_ROOT
+        / "configs"
+        / "schemas"
+        / "video_colpali_smol500_mv_frame_schema.json"
+    )
+
+    assert {
+        name: strategies[name].description
+        for name in (
+            "hybrid_float_bm25",
+            "hybrid_binary_bm25",
+            "hybrid_bm25_float",
+            "hybrid_bm25_binary",
+            "hybrid_bm25_binary_no_description",
+        )
+    } == {
+        "hybrid_float_bm25": "Combined visual (float) and text search",
+        "hybrid_binary_bm25": "Combined visual (binary) and text search",
+        "hybrid_bm25_float": "Text-first search reranked by visual and text",
+        "hybrid_bm25_binary": "Text-first search reranked by visual and text",
+        "hybrid_bm25_binary_no_description": (
+            "Text-first search reranked by visual and text (excluding descriptions)"
+        ),
+    }
+
+
+@pytest.mark.unit
+def test_single_vector_hybrids_retrieve_as_their_first_phase_scores():
+    """The fused dense hybrids keep nearestNeighbor retrieval on the field
+    their first phase scores; the text-first ones retrieve by text."""
+    schemas = _REPO_ROOT / "configs" / "schemas"
+    xclip = RankingStrategyExtractor().extract_from_schema(
+        schemas / "video_xclip_sv_chunk_6s_schema.json"
+    )
+    audio = RankingStrategyExtractor().extract_from_schema(
+        schemas / "audio_content_schema.json"
+    )
+
+    assert {
+        name: (
+            info.use_nearestneighbor,
+            info.nearestneighbor_field,
+            info.nearestneighbor_tensor,
+            info.needs_text_query,
+        )
+        for name, info in (
+            ("hybrid_float_bm25", xclip["hybrid_float_bm25"]),
+            ("hybrid_binary_bm25", xclip["hybrid_binary_bm25"]),
+            ("hybrid_bm25_float", xclip["hybrid_bm25_float"]),
+            ("hybrid_bm25_binary", xclip["hybrid_bm25_binary"]),
+            ("hybrid_acoustic_bm25", audio["hybrid_acoustic_bm25"]),
+        )
+    } == {
+        "hybrid_float_bm25": (True, "embedding", "qt", True),
+        "hybrid_binary_bm25": (True, "embedding_binary", "qtb", True),
+        "hybrid_bm25_float": (False, None, None, True),
+        "hybrid_bm25_binary": (False, None, None, True),
+        "hybrid_acoustic_bm25": (True, "acoustic_embedding", "acoustic_query", True),
+    }
+
+
+_TEXT_FIRST = {
+    "video_colpali_smol500_mv_frame": [
+        "hybrid_bm25_binary",
+        "hybrid_bm25_float",
+        "hybrid_bm25_binary_no_description",
+        "hybrid_bm25_float_no_description",
+    ],
+    "video_colqwen_omni_mv_chunk_30s": [
+        "hybrid_bm25_binary",
+        "hybrid_bm25_float",
+        "hybrid_bm25_binary_no_description",
+        "hybrid_bm25_float_no_description",
+    ],
+    "video_xclip_sv_chunk_6s": ["hybrid_bm25_binary", "hybrid_bm25_float"],
+}
+
+
+@pytest.mark.unit
+def test_only_the_text_first_hybrids_rank_text_matches_alone():
+    schemas = _REPO_ROOT / "configs" / "schemas"
+    found = {}
+    for path in sorted(schemas.glob("*_schema.json")):
+        for name, info in RankingStrategyExtractor().extract_from_schema(path).items():
+            if info.text_candidates_only:
+                found.setdefault(path.name.removesuffix("_schema.json"), []).append(
+                    (name, info.use_nearestneighbor)
+                )
+
+    assert found == {
+        base: [(name, False) for name in names] for base, names in _TEXT_FIRST.items()
+    }
+
+
+def _text_match_profile(**overrides):
+    return {
+        "name": "hybrid_bm25_float",
+        "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[768])"}],
+        "functions": [
+            {"name": "visual_sim", "expression": "closeness(field, embedding)"},
+            {"name": "text_sim", "expression": "nativeRank(video_title)"},
+        ],
+        "first_phase": "visual_sim + text_sim",
+        "candidates": "text_matches",
+        **overrides,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema", "text_score"), [("agent_memories", "nativeRank(text)")]
+)
+def test_a_native_rank_hybrid_reads_the_query_text(schema, text_score):
+    """A hybrid whose only text score is nativeRank still needs the query
+    text: without it the backend sends no terms and the hybrid ranks by
+    closeness alone, exactly as semantic_search."""
+    path = _REPO_ROOT / "configs" / "schemas" / f"{schema}_schema.json"
+    (profile,) = [
+        p
+        for p in json.loads(path.read_text())["rank_profiles"]
+        if p["name"] == "hybrid"
+    ]
+    info = RankingStrategyExtractor().extract_from_schema(path)["hybrid"]
+
+    assert profile["first_phase"]["expression"] == (
+        f"closeness(field, embedding) + {text_score}"
+    )
+    assert (
+        info.needs_text_query,
+        info.strategy_type,
+        info.use_nearestneighbor,
+        info.nearestneighbor_field,
+    ) == (True, SearchStrategyType.HYBRID, True, "embedding")
+
+
+@pytest.mark.unit
+def test_text_match_candidates_turn_off_nearest_neighbor(tmp_path):
+    """A dense first phase would retrieve by nearestNeighbor; ranking text
+    matches only keeps retrieval on the text."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank_profiles": [_text_match_profile()],
+        },
+    )
+
+    info = RankingStrategyExtractor().extract_from_schema(path)["hybrid_bm25_float"]
+
+    assert (
+        info.text_candidates_only,
+        info.first_phase_embedding_field,
+        info.use_nearestneighbor,
+        info.nearestneighbor_field,
+    ) == (True, "embedding", False, None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"candidates": "everything"},
+            "Rank profile 'hybrid_bm25_float' declares candidates 'everything'; "
+            "the only declarable candidate set is 'text_matches'",
+        ),
+        (
+            {"name": "visual_only", "first_phase": "visual_sim"},
+            "Rank profile 'visual_only' ranks text matches only but reads no "
+            "query text",
+        ),
+    ],
+)
+def test_an_undeclarable_candidate_set_is_refused(tmp_path, overrides, message):
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank_profiles": [_text_match_profile(**overrides)],
+        },
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        RankingStrategyExtractor().extract_from_schema(path)
+
+    assert str(excinfo.value) == message
+
+
+@pytest.mark.unit
+def test_text_match_candidates_reach_the_search_backend(tmp_path):
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_vespa.search_backend import VespaSearchBackend
+
+    source = _REPO_ROOT / "configs" / "schemas" / "video_xclip_sv_chunk_6s_schema.json"
+    (tmp_path / source.name).write_text(source.read_text())
+    backend = object.__new__(VespaSearchBackend)
+    backend._schema_loader = FilesystemSchemaLoader(tmp_path)
+
+    loaded = backend._load_ranking_strategies()["video_xclip_sv_chunk_6s"]
+
+    assert {
+        name: loaded[name]["text_candidates_only"]
+        for name in ("hybrid_bm25_float", "hybrid_float_bm25", "bm25_only")
+    } == {"hybrid_bm25_float": True, "hybrid_float_bm25": False, "bm25_only": False}
 
 
 @pytest.mark.unit

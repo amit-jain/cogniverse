@@ -115,6 +115,25 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
     )
 
 
+# Float MaxSim per query token over the in-code image schema's patches.
+_IMAGE_MAX_SIM = (
+    "reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), "
+    "max, patch)"
+)
+
+
+def _angular_closeness(query: str, field: str, dim: str) -> str:
+    """``closeness(field, <field>)`` under the angular metric, computed from
+    the attribute, so it also scores documents that no nearestNeighbor term
+    retrieved."""
+    cosine = (
+        f"sum(query({query}) * attribute({field}), {dim}) / "
+        f"sqrt(sum(query({query}) * query({query}), {dim}) * "
+        f"sum(attribute({field}) * attribute({field}), {dim}))"
+    )
+    return f"1 / (1 + acos(min(1, max(-1, {cosine}))))"
+
+
 class VespaSchemaManager:
     """Deploy and manage Vespa schemas, including per-tenant lifecycle."""
 
@@ -176,7 +195,6 @@ class VespaSchemaManager:
                 Function,
                 RankProfile,
                 Schema,
-                SecondPhaseRanking,
             )
 
             schema_objects = []
@@ -225,29 +243,39 @@ class VespaSchemaManager:
                                 type="array<string>",
                                 indexing=["summary", "attribute"],
                             ),
-                            # ColPali multi-vector embedding (same as video frames)
+                            # ColPali multi-vector embedding, mapped per patch
+                            # as in configs/schemas/image_colpali_mv_schema.json.
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<float>(x[1024],d[320])",
+                                type="tensor<bfloat16>(patch{}, v[320])",
                                 indexing=["attribute"],
-                                attribute=["distance-metric:prenormalized-angular"],
                             ),
                         ]
                     ),
                     rank_profiles=[
                         RankProfile(
                             name="colpali_similarity",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
-                            first_phase="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
+                            first_phase=f"sum({_IMAGE_MAX_SIM}, querytoken)",
                         ),
                         RankProfile(
                             name="hybrid_image",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
-                            first_phase="bm25(image_description)",
-                            second_phase=SecondPhaseRanking(
-                                expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
-                                rerank_count=100,
-                            ),
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
+                            functions=[
+                                Function(
+                                    name="visual_sim",
+                                    expression=f"reduce({_IMAGE_MAX_SIM}, avg, querytoken)",
+                                ),
+                                Function(
+                                    name="text_sim",
+                                    expression="nativeRank(image_description)",
+                                ),
+                            ],
+                            first_phase="visual_sim + text_sim",
                         ),
                     ],
                 )
@@ -329,15 +357,22 @@ class VespaSchemaManager:
                         RankProfile(
                             name="transcript_search", first_phase="bm25(transcript)"
                         ),
-                        # Hybrid: BM25 + semantic embeddings
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_audio",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
-                            first_phase="bm25(transcript)",
-                            second_phase=SecondPhaseRanking(
-                                expression="closeness(field, semantic_embedding)",
-                                rerank_count=100,
-                            ),
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "semantic_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(transcript)"
+                                ),
+                            ],
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )
@@ -506,15 +541,22 @@ class VespaSchemaManager:
                             inputs=[("query(q)", "tensor<float>(d[768])")],
                             first_phase="closeness(field, document_embedding)",
                         ),
-                        # Hybrid: BM25 recall -> semantic re-ranking
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_bm25_semantic",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
-                            first_phase="bm25(full_text)",
-                            second_phase=SecondPhaseRanking(
-                                expression="closeness(field, document_embedding)",
-                                rerank_count=100,
-                            ),
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "document_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(full_text)"
+                                ),
+                            ],
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )
