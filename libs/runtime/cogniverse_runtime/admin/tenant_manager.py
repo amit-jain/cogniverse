@@ -1206,6 +1206,95 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         )
 
 
+def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], bool]:
+    """Delete every config-store row the tenant left once its schemas are
+    dropped: its own rows in every scope (registry tombstones, backend
+    profiles, pin quotas, signature variants and other overrides), its
+    schema deployment intents, its provenance write lease and the drift
+    migration's refusals of its schemas.
+
+    The deletion marker, its pending record and the tenant's operation lease
+    are kept: the marker until the tenant is created again, the lease because
+    a create or delete of the tenant contends through it. Revoked harness keys
+    are immutable and stay revoked. Returns the rows found, as
+    ``service:key``, and whether every one was deleted. Nothing raises: a row
+    that cannot be read or deleted is logged at ERROR naming the tenant and
+    the row.
+    """
+    from cogniverse_core.memory.manager import PROVENANCE_WRITE_LEASE_SERVICE
+    from cogniverse_core.registries.schema_deployment_intents import (
+        SchemaDeploymentIntents,
+    )
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    store = config_manager.store
+    found: list[str] = []
+    deleted = True
+
+    def failed(row: str, exc: Exception) -> None:
+        nonlocal deleted
+        deleted = False
+        logger.error(
+            f"Cannot delete {row} of deleted tenant {tenant_id} "
+            f"({type(exc).__name__}: {exc}); the delete stays pending and its "
+            "retry, or the next create of the tenant, deletes it"
+        )
+
+    def delete(row: str, delete_row) -> None:
+        found.append(row)
+        try:
+            delete_row()
+        except Exception as exc:
+            failed(row, exc)
+
+    try:
+        own = store.list_configs(tenant_id=tenant_id)
+    except Exception as exc:
+        own = []
+        failed("the config rows", exc)
+    for entry in own:
+        delete(
+            f"{entry.service}:{entry.config_key}",
+            lambda entry=entry: store.delete_config(
+                tenant_id, entry.scope, entry.service, entry.config_key
+            ),
+        )
+    intents = SchemaDeploymentIntents(store)
+    try:
+        names = intents.tenant_names(tenant_id)
+    except Exception as exc:
+        names = []
+        failed("the schema deployment intents", exc)
+    for name in names:
+        delete(
+            f"schema_deployment_intents:{name}",
+            lambda name=name: intents.delete(name),
+        )
+    try:
+        lease = store.get_config(
+            SYSTEM_TENANT_ID,
+            ConfigScope.SCHEMA,
+            PROVENANCE_WRITE_LEASE_SERVICE,
+            tenant_id,
+        )
+    except Exception as exc:
+        lease = None
+        failed("the provenance write lease", exc)
+    if lease is not None:
+        delete(
+            f"{PROVENANCE_WRITE_LEASE_SERVICE}:{tenant_id}",
+            lambda: store.delete_config(
+                SYSTEM_TENANT_ID,
+                ConfigScope.SCHEMA,
+                PROVENANCE_WRITE_LEASE_SERVICE,
+                tenant_id,
+            ),
+        )
+    if not delete_tenant_refusals(config_manager, tenant_id):
+        deleted = False
+    return found, deleted
+
+
 class TenantRecordRetained(RuntimeError):
     """The ``tenant_metadata`` delete did not confirm and the record is
     still present."""
@@ -1369,13 +1458,15 @@ async def _delete_tenant(
         deleted_schemas: list = list(
             await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
-        # Its schemas are gone, so are the drift migration's refusals of them.
-        await asyncio.to_thread(delete_tenant_refusals, config_manager, canonical_tid)
+        # Its schemas are gone, so is everything the config store holds for it.
+        state_rows, state_deleted = await asyncio.to_thread(
+            _delete_tenant_state, config_manager, canonical_tid
+        )
 
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
         # tenant create, and accumulate every test run without this branch.
-        if not tenant and not deleted_schemas:
+        if not tenant and not deleted_schemas and not state_rows:
             # Nothing existed to delete: the tenant id stays free to use.
             await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
             return None
@@ -1453,10 +1544,13 @@ async def _delete_tenant(
                     f"failed (organization {org_id} may remain): {e}"
                 )
 
-        # Every step has completed. A failure to record that leaves the delete
-        # pending, so the next create of the tenant runs its steps again.
+        # Every step has completed, unless some of the tenant's state could not
+        # be deleted: the delete then stays pending, and its retry or the next
+        # create of the tenant deletes the rest. A failure to record completion
+        # leaves it pending too, so the next create runs its steps again.
         try:
-            await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
+            if state_deleted:
+                await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
         except Exception as exc:
             logger.error(
                 f"Tenant {canonical_tid} is deleted, but its delete could not be "

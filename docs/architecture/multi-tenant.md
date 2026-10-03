@@ -1658,8 +1658,12 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
      writes (`release_deleted_tenant`);
    - discovers the tenant's schemas from the registry plus any
      canonical-suffix-matched Vespa orphans, redeploys without them (immediate
-     Vespa removal), deletes the drift migration's recorded refusals of them
-     (`delete_tenant_refusals`), and tombstones the `tenant_metadata` row;
+     Vespa removal), deletes every config-store row of the tenant — registry
+     tombstones, schema deployment intents, backend profiles, overrides, its
+     provenance write lease and the drift migration's refusals of its schemas
+     — and deletes the `tenant_metadata` row. A row it cannot delete is
+     logged at ERROR and the delete stays pending, so its retry or the next
+     create of the tenant removes it;
    - records the delete complete (`complete_tenant_delete`).
    ```bash
    curl -X DELETE http://localhost:8000/admin/tenants/acme:acme

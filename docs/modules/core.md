@@ -809,7 +809,10 @@ unregistered schema, fencing pending registration writes.
 replace a newer generation. An absent schema retires the intent without
 registering anything; the inactive record retains its definition for late
 activation. `retire(record)` applies the same rule to a deploy that failed
-before activation. A deploy that failed after activation
+before activation; it is conditional on the record's revision, so a record
+the tenant delete removed meanwhile is not written back.
+`tenant_names(tenant_id)` lists the names of a tenant's records and
+`delete(name)` removes one; the tenant delete uses them. A deploy that failed after activation
 (`SchemaConvergenceError`: the generation did not reach every service, or the
 new schema refused a feed, inside the budget) leaves the intent pending: the
 schema is live, every package built meanwhile carries it, and recovery
@@ -858,7 +861,7 @@ under the deployment lease, every recorded refusal whose schema is no longer
 registered with a drifted definition: one that has migrated since, or was
 dropped. `delete_tenant_refusals(config_manager, tenant_id)` deletes a
 tenant's refusals; the tenant delete calls it once the tenant's schemas are
-dropped. Neither raises: a refusal that cannot be read or deleted is logged at
+dropped, among the rest of the tenant's rows. Neither raises: a refusal that cannot be read or deleted is logged at
 ERROR by tenant and schema, the run or the delete completes, and the next run
 removes it. A peer's deletion landing before
 activation drops that schema from the tenant's deploy. A tenant marked

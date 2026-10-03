@@ -484,6 +484,7 @@ async def test_concurrent_deletes_of_one_tenant_both_complete(
         "organization_deleted": False,
         "workers_released": [],
     }
+    assert _tenant_rows(tm._config_manager.store, tenant_id) == []
 
     assert await tm.get_tenant_internal(tenant_id) is None
     deployed = set(
@@ -1659,3 +1660,350 @@ async def test_a_tenant_operation_whose_lease_cannot_be_written_changes_nothing(
         assert (await tm.get_tenant_internal(tenant_id)).tenant_full_id == tenant_id
         assert _deployed_for(tenant_id) == [provenance_schema]
         await tm.delete_tenant_internal(tenant_id)
+
+
+def _tenant_rows(store, tenant_id: str) -> list[str]:
+    """Every config-store row the tenant's delete removes, as service:key:
+    its own rows, its schema deployment intents and its provenance write
+    lease."""
+    from cogniverse_core.memory.manager import PROVENANCE_WRITE_LEASE_SERVICE
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    rows = [
+        f"{entry.service}:{entry.config_key}" for entry in store.list_configs(tenant_id)
+    ]
+    rows += [
+        f"schema_deployment_intents:{entry.config_key}"
+        for entry in store.list_all_configs(
+            scope=ConfigScope.SCHEMA,
+            service="schema_deployment_intents",
+            config_key_suffix="_" + tenant_id.replace(":", "_"),
+        )
+        if entry.config_value["registration"]["tenant_id"] == tenant_id
+    ]
+    if store.get_config(
+        "__system__", ConfigScope.SCHEMA, PROVENANCE_WRITE_LEASE_SERVICE, tenant_id
+    ):
+        rows.append(f"{PROVENANCE_WRITE_LEASE_SERVICE}:{tenant_id}")
+    return sorted(rows)
+
+
+async def _create_tenant_with_state(tenant_id: str, base_url: str) -> list[str]:
+    """A tenant with memory schemas and documents, a backend profile, a pin
+    quota and a provenance write lease that was taken and released; returns
+    its rows."""
+    from cogniverse_core.memory.manager import PROVENANCE_WRITE_LEASE_SERVICE
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    await _create_tenant_with_memory(tenant_id, base_url)
+    store = tm._config_manager.store
+    tm._config_manager.add_backend_profile(
+        BackendProfileConfig(
+            profile_name="state_profile",
+            type="video",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
+        ),
+        tenant_id=tenant_id,
+    )
+    store.set_config(
+        tenant_id, ConfigScope.SYSTEM, "admin_overrides", "pin_quotas", {"quota": 3}
+    )
+    lease = SchemaDeployLease(
+        store,
+        service=PROVENANCE_WRITE_LEASE_SERVICE,
+        config_key=tenant_id,
+        purpose=f"provenance writes for {tenant_id}",
+    )
+    await asyncio.to_thread(lease.acquire)
+    await asyncio.to_thread(lease.release)
+    return _tenant_rows(store, tenant_id)
+
+
+def _expected_rows(tenant_id: str) -> list[str]:
+    memory_schema, provenance_schema = _schema_names(tenant_id)
+    return sorted(
+        [
+            "admin_overrides:pin_quotas",
+            "backend:backend_config",
+            "provenance_write_lease:" + tenant_id,
+            "schema_deployment_intents:" + memory_schema,
+            "schema_deployment_intents:" + provenance_schema,
+            "schema_registry:schema_agent_memories",
+            "schema_registry:schema_provenance",
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_delete_removes_every_row_of_the_tenant_but_its_marker(
+    wired_tenant_manager, vespa_instance, cluster_events
+):
+    """Registry tombstones, deployment intents, the backend profile, a pin
+    quota and the provenance write lease all go with the tenant. Its
+    deletion marker stays, the delete recorded complete, until a create."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    assert await _create_tenant_with_state(
+        tenant_id, vespa_instance["base_url"]
+    ) == _expected_rows(tenant_id)
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert result["workers_released"] == [cluster_events.worker_id]
+    assert sorted(result["deleted_schemas"]) == sorted(_schema_names(tenant_id))
+    assert _tenant_rows(store, tenant_id) == []
+    assert (
+        tenant_is_deleted(store, tenant_id),
+        tenant_delete_pending(store, tenant_id),
+    ) == (True, False)
+
+    recreated = await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id, created_by="recreate-test", base_schemas=["provenance"]
+        )
+    )
+    try:
+        assert recreated.schemas_deployed == ["provenance"]
+        provenance_schema = _schema_names(tenant_id)[1]
+        assert _tenant_rows(store, tenant_id) == sorted(
+            [
+                "schema_deployment_intents:" + provenance_schema,
+                "schema_registry:schema_provenance",
+            ]
+        )
+    finally:
+        await tm.delete_tenant_internal(tenant_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", ["retry", "create"])
+async def test_tenant_rows_the_delete_cannot_remove_are_removed_by_its_retry_or_a_create(
+    wired_tenant_manager, vespa_instance, config_manager, cluster_events, caplog, finish
+):
+    """The config store refuses to delete the tenant's own rows. The delete
+    still answers that the tenant is deleted, logs each row it could not
+    remove at ERROR by tenant, and stays pending; its retry, or a create of
+    the tenant, removes them and completes it."""
+    from urllib.parse import unquote
+
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    tenant_id = _unique_tenant()
+    store = config_manager.store
+    rows = await _create_tenant_with_state(tenant_id, vespa_instance["base_url"])
+    own = [
+        row for row in rows if not row.startswith(("schema_deployment", "provenance"))
+    ]
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    def refuse_own_row_deletes(method, path, _body):
+        if method == "DELETE" and f"::{tenant_id}:" in unquote(path):
+            return 500, {"message": "injected storage failure"}
+        return None
+
+    with InterceptFaultProxy(
+        vespa_instance["base_url"], refuse_own_row_deletes
+    ) as proxy:
+        proxied = ConfigManager(
+            store=VespaConfigStore(
+                backend_url="http://127.0.0.1", backend_port=proxy.port
+            )
+        )
+        BackendRegistry.get_instance().clear_instances()
+        tm.set_config_manager(proxied)
+        try:
+            result = await tm.delete_tenant_internal(tenant_id)
+        finally:
+            BackendRegistry.get_instance().clear_instances()
+            tm.set_config_manager(config_manager)
+            proxied.store.close()
+
+    assert result["status"] == "deleted"
+    assert result["workers_released"] == [cluster_events.worker_id]
+    assert sorted(result["deleted_schemas"]) == sorted(_schema_names(tenant_id))
+    logged = sorted(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == tm.logger.name and record.levelno == logging.ERROR
+    )
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot delete {row} of deleted tenant {tenant_id}" for row in sorted(own)
+    ]
+    assert all(
+        message.endswith(
+            "; the delete stays pending and its retry, or the next create of the "
+            "tenant, deletes it"
+        )
+        for message in logged
+    ), logged
+    assert _tenant_rows(store, tenant_id) == sorted(own)
+    assert tenant_delete_pending(store, tenant_id) is True
+    assert await tm.get_tenant_internal(tenant_id) is None
+
+    caplog.clear()
+    if finish == "retry":
+        retried = await tm.delete_tenant_internal(tenant_id)
+        assert retried == {
+            "status": "deleted",
+            "tenant_full_id": tenant_id,
+            "schemas_deleted": 0,
+            "deleted_schemas": [],
+            "organization_deleted": False,
+            "workers_released": [cluster_events.worker_id],
+        }
+        assert _tenant_rows(store, tenant_id) == []
+        assert (
+            tenant_is_deleted(store, tenant_id),
+            tenant_delete_pending(store, tenant_id),
+        ) == (True, False)
+    else:
+        created = await tm.create_tenant(
+            CreateTenantRequest(
+                tenant_id=tenant_id,
+                created_by="recreate-test",
+                base_schemas=["provenance"],
+            )
+        )
+        try:
+            assert created.created_by == "recreate-test"
+            provenance_schema = _schema_names(tenant_id)[1]
+            assert _tenant_rows(store, tenant_id) == sorted(
+                [
+                    "schema_deployment_intents:" + provenance_schema,
+                    "schema_registry:schema_provenance",
+                ]
+            )
+            assert tenant_is_deleted(store, tenant_id) is False
+        finally:
+            await tm.delete_tenant_internal(tenant_id)
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == tm.logger.name and record.levelno == logging.ERROR
+    ] == []
+
+
+def _deleting_peer(redis_url, channel, vespa_port, tenant_id, report) -> None:
+    """Another runtime process serving a delete of the tenant."""
+    import asyncio
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.cluster_events import ClusterEvents
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    async def run():
+        store = VespaConfigStore(
+            backend_url="http://localhost", backend_port=vespa_port
+        )
+        tenant_manager.set_config_manager(ConfigManager(store=store))
+        tenant_manager.set_schema_loader(FilesystemSchemaLoader("configs/schemas"))
+        events = ClusterEvents(
+            redis_url,
+            "worker-peer",
+            {"tenant_deleted": tenant_manager.release_deleted_tenant},
+            channel=channel,
+        )
+        await events.start()
+        tenant_manager.set_cluster_events(events)
+        try:
+            report.put(await tenant_manager.delete_tenant_internal(tenant_id))
+        finally:
+            await events.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_a_deploy_refused_by_a_delete_that_landed_after_its_decision_leaves_no_row(
+    wired_tenant_manager, vespa_instance, cluster_events, workflow_state_redis_url
+):
+    """A deploy of a new schema journals its intent; then another process
+    serves the tenant's whole delete before the deploy takes the deployment
+    lease. The delete leaves the deploy's pending schema out of its own
+    package; under the lease the deploy is refused, and its retire does not
+    write back the journal entry the delete removed, so once both finish
+    nothing of the tenant is left but its marker."""
+    from cogniverse_core.common.tenant_utils import TenantDeletedError
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    # The backend the registry activates through, which may be another
+    # tenant's instance sharing the registry.
+    activating = backend.schema_registry._backend
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    deleted = []
+    deploy = activating.deploy_schemas
+
+    def delete_lands_first(schema_definitions, *args, **kwargs):
+        journaled = _tenant_rows(store, tenant_id)
+        peer = context.Process(
+            target=_deleting_peer,
+            args=(
+                workflow_state_redis_url,
+                cluster_events.channel,
+                vespa_instance["http_port"],
+                tenant_id,
+                report,
+            ),
+        )
+        peer.start()
+        try:
+            deleted.append((journaled, report.get(True, 600)))
+            peer.join(60)
+        finally:
+            if peer.is_alive():
+                peer.kill()
+        deleted.append(peer.exitcode)
+        return deploy(schema_definitions, *args, **kwargs)
+
+    activating.deploy_schemas = delete_lands_first
+    try:
+        with pytest.raises(TenantDeletedError) as caught:
+            await asyncio.to_thread(
+                backend.schema_registry.deploy_schema,
+                tenant_id=tenant_id,
+                base_schema_name="agent_memories",
+            )
+    finally:
+        activating.deploy_schemas = deploy
+    [(journaled, result), exitcode] = deleted
+    memory_schema, provenance_schema = _schema_names(tenant_id)
+    assert exitcode == 0
+    assert journaled == sorted(
+        [
+            "schema_deployment_intents:" + memory_schema,
+            "schema_deployment_intents:" + provenance_schema,
+            "schema_registry:schema_provenance",
+        ]
+    )
+    assert result["deleted_schemas"] == [provenance_schema]
+    assert result["workers_released"] == sorted(
+        ["worker-peer", cluster_events.worker_id]
+    )
+    assert str(caught.value) == _deleted_message(tenant_id)
+    assert _tenant_rows(store, tenant_id) == []
+    assert _deployed_for(tenant_id) == []

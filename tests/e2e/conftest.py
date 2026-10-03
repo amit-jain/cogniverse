@@ -1921,8 +1921,7 @@ _TEST_TENANT_PREFIXES = (
     "search_e2e_",
     "ingest_e2e_",
     # Knowledge-system e2e prefixes (added with the Section A/B/C/D coverage).
-    # Each phase claims one prefix; tests mint via unique_id("<prefix>") so the
-    # session-end sweep at _cleanup_test_tenants reaps them automatically.
+    # Each phase claims one prefix; tests mint via unique_id("<prefix>").
     "know_",  # KnowledgeRegistry / lifecycle / pinning
     "prov_",  # Provenance round-trip
     "confl_",  # Contradiction detection
@@ -1998,84 +1997,6 @@ def _sweep_tenant_deletes(
         # Don't block on the queued/in-flight deletes — cancel the rest so a
         # large backlog can't hang session setup/teardown past the budget.
         pool.shutdown(wait=False, cancel_futures=True)
-
-
-def _cleanup_test_tenants() -> None:
-    """Delete every test-prefixed tenant AND parent org so the next run starts clean.
-
-    Tests mint per-test tenants and orgs and don't tear them down;
-    without this they accumulate. Symptoms observed:
-      * 321 orgs after a few days of runs — slows ``list_organizations``
-        and turns the daily-cleanup CronWorkflow into a 10-min crawl
-        because it instantiates one ``Mem0MemoryManager`` per tenant.
-      * Vespa orphan rollback trips on stale schemas left behind.
-
-    Only entities matching ``_TEST_TENANT_PREFIXES`` are touched —
-    real customer orgs / tenants must never be eligible.
-
-    Waits for the runtime to be ready before sweeping. Tests that
-    trigger a runtime rollout (e.g. the daily-gateway cron e2e) leave
-    the runtime mid-restart at teardown time; without this wait the
-    sweep would flood the log with ``Server disconnected without
-    sending a response`` for every test tenant.
-    """
-    import time as _t
-
-    deadline = _t.monotonic() + 180.0
-    while _t.monotonic() < deadline and not runtime_available():
-        _t.sleep(3.0)
-    # 1. Tenant sweep — query Vespa for every schema_registry row and
-    # delete via runtime so the registry tombstone + Vespa schema both
-    # land atomically.
-    vespa_url = backend_env.vespa_url()
-    yql = (
-        "select tenant_id from config_metadata "
-        'where scope contains "schema" '
-        'and service contains "schema_registry"'
-    )
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{vespa_url}/search/", params={"yql": yql, "hits": 400})
-            if resp.status_code != 200:
-                return
-            hits = resp.json().get("root", {}).get("children", []) or []
-    except (httpx.HTTPError, OSError):
-        return
-
-    tenants_seen: set[str] = set()
-    for hit in hits:
-        tid = (hit.get("fields") or {}).get("tenant_id", "")
-        if tid and any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
-            tenants_seen.add(tid)
-
-    _sweep_tenant_deletes(tenants_seen)
-
-    # 2. Org sweep — DELETE /admin/organizations/{org_id}. Tenants
-    # have been removed above so org delete is unblocked. Skip orgs
-    # whose id doesn't match a test prefix so flywheel_org / customer
-    # orgs survive.
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            r = client.get(f"{RUNTIME}/admin/organizations")
-            if r.status_code != 200:
-                return
-            orgs = (r.json() or {}).get("organizations") or []
-    except (httpx.HTTPError, OSError) as exc:
-        print(f"Cleanup failed listing organizations: {exc}")
-        return
-
-    org_ids = sorted(
-        o["org_id"]
-        for o in orgs
-        if o.get("org_id")
-        and any(o["org_id"].startswith(p) for p in _TEST_TENANT_PREFIXES)
-    )
-    for org_id in org_ids:
-        try:
-            with httpx.Client(timeout=60.0) as client:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-        except (httpx.HTTPError, OSError) as exc:
-            print(f"Cleanup failed for org {org_id}: {exc}")
 
 
 def _reconcile_vespa_orphans() -> None:

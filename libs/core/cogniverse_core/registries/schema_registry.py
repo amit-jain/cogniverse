@@ -193,10 +193,11 @@ def _refusal_records(store) -> list:
     )
 
 
-def _delete_refusal(store, tenant_id: str, schema_name: str) -> None:
-    """Delete the recorded refusal of a tenant schema. A failure is logged at
-    ERROR and not raised: the record stays for the next migration run, which
-    removes every refusal whose schema no longer drifts."""
+def _delete_refusal(store, tenant_id: str, schema_name: str) -> bool:
+    """Delete the recorded refusal of a tenant schema; False when it could
+    not be. A failure is logged at ERROR and not raised: the record stays for
+    the next migration run, which removes every refusal whose schema no
+    longer drifts."""
     try:
         store.delete_config(
             tenant_id=SYSTEM_TENANT_ID,
@@ -210,14 +211,17 @@ def _delete_refusal(store, tenant_id: str, schema_name: str) -> None:
             f"tenant '{tenant_id}' ({type(exc).__name__}: {exc}); the next "
             "migration removes it"
         )
+        return False
+    return True
 
 
-def delete_tenant_refusals(config_manager, tenant_id: str) -> None:
-    """Delete every recorded migration refusal of ``tenant_id``'s schemas.
+def delete_tenant_refusals(config_manager, tenant_id: str) -> bool:
+    """Delete every recorded migration refusal of ``tenant_id``'s schemas;
+    False when one could not be read or deleted.
 
     The tenant delete calls it once the tenant's schemas are dropped. It never
     raises: a refusal it cannot read or delete is logged at ERROR and stays
-    until the next migration run removes it, its schema being unregistered.
+    until the next migration run or the delete's retry removes it.
     """
     tenant_id = canonical_tenant_id(tenant_id)
     store = config_manager.store
@@ -228,10 +232,14 @@ def delete_tenant_refusals(config_manager, tenant_id: str) -> None:
             f"Cannot read the recorded migration refusals of tenant '{tenant_id}' "
             f"({type(exc).__name__}: {exc}); the next migration removes them"
         )
-        return
-    for record in records:
-        if record.config_value.get("tenant_id") == tenant_id:
+        return False
+    return all(
+        [
             _delete_refusal(store, tenant_id, record.config_key)
+            for record in records
+            if record.config_value.get("tenant_id") == tenant_id
+        ]
+    )
 
 
 def drifted_schemas(config_manager, schema_loader) -> List[DriftedSchema]:
