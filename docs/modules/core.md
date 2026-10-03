@@ -2209,6 +2209,11 @@ temperature)` sends one request with `response_format(timestamps)` and
   to it with `clamp_to_duration`, which logs the original value at DEBUG:
   Whisper times text into the padding after short audio (the live server gave
   29.98 s on an 18.77 s chunk).
+- Limits: the loop check measures a whole answer, so a short repetition inside
+  an otherwise ordinary answer is kept (the live server's "DR. DR. DR. DR.
+  SOUDOS, ..." sat in a json answer whose ratio was 1.76). Text that both
+  answers miss over the same stretch, or that a timed answer running to the
+  chunk's end skipped, is not detected.
 - `decode_audio(path)` decodes any container's first audio stream to 16 kHz
   mono PCM16 (pyav); `pcm16_wav_samples` and `wav_bytes` convert to and from
   WAV.
