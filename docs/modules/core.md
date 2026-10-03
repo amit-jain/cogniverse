@@ -853,7 +853,14 @@ on its own is left as it is, live definition, registry row and documents
 alike, logged at WARNING and recorded under the system tenant (`SCHEMA` scope,
 `schema_migration_refusals` service, keyed by full schema name, with the
 SHA-256 of the definition it was refused); every later run attempts it
-again and records the refusal again. A peer's deletion landing before
+again and records the refusal again. A run that reaches the end removes,
+under the deployment lease, every recorded refusal whose schema is no longer
+registered with a drifted definition: one that has migrated since, or was
+dropped. `delete_tenant_refusals(config_manager, tenant_id)` deletes a
+tenant's refusals; the tenant delete calls it once the tenant's schemas are
+dropped. Neither raises: a refusal that cannot be read or deleted is logged at
+ERROR by tenant and schema, the run or the delete completes, and the next run
+removes it. A peer's deletion landing before
 activation drops that schema from the tenant's deploy. A tenant marked
 deleted (see `mark_tenant_deleted`), whose delete has not completed, is never
 redeployed: `deploy_schemas` refuses it with `TenantDeletedError`, its
@@ -862,7 +869,8 @@ Any other error
 propagates, including the `LeaseWaitTimeout` (a `TimeoutError`) of a lease a
 peer held for the whole wait, and nothing is recorded against a tenant for
 it. `should_stop` is asked before each tenant's redeploy; once it answers
-True no further redeploy starts. It returns a `DriftedSchemaRedeploy`:
+True no further redeploy starts, and no refusal is removed. It returns a
+`DriftedSchemaRedeploy`:
 `redeployed` holds the full names it deployed, `refused` one
 `SchemaRefusal(tenant_id, base_schema_name, schema_name, error, refused_at)`
 per refused schema, `skipped` the drifted schemas a stop left, and `deleted`

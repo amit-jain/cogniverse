@@ -51,6 +51,7 @@ from cogniverse_core.memory.manager import (
     PROVENANCE_BASE_SCHEMA,
 )
 from cogniverse_core.registries.exceptions import RegistryStorageError
+from cogniverse_core.registries.schema_registry import delete_tenant_refusals
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
@@ -1204,6 +1205,8 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         deleted_schemas: list = list(
             await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
+        # Its schemas are gone, so are the drift migration's refusals of them.
+        await asyncio.to_thread(delete_tenant_refusals, config_manager, canonical_tid)
 
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
