@@ -367,7 +367,7 @@ def _runtime_memory_needed_gib(workers: int) -> float:
     "stack, render, expected",
     [
         ("base", lambda: _render(), (1, 3.0)),
-        ("k3s", lambda: _render_as_deployed(), (1, 12.0)),
+        ("k3s", lambda: _render_as_deployed(), (4, 12.0)),
         (
             "prod",
             lambda: _render("-f", str(CHART_PATH / "values.prod.yaml"), *PROD_SECRETS),

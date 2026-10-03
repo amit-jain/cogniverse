@@ -201,7 +201,7 @@ class TestRuntimeWorkerProcesses:
     variable is the number of processes the pod serves from.
     """
 
-    def test_every_shipped_stack_serves_from_one_process(self):
+    def test_each_shipped_stack_serves_from_its_worker_count(self):
         # Production leaves its secrets empty for the operator to supply.
         prod_secrets = (
             "minio.rootPassword=overlay-secret",
@@ -209,14 +209,18 @@ class TestRuntimeWorkerProcesses:
             "phoenix.postgres.auth.password=overlay-secret",
             "redis.auth.password=overlay-secret",
         )
-        for overlays, set_args in (
-            ((), ()),
-            (("values.k3s.yaml", "values.rocm.yaml"), ()),
-            (("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"), ()),
-            (("values.prod.yaml",), prod_secrets),
+        for overlays, set_args, workers in (
+            ((), (), "1"),
+            (("values.k3s.yaml", "values.rocm.yaml"), (), "4"),
+            (
+                ("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"),
+                (),
+                "4",
+            ),
+            (("values.prod.yaml",), prod_secrets, "1"),
         ):
             env = _runtime_container_env(_render_chart(*set_args, values=overlays))
-            assert env["UVICORN_WORKERS"] == "1", overlays
+            assert env["UVICORN_WORKERS"] == workers, overlays
             assert "WORKERS" not in env, overlays
 
     def test_the_worker_count_follows_the_value(self):

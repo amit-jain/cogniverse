@@ -1715,8 +1715,9 @@ UVICORN_WORKERS=4 uv run python -m cogniverse_runtime.runtime_cli \
 
 `runtime_cli` takes uvicorn's own flags and `UVICORN_*` variables
 (`uvicorn_config`). The chart renders `UVICORN_WORKERS` from
-`runtime.workers` (default 1, a whole number of at least 1); setting
-`UVICORN_WORKERS` or `WEB_CONCURRENCY` through `runtime.env` fails the render.
+`runtime.workers` (default 1, a whole number of at least 1; `values.k3s.yaml`
+sets 4); setting `UVICORN_WORKERS` or `WEB_CONCURRENCY` through `runtime.env`
+fails the render.
 One worker, or `--reload`, runs uvicorn as its command line does. More workers
 run under `RuntimeWorkerSupervisor`:
 

@@ -183,6 +183,9 @@ runtime:
     type: NodePort
   autoscaling:
     enabled: false
+  # Four worker processes, each a full runtime: the memory limit below holds
+  # four at the measured per-process peak.
+  workers: 4
   # Liveness/readiness probe config inherited from values.yaml (TCP socket
   # for liveness, /health/live HTTP for readiness). Overriding periods here
   # for k3s so initial delay accounts for cold Ollama pulls.
