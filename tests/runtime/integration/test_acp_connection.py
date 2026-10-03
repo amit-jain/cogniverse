@@ -107,6 +107,14 @@ class TruncatedPipeAgent(PipeTurnAgent):
         return events()
 
 
+@pytest.fixture(autouse=True)
+def local_litellm_cost_map(monkeypatch):
+    """The first LM call imports litellm, whose import fetches the model cost
+    map from GitHub unless told to use its bundled copy. A slow connect there
+    would spend a turn's 5-second reply budget before the LM is reached."""
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+
 @pytest.fixture
 def dispatcher():
     global GATE
