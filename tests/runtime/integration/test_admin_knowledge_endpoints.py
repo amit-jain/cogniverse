@@ -50,12 +50,21 @@ def knowledge_client(memory_manager, config_manager):
     raised RuntimeError BEFORE Pydantic could validate the body,
     masking the route-mounted assertion the test exists to make.
     """
+    from cogniverse_runtime.routers import tenant as tenant_router
+
     app = FastAPI()
     app.include_router(knowledge_router.router, prefix="/admin")
     app.dependency_overrides[knowledge_router._get_config_manager] = lambda: (
         config_manager
     )
-    yield TestClient(app, raise_server_exceptions=False), memory_manager
+    # A route whose tenant has no warm memory manager initialises one through
+    # the tenant router's ConfigManager, which main.py wires at startup.
+    previous = tenant_router._config_manager
+    tenant_router.set_config_manager(config_manager)
+    try:
+        yield TestClient(app, raise_server_exceptions=False), memory_manager
+    finally:
+        tenant_router._config_manager = previous
     # Clean up any memories this test created.
     try:
         memory_manager.clear_agent_memory(

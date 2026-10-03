@@ -368,8 +368,10 @@ async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatc
     backend.schema_manager.delete_tenant_schemas.return_value = []
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _org(_org_id):
         return None
@@ -412,8 +414,10 @@ async def test_delete_tenant_internal_cancels_the_tenants_queued_memory_writes(
     backend.schema_manager.delete_tenant_schemas.return_value = []
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _org(_org_id):
         return None

@@ -397,7 +397,10 @@ curl -s "$RUNTIME_URL/admin/schemas/drift" | jq .
 
 An empty `drifted` list means every tenant runs the shipped definitions. An
 entry with `"refusal": null` has not been migrated yet: the migration is still
-running or retrying. A pod of the previous release redeploys its own shipped
+running or retrying. A recorded refusal goes once its schema migrates or is
+deleted, with its tenant or alone; one that could not be deleted then is
+logged at ERROR (`Cannot delete the recorded migration refusal of ...`) and
+the next completed run removes it. A pod of the previous release redeploys its own shipped
 definition when a request first ensures a schema, so check again once the
 rollout has replaced every pod; a restart of one runtime pod runs the
 migration again.

@@ -11,8 +11,7 @@ Exercises the shipped knowledge subsystem against the deployed e2e stack:
 Mem0MemoryManager is built in-process and pointed at the deployed cluster's
 Vespa NodePort + denseon NodePort — the same pattern integration tests use,
 but here run against the actual cogniverse up cluster (not a per-test Vespa
-container). Every test mints a fresh ``unique_id("know_")`` tenant so the
-session-end sweep at ``_cleanup_test_tenants`` cleans up.
+container). Every test mints a fresh ``unique_id("know_")`` tenant.
 """
 
 from __future__ import annotations

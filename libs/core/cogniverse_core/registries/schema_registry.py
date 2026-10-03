@@ -185,6 +185,63 @@ def _drifted(infos: List[SchemaInfo], schema_loader) -> List[Tuple[SchemaInfo, s
     return drifted
 
 
+def _refusal_records(store) -> list:
+    return store.list_configs(
+        tenant_id=SYSTEM_TENANT_ID,
+        scope=ConfigScope.SCHEMA,
+        service=SCHEMA_REFUSALS_SERVICE,
+    )
+
+
+def _delete_refusal(store, tenant_id: str, schema_name: str) -> bool:
+    """Delete the recorded refusal of a tenant schema; False when it could
+    not be. A failure is logged at ERROR and not raised: the record stays for
+    the next migration run, which removes every refusal whose schema no
+    longer drifts."""
+    try:
+        store.delete_config(
+            tenant_id=SYSTEM_TENANT_ID,
+            scope=ConfigScope.SCHEMA,
+            service=SCHEMA_REFUSALS_SERVICE,
+            config_key=schema_name,
+        )
+    except Exception as exc:
+        logger.error(
+            f"Cannot delete the recorded migration refusal of '{schema_name}' for "
+            f"tenant '{tenant_id}' ({type(exc).__name__}: {exc}); the next "
+            "migration removes it"
+        )
+        return False
+    return True
+
+
+def delete_tenant_refusals(config_manager, tenant_id: str) -> bool:
+    """Delete every recorded migration refusal of ``tenant_id``'s schemas;
+    False when one could not be read or deleted.
+
+    The tenant delete calls it once the tenant's schemas are dropped. It never
+    raises: a refusal it cannot read or delete is logged at ERROR and stays
+    until the next migration run or the delete's retry removes it.
+    """
+    tenant_id = canonical_tenant_id(tenant_id)
+    store = config_manager.store
+    try:
+        records = _refusal_records(store)
+    except Exception as exc:
+        logger.error(
+            f"Cannot read the recorded migration refusals of tenant '{tenant_id}' "
+            f"({type(exc).__name__}: {exc}); the next migration removes them"
+        )
+        return False
+    return all(
+        [
+            _delete_refusal(store, tenant_id, record.config_key)
+            for record in records
+            if record.config_value.get("tenant_id") == tenant_id
+        ]
+    )
+
+
 def drifted_schemas(config_manager, schema_loader) -> List[DriftedSchema]:
     """Every registered tenant schema whose definition differs from the one
     ``schema_loader`` ships, ordered by tenant and schema name.
@@ -196,11 +253,7 @@ def drifted_schemas(config_manager, schema_loader) -> List[DriftedSchema]:
     """
     registered = _read_registered_schemas(config_manager).values()
     try:
-        records = config_manager.store.list_configs(
-            tenant_id=SYSTEM_TENANT_ID,
-            scope=ConfigScope.SCHEMA,
-            service=SCHEMA_REFUSALS_SERVICE,
-        )
+        records = _refusal_records(config_manager.store)
     except Exception as exc:
         raise RegistryStorageError(
             f"Cannot read schema migration refusals: {type(exc).__name__}: {exc}"
@@ -657,7 +710,10 @@ class SchemaRegistry:
         refuses it, its drifted schemas are reported in ``deleted`` and the
         other tenants still migrate. ``should_stop`` is asked before each
         tenant's redeploy; once it answers True no further redeploy starts,
-        and the drifted schemas left are reported in ``skipped``.
+        and the drifted schemas left are reported in ``skipped``. A call that
+        reaches the end removes every recorded refusal whose schema is no
+        longer registered with a drifted definition (see
+        :meth:`_remove_stale_refusals`).
         """
         by_tenant: Dict[str, List[str]] = {}
         for info, _ in _drifted(
@@ -698,9 +754,42 @@ class SchemaRegistry:
                 continue
             redeployed.extend(names)
             refused.extend(refusals)
+        self._remove_stale_refusals()
         return DriftedSchemaRedeploy(
             redeployed=redeployed, refused=refused, deleted=deleted
         )
+
+    def _remove_stale_refusals(self) -> None:
+        """Delete each recorded refusal whose schema is no longer registered
+        with a definition other than the shipped one: the schema has since
+        migrated, or it or its tenant was deleted.
+
+        Decided and deleted under the deployment lease, which every refusal
+        is recorded under, so a refusal a peer records meanwhile is never
+        taken for a stale one. Nothing here raises: a read or a delete that
+        fails is logged at ERROR and the refusal stays for the next run.
+        """
+        store = self._config_manager.store
+        try:
+            if not _refusal_records(store):
+                return
+            with self._backend.deployment_lease():
+                records = _refusal_records(store)
+                drifted = {
+                    (info.tenant_id, info.full_schema_name)
+                    for info, _ in _drifted(
+                        self._get_all_schemas(strict=True), self._schema_loader
+                    )
+                }
+                for record in records:
+                    tenant_id = record.config_value.get("tenant_id")
+                    if (tenant_id, record.config_key) not in drifted:
+                        _delete_refusal(store, tenant_id, record.config_key)
+        except Exception as exc:
+            logger.error(
+                f"Stale recorded migration refusals were not removed "
+                f"({type(exc).__name__}: {exc}); the next migration removes them"
+            )
 
     @staticmethod
     def _full_name(tenant_id: str, base_schema_name: str) -> str:

@@ -442,6 +442,10 @@ class TestTenantDeleteAcrossWorkers:
         pinned = _pinned(runtime, 1)
         try:
             deleted = _request(pinned[first][0], "DELETE", f"/admin/tenants/{tenant}")
+        finally:
+            _close(pinned)
+        pinned = _pinned(runtime, 1)
+        try:
             refused = _request(
                 pinned[second][0],
                 "POST",
@@ -474,6 +478,13 @@ class TestTenantDeleteAcrossWorkers:
         assert store.get_immutable_config(
             "__system__", ConfigScope.SYSTEM, "tenant_deletions", tenant
         ).config_value == {"deleted": True}
+        # Every step completed: the delete is no longer pending.
+        assert (
+            store.get_immutable_config(
+                "__system__", ConfigScope.SYSTEM, "tenant_deletions_pending", tenant
+            )
+            is None
+        )
 
 
 class TestSessionCloseAcrossWorkers:

@@ -1525,7 +1525,9 @@ exists = schema_manager.tenant_schema_exists(
 # (SchemaRegistry.deployment_lease), with the deployed snapshot taken inside
 # it and retaken before every conflict retry, so no deploy or delete can
 # activate a package built from a stale survivor set. The lease covers target
-# selection and registry removal for single and bulk deletes.
+# selection and registry removal for single and bulk deletes. A pending
+# activation of a deleted tenant's schema (a deployment intent) is never
+# carried into the package as a survivor.
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 # Returns: List of deleted schema names (schemas removed from Vespa via redeployment)
 ```

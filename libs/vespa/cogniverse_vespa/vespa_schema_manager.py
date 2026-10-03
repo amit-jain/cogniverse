@@ -1170,8 +1170,14 @@ class VespaSchemaManager:
 
         return target
 
-    def _redeploy_dropping(self, deletion_targets: set) -> list:
+    def _redeploy_dropping(
+        self, deletion_targets: set, dropped_tenants: frozenset = frozenset()
+    ) -> list:
         """Redeploy the application package without ``deletion_targets``.
+
+        A pending activation of a schema of ``dropped_tenants`` (canonical
+        ids of tenants being deleted) is not carried as a survivor: carrying
+        it would activate a schema of a tenant whose delete is removing them.
 
         Enumerates every Vespa-deployed schema, excludes the deletion targets
         and metadata schemas, reconstructs each remaining survivor from the
@@ -1231,8 +1237,10 @@ class VespaSchemaManager:
             survivor_names.extend(
                 sorted(
                     name
-                    for name in reserved
-                    if name not in deployed and name not in deletion_targets
+                    for name, registration in reserved.items()
+                    if name not in deployed
+                    and name not in deletion_targets
+                    and registration["tenant_id"] not in dropped_tenants
                 )
             )
 
@@ -1351,7 +1359,9 @@ class VespaSchemaManager:
 
             # Refuse (via _redeploy_dropping) rather than cascade into dropping a
             # peer-tenant orphan we cannot confirm is dead.
-            deleted = self._redeploy_dropping(deletion_targets)
+            deleted = self._redeploy_dropping(
+                deletion_targets, frozenset({canonical_tenant_id(tenant_id)})
+            )
             if deleted:
                 self._logger.info(
                     f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
@@ -1447,7 +1457,10 @@ class VespaSchemaManager:
             # tenants cannot be reconstructed — dropping a schema we cannot confirm
             # is an orphan would wipe a healthy peer. Same contract as the
             # per-tenant path.
-            deleted = self._redeploy_dropping(deletion_targets)
+            deleted = self._redeploy_dropping(
+                deletion_targets,
+                frozenset(canonical_tenant_id(tid) for tid in tenant_ids),
+            )
             if deleted:
                 self._logger.info(
                     f"Successfully removed schemas for {len(tenant_ids)} tenants "
