@@ -51,6 +51,10 @@ DOCUMENT_ROW_KEYS = {
 }
 DOCUMENT_METADATA_KEYS = {
     "source_title",
+    "chunk_index",
+    "chunk_count",
+    "chunk_start",
+    "chunk_end",
     "creation_timestamp",
     "document_id",
     "document_path",
@@ -226,7 +230,7 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
         seeded[title] for title in EXPECTED_TITLE_ORDER
     ]
     assert [result["document_id"] for result in results] == [
-        f"{seeded[title]}_{seeded[title]}" for title in EXPECTED_TITLE_ORDER
+        f"{seeded[title]}_{seeded[title]}_w0000" for title in EXPECTED_TITLE_ORDER
     ]
     assert [result["highlights"] for result in results] == [{}, {}]
     # Each source is one caption chunk, so its window holds exactly that chunk.
@@ -239,6 +243,20 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
     assert [result["metadata"]["source_title"] for result in results] == list(
         EXPECTED_TITLE_ORDER
     )
+    # Each caption fits one window of the embedding model, so its single
+    # chunk spans the whole text.
+    assert [
+        (
+            result["metadata"]["chunk_index"],
+            result["metadata"]["chunk_count"],
+            result["metadata"]["chunk_start"],
+            result["metadata"]["chunk_end"],
+        )
+        for result in results
+    ] == [
+        (0, 1, 0, len((_CAPTION_CORPUS_DIR / title).read_text(encoding="utf-8")))
+        for title in EXPECTED_TITLE_ORDER
+    ]
     assert [result["metadata"]["document_title"] for result in results] == list(
         EXPECTED_TITLE_ORDER
     )
@@ -252,7 +270,7 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
     ]
     assert [result["metadata"]["sddocname"] for result in results] == [schema, schema]
     assert [result["metadata"]["documentid"] for result in results] == [
-        f"id:content:{schema}::{seeded[title]}_{seeded[title]}"
+        f"id:content:{schema}::{seeded[title]}_{seeded[title]}_w0000"
         for title in EXPECTED_TITLE_ORDER
     ]
     assert [result["metadata"]["full_text"] for result in results] == [
