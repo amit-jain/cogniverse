@@ -383,9 +383,14 @@ async def list_profiles(
         HTTPException 500: List operation failed
     """
     try:
-        profiles = config_manager.list_backend_profiles(
-            tenant_id=tenant_id, service="backend"
+        # Read from the store, not this process's held copy, which may
+        # predate another worker's create, update or delete.
+        stored = await asyncio.to_thread(
+            config_manager.get_stored_backend_config,
+            tenant_id=tenant_id,
+            service="backend",
         )
+        profiles = stored.profiles
 
         backend_registry = BackendRegistry.get_instance()
         backend = backend_registry.get_ingestion_backend(
@@ -456,9 +461,12 @@ async def get_profile(
         HTTPException 500: Get operation failed
     """
     try:
-        profile = config_manager.get_backend_profile(
-            profile_name=profile_name, tenant_id=tenant_id, service="backend"
+        stored = await asyncio.to_thread(
+            config_manager.get_stored_backend_config,
+            tenant_id=tenant_id,
+            service="backend",
         )
+        profile = stored.get_profile(profile_name)
 
         if not profile:
             raise HTTPException(
