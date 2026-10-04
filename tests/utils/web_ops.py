@@ -1,9 +1,10 @@
 """The runtime the web client's operations views talk to, for browser tests.
 
-The tenant admin, profile admin, agents and ingestion routers are mounted at
-the paths the runtime mounts them on, over the caller's real config store and
-schema loader, with a cluster-events channel of their own so tenant deletes
-and session closes reach this worker the way they reach a runtime replica.
+The tenant admin, tenant self-service, profile admin, agents and ingestion
+routers are mounted at the paths the runtime mounts them on, over the
+caller's real config store and schema loader, with a cluster-events channel
+of their own so tenant deletes and session closes reach this worker the way
+they reach a runtime replica.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL``, as a worker pod runs it.
 """
@@ -24,7 +25,7 @@ from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
-from cogniverse_runtime.routers import admin, agents, ingestion
+from cogniverse_runtime.routers import admin, agents, ingestion, tenant
 from tests.utils.web_client import serve_app
 
 
@@ -42,6 +43,7 @@ def serve_ops_runtime(
     tm.set_schema_loader(schema_loader)
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
+    tenant.set_config_manager(config_manager)
     agents.set_agent_registry(
         AgentRegistry(tenant_id="default", config_manager=config_manager)
     )
@@ -88,6 +90,7 @@ def serve_ops_runtime(
     app = FastAPI(lifespan=cluster_events)
     app.include_router(admin.router, prefix="/admin")
     app.include_router(tm.router, prefix="/admin")
+    app.include_router(tenant.router, prefix="/admin/tenant")
     app.include_router(agents.router, prefix="/agents")
     app.include_router(ingestion.router, prefix="/ingestion")
     app.include_router(status_api.router, prefix="/ingestion")
@@ -104,4 +107,5 @@ def serve_ops_runtime(
         tm.set_config_manager(previous[0])
         tm.set_schema_loader(previous[1])
         admin.reset_dependencies()
+        tenant.set_config_manager(None)
         BackendRegistry.get_instance().clear_instances()

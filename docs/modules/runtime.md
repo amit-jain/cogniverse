@@ -1339,6 +1339,8 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 ### Tenant Optimization Runs
 
+**GET /admin/tenant/optimize-modes** — The modes `POST /admin/tenant/{tenant_id}/optimize` accepts, sorted: `{modes: [...]}`.
+
 **GET /admin/tenant/{tenant_id}/optimize/runs** — List the tenant's optimization Workflows from Argo, newest first. Query param `limit` (1–100, default 20) caps the response. Response: `{runs: [{workflow_name, mode, trigger, phase, started_at, finished_at}, ...]}`.
 
 Two label selectors feed it, because Argo does not copy a CronWorkflow's labels onto the Workflows it spawns: on-demand runs from `POST /admin/tenant/{tenant_id}/optimize` carry `cogniverse.ai/tenant`, and scheduled runs are found by the `workflows.argoproj.io/cron-workflow` label the controller stamps. Both lists are then narrowed to Workflows whose raw `tenant-id` argument is this tenant and whose spec references the optimization `WorkflowTemplate` — scheduled tenant *jobs* carry a `tenant-id` argument too, so the tenant tag alone cannot tell them apart.
