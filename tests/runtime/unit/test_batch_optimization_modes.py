@@ -82,6 +82,9 @@ def _self_consistency_block(
     """The pass's report; the defaults are a run every draw agreed on."""
     from cogniverse_agents.optimizer.entity_self_consistency import (
         NO_UNANIMOUS_KEY,
+        NON_VOTES_KEY,
+        RETRIES_KEY,
+        SELF_CONSISTENCY_MAX_TOKENS,
         SELF_CONSISTENCY_SAMPLES,
         SELF_CONSISTENCY_TEMPERATURE,
     )
@@ -90,8 +93,11 @@ def _self_consistency_block(
         "self_consistency": {
             "samples": SELF_CONSISTENCY_SAMPLES,
             "temperature": SELF_CONSISTENCY_TEMPERATURE,
+            "max_tokens": SELF_CONSISTENCY_MAX_TOKENS,
             "examples_sampled": examples,
             "examples_requested": examples,
+            RETRIES_KEY: 0,
+            NON_VOTES_KEY: [],
             "rows_needing_review": rows_needing_review,
             "batch_id": batch_id,
             "rows_queued": rows_queued,
@@ -6804,7 +6810,14 @@ class TestEntityExtractionOptimization:
         )
 
         def unanimous_draws(module_factory, query, *, lm, samples):
-            return [[{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)]
+            from cogniverse_agents.optimizer.entity_self_consistency import (
+                SampledQuery,
+            )
+
+            return SampledQuery(
+                [[{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)],
+                0,
+            )
 
         class RecordingApprovalStorage:
             async def save_batch(self, batch):
@@ -6914,6 +6927,7 @@ class TestEntityExtractionOptimization:
 
         import cogniverse_runtime.optimization_cli as optimization_cli
         from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+        from cogniverse_agents.optimizer.entity_self_consistency import SampledQuery
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -7088,9 +7102,13 @@ class TestEntityExtractionOptimization:
             patch(
                 "cogniverse_agents.optimizer.entity_self_consistency."
                 "sample_entity_extraction",
-                side_effect=lambda module_factory, query, *, lm, samples: [
-                    [{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)
-                ],
+                side_effect=lambda module_factory, query, *, lm, samples: SampledQuery(
+                    [
+                        [{"text": "PyTorch", "type": "TECHNOLOGY"}]
+                        for _ in range(samples)
+                    ],
+                    0,
+                ),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
@@ -7561,12 +7579,21 @@ class TestEntityExtractionOptimization:
         )
 
         def draws(module_factory, query, *, lm, samples):
+            from cogniverse_agents.optimizer.entity_self_consistency import (
+                SampledQuery,
+            )
+
             if query == "find entity 0":
-                return [
-                    [{"text": f"draw{index}", "type": "CONCEPT"}]
-                    for index in range(samples)
-                ]
-            return [[{"text": "Entity 1", "type": "CONCEPT"}] for _ in range(samples)]
+                return SampledQuery(
+                    [
+                        [{"text": f"draw{index}", "type": "CONCEPT"}]
+                        for index in range(samples)
+                    ],
+                    0,
+                )
+            return SampledQuery(
+                [[{"text": "Entity 1", "type": "CONCEPT"}] for _ in range(samples)], 0
+            )
 
         state, result = await self._run(
             provider,
@@ -7644,6 +7671,71 @@ class TestEntityExtractionOptimization:
         assert item.confidence == 1 / SELF_CONSISTENCY_SAMPLES
         assert item.status is ApprovalStatus.PENDING_REVIEW
         assert result["self_consistency"][NO_UNANIMOUS_KEY] == ["find entity 0"]
+
+    @pytest.mark.asyncio
+    async def test_a_query_whose_draw_never_parses_is_an_accounted_non_vote(self):
+        """A query the teacher could not answer parsably is reported, with its
+        cause, as a non-vote and as a bootstrap error; every other requested
+        query is sampled."""
+        from dspy.utils.exceptions import AdapterParseError
+
+        from cogniverse_agents.optimizer.entity_self_consistency import (
+            DrawNotParsed,
+            SampledQuery,
+        )
+
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(3)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        from cogniverse_agents.entity_extraction_agent import (
+            EntityExtractionSignature,
+        )
+
+        unparsable = AdapterParseError(
+            adapter_name="StructuredJSONAdapter",
+            signature=EntityExtractionSignature,
+            lm_response='{"reasoning":"loop',
+        )
+
+        def draws(module_factory, query, *, lm, samples):
+            if query == "find entity 0":
+                raise DrawNotParsed(query, 2, unparsable, retries=1)
+            return SampledQuery(
+                [[{"text": "Entity 1", "type": "CONCEPT"}] for _ in range(samples)], 2
+            )
+
+        state, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            draws=draws,
+            score_by_module=lambda module, holdout: 0.0,
+        )
+
+        cause = (
+            "self-consistency sampling failed for query 'find entity 0': "
+            f"DrawNotParsed: draw for query 'find entity 0' did not parse in 2 "
+            f"attempts: AdapterParseError: {unparsable}"
+        )
+        sampling = result["self_consistency"]
+        assert (
+            sampling["examples_requested"],
+            sampling["examples_sampled"],
+            sampling["retries"],
+            sampling["non_votes"],
+        ) == (2, 1, 1 + 2, [{"query": "find entity 0", "cause": cause}])
+        assert result["bootstrap"]["errors"] == 1
+        assert result["bootstrap"]["error_causes"] == [cause]
 
     @pytest.mark.asyncio
     async def test_entity_extraction_promote_persists_and_activates_candidate(self):

@@ -189,7 +189,10 @@ def create_budgeted_dspy_lm(
 
 
 def create_sampling_dspy_lm(
-    config: LLMEndpointConfig, *, temperature: float
+    config: LLMEndpointConfig,
+    *,
+    temperature: float,
+    max_tokens: int,
 ) -> dspy.LM:
     """A budgeted LM whose repeated calls are independent draws.
 
@@ -197,6 +200,9 @@ def create_sampling_dspy_lm(
     replays the first response and a pinned seed regenerates it, so both are
     dropped here and the temperature must be above zero. No tenant is bound,
     so the tenant-scoped response cache is off as well.
+
+    A sampled draw can fall into a repetition loop that runs to the token
+    limit, so the caller caps the completion at ``max_tokens``.
     """
 
     from cogniverse_foundation.config.budgeted_lm import BudgetedLM
@@ -206,8 +212,14 @@ def create_sampling_dspy_lm(
             f"sampling LM for {config.model} requires a temperature above zero, "
             f"got {temperature}"
         )
+    if max_tokens <= 0:
+        raise ValueError(
+            f"sampling LM for {config.model} requires a positive max_tokens, "
+            f"got {max_tokens}"
+        )
     kwargs = dspy_lm_kwargs(config)
     kwargs["temperature"] = temperature
+    kwargs["max_tokens"] = max_tokens
     extra_body = dict(kwargs.pop("extra_body", None) or {})
     extra_body.pop("seed", None)
     if extra_body:

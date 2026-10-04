@@ -439,8 +439,17 @@ outside `EntityType`. The metric (`entity_extraction.pair_set_f1.v1`) is F1 over
 `(casefold stripped text, type)` pairs of the typed mentions (`_entity_extraction_pair_set`); an
 empty recorded label set raises. Before the bootstrap walk, `_sample_entity_self_consistency` draws the teacher
 `SELF_CONSISTENCY_SAMPLES` (3) times per training record through
-`create_sampling_dspy_lm(..., temperature=SELF_CONSISTENCY_TEMPERATURE)` — an LM with the
-cache off and no seed, so each draw is an independent request. Per `(casefold text, type)`
+`create_sampling_dspy_lm(..., temperature=SELF_CONSISTENCY_TEMPERATURE,
+max_tokens=SELF_CONSISTENCY_MAX_TOKENS)` — an LM with the cache off and no seed, so each draw
+is an independent request. A sampled draw occasionally falls into a repetition loop that runs
+to the token limit and never closes its JSON: on the served teacher (Qwen3-14B-AWQ) about 1 in
+100 draws of a query it reasons about word by word, while the longest answer that parsed over
+3,160 measured draws was 470 tokens. `SELF_CONSISTENCY_MAX_TOKENS` (1024) ends such a loop at
+half the teacher's completion budget. A draw whose answer does not parse
+(`AdapterParseError`) is asked once more from a new seed (`SELF_CONSISTENCY_DRAW_ATTEMPTS`,
+2); a draw that fails both raises `DrawNotParsed`. vLLM's `repetition_penalty` is not sent: at
+1.05 it removed the loops but lowered the draws' pair-F1 against the ground truth on the
+looping query from 0.756 to 0.606. Per `(casefold text, type)`
 mention, `agreement` is the fraction of draws carrying it; a mention below 1.0 carries
 `needs_review`. `review_row` builds the approval-queue payload: `data` is the query with the
 unanimous mentions only, `metadata.self_consistency` carries `samples` and one
@@ -449,9 +458,14 @@ mention are queued as a `PENDING_REVIEW` `ApprovalBatch` through `ApprovalStorag
 `confidence` the mean agreement; the approval queue tab renders one agreement line per
 mention. A record with no unanimous mention is queued the same way, carrying an empty
 training example and every mention flagged, and its query is listed under
-`NO_UNANIMOUS_KEY` (`no_unanimous_examples`). A record whose draws did not all complete is
-recorded through `BootstrapErrorLog.record_cause` and contributes no row. The run reports
-the pass under `self_consistency`. Approved rows re-enter training the same way every
+`NO_UNANIMOUS_KEY` (`no_unanimous_examples`). A record whose draws did not all complete —
+a draw that never parsed, or a failed request — is a non-vote: it contributes no row, its
+cause is recorded through `BootstrapErrorLog.record_cause` (so it counts in the bootstrap's
+`errors` and `error_causes`), and it is listed under `NON_VOTES_KEY` (`non_votes`) as
+`{query, cause}`. Every requested record is therefore either sampled or a non-vote. The run
+reports the pass under `self_consistency`: `samples`, `temperature`, `max_tokens`,
+`examples_requested`, `examples_sampled`, `retries` (draws asked again), `non_votes`,
+`rows_needing_review`, `batch_id`, `rows_queued` and `no_unanimous_examples`. Approved rows re-enter training the same way every
 approved synthetic row does — through `approved_synthetic_data-{tenant}`; ground truth is
 never rewritten. `validate_approved_training_values` refuses an entity whose type is outside
 `ENTITY_TYPES` (`cogniverse_foundation.common.entity_types`), so a human correction naming an

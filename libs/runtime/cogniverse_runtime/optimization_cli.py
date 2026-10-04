@@ -3336,6 +3336,9 @@ async def _sample_entity_self_consistency(
     """Draw the teacher repeatedly per example and queue what it disagreed on."""
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
     from cogniverse_agents.optimizer.entity_self_consistency import (
+        NON_VOTES_KEY,
+        RETRIES_KEY,
+        SELF_CONSISTENCY_MAX_TOKENS,
         SELF_CONSISTENCY_SAMPLES,
         SELF_CONSISTENCY_TEMPERATURE,
         collect_self_consistency_rows,
@@ -3346,14 +3349,16 @@ async def _sample_entity_self_consistency(
     sampling_lm = create_sampling_dspy_lm(
         resolve_teacher_endpoint(llm_config),
         temperature=SELF_CONSISTENCY_TEMPERATURE,
+        max_tokens=SELF_CONSISTENCY_MAX_TOKENS,
     )
-    rows = await collect_self_consistency_rows(
+    outcome = await collect_self_consistency_rows(
         train_records,
         EntityExtractionModule,
         lm=sampling_lm,
         samples=SELF_CONSISTENCY_SAMPLES,
         record_cause=record_cause,
     )
+    rows = outcome.rows
     queued = await _queue_entity_self_consistency_review(
         rows,
         storage_factory=lambda: _approval_storage(
@@ -3364,8 +3369,11 @@ async def _sample_entity_self_consistency(
     return {
         "samples": SELF_CONSISTENCY_SAMPLES,
         "temperature": SELF_CONSISTENCY_TEMPERATURE,
+        "max_tokens": SELF_CONSISTENCY_MAX_TOKENS,
         "examples_sampled": len(rows),
         "examples_requested": len(train_records),
+        RETRIES_KEY: outcome.retries,
+        NON_VOTES_KEY: outcome.non_votes,
         "rows_needing_review": sum(1 for row in rows if row_needs_review(row)),
         **queued,
     }
