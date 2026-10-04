@@ -2329,16 +2329,18 @@ its remote CLAP calls to it.
 
 ### SemanticEmbedder (semantic_embedder.py)
 
-Pluggable text embedder used by memory/dedup code paths that need a plain
-sentence embedding (not the multi-vector ColBERT/ColPali contract). Prefers a
-remote OpenAI-compatible `/v1/embeddings` endpoint, falls back to an in-process
-SentenceTransformer.
+Text embedder used by memory/dedup code paths that need a plain sentence
+embedding (not the multi-vector ColBERT/ColPali contract). It calls a remote
+OpenAI-compatible `/v1/embeddings` endpoint; no model is loaded in-process.
+With no endpoint it raises `SemanticEmbedderNotConfiguredError` naming the
+settings.
 
 ```python
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
-# Resolution order: explicit remote_url/model_name arg ->
-# COGNIVERSE_SEMANTIC_EMBED_URL / _MODEL env vars -> local SentenceTransformer.
+# Resolution order: explicit remote_url/model_name arg -> the entrypoint's
+# default (COGNIVERSE_SEMANTIC_EMBED_URL, else INFERENCE_SERVICE_URLS["denseon"];
+# COGNIVERSE_SEMANTIC_EMBED_MODEL, else DenseOn) -> SemanticEmbedderNotConfiguredError.
 embedder = get_semantic_embedder()
 vectors = embedder.encode(["find manufacturing defects"], is_query=True)  # (1, D)
 
@@ -2351,12 +2353,10 @@ modal_embedder = get_semantic_embedder(
 
 | Class | Backend |
 |---|---|
-| `LocalSentenceTransformerEmbedder` | In-process `sentence-transformers` model |
 | `RemoteOpenAIEmbedder` | Authenticated HTTP client for an OpenAI-compatible `/v1/embeddings` server; Modal URLs use `COGNIVERSE_INFERENCE_API_KEY`, non-Modal URLs may accept an exact bearer `Authorization` mapping, and DenseOn's `query: `/`document: ` prompt prefixes plus L2 normalization are applied client-side |
 
 Remote instances are cached module-level by `(remote_url, model,
-credential fingerprint)`; local instances are cached by `(backend, model)`.
-Concurrent agents therefore share only clients for the same endpoint, model,
+credential fingerprint)`. Concurrent agents therefore share only clients for the same endpoint, model,
 and authentication context; `reset_semantic_embedder_cache()` clears them for
 tests. Connection and timeout errors preserve their original `requests`
 exception type while adding the exact model and `/v1/embeddings` endpoint;

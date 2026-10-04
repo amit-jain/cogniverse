@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 from cogniverse_core.common.models.semantic_embedder import (
-    LocalSentenceTransformerEmbedder,
     RemoteOpenAIEmbedder,
+    SemanticEmbedderNotConfiguredError,
     configure_semantic_embedder_defaults,
     get_semantic_embedder,
     reset_semantic_embedder_cache,
@@ -48,14 +48,31 @@ def test_configured_defaults_select_remote_backend():
     assert embedder._model == "configured-remote-model"
 
 
-def test_no_url_falls_back_to_local(monkeypatch):
+def test_no_url_raises_naming_the_settings_and_loads_nothing(monkeypatch):
+    """With no URL the factory used to load a SentenceTransformer in-process."""
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
     monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
-    with patch("cogniverse_core.common.models.semantic_embedder.SemanticEmbedder"):
-        with patch("sentence_transformers.SentenceTransformer") as MockST:
-            MockST.return_value = MagicMock(name="local-st")
-            embedder = get_semantic_embedder()
-    assert isinstance(embedder, LocalSentenceTransformerEmbedder)
-    MockST.assert_called_once()
+    with patch("sentence_transformers.SentenceTransformer") as MockST:
+        with pytest.raises(SemanticEmbedderNotConfiguredError) as excinfo:
+            get_semantic_embedder()
+
+    assert str(excinfo.value) == (
+        "No semantic embedder endpoint is configured: set "
+        "COGNIVERSE_SEMANTIC_EMBED_URL or the 'denseon' entry of "
+        "INFERENCE_SERVICE_URLS"
+    )
+    assert MockST.call_args_list == []
+    assert semantic_embedder._cache == {}
+
+
+def test_a_model_name_without_a_url_still_raises(monkeypatch):
+    monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
+    with patch("sentence_transformers.SentenceTransformer") as MockST:
+        with pytest.raises(SemanticEmbedderNotConfiguredError):
+            get_semantic_embedder(model_name="sentence-transformers/all-mpnet-base-v2")
+
+    assert MockST.call_args_list == []
 
 
 def test_instances_cached_by_backend_and_model():
@@ -288,13 +305,8 @@ def test_modal_remote_rejects_caller_supplied_credentials(monkeypatch):
 
 
 def test_explicit_headers_require_remote_url():
-    with patch(
-        "cogniverse_core.common.models.semantic_embedder.LocalSentenceTransformerEmbedder"
-    ):
-        with pytest.raises(ValueError, match="headers require a remote_url"):
-            get_semantic_embedder(
-                headers={"Authorization": "Bearer custom-endpoint-key"}
-            )
+    with pytest.raises(ValueError, match="headers require a remote_url"):
+        get_semantic_embedder(headers={"Authorization": "Bearer custom-endpoint-key"})
 
 
 def test_modal_remote_requires_environment_credential(monkeypatch):
@@ -377,21 +389,6 @@ def test_remote_cache_restores_old_entry_when_eviction_close_fails(monkeypatch):
     assert list(semantic_embedder._cache.values()) == [first]
     first_close.assert_called_once_with()
     first_close.side_effect = None
-
-
-def test_local_embedder_participates_in_cache_shutdown(monkeypatch):
-    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
-
-    monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
-    with patch.object(LocalSentenceTransformerEmbedder, "__init__", return_value=None):
-        local = get_semantic_embedder(model_name="local-test-model")
-    close = MagicMock(wraps=local._close)
-    monkeypatch.setattr(local, "_close", close)
-
-    reset_semantic_embedder_cache()
-
-    close.assert_called_once_with()
-    assert semantic_embedder._cache == {}
 
 
 def test_remote_encode_preserves_order_when_backend_reorders():

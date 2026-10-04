@@ -164,7 +164,7 @@ The schema stores the following fields:
 | `update_count` | int | Number of times a topic page has been updated |
 | `created_at` | string | ISO-8601 UTC timestamp of first creation |
 | `updated_at` | string | ISO-8601 UTC timestamp of last update |
-| `embedding` | tensor | 768-dim float tensor (shared `SemanticEmbedder` — `lightonai/DenseOn` when remote, `sentence-transformers/all-mpnet-base-v2` local fallback) |
+| `embedding` | tensor | 768-dim float tensor (shared `SemanticEmbedder` — `lightonai/DenseOn` served by the denseon service) |
 
 **WikiManager constructor** (initialized by the runtime on startup):
 

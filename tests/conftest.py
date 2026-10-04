@@ -55,6 +55,19 @@ def shared_denseon(remote_inference):
     return remote_inference.resolve("denseon").base_url
 
 
+@pytest.fixture(scope="session")
+def semantic_embedder_env(remote_inference):
+    """The environment a runtime subprocess needs to embed text: the
+    cluster's DenseOn, which every entrypoint makes its embedder default.
+    The embedder has no in-process fallback, so a runtime started without
+    it fails on its first embedding."""
+    denseon = remote_inference.resolve("denseon")
+    return {
+        "COGNIVERSE_SEMANTIC_EMBED_URL": denseon.base_url,
+        "COGNIVERSE_SEMANTIC_EMBED_MODEL": denseon.model_id,
+    }
+
+
 # Credentials for the remote inference endpoints every model test resolves.
 from tests.env_secrets import load_env_secrets  # noqa: E402
 

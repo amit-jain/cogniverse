@@ -1,12 +1,11 @@
-"""Pluggable semantic text embedder: local SentenceTransformer or remote OAI-compat embedder.
+"""Semantic text embedder backed by a remote OpenAI-compatible embedder.
 
-`get_semantic_embedder()`:
-
-* Delegates to any OpenAI-compatible `/v1/embeddings`
-  endpoint when the runtime default remote URL is configured by the
-  entrypoint. Inference runs out of process; the runtime only holds a
-  lightweight HTTP wrapper.
-* Falls back to an in-process SentenceTransformer otherwise.
+`get_semantic_embedder()` delegates to an OpenAI-compatible `/v1/embeddings`
+endpoint: the caller's URL, else the default the entrypoint configured from
+``COGNIVERSE_SEMANTIC_EMBED_URL`` or ``INFERENCE_SERVICE_URLS["denseon"]``.
+Inference runs out of process; the caller only holds a lightweight HTTP
+wrapper. With no URL it raises ``SemanticEmbedderNotConfiguredError``; no
+model is loaded in-process.
 
 Instances are cached module-level so concurrent agents share one
 embedder per (backend, model) pair, mirroring `get_or_load_model`
@@ -25,16 +24,12 @@ import numpy as np
 
 from cogniverse_core.common.models.model_loaders import QUERY_ENCODE_TIMEOUT_S
 from cogniverse_foundation.config.inference_auth import inference_headers
-from cogniverse_foundation.config.inference_service import (
-    require_in_process_backend,
-)
 
 logger = logging.getLogger(__name__)
 
 TextsT = Union[str, List[str]]
 
 
-_DEFAULT_LOCAL_MODEL = "sentence-transformers/all-mpnet-base-v2"
 _DEFAULT_REMOTE_MODEL = "lightonai/DenseOn"
 
 _CONFIGURED_REMOTE_URL: Optional[str] = None
@@ -202,30 +197,6 @@ def _l2_normalize(vectors: np.ndarray) -> np.ndarray:
     return (vectors / norms).astype(np.float32, copy=False)
 
 
-class LocalSentenceTransformerEmbedder(SemanticEmbedder):
-    """In-process SentenceTransformer wrapper (fallback when no remote URL)."""
-
-    def __init__(self, model_name: str):
-        require_in_process_backend("denseon", module="sentence_transformers")
-
-        from sentence_transformers import SentenceTransformer
-
-        logger.info("Loading local semantic model: %s", model_name)
-        self._model = SentenceTransformer(model_name)
-
-    def encode(self, texts: TextsT, is_query: bool = False, **kwargs) -> np.ndarray:
-        # SentenceTransformer reads the model's own prompts from
-        # config_sentence_transformers.json via prompt_name, matching the
-        # query/document prefixes DenseOn ships with.
-        prompt_name = "query" if is_query else "document"
-        try:
-            return self._model.encode(texts, prompt_name=prompt_name, **kwargs)
-        except (ValueError, KeyError):
-            # Models without registered prompts (e.g. all-mpnet-base-v2)
-            # reject prompt_name; fall back to plain encode.
-            return self._model.encode(texts, **kwargs)
-
-
 class RemoteOpenAIEmbedder(SemanticEmbedder):
     """HTTP client targeting an OpenAI-compatible ``/v1/embeddings`` endpoint.
 
@@ -303,8 +274,7 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
         # convert_to_numpy / normalize_embeddings are accepted for
         # SentenceTransformer call-site compatibility; this backend always
         # returns a normalized np.ndarray, so they are no-ops. Anything else
-        # would be silently dropped here (the local sibling forwards its
-        # kwargs to SentenceTransformer), so reject it loudly.
+        # would be silently dropped here, so reject it loudly.
         if kwargs:
             raise TypeError(
                 "RemoteOpenAIEmbedder.encode() got unexpected keyword "
@@ -474,51 +444,47 @@ def _store_cached_embedder(key: str, embedder: SemanticEmbedder) -> None:
     _cache.move_to_end(key)
 
 
+class SemanticEmbedderNotConfiguredError(RuntimeError):
+    """No semantic embedder URL was given or configured for this process."""
+
+
 def get_semantic_embedder(
     model_name: Optional[str] = None,
     remote_url: Optional[str] = None,
     headers: Optional[Mapping[str, str]] = None,
 ) -> SemanticEmbedder:
-    """Return a cached semantic embedder, remote-preferred.
+    """Return a cached remote semantic embedder.
 
-    Resolution order for the backend:
-    1. Explicit `remote_url` argument
-    2. Runtime default configured by the entrypoint
-    3. Local SentenceTransformer
-
-    Resolution order for the model name:
-    1. Explicit `model_name` argument
-    2. Runtime default configured by the entrypoint
-    3. A default that matches the chosen backend
+    The endpoint is ``remote_url``, else the default the entrypoint
+    configured; the model is ``model_name``, else the configured default,
+    else DenseOn. Raises ``SemanticEmbedderNotConfiguredError`` when there is
+    no endpoint.
     """
     remote_url = remote_url or _CONFIGURED_REMOTE_URL
-    canonical_headers: Mapping[str, str] = {}
-
-    if remote_url:
-        canonical_headers = _resolved_inference_headers(remote_url, headers)
-        model_name = model_name or _CONFIGURED_MODEL_NAME or _DEFAULT_REMOTE_MODEL
-        authorization = canonical_headers.get("Authorization", "")
-        credential_fingerprint = hashlib.sha256(authorization.encode()).hexdigest()
-        key = f"remote|{remote_url}|{model_name}|{credential_fingerprint}"
-    else:
+    if not remote_url:
         if headers:
             raise ValueError("headers require a remote_url")
-        model_name = model_name or _CONFIGURED_MODEL_NAME or _DEFAULT_LOCAL_MODEL
-        key = f"local|{model_name}"
+        raise SemanticEmbedderNotConfiguredError(
+            "No semantic embedder endpoint is configured: set "
+            "COGNIVERSE_SEMANTIC_EMBED_URL or the 'denseon' entry of "
+            "INFERENCE_SERVICE_URLS"
+        )
+    canonical_headers = _resolved_inference_headers(remote_url, headers)
+    model_name = model_name or _CONFIGURED_MODEL_NAME or _DEFAULT_REMOTE_MODEL
+    authorization = canonical_headers.get("Authorization", "")
+    credential_fingerprint = hashlib.sha256(authorization.encode()).hexdigest()
+    key = f"remote|{remote_url}|{model_name}|{credential_fingerprint}"
 
     with _lock:
         cached = _cache.get(key)
         if cached is not None:
             _cache.move_to_end(key)
             return cached
-        if remote_url:
-            embedder: SemanticEmbedder = RemoteOpenAIEmbedder(
-                remote_url,
-                model_name,
-                _resolved_headers=canonical_headers,
-            )
-        else:
-            embedder = LocalSentenceTransformerEmbedder(model_name)
+        embedder = RemoteOpenAIEmbedder(
+            remote_url,
+            model_name,
+            _resolved_headers=canonical_headers,
+        )
         _store_cached_embedder(key, embedder)
         return embedder
 

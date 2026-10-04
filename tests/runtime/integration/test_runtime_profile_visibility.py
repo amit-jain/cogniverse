@@ -192,8 +192,9 @@ class _Worker:
 
 
 @pytest.fixture(scope="module")
-def workers(vespa_instance, workflow_state_redis_url):
+def workers(vespa_instance, workflow_state_redis_url, semantic_embedder_env):
     env = {
+        **semantic_embedder_env,
         "BACKEND_URL": "http://localhost",
         "BACKEND_PORT": str(vespa_instance["http_port"]),
         "REDIS_URL": workflow_state_redis_url,

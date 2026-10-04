@@ -47,9 +47,6 @@ from cogniverse_core.common.media.config import MediaConfig
 from cogniverse_core.common.media.locator import (
     prewarm_s3_filesystem as _prewarm_s3_filesystem,
 )
-from cogniverse_core.common.models.semantic_embedder import (
-    configure_semantic_embedder_defaults,
-)
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import affirm_memory_profile
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -805,14 +802,12 @@ def _configure_library_module_defaults(
             "rlm_promotion_enabled": rlm_promotion_enabled,
             "rlm_promotion_fraction": rlm_promotion_fraction,
             "rlm_skip_deno_check": rlm_skip_deno_check,
+            "semantic_embed_url": semantic_embed_url,
+            "semantic_embed_model": semantic_embed_model,
         }
     )
     if minio_endpoint:
         _prewarm_s3_filesystem(MediaConfig.for_object_store(minio_endpoint))
-    configure_semantic_embedder_defaults(
-        remote_url=semantic_embed_url,
-        model_name=semantic_embed_model,
-    )
     configure_text_analysis_agent_tenant_cache_capacity(tenant_cache_capacity)
     configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
     configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
