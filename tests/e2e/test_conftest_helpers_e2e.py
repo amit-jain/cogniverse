@@ -94,10 +94,10 @@ _E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:19090"
 _E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
 
 
-def _expected_e2e_sandbox_overrides() -> dict[str, str]:
+def _expected_e2e_sandbox_overrides(llm_serving: str = "local") -> dict[str, str]:
     overrides = {
         f"inference.{service}.enabled": "false"
-        for service in sorted(inference._E2E_DISABLED_INFERENCE_SERVICES)
+        for service in sorted(inference._e2e_disabled_inference_services(llm_serving))
     }
     overrides.update(
         {
@@ -296,9 +296,11 @@ class TestE2EDeploymentOverrides:
     """The e2e Helm overrides wire the host-mode sandbox from live sources: the
     active gateway's own port and the k3d network's gateway IP."""
 
-    def test_overrides_derive_endpoint_and_host_ip(self, monkeypatch):
+    @pytest.mark.parametrize("llm_serving", ["local", "modal"])
+    def test_overrides_derive_endpoint_and_host_ip(self, monkeypatch, llm_serving):
         import cogniverse_cli.sandbox as sandbox_mod
 
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", llm_serving)
         monkeypatch.setattr(
             sandbox_mod,
             "active_gateway_metadata",
@@ -313,7 +315,7 @@ class TestE2EDeploymentOverrides:
         monkeypatch.setattr(e2e_conftest.subprocess, "run", fake_run)
 
         assert e2e_conftest._e2e_deployment_overrides() == (
-            _expected_e2e_sandbox_overrides()
+            _expected_e2e_sandbox_overrides(llm_serving)
         )
         assert commands == [
             [
@@ -329,6 +331,7 @@ class TestE2EDeploymentOverrides:
     def test_missing_network_gateway_is_an_error(self, monkeypatch):
         import cogniverse_cli.sandbox as sandbox_mod
 
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", "local")
         monkeypatch.setattr(
             sandbox_mod,
             "active_gateway_metadata",

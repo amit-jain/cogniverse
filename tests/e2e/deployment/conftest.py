@@ -527,13 +527,24 @@ def deployed_llm_serving_mode(
         return None
 
 
+def e2e_llm_serving_mode() -> str:
+    """Where the deploy serves the chat models: the env, else the release, else local."""
+    from cogniverse_cli.config import LLM_SERVING_LOCAL
+
+    return (
+        os.environ.get("COGNIVERSE_LLM_SERVING")
+        or deployed_llm_serving_mode()
+        or LLM_SERVING_LOCAL
+    )
+
+
 def deployment_helm_inputs(
     project_root,
     *,
     extra_set: dict[str, str] | None = None,
 ) -> dict:
     """Resolve the exact backend, overlays, image tags, and Helm overrides."""
-    from cogniverse_cli.config import LLM_SERVING_LOCAL, compose_values_files
+    from cogniverse_cli.config import compose_values_files
     from cogniverse_cli.images import (
         detect_torch_backend,
         dev_image_set_values,
@@ -551,9 +562,7 @@ def deployment_helm_inputs(
     helm_values = compose_values_files(
         use_k3d=True,
         backend=backend,
-        serving=os.environ.get("COGNIVERSE_LLM_SERVING")
-        or deployed_llm_serving_mode()
-        or LLM_SERVING_LOCAL,
+        serving=e2e_llm_serving_mode(),
         project_root=project_root,
     )
     assert helm_values[0] == values_file, helm_values

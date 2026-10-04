@@ -48,21 +48,34 @@ def _e2e_docker_network_gateway_ip() -> str:
     return gateway_ip
 
 
-# The teacher needs 20Gi of the node's 123.5Gi. Video embedding and
-# transcription cannot make room for it -- the session fixture ingests the
+# A locally served teacher needs 20Gi of the node's 123.5Gi. Video embedding
+# and transcription cannot make room for it -- the session fixture ingests the
 # corpus, and the shipped profiles bind embedding to vllm_colpali and
 # transcription to vllm_asr. Only the code retriever is unused here, so the
-# rest of the room comes from right-sizing requests to measured usage.
+# rest of the room comes from right-sizing requests to measured usage. Served
+# from Modal, neither chat model is on the node and the code retriever fits.
 _E2E_DISABLED_INFERENCE_SERVICES = frozenset({"code_colbert_pylate"})
+
+
+def _e2e_disabled_inference_services(llm_serving: str) -> frozenset[str]:
+    from cogniverse_cli.config import LLM_SERVING_LOCAL
+
+    if llm_serving == LLM_SERVING_LOCAL:
+        return _E2E_DISABLED_INFERENCE_SERVICES
+    return frozenset()
 
 
 def _e2e_deployment_overrides() -> dict[str, str]:
     from cogniverse_cli.sandbox import active_gateway_metadata, pod_gateway_endpoint
 
+    from tests.e2e.deployment.conftest import e2e_llm_serving_mode
+
     overrides = {
         **{
             f"inference.{service}.enabled": "false"
-            for service in sorted(_E2E_DISABLED_INFERENCE_SERVICES)
+            for service in sorted(
+                _e2e_disabled_inference_services(e2e_llm_serving_mode())
+            )
         },
         "runtime.sandbox.enabled": "true",
         "runtime.sandbox.inCluster.enabled": "false",
