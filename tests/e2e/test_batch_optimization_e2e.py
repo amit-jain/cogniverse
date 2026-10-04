@@ -87,6 +87,7 @@ from tests.e2e.batch_optimization import (
     _record_batch_job_duration,
     _replayed_optimizer_capture_counts,
     _replayed_optimizer_workflow_result,
+    _reset_module_artifact_script,
     _seeded_enhancement_queries,
     _subprocess_failure_message,
     _synthetic_top_up_counts,
@@ -2335,7 +2336,8 @@ def _reset_module_artifact_in_pod(
     label: str,
     tenant_id: str,
 ) -> tuple[bool, int]:
-    """Serve the base state of ``module_class`` as the tenant's active artifact.
+    """Serve the base state of ``module_class`` as the tenant's active artifact,
+    with a version lineage that starts here.
 
     An artifact left by an earlier run carries the signature it was compiled
     under (DSPy ``load_state`` restores instructions and field descs), so the
@@ -2346,28 +2348,24 @@ def _reset_module_artifact_in_pod(
     the served blob alone left the ledger pointing at the last promoted
     version while the pod served base.
 
+    The tenant outlives this module, so its lineage holds every version any
+    earlier session wrote, and training selection decays an example whose
+    first consumption in that lineage is older than ``downweight_age_days``.
+    The reset deletes those versions first: every consumed id the module's
+    runs see was consumed in this session, so no test inherits decay from
+    history it did not write.
+
     Returns ``(differs, version)``: ``differs`` is True when the previously
     served artifact was not the base state (the running pod, which loaded it
     at start, must be bounced before it serves traffic), ``version`` is the
     now-active version.
     """
-    script = IN_POD_TELEMETRY_PRELUDE + (
-        "import asyncio, json; "
-        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
-        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
-        f"{module_import}; "
-        + (f"{key_import}; " if key_import else "")
-        + f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
-        f"am = ArtifactManager(tp, {tenant_id!r}); "
-        f"base = json.dumps({module_class}().dump_state(), default=str); "
-        f"blob = asyncio.run(am.load_blob('model', {key_expr})); "
-        "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
-        "version = asyncio.run(am.save_blob_versioned("
-        f"kind='model', key={key_expr}, content=base, "
-        "consumed_example_ids=['reset:base-module'], decision='rollback', "
-        "scored=False, base_score=None, candidate_score=None))[1]; "
-        f"asyncio.run(am.activate_version('model', {key_expr}, version)); "
-        "print('__RESET__' + ('1' if differs else '0') + ':' + str(version))"
+    script = _reset_module_artifact_script(
+        module_import=module_import,
+        module_class=module_class,
+        key_import=key_import,
+        key_expr=key_expr,
+        tenant_id=tenant_id,
     )
     result = subprocess.run(
         [
