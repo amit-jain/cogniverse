@@ -1223,11 +1223,13 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted. Without `force`, `already_deployed` is answered only when the tenant's stored registry row says the schema is deployed, read on this request, so a schema another process dropped is deployed again.
 
-The update, delete and deploy routes look the profile up in the tenant's stored
-backend config (`get_stored_backend_config`), so a profile another worker or
-replica created or deleted a moment ago is found or answered 404 at once; the
-list and get routes serve the process's held copy. A profile deleted between
-the update's or delete's read and its write answers 404.
+Every profile route looks the profile up in the tenant's stored backend config,
+not the process's held copy, so a profile another worker or replica created,
+updated or deleted a moment ago is listed, read, found or answered 404 at once.
+The get reads the stored row once, so the profile it answers and its `version`
+and `created_at` come from the same write. The list's and get's schema lookups
+run off the serving loop. A profile deleted between the update's or delete's
+read and its write answers 404.
 **GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. A refusal is removed once its schema no longer drifts or is deleted (see [Schema drift migration](core.md#schema-drift-migration)). 503 `schema_drift_unavailable` when the registry or the recorded refusals cannot be read; `failure` is `SchemaRegistryInitializationError` for the registry and `RegistryStorageError` for the refusals.
 
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)

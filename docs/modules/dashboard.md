@@ -567,7 +567,9 @@ render_rlm_ab_compare_tab()
 
 **Purpose:** CRUD interface for backend profiles via ConfigManager. Not one of
 the 16 top-level tabs — it's a standalone module embedded inside the
-Configuration Management tab's "Backend Profiles" sub-tab.
+Configuration Management tab's "Backend Profiles" sub-tab. The profile list and
+detail read the tenant's stored backend config (`get_stored_backend_config`),
+so a profile the runtime created, updated or deleted shows as it is at once.
 
 **Functions:**
 

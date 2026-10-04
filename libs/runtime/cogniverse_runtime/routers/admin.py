@@ -40,7 +40,10 @@ from cogniverse_foundation.config.manager import (
     BackendProfileNotFoundError,
     ConfigManager,
 )
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+)
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.profile_models import (
     ProfileCreateRequest,
@@ -392,33 +395,33 @@ async def list_profiles(
         )
         profiles = stored.profiles
 
-        backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend(
-            "vespa",
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
-
-        profile_summaries = []
-
-        for profile_name, profile in profiles.items():
-            schema_deployed = backend.schema_exists(
-                schema_name=profile.schema_name, tenant_id=tenant_id
+        def _summaries() -> List[ProfileSummary]:
+            """Each profile's summary. The schema lookups query Vespa, so
+            they run off the serving loop."""
+            backend = BackendRegistry.get_instance().get_ingestion_backend(
+                "vespa",
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
             )
-            profile_summaries.append(
+            return [
                 ProfileSummary(
                     profile_name=profile_name,
                     type=profile.type,
                     description=profile.description,
                     schema_name=profile.schema_name,
                     embedding_model=profile.embedding_model,
-                    schema_deployed=schema_deployed,
+                    schema_deployed=backend.schema_exists(
+                        schema_name=profile.schema_name, tenant_id=tenant_id
+                    ),
                     created_at=datetime.now(
                         timezone.utc
                     ).isoformat(),  # config store does not persist creation time
                 )
-            )
+                for profile_name, profile in profiles.items()
+            ]
+
+        profile_summaries = await asyncio.to_thread(_summaries)
 
         return ProfileListResponse(
             profiles=profile_summaries,
@@ -461,38 +464,11 @@ async def get_profile(
         HTTPException 500: Get operation failed
     """
     try:
-        stored = await asyncio.to_thread(
-            config_manager.get_stored_backend_config,
-            tenant_id=tenant_id,
-            service="backend",
-        )
-        profile = stored.get_profile(profile_name)
-
-        if not profile:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
-            )
-
-        backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend(
-            "vespa",
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
-
-        schema_deployed = backend.schema_exists(
-            schema_name=profile.schema_name, tenant_id=tenant_id
-        )
-        tenant_schema_name = (
-            backend.get_tenant_schema_name(tenant_id, profile.schema_name)
-            if schema_deployed
-            else None
-        )
-
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
+        # One read of the stored row gives the profile, its version and its
+        # creation time together; a write landing between two reads would
+        # pair the content with another write's version.
         config_entry = await asyncio.to_thread(
             config_manager.store.get_config,
             tenant_id=canonical_tenant_id(tenant_id),
@@ -500,7 +476,38 @@ async def get_profile(
             service="backend",
             config_key="backend_config",
         )
-        config_version = config_entry.version if config_entry else 1
+        profile = (
+            BackendConfig.from_dict(config_entry.config_value).get_profile(profile_name)
+            if config_entry is not None
+            else None
+        )
+
+        if not profile:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
+            )
+
+        def _deployment() -> tuple[bool, Optional[str]]:
+            """Whether the profile's schema is deployed for the tenant, and
+            its tenant schema name. The lookup queries Vespa, so it runs off
+            the serving loop."""
+            backend = BackendRegistry.get_instance().get_ingestion_backend(
+                "vespa",
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+            deployed = backend.schema_exists(
+                schema_name=profile.schema_name, tenant_id=tenant_id
+            )
+            return deployed, (
+                backend.get_tenant_schema_name(tenant_id, profile.schema_name)
+                if deployed
+                else None
+            )
+
+        schema_deployed, tenant_schema_name = await asyncio.to_thread(_deployment)
 
         return ProfileDetail(
             profile_name=profile.profile_name,
@@ -516,10 +523,8 @@ async def get_profile(
             model_specific=profile.model_specific,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
-            created_at=config_entry.created_at.isoformat()
-            if config_entry
-            else datetime.now(timezone.utc).isoformat(),
-            version=config_version,
+            created_at=config_entry.created_at.isoformat(),
+            version=config_entry.version,
         )
 
     except HTTPException:

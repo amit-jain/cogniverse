@@ -232,6 +232,8 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
 
 - Profiles are tenant-isolated (cannot see other tenants' profiles)
 
+- The list reads the tenant's stored profiles, so a profile created, updated or deleted through any runtime worker or replica is listed as it is at once
+
 - `created_at` in this list response is NOT a persisted per-profile creation timestamp — the config store doesn't track it, so the route fills it in as the current time of the list request. Every profile in a given response therefore shows the same `created_at`. Use Get Profile for a real per-profile version/timestamp derived from the config store's version history.
 
 ---
@@ -299,6 +301,10 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
   "detail": "Profile 'video_colpali_mv_frame' not found for tenant 'acme_corp'"
 }
 ```
+
+**Notes:**
+
+- The profile, `version` and `created_at` come from one read of the tenant's stored backend config, so a write through any runtime worker or replica is answered at once, and the content and `version` are always from the same write
 
 ---
 

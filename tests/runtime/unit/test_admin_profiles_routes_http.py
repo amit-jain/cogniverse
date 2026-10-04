@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -74,7 +75,8 @@ def _profile(name: str, schema: str, embedding_model: str) -> BackendProfileConf
 
 
 class _FakeConfigStore:
-    def __init__(self):
+    def __init__(self, profiles: dict):
+        self.profiles = profiles
         self.get_config_calls = []
         self.deletion_marker_reads = []
 
@@ -92,13 +94,19 @@ class _FakeConfigStore:
                 "config_key": config_key,
             }
         )
-        return SimpleNamespace(version=_STORE_VERSION, created_at=_FIXED_CREATED_AT)
+        return SimpleNamespace(
+            version=_STORE_VERSION,
+            created_at=_FIXED_CREATED_AT,
+            config_value=BackendConfig(
+                tenant_id=tenant_id, profiles=dict(self.profiles)
+            ).to_dict(),
+        )
 
 
 class _StubConfigManager:
     def __init__(self):
         self.profiles: dict[str, BackendProfileConfig] = {}
-        self.store = _FakeConfigStore()
+        self.store = _FakeConfigStore(self.profiles)
         self.calls: dict = {}
 
     def list_backend_profiles(self, tenant_id=None, service="backend"):
@@ -442,7 +450,14 @@ async def test_get_profile_answers_the_store_not_the_held_copy(env):
     assert resp.json() == {
         "detail": "Profile 'video_colpali' not found for tenant 'acme'"
     }
-    assert env.cm.calls["stored"] == [{"tenant_id": "acme", "service": "backend"}]
+    assert env.cm.store.get_config_calls == [
+        {
+            "tenant_id": "acme:acme",
+            "scope": ConfigScope.BACKEND,
+            "service": "backend",
+            "config_key": "backend_config",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -478,7 +493,11 @@ async def test_profile_reads_whose_store_cannot_be_read_raise_500_not_the_held_c
     def unreadable(tenant_id=None, service="backend"):
         raise ConfigStoreUnavailableError("config store unreachable")
 
+    def unreadable_row(**kwargs):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
     env.cm.get_stored_backend_config = unreadable
+    env.cm.store.get_config = unreadable_row
 
     resp = await _get(env.app, path, tenant_id="acme")
 
@@ -497,6 +516,109 @@ async def test_profile_reads_whose_store_cannot_be_read_raise_500_not_the_held_c
         if record.name == "cogniverse_runtime.http_errors"
     ] == [f"{error}: ConfigStoreUnavailableError: config store unreachable"]
     assert env.backend.schema_exists_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_profile_pairs_the_content_with_the_version_it_was_read_at(env):
+    """Another worker's update lands while the get is reading the stored
+    row: the answer is one stored version, its content with its number."""
+    store = InMemoryConfigStore()
+    serving, writing = ConfigManager(store=store), ConfigManager(store=store)
+    tenant = "acme:acme"
+    created = serving.add_backend_profile(
+        _profile("video_colpali", "video_colpali_sv", "colpali-v1.2"),
+        tenant_id=tenant,
+    )
+    env.app.dependency_overrides[admin.get_config_manager_dependency] = lambda: serving
+    read_versions = []
+    written: list = []
+    landed = threading.Event()
+    barrier = threading.Barrier(2)
+    read_row = store.get_config
+
+    def get_config(*args, **kwargs):
+        entry = read_row(*args, **kwargs)
+        if threading.current_thread() is not writer:
+            read_versions.append(entry.version)
+            if len(read_versions) == 1:
+                barrier.wait(timeout=10)
+                landed.wait(timeout=10)
+        return entry
+
+    def write() -> None:
+        barrier.wait(timeout=10)
+        written.append(
+            writing.update_backend_profile(
+                "video_colpali",
+                {"description": "written between the reads"},
+                base_tenant_id=tenant,
+                target_tenant_id=tenant,
+            ).version
+        )
+        landed.set()
+
+    store.get_config = get_config
+    writer = threading.Thread(target=write)
+    writer.start()
+    try:
+        resp = await _get(env.app, "/admin/profiles/video_colpali", tenant_id=tenant)
+    finally:
+        writer.join(timeout=30)
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["description"], resp.json()["version"]) == (
+        "desc for video_colpali",
+        created.version,
+    )
+    assert read_versions == [created.version]
+    assert written == [created.version + 1]
+    stored = read_row(
+        tenant_id=tenant,
+        scope=ConfigScope.BACKEND,
+        service="backend",
+        config_key="backend_config",
+    )
+    assert (
+        stored.version,
+        stored.config_value["profiles"]["video_colpali"]["description"],
+    ) == (created.version + 1, "written between the reads")
+
+
+@pytest.mark.parametrize("path", ["/admin/profiles", "/admin/profiles/video_colpali"])
+@pytest.mark.asyncio
+async def test_profile_reads_keep_the_loop_serving_during_a_slow_schema_lookup(
+    env, path
+):
+    """The schema lookup queries Vespa; while it waits, the loop serves a
+    heartbeat, which is what releases the lookup."""
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+    started = threading.Event()
+    released = threading.Event()
+    lookups = []
+
+    def slow_schema_exists(schema_name, tenant_id):
+        started.set()
+        lookups.append(released.wait(timeout=5))
+        return True
+
+    env.backend.schema_exists = slow_schema_exists
+    beats = []
+
+    async def heartbeat() -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 30
+        while not started.is_set() and loop.time() < deadline:
+            await asyncio.sleep(0.01)
+        beats.append(lookups == [])
+        released.set()
+
+    resp, _ = await asyncio.gather(_get(env.app, path, tenant_id="acme"), heartbeat())
+
+    assert resp.status_code == 200, resp.text
+    assert beats == [True]
+    assert lookups == [True]
 
 
 @pytest.mark.asyncio
