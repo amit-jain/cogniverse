@@ -36,8 +36,14 @@ MAX_CONNECTIONS = 200
 
 
 @pytest.fixture(scope="module")
-def runtime(tmp_path_factory, workflow_state_redis_url, vespa_instance):
-    with _runtime(tmp_path_factory.mktemp("admin_state"), workflow_state_redis_url) as (
+def runtime(
+    tmp_path_factory, workflow_state_redis_url, vespa_instance, semantic_embedder_env
+):
+    with _runtime(
+        tmp_path_factory.mktemp("admin_state"),
+        workflow_state_redis_url,
+        embedder_env=semantic_embedder_env,
+    ) as (
         process,
         log,
         port,
@@ -489,7 +495,7 @@ class TestTenantDeleteAcrossWorkers:
 
 class TestSessionCloseAcrossWorkers:
     def test_a_session_close_is_swept_by_every_worker_of_every_replica(
-        self, tmp_path, owned_redis, vespa_instance
+        self, tmp_path, owned_redis, vespa_instance, semantic_embedder_env
     ):
         """Two runtimes of their own on one Redis, as two replicas are: no
         earlier request has warmed a memory manager on any of their workers,
@@ -497,8 +503,12 @@ class TestSessionCloseAcrossWorkers:
         session_id = f"sess-{uuid.uuid4().hex[:8]}"
         redis_url = owned_redis["url"]
         with (
-            _runtime(tmp_path, redis_url, "replica_a") as (process_a, log_a, port_a),
-            _runtime(tmp_path, redis_url, "replica_b") as (process_b, log_b, _),
+            _runtime(
+                tmp_path, redis_url, "replica_a", embedder_env=semantic_embedder_env
+            ) as (process_a, log_a, port_a),
+            _runtime(
+                tmp_path, redis_url, "replica_b", embedder_env=semantic_embedder_env
+            ) as (process_b, log_b, _),
         ):
             replica_a = SimpleNamespace(port=port_a, workers=_serving(process_a, log_a))
             replica_b_workers = _serving(process_b, log_b)

@@ -96,6 +96,42 @@ class _MixinHost(RLMAwareMixin):
         self.bind_config_manager(config_manager)
 
 
+class TestRLMAwareMixinEndpoint:
+    """The endpoint ``process_with_rlm`` runs an RLM on when the request
+    names no model."""
+
+    def test_an_unset_model_runs_on_the_tenants_configured_endpoint(self, monkeypatch):
+        from cogniverse_foundation.config.unified_config import LLMConfig
+
+        cfg = MagicMock()
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
+        cfg.get_llm_config.return_value = LLMConfig(
+            primary=LLMEndpointConfig(
+                model="openai/student", api_base="http://student/v1"
+            )
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+        host = _MixinHost(MagicMock())
+        built = []
+
+        def get_rlm(llm_config, **kwargs):
+            built.append(llm_config)
+            return MagicMock(process=lambda **kw: "answer")
+
+        host.get_rlm = get_rlm
+
+        answer = host.process_with_rlm(
+            "q", "context", RLMOptions(enabled=True), tenant_id="acme:prod"
+        )
+
+        assert answer == "answer"
+        assert [(c.model, c.api_base) for c in built] == [
+            ("openai/student", "http://student/v1")
+        ]
+
+
 class TestRLMAwareMixinRouting:
     """get_rlm routes the RLM endpoint through the semantic router for the host tenant."""
 

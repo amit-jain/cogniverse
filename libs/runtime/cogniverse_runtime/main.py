@@ -28,6 +28,7 @@ if _bootstrap_os.environ.get("OPENINFERENCE_DSPY") == "1":
         print(f"OpenInference DSPy instrument failed: {_exc}")
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -46,9 +47,6 @@ from fastapi.routing import iter_route_contexts
 from cogniverse_core.common.media.config import MediaConfig
 from cogniverse_core.common.media.locator import (
     prewarm_s3_filesystem as _prewarm_s3_filesystem,
-)
-from cogniverse_core.common.models.semantic_embedder import (
-    configure_semantic_embedder_defaults,
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import affirm_memory_profile
@@ -805,14 +803,12 @@ def _configure_library_module_defaults(
             "rlm_promotion_enabled": rlm_promotion_enabled,
             "rlm_promotion_fraction": rlm_promotion_fraction,
             "rlm_skip_deno_check": rlm_skip_deno_check,
+            "semantic_embed_url": semantic_embed_url,
+            "semantic_embed_model": semantic_embed_model,
         }
     )
     if minio_endpoint:
         _prewarm_s3_filesystem(MediaConfig.for_object_store(minio_endpoint))
-    configure_semantic_embedder_defaults(
-        remote_url=semantic_embed_url,
-        model_name=semantic_embed_model,
-    )
     configure_text_analysis_agent_tenant_cache_capacity(tenant_cache_capacity)
     configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
     configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
@@ -1068,6 +1064,20 @@ def preload_lm_client_modules() -> None:
     # Reading an attribute executes LiteLLM if DSPy registered it lazily.
     _ = importlib.import_module("litellm").completion
     importlib.import_module("openai.resources")
+
+
+def freeze_startup_heap() -> None:
+    """Exclude the objects startup created from every later collection.
+
+    A worker holds about half a million objects once its agents, models'
+    clients and routes are loaded. A full (generation 2) collection scans all
+    of them and holds the interpreter for 0.3 to 0.5 s; whichever thread's
+    allocation triggers it, the serving loop answers nothing meanwhile. These
+    objects live as long as the process, so collecting them once and freezing
+    them leaves later full collections only the objects made since.
+    """
+    gc.collect()
+    gc.freeze()
 
 
 @asynccontextmanager
@@ -1585,6 +1595,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("DSPy ambient LM already configured for this process")
     await asyncio.to_thread(preload_lm_client_modules)
+    await asyncio.to_thread(get_telemetry_manager().preload_span_export)
     # NOTE: OpenInference DSPy instrumentation runs at module-top
     # bootstrap (see the top of this file) so DSPy classes are
     # wrapped BEFORE any agent imports bind references to the
@@ -1844,6 +1855,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         (time.perf_counter() - route_build_started) * 1000,
     )
 
+    freeze_startup_heap()
     logger.info("Cogniverse Runtime started successfully")
 
     # Tenant schemas registered with a definition other than the shipped one

@@ -52,6 +52,7 @@ def runtime(
     vespa_instance,
     ensure_host_ollama,
     remote_inference,
+    semantic_embedder_env,
 ):
     """A fresh two-worker runtime: no worker has made an LM call yet."""
     endpoints = {service: remote_inference.resolve(service) for service in SERVICES}
@@ -59,10 +60,13 @@ def runtime(
         "INFERENCE_SERVICE_URLS": json.dumps(
             {service: endpoint.base_url for service, endpoint in endpoints.items()}
         ),
-        "COGNIVERSE_SEMANTIC_EMBED_URL": endpoints["denseon"].base_url,
-        "COGNIVERSE_SEMANTIC_EMBED_MODEL": endpoints["denseon"].model_id,
     }
-    with _runtime(tmp_path, workflow_state_redis_url, extra_env=env) as (
+    with _runtime(
+        tmp_path,
+        workflow_state_redis_url,
+        extra_env=env,
+        embedder_env=semantic_embedder_env,
+    ) as (
         process,
         log,
         port,

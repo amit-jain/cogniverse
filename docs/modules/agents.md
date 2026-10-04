@@ -3871,9 +3871,14 @@ print(f"Latency: {result.latency_ms}ms")
 tenant_id="")` (same module) is the shared constructor used by the KG
 summariser agents (`FederatedQueryAgent`, `TemporalReasoningAgent`,
 `KnowledgeGraphTraversalAgent`, `KnowledgeSummarizationAgent`,
-`MultiDocumentSynthesisAgent`). It resolves the endpoint config — falling back
-to an `RLMOptions`-derived default model when the agent has none wired — and
-applies the option's iteration / call / timeout caps. When `config_manager` and
+`MultiDocumentSynthesisAgent`). It resolves the endpoint config through
+`rlm_endpoint` — the request's `rlm.model` (with its `api_base` and
+`api_key`) when it names one, else the agent's endpoint, else the tenant's
+configured endpoint for `rlm_inference` (the primary LM unless
+`llm_config.overrides` names one), and `RLMEndpointNotConfiguredError` when
+none is available — and applies the option's iteration / call / timeout caps.
+`RLMAwareMixin.process_with_rlm` resolves its endpoint the same way, so an RLM
+run that names no model never defaults to a provider's public API. When `config_manager` and
 `tenant_id` are supplied and gateway routing is enabled for that tenant, the
 resolved endpoint is routed through the gateway (task `rlm_inference`) before
 the RLM's LM is built; `tenant_id` is also threaded onto the `RLMInference` for
