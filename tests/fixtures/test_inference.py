@@ -2007,3 +2007,88 @@ def test_session_endpoints_reject_a_second_credential_without_recording_it(
     assert provider.calls == ["vllm_colpali", "denseon"]
     endpoints.close()
     assert "INFERENCE_SERVICE_URLS" not in os.environ
+
+
+@pytest.mark.unit
+def test_concurrent_fixtures_resolve_each_cluster_service_once(monkeypatch):
+    """Many fixtures asking for several services at once: each service is
+    discovered and validated once, every caller gets that one endpoint, and a
+    service the cluster does not serve fails every caller with one typed error
+    without ever being started."""
+    from tests.fixtures import inference as inference_fixture
+    from tests.utils import vllm_sidecar
+
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+    discoveries: list[str] = []
+    discovery_lock = Lock()
+    with (
+        _model_server(
+            model=COLPALI.model_id, revision=COLPALI.model_revision, token=API_KEY
+        ) as (colpali_url, colpali_requests),
+        _model_server(
+            model=DENSEON.model_id, revision=DENSEON.model_revision, token=API_KEY
+        ) as (denseon_url, denseon_requests),
+    ):
+        served = {COLPALI.model_id: colpali_url, DENSEON.model_id: denseon_url}
+
+        def discover_e2e(model):
+            with discovery_lock:
+                discoveries.append(f"e2e {model}")
+            url = served.get(model)
+            return () if url is None else (_discovered(url, None),)
+
+        def discover_dev(model):
+            with discovery_lock:
+                discoveries.append(f"dev {model}")
+            return ()
+
+        def no_local_process(*args, **kwargs):
+            raise AssertionError("cluster resolution must not start anything")
+
+        monkeypatch.setattr(vllm_sidecar, "_discover_e2e_model_urls", discover_e2e)
+        monkeypatch.setattr(vllm_sidecar, "_discover_dev_model_urls", discover_dev)
+        monkeypatch.setattr(subprocess, "run", no_local_process)
+        monkeypatch.setattr(subprocess, "Popen", no_local_process)
+        resolver = inference_fixture._build_resolver(
+            {"vllm_colpali", "denseon", "face_embed"}
+        )
+        services = ["vllm_colpali", "denseon", "face_embed"] * 8
+        barrier = Barrier(len(services))
+
+        def resolve(service):
+            barrier.wait(timeout=10)
+            try:
+                return resolver.resolve(service)
+            except RemoteServiceUnavailable as exc:
+                return exc
+
+        try:
+            with ThreadPoolExecutor(max_workers=len(services)) as pool:
+                outcomes = list(pool.map(resolve, services))
+        finally:
+            resolver.close()
+
+    by_service: dict[str, set[int]] = {}
+    for service, outcome in zip(services, outcomes):
+        by_service.setdefault(service, set()).add(id(outcome))
+    assert {service: len(ids) for service, ids in by_service.items()} == {
+        "vllm_colpali": 1,
+        "denseon": 1,
+        "face_embed": 1,
+    }
+    colpali, denseon, face = outcomes[:3]
+    assert (colpali.provider, colpali.base_url) == ("e2e", colpali_url)
+    assert (denseon.provider, denseon.base_url) == ("e2e", denseon_url)
+    assert isinstance(face, RemoteServiceUnavailable)
+    assert face.service == "face_embed"
+    assert sorted(discoveries) == sorted(
+        [
+            f"e2e {COLPALI.model_id}",
+            f"e2e {DENSEON.model_id}",
+            f"e2e {FACE.model_id}",
+            f"dev {FACE.model_id}",
+        ]
+    )
+    assert colpali_requests == [("/v1/models", f"Bearer {API_KEY}")]
+    assert denseon_requests == [("/v1/models", f"Bearer {API_KEY}")]
