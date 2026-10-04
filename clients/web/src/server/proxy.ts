@@ -8,8 +8,9 @@ const ALLOWED = [
   /^\/admin\/router-tiers$/,
   /^\/admin\/profiles(\/[^/]+(\/deploy)?)?$/,
   /^\/admin\/tenant\/[^/]+\/(optimize|memories|jobs)(\/.*)?$/,
-  /^\/ingestion\/(upload|start|status\/[^/]+)$/,
-  /^\/events\/(ingestion|workflows)\/[^/]+(\/cancel)?$/,
+  /^\/ingestion\/upload$/,
+  /^\/ingestion\/[^/]+\/(events|status)$/,
+  /^\/events\/workflows\/[^/]+(\/cancel)?$/,
 ];
 
 const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept'];

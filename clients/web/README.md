@@ -24,6 +24,7 @@ runtime's existing routes through `/api/runtime/*`.
 |---|---|---|
 | Tenants | List, create and delete organizations and tenants; set a tenant's router tier. Deletes need the name typed to confirm. | `/admin/organizations`, `/admin/tenants`, `/admin/router-tiers` |
 | Backend profiles | For a chosen tenant: list the profiles created for it, create one (JSON fields for pipeline, strategies, schema config and model-specific parameters), edit its description, pipeline, strategies and model-specific parameters, deploy its schema, and delete it with or without its schema. Shipped profiles are not listed. | `/admin/profiles` |
+| Ingestion | Upload a file to a tenant (optionally naming a profile, or forcing a re-ingest of identical bytes) and follow each ingest live through queued, running, and complete or failed, with its result or error. Follow an existing ingest by its ID. | `/ingestion/upload`, `/ingestion/{id}/events`, `/ingestion/{id}/status` |
 
 ## Setup
 
@@ -53,7 +54,7 @@ npm run typecheck
 npm test
 ```
 
-Vitest covers the result-card parsing, error, route and JSON-field parsing, the server's
+Vitest covers the result-card parsing, error, route, JSON-field and event-stream parsing, the server's
 configuration and agent listing, and the runtime proxy against local HTTP
 sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,

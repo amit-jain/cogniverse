@@ -185,9 +185,9 @@ class TestProfileLifecycle:
     ):
         name = f"web_{uuid.uuid4().hex[:8]}"
         _profiles_view(page, web_url, tenant)
-        expect(
-            page.locator(f'#profile-tenants option[value="{tenant}"]')
-        ).to_have_count(1)
+        expect(page.locator(f'#known-tenants option[value="{tenant}"]')).to_have_count(
+            1
+        )
         profiles = page.get_by_role("region", name=f"Profiles of {tenant}")
         expect(
             profiles.get_by_text(f"No profiles created for {tenant}.")

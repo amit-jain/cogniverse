@@ -37,15 +37,19 @@ export function errorMessage(body: unknown, status: number): string {
   return `The runtime answered HTTP ${status}.`;
 }
 
-/** Calls a runtime route through the web server and returns its JSON body. */
+/**
+ * Calls a runtime route through the web server and returns its JSON body.
+ * A ``FormData`` body goes as multipart; any other body as JSON.
+ */
 export async function runtimeJson<T>(
   path: string,
   init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
+  const form = init.body instanceof FormData;
   const response = await fetch(`/api/runtime${path}`, {
     method: init.method ?? 'GET',
-    headers: init.body === undefined ? undefined : { 'content-type': 'application/json' },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    headers: init.body === undefined || form ? undefined : { 'content-type': 'application/json' },
+    body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),
     signal: init.signal,
   });
   const text = await response.text();
