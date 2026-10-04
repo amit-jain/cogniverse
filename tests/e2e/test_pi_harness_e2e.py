@@ -39,8 +39,18 @@ DOCUMENT_QUERY = "find PDF documents about washing dishes"
 EXPECTED_TITLE_ORDER = ("v_0BtHd6dvm78.txt", "v_-nl4G-00PtA.txt")
 
 # The row and metadata shapes ``POST /search/`` serves for a document profile.
-DOCUMENT_ROW_KEYS = {"document_id", "score", "metadata", "highlights", "source_id"}
+DOCUMENT_ROW_KEYS = {
+    "document_id",
+    "score",
+    "metadata",
+    "highlights",
+    "source_id",
+    "source_title",
+    "matched_segments",
+    "segments_in_window",
+}
 DOCUMENT_METADATA_KEYS = {
+    "source_title",
     "creation_timestamp",
     "document_id",
     "document_path",
@@ -187,7 +197,10 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
         "results_count",
         "results",
         "session_id",
+        "source_search_incomplete",
     }
+    # Every seeded caption fits the source budget, so the search is complete.
+    assert body["source_search_incomplete"] is False
     assert body["query"] == DOCUMENT_QUERY
     assert body["profile"] == DOCUMENT_PROFILE
     assert body["strategy"] == "default"
@@ -216,6 +229,16 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
         f"{seeded[title]}_{seeded[title]}" for title in EXPECTED_TITLE_ORDER
     ]
     assert [result["highlights"] for result in results] == [{}, {}]
+    # Each source is one caption chunk, so its window holds exactly that chunk.
+    assert [result["segments_in_window"] for result in results] == [1, 1]
+    assert [result["matched_segments"] for result in results] == [
+        [{"document_id": result["document_id"], "score": result["score"]}]
+        for result in results
+    ]
+    assert [result["source_title"] for result in results] == list(EXPECTED_TITLE_ORDER)
+    assert [result["metadata"]["source_title"] for result in results] == list(
+        EXPECTED_TITLE_ORDER
+    )
     assert [result["metadata"]["document_title"] for result in results] == list(
         EXPECTED_TITLE_ORDER
     )
