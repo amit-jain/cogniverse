@@ -405,9 +405,9 @@ half of the forward pass for a gateway-length query. The export writes
 `source.json` naming the checkpoint, and the server refuses to load an
 export of any other model or revision. `transformers` and `onnxruntime` are
 pinned in the Dockerfile because the graph traces one and runs on the other.
-`tests/cli/integration/test_gliner_image_serving.py` builds the image, runs
-it under the chart's CPU and memory limits, and checks its entities against
-the PyTorch checkpoint's.
+`tests/cli/integration/test_gliner_image_serving.py` checks the cluster's
+gliner service: its pinned identity, and its entities against the PyTorch
+checkpoint's.
 
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
