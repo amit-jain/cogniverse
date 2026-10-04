@@ -670,6 +670,19 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
         "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS",
         30 * 60 * 1000,
     )
+    from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
+
+    # The REPL steps each promoted gate actually took, read off the
+    # trajectory its RLM returned.
+    steps_taken: List[int] = []
+    run_rlm = InstrumentedRLM.forward
+
+    def counting_forward(self, **kwargs):
+        prediction = run_rlm(self, **kwargs)
+        steps_taken.append(len(prediction.trajectory))
+        return prediction
+
+    monkeypatch.setattr(InstrumentedRLM, "forward", counting_forward)
     # 100 copies of the seg_3 snippet pushes the JSON serialization above
     # _ITER_GATE_RLM_PROMOTION_CHARS (6000 chars).
     preload = [_marie_curie_30s_seg3() for _ in range(100)]
@@ -694,10 +707,12 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
     assert [int(s.attributes["max_iterations"]) for s in rlm_spans] == [
         _ITER_GATE_RLM_MAX_ITERATIONS
     ] * 2
-    # The preload is 100 copies of one snippet: neither gate can settle the
-    # query from it, so both run the REPL to the production cap.
-    assert [int(s.attributes["rlm_iterations"]) for s in rlm_spans] == [
-        _ITER_GATE_RLM_MAX_ITERATIONS
+    # Each span records the REPL steps its gate took. How many is the LM's
+    # call: the snippet answers the query (the gate-1 contract above), so a
+    # gate may submit at its first step or explore up to the production cap.
+    assert [int(s.attributes["rlm_iterations"]) for s in rlm_spans] == steps_taken
+    assert [n in range(1, _ITER_GATE_RLM_MAX_ITERATIONS + 1) for n in steps_taken] == [
+        True
     ] * 2
 
 
