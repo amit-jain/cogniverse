@@ -32,8 +32,11 @@ contract is undefined — refine it before coding. Done means a real-service tes
 against that list passes, not "it runs".
 
 **Integration tests hit the real boundary.** Real Vespa, real Phoenix, real
-Redis, real MinIO, real LM — in Docker, managed by the test's own fixture. No
-mocks at a boundary, no exceptions. But a real boundary with a weak assertion is
+Redis, real MinIO — in Docker, managed by the test's own fixture — and real
+models served remotely: the chat LLMs on Modal, every other model by the
+`cogniverse-e2e` cluster. No test starts a model container or process on this
+host (`docs/testing/TESTING_GUIDE.md`, "Model endpoints"). No mocks at a
+boundary, no exceptions. But a real boundary with a weak assertion is
 the same empty test with a slower setup: hitting real Vespa and asserting only
 that hits came back proves nothing.
 

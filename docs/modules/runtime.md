@@ -243,22 +243,22 @@ included in vLLM command arguments or returned in an error response.
 
 Integration sessions resolve and warm stateless inference before the final E2E
 run. An explicit endpoint is authoritative. Generic integration selection then
-checks the `cogniverse-e2e` cluster, the `cogniverse` development cluster, and a
-test-owned service; the presence of Modal credentials never changes that order
-or allocates a paid container. Tests marked
+checks the `cogniverse-e2e` cluster, then the `cogniverse` development cluster,
+and fails naming the service when neither serves it; nothing is started on the
+test host, and the presence of Modal credentials never changes that order or
+allocates a paid container. The chat services resolve from Modal only. Tests marked
 `requires_modal_inference("<service>")` select Modal only for that named
 service, and a Modal authentication, deployment, warm-up, health, or identity
 failure ends setup. Non-Modal custom services validate their exact model
 identifier and immutable revision through `/health`. vLLM services and every
 Modal candidate validate identity through `/v1/models`; Modal warm-up also
 probes `/health` for readiness. Teardown returns warmed Modal services to
-scale-to-zero and stops test-owned sidecars. Discovered k3d workloads are
+scale-to-zero. Discovered k3d workloads are
 borrowed and their replicas are never mutated by the fixture.
 
 Before the shared E2E stack starts, the session fixture reaps dead owner-pid
-containers, removes every unleased `cogniverse-test-*` exact-model sidecar, and
-fails fast if any exact-model sidecar is still leased by a live pytest pid.
-After that reclaim, it reads `/sys/class/drm/card1/device/mem_info_gtt_used`
+containers and refuses to start while a container outside the cluster holds a
+GPU device. It then reads `/sys/class/drm/card1/device/mem_info_gtt_used`
 and aborts when more than 2 GiB remains pinned, naming the live test-owned
 containers if any are still visible. That keeps the final E2E run from
 starting while test-owned GPU residency is still present.
