@@ -2664,6 +2664,14 @@ mapping through `extract_faces_per_keyframe(..., headers=...)`. The internally
 owned HTTP client uses the resolved immutable headers for every concurrent
 keyframe request.
 
+`extract_faces_per_keyframe` reads the keyframes `KeyframeProcessor` wrote,
+`processing_results["keyframes"]["keyframes"]`, each
+`{frame_number, timestamp, filename, path}`. A keyframe's segment id is its
+index in that list, the id of its content document and of the transcript
+segment aligned to it. Each request reads the image at `path` and sends it as
+`image_b64`. A keyframe without a `path` or `timestamp` raises `ValueError`; an
+image that cannot be read raises `RuntimeError` naming the segment and path.
+
 ---
 
 ### 12. TextAnalysisAgent

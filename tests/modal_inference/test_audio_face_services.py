@@ -452,25 +452,27 @@ def test_audio_generator_preserves_fixed_audio_embeddings(monkeypatch, tmp_path)
     assert float(np.dot(first, other)) < 0.00001
 
 
-def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch):
+def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch, tmp_path):
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
     face_server._MODEL = _ImageSignatureFaceModel()
     app = _modal_asgi_app(face_modal_app)
-    frame = _video_frame_b64(VIDEO_A)
-    unrelated = _video_frame_b64(VIDEO_B)
-    processing_results = {
-        "keyframes": {
-            "items": [
-                {"segment_id": "same-a", "ts_start": 1.0, "image_b64": frame},
-                {"segment_id": "same-b", "ts_start": 2.0, "image_b64": frame},
-                {
-                    "segment_id": "unrelated",
-                    "ts_start": 3.0,
-                    "image_b64": unrelated,
-                },
-            ]
-        }
-    }
+    frame = base64.b64decode(_video_frame_b64(VIDEO_A))
+    unrelated = base64.b64decode(_video_frame_b64(VIDEO_B))
+    keyframes = []
+    for index, (timestamp, image) in enumerate(
+        [(1.0, frame), (2.0, frame), (3.0, unrelated)]
+    ):
+        path = tmp_path / f"fixed_keyframe_{index:04d}.jpg"
+        path.write_bytes(image)
+        keyframes.append(
+            {
+                "frame_number": index,
+                "timestamp": timestamp,
+                "filename": path.name,
+                "path": str(path),
+            }
+        )
+    processing_results = {"keyframes": {"keyframes": keyframes}}
 
     with _live_server(app) as endpoint:
         identity = httpx.get(
@@ -496,11 +498,7 @@ def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch):
         ],
         "object": "list",
     }
-    assert [record.segment_id for record in records] == [
-        "same-a",
-        "same-b",
-        "unrelated",
-    ]
+    assert [record.segment_id for record in records] == ["0", "1", "2"]
     assert [record.bbox for record in records] == [
         (320, 180, 960, 540),
         (320, 180, 960, 540),

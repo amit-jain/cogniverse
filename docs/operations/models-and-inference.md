@@ -433,14 +433,18 @@ model data on the first inference request. A load failure returns HTTP 503; its
 `face_embed: model buffalo_l load failed (<ExceptionType>): <cause>`.
 
 The service is stateless — no persistence. The knowledge-graph face pipeline
-(`libs/agents/cogniverse_agents/graph/face_extractor.py`) POSTs one keyframe
-per request and clusters the returned 512-dim L2-normalized ArcFace vectors
+(`libs/agents/cogniverse_agents/graph/face_extractor.py`) reads each keyframe
+`KeyframeProcessor` wrote from its `path`, POSTs it as `image_b64`, one
+keyframe per request, and clusters the returned 512-dim L2-normalized ArcFace vectors
 per `source_doc_id` to discover anonymous identity groups, attributing each
 cluster to a temporally-aligned named person where possible. It's wired the
 same way as CLAP: opt-in via `inference_service_urls["face_embed"]`
 (`_lookup_face_embed_endpoint` in `libs/runtime/cogniverse_runtime/routers/ingestion.py`),
-additive — an unreachable sidecar degrades the pipeline rather than failing
-the whole ingest.
+additive — an unreachable sidecar or an unreadable keyframe is logged as a
+warning rather than failing the whole ingest. Each run logs its counts at
+INFO: `Face pipeline for source_doc_id=<id>: <n> faces in <k> keyframes, <c>
+clusters, <e> same_as edges, <a> anonymous face nodes`, or `no keyframes in
+the result` / `no faces in <k> keyframes`.
 
 ---
 
