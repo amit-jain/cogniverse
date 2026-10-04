@@ -17,6 +17,8 @@ from cogniverse_cli.images import IMAGE_DOCKERFILES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
+RUNTIME_DOCKERFILE = REPO_ROOT / "libs" / "runtime" / "Dockerfile"
+DASHBOARD_DOCKERFILE = REPO_ROOT / "libs" / "dashboard" / "Dockerfile"
 VARIABLE = "LITELLM_LOCAL_MODEL_COST_MAP"
 
 pytestmark = pytest.mark.skipif(
@@ -83,10 +85,19 @@ def _rendered_cogniverse_containers(*set_args: str) -> list[tuple[str, dict]]:
     return found
 
 
-@pytest.mark.parametrize("image", ["runtime", "dashboard"])
-def test_the_image_sets_the_bundled_cost_map(image):
-    env = _final_stage_env(REPO_ROOT / IMAGE_DOCKERFILES[image])
-    assert env[VARIABLE] == "True"
+def test_the_checked_dockerfiles_are_the_ones_the_images_build_from():
+    assert {image: IMAGE_DOCKERFILES[image] for image in ("runtime", "dashboard")} == {
+        "runtime": RUNTIME_DOCKERFILE.relative_to(REPO_ROOT).as_posix(),
+        "dashboard": DASHBOARD_DOCKERFILE.relative_to(REPO_ROOT).as_posix(),
+    }
+
+
+def test_the_runtime_image_sets_the_bundled_cost_map():
+    assert _final_stage_env(RUNTIME_DOCKERFILE)[VARIABLE] == "True"
+
+
+def test_the_dashboard_image_sets_the_bundled_cost_map():
+    assert _final_stage_env(DASHBOARD_DOCKERFILE)[VARIABLE] == "True"
 
 
 @pytest.mark.parametrize("backend", ["cpu", "cuda", "rocm"])
