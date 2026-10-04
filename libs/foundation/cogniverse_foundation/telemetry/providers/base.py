@@ -487,6 +487,16 @@ class TelemetryProvider(ABC):
         """
         pass
 
+    def preload_span_export(self) -> None:
+        """Import the modules ``configure_span_export`` loads on first use.
+
+        A process's first span for a tenant and project builds that
+        project's exporter on the caller's thread, which for a served
+        request is the event loop; importing a backend's exporter stack
+        there holds the loop. Startup calls this first. Providers whose
+        span export imports nothing lazily keep this default.
+        """
+
     @property
     def traces(self) -> TraceStore:
         """Get trace store (query spans)"""

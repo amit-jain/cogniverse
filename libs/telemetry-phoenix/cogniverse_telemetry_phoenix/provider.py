@@ -1321,6 +1321,19 @@ class PhoenixProvider(TelemetryProvider):
             f"(http={http_endpoint}, grpc={grpc_endpoint})"
         )
 
+    def preload_span_export(self) -> None:
+        """Import Phoenix's OTel registration and the gRPC span exporter,
+        which ``configure_span_export`` otherwise imports on a project's
+        first span."""
+        import importlib
+
+        for module in (
+            "phoenix.otel",
+            "opentelemetry.exporter.otlp.proto.grpc.trace_exporter",
+            "opentelemetry.sdk.trace.export",
+        ):
+            importlib.import_module(module)
+
     def configure_span_export(
         self,
         endpoint: str,

@@ -595,6 +595,12 @@ class TelemetryProvider(ABC):
         """
         pass
 
+    def preload_span_export(self) -> None:
+        """Import what configure_span_export loads on first use (Phoenix:
+        phoenix.otel and the OTLP gRPC exporter). The runtime calls it through
+        TelemetryManager.preload_span_export before serving, so a tenant's
+        first span does not import them on the event loop. Default: no-op."""
+
     @property
     def traces(self) -> TraceStore:
         """Get trace store (query spans). Raises RuntimeError if not initialized."""

@@ -1580,6 +1580,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("DSPy ambient LM already configured for this process")
     await asyncio.to_thread(preload_lm_client_modules)
+    await asyncio.to_thread(get_telemetry_manager().preload_span_export)
     # NOTE: OpenInference DSPy instrumentation runs at module-top
     # bootstrap (see the top of this file) so DSPy classes are
     # wrapped BEFORE any agent imports bind references to the
