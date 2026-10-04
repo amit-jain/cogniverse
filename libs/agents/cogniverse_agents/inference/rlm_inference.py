@@ -480,6 +480,51 @@ def route_rlm_endpoint(
     )
 
 
+class RLMEndpointNotConfiguredError(ValueError):
+    """An RLM run named no model and no LM endpoint is configured for it."""
+
+
+def rlm_endpoint(
+    rlm_options: "RLMOptions",
+    agent_endpoint: Optional[LLMEndpointConfig] = None,
+    *,
+    config_manager=None,
+    tenant_id: str = "",
+) -> LLMEndpointConfig:
+    """The LM endpoint an RLM run calls.
+
+    The request's ``model`` when it names one, with its ``api_base`` and
+    ``api_key``; otherwise the agent's own endpoint; otherwise the tenant's
+    configured endpoint for ``rlm_inference`` (the primary LM unless
+    ``llm_config.overrides`` names one). Raises
+    ``RLMEndpointNotConfiguredError`` when none of them is available, rather
+    than calling a provider's public API with no credentials.
+    """
+    if rlm_options.model:
+        model = rlm_options.model
+        if "/" not in model:
+            model = f"{rlm_options.backend}/{model}"
+        return LLMEndpointConfig(
+            model=model,
+            api_base=rlm_options.api_base,
+            api_key=rlm_options.api_key,
+        )
+    if agent_endpoint is not None:
+        return agent_endpoint
+    if config_manager is None or not tenant_id:
+        raise RLMEndpointNotConfiguredError(
+            "RLM run names no model and has no agent LM endpoint or tenant "
+            "config to resolve one from; set rlm.model or llm_config.primary"
+        )
+    from cogniverse_foundation.config.utils import get_config
+
+    return (
+        get_config(tenant_id=tenant_id, config_manager=config_manager)
+        .get_llm_config()
+        .resolve("rlm_inference")
+    )
+
+
 def build_rlm_from_options(
     llm_config: Optional[LLMEndpointConfig],
     rlm_options: "RLMOptions",
@@ -499,11 +544,11 @@ def build_rlm_from_options(
     ``rlm_inference``); the RLM's own LM is then built from the routed
     endpoint. Omitting them keeps the direct-to-backend path.
     """
-    resolved = llm_config or LLMEndpointConfig(
-        model=(
-            f"{rlm_options.backend}/{rlm_options.model}"
-            if rlm_options.model
-            else f"{rlm_options.backend}/gpt-4o"
+    resolved = (
+        llm_config
+        if llm_config is not None
+        else rlm_endpoint(
+            rlm_options, config_manager=config_manager, tenant_id=tenant_id
         )
     )
     resolved = route_rlm_endpoint(resolved, config_manager, tenant_id)

@@ -533,11 +533,59 @@ class TestBuildRlmFromOptions:
         assert rlm.timeout_seconds == 42
         assert rlm.cache is False
 
-    def test_default_model_when_options_model_unset(self):
-        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+    def test_unset_model_without_config_raises_instead_of_a_public_default(self):
+        """An RLM that named no model used to call ``openai/gpt-4o`` on
+        OpenAI's public API, with whatever key the process held."""
+        from cogniverse_agents.inference.rlm_inference import (
+            RLMEndpointNotConfiguredError,
+            build_rlm_from_options,
+        )
 
-        rlm = build_rlm_from_options(None, RLMOptions(backend="openai"))
-        assert rlm.model == "openai/gpt-4o"
+        with pytest.raises(RLMEndpointNotConfiguredError) as excinfo:
+            build_rlm_from_options(None, RLMOptions(backend="openai"))
+
+        assert str(excinfo.value) == (
+            "RLM run names no model and has no agent LM endpoint or tenant "
+            "config to resolve one from; set rlm.model or llm_config.primary"
+        )
+
+    def test_unset_model_uses_the_tenants_configured_rlm_endpoint(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+        from cogniverse_foundation.config.unified_config import (
+            LLMConfig,
+            SemanticRouterConfig,
+        )
+
+        read = []
+        cfg = MagicMock()
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
+        cfg.get_llm_config.return_value = LLMConfig(
+            primary=LLMEndpointConfig(
+                model="openai/student", api_base="http://student/v1"
+            ),
+            overrides={"rlm_inference": {"model": "openai/rlm-student"}},
+        )
+
+        def get_config(**kwargs):
+            read.append(kwargs["tenant_id"])
+            return cfg
+
+        monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", get_config)
+
+        rlm = build_rlm_from_options(
+            None,
+            RLMOptions(backend="openai"),
+            config_manager=MagicMock(),
+            tenant_id="acme:prod",
+        )
+
+        assert (rlm.model, rlm.llm_config.api_base) == (
+            "openai/rlm-student",
+            "http://student/v1",
+        )
+        assert set(read) == {"acme:prod"}
 
     def test_explicit_llm_config_wins_over_options(self):
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
