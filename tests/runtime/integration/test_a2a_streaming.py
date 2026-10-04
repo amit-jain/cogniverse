@@ -464,13 +464,21 @@ class TestOrchestratorAgentStreaming:
     """
 
     def test_stream_phases_and_plan_output(
-        self, config_manager, streaming_registry, dspy_lm_planning, real_telemetry
+        self,
+        config_manager,
+        streaming_registry,
+        dspy_lm_planning,
+        real_telemetry,
+        gliner_url,
     ):
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorAgent,
             OrchestratorDeps,
             OrchestratorInput,
         )
+        from tests.fixtures.sidecars import inject_gliner_url
+
+        inject_gliner_url(config_manager, gliner_url)
 
         agent = OrchestratorAgent(
             deps=OrchestratorDeps(),

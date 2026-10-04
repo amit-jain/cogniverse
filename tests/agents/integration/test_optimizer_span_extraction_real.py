@@ -212,7 +212,9 @@ async def test_profile_selection_span_yields_training_pair(
 
 
 @pytest.mark.asyncio
-async def test_orchestration_span_carries_canonical_workflow(real_telemetry):
+async def test_orchestration_span_carries_canonical_workflow(
+    real_telemetry, gliner_url
+):
     from cogniverse_agents.orchestrator_agent import (
         AgentStep,
         OrchestrationPlan,
@@ -250,6 +252,7 @@ async def test_orchestration_span_carries_canonical_workflow(real_telemetry):
         iter_retrieval_max_iter=3,
         iter_retrieval_token_budget=10000,
         iter_retrieval_wall_clock_ms=10000,
+        inference_service_urls={"gliner": gliner_url},
     )
     mock_cm.get_config.return_value = {}
 

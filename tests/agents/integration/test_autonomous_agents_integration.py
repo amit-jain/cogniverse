@@ -117,7 +117,9 @@ def query_agent_with_real_lm(real_dspy_lm, real_telemetry, config_manager_memory
 
 
 @pytest.fixture
-def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
+def orchestrator_with_real_agents(
+    vespa_with_schema, dspy_lm, real_telemetry, gliner_url
+):
     """OrchestratorAgent wired to real in-process agents via an in-memory ASGI
     app. httpx is patched to ASGITransport so the orchestrator's POSTs flow
     through the real /agents/{name}/process route + AgentTask validation + the
@@ -133,6 +135,7 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
     from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_runtime.routers import agents as agents_router
+    from tests.fixtures.sidecars import inject_gliner_url
 
     config_manager = vespa_with_schema["manager"].config_manager
     # profile_selection refuses a tenant with no servable profile, so the
@@ -146,6 +149,7 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
         ),
         tenant_id=PROFILE_TENANT,
     )
+    inject_gliner_url(config_manager, gliner_url)
     schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 

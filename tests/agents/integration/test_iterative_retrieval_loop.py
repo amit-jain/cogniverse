@@ -49,6 +49,7 @@ from tests.fixtures.llm import (
     resolve_base_url,
     resolve_prefixed_model,
 )
+from tests.fixtures.sidecars import inject_gliner_url
 
 # Every case here drives the real LM through ``dspy_lm``. The marker both
 # arms the reachability gate and tells the session provisioner this module
@@ -355,8 +356,10 @@ def _build_orchestrator(
     *,
     telemetry_manager,
     peer: _IterRetrievalPeer,
+    gliner_url: str,
 ) -> OrchestratorAgent:
     cm = create_default_config_manager()
+    inject_gliner_url(cm, gliner_url)
     registry = AgentRegistry(tenant_id="iter_retrieval_test", config_manager=cm)
     registry.register_agent(
         AgentEndpoint(
@@ -450,16 +453,20 @@ async def _run_loop(
 
 
 @pytest.mark.asyncio
-async def test_iter1_evidence_byte_equal_golden(captured_spans, dspy_lm):
+async def test_iter1_evidence_byte_equal_golden(captured_spans, dspy_lm, gliner_url):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, _ = await _run_loop(orchestrator)
 
     # Pull the evidence the loop accumulated through iter 1 by re-running
     # the first iteration in isolation. _execute_plan + _extract +
     # _deduplicate are pure given the same plan / peer state.
     iter1_peer = _IterRetrievalPeer()
-    iter1_orch = _build_orchestrator(telemetry_manager=captured_spans, peer=iter1_peer)
+    iter1_orch = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=iter1_peer, gliner_url=gliner_url
+    )
     plan = _make_search_plan(CANONICAL_QUERY)
     iter1_results = await iter1_orch._execute_plan(
         plan,
@@ -483,9 +490,13 @@ async def test_iter1_evidence_byte_equal_golden(captured_spans, dspy_lm):
 
 
 @pytest.mark.asyncio
-async def test_gate1_output_locked_to_decision_contract(captured_spans, dspy_lm):
+async def test_gate1_output_locked_to_decision_contract(
+    captured_spans, dspy_lm, gliner_url
+):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     evidence = [_marie_curie_30s_seg3()]
     gate_output = await orchestrator._run_sufficiency_gate(
         original_query=CANONICAL_QUERY,
@@ -504,9 +515,11 @@ async def test_gate1_output_locked_to_decision_contract(captured_spans, dspy_lm)
 
 
 @pytest.mark.asyncio
-async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm):
+async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm, gliner_url):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, _ = await _run_loop(orchestrator)
 
     iter2_evidence = sorted(
@@ -521,9 +534,13 @@ async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm):
 
 
 @pytest.mark.asyncio
-async def test_gate2_output_locked_to_decision_contract(captured_spans, dspy_lm):
+async def test_gate2_output_locked_to_decision_contract(
+    captured_spans, dspy_lm, gliner_url
+):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, _ = await _run_loop(orchestrator)
     assert_gate_decision_grounded(
         loop_result.final_gate_output,
@@ -541,10 +558,12 @@ async def test_gate2_output_locked_to_decision_contract(captured_spans, dspy_lm)
 
 @pytest.mark.asyncio
 async def test_loop_terminates_at_sufficient_after_two_iterations(
-    captured_spans, dspy_lm
+    captured_spans, dspy_lm, gliner_url
 ):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, _ = await _run_loop(orchestrator)
     assert loop_result.iterations_executed == 2
     assert loop_result.exit_reason == "sufficient"
@@ -556,9 +575,11 @@ async def test_loop_terminates_at_sufficient_after_two_iterations(
 
 
 @pytest.mark.asyncio
-async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
+async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm, gliner_url):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, agent_results = await _run_loop(orchestrator)
     aggregated = orchestrator._aggregate_results(CANONICAL_QUERY, agent_results)
     answer_text = aggregated["aggregated_content"]
@@ -577,13 +598,15 @@ async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
 
 @pytest.mark.asyncio
 async def test_retrieval_iteration_spans_carry_each_gate_decision(
-    captured_spans, dspy_lm
+    captured_spans, dspy_lm, gliner_url
 ):
     """One span per executed iteration, numbered in order, each carrying the
     loop's declared attributes, and the last one recording exactly the
     confidence the final gate returned."""
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     loop_result, _ = await _run_loop(orchestrator)
 
     spans = [
@@ -614,7 +637,9 @@ async def test_retrieval_iteration_spans_carry_each_gate_decision(
 
 
 @pytest.mark.asyncio
-async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monkeypatch):
+async def test_token_budget_breach_exits_at_iter1(
+    captured_spans, dspy_lm, gliner_url, monkeypatch
+):
     # Override the cap so the cumulative-token check fires after iter 1.
     monkeypatch.setattr(
         "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_TOKEN_BUDGET",
@@ -623,7 +648,9 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
     # Force the gate to NOT report sufficient so the loop attempts iter 2,
     # at which point the post-iter cumulative-token check trips the cap.
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
 
     async def _force_insufficient_gate(
         *, original_query, accumulated_evidence, iteration_idx
@@ -659,7 +686,7 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("ensure_deno")
 async def test_rlm_promotion_emits_instrumented_rlm_child_span(
-    captured_spans, dspy_lm, monkeypatch
+    captured_spans, dspy_lm, gliner_url, monkeypatch
 ):
     # Both gate iterations must run to completion regardless of LM latency:
     # on a contended LM the capped RLM sub-loops outlast the default wall
@@ -687,7 +714,9 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
     # _ITER_GATE_RLM_PROMOTION_CHARS (6000 chars).
     preload = [_marie_curie_30s_seg3() for _ in range(100)]
     peer = _IterRetrievalPeer(preload=preload)
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
     await _run_loop(orchestrator)
 
     rlm_spans = sorted(
@@ -722,13 +751,17 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
 
 
 @pytest.mark.asyncio
-async def test_wall_clock_cap_exits_promptly(captured_spans, dspy_lm, monkeypatch):
+async def test_wall_clock_cap_exits_promptly(
+    captured_spans, dspy_lm, gliner_url, monkeypatch
+):
     monkeypatch.setattr(
         "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS",
         100,
     )
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
 
     async def _fixed_reformulation(query, missing_aspects):
         return query, ""
@@ -767,9 +800,13 @@ async def test_wall_clock_cap_exits_promptly(captured_spans, dspy_lm, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_kg_traversal_span_attributes_match_golden(captured_spans, dspy_lm):
+async def test_kg_traversal_span_attributes_match_golden(
+    captured_spans, dspy_lm, gliner_url
+):
     peer = _IterRetrievalPeer()
-    orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
+    orchestrator = _build_orchestrator(
+        telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
+    )
 
     # Force the loop to traverse the KG between iterations.
     real_gate = orchestrator._run_sufficiency_gate

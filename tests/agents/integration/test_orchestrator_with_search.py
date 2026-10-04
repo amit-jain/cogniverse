@@ -165,7 +165,7 @@ def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url, real_telem
 
 @pytest.fixture
 def orchestrator_with_agents(
-    vespa_with_schema, dspy_lm, agent_instances, real_telemetry
+    vespa_with_schema, dspy_lm, agent_instances, real_telemetry, gliner_url
 ):
     """
     OrchestratorAgent wired to real in-process agents via an in-memory ASGI
@@ -176,8 +176,10 @@ def orchestrator_with_agents(
     """
     from cogniverse_core.common.agent_models import AgentEndpoint
     from cogniverse_runtime.routers import agents as agents_router
+    from tests.fixtures.sidecars import inject_gliner_url
 
     config_manager = vespa_with_schema["manager"].config_manager
+    inject_gliner_url(config_manager, gliner_url)
     schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
