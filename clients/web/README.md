@@ -15,6 +15,15 @@ operations views reach the runtime's admin, ingestion and event routes through
 and streams their server-sent events. There is no user login, so anyone who can
 reach the server can use those routes.
 
+## Operations views
+
+The sidebar's Operations section manages the runtime. Each view calls the
+runtime's existing routes through `/api/runtime/*`.
+
+| View | What it does | Runtime routes |
+|---|---|---|
+| Tenants | List, create and delete organizations and tenants; set a tenant's router tier. Deletes need the name typed to confirm. | `/admin/organizations`, `/admin/tenants`, `/admin/router-tiers` |
+
 ## Setup
 
 Use Node.js 22. Copy `.env.example` to `.env` and set:
@@ -43,8 +52,11 @@ npm run typecheck
 npm test
 ```
 
-Vitest covers the result-card parsing and the server's configuration and agent
-listing against local HTTP sockets.
+Vitest covers the result-card parsing, error and route parsing, the server's
+configuration and agent listing, and the runtime proxy against local HTTP
+sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
-the published `@ag-ui/client`.
+the published `@ag-ui/client`. `tests/runtime/integration/test_web_ops_*.py`
+build the client, serve it, and drive each operations view in Chromium against
+the runtime's routers over real Vespa.

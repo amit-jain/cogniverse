@@ -19,18 +19,12 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-import socket
 import subprocess
-import threading
-import time
 import uuid
-from contextlib import asynccontextmanager, contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
 
 import pytest
-import uvicorn
 from fastapi import FastAPI
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
@@ -43,6 +37,13 @@ from cogniverse_runtime.routers import ag_ui, agents, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
 from tests.utils.memory_store import InMemoryConfigStore
 from tests.utils.node_env import node_env
+from tests.utils.web_client import (
+    free_port,
+    install_web_client,
+    recording_telemetry_sink,
+    serve_app,
+    serve_web,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -50,9 +51,6 @@ pytestmark = [
     pytest.mark.no_shared_vespa,
 ]
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CLIENT_DIR = REPO_ROOT / "clients" / "web"
-MIN_NODE_MAJOR = 22
 
 TENANT = "acme:web"
 KEY = "web-client-harness-key"
@@ -266,48 +264,10 @@ _AGENT_CLASSES = {
 _TOKEN_STREAMING = {"search_agent": True, "tool_agent": False}
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
 def web_client_dir(tmp_path_factory):
     """The client's sources with its lockfile installed beside them."""
-    node = shutil.which("node")
-    npm = shutil.which("npm")
-    assert node is not None and npm is not None, (
-        "node and npm are required to run the web client; the runtime CI job "
-        "installs node 22"
-    )
-    version = subprocess.run(
-        [node, "--version"], capture_output=True, text=True, timeout=30
-    ).stdout.strip()
-    assert int(version.lstrip("v").split(".")[0]) >= MIN_NODE_MAJOR, (
-        f"the web client requires node >= {MIN_NODE_MAJOR}, got {version}"
-    )
-
-    root = tmp_path_factory.mktemp("web_client")
-    for name in (
-        "package.json",
-        "package-lock.json",
-        "tsconfig.json",
-        "tsconfig.server.json",
-    ):
-        shutil.copy(CLIENT_DIR / name, root / name)
-    shutil.copytree(CLIENT_DIR / "src", root / "src")
-    install = subprocess.run(
-        [npm, "ci", "--no-fund", "--no-audit"],
-        cwd=root,
-        env=node_env(node),
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert install.returncode == 0, (
-        f"npm ci from the client lockfile failed:\n{install.stdout}\n{install.stderr}"
-    )
+    root = install_web_client(tmp_path_factory.mktemp("web_client"))
     (root / "driver.ts").write_text(DRIVER_TS)
     return root
 
@@ -341,22 +301,9 @@ def live_runtime(session_state_lifespan):
     openai_compat.set_api_keys({KEY: TENANT})
     openai_compat.set_key_resolver(None)
 
-    port = _free_port()
-    server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 20
-    while not server.started and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert server.started, "uvicorn did not start"
+    with serve_app(app) as url:
+        yield url
 
-    yield f"http://127.0.0.1:{port}"
-
-    server.should_exit = True
-    thread.join(timeout=20)
-    assert not thread.is_alive()
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     for agent_name in _AGENT_CLASSES:
@@ -384,70 +331,15 @@ def session_state_lifespan(workflow_state_redis_url):
 
 @pytest.fixture()
 def telemetry_sink():
-    """A local stand-in for CopilotKit's telemetry endpoint, recording paths."""
-    received: List[str] = []
-
-    class Recorder(BaseHTTPRequestHandler):
-        def do_POST(self):
-            received.append(self.path)
-            self.send_response(204)
-            self.end_headers()
-
-        def log_message(self, *_args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{server.server_address[1]}/ingest", received
-    server.shutdown()
-    thread.join(timeout=10)
-
-
-@contextmanager
-def _serve_web(client_dir: Path, runtime_url: str, key: str, telemetry_url: str):
-    """The client's Node server, run from source with a harness key."""
-    node = shutil.which("node")
-    port = _free_port()
-    proc = subprocess.Popen(
-        [node, "--import", "tsx", str(client_dir / "src" / "server" / "index.ts")],
-        cwd=client_dir,
-        env=node_env(
-            node,
-            COGNIVERSE_RUNTIME_URL=runtime_url,
-            COGNIVERSE_API_KEY=key,
-            PORT=str(port),
-            COPILOTKIT_TELEMETRY_URL=telemetry_url,
-        ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    # Drained on a thread so a chatty server never blocks on a full pipe.
-    output: List[str] = []
-    reader = threading.Thread(
-        target=lambda: output.extend(iter(proc.stdout.readline, "")), daemon=True
-    )
-    reader.start()
-    ready = f"cogniverse-web listening on http://127.0.0.1:{port}\n"
-    deadline = time.monotonic() + 60
-    while ready not in output and proc.poll() is None:
-        assert time.monotonic() < deadline, f"the web server did not start: {output}"
-        time.sleep(0.05)
-    assert ready in output, f"the web server exited: {output}"
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        proc.terminate()
-        assert proc.wait(timeout=20) == 0, (
-            f"the web server did not exit cleanly: {output}"
-        )
-        reader.join(timeout=10)
+    with recording_telemetry_sink() as sink:
+        yield sink
 
 
 @pytest.fixture()
 def web_server(web_client_dir, live_runtime, telemetry_sink):
-    with _serve_web(web_client_dir, live_runtime, KEY, telemetry_sink[0]) as url:
+    with serve_web(
+        web_client_dir, live_runtime, KEY, telemetry_url=telemetry_sink[0]
+    ) as url:
         yield url
 
 
@@ -549,8 +441,11 @@ def test_a_rejected_harness_key_fails_the_run_with_the_reason(
 ):
     """The runtime's 401 reaches the browser as the run's error, word for
     word; the unauthenticated agent list still answers."""
-    with _serve_web(
-        web_client_dir, live_runtime, "not-a-harness-key", telemetry_sink[0]
+    with serve_web(
+        web_client_dir,
+        live_runtime,
+        "not-a-harness-key",
+        telemetry_url=telemetry_sink[0],
     ) as web_url:
         result = _drive(web_client_dir, web_url, SCENARIO="fault")
     assert result == {
@@ -582,8 +477,10 @@ def test_a_down_runtime_fails_the_run_and_the_agent_list(
 ):
     """Neither the Dots nor a run read as empty when the runtime is down:
     both fail naming the runtime that did not answer."""
-    dead_runtime = f"http://127.0.0.1:{_free_port()}"
-    with _serve_web(web_client_dir, dead_runtime, KEY, telemetry_sink[0]) as web_url:
+    dead_runtime = f"http://127.0.0.1:{free_port()}"
+    with serve_web(
+        web_client_dir, dead_runtime, KEY, telemetry_url=telemetry_sink[0]
+    ) as web_url:
         result = _drive(web_client_dir, web_url, SCENARIO="fault")
     reason = f"The Cogniverse runtime at {dead_runtime} did not answer (TypeError)."
     assert result == {

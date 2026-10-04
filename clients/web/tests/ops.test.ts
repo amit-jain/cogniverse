@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+import { errorMessage } from '../src/client/ops/http';
+import { parseRoute, routeHash } from '../src/client/route';
+
+describe('errorMessage', () => {
+  it('reads each failure shape the runtime and web server answer with', () => {
+    expect(errorMessage({ error: 'runtime down' }, 502)).toBe('runtime down');
+    expect(errorMessage({ detail: 'Tenant acme:prod already exists' }, 409)).toBe(
+      'Tenant acme:prod already exists',
+    );
+    expect(
+      errorMessage(
+        { detail: { error: 'profile_list_failed', message: 'Listing profiles failed.' } },
+        500,
+      ),
+    ).toBe('Listing profiles failed.');
+    expect(
+      errorMessage(
+        {
+          detail: [
+            { loc: ['body', 'org_id'], msg: 'Field required', type: 'missing' },
+            { loc: ['query', 'tenant_id'], msg: 'Field required', type: 'missing' },
+          ],
+        },
+        422,
+      ),
+    ).toBe('org_id: Field required; query.tenant_id: Field required');
+  });
+
+  it('names the status when the body carries no reason', () => {
+    expect(errorMessage(null, 500)).toBe('The runtime answered HTTP 500.');
+    expect(errorMessage({ detail: [{ nope: 1 }] }, 422)).toBe('The runtime answered HTTP 422.');
+  });
+});
+
+describe('routes', () => {
+  it('round-trips every route through its hash', () => {
+    for (const route of [
+      { kind: 'agent' as const, name: 'search_agent' },
+      { kind: 'ops' as const, id: 'tenants' },
+      { kind: 'agent' as const, name: 'a b/c' },
+    ])
+      expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+
+  it('treats an unknown or empty hash as the default agent', () => {
+    expect(parseRoute('')).toEqual({ kind: 'agent' });
+    expect(parseRoute('#/ops')).toEqual({ kind: 'agent' });
+    expect(parseRoute('#/elsewhere/x')).toEqual({ kind: 'agent' });
+  });
+});

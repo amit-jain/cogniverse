@@ -228,6 +228,11 @@ jobs:
       run: |
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
+    # The web client's operations views are driven in Chromium
+    # (tests/runtime/integration/test_web_ops_*.py).
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
     - name: Free up disk space for Vespa
       run: |
         sudo rm -rf /usr/share/dotnet
