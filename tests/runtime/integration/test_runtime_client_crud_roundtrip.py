@@ -24,7 +24,7 @@ TENANT_ID = "rc_crud"
 
 
 @pytest.fixture(scope="module")
-def crud_app(vespa_instance, config_manager, schema_loader):
+def crud_app(vespa_instance, config_manager, schema_loader, served_semantic_embedder):
     """FastAPI app mounting wiki + tenant routers wired to real Vespa.
 
     Mirrors main.py: wiki gets a per-tenant factory that deploys a

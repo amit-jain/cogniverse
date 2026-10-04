@@ -41,7 +41,7 @@ HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
 
 
 @pytest.fixture(scope="module")
-def ee_service(shared_vespa):
+def ee_service(shared_vespa, gliner_url):
     tenant_id = f"synentity{uuid.uuid4().hex[:8]}:media"
     profile_name = "video_colpali_smol500_mv_frame"
     title = "PyTorch was released by Meta AI in Menlo Park"
@@ -112,7 +112,9 @@ def ee_service(shared_vespa):
     else:
         pytest.fail("PyTorch source document was not indexed by Vespa")
 
-    entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent = EntityExtractionAgent(
+        deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+    )
     entity_agent.bind_config_manager(config_manager)
     entity_agent.telemetry_manager = RecordingTelemetryManager()
     extraction_paths = []
@@ -182,8 +184,11 @@ async def test_service_generates_entity_extraction_examples(ee_service):
     for item in response.data:
         assert item == {
             "query": ee_service.source_text,
+            # The served GLiNER keeps entities scoring 0.4 and above
+            # (RemoteGlinerClient's threshold), so "was released" (0.41) is one.
             "entities": [
                 {"text": "PyTorch", "type": "TECHNOLOGY"},
+                {"text": "was released", "type": "EVENT"},
                 {"text": "Meta AI", "type": "ORGANIZATION"},
                 {"text": "Menlo Park", "type": "PLACE"},
             ],

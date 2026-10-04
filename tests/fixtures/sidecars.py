@@ -95,3 +95,30 @@ def served_code_colbert(remote_inference):
         yield model
     finally:
         model._close()
+
+
+@pytest.fixture(scope="session")
+def gliner_url(remote_inference):
+    """Base URL of the cluster's GLiNER service, the production entity and
+    routing classifier."""
+    return remote_inference.resolve("gliner").base_url
+
+
+@pytest.fixture(scope="module")
+def served_semantic_embedder(remote_inference):
+    """Point the shared semantic embedder at the cluster's DenseOn, the way the
+    runtime entrypoint configures it, and restore the prior defaults after."""
+    from cogniverse_core.common.models import semantic_embedder as module
+
+    endpoint = remote_inference.resolve("denseon")
+    original = (module._CONFIGURED_REMOTE_URL, module._CONFIGURED_MODEL_NAME)
+    module.configure_semantic_embedder_defaults(
+        remote_url=endpoint.base_url, model_name=endpoint.model_id
+    )
+    try:
+        yield endpoint
+    finally:
+        module.configure_semantic_embedder_defaults(
+            remote_url=original[0], model_name=original[1]
+        )
+        module.reset_semantic_embedder_cache()
