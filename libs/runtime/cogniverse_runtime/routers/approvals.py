@@ -33,9 +33,11 @@ from cogniverse_synthetic.approval import (
     SyntheticDataFeedbackHandler,
 )
 from cogniverse_synthetic.approval.corrections import (
+    CORRECTION_ONLY_SCHEMAS,
     correction_template,
     parse_corrections,
     review_reasoning,
+    schema_for_item_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,9 @@ class PendingItem(BaseModel):
     # corrected.
     schema_name: Optional[str]
     correction_template: Optional[Dict[str, Any]]
+    # A rejection of this item merges the corrections instead of
+    # regenerating, so it needs at least one.
+    corrections_required: bool
     reasoning: str
 
 
@@ -94,8 +99,12 @@ def _pending_item(item: ReviewItem, batch_id: str) -> PendingItem:
     try:
         schema_name, template = correction_template(item.data)
         reasoning = review_reasoning(item.data)
+        corrections_required = (
+            schema_for_item_data(item.data) in CORRECTION_ONLY_SCHEMAS
+        )
     except ValueError:
         schema_name, template, reasoning = None, None, ""
+        corrections_required = False
     return PendingItem(
         item_id=item.item_id,
         batch_id=batch_id,
@@ -106,6 +115,7 @@ def _pending_item(item: ReviewItem, batch_id: str) -> PendingItem:
         created_at=_iso(item.created_at),
         schema_name=schema_name,
         correction_template=template,
+        corrections_required=corrections_required,
         reasoning=reasoning,
     )
 
@@ -217,13 +227,19 @@ async def decide(tenant_id: str, batch_id: str, item_id: str, request: DecisionR
             status_code=404,
             detail=f"Item {item_id} of batch {batch_id} is not awaiting review.",
         )
-    regenerable = _pending_item(item, batch_id).schema_name is not None
+    pending = _pending_item(item, batch_id)
+    regenerable = pending.schema_name is not None
     corrections: Dict[str, Any] = {}
     if request.corrections:
         try:
             corrections = parse_corrections(item.data, request.corrections)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not request.approved and pending.corrections_required and not corrections:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A {pending.schema_name} rejection needs at least one correction.",
+        )
     if not request.approved and regenerable:
         agent.feedback_handler = await asyncio.to_thread(_feedback_handler, tenant_id)
 

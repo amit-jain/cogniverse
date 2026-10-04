@@ -1358,13 +1358,13 @@ The dashboard's Optimization Overview reads this route for its run-count tile, i
 
 Generated examples the confidence extractor did not auto-approve wait in the tenant's approval store (`ApprovalStorageImpl.from_system_config`: Phoenix spans and annotations, Redis electing each decision).
 
-**GET /admin/tenant/{tenant_id}/approvals** — The items awaiting review (`pending_review` or `regenerated`). Response: `{items: [{item_id, batch_id, status, confidence, data, metadata, created_at, schema_name, correction_template, reasoning}, ...]}`. `schema_name` and `correction_template` (the correctable fields with their current values) are `null` for data no synthetic example schema describes; such an item can be approved or rejected but not corrected. A store read failure answers **502** `approval_store_unavailable`; a store the system config cannot build answers **503** with the same code.
+**GET /admin/tenant/{tenant_id}/approvals** — The items awaiting review (`pending_review` or `regenerated`). Response: `{items: [{item_id, batch_id, status, confidence, data, metadata, created_at, schema_name, correction_template, corrections_required, reasoning}, ...]}`. `schema_name` and `correction_template` (the correctable fields with their current values) are `null` for data no synthetic example schema describes; such an item can be approved or rejected but not corrected. A store read failure answers **502** `approval_store_unavailable`; a store the system config cannot build answers **503** with the same code.
 
 **POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}** — Body `{approved, reviewer, feedback?, corrections?}`. Response: `{status, item}`.
 
 - An approval appends the item to the tenant's approved training dataset and answers `approved`.
 - A rejection needs `feedback` (**400** otherwise). For an item of a synthetic example schema it regenerates with the tenant's primary LM and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`. No LM for the tenant answers **503** `regeneration_unavailable`.
-- `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise).
+- `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise). An item with `corrections_required` (a `WorkflowExecutionSchema` record) is not regenerated: its rejection merges the corrections into a replacement, so a rejection without one answers **400**.
 - An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
 - A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
 

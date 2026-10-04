@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { ApprovalsView } from './ApprovalsView';
 import { IngestionView } from './IngestionView';
 import { MemoryView } from './MemoryView';
 import { OptimizationView } from './OptimizationView';
@@ -17,4 +18,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'ingestion', label: 'Ingestion', component: IngestionView },
   { id: 'optimization', label: 'Optimization runs', component: OptimizationView },
   { id: 'memory', label: 'Memory', component: MemoryView },
+  { id: 'approvals', label: 'Approvals', component: ApprovalsView },
 ];

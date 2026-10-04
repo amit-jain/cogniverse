@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { changedCorrections } from '../src/client/ops/ApprovalsView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { errorMessage } from '../src/client/ops/http';
 import { formatArgoTime } from '../src/client/ops/OptimizationView';
@@ -90,6 +91,25 @@ describe('JSON form fields', () => {
     expect(sameJson({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(true);
     expect(sameJson({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
     expect(sameJson({ a: 1 }, { a: 1, b: null })).toBe(false);
+  });
+});
+
+describe('changedCorrections', () => {
+  it('keeps only the fields the reviewer changed, comparing nested values by content', () => {
+    const template = {
+      chosen_agent: 'video_search_agent',
+      entities: [{ text: 'gradient descent', type: 'TOPIC' }],
+      relationships: [],
+    };
+    expect(
+      changedCorrections(template, {
+        chosen_agent: 'summarizer_agent',
+        entities: [{ type: 'TOPIC', text: 'gradient descent' }],
+        relationships: [],
+        topics: ['optimization'],
+      }),
+    ).toEqual({ chosen_agent: 'summarizer_agent', topics: ['optimization'] });
+    expect(changedCorrections(template, template)).toEqual({});
   });
 });
 
