@@ -376,6 +376,7 @@ def _build_span_query_condition(
     *,
     name_filter: Optional[Any],
     excluded_span_ids: Sequence[str] = (),
+    span_ids: Sequence[str] = (),
 ) -> Optional[str]:
     predicate_parts: List[str] = []
 
@@ -403,6 +404,13 @@ def _build_span_query_condition(
             for span_id in sorted(set(excluded_span_ids))
         )
         predicate_parts.append(f"span_id not in [{joined}]")
+
+    if span_ids:
+        joined = ", ".join(
+            f"'{_escape_phoenix_query_literal(span_id)}'"
+            for span_id in sorted(set(span_ids))
+        )
+        predicate_parts.append(f"span_id in [{joined}]")
 
     return " and ".join(predicate_parts) if predicate_parts else None
 
@@ -483,7 +491,8 @@ class PhoenixTraceStore(TraceStore):
                 names (``name in ['a', 'b']``) — the list form is required
                 when the caller reconstructs an object from more than one
                 span type in the returned frame (e.g. approval batch + its
-                item children).
+                item children). ``{"span_id": [<id>, ...]}`` returns only
+                those spans.
             limit: Maximum number of spans to return
             columns: Optional projection of standardized columns to return.
                 Phoenix selects only the requested columns when supported;
@@ -509,20 +518,13 @@ class PhoenixTraceStore(TraceStore):
 
             # Pass time filters directly to Phoenix API for efficient server-side filtering
             query = None
-            if filters and filters.get("name"):
+            predicate = _build_span_query_condition(
+                name_filter=(filters or {}).get("name"),
+                span_ids=(filters or {}).get("span_id") or (),
+            )
+            if predicate:
                 from phoenix.client.types.spans import SpanQuery
 
-                def _esc(n: object) -> str:
-                    # Backslash first, then quote — quoting first would let a
-                    # trailing backslash re-escape the closing quote.
-                    return str(n).replace("\\", "\\\\").replace("'", "\\'")
-
-                name_filter = filters["name"]
-                if isinstance(name_filter, (list, tuple, set)):
-                    joined = ", ".join(f"'{_esc(n)}'" for n in name_filter)
-                    predicate = f"name in [{joined}]"
-                else:
-                    predicate = f"name == '{_esc(name_filter)}'"
                 query = SpanQuery().where(predicate)
             if columns is not None:
                 from phoenix.client.types.spans import SpanQuery

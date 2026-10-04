@@ -112,6 +112,11 @@ ENV PYTHONUNBUFFERED=1
 # litellm loads its bundled model cost map instead of fetching it from
 # GitHub on the first LM call.
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
+# Two glibc malloc arenas. With one per thread, the memory a worker thread
+# frees (decoded frames, base64 images, parsed responses) stays in that
+# thread's arena, and a long-lived ingestion worker grows with every job
+# until it reaches its memory limit.
+ENV MALLOC_ARENA_MAX=2
 ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV RUNTIME_HOST=0.0.0.0

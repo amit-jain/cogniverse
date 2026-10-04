@@ -1331,7 +1331,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     # would collapse the token dim to (D,), which the multi-vector
                     # chunk schema rejects.
                     chunk_arr = (
-                        embeddings_arr.mean(axis=0) if n_frames > 1 else embeddings_arr
+                        embeddings_arr.mean(axis=0, dtype=np.float64)
+                        if n_frames > 1
+                        else embeddings_arr
                     )
                     if chunk_arr.ndim == 2 and chunk_arr.shape[0] > 1:
                         chunk_arr = pool_document_tokens(
@@ -1502,7 +1504,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     if embeddings_arr.size == 0:
                         return None
                     if len(frames) > 1 and embeddings_arr.ndim >= 2:
-                        embeddings_arr = embeddings_arr.mean(axis=0)
+                        embeddings_arr = embeddings_arr.mean(axis=0, dtype=np.float64)
                     if embeddings_arr.ndim == 2 and embeddings_arr.shape[0] > 1:
                         embeddings_arr = pool_document_tokens(
                             embeddings_arr, self._token_pool_factor

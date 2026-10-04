@@ -13,7 +13,7 @@
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pandas as pd
 import pytest
@@ -148,9 +148,14 @@ class TestBackendFailurePropagates:
 
 class TestPrefetchedSpansSkipTheProviderPull:
     """query_annotated_spans(spans_df=...) reuses the caller's pre-fetched
-    project frame. The quality-monitor cycles call the method once per agent
-    type over an identical window; without the parameter every call re-pulled
-    the whole project (limit=10000) from the provider."""
+    project frame of span ids. The quality-monitor cycles call the method once
+    per agent type over an identical window; without the parameter every call
+    re-pulled the whole project (limit=10000) from the provider. Only the
+    annotated spans' rows are then fetched, by id."""
+
+    @staticmethod
+    def _span_ids_df():
+        return pd.DataFrame([{"context.span_id": "s0"}, {"context.span_id": "s1"}])
 
     @staticmethod
     def _spans_df():
@@ -190,9 +195,7 @@ class TestPrefetchedSpansSkipTheProviderPull:
         storage.agent_type = "routing"
         storage.annotation_name = "routing_annotation"
         provider = MagicMock()
-        provider.traces.get_spans = AsyncMock(
-            side_effect=AssertionError("provider span pull must be skipped")
-        )
+        provider.traces.get_spans = AsyncMock(return_value=self._spans_df())
         provider.annotations.get_annotations = AsyncMock(
             return_value=self._annotations_df()
         )
@@ -207,10 +210,16 @@ class TestPrefetchedSpansSkipTheProviderPull:
             start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
             only_human_reviewed=True,
-            spans_df=self._spans_df(),
+            spans_df=self._span_ids_df(),
         )
 
-        storage.provider.traces.get_spans.assert_not_called()
+        storage.provider.traces.get_spans.assert_awaited_once_with(
+            project="cogniverse-acme",
+            start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            filters={"span_id": ["s1"]},
+            limit=1,
+        )
         assert rows == [
             {
                 "span_id": "s1",
@@ -230,16 +239,25 @@ class TestPrefetchedSpansSkipTheProviderPull:
         ]
 
     @pytest.mark.asyncio
-    async def test_omitting_the_frame_still_pulls_from_the_provider(self):
+    async def test_omitting_the_frame_pulls_span_ids_then_annotated_rows(self):
         storage = self._storage()
-        storage.provider.traces.get_spans = AsyncMock(return_value=self._spans_df())
-
-        rows = await storage.query_annotated_spans(
-            start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            end_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
-            only_human_reviewed=True,
+        storage.provider.traces.get_spans = AsyncMock(
+            side_effect=[self._span_ids_df(), self._spans_df()]
         )
+        window = {
+            "start_time": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "end_time": datetime(2026, 1, 2, tzinfo=timezone.utc),
+        }
 
-        storage.provider.traces.get_spans.assert_awaited_once()
-        assert len(rows) == 1
-        assert rows[0]["span_id"] == "s1"
+        rows = await storage.query_annotated_spans(only_human_reviewed=True, **window)
+
+        assert storage.provider.traces.get_spans.await_args_list == [
+            call(project="cogniverse-acme", limit=10000, columns=["span_id"], **window),
+            call(
+                project="cogniverse-acme",
+                filters={"span_id": ["s1"]},
+                limit=1,
+                **window,
+            ),
+        ]
+        assert [row["span_id"] for row in rows] == ["s1"]

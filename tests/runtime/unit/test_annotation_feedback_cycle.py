@@ -318,14 +318,22 @@ class _CountingTraceStore:
 
     def __init__(self):
         self.get_spans_calls = 0
+        self.projections = []
 
     async def get_spans(
-        self, project, start_time=None, end_time=None, filters=None, limit=1000
+        self,
+        project,
+        start_time=None,
+        end_time=None,
+        filters=None,
+        limit=1000,
+        columns=None,
     ):
         import pandas as pd
 
         self.get_spans_calls += 1
-        return pd.DataFrame([{"context.span_id": "s1", "name": "cogniverse.routing"}])
+        self.projections.append(columns)
+        return pd.DataFrame([{"context.span_id": "s1"}])
 
 
 class _EmptyAnnotationStore:
@@ -382,6 +390,7 @@ async def test_feedback_cycle_pulls_project_spans_once_across_all_agents():
     )
     assert len(result["agents"]) == 8
     assert trace_store.get_spans_calls == 1
+    assert trace_store.projections == [["span_id"]]
 
 
 class TestLoopStateFaultContract:

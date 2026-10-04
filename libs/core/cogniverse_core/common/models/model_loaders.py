@@ -387,6 +387,11 @@ class RemoteInferenceClient:
         endpoint takes one image per request, so concurrent requests are
         the batching mechanism: vLLM's continuous batching coalesces them
         into shared forward passes server-side.
+
+        ``embeddings`` is one float32 ``[T, D]`` array for one image, a
+        float32 ``[N, T, D]`` array when every image yields the same token
+        count, and otherwise an object array of ``N`` float32 ``[T, D]``
+        arrays.
         """
         import base64
         import io
@@ -394,7 +399,7 @@ class RemoteInferenceClient:
 
         from PIL import Image
 
-        def encode_and_post(img) -> Dict[str, Any]:
+        def encode_and_post(img) -> tuple[np.ndarray, Dict[str, Any]]:
             if isinstance(img, (str, Path)):
                 with Image.open(img) as pil_img:
                     buf = io.BytesIO()
@@ -427,7 +432,15 @@ class RemoteInferenceClient:
                 timeout=1800,
             )
             response.raise_for_status()
-            return response.json()
+            body = response.json()
+            # The server's vectors are float32 values; holding them as float32
+            # arrays straight away drops the parsed JSON (a Python float object
+            # per value) before the next response arrives.
+            vectors = np.asarray(
+                body.get("data", [{}])[0].get("data", []), dtype=np.float32
+            )
+            body.pop("data", None)
+            return vectors, body
 
         if len(images) <= 1:
             results = [encode_and_post(img) for img in images]
@@ -435,12 +448,17 @@ class RemoteInferenceClient:
             with ThreadPoolExecutor(max_workers=min(8, len(images))) as pool:
                 results = list(pool.map(encode_and_post, images))
 
-        per_image = [np.array(r.get("data", [{}])[0].get("data", [])) for r in results]
-        result = results[-1] if results else {}
+        per_image = [vectors for vectors, _ in results]
+        result = results[-1][1] if results else {}
 
-        embeddings = (
-            per_image[0] if len(per_image) == 1 else np.array(per_image, dtype=object)
-        )
+        if len(per_image) == 1:
+            embeddings = per_image[0]
+        elif len({v.shape for v in per_image}) == 1:
+            embeddings = np.stack(per_image)
+        else:
+            embeddings = np.empty(len(per_image), dtype=object)
+            for i, vectors in enumerate(per_image):
+                embeddings[i] = vectors
 
         return {
             "embeddings": embeddings,
