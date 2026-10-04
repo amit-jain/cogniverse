@@ -891,6 +891,109 @@ class TestProfileAPISchemaDeployment:
         data = response.json()
         assert data["deployment_status"] == "success"
 
+    def test_a_schema_another_process_dropped_is_deployed_again(
+        self, test_client: TestClient, vespa_instance
+    ):
+        """Another process drops a tenant schema through the backend method
+        the admin profile delete calls. This process's deploy route decides
+        from the stored registry row, so it deploys the schema again rather
+        than answering already_deployed from what it held; four such deploys
+        at once register it exactly once."""
+        import multiprocessing
+        import threading
+        import uuid
+
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        tenant_id = f"dropredeploy{uuid.uuid4().hex[:8]}"
+        canonical = f"{tenant_id}:{tenant_id}"
+        schema = f"video_deploy_test2_{tenant_id}_{tenant_id}"
+        created = test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "dropped_elsewhere",
+                "tenant_id": tenant_id,
+                "type": "video",
+                "schema_name": "video_deploy_test2",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_type": "multi_vector",
+                "deploy_schema": True,
+            },
+        )
+        assert (created.status_code, created.json()["schema_deployed"]) == (
+            201,
+            True,
+        )
+        deploy = {"tenant_id": tenant_id, "force": False}
+        again = test_client.post(
+            "/admin/profiles/dropped_elsewhere/deploy", json=deploy
+        )
+        assert again.json()["deployment_status"] == "already_deployed"
+
+        context = multiprocessing.get_context("spawn")
+        report = context.Queue()
+        peer = context.Process(
+            target=_drop_in_another_process,
+            args=(
+                vespa_instance["http_port"],
+                tenant_id,
+                "video_deploy_test2",
+                report,
+            ),
+        )
+        peer.start()
+        dropped = report.get(True, 600)
+        peer.join(60)
+        assert (dropped, peer.exitcode) == ([schema], 0)
+
+        from cogniverse_runtime.routers import admin
+
+        store = admin._config_manager.store
+
+        def row():
+            return store.get_config(
+                canonical,
+                ConfigScope.SCHEMA,
+                "schema_registry",
+                "schema_video_deploy_test2",
+            )
+
+        tombstone = row()
+        assert tombstone.config_value["deleted"] is True
+
+        # Four deploys of it arrive together on this process.
+        barrier = threading.Barrier(4)
+        answers = []
+        lock = threading.Lock()
+
+        def deploy_once():
+            with TestClient(test_client.app) as client:
+                barrier.wait(timeout=60)
+                response = client.post(
+                    "/admin/profiles/dropped_elsewhere/deploy", json=deploy
+                )
+            with lock:
+                answers.append(
+                    (response.status_code, response.json()["deployment_status"])
+                )
+
+        threads = [threading.Thread(target=deploy_once) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=900)
+
+        assert answers == [(200, "success")] * 4
+        registered = row()
+        assert registered.config_value.get("deleted", False) is False
+        assert registered.version == tombstone.version + 1
+        deployed = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=vespa_instance["config_port"],
+        ).list_deployed_document_types(raise_on_failure=True)
+        assert schema in deployed
+
     def test_end_to_end_schema_deployment_and_ingestion(
         self, test_client: TestClient, vespa_instance
     ):
@@ -1126,3 +1229,25 @@ class TestProfileAPISchemaDeployment:
                 strategies_path.unlink()
             if strategies_backup and strategies_backup.exists():
                 shutil.move(strategies_backup, strategies_path)
+
+
+def _drop_in_another_process(http_port, tenant_id, base_schema_name, report):
+    """Another process (a CLI, a job, another runtime) dropping a tenant
+    schema through the backend method the admin profile delete calls."""
+    import cogniverse_vespa.backend  # noqa: F401 - registers the backend
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=http_port)
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=ConfigManager(store=store),
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+    )
+    try:
+        report.put(backend.delete_schema(base_schema_name, tenant_id=tenant_id))
+    except Exception as exc:
+        report.put(f"{type(exc).__name__}: {exc}")

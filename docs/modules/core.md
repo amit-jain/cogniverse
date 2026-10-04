@@ -642,7 +642,8 @@ registry.register_schema(
     config={"profile": "video_content"}
 )
 
-# Check if schema exists
+# Check if schema exists: read from its stored row on every call, so a drop
+# or registration by another process is seen at once
 exists = registry.schema_exists("acme", "video_content")
 
 # Get all schemas for tenant

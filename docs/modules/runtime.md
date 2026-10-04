@@ -1221,7 +1221,7 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **POST /admin/profiles** - Create profile; `version` is the tenant's backend config version the create produced
 **PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
-**POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted
+**POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted. Without `force`, `already_deployed` is answered only when the tenant's stored registry row says the schema is deployed, read on this request, so a schema another process dropped is deployed again.
 
 The update, delete and deploy routes look the profile up in the tenant's stored
 backend config (`get_stored_backend_config`), so a profile another worker or

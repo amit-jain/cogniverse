@@ -2218,3 +2218,284 @@ async def test_a_deploy_refused_by_a_delete_that_landed_after_its_decision_leave
     assert str(caught.value) == _deleted_message(tenant_id)
     assert _tenant_rows(store, tenant_id) == []
     assert _deployed_for(tenant_id) == []
+
+
+def _drop_schema_in_another_process(vespa_port, tenant_id, base_schema_name, report):
+    """Another process (a CLI, a job, another runtime) dropping a tenant
+    schema through the backend method the admin profile delete calls."""
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=vespa_port)
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=ConfigManager(store=store),
+        schema_loader=FilesystemSchemaLoader("configs/schemas"),
+    )
+    try:
+        report.put(backend.delete_schema(base_schema_name, tenant_id=tenant_id))
+    except Exception as exc:
+        report.put(f"{type(exc).__name__}: {exc}")
+
+
+@pytest.mark.asyncio
+async def test_a_cached_ingestion_client_redeploys_a_schema_another_process_dropped(
+    wired_tenant_manager, vespa_instance
+):
+    """This process built its ingestion client for a tenant schema, which
+    another process then drops. Preparing ingestion again redeploys the
+    schema rather than handing back the cached client for a document type
+    Vespa no longer has."""
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    tenant_id = _unique_tenant()
+    provenance_schema = _schema_names(tenant_id)[1]
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    await asyncio.to_thread(backend.prepare_ingestion, "provenance")
+    assert _deployed_for(tenant_id) == [provenance_schema]
+
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    peer = context.Process(
+        target=_drop_schema_in_another_process,
+        args=(vespa_instance["http_port"], tenant_id, "provenance", report),
+    )
+    peer.start()
+    dropped = await asyncio.to_thread(report.get, True, 600)
+    await asyncio.to_thread(peer.join, 60)
+    assert (dropped, peer.exitcode) == ([provenance_schema], 0)
+    assert _deployed_for(tenant_id) == []
+
+    await asyncio.to_thread(backend.prepare_ingestion, "provenance")
+
+    try:
+        assert _deployed_for(tenant_id) == [provenance_schema]
+        stored = tm._config_manager.store.get_config(
+            tenant_id, ConfigScope.SCHEMA, "schema_registry", "schema_provenance"
+        )
+        assert stored.config_value.get("deleted", False) is False
+        assert stored.config_value["full_schema_name"] == provenance_schema
+    finally:
+        await tm.delete_tenant_internal(tenant_id)
+
+
+def _counting_store_reads(monkeypatch) -> list:
+    """Record every config-store read any store in this process answers from
+    now on: the backend's schema registry may hold a store of its own."""
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    reads = []
+    for method in (
+        "get_config",
+        "list_configs",
+        "list_all_configs",
+        "get_immutable_config",
+    ):
+        real = getattr(VespaConfigStore, method)
+
+        def counted(self, *args, _real=real, _method=method, **kwargs):
+            reads.append(_method)
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(VespaConfigStore, method, counted)
+    return reads
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_metadata_query_reads_the_config_store_once_not_per_query(
+    wired_tenant_manager, vespa_instance, monkeypatch
+):
+    """A tenant-scoped metadata query on a deployed schema answers whether
+    the schema is deployed from memory after the first read: five queries in
+    a row cost the config store nothing."""
+    tenant_id = _unique_tenant()
+    await _create_tenant_with_memory(tenant_id, vespa_instance["base_url"])
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    try:
+        first = await asyncio.to_thread(
+            backend.query_metadata_documents, schema="provenance", tenant_id=tenant_id
+        )
+        assert [row["id"] for row in first] == ["provenance-memory-1"]
+        reads = _counting_store_reads(monkeypatch)
+
+        for _ in range(5):
+            rows = await asyncio.to_thread(
+                backend.query_metadata_documents,
+                schema="provenance",
+                tenant_id=tenant_id,
+            )
+            assert [row["id"] for row in rows] == ["provenance-memory-1"]
+
+        assert reads == []
+    finally:
+        monkeypatch.undo()
+        await tm.delete_tenant_internal(tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_a_metadata_query_inside_the_staleness_window_of_a_peer_drop_answers_no_rows(
+    wired_tenant_manager, vespa_instance, caplog
+):
+    """This process last read the tenant's provenance schema as deployed;
+    another process then drops it. Within the read's staleness window the
+    query still goes to Vespa, which no longer resolves the schema: the
+    stored row decides, and the query answers no rows instead of raising
+    Vespa's error. The next query skips Vespa altogether."""
+    caplog.set_level(logging.INFO, logger="cogniverse_vespa.backend")
+    tenant_id = _unique_tenant()
+    base_url = vespa_instance["base_url"]
+    await _create_tenant_with_memory(tenant_id, base_url)
+    provenance_schema = _schema_names(tenant_id)[1]
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    try:
+        warm = await asyncio.to_thread(
+            backend.query_metadata_documents, schema="provenance", tenant_id=tenant_id
+        )
+        assert [row["id"] for row in warm] == ["provenance-memory-1"]
+
+        context = multiprocessing.get_context("spawn")
+        report = context.Queue()
+        peer = context.Process(
+            target=_drop_schema_in_another_process,
+            args=(vespa_instance["http_port"], tenant_id, "provenance", report),
+        )
+        peer.start()
+        dropped = await asyncio.to_thread(report.get, True, 600)
+        await asyncio.to_thread(peer.join, 60)
+        assert (dropped, peer.exitcode) == ([provenance_schema], 0)
+        await asyncio.to_thread(
+            _wait_until_source_unresolvable, base_url, provenance_schema
+        )
+        assert backend._deployed_schema_names(tenant_id, "provenance") is True
+
+        rows = await asyncio.to_thread(
+            backend.query_metadata_documents, schema="provenance", tenant_id=tenant_id
+        )
+
+        assert rows == []
+        assert backend._deployed_schema_names(tenant_id, "provenance") is False
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_vespa.backend"
+            and "was dropped" in record.getMessage()
+        ] == [
+            "Tenant-scoped metadata query answered no rows: schema 'provenance' "
+            f"of tenant '{tenant_id}' was dropped"
+        ]
+        again = await asyncio.to_thread(
+            backend.query_metadata_documents, schema="provenance", tenant_id=tenant_id
+        )
+        assert again == []
+    finally:
+        await tm.delete_tenant_internal(tenant_id)
+
+
+def _signal_config_proxy(container: str, signal: str) -> list[str]:
+    """Stop or resume the config proxy that hands config to the content
+    node, so the node lags behind the activated generation."""
+    pids = subprocess.run(
+        ["docker", "exec", container, "pgrep", "-f", "config.proxy.ProxyServer"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.split()
+    for pid in pids:
+        subprocess.run(
+            ["docker", "exec", container, "kill", f"-{signal}", pid],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    return pids
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_schema_redeployed_never_serves_its_previous_documents(
+    wired_tenant_manager, vespa_instance
+):
+    """The content node is slow to take config while a tenant schema with a
+    document is dropped. The drop returns only once the node has applied
+    the removal, holding the deployment lease meanwhile, so the schema
+    deployed again afterwards starts empty: the previous incarnation's
+    document is gone. Without that wait a re-add could activate first and
+    the node, going straight to the newer generation, keep the document."""
+    tenant_id = _unique_tenant()
+    base_url = vespa_instance["base_url"]
+    provenance_schema = _schema_names(tenant_id)[1]
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    fed = []
+    Vespa(url=base_url).feed_iterable(
+        [{"id": "provenance-memory-1", "fields": _provenance_fields(tenant_id)}],
+        schema=provenance_schema,
+        namespace=provenance_schema,
+        callback=lambda response, doc_id: fed.append(response.status_code),
+    )
+    assert fed == [200]
+    assert _provenance_status(base_url, tenant_id) == 200
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    container = vespa_instance["container_name"]
+    outcome = {}
+
+    def drop():
+        try:
+            outcome["dropped"] = backend.schema_manager.delete_schema(
+                tenant_id, "provenance"
+            )
+        except Exception as exc:
+            outcome["dropped"] = f"{type(exc).__name__}: {exc}"
+
+    stopped = _signal_config_proxy(container, "STOP")
+    try:
+        assert len(stopped) == 1, stopped
+        dropping = threading.Thread(target=drop)
+        dropping.start()
+        await asyncio.to_thread(dropping.join, 8)
+        still_waiting = dropping.is_alive()
+    finally:
+        _signal_config_proxy(container, "CONT")
+    await asyncio.to_thread(dropping.join, 180)
+
+    try:
+        assert still_waiting is True
+        assert outcome == {"dropped": provenance_schema}
+        await asyncio.to_thread(
+            backend.schema_registry.deploy_schema, tenant_id, "provenance"
+        )
+        assert _deployed_for(tenant_id) == [provenance_schema]
+        assert _provenance_status(base_url, tenant_id) == 404
+        found = Vespa(url=base_url).query(
+            body={"yql": f"select * from {provenance_schema} where true", "hits": 1}
+        )
+        assert found.json["root"]["fields"]["totalCount"] == 0
+    finally:
+        await tm.delete_tenant_internal(tenant_id)

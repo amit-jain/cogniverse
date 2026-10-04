@@ -1365,10 +1365,12 @@ class SchemaRegistry:
         """
         Check if schema already deployed for tenant.
 
-        A cache hit answers from memory; a miss reads this tenant's row for
-        the schema from persistent storage, so schemas registered by peer
-        processes are visible. Use this before deploying to avoid unnecessary
-        redeployments.
+        Reads this tenant's row for the schema from persistent storage on
+        every call, never from what this registry holds: another process (a
+        runtime worker or replica, the CLI, a migration job) may have dropped
+        or registered the schema since, and a deploy decided from a stale
+        "deployed" would never deploy it. A storage outage raises. Use this
+        before deploying to avoid unnecessary redeployments.
 
         Args:
             tenant_id: Tenant identifier
@@ -1387,11 +1389,6 @@ class SchemaRegistry:
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
         tenant_id = canonical_tenant_id(tenant_id)
-        if (tenant_id, base_schema_name) in self._schemas:
-            return True
-        # A miss is not authoritative: a peer process (another runtime
-        # replica, a host-side manager) may have deployed and registered the
-        # schema since this registry last read storage.
         return self._stored_schema(tenant_id, base_schema_name) is not None
 
     def _stored_schema(
