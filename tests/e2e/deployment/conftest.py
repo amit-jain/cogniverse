@@ -15,6 +15,7 @@ Requires: docker, k3d, kubectl, helm installed.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -713,6 +714,29 @@ def dump_pod_state(namespace: str) -> None:
     print("================================================\n", file=sys.stdout)
 
 
+# Vespa blocks every external feed once its disk passes 75% (its default
+# disk resource limit), and the e2e cluster's Vespa data lives on the host
+# disk that image builds fill: a deploy that starts above the limit leaves
+# the new runtime unable to write its config and crash-looping.
+E2E_DEPLOY_DISK_LIMIT = 0.75
+E2E_DEPLOY_DISK_PATH = Path("/var/lib")
+"""A path on the filesystem holding docker's data, and with it Vespa's."""
+
+
+def refuse_deploy_on_a_full_disk(path: Path = E2E_DEPLOY_DISK_PATH) -> None:
+    """Fail before building when the host disk is at Vespa's feed-block limit."""
+    usage = shutil.disk_usage(path)
+    used = usage.used / usage.total
+    if used >= E2E_DEPLOY_DISK_LIMIT:
+        raise RuntimeError(
+            f"host disk at {path} is {used:.1%} used "
+            f"({usage.free / 1024**3:.0f} GiB free), at or above Vespa's "
+            f"{E2E_DEPLOY_DISK_LIMIT:.0%} feed-block limit, so the deployed "
+            "runtime could not write to Vespa. Free space first, e.g. "
+            "`docker builder prune -f`, then rerun."
+        )
+
+
 def deploy_stack(
     cluster_name: str,
     namespace: str,
@@ -726,6 +750,7 @@ def deploy_stack(
     """
     from pathlib import Path
 
+    refuse_deploy_on_a_full_disk()
     project_root = Path(__file__).parent.parent.parent.parent
     chart_path = project_root / "charts" / "cogniverse"
     deployment_inputs = deployment_helm_inputs(project_root, extra_set=extra_set)

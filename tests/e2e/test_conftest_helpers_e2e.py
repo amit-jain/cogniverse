@@ -127,19 +127,31 @@ def _stack_request() -> SimpleNamespace:
     return request
 
 
-def _stub_stack_boundaries(monkeypatch) -> dict[str, list]:
+def _stub_stack_boundaries(
+    monkeypatch, *, modal_warmed: bool = False
+) -> dict[str, list]:
     """Record the boundaries ``e2e_stack`` crosses after the cluster decision:
-    the run lock, the GPU-residency reclaim, and the two corpus ingests. The
-    cluster-decision helpers are stubbed per scenario by the caller."""
+    the run lock, the GPU-residency reclaim, the Modal chat-model warm, and the
+    two corpus ingests. The cluster-decision helpers are stubbed per scenario
+    by the caller. ``modal_warmed`` is what the warm reports."""
     from tests.e2e import run_lock
 
     calls: dict[str, list] = {
         "acquire": [],
         "release": [],
         "residency": [],
+        "modal_warm": [],
         "ingest_documents": [],
         "ingest_evaluation_corpus": [],
     }
+    monkeypatch.setattr(
+        e2e_conftest,
+        "_warm_modal_chat_models",
+        lambda: calls["modal_warm"].append(True) or modal_warmed,
+    )
+    # The orphan-schema preflight posts to the live runtime; these drive the
+    # stack's control flow, so it must not depend on a runtime being up.
+    monkeypatch.setattr(e2e_conftest, "_reconcile_orphan_schemas", lambda: None)
     monkeypatch.setattr(
         run_lock, "acquire", lambda path: calls["acquire"].append(path) or True
     )
@@ -1831,6 +1843,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [],
             "ingest_evaluation_corpus": [],
         }
@@ -2231,6 +2244,7 @@ class TestSharedClusterOwnership:
         mid_build=None,
         calls: dict[str, list] | None = None,
         llm_serving_env: str | None = LLM_SERVING_LOCAL,
+        modal_warmed: bool = False,
     ):
         """Drive ``e2e_stack`` with every cluster boundary stubbed.
 
@@ -2397,11 +2411,24 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        calls["boundaries"] = _stub_stack_boundaries(monkeypatch)
+        calls["boundaries"] = _stub_stack_boundaries(
+            monkeypatch, modal_warmed=modal_warmed
+        )
         calls["request"] = _stack_request()
         stack = e2e_conftest.e2e_stack.__wrapped__(calls["request"], {})
         next(stack)
         return stack, calls
+
+    def test_a_warmed_modal_chat_model_is_released_with_the_session(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch, cluster_states=[], force_fresh=False, modal_warmed=True
+        )
+
+        assert calls["boundaries"]["modal_warm"] == [True]
+        assert calls["request"].finalizers[-1] is (
+            e2e_conftest._release_modal_chat_models
+        )
+        stack.close()
 
     def test_absent_shared_cluster_is_created_with_exact_deployment(self, monkeypatch):
         stack, calls = self._start_stack(
@@ -2413,6 +2440,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -2929,6 +2957,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [],
             "ingest_evaluation_corpus": [],
         }
@@ -3038,6 +3067,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -3054,6 +3084,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -3094,6 +3125,143 @@ class TestSharedClusterOwnership:
             "Refusing to replace existing deployment-test cluster "
             "'cogniverse-deploy-test'"
         ) in str(raised.value)
+
+
+class TestDeployDiskPreflight:
+    """A deploy refuses to start on a host disk at Vespa's feed-block limit."""
+
+    @staticmethod
+    def _disk(monkeypatch, used_fraction):
+        from tests.e2e.deployment import conftest as deployment
+
+        total = 1000 * 1024**3
+        used = int(total * used_fraction)
+        seen: list[Path] = []
+
+        def disk_usage(path):
+            seen.append(path)
+            return SimpleNamespace(total=total, used=used, free=total - used)
+
+        monkeypatch.setattr(deployment.shutil, "disk_usage", disk_usage)
+        return deployment, seen
+
+    def test_a_disk_at_the_limit_fails_naming_usage_and_the_prune(self, monkeypatch):
+        deployment, seen = self._disk(monkeypatch, 0.80)
+
+        with pytest.raises(RuntimeError) as raised:
+            deployment.refuse_deploy_on_a_full_disk()
+
+        assert seen == [Path("/var/lib")]
+        assert str(raised.value) == (
+            "host disk at /var/lib is 80.0% used (200 GiB free), at or above "
+            "Vespa's 75% feed-block limit, so the deployed runtime could not "
+            "write to Vespa. Free space first, e.g. `docker builder prune -f`, "
+            "then rerun."
+        )
+
+    def test_exactly_the_limit_is_refused(self, monkeypatch):
+        deployment, _ = self._disk(monkeypatch, 0.75)
+
+        with pytest.raises(RuntimeError, match="75.0% used"):
+            deployment.refuse_deploy_on_a_full_disk()
+
+    def test_a_disk_below_the_limit_deploys(self, monkeypatch):
+        deployment, seen = self._disk(monkeypatch, 0.64)
+
+        deployment.refuse_deploy_on_a_full_disk()
+
+        assert seen == [Path("/var/lib")]
+
+    def test_the_preflight_runs_before_any_build(self, monkeypatch):
+        from tests.e2e.deployment import conftest as deployment
+
+        self._disk(monkeypatch, 0.9)
+        monkeypatch.setattr(
+            deployment,
+            "deployment_helm_inputs",
+            lambda *args, **kwargs: pytest.fail("deploy inputs resolved"),
+        )
+
+        with pytest.raises(RuntimeError, match="90.0% used"):
+            deployment.deploy_stack("cogniverse-e2e", "cogniverse")
+
+
+class TestModalChatModelWarm:
+    """The session holds a runner of the Modal chat model whose calls run
+    under latency budgets a cold start cannot meet, and lets it go after."""
+
+    @staticmethod
+    def _record_cli(monkeypatch, returncode=0, stderr=""):
+        commands: list[list[str]] = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, returncode, stdout="", stderr=stderr
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", run)
+        return commands
+
+    @staticmethod
+    def _serving(monkeypatch, mode):
+        from tests.e2e.deployment import conftest as deployment
+
+        monkeypatch.setattr(deployment, "e2e_llm_serving_mode", lambda: mode)
+
+    @staticmethod
+    def _cli(action):
+        return [
+            str(Path(e2e_conftest.sys.executable).with_name("cogniverse")),
+            "inference",
+            "modal",
+            action,
+            "vllm_llm_student",
+        ]
+
+    def test_modal_serving_warms_the_student(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_MODAL)
+        commands = self._record_cli(monkeypatch)
+
+        assert e2e_conftest._warm_modal_chat_models() is True
+        assert commands == [self._cli("warm")]
+
+    def test_local_serving_warms_nothing(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_LOCAL)
+        commands = self._record_cli(monkeypatch)
+
+        assert e2e_conftest._warm_modal_chat_models() is False
+        assert commands == []
+
+    def test_a_failed_warm_fails_the_session_naming_the_cause(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_MODAL)
+        self._record_cli(monkeypatch, returncode=1, stderr="Token missing")
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            e2e_conftest._warm_modal_chat_models()
+
+        assert str(raised.value) == (
+            "Session pre-flight: warming the Modal chat models vllm_llm_student "
+            "failed (exit 1): Token missing"
+        )
+
+    def test_release_returns_the_student_to_scale_to_zero(self, monkeypatch):
+        commands = self._record_cli(monkeypatch)
+
+        e2e_conftest._release_modal_chat_models()
+
+        assert commands == [self._cli("release")]
+
+    def test_a_failed_release_fails_the_teardown(self, monkeypatch):
+        self._record_cli(monkeypatch, returncode=1, stderr="autoscaler update failed")
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            e2e_conftest._release_modal_chat_models()
+
+        assert str(raised.value) == (
+            "Session teardown: releasing the Modal chat models vllm_llm_student "
+            "failed (exit 1): autoscaler update failed"
+        )
 
 
 class TestSidecarsEnabledOnlyBySet:
