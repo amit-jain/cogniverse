@@ -224,7 +224,10 @@ async def test_orchestration_span_carries_canonical_workflow(
     )
     from cogniverse_core.common.agent_models import AgentEndpoint
     from cogniverse_core.registries.agent_registry import AgentRegistry
-    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_foundation.config.unified_config import (
+        RoutingConfigUnified,
+        SystemConfig,
+    )
 
     tenant_id = "orch-opt-real"
 
@@ -255,6 +258,11 @@ async def test_orchestration_span_carries_canonical_workflow(
         inference_service_urls={"gliner": gliner_url},
     )
     mock_cm.get_config.return_value = {}
+    mock_cm.get_routing_config.side_effect = (
+        lambda tenant_id=None, service="gateway_agent": RoutingConfigUnified(
+            tenant_id=tenant_id
+        )
+    )
 
     agent = OrchestratorAgent(
         deps=OrchestratorDeps(),

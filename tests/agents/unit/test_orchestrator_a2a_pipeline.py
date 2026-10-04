@@ -20,7 +20,10 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorInput,
     OrchestratorOutput,
 )
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import (
+    RoutingConfigUnified,
+    SystemConfig,
+)
 from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 
 
@@ -30,6 +33,11 @@ def _make_mock_config_manager() -> Mock:
     ``iter_retrieval_*`` and ``redis_url`` off it)."""
     cm = Mock()
     cm.get_system_config = Mock(return_value=SystemConfig())
+    cm.get_routing_config = Mock(
+        side_effect=lambda tenant_id=None, service="gateway_agent": (
+            RoutingConfigUnified(tenant_id=tenant_id)
+        )
+    )
     return cm
 
 
