@@ -12,31 +12,24 @@ from __future__ import annotations
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from playwright.sync_api import Page, expect, sync_playwright
 
-from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.tenant_tiers import read_tenant_tier
 from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     ROUTER_TIERS,
 )
-from cogniverse_runtime.admin import tenant_manager as tm
-from cogniverse_runtime.cluster_events import ClusterEvents
-from cogniverse_runtime.routers import agents
 from tests.utils.web_client import (
     build_web_client,
     free_port,
     install_web_client,
     recording_telemetry_sink,
-    serve_app,
     serve_web,
 )
+from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -52,40 +45,10 @@ def built_client(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def runtime_url(config_manager, schema_loader, workflow_state_redis_url):
-    previous = (tm._config_manager, tm._schema_loader)
-    tm.set_config_manager(config_manager)
-    tm.set_schema_loader(schema_loader)
-    agents.set_agent_registry(
-        AgentRegistry(tenant_id="default", config_manager=config_manager)
-    )
-
-    @asynccontextmanager
-    async def cluster_events(_app):
-        # The one worker on its own cluster-events channel, started on the
-        # server's loop as the runtime starts its own, so tenant deletes
-        # reach it.
-        events = ClusterEvents(
-            workflow_state_redis_url,
-            "web-ops-test-worker",
-            {"tenant_deleted": tm.release_deleted_tenant},
-            channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
-        )
-        await events.start()
-        tm.set_cluster_events(events)
-        try:
-            yield
-        finally:
-            tm.set_cluster_events(None)
-            await events.close()
-
-    app = FastAPI(lifespan=cluster_events)
-    app.include_router(tm.router, prefix="/admin")
-    app.include_router(agents.router, prefix="/agents")
-    with serve_app(app) as url:
+    with serve_ops_runtime(
+        config_manager, schema_loader, workflow_state_redis_url
+    ) as url:
         yield url
-    tm.set_config_manager(previous[0])
-    tm.set_schema_loader(previous[1])
-    BackendRegistry.get_instance().clear_instances()
 
 
 @pytest.fixture()

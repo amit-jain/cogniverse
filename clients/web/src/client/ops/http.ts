@@ -10,7 +10,8 @@ export class RuntimeRequestError extends Error {
 /**
  * The human-readable reason in a failed runtime or web-server response:
  * the web server's ``error``, FastAPI's string ``detail``, a structured
- * ``detail.message``, or each validation error as ``field: message``.
+ * ``detail.message`` followed by its ``detail.errors``, or each validation
+ * error as ``field: message``.
  */
 export function errorMessage(body: unknown, status: number): string {
   const value = body as { error?: unknown; detail?: unknown } | null;
@@ -26,8 +27,13 @@ export function errorMessage(body: unknown, status: number): string {
     });
     if (parts.length) return parts.join('; ');
   }
-  const message = (detail as { message?: unknown } | null)?.message;
-  if (typeof message === 'string') return message;
+  const structured = detail as { message?: unknown; errors?: unknown } | null;
+  if (typeof structured?.message === 'string') {
+    const errors = Array.isArray(structured.errors)
+      ? structured.errors.filter((item): item is string => typeof item === 'string')
+      : [];
+    return errors.length ? `${structured.message}: ${errors.join('; ')}` : structured.message;
+  }
   return `The runtime answered HTTP ${status}.`;
 }
 
