@@ -1255,6 +1255,92 @@ def test_hermetic_gemma_reuses_exact_explicit_test_override(monkeypatch):
     assert hermetic_llm.MODEL == GEMMA
 
 
+def _no_cluster_discovery(monkeypatch) -> None:
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
+    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
+    for name in ("_discover_e2e_model_urls", "_discover_dev_model_urls"):
+        monkeypatch.setattr(sidecar_module, name, lambda model: ())
+    monkeypatch.setattr(
+        sidecar_module, "_discover_external_model_urls", lambda context: ()
+    )
+
+
+def _record_hermetic_spawns(monkeypatch) -> list[tuple[str, str, int]]:
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    spawned: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(hermetic_llm, "_container_state", lambda container: None)
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(
+        hermetic_llm,
+        "_spawn",
+        lambda model, container, host_port, device, gpu_utilization=0.25: (
+            spawned.append((model, container, host_port))
+        ),
+    )
+    monkeypatch.setattr(
+        hermetic_llm,
+        "listed_model_ids",
+        lambda base_url: {GEMMA} if spawned else None,
+    )
+    monkeypatch.setattr(hermetic_llm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        hermetic_llm.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="", stderr=""
+        ),
+    )
+    return spawned
+
+
+def test_other_services_published_urls_do_not_stop_the_gemma_sidecar(monkeypatch):
+    """A session that already published its LateOn and Whisper sidecars still
+    provisions Gemma: neither URL is a candidate for a model it does not serve."""
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    _no_cluster_discovery(monkeypatch)
+    spawned = _record_hermetic_spawns(monkeypatch)
+    with (
+        _models_server(LATEON) as lateon_url,
+        _models_server("openai/whisper-large-v3-turbo") as whisper_url,
+    ):
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            json.dumps({"colbert_pylate": lateon_url, "vllm_asr": whisper_url}),
+        )
+        assert hermetic_llm._configured_model_urls(GEMMA) == ()
+        assert hermetic_llm._configured_model_urls(LATEON) == (lateon_url,)
+
+        resolved = hermetic_llm.ensure_llm(model=GEMMA, deadline_s=0.01)
+
+    assert resolved == "http://127.0.0.1:29110/v1"
+    assert spawned == [(GEMMA, "cogniverse-test-llm", 29110)]
+
+
+def test_the_gemma_services_published_url_is_its_only_candidate(monkeypatch):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    _no_cluster_discovery(monkeypatch)
+    spawned = _record_hermetic_spawns(monkeypatch)
+    with (
+        _models_server(GEMMA) as gemma_url,
+        _models_server(LATEON) as lateon_url,
+    ):
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            json.dumps({"colbert_pylate": lateon_url, "vllm_llm_student": gemma_url}),
+        )
+        assert hermetic_llm._configured_model_urls(GEMMA) == (gemma_url,)
+
+        resolved = hermetic_llm.ensure_llm(model=GEMMA, deadline_s=0.01)
+
+    assert resolved == f"{gemma_url}/v1"
+    assert spawned == []
+
+
 def test_hermetic_teacher_fallback_spawns_the_exact_model(monkeypatch):
     import tests.utils.hermetic_llm as hermetic_llm
 

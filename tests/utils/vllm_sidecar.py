@@ -45,6 +45,7 @@ import requests
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 
 logger = logging.getLogger(__name__)
@@ -996,9 +997,16 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
     if env_model == model and env_api_base:
         candidates.append(env_api_base)
 
+    # A URL named for a service is a candidate only for the model that service
+    # serves: the session's own LateOn or Whisper sidecar never serves Gemma.
     env_urls = parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
     if env_urls is not None:
-        candidates.extend(env_urls.values())
+        candidates.extend(
+            url
+            for service, url in env_urls.items()
+            if service in INFERENCE_SERVICE_SPECS
+            and INFERENCE_SERVICE_SPECS[service].model_id == model
+        )
 
     for candidate in _discover_e2e_model_urls(model):
         candidates.append(candidate.base_url)
