@@ -157,7 +157,9 @@ available, standalone model, not as an active pipeline stage.
 
 `ComposableQueryAnalysisModule` (in `routing/dspy_relationship_router.py`) is lazily built and cached by
 `OrchestratorAgent._get_query_analysis_module()` for reuse across iterations of the orchestrator's iterative
-retrieval loop — it is **not** part of `QueryEnhancementAgent`, which uses a separate, simpler DSPy module
+retrieval loop, one module per GLiNER model and endpoint. The model is the request tenant's
+`RoutingConfigUnified.gliner_model` (the setting the dispatcher also seeds the gateway with) and the endpoint is
+`SystemConfig.inference_service_urls["gliner"]`; a config read that fails raises. It is **not** part of `QueryEnhancementAgent`, which uses a separate, simpler DSPy module
 (see [QueryEnhancementAgent](#3-queryenhancementagent-query_enhancement_agentpy)).
 
 ```mermaid

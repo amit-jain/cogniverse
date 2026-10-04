@@ -35,6 +35,7 @@ from cogniverse_core.events import (
 )
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
+    RoutingConfigUnified,
     SemanticRouterConfig,
     SystemConfig,
 )
@@ -73,6 +74,11 @@ def _make_mock_config_manager() -> Mock:
     """
     cm = Mock()
     cm.get_system_config = Mock(return_value=SystemConfig())
+    cm.get_routing_config = Mock(
+        side_effect=lambda tenant_id=None, service="gateway_agent": (
+            RoutingConfigUnified(tenant_id=tenant_id)
+        )
+    )
     return cm
 
 

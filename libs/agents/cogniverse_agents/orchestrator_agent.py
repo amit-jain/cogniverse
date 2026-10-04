@@ -23,7 +23,7 @@ import weakref
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import dspy
 import httpx
@@ -740,6 +740,8 @@ class OrchestratorAgent(
         # concurrent first requests each build a Mem0 stack and leak the losers.
         self._memory_initialized_tenants: set = set()
         self._memory_init_lock = threading.Lock()
+        self._query_analysis_modules: Dict[Tuple[str, Optional[str]], Any] = {}
+        self._query_analysis_lock = threading.Lock()
 
         logger.info(
             f"OrchestratorAgent initialized with {len(self.registry.agents)} registered agents"
@@ -1878,32 +1880,40 @@ class OrchestratorAgent(
     # ------------------------------------------------------------------
 
     def _get_query_analysis_module(self):
-        """Lazily build the ``ComposableQueryAnalysisModule`` reused per
-        iteration of the retrieval loop. Cached on the instance so the
-        GLiNER + spaCy extractors load once."""
-        if getattr(self, "_query_analysis_module", None) is not None:
-            return self._query_analysis_module
+        """Return the ``ComposableQueryAnalysisModule`` reused per iteration of
+        the retrieval loop, built once per configured GLiNER model and
+        endpoint so the GLiNER + spaCy extractors load once.
+
+        The model is the request tenant's ``RoutingConfigUnified.gliner_model``
+        (the setting the dispatcher also seeds the gateway with); the endpoint
+        is ``SystemConfig.inference_service_urls["gliner"]``, so the slim
+        runtime image (no in-process gliner/torch) routes extraction through
+        the inference service.
+        """
         from cogniverse_agents.routing.dspy_relationship_router import (
             create_composable_query_analysis_module,
         )
 
-        # Resolve the configured GLiNER model + remote endpoint so the slim
-        # runtime image (no in-process gliner/torch) routes extraction through
-        # the inference service instead of failing to import gliner.
-        gliner_model = None
-        gliner_inference_url = None
-        try:
-            sys_cfg = self._config_manager.get_system_config()
-            gliner_model = getattr(sys_cfg, "gliner_model", None)
-            gliner_inference_url = (sys_cfg.inference_service_urls or {}).get("gliner")
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("GLiNER config lookup failed for query analysis: %s", exc)
-
-        self._query_analysis_module = create_composable_query_analysis_module(
-            gliner_model=gliner_model,
-            gliner_inference_url=gliner_inference_url,
+        tenant_id = (
+            _request_tenant_id.get()
+            or getattr(self.deps, "tenant_id", None)
+            or SYSTEM_TENANT_ID
         )
-        return self._query_analysis_module
+        gliner_model = self._config_manager.get_routing_config(tenant_id).gliner_model
+        gliner_inference_url = (
+            self._config_manager.get_system_config().inference_service_urls or {}
+        ).get("gliner")
+
+        key = (gliner_model, gliner_inference_url)
+        with self._query_analysis_lock:
+            module = self._query_analysis_modules.get(key)
+            if module is None:
+                module = create_composable_query_analysis_module(
+                    gliner_model=gliner_model,
+                    gliner_inference_url=gliner_inference_url,
+                )
+                self._query_analysis_modules[key] = module
+        return module
 
     @staticmethod
     def _coerce_evidence_snippet(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
