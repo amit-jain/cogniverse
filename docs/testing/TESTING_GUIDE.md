@@ -200,6 +200,13 @@ fingerprint again before reuse. A healthy, current cluster is reused as-is. A
 stale or unhealthy cluster fails the test session without deleting or replacing
 shared state; repair it, or perform the explicit reset below.
 
+k3d fixes the loadbalancer's published ports when the cluster is created, so a
+cluster created before a host-port mapping was added is unhealthy until it
+publishes it. The failure names the command that adds the missing mappings,
+for example
+`k3d cluster edit cogniverse-e2e --port-add 33912:29012@loadbalancer`; it
+recreates only the loadbalancer.
+
 Do not stop the cluster after an individual pytest command. Once every
 integration and end-to-end check in the campaign has finished, stop it
 explicitly to release its CPU, RAM, and accelerator allocations:

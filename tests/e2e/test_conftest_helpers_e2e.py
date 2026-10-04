@@ -1939,6 +1939,126 @@ class TestSharedClusterOwnership:
             "http://127.0.0.1:33905/v1/models",
         )
 
+    def _reusable_cluster_up_to_ports(self, monkeypatch, port_bindings):
+        import cogniverse_cli.cluster as cluster_cli
+
+        monkeypatch.setattr(
+            cluster_cli,
+            "list_cluster_states",
+            lambda: [
+                {
+                    "name": "cogniverse-e2e",
+                    "servers_running": 1,
+                    "servers_count": 1,
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args, 0),
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_read_e2e_deploy_state", lambda: self._current_identity()
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deploy_reuse_state",
+            lambda repo_root, deployed_state, current_identity=None: (
+                "reusable",
+                "",
+            ),
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_semantic_router_ready", lambda: (True, "")
+        )
+        commands: list[list[str]] = []
+
+        def docker(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps(port_bindings), stderr=""
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", docker)
+        return commands
+
+    @staticmethod
+    def _bindings(mappings):
+        return {
+            f"{node}/tcp": [{"HostIp": "", "HostPort": str(host)}]
+            for host, node in mappings.items()
+        }
+
+    def test_cluster_missing_a_published_sidecar_port_is_not_reused(self, monkeypatch):
+        """A cluster created before video_embed's 33912:29012 mapping existed
+        serves every other port, so only the port check can tell."""
+        published = {
+            host: node
+            for host, node in e2e_conftest.E2E_HOST_PORTS.items()
+            if host != 33912
+        }
+        commands = self._reusable_cluster_up_to_ports(
+            monkeypatch, self._bindings(published)
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == (
+            "unhealthy",
+            "the loadbalancer does not publish 33912:29012; publish them with "
+            "`k3d cluster edit cogniverse-e2e --port-add "
+            "33912:29012@loadbalancer`, which recreates only the loadbalancer",
+        )
+        assert commands == [
+            [
+                "docker",
+                "inspect",
+                "k3d-cogniverse-e2e-serverlb",
+                "--format",
+                "{{json .HostConfig.PortBindings}}",
+            ]
+        ]
+
+    def test_cluster_publishing_every_mapping_is_reused(self, monkeypatch):
+        self._reusable_cluster_up_to_ports(
+            monkeypatch, self._bindings(e2e_conftest.E2E_HOST_PORTS)
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == ("reusable", "")
+
+    def test_a_sidecar_port_published_on_another_host_port_is_missing(
+        self, monkeypatch
+    ):
+        published = dict(e2e_conftest.E2E_HOST_PORTS)
+        del published[33912]
+        published[29012] = 29012
+        self._reusable_cluster_up_to_ports(monkeypatch, self._bindings(published))
+
+        state, detail = e2e_conftest._e2e_cluster_state()
+
+        assert state == "unhealthy"
+        assert "does not publish 33912:29012;" in detail, detail
+
+    def test_loadbalancer_inspection_failure_is_unhealthy(self, monkeypatch):
+        self._reusable_cluster_up_to_ports(monkeypatch, {})
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda command, **kwargs: subprocess.CompletedProcess(
+                command, 1, stdout="", stderr="No such object"
+            ),
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == (
+            "unhealthy",
+            "loadbalancer port inspection failed: docker inspect "
+            "k3d-cogniverse-e2e-serverlb --format "
+            "'{{json .HostConfig.PortBindings}}'\nstderr: No such object",
+        )
+
     def test_started_cluster_waits_for_cluster_runtime_models_and_state(
         self, monkeypatch
     ):

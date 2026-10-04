@@ -1611,7 +1611,54 @@ def _e2e_cluster_state() -> tuple[str, str]:
     )
     if not semantic_router_ready:
         return "unhealthy", semantic_router_detail
+    try:
+        unpublished = _e2e_unpublished_host_ports()
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        return "unhealthy", str(exc)
+    if unpublished:
+        port_adds = " ".join(
+            f"--port-add {mapping}@loadbalancer" for mapping in unpublished
+        )
+        return (
+            "unhealthy",
+            f"the loadbalancer does not publish {', '.join(unpublished)}; "
+            f"publish them with `k3d cluster edit {E2E_CLUSTER_NAME} {port_adds}`, "
+            "which recreates only the loadbalancer",
+        )
     return "reusable", ""
+
+
+def _e2e_unpublished_host_ports() -> list[str]:
+    """``E2E_HOST_PORTS`` mappings the cluster's loadbalancer does not publish.
+
+    k3d fixes the loadbalancer's ports when the cluster is created, so a
+    cluster created before a mapping was added keeps serving without it and
+    every test that reaches that sidecar fails as if it were not deployed.
+    """
+    command = [
+        "docker",
+        "inspect",
+        f"k3d-{E2E_CLUSTER_NAME}-serverlb",
+        "--format",
+        "{{json .HostConfig.PortBindings}}",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"loadbalancer port inspection failed: {shlex.join(command)}\n"
+            f"stderr: {(result.stderr or '').strip()}"
+        )
+    published = {
+        (int(binding["HostPort"]), int(container_port.split("/", 1)[0]))
+        for container_port, bindings in (json.loads(result.stdout) or {}).items()
+        for binding in bindings or []
+        if binding.get("HostPort")
+    }
+    return [
+        f"{host}:{node}"
+        for host, node in E2E_HOST_PORTS.items()
+        if (host, node) not in published
+    ]
 
 
 def _wait_for_e2e_reuse_convergence(
