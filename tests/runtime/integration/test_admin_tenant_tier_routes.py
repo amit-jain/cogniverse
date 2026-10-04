@@ -99,6 +99,22 @@ class TestTierRoundTrip:
                 assert got.json() == {"tenant_id": tenant_id, "tier": tier}
                 assert read_tenant_tier(config_manager, tenant_id) == tier
 
+    async def test_every_listed_tier_is_settable(self, client, config_manager):
+        tenant_id = _seed_tenant()
+        async with client as c:
+            listed = await c.get("/admin/router-tiers")
+            assert listed.status_code == 200
+            assert listed.json() == {
+                "tiers": sorted(ROUTER_TIERS),
+                "default": DEFAULT_ROUTER_TIER,
+            }
+            for tier in listed.json()["tiers"]:
+                response = await c.put(
+                    f"/admin/tenants/{tenant_id}/tier", json={"tier": tier}
+                )
+                assert response.status_code == 200
+                assert read_tenant_tier(config_manager, tenant_id) == tier
+
     async def test_the_simple_form_addresses_the_canonical_tenant(self, client):
         tenant_id = _seed_tenant()
         org_id = tenant_id.split(":")[0]
