@@ -199,6 +199,8 @@ describe('runtime proxy', () => {
       ['POST', '/admin/tenant/acme:prod/approvals/batch_1/item/extra'],
       ['POST', '/agents/annotations/queue/enqueue'],
       ['GET', '/agents/annotations/queue/span-1'],
+      ['GET', '/admin/tenant/acme:prod/orchestration-workflows/abc123'],
+      ['POST', '/admin/tenant/acme:prod/orchestration-workflows/abc123/annotation/extra'],
     ]) {
       const response = await app.request(`/api/runtime${path}`, { method });
       expect(response.status).toBe(404);
@@ -245,6 +247,8 @@ describe('runtime proxy', () => {
       ['GET', '/agents/annotations/queue'],
       ['POST', '/agents/annotations/queue/span-1/assign'],
       ['POST', '/agents/annotations/queue/span-1/complete'],
+      ['GET', '/admin/tenant/acme:prod/orchestration-workflows?lookback_hours=24'],
+      ['POST', '/admin/tenant/acme:prod/orchestration-workflows/abc123/annotation'],
     ];
     for (const [method, path] of calls) {
       const response = await app.request(`/api/runtime${path}`, { method });

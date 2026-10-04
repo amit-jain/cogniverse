@@ -517,7 +517,8 @@ uses the priority default, while an explicit value, including `0`, is honored.
 per-agent-type Phoenix annotation name (`{agent_type}_annotation`; routing keeps `routing_annotation`,
 and `RoutingAnnotationStorage` remains as an alias);
 `routing/orchestration_annotation_storage.py`'s `OrchestrationAnnotationStorage` does the same for
-orchestration-workflow-level annotations.
+orchestration-workflow-level annotations, under `ORCHESTRATION_ANNOTATION_NAME`
+(`orchestration_quality`); `store_annotation()` raises when the backend refuses the write.
 
 ---
 

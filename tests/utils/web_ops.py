@@ -1,10 +1,10 @@
 """The runtime the web client's operations views talk to, for browser tests.
 
-The tenant admin, tenant self-service, approvals, profile admin, agents and
-ingestion routers are mounted at the paths the runtime mounts them on, over the
-caller's real config store and schema loader, with a cluster-events channel
-of their own so tenant deletes and session closes reach this worker the way
-they reach a runtime replica.
+The tenant admin, tenant self-service, approvals, orchestration annotation,
+profile admin, agents and ingestion routers are mounted at the paths the
+runtime mounts them on, over the caller's real config store and schema loader,
+with a cluster-events channel of their own so tenant deletes and session
+closes reach this worker the way they reach a runtime replica.
 The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL``, as a worker pod runs it.
@@ -36,7 +36,14 @@ from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
-from cogniverse_runtime.routers import admin, agents, approvals, ingestion, tenant
+from cogniverse_runtime.routers import (
+    admin,
+    agents,
+    approvals,
+    ingestion,
+    orchestration_annotations,
+    tenant,
+)
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.web_client import serve_app
 
@@ -116,6 +123,7 @@ def serve_ops_runtime(
     app.include_router(tm.router, prefix="/admin")
     app.include_router(tenant.router, prefix="/admin/tenant")
     app.include_router(approvals.router, prefix="/admin/tenant")
+    app.include_router(orchestration_annotations.router, prefix="/admin/tenant")
     app.include_router(agents.router, prefix="/agents")
     app.include_router(ingestion.router, prefix="/ingestion")
     app.include_router(status_api.router, prefix="/ingestion")

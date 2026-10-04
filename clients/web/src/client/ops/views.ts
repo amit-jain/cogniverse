@@ -6,6 +6,7 @@ import { MemoryView } from './MemoryView';
 import { OptimizationView } from './OptimizationView';
 import { ProfilesView } from './ProfilesView';
 import { TenantsView } from './TenantsView';
+import { WorkflowReviewsView } from './WorkflowReviewsView';
 
 export interface OpsView {
   id: string;
@@ -21,4 +22,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'memory', label: 'Memory', component: MemoryView },
   { id: 'approvals', label: 'Approvals', component: ApprovalsView },
   { id: 'annotations', label: 'Annotation queue', component: AnnotationsView },
+  { id: 'workflows', label: 'Workflow reviews', component: WorkflowReviewsView },
 ];

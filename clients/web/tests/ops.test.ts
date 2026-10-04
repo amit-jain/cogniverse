@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { queueSummary } from '../src/client/ops/AnnotationsView';
 import { changedCorrections } from '../src/client/ops/ApprovalsView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
+import { splitList } from '../src/client/ops/WorkflowReviewsView';
 import { errorMessage } from '../src/client/ops/http';
 import { formatArgoTime } from '../src/client/ops/OptimizationView';
 import { parseSse } from '../src/client/ops/sse';
@@ -117,6 +118,17 @@ describe('changedCorrections', () => {
 describe('queueSummary', () => {
   it('counts every status in a fixed order, zero for one the queue does not report', () => {
     expect(queueSummary({ expired: 2, pending: 7 })).toBe('7 pending, 0 assigned, 2 expired, 0 completed.');
+  });
+});
+
+describe('splitList', () => {
+  it('splits on commas and line breaks, trimming and dropping blanks', () => {
+    expect(splitList(' search_agent, report_agent ,\n\nsummarizer_agent\n')).toEqual([
+      'search_agent',
+      'report_agent',
+      'summarizer_agent',
+    ]);
+    expect(splitList(' , \n ')).toEqual([]);
   });
 });
 

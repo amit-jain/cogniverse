@@ -465,6 +465,7 @@ The server uses modular routers for different functionality:
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
+| `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -1369,6 +1370,14 @@ Generated examples the confidence extractor did not auto-approve wait in the ten
 - `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise). An item with `corrections_required` (a `WorkflowExecutionSchema` record) is not regenerated: its rejection merges the corrections into a replacement, so a rejection without one answers **400**.
 - An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
 - A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
+
+### Tenant Orchestration Reviews
+
+The orchestrator records each workflow as a `cogniverse.orchestration` span in the tenant's project: the query in `input.value`, the workflow in `output.value`. A review is stored as the span's `orchestration_quality` annotation.
+
+**GET /admin/tenant/{tenant_id}/orchestration-workflows** — Workflows of the last `lookback_hours` (1–720, default 24), newest first, at most `limit` (1–500, default 50). Response: `{workflows: [{span_id, start_time, query, workflow_id, pattern, agent_sequence, execution_order, execution_time, tasks_completed, success, error_summary, review}, ...]}`, where `review` is the latest `{annotator, label, score, annotation_source, pattern_is_optimal, agents_are_correct, execution_order_is_optimal, improvement_notes}` or `null`. A telemetry read failure answers **502** `telemetry_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/orchestration-workflows/{span_id}/annotation** — Body: `start_time` (the listed value, with its timezone), `annotator`, `quality_label` (`failed`, `poor`, `acceptable`, `good`, `excellent`), `quality_score` (0–1), `pattern_is_optimal`, `agents_are_correct`, `execution_order_is_optimal`, and optionally `suggested_pattern` (`parallel`, `sequential`, `conditional`, `mixed`), `pattern_feedback`, `missing_agents`, `unnecessary_agents`, `suggested_execution_order`, `execution_order_feedback`, `what_went_well`, `what_went_wrong`, `improvement_notes`. The workflow's recorded values are read from its span, not from the request; suggested agents are its agent sequence plus `missing_agents` minus `unnecessary_agents`. Response: the workflow with its new `review`. A span not found at `start_time` answers **404**; a failed annotation write answers **502** `annotation_not_stored`.
 
 ### Knowledge Endpoints
 
