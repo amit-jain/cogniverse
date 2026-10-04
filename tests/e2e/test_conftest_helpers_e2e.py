@@ -3096,6 +3096,71 @@ class TestSharedClusterOwnership:
         ) in str(raised.value)
 
 
+class TestSidecarsEnabledOnlyBySet:
+    """Image builds and tag overrides follow the enabled sidecars. A sidecar
+    switched by ``--set`` alone must count, or it deploys on the chart's
+    static tag, which no build produced."""
+
+    _CHART_INFERENCE = {
+        "inference": {
+            "face_embed": {"enabled": False, "image": {"tag": "0.1.0"}},
+            "colbert_pylate": {"enabled": True, "image": {"tag": "0.1.0"}},
+            "code_colbert_pylate": {"enabled": True, "image": {"tag": "0.1.0"}},
+        }
+    }
+
+    def _inputs(self, tmp_path, monkeypatch, extra_set):
+        from tests.e2e.deployment import conftest as deployment
+
+        repo_root, _ = TestSharedClusterOwnership._seed_git_repo(tmp_path)
+        TestSharedClusterOwnership._commit_change(
+            repo_root,
+            "charts/cogniverse/values.yaml",
+            yaml.safe_dump(self._CHART_INFERENCE),
+            "chart sidecars",
+        )
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(deployment, "e2e_llm_serving_mode", lambda: "modal")
+        inputs = deployment.deployment_helm_inputs(repo_root, extra_set=extra_set)
+        return inputs, images_mod.dev_versions(repo_root)
+
+    def test_a_sidecar_enabled_only_by_set_gets_its_dev_tag(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, versions = self._inputs(
+            tmp_path, monkeypatch, {"inference.face_embed.enabled": "true"}
+        )
+        dev_tag = versions["face_embed"].replace("+", "-")
+
+        overrides = inputs["helm_set_overrides"]
+        assert overrides["inference.face_embed.enabled"] == "true"
+        assert overrides["inference.face_embed.image.tag"] == dev_tag
+        assert dev_tag != "0.1.0"
+        assert f"cogniverse/face-embed:{dev_tag}" in inputs["image_tags"]
+
+    def test_a_sidecar_disabled_only_by_set_is_neither_built_nor_pinned(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, _ = self._inputs(
+            tmp_path, monkeypatch, {"inference.code_colbert_pylate.enabled": "false"}
+        )
+
+        overrides = inputs["helm_set_overrides"]
+        assert "inference.code_colbert_pylate.image.tag" not in overrides
+        # colbert_pylate shares the pylate image, so the image stays built.
+        assert "inference.colbert_pylate.image.tag" in overrides
+
+    def test_no_enablement_in_set_leaves_the_values_files_alone(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, _ = self._inputs(
+            tmp_path, monkeypatch, {"runtime.sandbox.enabled": "true"}
+        )
+
+        assert inputs["image_values"] == inputs["helm_values"]
+        assert "inference.face_embed.image.tag" not in inputs["helm_set_overrides"]
+
+
 @pytest.mark.e2e
 def test_conftest_helpers_self_check(phoenix_client_session):
     """One self-check covering every conftest-helper contract.
