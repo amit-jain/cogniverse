@@ -1535,6 +1535,10 @@ class AgentDispatcher:
         reads the registry."""
         await self._registry.refresh()
 
+    def is_registered(self, agent_name: str) -> bool:
+        """Whether the registry, as last refreshed, serves ``agent_name``."""
+        return self._registry.get_agent(agent_name) is not None
+
     def supports_token_stream(self, agent_name: str) -> bool:
         """Return the registered answer-token streaming declaration."""
         agent = self._registry.get_agent(agent_name)

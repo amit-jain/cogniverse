@@ -34,8 +34,17 @@ import json
 import logging
 import time
 import uuid
-from contextlib import aclosing
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
+from contextlib import aclosing, contextmanager
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+)
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -114,7 +123,7 @@ def set_continuation_store(store: Optional[ContinuationStore]) -> None:
     _continuation_store = store
 
 
-def _require_continuation_store() -> ContinuationStore:
+def require_continuation_store() -> ContinuationStore:
     if _continuation_store is None:
         raise SessionStateUnavailable(
             "a turn with tool calls needs the shared continuation store, and "
@@ -126,6 +135,36 @@ def _require_continuation_store() -> ContinuationStore:
 def in_flight_count() -> int:
     """Number of turns currently executing (streamed and non-streamed)."""
     return len(_in_flight)
+
+
+@contextmanager
+def in_flight_turn() -> Iterator[None]:
+    """Count the enclosed turn in ``in_flight_count`` while it runs."""
+    handle = object()
+    _in_flight.add(handle)
+    try:
+        yield
+    finally:
+        _in_flight.discard(handle)
+
+
+class DispatcherNotReady(RuntimeError):
+    """The runtime has not wired or built its dispatcher yet."""
+
+
+def current_dispatcher() -> Any:
+    """The dispatcher turns run on.
+
+    Raises:
+        DispatcherNotReady: no provider is wired, or it has not built one.
+        Exception: whatever the provider raised building it.
+    """
+    if _dispatcher_provider is None:
+        raise DispatcherNotReady("Runtime initialising; dispatcher not wired.")
+    dispatcher = _dispatcher_provider()
+    if dispatcher is None:
+        raise DispatcherNotReady("Runtime initialising; dispatcher not built yet.")
+    return dispatcher
 
 
 def resolve_tenant(api_key: str) -> Optional[str]:
@@ -502,7 +541,7 @@ def _finalize_usage(
     }
 
 
-def _error_response(
+def error_response(
     status_code: int,
     message: str,
     code: str,
@@ -531,7 +570,7 @@ class StreamedAnswerDiverged(RuntimeError):
     """
 
 
-def _failure_body(exc: BaseException, agent: str) -> Dict[str, str]:
+def failure_body(exc: BaseException, agent: str) -> Dict[str, str]:
     """What a ``/v1`` client is told about a failure it did not cause.
 
     The exception text stays server-side: a backend error carries the URL it
@@ -553,7 +592,7 @@ def _failure_body(exc: BaseException, agent: str) -> Dict[str, str]:
     }
 
 
-_UNAUTHORIZED = dict(
+UNAUTHORIZED = dict(
     status_code=401,
     message="Invalid or missing API key.",
     code="invalid_api_key",
@@ -562,17 +601,17 @@ _UNAUTHORIZED = dict(
 
 
 def _unavailable(message: str) -> JSONResponse:
-    return _error_response(503, message, "service_unavailable", err_type="server_error")
+    return error_response(503, message, "service_unavailable", err_type="server_error")
 
 
-def _dependency_unavailable(exc: BaseException, dependency: str) -> JSONResponse:
+def dependency_unavailable(exc: BaseException, dependency: str) -> JSONResponse:
     """503 for a dependency this replica could not reach.
 
     The client is told which dependency and which exception type; the text,
     which carries the backend URL and its credentials, stays in the log.
     """
     error_type = type(leaf_exceptions(exc)[0]).__name__
-    return _error_response(
+    return error_response(
         503,
         f"The {dependency} is unavailable ({error_type}). See server logs for detail.",
         "service_unavailable",
@@ -713,7 +752,7 @@ def build_dispatch_context(
     return context
 
 
-async def _run_turn(
+async def run_turn(
     dispatcher: Any,
     agent_name: str,
     dispatch_args: Dict[str, Any],
@@ -739,7 +778,7 @@ async def _run_turn(
     )
 
     if context.get("tool_results"):
-        state = await _require_continuation_store().pop(
+        state = await require_continuation_store().pop(
             tenant_id,
             agent_name,
             seed,
@@ -763,7 +802,7 @@ async def _run_turn(
         tool_calls = to_openai_tool_calls(pending)
         state = result.get("continuation_state")
         if isinstance(state, dict) and state:
-            await _require_continuation_store().put(
+            await require_continuation_store().put(
                 tenant_id, agent_name, seed, [c["id"] for c in tool_calls], state
             )
         usage = _finalize_usage(tracker, query, history, json.dumps(tool_calls))
@@ -771,7 +810,7 @@ async def _run_turn(
 
     answer = extract_answer_text(result)
     usage = _finalize_usage(tracker, query, history, answer)
-    return {"kind": "answer", "answer": answer, "usage": usage}
+    return {"kind": "answer", "answer": answer, "usage": usage, "payload": result}
 
 
 def _sse(payload: Dict[str, Any]) -> str:
@@ -802,7 +841,7 @@ def _error_frame(exc: BaseException, agent_name: str) -> str:
     return _sse(
         {
             "error": {
-                **_failure_body(exc, agent_name),
+                **failure_body(exc, agent_name),
                 "type": "server_error",
                 "code": "service_unavailable" if unavailable else "internal_error",
             }
@@ -848,7 +887,7 @@ async def _stream_turn(
 ) -> AsyncIterator[str]:
     """Stream one turn as SSE by chunking the finished answer."""
     task = asyncio.create_task(
-        _run_turn(
+        run_turn(
             dispatcher,
             agent_name,
             dispatch_args,
@@ -944,6 +983,135 @@ def use_token_stream(dispatcher: Any, agent_name: str, has_tool_results: bool) -
     return dispatcher.supports_token_stream(agent_name)
 
 
+async def answer_token_events(
+    dispatcher: Any,
+    agent_name: str,
+    dispatch_args: Dict[str, Any],
+    tenant_id: str,
+    external_tools: Optional[List[Dict[str, Any]]] = None,
+    sampling: Optional[Dict[str, Any]] = None,
+    tools_forbidden: bool = False,
+) -> AsyncIterator[Dict[str, Any]]:
+    """The token path of one turn as surface-neutral events.
+
+    Yields, in order of arrival:
+
+    - ``{"kind": "status", "phase", "message"}`` for each progress event that
+      is not an answer token;
+    - ``{"kind": "text", "delta"}`` for each piece of reply text;
+    - exactly one terminal event: ``{"kind": "answer", "text", "payload"}``,
+      ``{"kind": "tool_calls", "tool_calls", "payload"}`` (OpenAI
+      ``message.tool_calls`` shape, its continuation already stored), or
+      ``{"kind": "error", "message", "agent", "error_type"}``.
+
+    An agent emits a token event per streamed field, so only the field that
+    carries the answer (``is_answer_field``) becomes text, and the first such
+    field seen is the one followed: a research agent's decomposition and gap
+    list travel on the same channel as its summary and are not the reply.
+
+    Whatever was streamed is reconciled against the answer of the final
+    payload, so the deltas of a streamed turn always concatenate to the answer
+    of the same turn served non-streamed.
+
+    Raises:
+        ToolsForbiddenError: the agent asked for tool calls on a turn that
+            forbade them.
+        StreamedAnswerDiverged: the final answer does not continue the text
+            already streamed.
+        SessionStateUnavailable: a suspended turn could not store its
+            continuation.
+    """
+    query = dispatch_args["query"]
+    history = dispatch_args["conversation_history"]
+    seed = derive_request_seed(query, history)
+    context = build_dispatch_context(
+        dispatch_args, tenant_id, seed, external_tools, sampling or {}
+    )
+    streamed = ""
+    answer_field: Optional[str] = None
+    async with aclosing(
+        dispatcher.dispatch_stream(agent_name, query, context)
+    ) as events:
+        async for event in events:
+            if event.get("type") == "error":
+                # The agent layer already withheld the exception text; carry
+                # the identity it named through unchanged.
+                yield {
+                    "kind": "error",
+                    "message": str(event.get("message", "")),
+                    "agent": str(event.get("agent", agent_name)),
+                    "error_type": str(event.get("error_type", "")),
+                }
+                return
+            if event.get("phase") == "token":
+                field = (event.get("data") or {}).get("output_field")
+                if not isinstance(field, str) or not is_answer_field(field):
+                    continue
+                if answer_field is None:
+                    answer_field = field
+                elif field != answer_field:
+                    continue
+                delta = event.get("message") or ""
+                if delta:
+                    streamed += delta
+                    yield {"kind": "text", "delta": delta}
+                continue
+            if event.get("type") in ("status", "partial"):
+                yield {
+                    "kind": "status",
+                    "phase": str(event.get("phase", "")),
+                    "message": str(event.get("message", "")),
+                }
+                continue
+            if event.get("type") != "final":
+                continue
+
+            payload = event.get("data") or {}
+            pending = payload.get("pending_tool_calls")
+            if pending:
+                if tools_forbidden:
+                    raise ToolsForbiddenError(
+                        f"Agent '{agent_name}' requested {len(pending)} tool "
+                        'call(s) on a turn sent with tool_choice "none"'
+                    )
+                tool_calls = to_openai_tool_calls(pending)
+                state = payload.get("continuation_state")
+                if isinstance(state, dict) and state:
+                    await require_continuation_store().put(
+                        tenant_id,
+                        agent_name,
+                        seed,
+                        [call["id"] for call in tool_calls],
+                        state,
+                    )
+                yield {
+                    "kind": "tool_calls",
+                    "tool_calls": tool_calls,
+                    "payload": payload,
+                }
+                return
+
+            answer = extract_answer_text(payload)
+            if not streamed:
+                if answer:
+                    streamed = answer
+                    yield {"kind": "text", "delta": answer}
+            elif answer != streamed:
+                if not answer.startswith(streamed):
+                    raise StreamedAnswerDiverged(
+                        f"Agent '{agent_name}' streamed {len(streamed)} "
+                        f"characters of {answer_field!r} that its final "
+                        "answer does not begin with; the streamed reply "
+                        "cannot be completed"
+                    )
+                remainder = answer[len(streamed) :]
+                streamed = answer
+                yield {"kind": "text", "delta": remainder}
+            yield {"kind": "answer", "text": streamed, "payload": payload}
+            return
+    yield {"kind": "answer", "text": streamed, "payload": None}
+
+
 async def _stream_tokens(
     dispatcher: Any,
     agent_name: str,
@@ -957,27 +1125,11 @@ async def _stream_tokens(
     tools_forbidden: bool = False,
     include_usage: bool = False,
 ) -> AsyncIterator[str]:
-    """Stream the agent's answer tokens as they are produced.
-
-    An agent emits a token event per streamed field, so the router forwards
-    only the field that carries the answer (``is_answer_field``) and locks
-    onto the first one it sees: a research agent's decomposition and gap list
-    travel on the same channel as its summary and are not the reply.
-
-    Whatever the agent streamed is reconciled against the answer of its final
-    payload, so the deltas of a streamed turn always concatenate to the body
-    of the same turn served non-streamed.
-    """
+    """Stream the agent's answer tokens as they are produced."""
     query = dispatch_args["query"]
     history = dispatch_args["conversation_history"]
-    seed = derive_request_seed(query, history)
-    context = build_dispatch_context(
-        dispatch_args, tenant_id, seed, external_tools, sampling or {}
-    )
     handle = object()
     _in_flight.add(handle)
-    streamed = ""
-    answer_field: Optional[str] = None
 
     def content(text: str) -> str:
         return _chunk(
@@ -994,60 +1146,38 @@ async def _stream_tokens(
             model,
             [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
         )
+        streamed = ""
         async with aclosing(
-            dispatcher.dispatch_stream(agent_name, query, context)
+            answer_token_events(
+                dispatcher,
+                agent_name,
+                dispatch_args,
+                tenant_id,
+                external_tools,
+                sampling,
+                tools_forbidden,
+            )
         ) as events:
             async for event in events:
-                if event.get("type") == "error":
-                    # The agent layer already withheld the exception text; carry
-                    # the identity it named through unchanged.
+                kind = event["kind"]
+                if kind == "text":
+                    yield content(event["delta"])
+                elif kind == "error":
                     yield _sse(
                         {
                             "error": {
-                                "message": str(event.get("message", "")),
+                                "message": event["message"],
                                 "type": "server_error",
                                 "code": "internal_error",
-                                "agent": str(event.get("agent", agent_name)),
-                                "error_type": str(event.get("error_type", "")),
+                                "agent": event["agent"],
+                                "error_type": event["error_type"],
                             }
                         }
                     )
                     yield "data: [DONE]\n\n"
                     return
-                if event.get("phase") == "token":
-                    field = (event.get("data") or {}).get("output_field")
-                    if not isinstance(field, str) or not is_answer_field(field):
-                        continue
-                    if answer_field is None:
-                        answer_field = field
-                    elif field != answer_field:
-                        continue
-                    delta = event.get("message") or ""
-                    if delta:
-                        streamed += delta
-                        yield content(delta)
-                    continue
-                if event.get("type") != "final":
-                    continue
-
-                payload = event.get("data") or {}
-                pending = payload.get("pending_tool_calls")
-                if pending:
-                    if tools_forbidden:
-                        raise ToolsForbiddenError(
-                            f"Agent '{agent_name}' requested {len(pending)} tool "
-                            'call(s) on a turn sent with tool_choice "none"'
-                        )
-                    tool_calls = to_openai_tool_calls(pending)
-                    state = payload.get("continuation_state")
-                    if isinstance(state, dict) and state:
-                        await _require_continuation_store().put(
-                            tenant_id,
-                            agent_name,
-                            seed,
-                            [call["id"] for call in tool_calls],
-                            state,
-                        )
+                elif kind == "tool_calls":
+                    tool_calls = event["tool_calls"]
                     yield _chunk(
                         completion_id,
                         created,
@@ -1083,23 +1213,8 @@ async def _stream_tokens(
                         )
                     yield "data: [DONE]\n\n"
                     return
-
-                answer = extract_answer_text(payload)
-                if not streamed:
-                    if answer:
-                        streamed = answer
-                        yield content(answer)
-                elif answer != streamed:
-                    if not answer.startswith(streamed):
-                        raise StreamedAnswerDiverged(
-                            f"Agent '{agent_name}' streamed {len(streamed)} "
-                            f"characters of {answer_field!r} that its final "
-                            "answer does not begin with; the streamed reply "
-                            "cannot be completed"
-                        )
-                    remainder = answer[len(streamed) :]
-                    streamed = answer
-                    yield content(remainder)
+                elif kind == "answer":
+                    streamed = event["text"]
         yield _chunk(
             completion_id,
             created,
@@ -1170,7 +1285,7 @@ async def run_turn_until_disconnect(
         await asyncio.gather(watcher, return_exceptions=True)
 
 
-async def _resolve_tenant_off_loop(authorization: Optional[str]) -> Optional[str]:
+async def resolve_tenant_off_loop(authorization: Optional[str]) -> Optional[str]:
     """Resolve the bearer key to a canonical tenant; None means reject.
 
     The dynamic resolver does a blocking backend read, so it runs off the
@@ -1188,12 +1303,12 @@ async def _resolve_tenant_off_loop(authorization: Optional[str]) -> Optional[str
 async def list_models(authorization: Optional[str] = Header(default=None)):
     """The configured model map in OpenAI list form, in configuration order."""
     try:
-        tenant_id = await _resolve_tenant_off_loop(authorization)
+        tenant_id = await resolve_tenant_off_loop(authorization)
     except ConfigStoreUnavailableError as exc:
         logger.warning("harness key store unavailable on /v1/models: %s", exc)
-        return _dependency_unavailable(exc, "harness key store")
+        return dependency_unavailable(exc, "harness key store")
     if tenant_id is None:
-        return _error_response(**_UNAUTHORIZED)
+        return error_response(**UNAUTHORIZED)
     created = int(time.time())
     return JSONResponse(
         {
@@ -1218,16 +1333,16 @@ async def chat_completions(
     authorization: Optional[str] = Header(default=None),
 ):
     try:
-        tenant_id = await _resolve_tenant_off_loop(authorization)
+        tenant_id = await resolve_tenant_off_loop(authorization)
     except ConfigStoreUnavailableError as exc:
         logger.warning("harness key store unavailable on /v1/chat: %s", exc)
-        return _dependency_unavailable(exc, "harness key store")
+        return dependency_unavailable(exc, "harness key store")
     if tenant_id is None:
-        return _error_response(**_UNAUTHORIZED)
+        return error_response(**UNAUTHORIZED)
 
     agent_name = resolve_agent(request.model)
     if agent_name is None:
-        return _error_response(
+        return error_response(
             404,
             f"Model '{request.model}' does not exist or you do not have access to it.",
             "model_not_found",
@@ -1239,22 +1354,20 @@ async def chat_completions(
         external_tools, tools_forbidden = resolve_tool_policy(request)
         include_usage = usage_requested(request)
     except RequestShapeError as exc:
-        return _error_response(400, str(exc), "invalid_request")
+        return error_response(400, str(exc), "invalid_request")
 
-    if _dispatcher_provider is None:
-        return _unavailable("Runtime initialising; dispatcher not wired.")
     try:
-        dispatcher = _dispatcher_provider()
+        dispatcher = current_dispatcher()
+    except DispatcherNotReady as exc:
+        return _unavailable(str(exc))
     except Exception as exc:
         logger.exception("dispatcher provider failed")
-        return _dependency_unavailable(exc, "dispatcher")
-    if dispatcher is None:
-        return _unavailable("Runtime initialising; dispatcher not built yet.")
+        return dependency_unavailable(exc, "dispatcher")
     try:
         await dispatcher.refresh_agent_registry()
     except AgentRegistryUnavailableError as exc:
         logger.warning("agent registry unavailable on /v1/chat: %s", exc)
-        return _dependency_unavailable(exc, "agent registry")
+        return dependency_unavailable(exc, "agent registry")
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -1285,7 +1398,7 @@ async def chat_completions(
         )
 
     task = asyncio.create_task(
-        _run_turn(
+        run_turn(
             dispatcher,
             agent_name,
             dispatch_args,
@@ -1301,14 +1414,14 @@ async def chat_completions(
         outcome = await run_turn_until_disconnect(raw_request, task)
     except ToolsForbiddenError as exc:
         logger.warning("chat.completions turn ignored tool_choice none: %s", exc)
-        return _error_response(
+        return error_response(
             502, str(exc), "tool_choice_violation", err_type="server_error"
         )
     except NoAnswerError as exc:
         # The agent's reported detail can carry a backend's error text; it
         # stays in the log.
         logger.warning("chat.completions turn produced no answer: %s", exc)
-        return _error_response(
+        return error_response(
             502,
             f"Agent '{agent_name}' finished without an answer to return "
             f"(status={exc.status}).",
@@ -1319,12 +1432,12 @@ async def chat_completions(
         )
     except SessionStateUnavailable as exc:
         logger.warning("chat.completions turn lost its session state: %s", exc)
-        return _dependency_unavailable(exc, "session state store")
+        return dependency_unavailable(exc, "session state store")
     except Exception as exc:
         llm_failure = llm_dependency_failure(exc)
         if llm_failure is not None:
             logger.warning("chat.completions turn failed on the chat LLM: %s", exc)
-            return _error_response(
+            return error_response(
                 llm_failure.http_status,
                 llm_failure.message(agent_name),
                 llm_failure.error,
@@ -1337,18 +1450,18 @@ async def chat_completions(
         # the dispatch turn (including a ValueError from agent-input
         # validation) is a server-side failure, not a bad model name.
         logger.exception("chat.completions turn failed")
-        return _error_response(
+        return error_response(
             500,
             code="internal_error",
             err_type="server_error",
-            **_failure_body(exc, agent_name),
+            **failure_body(exc, agent_name),
         )
 
     if outcome is None:
         logger.info(
             "chat.completions client for %s disconnected; turn cancelled", agent_name
         )
-        return _error_response(
+        return error_response(
             499,
             "Client closed the request before the turn completed.",
             "client_disconnected",
