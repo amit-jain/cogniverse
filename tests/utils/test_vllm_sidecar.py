@@ -1027,6 +1027,52 @@ def test_whisper_fallback_installs_audio_extras_before_serving(monkeypatch):
     ]
 
 
+def test_generic_sidecar_gets_the_shared_memory_vllm_documents(monkeypatch, tmp_path):
+    """Every factory sidecar starts with vLLM's documented 4 GB of /dev/shm,
+    not docker's 64 MB default, ahead of its image and serve arguments."""
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    monkeypatch.setattr(sidecar_module, "writable_test_hf_cache", lambda: str(tmp_path))
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    VllmSidecarFactory(configured_urls=()).spawn(model=DENSEON)
+
+    assert sidecar_module.VLLM_SHM_SIZE == "4g"
+    assert len(docker_runs) == 1
+    command = docker_runs[0]
+    container = command[command.index("--name") + 1]
+    assert command[: command.index("vllm/vllm-openai-cpu:v0.23.0")] == [
+        "docker",
+        "run",
+        "-d",
+        "--pull=never",
+        "--name",
+        container,
+        "--label",
+        f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
+        "-p",
+        "30100:8000",
+        "-e",
+        "VLLM_CPU_MEMORY_UTILIZATION=0.05",
+        "-e",
+        "VLLM_CPU_KVCACHE_SPACE=2",
+        "--oom-score-adj=500",
+        "--shm-size=4g",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "-e",
+        f"HOME={sidecar_module.CONTAINER_HF_CACHE}",
+        "-e",
+        f"HF_HOME={sidecar_module.CONTAINER_HF_CACHE}",
+        "-e",
+        "LOGNAME=cogniverse",
+        "-e",
+        "USER=cogniverse",
+        "-v",
+        f"{tmp_path}:{sidecar_module.CONTAINER_HF_CACHE}",
+    ]
+
+
 def test_writable_test_hf_cache_creates_hub_and_returns_root(monkeypatch, tmp_path):
     import tests.utils.vllm_sidecar as sidecar_module
 
@@ -1906,6 +1952,7 @@ def test_exact_model_rocm_spawn_marks_the_container_and_keeps_every_flag(monkeyp
         "--dns",
         "8.8.8.8",
         "--oom-score-adj=400",
+        "--shm-size=4g",
         "--device",
         "/dev/kfd",
         "--device",
@@ -1945,6 +1992,7 @@ def test_exact_model_cpu_spawn_marks_the_container_and_keeps_every_flag(monkeypa
         "--dns",
         "8.8.8.8",
         "--oom-score-adj=400",
+        "--shm-size=4g",
         "-e",
         "VLLM_CPU_KVCACHE_SPACE=4",
         "vllm/vllm-openai-cpu:v0.23.0",

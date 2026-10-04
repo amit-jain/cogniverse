@@ -71,6 +71,12 @@ DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
 DOCKER_IMAGE_PULL_TIMEOUT_SECONDS = 300
 DOCKER_LAUNCH_TIMEOUT_SECONDS = 60
+# Shared memory for every test-owned vLLM container. vLLM's engine and its
+# workers exchange tensors through /dev/shm, and docker's 64 MB default is
+# too small for a multimodal batch; the CPU install guide's docker command
+# passes --shm-size=4g (docs/getting_started/installation/cpu.x86.inc.md,
+# v0.23.0).
+VLLM_SHM_SIZE = "4g"
 # Test-owned Hugging Face cache, deliberately separate from the user's
 # ~/.cache/huggingface: containers previously ran as root and wrote
 # root-owned entries into the personal cache, which breaks host-side
@@ -1303,6 +1309,7 @@ class VllmSidecarFactory:
                 "-e",
                 "VLLM_CPU_KVCACHE_SPACE=2",
                 "--oom-score-adj=500",
+                f"--shm-size={VLLM_SHM_SIZE}",
             ]
             for env_key, env_value in resolved_env.items():
                 cmd.extend(["-e", f"{env_key}={env_value}"])
