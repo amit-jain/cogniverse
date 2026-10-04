@@ -1,18 +1,24 @@
-"""The served GLiNER answers with its pinned checkpoint's own entities.
+"""The served GLiNER image answers with its pinned checkpoint's own entities.
 
-The cluster's gliner service runs the image built from
-``deploy/gliner/Dockerfile`` (its baked ONNX export). These tests check what
-the gateway depends on: the service identifies the pinned checkpoint, the
-exported graph reproduces the PyTorch checkpoint's entities, and concurrent
-requests each get their own answer.
+The cluster's gliner pod runs the image built from ``deploy/gliner/Dockerfile``.
+These tests check what the gateway depends on: the image carries the ONNX
+export of the pinned checkpoint and serves it (no model download), on as many
+threads as the pod's CPU quota grants; the service identifies the checkpoint;
+the exported graph reproduces the PyTorch checkpoint's entities; and
+concurrent requests each get their own answer. The pod is read with
+``kubectl get``/``logs``/``exec`` only.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
+
+from tests.utils.vllm_sidecar import E2E_CONTEXT
 
 pytestmark = [pytest.mark.integration]
 
@@ -105,9 +111,56 @@ def _predict(url: str, text: str, labels: list[str], threshold: float) -> list:
     return response.json()["entities"]
 
 
+NAMESPACE = "cogniverse"
+POD_SELECTOR = "app.kubernetes.io/component=inference-gliner"
+
+
+def _kubectl(*args: str) -> str:
+    result = subprocess.run(
+        ["kubectl", "--context", E2E_CONTEXT, "-n", NAMESPACE, *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
 @pytest.fixture(scope="module")
 def served(remote_inference):
     return remote_inference.resolve("gliner").base_url
+
+
+@pytest.fixture(scope="module")
+def gliner_pod(remote_inference) -> dict:
+    """The e2e pod behind the resolved endpoint, as ``kubectl get`` reports it."""
+    endpoint = remote_inference.resolve("gliner")
+    assert endpoint.provider == "e2e", endpoint
+    pods = json.loads(_kubectl("get", "pods", "-l", POD_SELECTOR, "-o", "json"))
+    running = [pod for pod in pods["items"] if pod["status"].get("phase") == "Running"]
+    assert len(running) == 1, [pod["metadata"]["name"] for pod in pods["items"]]
+    return running[0]
+
+
+def test_image_serves_its_baked_export_of_the_pinned_checkpoint(gliner_pod):
+    name = gliner_pod["metadata"]["name"]
+    export_dir = _kubectl("exec", name, "--", "printenv", "ONNX_MODEL_DIR").strip()
+    source = _kubectl("exec", name, "--", "cat", f"{export_dir}/source.json")
+
+    assert json.loads(source) == {"model": MODEL, "revision": REVISION}
+
+
+def test_image_serves_the_export_on_quota_sized_threads(gliner_pod):
+    name = gliner_pod["metadata"]["name"]
+    cpus = gliner_pod["spec"]["containers"][0]["resources"]["limits"]["cpu"]
+
+    loaded = [
+        line for line in _kubectl("logs", name).splitlines() if "GLiNER loaded" in line
+    ]
+
+    assert [line.split(" INFO gliner_server: ")[1] for line in loaded] == [
+        f"GLiNER loaded: {MODEL} backend=onnxruntime device=cpu threads={cpus}"
+    ]
 
 
 def test_service_identifies_the_pinned_checkpoint(served):
