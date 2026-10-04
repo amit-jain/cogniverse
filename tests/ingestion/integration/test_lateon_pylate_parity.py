@@ -1,19 +1,19 @@
 """Real PyLate-service LateOn parity — served per-token embeddings vs the
-in-process pylate oracle.
+recorded pylate reference.
 
 Resolves the ``colbert_pylate`` service through the shared inference
-fixture (locally: the ``deploy/pylate`` image built and run by the
-fixture) and drives text through ``RemoteColBERTLoader``. Asserts:
+fixture and drives text through ``RemoteColBERTLoader``. Asserts:
 
 - the per-token matrix is 2-D, 128-dim (LateOn stays 128), L2-normalized,
-- PARITY against the in-process ``pylate.models.ColBERT`` oracle at the
-  same pinned revision: cosine ≥ 0.99 per token for both ``is_query=True``
-  and ``is_query=False``, and
+- PARITY against ``pylate.models.ColBERT`` at the same pinned revision,
+  recorded on CPU in ``tests/fixtures/model_references/lateon.json`` by
+  ``scripts/record_model_references.py``: cosine ≥ 0.99 per token for both
+  ``is_query=True`` and ``is_query=False``, and
 - MaxSim ranks a relevant document above a distractor through the remote
   path.
 
 Both sides run pylate's canonical encode — the service inside the
-container, the oracle in-process — so any drift in the served revision,
+container, the reference when it was recorded — so any drift in the served revision,
 the ``/pooling`` request contract, or the response parsing breaks the
 cosine check. The stock vLLM ``/pooling`` route cannot pass this test:
 its request schema carries no attention mask, so PyLate's query expansion
@@ -25,12 +25,12 @@ from __future__ import annotations
 
 import logging
 import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+from tests.utils.model_references import load_reference, reference_embedding
 
 pytestmark = [
     pytest.mark.requires_docker,
@@ -64,19 +64,20 @@ def remote_lateon(resolved_inference_endpoints):
 
 
 @pytest.fixture(scope="module")
-def pylate_oracle():
-    """The in-process reference at the exact served revision, loaded from
-    the writable test-owned cache the service containers also use."""
-    import pylate.models as pylate_models
+def pylate_reference():
+    return load_reference("lateon")
 
-    from tests.utils.vllm_sidecar import writable_test_hf_cache
 
-    return pylate_models.ColBERT(
+def test_the_recorded_reference_covers_both_directions(pylate_reference):
+    assert (pylate_reference["model"], pylate_reference["revision"]) == (
         LATEON_MODEL,
-        device="cpu",
-        revision=LATEON_REVISION,
-        cache_folder=str(Path(writable_test_hf_cache()) / "hub"),
+        LATEON_REVISION,
     )
+    assert pylate_reference["device"] == "cpu"
+    assert [
+        (case["is_query"], np.asarray(case["embedding"]).shape[1])
+        for case in pylate_reference["cases"]
+    ] == [(True, EMBED_DIM), (False, EMBED_DIM)]
 
 
 def _l2(matrix: np.ndarray) -> np.ndarray:
@@ -114,7 +115,9 @@ def test_remote_lateon_is_128d_l2_normalized(remote_lateon):
 
 
 @pytest.mark.parametrize("is_query", [True, False])
-def test_remote_lateon_matches_pylate_oracle(remote_lateon, pylate_oracle, is_query):
+def test_remote_lateon_matches_pylate_reference(
+    remote_lateon, pylate_reference, is_query
+):
     text = (
         "what is a vector database"
         if is_query
@@ -124,13 +127,11 @@ def test_remote_lateon_matches_pylate_oracle(remote_lateon, pylate_oracle, is_qu
     remote_tokens = np.asarray(
         remote_lateon.encode([text], is_query=is_query)[0], dtype=np.float32
     )
-    oracle_tokens = np.asarray(
-        pylate_oracle.encode([text], is_query=is_query)[0], dtype=np.float32
-    )
+    oracle_tokens = reference_embedding(pylate_reference, text, is_query)
 
     assert remote_tokens.shape == oracle_tokens.shape, (
         f"is_query={is_query}: remote shape {remote_tokens.shape} must match "
-        f"pylate oracle shape {oracle_tokens.shape} — both sides run pylate's "
+        f"pylate reference shape {oracle_tokens.shape} — both sides run pylate's "
         f"canonical encode (query expansion, document skiplist), so any shape "
         f"drift means the service is not serving the pinned PyLate contract"
     )
@@ -138,7 +139,7 @@ def test_remote_lateon_matches_pylate_oracle(remote_lateon, pylate_oracle, is_qu
 
     cosines = _per_token_cosine(remote_tokens, oracle_tokens)
     assert float(cosines.min()) >= 0.99, (
-        f"is_query={is_query}: every token must match the pylate oracle at "
+        f"is_query={is_query}: every token must match the pylate reference at "
         f"cosine ≥ 0.99; got min {float(cosines.min()):.4f} "
         f"(per-token cosines: {np.round(cosines, 4).tolist()})"
     )
