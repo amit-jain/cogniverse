@@ -114,8 +114,8 @@ def vespa_instance(shared_vespa):  # noqa: F811
 
 
 @pytest.fixture(scope="module")
-def tomoro_search_url(config_manager, vllm_sidecar):
-    """Spawn the ColQwen3/Tomoro vLLM sidecar and register its URL under the
+def tomoro_search_url(config_manager, remote_inference):
+    """Resolve the cluster's ColQwen3/Tomoro vLLM service and register its URL under the
     embedding service names the ColPali profiles reference. The SearchAgent
     resolves its encoder from the SYSTEM_TENANT_ID config, whose
     ``video_colpali_smol500_mv_frame`` profile (from config.json) names
@@ -124,17 +124,7 @@ def tomoro_search_url(config_manager, vllm_sidecar):
     SearchAgent's eager encoder build needs this URL or it falls back to an
     unsupported local load and raises. Tests that dispatch the search agent
     depend on this."""
-    url = vllm_sidecar.spawn(
-        model="TomoroAI/tomoro-colqwen3-embed-4b",
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     sys_cfg = config_manager.get_system_config()
     sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
     sys_cfg.inference_service_urls["vllm_colpali"] = url
@@ -176,7 +166,7 @@ def config_manager(vespa_instance):
             # Tomoro (qwen3_vl) is remote-only — route the query encoder
             # through the vLLM sidecar. The URL for this service name is
             # injected into SystemConfig.inference_service_urls by the
-            # search test once the sidecar is spawned (tomoro_search_url).
+            # search test once the service is resolved (tomoro_search_url).
             extra_config={"inference_services": {"embedding": "tomoro_embedding"}},
         ),
         tenant_id="test:unit",

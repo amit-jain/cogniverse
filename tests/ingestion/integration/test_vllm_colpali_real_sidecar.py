@@ -33,20 +33,8 @@ COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 
 @pytest.fixture(scope="module")
-def vllm_colpali_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-            "--gpu-memory-utilization",
-            "0.10",
-        ],
-    )
+def vllm_colpali_url(remote_inference):
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 @pytest.fixture(scope="module")

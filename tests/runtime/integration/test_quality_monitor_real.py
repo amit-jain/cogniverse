@@ -88,8 +88,8 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
 
 
 @pytest.fixture(scope="module")
-def vllm_colpali_url(vllm_sidecar, config_manager):
-    """Spawn the ColPali vLLM sidecar and register its URL under the
+def vllm_colpali_url(remote_inference, config_manager):
+    """Resolve the cluster's ColPali vLLM service and register its URL under the
     ``vllm_colpali`` service name. The /search/ route resolves the query
     encoder through QueryEncoderFactory → SystemConfig.inference_service_urls
     (the tenant's ``video_colpali_smol500_mv_frame`` profile declares
@@ -98,17 +98,7 @@ def vllm_colpali_url(vllm_sidecar, config_manager):
     wiring in conftest.py; the module-scoped ``config_manager`` re-seeds
     SystemConfig per module, so the URL does not leak past this module.
     """
-    url = vllm_sidecar.spawn(
-        model=COLPALI_MODEL_NAME,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     sys_cfg = config_manager.get_system_config()
     sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
     sys_cfg.inference_service_urls["vllm_colpali"] = url

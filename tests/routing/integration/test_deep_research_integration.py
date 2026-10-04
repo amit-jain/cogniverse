@@ -59,27 +59,17 @@ def configure_dspy(ensure_host_ollama):
 
 
 @pytest.fixture(scope="module")
-def colpali_query_encoder_url(vllm_sidecar, vespa_instance):
+def colpali_query_encoder_url(remote_inference, vespa_instance):
     """The smol500 profile resolves its query encoder through the
     ``vllm_colpali`` inference service; without a registered URL every
     sub-question search fails and the cycle synthesizes over zero evidence.
-    Spawn the real embed sidecar and persist its URL into the store-backed
+    Resolve the cluster's embed service and persist its URL into the store-backed
     system config, where each fresh create_default_config_manager() (built
     per search call) reads it back."""
     from cogniverse_core.query.encoders import QueryEncoderFactory
     from cogniverse_foundation.config.utils import create_default_config_manager
 
-    url = vllm_sidecar.spawn(
-        model="TomoroAI/tomoro-colqwen3-embed-4b",
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     cm = create_default_config_manager()
     sys_cfg = cm.get_system_config()
     sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)

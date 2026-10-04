@@ -44,25 +44,15 @@ SCHEMAS_DIR = Path("configs/schemas")
 
 
 @pytest.fixture(scope="module")
-def tomoro_url(vllm_sidecar):
+def tomoro_url(remote_inference):
     """Real vLLM sidecar serving Tomoro ColQwen3 via the pooling runner.
 
     Tomoro (qwen3_vl) is remote-only — the ingestion embedding generator and
     the query encoder both route through this URL via RemoteColPaliLoader. Same
     serving config the search-side fixtures use (``--runner pooling --convert
-    embed``); cached across the session by the vllm_sidecar factory.
+    embed``); resolved once per session by ``remote_inference``.
     """
-    return vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 class _BackendAdapter:

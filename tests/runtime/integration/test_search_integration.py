@@ -44,18 +44,8 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
 
 
 @pytest.fixture(scope="module")
-def vllm_colpali_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=COLPALI_MODEL_NAME,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+def vllm_colpali_url(remote_inference):
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +63,7 @@ def colpali_client(vllm_colpali_url):
 
 @pytest.fixture(scope="module")
 def tomoro_search_url(config_manager, vllm_colpali_url):
-    """Inject the spawned Tomoro vLLM sidecar URL into SystemConfig under the
+    """Inject the cluster's Tomoro vLLM service URL into SystemConfig under the
     ``tomoro_embedding`` service name the ``test_colpali`` profile references
     (profile inference_services.embedding). Tomoro (qwen3_vl) is remote-only,
     so the search query encoder must resolve this URL and route through

@@ -14,8 +14,6 @@ import os
 import socket
 import subprocess
 import threading
-import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,9 +32,6 @@ from tests.fixtures.inference import (
     pytest_configure as configure_inference_plugin,
 )
 from tests.utils.vllm_sidecar import (
-    VllmSidecarFactory,
-    _external_endpoints_from_workload,
-    _merge_serve_args,
     listed_model_ids,
     serves_exact_model,
 )
@@ -131,28 +126,6 @@ def _models_server(
         thread.join(timeout=5)
 
 
-def _record_local_spawns(monkeypatch, *, wait: float = 0.0):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    docker_runs: list[list[str]] = []
-    ports = iter(range(30100, 30200))
-    runs_lock = threading.Lock()
-
-    def fake_run(command, **kwargs):
-        if command[:3] == ["docker", "run", "-d"]:
-            with runs_lock:
-                docker_runs.append(list(command))
-            if wait:
-                time.sleep(wait)
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(sidecar_module, "reap_dead_owner_containers", lambda: None)
-    monkeypatch.setattr(sidecar_module, "_free_port", lambda: next(ports))
-    monkeypatch.setattr(sidecar_module, "_wait_for_models", lambda *args: None)
-    monkeypatch.setattr(sidecar_module.subprocess, "run", fake_run)
-    return docker_runs
-
-
 def _e2e_resources(model: str, node_port: int) -> dict:
     labels = {"app": "exact-inference"}
     return {
@@ -224,45 +197,6 @@ def _rendered_cluster_resources(
     }
 
 
-def test_default_candidates_ignore_dev_config_and_chart(monkeypatch, tmp_path):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    dev_config = tmp_path / "dev-config.json"
-    dev_config.write_text(
-        json.dumps(
-            {
-                "inference_service_urls": {
-                    "denseon": "http://127.0.0.1:29006",
-                }
-            }
-        )
-    )
-    monkeypatch.setenv("COGNIVERSE_CONFIG", str(dev_config))
-    monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
-    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-    monkeypatch.setattr(
-        sidecar_module,
-        "_discover_e2e_model_urls",
-        lambda model: (),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        sidecar_module,
-        "_discover_dev_model_urls",
-        lambda model: (),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        sidecar_module,
-        "_discover_external_model_urls",
-        lambda *, context: (),
-        raising=False,
-    )
-
-    assert sidecar_module._configured_model_urls(DENSEON) == ()
-
-
 def test_e2e_discovery_maps_exact_workload_to_published_port(monkeypatch):
     import tests.utils.vllm_sidecar as sidecar_module
 
@@ -313,6 +247,33 @@ def test_e2e_discovery_maps_exact_workload_to_published_port(monkeypatch):
         "k3d-cogniverse-e2e",
     ]
     assert all("k3d-cogniverse-serverlb" not in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("variable", "service"),
+    [
+        ("MODEL_NAME", "gliner"),
+        ("CLAP_EMBED_MODEL", "clap_embed"),
+        ("VIDEO_EMBED_MODEL", "video_embed"),
+        ("FACE_EMBED_MODEL", "face_embed"),
+    ],
+)
+def test_discovery_reads_the_model_variable_each_server_image_uses(variable, service):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    model = get_inference_service_spec(service).model_id
+    container = {
+        "env": [{"name": "PORT", "value": "8000"}, {"name": variable, "value": model}]
+    }
+
+    assert sidecar_module._container_declares_model(container, model) is True
+    assert sidecar_module._container_declares_model(container, DENSEON) is False
+    assert (
+        sidecar_module._container_declares_model(
+            {"env": [{"name": "UNRELATED_MODEL", "value": model}]}, model
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -461,616 +422,6 @@ def test_cluster_discovery_ignores_model_consumers(monkeypatch):
     assert sidecar_module._discover_e2e_model_urls(DENSEON) == ()
 
 
-def test_default_resolution_prefers_dynamic_e2e_mapping_over_dynamic_dev(
-    monkeypatch, tmp_path
-):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    docker_runs = _record_local_spawns(monkeypatch)
-    with (
-        _models_server(DENSEON) as implicit_config_url,
-        _models_server(DENSEON) as e2e_url,
-        _models_server(DENSEON) as dev_url,
-    ):
-        dev_config = tmp_path / "dev-config.json"
-        dev_config.write_text(
-            json.dumps(
-                {
-                    "inference_service_urls": {
-                        "denseon": implicit_config_url,
-                    }
-                }
-            )
-        )
-        monkeypatch.setenv("COGNIVERSE_CONFIG", str(dev_config))
-        monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
-        monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-        monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_e2e_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=e2e_url),
-            ),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_dev_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
-            ),
-            raising=False,
-        )
-
-        resolved = VllmSidecarFactory().spawn(model=DENSEON)
-
-    assert resolved == e2e_url
-    assert docker_runs == []
-
-
-def test_explicit_test_override_precedes_both_clusters(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    docker_runs = _record_local_spawns(monkeypatch)
-    with (
-        _models_server(DENSEON) as explicit_url,
-        _models_server(DENSEON) as e2e_url,
-        _models_server(DENSEON) as dev_url,
-    ):
-        monkeypatch.setenv(
-            "INFERENCE_SERVICE_URLS",
-            json.dumps({"denseon": explicit_url}),
-        )
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_e2e_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=e2e_url),
-            ),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_dev_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
-            ),
-            raising=False,
-        )
-
-        resolved = VllmSidecarFactory().spawn(model=DENSEON)
-
-    assert resolved == explicit_url
-    assert docker_runs == []
-
-
-def test_default_resolution_uses_dynamic_dev_when_e2e_model_is_wrong(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    docker_runs = _record_local_spawns(monkeypatch)
-    with (
-        _models_server(LATEON) as wrong_e2e_url,
-        _models_server(DENSEON) as dev_url,
-    ):
-        monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
-        monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-        monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_e2e_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_e2e_url),
-            ),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_dev_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
-            ),
-            raising=False,
-        )
-
-        resolved = VllmSidecarFactory().spawn(model=DENSEON)
-
-    assert resolved == dev_url
-    assert docker_runs == []
-
-
-def test_default_resolution_spawns_local_when_neither_cluster_is_exact(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    docker_runs = _record_local_spawns(monkeypatch)
-    with _models_server(LATEON) as wrong_url:
-        monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
-        monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-        monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_e2e_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_url),
-            ),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            sidecar_module,
-            "_discover_dev_model_urls",
-            lambda model: (
-                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_url),
-            ),
-            raising=False,
-        )
-
-        resolved = VllmSidecarFactory().spawn(model=DENSEON)
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-    model_flag = docker_runs[0].index("--model")
-    assert docker_runs[0][model_flag + 1] == DENSEON
-
-
-def test_reachable_exact_model_endpoint_is_reused_without_local_spawn(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-    with _models_server(TOMORO) as cluster_url:
-        factory = VllmSidecarFactory()
-        factory.configured_urls = (cluster_url,)
-
-        resolved = factory.spawn(model=TOMORO)
-
-    assert resolved == cluster_url
-    assert docker_runs == []
-
-
-def test_wrong_or_malformed_model_endpoint_spawns_the_exact_model(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-    with (
-        _models_server(DENSEON) as wrong_url,
-        _models_server(TOMORO, malformed=True) as malformed_url,
-    ):
-        factory = VllmSidecarFactory()
-        factory.configured_urls = (wrong_url, malformed_url)
-
-        resolved = factory.spawn(model=TOMORO)
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-    model_flag = docker_runs[0].index("--model")
-    assert docker_runs[0][model_flag + 1] == TOMORO
-
-
-def test_matching_id_in_malformed_model_row_is_rejected(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-    with _models_server(TOMORO, invalid_rows=True) as malformed_url:
-        factory = VllmSidecarFactory()
-        factory.configured_urls = (malformed_url,)
-
-        resolved = factory.spawn(model=TOMORO)
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-
-
-def test_qwen_teacher_endpoint_is_rejected_for_exact_gemma(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-    with _models_server(QWEN_TEACHER) as qwen_url:
-        factory = VllmSidecarFactory()
-        factory.configured_urls = (qwen_url,)
-
-        resolved = factory.spawn(model=TEACHER_GEMMA)
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-    model_flag = docker_runs[0].index("--model")
-    assert docker_runs[0][model_flag + 1] == TEACHER_GEMMA
-
-
-def test_unreachable_endpoint_spawns_the_exact_model(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-    factory = VllmSidecarFactory()
-    factory.configured_urls = ("http://127.0.0.1:1",)
-
-    resolved = factory.spawn(model=DENSEON)
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-    model_flag = docker_runs[0].index("--model")
-    assert docker_runs[0][model_flag + 1] == DENSEON
-
-
-def test_concurrent_consumers_start_one_identical_sidecar(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch, wait=0.05)
-    factory = VllmSidecarFactory()
-    factory.configured_urls = ()
-    start = threading.Barrier(8)
-    urls: list[str] = []
-
-    def resolve():
-        start.wait(timeout=5)
-        urls.append(factory.spawn(model=DENSEON))
-
-    threads = [threading.Thread(target=resolve) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert len(docker_runs) == 1
-    assert urls == ["http://127.0.0.1:30100"] * 8
-
-
-def test_failed_generic_launch_reports_logs_and_removes_container(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    commands: list[list[str]] = []
-
-    def fail_launch(command, **kwargs):
-        commands.append(list(command))
-        if command[:3] == ["docker", "run", "-d"]:
-            raise subprocess.CalledProcessError(
-                125,
-                command,
-                stderr="container creation failed",
-            )
-        if command[:3] == ["docker", "logs", "--tail"]:
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout="vLLM did not start",
-                stderr="",
-            )
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(sidecar_module, "reap_dead_owner_containers", lambda: None)
-    monkeypatch.setattr(sidecar_module, "_free_port", lambda: 30100)
-    monkeypatch.setattr(sidecar_module.subprocess, "run", fail_launch)
-    factory = VllmSidecarFactory(configured_urls=())
-
-    with pytest.raises(RuntimeError) as exc_info:
-        factory.spawn(model=DENSEON)
-
-    message = str(exc_info.value)
-    assert DENSEON in message
-    assert "container creation failed" in message
-    assert "vLLM did not start" in message
-    launch = next(
-        command for command in commands if command[:3] == ["docker", "run", "-d"]
-    )
-    container = launch[launch.index("--name") + 1]
-    assert ["docker", "rm", "-f", container] in commands
-
-
-@pytest.fixture
-def image_provisioning_docker(monkeypatch, tmp_path):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    commands = []
-    state = {"present": False, "failure": None}
-
-    def run(command, **kwargs):
-        commands.append((list(command), kwargs))
-        operation = command[1:3]
-        if operation == ["image", "inspect"]:
-            if state["failure"] == "inspect-timeout":
-                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-            if state["failure"] == "inspect-error":
-                return subprocess.CompletedProcess(
-                    command, 1, stdout="", stderr="Cannot connect to the Docker daemon"
-                )
-            return subprocess.CompletedProcess(
-                command,
-                0 if state["present"] else 1,
-                stdout="[]",
-                stderr=""
-                if state["present"]
-                else f"Error: No such image: {command[-1]}",
-            )
-        if command[1] == "pull":
-            if state.get("pull_pause"):
-                time.sleep(0.05)
-            if state["failure"] == "pull-timeout":
-                raise subprocess.TimeoutExpired(
-                    command, kwargs["timeout"], stderr="registry transfer stalled"
-                )
-            if state["failure"] == "pull-error":
-                raise subprocess.CalledProcessError(
-                    1, command, stderr="registry rejected image manifest"
-                )
-            state["present"] = True
-        if command[1] == "run" and state["failure"] == "launch-timeout":
-            raise subprocess.TimeoutExpired(
-                command, kwargs["timeout"], stderr="container create stalled"
-            )
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(sidecar_module, "reap_dead_owner_containers", lambda: None)
-    monkeypatch.setattr(sidecar_module, "_free_port", lambda: 30100)
-    monkeypatch.setattr(sidecar_module, "_wait_for_models", lambda *args: None)
-    monkeypatch.setattr(sidecar_module, "writable_test_hf_cache", lambda: str(tmp_path))
-    monkeypatch.setattr(sidecar_module.subprocess, "run", run)
-    return commands, state
-
-
-@pytest.mark.parametrize("present", [True, False])
-def test_image_provisioning_precedes_launch_without_implicit_pull(
-    image_provisioning_docker, present
-):
-    commands, state = image_provisioning_docker
-    state["present"] = present
-    image = "fixture/vllm:exact"
-    factory = VllmSidecarFactory(configured_urls=())
-
-    assert factory.spawn(model=DENSEON, image=image) == "http://127.0.0.1:30100"
-    assert [command[1] for command, _ in commands] == (
-        ["image", "run"] if present else ["image", "pull", "run"]
-    )
-    assert commands[0][0] == ["docker", "image", "inspect", image]
-    assert commands[0][1]["timeout"] == 30
-    if not present:
-        assert commands[1][0] == ["docker", "pull", image]
-        assert commands[1][1]["timeout"] == 300
-    launch, options = commands[-1]
-    assert launch[:4] == ["docker", "run", "-d", "--pull=never"]
-    assert launch[launch.index("--model") - 1] == image
-    assert options == {
-        "check": True,
-        "timeout": 60,
-        "capture_output": True,
-        "text": True,
-    }
-
-
-@pytest.mark.parametrize(
-    ("failure", "context", "operations"),
-    [
-        ("inspect-timeout", "30s", ["image"]),
-        ("inspect-error", "Cannot connect to the Docker daemon", ["image"]),
-        ("pull-timeout", "registry transfer stalled", ["image", "pull"]),
-        ("pull-error", "registry rejected image manifest", ["image", "pull"]),
-    ],
-)
-def test_image_provisioning_failure_prevents_launch_and_can_retry(
-    image_provisioning_docker, failure, context, operations
-):
-    commands, state = image_provisioning_docker
-    state["failure"] = failure
-    factory = VllmSidecarFactory(configured_urls=())
-
-    with pytest.raises(RuntimeError) as exc_info:
-        factory.spawn(model=DENSEON, image="fixture/vllm:exact")
-
-    message = str(exc_info.value)
-    assert "fixture/vllm:exact" in message
-    assert context in message
-    assert ("pull" if failure.startswith("pull") else "inspect") in message
-    assert [command[1] for command, _ in commands] == operations
-    assert factory._spawned == {}
-
-    state["failure"] = None
-    commands.clear()
-    assert factory.spawn(model=DENSEON, image="fixture/vllm:exact") == (
-        "http://127.0.0.1:30100"
-    )
-    assert [command[1] for command, _ in commands] == ["image", "pull", "run"]
-
-
-def test_concurrent_image_provisioning_pulls_and_launches_once(
-    image_provisioning_docker,
-):
-    commands, state = image_provisioning_docker
-    state["pull_pause"] = True
-    factory = VllmSidecarFactory(configured_urls=())
-    start = threading.Barrier(8)
-
-    def spawn():
-        start.wait(timeout=5)
-        return factory.spawn(model=DENSEON, image="fixture/vllm:exact")
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(spawn) for _ in range(8)]
-        assert [future.result(timeout=10) for future in futures] == [
-            "http://127.0.0.1:30100"
-        ] * 8
-    assert [command[1] for command, _ in commands] == ["image", "pull", "run"]
-
-
-@pytest.mark.integration
-@pytest.mark.requires_docker
-def test_real_docker_absence_message_drives_provisioning():
-    """The absence branch reads the message real docker emits, and a pull that
-    cannot succeed stops provisioning with that failure quoted."""
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    image = f"cogniverse-absent-{uuid.uuid4().hex[:10]}:404"
-    inspected = subprocess.run(
-        ["docker", "image", "inspect", image],
-        capture_output=True,
-        text=True,
-        timeout=sidecar_module.DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
-    )
-    assert inspected.returncode == 1
-    assert inspected.stdout.strip() == "[]"
-    assert inspected.stderr.strip() == (
-        f"Error response from daemon: No such image: {image}"
-    )
-
-    pulled = subprocess.run(
-        ["docker", "pull", image],
-        capture_output=True,
-        text=True,
-        timeout=sidecar_module.DOCKER_IMAGE_PULL_TIMEOUT_SECONDS,
-    )
-    assert pulled.returncode == 1
-
-    with pytest.raises(RuntimeError) as exc_info:
-        sidecar_module._prepare_docker_image(image)
-
-    assert str(exc_info.value) == (
-        f"Failed to pull vLLM image '{image}' (budget 300s): "
-        f"Command '['docker', 'pull', '{image}']' returned non-zero exit status 1."
-        f"\nstderr:\n{pulled.stderr}"
-    )
-
-
-def test_launch_timeout_names_launch_budget_and_cleans_up(image_provisioning_docker):
-    commands, state = image_provisioning_docker
-    state.update(present=True, failure="launch-timeout")
-    factory = VllmSidecarFactory(configured_urls=())
-
-    with pytest.raises(RuntimeError) as exc_info:
-        factory.spawn(model=DENSEON, image="fixture/vllm:exact")
-
-    message = str(exc_info.value)
-    assert "launch budget of 60s" in message
-    assert "container create stalled" in message
-    assert DENSEON in message
-    assert [command[1] for command, _ in commands] == ["image", "run", "logs", "rm"]
-    launch = commands[1][0]
-    container = launch[launch.index("--name") + 1]
-    assert commands[-1][0] == ["docker", "rm", "-f", container]
-    assert factory._spawned == {}
-
-
-def test_generic_launch_cleanup_failure_preserves_launch_context(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    commands: list[list[str]] = []
-
-    def fail_launch_and_cleanup(command, **kwargs):
-        commands.append(list(command))
-        if command[:3] == ["docker", "run", "-d"]:
-            raise subprocess.CalledProcessError(
-                125,
-                command,
-                stderr="container creation failed",
-            )
-        if command[:3] == ["docker", "logs", "--tail"]:
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout="model startup logs",
-                stderr="",
-            )
-        if command[:3] == ["docker", "rm", "-f"]:
-            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(sidecar_module, "reap_dead_owner_containers", lambda: None)
-    monkeypatch.setattr(sidecar_module, "_free_port", lambda: 30101)
-    monkeypatch.setattr(sidecar_module.subprocess, "run", fail_launch_and_cleanup)
-
-    with pytest.raises(RuntimeError) as exc_info:
-        VllmSidecarFactory(configured_urls=()).spawn(model=DENSEON)
-
-    message = str(exc_info.value)
-    assert "container creation failed" in message
-    assert "model startup logs" in message
-    assert "cleanup failed: TimeoutExpired" in message
-
-
-def test_generic_teardown_reports_cleanup_failure_and_clears_state(monkeypatch):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    _record_local_spawns(monkeypatch)
-    factory = VllmSidecarFactory(configured_urls=())
-    factory.spawn(model=DENSEON)
-
-    def fail_cleanup(command, **kwargs):
-        return subprocess.CompletedProcess(
-            command,
-            1,
-            stdout="",
-            stderr="permission denied",
-        )
-
-    monkeypatch.setattr(sidecar_module.subprocess, "run", fail_cleanup)
-
-    with pytest.raises(RuntimeError) as exc_info:
-        factory.teardown()
-
-    assert "permission denied" in str(exc_info.value)
-    assert factory._spawned == {}
-
-
-def test_whisper_fallback_installs_audio_extras_before_serving(monkeypatch):
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    resolved = VllmSidecarFactory(configured_urls=()).spawn(
-        model="openai/whisper-tiny",
-        extra_args=[
-            "--runner",
-            "generate",
-            "--max-model-len",
-            "448",
-        ],
-    )
-
-    assert resolved == "http://127.0.0.1:30100"
-    assert len(docker_runs) == 1
-    command = docker_runs[0]
-    assert command[command.index("--entrypoint") + 1] == "sh"
-    image_index = command.index("vllm/vllm-openai-cpu:v0.23.0")
-    assert command[image_index + 1 :] == [
-        "-c",
-        (
-            "pip install --no-cache-dir --quiet --target "
-            "/hf-cache/.pip-audio-extras soundfile librosa || exit 1; "
-            'export PYTHONPATH="/hf-cache/.pip-audio-extras'
-            '${PYTHONPATH:+:$PYTHONPATH}"; '
-            "exec vllm serve openai/whisper-tiny --runner generate "
-            "--max-model-len 448 --gpu-memory-utilization 0.10"
-        ),
-    ]
-
-
-def test_generic_sidecar_gets_the_shared_memory_vllm_documents(monkeypatch, tmp_path):
-    """Every factory sidecar starts with vLLM's documented 4 GB of /dev/shm,
-    not docker's 64 MB default, ahead of its image and serve arguments."""
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    monkeypatch.setattr(sidecar_module, "writable_test_hf_cache", lambda: str(tmp_path))
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    VllmSidecarFactory(configured_urls=()).spawn(model=DENSEON)
-
-    assert sidecar_module.VLLM_SHM_SIZE == "4g"
-    assert len(docker_runs) == 1
-    command = docker_runs[0]
-    container = command[command.index("--name") + 1]
-    assert command[: command.index("vllm/vllm-openai-cpu:v0.23.0")] == [
-        "docker",
-        "run",
-        "-d",
-        "--pull=never",
-        "--name",
-        container,
-        "--label",
-        f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
-        "-p",
-        "30100:8000",
-        "-e",
-        "VLLM_CPU_MEMORY_UTILIZATION=0.05",
-        "-e",
-        "VLLM_CPU_KVCACHE_SPACE=2",
-        "--oom-score-adj=500",
-        "--shm-size=4g",
-        "--user",
-        f"{os.getuid()}:{os.getgid()}",
-        "-e",
-        f"HOME={sidecar_module.CONTAINER_HF_CACHE}",
-        "-e",
-        f"HF_HOME={sidecar_module.CONTAINER_HF_CACHE}",
-        "-e",
-        "LOGNAME=cogniverse",
-        "-e",
-        "USER=cogniverse",
-        "-v",
-        f"{tmp_path}:{sidecar_module.CONTAINER_HF_CACHE}",
-    ]
-
-
 def test_writable_test_hf_cache_creates_hub_and_returns_root(monkeypatch, tmp_path):
     import tests.utils.vllm_sidecar as sidecar_module
 
@@ -1098,184 +449,6 @@ def test_writable_test_hf_cache_raises_with_context_when_unwritable(
             sidecar_module.writable_test_hf_cache()
     finally:
         blocked.chmod(0o755)
-
-
-def test_pinned_fallback_validates_cached_files_then_runs_offline(
-    monkeypatch,
-    tmp_path,
-):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir()
-    (snapshot / "config.json").write_text("{}")
-    downloads: list[tuple[bool, str]] = []
-
-    def cached_snapshot(*, local_files_only, cache_dir, **kwargs):
-        downloads.append((local_files_only, cache_dir))
-        return str(snapshot)
-
-    monkeypatch.setattr(sidecar_module, "snapshot_download", cached_snapshot)
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    VllmSidecarFactory(configured_urls=()).spawn(
-        model="openai/whisper-large-v3-turbo",
-        model_revision="exact-revision",
-        required_snapshot_files=("config.json",),
-        extra_args=["--runner", "generate"],
-    )
-
-    assert downloads == [(True, f"{sidecar_module.TEST_HF_CACHE}/hub")]
-    command = docker_runs[0]
-    offline_index = command.index("HF_HUB_OFFLINE=1")
-    assert command[offline_index - 1] == "-e"
-    image_index = command.index("vllm/vllm-openai-cpu:v0.23.0")
-    assert command[image_index + 1 :] == [
-        "-c",
-        (
-            "pip install --no-cache-dir --quiet --target "
-            "/hf-cache/.pip-audio-extras soundfile librosa || exit 1; "
-            'export PYTHONPATH="/hf-cache/.pip-audio-extras'
-            '${PYTHONPATH:+:$PYTHONPATH}"; '
-            "exec vllm serve openai/whisper-large-v3-turbo --runner generate "
-            "--revision exact-revision --gpu-memory-utilization 0.10"
-        ),
-    ]
-
-
-def test_concurrent_pinned_consumers_provision_and_launch_once(monkeypatch, tmp_path):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir()
-    (snapshot / "config.json").write_text("{}")
-    download_calls = 0
-
-    def cached_snapshot(**kwargs):
-        nonlocal download_calls
-        download_calls += 1
-        time.sleep(0.05)
-        return str(snapshot)
-
-    monkeypatch.setattr(sidecar_module, "snapshot_download", cached_snapshot)
-    docker_runs = _record_local_spawns(monkeypatch)
-    factory = VllmSidecarFactory(configured_urls=())
-    start = threading.Barrier(12)
-    urls: list[str] = []
-
-    def resolve():
-        start.wait(timeout=5)
-        urls.append(
-            factory.spawn(
-                model="openai/whisper-large-v3-turbo",
-                model_revision="exact-revision",
-                required_snapshot_files=("config.json",),
-            )
-        )
-
-    threads = [threading.Thread(target=resolve) for _ in range(12)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert download_calls == 1
-    assert len(docker_runs) == 1
-    assert urls == ["http://127.0.0.1:30100"] * 12
-
-
-def test_pinned_fallback_downloads_missing_files_before_launch(monkeypatch, tmp_path):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir()
-    downloads: list[bool] = []
-
-    def provision_snapshot(*, local_files_only, **kwargs):
-        downloads.append(local_files_only)
-        if not local_files_only:
-            (snapshot / "config.json").write_text("{}")
-        return str(snapshot)
-
-    monkeypatch.setattr(sidecar_module, "snapshot_download", provision_snapshot)
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    VllmSidecarFactory(configured_urls=()).spawn(
-        model="openai/whisper-large-v3-turbo",
-        model_revision="exact-revision",
-        required_snapshot_files=("config.json",),
-    )
-
-    assert downloads == [True, False]
-    assert len(docker_runs) == 1
-
-
-def test_pinned_fallback_rejects_incomplete_download_without_launch(
-    monkeypatch,
-    tmp_path,
-):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir()
-    monkeypatch.setattr(
-        sidecar_module,
-        "snapshot_download",
-        lambda **kwargs: str(snapshot),
-    )
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    with pytest.raises(
-        RuntimeError,
-        match="openai/whisper-large-v3-turbo.*preprocessor_config.json",
-    ):
-        VllmSidecarFactory(configured_urls=()).spawn(
-            model="openai/whisper-large-v3-turbo",
-            model_revision="exact-revision",
-            required_snapshot_files=("preprocessor_config.json",),
-        )
-
-    assert docker_runs == []
-
-
-def test_pinned_fallback_reports_artifact_outage_without_launch(
-    monkeypatch,
-    tmp_path,
-):
-    import tests.utils.vllm_sidecar as sidecar_module
-
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir()
-    downloads: list[bool] = []
-
-    def unavailable_artifact_service(*, local_files_only, **kwargs):
-        downloads.append(local_files_only)
-        if local_files_only:
-            return str(snapshot)
-        raise OSError("artifact service unavailable")
-
-    monkeypatch.setattr(
-        sidecar_module,
-        "snapshot_download",
-        unavailable_artifact_service,
-    )
-    docker_runs = _record_local_spawns(monkeypatch)
-
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            "Failed to provision pinned model 'openai/whisper-large-v3-turbo' "
-            "at exact-revision: artifact service unavailable"
-        ),
-    ):
-        VllmSidecarFactory(configured_urls=()).spawn(
-            model="openai/whisper-large-v3-turbo",
-            model_revision="exact-revision",
-            required_snapshot_files=("preprocessor_config.json",),
-        )
-
-    assert downloads == [True, False]
-    assert docker_runs == []
 
 
 def test_session_config_preserves_distinct_exact_models(monkeypatch, tmp_path):
@@ -1883,12 +1056,12 @@ def test_agent_vespa_fixture_injects_exact_inference_url(monkeypatch):
         store.initialize()
         return ConfigManager(store=store)
 
-    spawn_calls: list[tuple[str, tuple[str, ...]]] = []
+    resolve_calls: list[str] = []
 
-    class Factory:
-        def spawn(self, model, *, extra_args):
-            spawn_calls.append((model, tuple(extra_args)))
-            return "http://127.0.0.1:33901"
+    class Remote:
+        def resolve(self, service):
+            resolve_calls.append(service)
+            return _resolved_endpoint(service, "http://127.0.0.1:33901")
 
     class Adapter:
         def __init__(self, shared_vespa):
@@ -1907,26 +1080,14 @@ def test_agent_vespa_fixture_injects_exact_inference_url(monkeypatch):
         "base_url": "http://127.0.0.1:34180",
         "config_manager": config_manager(),
     }
-    tomoro_url = agents_conftest.tomoro_inference_url.__wrapped__(Factory())
+    tomoro_url = agents_conftest.tomoro_inference_url.__wrapped__(Remote())
     fixture = agents_conftest.vespa_with_schema.__wrapped__(
         shared_vespa,
         tomoro_url,
     )
     result = next(fixture)
     try:
-        assert spawn_calls == [
-            (
-                TOMORO,
-                (
-                    "--runner",
-                    "pooling",
-                    "--convert",
-                    "embed",
-                    "--max-model-len",
-                    "4096",
-                ),
-            )
-        ]
+        assert resolve_calls == ["vllm_colpali"]
         system_config = result["manager"].config_manager.get_system_config()
         assert system_config.inference_service_urls == {
             "vllm_colpali": "http://127.0.0.1:33901"
@@ -2303,48 +1464,6 @@ def test_ingestion_teardown_failure_restores_environment(monkeypatch):
     assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == original_key
 
 
-def test_tomoro_gets_gpu_mem_and_mm_limit_defaults():
-    assert _merge_serve_args(TOMORO, ["--runner", "pooling"]) == [
-        "--runner",
-        "pooling",
-        "--gpu-memory-utilization",
-        "0.10",
-        "--limit-mm-per-prompt",
-        '{"video":0,"image":1}',
-    ]
-
-
-def test_explicit_mm_limit_is_not_duplicated():
-    out = _merge_serve_args(TOMORO, ["--limit-mm-per-prompt", '{"video":0,"image":2}'])
-    assert out.count("--limit-mm-per-prompt") == 1
-    assert out == [
-        "--limit-mm-per-prompt",
-        '{"video":0,"image":2}',
-        "--gpu-memory-utilization",
-        "0.10",
-    ]
-
-
-def test_explicit_gpu_mem_kept_and_mm_limit_still_injected():
-    assert _merge_serve_args(TOMORO, ["--gpu-memory-utilization", "0.20"]) == [
-        "--gpu-memory-utilization",
-        "0.20",
-        "--limit-mm-per-prompt",
-        '{"video":0,"image":1}',
-    ]
-
-
-def test_non_qwen3_model_gets_no_mm_limit():
-    out = _merge_serve_args(LATEON, ["--runner", "pooling"])
-    assert "--limit-mm-per-prompt" not in out
-    assert out == ["--runner", "pooling", "--gpu-memory-utilization", "0.10"]
-
-
-def test_model_name_match_is_case_insensitive():
-    out = _merge_serve_args("TomoroAI/Tomoro-ColQwen3-Embed-4B", [])
-    assert out[out.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
-
-
 class TestAuthenticatedModelListing:
     """Externally served endpoints require the inference API key."""
 
@@ -2367,50 +1486,6 @@ class TestAuthenticatedModelListing:
             assert serves_exact_model(base_url, GEMMA) is False
 
 
-class TestExternallyServedEndpointsAreDiscovered:
-    """Models the cluster does not run are published on the runtime workload."""
-
-    WORKLOAD = {
-        "kind": "Deployment",
-        "metadata": {"name": "cogniverse-runtime", "namespace": "cogniverse"},
-        "spec": {
-            "template": {
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "runtime",
-                            "env": [
-                                {
-                                    "name": "LLM_ENDPOINT",
-                                    "value": "https://student.modal.run/v1",
-                                },
-                                {
-                                    "name": "INFERENCE_SERVICE_URLS",
-                                    "value": json.dumps(
-                                        {
-                                            "gliner": "http://cogniverse-gliner:8080",
-                                            "vllm_llm_teacher": "https://teacher.modal.run",
-                                        }
-                                    ),
-                                },
-                            ],
-                        }
-                    ]
-                }
-            }
-        },
-    }
-
-    def test_external_urls_are_returned_and_cluster_local_ones_are_not(self):
-        assert _external_endpoints_from_workload(self.WORKLOAD) == (
-            "https://student.modal.run",
-            "https://teacher.modal.run",
-        )
-
-    def test_a_workload_publishing_nothing_external_yields_nothing(self):
-        assert _external_endpoints_from_workload({"kind": "Deployment"}) == ()
-
-
 class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
     """A failed cluster query must not read as 'nothing is served remotely'."""
 
@@ -2421,8 +1496,10 @@ class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
 
         monkeypatch.setenv("KUBECONFIG", str(tmp_path / "no-clusters.kubeconfig"))
         with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
-            result = sidecar_module._discover_external_model_urls(
-                context="cogniverse-no-such-kube-context"
+            result = sidecar_module._discover_cluster_model_urls(
+                DENSEON,
+                context="cogniverse-no-such-kube-context",
+                cluster="cogniverse-no-such-cluster",
             )
         assert result == ()
         assert (
@@ -2454,8 +1531,10 @@ class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
         monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
 
         with pytest.raises(sidecar_module.ModelEndpointDiscoveryError) as excinfo:
-            sidecar_module._discover_external_model_urls(
-                context="cogniverse-dead-kube-context"
+            sidecar_module._discover_cluster_model_urls(
+                DENSEON,
+                context="cogniverse-dead-kube-context",
+                cluster="cogniverse-dead-cluster",
             )
         assert excinfo.value.context == "cogniverse-dead-kube-context"
         assert f"127.0.0.1:{dead_port}" in excinfo.value.detail
@@ -2523,9 +1602,7 @@ class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
         assert excinfo.value.detail.startswith("docker ps: ")
         assert str(socket_path) in excinfo.value.detail
 
-    def test_a_reachable_cluster_with_no_external_endpoints_is_silent(
-        self, caplog, monkeypatch
-    ):
+    def test_a_reachable_cluster_with_no_workloads_is_silent(self, caplog, monkeypatch):
         import tests.utils.vllm_sidecar as sidecar_module
 
         monkeypatch.setattr(
@@ -2534,7 +1611,12 @@ class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
             lambda command: {"items": []},
         )
         with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
-            assert sidecar_module._discover_external_model_urls(context="any") == ()
+            assert (
+                sidecar_module._discover_cluster_model_urls(
+                    DENSEON, context="any", cluster="any"
+                )
+                == ()
+            )
         assert [r.getMessage() for r in caplog.records] == []
 
 

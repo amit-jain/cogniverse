@@ -67,19 +67,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
 
 
 @pytest.fixture(scope="session")
-def vllm_sidecar():
-    """Factory for spinning up real vLLM sidecars on demand. See
-    tests/utils/vllm_sidecar.py for usage details."""
-    from tests.utils.vllm_sidecar import VllmSidecarFactory
-
-    factory = VllmSidecarFactory()
-    try:
-        yield factory
-    finally:
-        factory.teardown()
-
-
-@pytest.fixture(scope="session")
 def pylate_server(remote_inference):
     """LateOn served by the cluster's PyLate service (deploy/pylate) exposing
     the production ``/pooling`` contract.

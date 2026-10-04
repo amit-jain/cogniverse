@@ -43,20 +43,8 @@ EMBED_DIM = 320
 
 
 @pytest.fixture(scope="module")
-def tomoro_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=TOMORO_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-            "--gpu-memory-utilization",
-            "0.10",
-        ],
-    )
+def tomoro_url(remote_inference):
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 @pytest.fixture(scope="module")

@@ -24,27 +24,17 @@ COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 
 @pytest.fixture(scope="module")
-def tomoro_client(vllm_sidecar):
+def tomoro_client(remote_inference):
     """Real vLLM-served Tomoro ColQwen3 via RemoteColPaliLoader.
 
     Tomoro (qwen3_vl) is remote-only — the image/document-visual ingestion and
     search paths route image and query embedding through this sidecar. Same
     ``--runner pooling --convert embed`` serving config the other real-boundary
-    visual fixtures use; cached across the session by the vllm_sidecar factory.
+    visual fixtures use; resolved once per session by ``remote_inference``.
     """
     from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 
-    url = vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     loader = RemoteColPaliLoader(
         model_name=COLPALI_MODEL,
         config={"remote_inference_url": url},

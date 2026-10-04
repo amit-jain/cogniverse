@@ -1,24 +1,10 @@
-"""Cluster-first exact-model vLLM fixtures for integration tests.
+"""Remote model endpoints for tests: cluster discovery and model-list probes.
 
-The factory checks explicit test overrides, then dynamically discovers
-host-published inference services in the isolated ``cogniverse-e2e``
-k3d cluster, then the development ``cogniverse`` cluster. It reuses an
-endpoint only when its OpenAI model-list response names the requested
-model exactly. Otherwise it launches an identical local vLLM container.
-
-Usage::
-
-    def test_my_remote_path(vllm_sidecar):
-        url = vllm_sidecar.spawn(
-            model="openai/whisper-tiny",
-            extra_args=["--max-model-len", "448"],
-        )
-        # url is the verified cluster service, or a local fallback
-        # that is cleaned up when the session ends.
-
-The factory caches resolution by model and serving arguments, and
-serializes first use so concurrent consumers cannot launch duplicate
-fallbacks.
+Discovery maps a workload in the isolated ``cogniverse-e2e`` k3d cluster, or
+the development ``cogniverse`` cluster, that serves an exact model to the host
+port its load balancer publishes. ``tests/fixtures/inference.py`` validates
+what it finds; nothing here starts a model. The module also reaps containers
+whose owning pytest process died before its teardown ran.
 """
 
 from __future__ import annotations
@@ -29,20 +15,12 @@ import os
 import shlex
 import socket
 import subprocess
-import threading
 import time
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 import requests
-from huggingface_hub import snapshot_download
-from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
-
-from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
-from cogniverse_runtime.inference_services import parse_inference_service_urls
 
 logger = logging.getLogger(__name__)
 
@@ -62,25 +40,9 @@ def _probe_timeout(base_url: str) -> float:
     return _REMOTE_PROBE_TIMEOUT_S
 
 
-DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
-DEFAULT_HEALTH_DEADLINE_SECONDS = 600
-DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
-DOCKER_IMAGE_PULL_TIMEOUT_SECONDS = 300
-DOCKER_LAUNCH_TIMEOUT_SECONDS = 60
-# Shared memory for every test-owned vLLM container. vLLM's engine and its
-# workers exchange tensors through /dev/shm, and docker's 64 MB default is
-# too small for a multimodal batch; the CPU install guide's docker command
-# passes --shm-size=4g (docs/getting_started/installation/cpu.x86.inc.md,
-# v0.23.0).
-VLLM_SHM_SIZE = "4g"
-# Test-owned Hugging Face cache, deliberately separate from the user's
-# ~/.cache/huggingface: containers previously ran as root and wrote
-# root-owned entries into the personal cache, which breaks host-side
-# (in-process) model loads with permission errors. Test containers mount
-# this directory at /hf-cache and run as the invoking user, so every
-# entry stays user-owned; host-side oracles share it via ``hub/``.
+# Test-owned Hugging Face cache for in-process reference models, kept apart
+# from the user's ~/.cache/huggingface.
 TEST_HF_CACHE = os.path.expanduser("~/.cache/cogniverse-tests/huggingface")
-CONTAINER_HF_CACHE = "/hf-cache"
 
 
 def writable_test_hf_cache() -> str:
@@ -268,27 +230,6 @@ def reap_dead_owner_networks(label: str = OWNER_LABEL) -> list[str]:
     return removed
 
 
-def _merge_serve_args(model: str, extra_args: Optional[list[str]]) -> list[str]:
-    """``extra_args`` plus serving defaults the deploy chart also applies.
-
-    - ``--gpu-memory-utilization 0.10`` when unset (CPU vLLM budgets host RAM
-      from this; the default 0.92 aborts on a loaded test host).
-    - ``--limit-mm-per-prompt {"video":0,"image":1}`` for qwen3_vl (Tomoro
-      ColQwen3): its ViT vision tower makes vLLM's startup profiler allocate a
-      worst-case video attention buffer and OOM. Tomoro embeds image frames,
-      never native video. Mirrors ``charts/.../values*.yaml`` so the sidecar
-      exercises the real serving config.
-    """
-    merged = list(extra_args or [])
-    if not any(a == "--gpu-memory-utilization" for a in merged):
-        merged.extend(["--gpu-memory-utilization", "0.10"])
-    if "colqwen3" in model.lower() and not any(
-        a == "--limit-mm-per-prompt" for a in merged
-    ):
-        merged.extend(["--limit-mm-per-prompt", '{"video":0,"image":1}'])
-    return merged
-
-
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -396,12 +337,6 @@ def serves_exact_model(base_url: str, model: str, timeout: float | None = None) 
     """Return whether an OpenAI-compatible endpoint lists ``model`` exactly."""
     model_ids = listed_model_ids(base_url, timeout)
     return model_ids is not None and model in model_ids
-
-
-def _bare_model(model: object) -> str | None:
-    if not isinstance(model, str) or not model:
-        return None
-    return model[len("openai/") :] if model.startswith("openai/") else model
 
 
 class ModelEndpointDiscoveryError(RuntimeError):
@@ -517,6 +452,13 @@ def _container_tokens(container: object) -> list[str]:
     return tokens
 
 
+# The variables each model server reads its served model from
+# (cogniverse_cli/modal_inference/servers).
+_MODEL_ENV_NAMES = frozenset(
+    {"MODEL_NAME", "CLAP_EMBED_MODEL", "VIDEO_EMBED_MODEL", "FACE_EMBED_MODEL"}
+)
+
+
 def _container_declares_model(container: object, model: str) -> bool:
     if not isinstance(container, dict):
         return False
@@ -525,7 +467,7 @@ def _container_declares_model(container: object, model: str) -> bool:
         for entry in env:
             if (
                 isinstance(entry, dict)
-                and entry.get("name") == "MODEL_NAME"
+                and entry.get("name") in _MODEL_ENV_NAMES
                 and entry.get("value") == model
             ):
                 return True
@@ -741,475 +683,3 @@ def _discover_dev_model_urls(
         context=DEV_CONTEXT,
         cluster=DEV_CLUSTER,
     )
-
-
-def _external_endpoints_from_workload(workload: object) -> tuple[str, ...]:
-    """Return the non-cluster endpoints a workload publishes."""
-    if not isinstance(workload, dict):
-        return ()
-    spec = workload.get("spec")
-    template = spec.get("template") if isinstance(spec, dict) else None
-    pod_spec = template.get("spec") if isinstance(template, dict) else None
-    containers = pod_spec.get("containers") if isinstance(pod_spec, dict) else None
-    if not isinstance(containers, list):
-        return ()
-
-    urls: list[str] = []
-    for container in containers:
-        if not isinstance(container, dict):
-            continue
-        for entry in container.get("env") or []:
-            if not isinstance(entry, dict) or not isinstance(entry.get("value"), str):
-                continue
-            name, value = entry.get("name"), entry["value"]
-            if name == "LLM_ENDPOINT":
-                urls.append(value)
-            elif name == "INFERENCE_SERVICE_URLS":
-                urls.extend((parse_inference_service_urls(value) or {}).values())
-    return tuple(
-        dict.fromkeys(_server_base(url) for url in urls if url.startswith("https://"))
-    )
-
-
-def _discover_external_model_urls(*, context: str) -> tuple[str, ...]:
-    """Collect externally served endpoints published by cluster workloads.
-
-    A context the kubeconfig does not define publishes nothing. One it defines
-    but kubectl cannot query raises, because its workloads may publish the
-    endpoint being resolved.
-    """
-    items = _kubectl_items(
-        context,
-        [
-            "kubectl",
-            "--context",
-            context,
-            "get",
-            "deployments",
-            "--all-namespaces",
-            "-o",
-            "json",
-        ],
-    )
-    if items is None:
-        return ()
-    urls: list[str] = []
-    for item in items:
-        urls.extend(_external_endpoints_from_workload(item))
-    return tuple(dict.fromkeys(urls))
-
-
-def _configured_model_urls(model: str) -> tuple[str, ...]:
-    """Collect explicit, e2e-cluster, then dev-cluster candidates."""
-    candidates: list[str] = []
-
-    env_model = _bare_model(os.environ.get("TEST_LLM_MODEL"))
-    env_api_base = os.environ.get("TEST_LLM_API_BASE")
-    if env_model == model and env_api_base:
-        candidates.append(env_api_base)
-
-    # A URL named for a service is a candidate only for the model that service
-    # serves: the session's own LateOn or Whisper sidecar never serves Gemma.
-    env_urls = parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
-    if env_urls is not None:
-        candidates.extend(
-            url
-            for service, url in env_urls.items()
-            if service in INFERENCE_SERVICE_SPECS
-            and INFERENCE_SERVICE_SPECS[service].model_id == model
-        )
-
-    for candidate in _discover_e2e_model_urls(model):
-        candidates.append(candidate.base_url)
-    for candidate in _discover_dev_model_urls(model):
-        candidates.append(candidate.base_url)
-    candidates.extend(_discover_external_model_urls(context=E2E_CONTEXT))
-
-    return tuple(dict.fromkeys(_server_base(url) for url in candidates if url))
-
-
-def probe_exact_model_endpoints(
-    model: str, urls: tuple[str, ...]
-) -> tuple[ModelListProbe, ...]:
-    """Probe ``urls`` in order, stopping at the first that serves ``model``."""
-    probes: list[ModelListProbe] = []
-    for url in urls:
-        probe = probe_model_list(_server_base(url))
-        probes.append(probe)
-        if probe.serves(model):
-            break
-    return tuple(probes)
-
-
-def find_exact_model_endpoint(model: str, urls: tuple[str, ...]) -> str | None:
-    """Return the first reachable URL with a valid exact-model API response."""
-    probes = probe_exact_model_endpoints(model, urls)
-    if probes and probes[-1].serves(model):
-        return probes[-1].base_url
-    return None
-
-
-def _container_logs(container: str) -> str:
-    try:
-        logs = subprocess.run(
-            ["docker", "logs", "--tail", "200", container],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return f"unable to read container logs: {exc}"
-    return "\n".join(part for part in (logs.stdout, logs.stderr) if part).strip()
-
-
-def _remove_sidecar_container(container: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["docker", "rm", "-f", container],
-            check=False,
-            timeout=30,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return f"cleanup failed: {type(exc).__name__}: {exc}"
-    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-    if result.returncode != 0:
-        return f"cleanup failed with exit {result.returncode}: {detail}"
-    return None
-
-
-def _append_image_command(
-    command: list[str],
-    image: str,
-    model: str,
-    serve_args: list[str],
-) -> None:
-    if "whisper" not in model.lower():
-        command.extend([image, "--model", model, *serve_args])
-        return
-    serve_command = shlex.join(["vllm", "serve", model, *serve_args])
-    # The container runs as the invoking (non-root) user, so pip cannot
-    # write into the image's root-owned venv — install the audio extras
-    # into the writable cache mount and expose them via PYTHONPATH.
-    extras_dir = f"{CONTAINER_HF_CACHE}/.pip-audio-extras"
-    command.extend(
-        [
-            "--entrypoint",
-            "sh",
-            image,
-            "-c",
-            (
-                f"pip install --no-cache-dir --quiet --target {extras_dir} "
-                "soundfile librosa || exit 1; "
-                f'export PYTHONPATH="{extras_dir}${{PYTHONPATH:+:$PYTHONPATH}}"; '
-                f"exec {serve_command}"
-            ),
-        ]
-    )
-
-
-def _wait_for_models(
-    base_url: str, model: str, deadline_seconds: int, container: str
-) -> None:
-    """Poll ``/v1/models`` until vLLM finishes loading the served model."""
-    end = time.monotonic() + deadline_seconds
-    last_err: Optional[str] = None
-    while time.monotonic() < end:
-        if serves_exact_model(base_url, model):
-            return
-        last_err = f"{model!r} absent from a valid /v1/models response"
-        time.sleep(2)
-    raise AssertionError(
-        f"vllm sidecar at {base_url} did not become healthy within "
-        f"{deadline_seconds}s (last error: {last_err})\n"
-        f"--- container logs ---\n{_container_logs(container)}"
-    )
-
-
-@dataclass
-class _SpawnedSidecar:
-    container: str | None
-    base_url: str
-
-
-def _prepare_pinned_snapshot(
-    model: str,
-    revision: str,
-    required_files: tuple[str, ...],
-) -> None:
-    if not required_files:
-        raise ValueError("Pinned model snapshots require an explicit file contract")
-
-    cache_dir = os.path.join(writable_test_hf_cache(), "hub")
-    snapshot_path: str | None = None
-    try:
-        snapshot_path = snapshot_download(
-            repo_id=model,
-            revision=revision,
-            cache_dir=cache_dir,
-            local_files_only=True,
-        )
-    except LocalEntryNotFoundError:
-        pass
-
-    missing = (
-        list(required_files)
-        if snapshot_path is None
-        else [
-            relative_path
-            for relative_path in required_files
-            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
-        ]
-    )
-    if missing:
-        try:
-            snapshot_path = snapshot_download(
-                repo_id=model,
-                revision=revision,
-                cache_dir=cache_dir,
-                local_files_only=False,
-            )
-        except (HfHubHTTPError, LocalEntryNotFoundError, OSError) as exc:
-            raise RuntimeError(
-                f"Failed to provision pinned model {model!r} at {revision}: {exc}"
-            ) from exc
-        missing = [
-            relative_path
-            for relative_path in required_files
-            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
-        ]
-    if missing:
-        raise RuntimeError(
-            f"Pinned model {model!r} at {revision} is missing required files: "
-            + ", ".join(missing)
-        )
-
-
-def _prepare_docker_image(image: str) -> None:
-    """Pull a missing image within its own provisioning budget."""
-    try:
-        inspected = subprocess.run(
-            ["docker", "image", "inspect", image],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(
-            f"Failed to inspect vLLM image {image!r} "
-            f"(budget {DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS}s): {exc}"
-        ) from exc
-    if inspected.returncode == 0:
-        return
-    if f"No such image: {image}" not in inspected.stderr:
-        raise RuntimeError(
-            f"Failed to inspect vLLM image {image!r}: "
-            f"exit {inspected.returncode}: {inspected.stderr}"
-        )
-    try:
-        subprocess.run(
-            ["docker", "pull", image],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=DOCKER_IMAGE_PULL_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        stderr = getattr(exc, "stderr", None)
-        raise RuntimeError(
-            f"Failed to pull vLLM image {image!r} "
-            f"(budget {DOCKER_IMAGE_PULL_TIMEOUT_SECONDS}s): {exc}"
-            + (f"\nstderr:\n{stderr}" if stderr else "")
-        ) from exc
-
-
-@dataclass
-class VllmSidecarFactory:
-    """Per-session manager for exact remote services and local sidecars."""
-
-    image: str = DEFAULT_IMAGE
-    health_deadline_seconds: int = DEFAULT_HEALTH_DEADLINE_SECONDS
-    configured_urls: tuple[str, ...] | None = None
-    _spawned: dict[tuple, _SpawnedSidecar] = field(default_factory=dict)
-    _spawn_lock: threading.Lock = field(
-        default_factory=threading.Lock, init=False, repr=False
-    )
-
-    def spawn(
-        self,
-        model: str,
-        *,
-        model_revision: str | None = None,
-        required_snapshot_files: tuple[str, ...] = (),
-        extra_args: Optional[list[str]] = None,
-        image: Optional[str] = None,
-        device: str = "cpu",
-        env: Optional[dict[str, str]] = None,
-    ) -> str:
-        """Reuse an exact configured model or spawn its identical sidecar."""
-        image = image or self.image
-        key = (
-            model,
-            model_revision,
-            required_snapshot_files,
-            image,
-            tuple(extra_args or ()),
-            device,
-            tuple(sorted((env or {}).items())),
-        )
-        with self._spawn_lock:
-            if key in self._spawned:
-                return self._spawned[key].base_url
-
-            configured_urls = (
-                self.configured_urls
-                if self.configured_urls is not None
-                else _configured_model_urls(model)
-            )
-            configured_url = find_exact_model_endpoint(model, configured_urls)
-            if configured_url is not None:
-                self._spawned[key] = _SpawnedSidecar(
-                    container=None, base_url=configured_url
-                )
-                return configured_url
-
-            resolved_env = dict(env or {})
-            resolved_args = list(extra_args or ())
-            if model_revision is not None:
-                if "--revision" in resolved_args:
-                    raise ValueError(
-                        "Pass the pinned revision through model_revision only"
-                    )
-                _prepare_pinned_snapshot(
-                    model,
-                    model_revision,
-                    required_snapshot_files,
-                )
-                resolved_args.extend(["--revision", model_revision])
-                resolved_env["HF_HUB_OFFLINE"] = "1"
-
-            # Reclaim RAM from sidecars whose owning session was SIGKILLed
-            # before its teardown could run.
-            reap_dead_owner_containers()
-            _prepare_docker_image(image)
-
-            container = f"cogniverse-vllm-test-{uuid.uuid4().hex[:8]}"
-            port = _free_port()
-            cmd = [
-                "docker",
-                "run",
-                "-d",
-                "--pull=never",
-                "--name",
-                container,
-                "--label",
-                f"{OWNER_LABEL}={os.getpid()}",
-                "-p",
-                f"{port}:8000",
-                "-e",
-                "VLLM_CPU_MEMORY_UTILIZATION=0.05",
-                "-e",
-                "VLLM_CPU_KVCACHE_SPACE=2",
-                "--oom-score-adj=500",
-                f"--shm-size={VLLM_SHM_SIZE}",
-            ]
-            for env_key, env_value in resolved_env.items():
-                cmd.extend(["-e", f"{env_key}={env_value}"])
-            if device == "rocm":
-                cmd.extend(
-                    [
-                        "--device",
-                        "/dev/kfd",
-                        "--device",
-                        "/dev/dri",
-                        "--group-add",
-                        "video",
-                        "--group-add",
-                        "render",
-                        "--security-opt",
-                        "seccomp=unconfined",
-                    ]
-                )
-            # Run as the invoking user against the test-owned cache so model
-            # downloads and engine caches stay user-owned on the host. HOME
-            # inside the mount keeps every ~-derived cache path writable;
-            # LOGNAME/USER keep getpass.getuser() working for a uid with no
-            # container passwd entry (torch inductor derives its cache dir
-            # from it and crashes on KeyError otherwise).
-            cmd.extend(
-                [
-                    "--user",
-                    f"{os.getuid()}:{os.getgid()}",
-                    "-e",
-                    f"HOME={CONTAINER_HF_CACHE}",
-                    "-e",
-                    f"HF_HOME={CONTAINER_HF_CACHE}",
-                    "-e",
-                    "LOGNAME=cogniverse",
-                    "-e",
-                    "USER=cogniverse",
-                    "-v",
-                    f"{writable_test_hf_cache()}:{CONTAINER_HF_CACHE}",
-                ]
-            )
-            _append_image_command(
-                cmd,
-                image,
-                model,
-                _merge_serve_args(model, resolved_args),
-            )
-
-            base_url = f"http://127.0.0.1:{port}"
-            try:
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    timeout=DOCKER_LAUNCH_TIMEOUT_SECONDS,
-                    capture_output=True,
-                    text=True,
-                )
-                _wait_for_models(
-                    base_url, model, self.health_deadline_seconds, container
-                )
-            except Exception as exc:
-                stderr = getattr(exc, "stderr", None)
-                details = (
-                    f"{type(exc).__name__}: {exc}"
-                    + (f"\nstderr:\n{stderr}" if stderr else "")
-                    + f"\ncontainer logs:\n{_container_logs(container)}"
-                )
-                if isinstance(exc, subprocess.TimeoutExpired) and exc.cmd == cmd:
-                    details = (
-                        "docker run exceeded the launch budget of "
-                        f"{DOCKER_LAUNCH_TIMEOUT_SECONDS}s\n{details}"
-                    )
-                cleanup_error = _remove_sidecar_container(container)
-                if cleanup_error is not None:
-                    details += f"\n{cleanup_error}"
-                raise RuntimeError(
-                    f"Failed to launch exact vLLM model {model!r} at "
-                    f"{base_url}:\n{details}"
-                ) from exc
-
-            self._spawned[key] = _SpawnedSidecar(container=container, base_url=base_url)
-            return base_url
-
-    def teardown(self) -> None:
-        with self._spawn_lock:
-            cleanup_errors: list[str] = []
-            try:
-                for sidecar in self._spawned.values():
-                    if sidecar.container is None:
-                        continue
-                    cleanup_error = _remove_sidecar_container(sidecar.container)
-                    if cleanup_error is not None:
-                        cleanup_errors.append(f"{sidecar.container}: {cleanup_error}")
-            finally:
-                self._spawned.clear()
-            if cleanup_errors:
-                raise RuntimeError(
-                    "Failed to remove exact vLLM sidecars: " + "; ".join(cleanup_errors)
-                )
