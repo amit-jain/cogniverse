@@ -106,7 +106,10 @@ def _profile_manager_app(tmp_path: Path) -> AppTest:
         import streamlit as st
 
         from cogniverse_dashboard.tabs import backend_profile as bp
-        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            BackendProfileConfig,
+        )
 
         st.session_state["current_tenant"] = "acme:prod"
 
@@ -116,18 +119,22 @@ def _profile_manager_app(tmp_path: Path) -> AppTest:
             "error": None,
         }
 
+        profile = BackendProfileConfig(
+            profile_name="video_colpali_smol500_mv_frame",
+            type="video",
+            description="High quality backend profile",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
+            pipeline_config={"fps": 60},
+            strategies={"search": {"enabled": True}},
+            embedding_type="multi_vector",
+            model_specific={"quantized": False},
+        )
+
         class _Manager:
-            def get_backend_profile(self, profile_name, tenant_id=None, service="backend"):
-                return BackendProfileConfig(
-                    profile_name=profile_name,
-                    type="video",
-                    description="High quality backend profile",
-                    schema_name="video_colpali_smol500_mv_frame",
-                    embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
-                    pipeline_config={"fps": 60},
-                    strategies={"search": {"enabled": True}},
-                    embedding_type="multi_vector",
-                    model_specific={"quantized": False},
+            def get_stored_backend_config(self, tenant_id=None, service="backend"):
+                return BackendConfig(
+                    tenant_id=tenant_id, profiles={profile.profile_name: profile}
                 )
 
         bp.render_profile_manager(

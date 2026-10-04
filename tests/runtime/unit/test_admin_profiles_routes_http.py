@@ -311,7 +311,7 @@ async def test_list_profiles_returns_exact_summaries_and_deployment_flags(env):
             "schema_deployed": False,
         },
     ]
-    assert env.cm.calls["list"] == {"tenant_id": "acme", "service": "backend"}
+    assert env.cm.calls["stored"] == [{"tenant_id": "acme", "service": "backend"}]
     assert env.backend.schema_exists_calls == [
         {"schema_name": "video_colpali_sv", "tenant_id": "acme"},
         {"schema_name": "video_prism_mv", "tenant_id": "acme"},
@@ -409,6 +409,94 @@ async def test_get_profile_schema_lookup_failure_raises_500(env):
     assert env.backend.schema_exists.call_args_list == [
         call(schema_name="video_colpali_sv", tenant_id="acme"),
     ]
+
+
+def _held_copy_with_a_deleted_profile(*args, **kwargs):
+    """This process's held backend config, from before another worker's
+    delete: it still has the profile."""
+    return {
+        "video_colpali": _profile("video_colpali", "video_colpali_sv", "colpali-v1.2")
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_profiles_answers_the_store_not_the_held_copy(env):
+    env.cm.list_backend_profiles = _held_copy_with_a_deleted_profile
+
+    resp = await _get(env.app, "/admin/profiles", tenant_id="acme")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"profiles": [], "total_count": 0, "tenant_id": "acme"}
+    assert env.cm.calls["stored"] == [{"tenant_id": "acme", "service": "backend"}]
+
+
+@pytest.mark.asyncio
+async def test_get_profile_answers_the_store_not_the_held_copy(env):
+    env.cm.get_backend_profile = lambda *args, **kwargs: (
+        _held_copy_with_a_deleted_profile()["video_colpali"]
+    )
+
+    resp = await _get(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
+
+    assert resp.status_code == 404
+    assert resp.json() == {
+        "detail": "Profile 'video_colpali' not found for tenant 'acme'"
+    }
+    assert env.cm.calls["stored"] == [{"tenant_id": "acme", "service": "backend"}]
+
+
+@pytest.mark.parametrize(
+    ("path", "error", "message", "identity"),
+    [
+        (
+            "/admin/profiles",
+            "profile_list_failed",
+            "Listing profiles for tenant 'acme' failed; the runtime log names "
+            "the cause.",
+            {"tenant_id": "acme"},
+        ),
+        (
+            "/admin/profiles/video_colpali",
+            "profile_read_failed",
+            "Reading profile 'video_colpali' failed; the runtime log names the cause.",
+            {"profile_name": "video_colpali", "tenant_id": "acme"},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_profile_reads_whose_store_cannot_be_read_raise_500_not_the_held_copy(
+    env, caplog, path, error, message, identity
+):
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    caplog.set_level(logging.ERROR, logger="cogniverse_runtime.http_errors")
+    env.cm.list_backend_profiles = _held_copy_with_a_deleted_profile
+    env.cm.get_backend_profile = lambda *args, **kwargs: (
+        _held_copy_with_a_deleted_profile()["video_colpali"]
+    )
+
+    def unreadable(tenant_id=None, service="backend"):
+        raise ConfigStoreUnavailableError("config store unreachable")
+
+    env.cm.get_stored_backend_config = unreadable
+
+    resp = await _get(env.app, path, tenant_id="acme")
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "detail": {
+            "error": error,
+            "message": message,
+            "failure": "ConfigStoreUnavailableError",
+            **identity,
+        }
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cogniverse_runtime.http_errors"
+    ] == [f"{error}: ConfigStoreUnavailableError: config store unreachable"]
+    assert env.backend.schema_exists_calls == []
 
 
 @pytest.mark.asyncio
