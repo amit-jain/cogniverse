@@ -1783,6 +1783,10 @@ def test_unresolvable_service_errors_only_the_tests_that_declared_it(
     assert (pytester.path / "discovery.log").read_text().splitlines() == [
         f"e2e {FACE.model_id}",
         f"dev {FACE.model_id}",
+        # The explicit clap URL is matched against the workloads that may
+        # publish it, for their rendered revision.
+        f"e2e {CLAP.model_id}",
+        f"dev {CLAP.model_id}",
     ]
     assert not (pytester.path / "module_fixture.log").exists()
 
@@ -2092,3 +2096,89 @@ def test_concurrent_fixtures_resolve_each_cluster_service_once(monkeypatch):
     )
     assert colpali_requests == [("/v1/models", f"Bearer {API_KEY}")]
     assert denseon_requests == [("/v1/models", f"Bearer {API_KEY}")]
+
+
+def _explicit_candidate(url: str) -> CandidateEndpoint:
+    return CandidateEndpoint(
+        provider="local",
+        base_url=url,
+        credentials=EndpointCredentials(bearer_token=TEST_INFERENCE_API_KEY),
+        identity_evidence=EndpointIdentityEvidence.ENDPOINT,
+    )
+
+
+@pytest.mark.unit
+def test_explicit_cluster_url_takes_its_revision_from_the_workload():
+    """vLLM's /v1/models carries no revision: an explicit URL a cluster
+    workload publishes is verified against that workload's --revision."""
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, requests):
+        discovered: list[str] = []
+
+        def discover(spec):
+            discovered.append(spec.name)
+            return (
+                _discovered("http://127.0.0.1:1", COLPALI.model_revision),
+                _discovered(url, COLPALI.model_revision),
+            )
+
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)}, discover=discover
+        )
+        try:
+            endpoint = provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert (endpoint.provider, endpoint.base_url, endpoint.model_revision) == (
+        "local",
+        url,
+        COLPALI.model_revision,
+    )
+    assert discovered == ["vllm_colpali"]
+    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
+
+
+@pytest.mark.unit
+def test_explicit_cluster_url_with_another_workload_revision_is_refused():
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, requests):
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)},
+            discover=lambda spec: (_discovered(url, "0" * 40),),
+        )
+        try:
+            with pytest.raises(ModelIdentityError) as caught:
+                provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert str(caught.value) == (
+        f"vllm_colpali: deployment revision {'0' * 40!r} does not match "
+        f"expected {COLPALI.model_revision!r}"
+    )
+    assert requests == []
+
+
+@pytest.mark.unit
+def test_explicit_url_no_workload_publishes_must_report_its_revision():
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, _):
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)},
+            discover=lambda spec: (
+                _discovered("http://127.0.0.1:1", COLPALI.model_revision),
+            ),
+        )
+        try:
+            with pytest.raises(ModelIdentityError) as caught:
+                provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert str(caught.value) == (
+        f"vllm_colpali: expected revision {COLPALI.model_revision!r}, got None"
+    )
