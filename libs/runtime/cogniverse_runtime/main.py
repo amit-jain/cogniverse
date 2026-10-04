@@ -28,6 +28,7 @@ if _bootstrap_os.environ.get("OPENINFERENCE_DSPY") == "1":
         print(f"OpenInference DSPy instrument failed: {_exc}")
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -1065,6 +1066,20 @@ def preload_lm_client_modules() -> None:
     importlib.import_module("openai.resources")
 
 
+def freeze_startup_heap() -> None:
+    """Exclude the objects startup created from every later collection.
+
+    A worker holds about half a million objects once its agents, models'
+    clients and routes are loaded. A full (generation 2) collection scans all
+    of them and holds the interpreter for 0.3 to 0.5 s; whichever thread's
+    allocation triggers it, the serving loop answers nothing meanwhile. These
+    objects live as long as the process, so collecting them once and freezing
+    them leaves later full collections only the objects made since.
+    """
+    gc.collect()
+    gc.freeze()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -1840,6 +1855,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         (time.perf_counter() - route_build_started) * 1000,
     )
 
+    freeze_startup_heap()
     logger.info("Cogniverse Runtime started successfully")
 
     # Tenant schemas registered with a definition other than the shipped one
