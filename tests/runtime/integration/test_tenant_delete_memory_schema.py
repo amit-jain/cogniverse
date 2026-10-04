@@ -2218,3 +2218,70 @@ async def test_a_deploy_refused_by_a_delete_that_landed_after_its_decision_leave
     assert str(caught.value) == _deleted_message(tenant_id)
     assert _tenant_rows(store, tenant_id) == []
     assert _deployed_for(tenant_id) == []
+
+
+def _drop_schema_in_another_process(vespa_port, tenant_id, base_schema_name, report):
+    """Another process (a CLI, a job, another runtime) dropping a tenant
+    schema through the backend method the admin profile delete calls."""
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=vespa_port)
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=ConfigManager(store=store),
+        schema_loader=FilesystemSchemaLoader("configs/schemas"),
+    )
+    try:
+        report.put(backend.delete_schema(base_schema_name, tenant_id=tenant_id))
+    except Exception as exc:
+        report.put(f"{type(exc).__name__}: {exc}")
+
+
+@pytest.mark.asyncio
+async def test_a_cached_ingestion_client_redeploys_a_schema_another_process_dropped(
+    wired_tenant_manager, vespa_instance
+):
+    """This process built its ingestion client for a tenant schema, which
+    another process then drops. Preparing ingestion again redeploys the
+    schema rather than handing back the cached client for a document type
+    Vespa no longer has."""
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    tenant_id = _unique_tenant()
+    provenance_schema = _schema_names(tenant_id)[1]
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    await asyncio.to_thread(backend.prepare_ingestion, "provenance")
+    assert _deployed_for(tenant_id) == [provenance_schema]
+
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    peer = context.Process(
+        target=_drop_schema_in_another_process,
+        args=(vespa_instance["http_port"], tenant_id, "provenance", report),
+    )
+    peer.start()
+    dropped = await asyncio.to_thread(report.get, True, 600)
+    await asyncio.to_thread(peer.join, 60)
+    assert (dropped, peer.exitcode) == ([provenance_schema], 0)
+    assert _deployed_for(tenant_id) == []
+
+    await asyncio.to_thread(backend.prepare_ingestion, "provenance")
+
+    try:
+        assert _deployed_for(tenant_id) == [provenance_schema]
+        stored = tm._config_manager.store.get_config(
+            tenant_id, ConfigScope.SCHEMA, "schema_registry", "schema_provenance"
+        )
+        assert stored.config_value.get("deleted", False) is False
+        assert stored.config_value["full_schema_name"] == provenance_schema
+    finally:
+        await tm.delete_tenant_internal(tenant_id)

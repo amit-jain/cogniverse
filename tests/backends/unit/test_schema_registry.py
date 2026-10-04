@@ -548,14 +548,26 @@ class TestSchemaRegistryTracking:
             }
         ]
 
-    def test_schema_exists_hit_does_not_touch_storage(self, schema_registry):
+    def test_schema_exists_hit_reads_only_the_tenants_row(self, schema_registry):
+        """A schema this registry holds is still read from its stored row: a
+        peer process may have dropped it. Only that row is read."""
         schema_registry.deploy_schema("acme", "test_schema")
         schema_registry._config_manager.store.list_all_configs.reset_mock()
         schema_registry._config_manager.store.get_config.reset_mock()
 
         assert schema_registry.schema_exists("acme", "test_schema") is True
         schema_registry._config_manager.store.list_all_configs.assert_not_called()
-        schema_registry._config_manager.store.get_config.assert_not_called()
+        assert [
+            call.kwargs
+            for call in schema_registry._config_manager.store.get_config.call_args_list
+        ] == [
+            {
+                "tenant_id": "acme:acme",
+                "scope": ConfigScope.SCHEMA,
+                "service": "schema_registry",
+                "config_key": "schema_test_schema",
+            }
+        ]
 
     def test_register_schema_adds_to_tracking(self, schema_registry):
         """Test register_schema adds schema to in-memory tracking"""
@@ -985,3 +997,99 @@ class TestSchemaRegistryDeployRace:
             "second deploy shipped a stale list — it would drop the first "
             "tenant's just-deployed schema from the backend"
         )
+
+
+class TestDeployedStateIsReadFromTheStore:
+    """Whether a tenant schema is deployed is answered from the stored
+    registry row, never from what this registry held: another process (a
+    runtime worker or replica, the CLI, a migration job) may have dropped or
+    registered the schema since."""
+
+    @staticmethod
+    def _registries(store):
+        from cogniverse_foundation.config.manager import ConfigManager
+
+        def registry():
+            return SchemaRegistry(ConfigManager(store=store), MagicMock(), MagicMock())
+
+        return registry(), registry()
+
+    @staticmethod
+    def _register(registry, tenant_id="acme:acme", base="test_schema"):
+        registry.register_schema(
+            tenant_id=tenant_id,
+            base_schema_name=base,
+            full_schema_name=f"{base}_{tenant_id.replace(':', '_')}",
+            schema_definition='{"name": "x"}',
+        )
+
+    def test_a_drop_by_another_process_reads_as_not_deployed(self):
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        serving, peer = self._registries(store)
+        self._register(serving)
+        assert serving.schema_exists("acme:acme", "test_schema") is True
+
+        peer.unregister_schema("acme:acme", "test_schema")
+
+        assert serving.schema_exists("acme:acme", "test_schema") is False
+        assert ("acme:acme", "test_schema") not in serving._schemas
+
+    def test_a_registration_by_another_process_reads_as_deployed(self):
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        serving, peer = self._registries(store)
+        assert serving.schema_exists("acme:acme", "test_schema") is False
+
+        self._register(peer)
+
+        assert serving.schema_exists("acme:acme", "test_schema") is True
+
+    def test_an_unreadable_store_raises_instead_of_answering_deployed(self):
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        serving, _ = self._registries(store)
+        self._register(serving)
+
+        def unavailable(*args, **kwargs):
+            raise ConfigStoreUnavailableError("config store did not answer")
+
+        store.get_config = unavailable
+        with pytest.raises(SchemaRegistryInitializationError) as caught:
+            serving.schema_exists("acme:acme", "test_schema")
+        assert str(caught.value) == (
+            "Cannot tell whether 'test_schema' is deployed for tenant "
+            "'acme:acme': failed to read schema storage: "
+            "ConfigStoreUnavailableError: config store did not answer"
+        )
+
+    def test_concurrent_checks_each_see_a_peer_drop(self):
+        """Eight threads check the same schema at once after a peer process
+        dropped it: every one answers not deployed."""
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        serving, peer = self._registries(store)
+        self._register(serving)
+        assert serving.schema_exists("acme:acme", "test_schema") is True
+        peer.unregister_schema("acme:acme", "test_schema")
+        barrier = threading.Barrier(8)
+        answers = []
+        lock = threading.Lock()
+
+        def check():
+            barrier.wait(timeout=30)
+            answer = serving.schema_exists("acme:acme", "test_schema")
+            with lock:
+                answers.append(answer)
+
+        threads = [threading.Thread(target=check) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert answers == [False] * 8

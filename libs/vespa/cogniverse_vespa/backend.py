@@ -318,14 +318,17 @@ class VespaBackend(Backend):
                 self._tenant_id, schema_name
             )
 
-        # Return cached client if it exists (skip schema deploy check)
-        if target_schema_name in self._vespa_ingestion_clients:
-            return self._vespa_ingestion_clients[target_schema_name]
+        # A cached client still answers only for a schema the stored registry
+        # row says is deployed: another process may have dropped it since.
+        cached = self._vespa_ingestion_clients.get(target_schema_name)
+        if cached is not None and (
+            not self._tenant_id
+            or self.schema_registry.schema_exists(self._tenant_id, schema_name)
+        ):
+            return cached
 
         with self._ingestion_clients_lock:
             cached = self._vespa_ingestion_clients.get(target_schema_name)
-            if cached is not None:
-                return cached
 
             if self._tenant_id:
                 if not self.schema_registry:
@@ -339,6 +342,9 @@ class VespaBackend(Backend):
                 except Exception as e:
                     logger.error(f"Failed to deploy tenant schema: {e}")
                     raise
+
+            if cached is not None:
+                return cached
 
             logger.info(f"Creating new VespaPyClient for schema: {target_schema_name}")
 
