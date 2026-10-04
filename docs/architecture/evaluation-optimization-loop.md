@@ -632,7 +632,9 @@ and `AnnotationStorage` — plus two scheduled cycles in
   `AnnotationStorage.fetch_project_spans` and passes the shared frame into every
   per-agent-type `query_annotated_spans(spans_df=...)` call instead of re-pulling the
   whole project per agent type; `run_annotation_feedback_cycle` does the same for its
-  per-agent human-reviewed-annotation counts. Enqueue timestamps must include an
+  per-agent human-reviewed-annotation counts. That frame carries only
+  `context.span_id`; `query_annotated_spans` then fetches the rows of the annotated
+  spans alone, by id in batches of 200. Enqueue timestamps must include an
   ISO-8601 timezone offset; the queue normalizes them to UTC and records assignment,
   deadline, and completion timestamps in UTC.
 - Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;

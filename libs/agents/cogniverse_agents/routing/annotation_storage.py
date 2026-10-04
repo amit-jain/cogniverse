@@ -50,6 +50,10 @@ def _routing_get(span_row: "pd.Series", field: str, default: Any = None) -> Any:
     return default
 
 
+# Span ids per by-id span query; bounds the query string and each response.
+_SPAN_ID_BATCH = 200
+
+
 class AnnotationStorage:
     """
     Stores and retrieves per-agent-type annotations in the telemetry backend.
@@ -245,25 +249,52 @@ class AnnotationStorage:
     async def fetch_project_spans(
         self, start_time: datetime, end_time: datetime
     ) -> "pd.DataFrame":
-        """Pull the tenant project's spans for a time window.
+        """Pull the ids of the tenant project's spans for a time window.
 
         The annotation join needs every span name (annotations attach to
-        whichever span each agent emitted), so the pull is unfiltered.
-        Callers that query several agent types over one window fetch this
-        frame once and pass it to ``query_annotated_spans(spans_df=...)``.
+        whichever span each agent emitted), so the pull is unfiltered, and it
+        carries only ``context.span_id``: ``query_annotated_spans`` reads the
+        attributes of the annotated spans alone. Callers that query several
+        agent types over one window fetch this frame once and pass it to
+        ``query_annotated_spans(spans_df=...)``.
         """
         try:
-            return await self.provider.traces.get_spans(
+            frame = await self.provider.traces.get_spans(
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
                 limit=10000,
+                columns=["span_id"],
             )
+            if "context.span_id" not in frame.columns:
+                frame = frame.reset_index()
+            return frame
         except Exception as e:
             # A backend failure is not "no annotated spans" — swallowing it
             # into [] hid Phoenix outages from every caller.
             logger.error(f"❌ Error querying annotated spans: {e!r}")
             raise
+
+    async def _fetch_spans_by_id(
+        self, span_ids: List[str], *, start_time: datetime, end_time: datetime
+    ) -> Dict[str, "pd.Series"]:
+        """The full rows of ``span_ids``, keyed by span id, fetched in
+        batches of ``_SPAN_ID_BATCH``."""
+        rows: Dict[str, "pd.Series"] = {}
+        for offset in range(0, len(span_ids), _SPAN_ID_BATCH):
+            batch = span_ids[offset : offset + _SPAN_ID_BATCH]
+            frame = await self.provider.traces.get_spans(
+                project=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
+                filters={"span_id": batch},
+                limit=len(batch),
+            )
+            if "context.span_id" not in frame.columns:
+                frame = frame.reset_index()
+            for _, row in frame.iterrows():
+                rows[row["context.span_id"]] = row
+        return rows
 
     async def query_annotated_spans(
         self,
@@ -314,15 +345,23 @@ class AnnotationStorage:
 
         # annotations_df is indexed by span_id (no span_id column).
         annotations_by_span = {sid: row for sid, row in annotations_df.iterrows()}
+        annotated_ids = [
+            span_id
+            for span_id in spans_df["context.span_id"]
+            if span_id in annotations_by_span
+        ]
+        span_rows = await self._fetch_spans_by_id(
+            annotated_ids, start_time=start_time, end_time=end_time
+        )
 
         from cogniverse_foundation.telemetry.span_contract import read_span_io
 
         annotated_spans = []
-        for _, span_row in spans_df.iterrows():
-            span_id = span_row.get("context.span_id")
-            ann_row = annotations_by_span.get(span_id)
-            if ann_row is None:
+        for span_id in annotated_ids:
+            span_row = span_rows.get(span_id)
+            if span_row is None:
                 continue
+            ann_row = annotations_by_span[span_id]
 
             human_reviewed = bool(_meta_get(ann_row, "human_reviewed", False))
             if only_human_reviewed and not human_reviewed:
