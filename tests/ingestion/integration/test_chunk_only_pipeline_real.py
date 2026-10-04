@@ -139,6 +139,37 @@ def test_concurrent_real_chunk_extraction_keeps_segment_frames_isolated(tmp_path
     assert [_video_frame_count(path) for path in segment_paths] == [900, 30]
 
 
+def test_re_encoding_a_720p_chunk_runs_ffmpeg_on_four_threads(tmp_path):
+    """Left to size its thread pools from the host's cores, ffmpeg peaks at
+    253 MiB re-encoding the tracked 1280x720 clip on a 32-core node; the
+    pod's memory limit pays for that, not its 4-CPU limit."""
+    import json
+    import sys
+
+    script = (
+        "import json, resource, sys\n"
+        "from pathlib import Path\n"
+        "from types import SimpleNamespace\n"
+        "from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor\n"
+        "quiet = SimpleNamespace(info=lambda *a, **k: None, error=lambda *a, **k: None)\n"
+        "processor = ChunkProcessor(logger=quiet, chunk_duration=30.0, chunk_overlap=5.0, cache_chunks=False)\n"
+        "result = processor.extract_chunks(Path(sys.argv[1]), output_dir=Path(sys.argv[2]))\n"
+        "peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024\n"
+        "print(json.dumps({'chunks': len(result['chunks']), 'ffmpeg_peak_mib': peak}))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, str(TRACKED_VIDEO.resolve()), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=True,
+    )
+    report = json.loads(done.stdout.strip().splitlines()[-1])
+
+    assert report["chunks"] == 1
+    assert report["ffmpeg_peak_mib"] < 160, report
+
+
 @pytest.mark.asyncio
 async def test_chunk_only_profile_processes_cleanly_end_to_end(tmp_path, monkeypatch):
     # No-op telemetry so the stage spans don't need BACKEND_URL wiring.

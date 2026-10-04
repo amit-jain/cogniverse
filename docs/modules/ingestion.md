@@ -1484,8 +1484,14 @@ result = processor.extract_chunks(
 
 **FFmpeg Command**:
 ```bash
-ffmpeg -y -i video.mp4 -ss 0.0 -t 30.0 -c copy -avoid_negative_ts make_zero chunk_0000.mp4
+ffmpeg -y -threads 4 -ss 0.0 -i video.mp4 -t 30.0 -map 0:v:0 -map 0:a? \
+  -c:v libx264 -threads 4 -preset ultrafast -pix_fmt yuv420p -c:a aac \
+  -avoid_negative_ts make_zero chunk_0000.mp4
 ```
+
+Each chunk is re-encoded so it decodes on its own. Decoding and encoding run
+on 4 threads (`FFMPEG_THREADS`); left to ffmpeg, both size their thread pools
+from the node's cores rather than the container's CPU limit.
 
 **Output**:
 
