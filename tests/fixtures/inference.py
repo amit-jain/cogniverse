@@ -6,6 +6,7 @@ import json
 import os
 from concurrent.futures import Future
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from threading import Condition, Lock
 from types import MappingProxyType, TracebackType
@@ -321,22 +322,45 @@ class EndpointValidator:
 
 
 class ExplicitEndpointProvider:
+    """Validate the endpoint configured for a service.
+
+    vLLM's model list carries no revision, so an explicit URL that a cluster
+    workload publishes takes its revision from that workload's rendered
+    ``--revision`` (``DEPLOYMENT`` evidence), exactly as discovery does.
+    A URL no workload publishes must report the revision itself.
+    """
+
     name = "explicit"
 
     def __init__(
         self,
         endpoints: Mapping[str, CandidateEndpoint],
         validator: EndpointValidator | None = None,
+        discover: Callable[
+            [InferenceServiceSpec], Sequence[_DiscoveredClusterEndpoint]
+        ] = lambda spec: (),
     ) -> None:
         self._endpoints = MappingProxyType(dict(endpoints))
         self._owns_validator = validator is None
         self._validator = validator if validator is not None else EndpointValidator()
+        self._discover = discover
 
     def has_service(self, service: str) -> bool:
         return service in self._endpoints
 
     def resolve(self, spec: InferenceServiceSpec):
-        return self._validator.validate(spec, self._endpoints[spec.name])
+        candidate = self._endpoints[spec.name]
+        if candidate.provider != "modal":
+            for discovered in self._discover(spec):
+                url, revision = _discovered_endpoint(discovered)
+                if revision is not None and url.rstrip("/") == candidate.base_url:
+                    candidate = replace(
+                        candidate,
+                        identity_evidence=EndpointIdentityEvidence.DEPLOYMENT,
+                        model_revision=revision,
+                    )
+                    break
+        return self._validator.validate(spec, candidate)
 
     def close(self) -> None:
         if self._owns_validator:
@@ -449,10 +473,15 @@ class InferenceSessionResolver:
         *,
         providers: Sequence[object],
         explicit_endpoints: Mapping[str, CandidateEndpoint] | None = None,
+        explicit_discovery: Callable[
+            [InferenceServiceSpec], Sequence[_DiscoveredClusterEndpoint]
+        ] = lambda spec: (),
         modal_services: Iterable[str] = (),
     ) -> None:
         self._providers = tuple(providers)
-        self._explicit = ExplicitEndpointProvider(explicit_endpoints or {})
+        self._explicit = ExplicitEndpointProvider(
+            explicit_endpoints or {}, discover=explicit_discovery
+        )
         self._modal_services = frozenset(modal_services)
         self._lock = Lock()
         self._condition = Condition(self._lock)
@@ -512,7 +541,17 @@ class InferenceSessionResolver:
 
     def _resolve_once(self, spec: InferenceServiceSpec):
         if self._explicit.has_service(spec.name):
-            return self._explicit.resolve(spec)
+            endpoint = self._explicit.resolve(spec)
+            record(
+                ModelResolution(
+                    f"inference {spec.name}",
+                    "resolved-remote",
+                    endpoint.base_url,
+                    ("explicit",),
+                    "INFERENCE_SERVICE_URLS",
+                )
+            )
+            return endpoint
         failures: list[str] = []
         # A service marked for Modal goes to the Modal provider alone. Otherwise
         # a provider that names the services it owns is the only one asked for
@@ -737,6 +776,10 @@ def _build_resolver(
     )
     return InferenceSessionResolver(
         explicit_endpoints=explicit_endpoints_from_environment(required),
+        explicit_discovery=lambda spec: (
+            *_discover_e2e_model_urls(spec.model_id),
+            *_discover_dev_model_urls(spec.model_id),
+        ),
         providers=(
             ChatModelProvider(),
             DiscoveredEndpointProvider(

@@ -32,8 +32,11 @@ contract is undefined — refine it before coding. Done means a real-service tes
 against that list passes, not "it runs".
 
 **Integration tests hit the real boundary.** Real Vespa, real Phoenix, real
-Redis, real MinIO, real LM — in Docker, managed by the test's own fixture. No
-mocks at a boundary, no exceptions. But a real boundary with a weak assertion is
+Redis, real MinIO — in Docker, managed by the test's own fixture — and real
+models served remotely: the chat LLMs on Modal, every other model by the
+`cogniverse-e2e` cluster. No test starts a model container or process on this
+host (`docs/testing/TESTING_GUIDE.md`, "Model endpoints"). No mocks at a
+boundary, no exceptions. But a real boundary with a weak assertion is
 the same empty test with a slower setup: hitting real Vespa and asserting only
 that hits came back proves nothing.
 
@@ -102,7 +105,9 @@ changed to and why. When a test fails, first decide product-bug vs stale-test
 and name the file:line that settles it — a test edit without that verdict is a
 cover-up. `tests/common/unit/test_assertion_strength_guard.py` enforces this in
 CI: it fails any change with a net assertion loss in a `tests/` file, or a newly
-added skip, xfail, `is not None`, `>= 1`, or `> 0`.
+added skip, xfail, `is not None`, `>= 1`, or `> 0`. The only accepted loss is of
+assertions that tested code the change deletes, declared and checked in
+`tests/common/assertion_waivers.toml`.
 
 ---
 

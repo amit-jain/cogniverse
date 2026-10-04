@@ -740,18 +740,16 @@ What it does:
    `schemas/` directory so relative schema discovery still works.
 2. Sets `COGNIVERSE_CONFIG=<tmpdir>/config.json` for the session.
 3. Tests that request `ensure_host_ollama` then require the production Gemma
-   primary model and, when marked, the distinct teacher model. The provisioner
-   checks explicit endpoints, `INFERENCE_SERVICE_URLS`, the shared e2e cluster,
-   and the development cluster in that order, accepting a URL only when
-   `/v1/models` lists the exact model. Only then does it start an identical
-   session-owned vLLM sidecar and publish the verified endpoints in a second
-   temporary config.
+   primary model and, when marked, the distinct teacher model, both served on
+   Modal. The resolver accepts an endpoint only when its authenticated
+   `/v1/models` lists the exact model and revision, and publishes the verified
+   endpoints in a second temporary config. Nothing is started on this host; see
+   "Model endpoints" in `docs/testing/TESTING_GUIDE.md`.
 
-Override via env vars **before pytest starts**:
+Override the Modal lookup via env vars **before pytest starts**:
 
 ```bash
-TEST_LLM_MODEL=google/gemma-4-e4b-it \
-TEST_LLM_API_BASE=http://my-vllm:8000/v1 \
+INFERENCE_SERVICE_URLS='{"vllm_llm_student":"https://my-gemma.example"}' \
 uv run pytest
 ```
 
@@ -983,7 +981,7 @@ Key details:
 - **Scope**: Module-scoped — one Phoenix instance per test module
 
 Test containers carry `cogniverse-test-owner-pid=<pytest pid>`. When every
-pytest session starts, and again before a sidecar spawn, the shared reaper
+pytest session starts, the shared reaper
 removes containers whose owner process is gone and already-exited containers;
 the session's `test sidecars` summary lists what it removed, or why docker could
 not be asked. A live owner's `created`, `restarting`, `paused`, or `running`

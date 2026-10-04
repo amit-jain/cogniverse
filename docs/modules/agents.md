@@ -5392,12 +5392,11 @@ either URL. A configured endpoint with the wrong model, revision, or
 credentials fails immediately and never falls through to a local model.
 
 The Gemma fixture injects `openai/google/gemma-4-e4b-it`, the endpoint `/v1` URL, and
-the resolved bearer key into `LLMEndpointConfig`. When no Modal URL is present,
-it uses the test-owned exact-model LM. The Whisper fixture similarly prefers
-the validated `openai/whisper-large-v3-turbo` service and otherwise starts the
-test-owned vLLM sidecar with the production generate arguments. Session teardown
-returns test-owned local processes to their prior state; Modal lifecycle
-commands control remote warm-container counts independently.
+the resolved bearer key into `LLMEndpointConfig`; with no Modal URL configured it
+reads the Gemma deployment through the Modal lifecycle. The Whisper fixture
+prefers a configured Modal `openai/whisper-large-v3-turbo` and otherwise uses
+the cogniverse-e2e cluster's `vllm_asr` service. No model is started on the
+test host.
 
 ---
 

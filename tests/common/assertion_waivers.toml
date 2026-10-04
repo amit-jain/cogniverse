@@ -1,0 +1,86 @@
+# Accepted net assertion losses: each one is in a test file whose lost
+# assertions tested code that no longer exists. The assertion-strength guard
+# (tests/common/unit/test_assertion_strength_guard.py) checks every entry.
+
+[[waiver]]
+file = "tests/utils/test_vllm_sidecar.py"
+max_net_loss = 173
+removed_symbols = [
+    "tests/utils/vllm_sidecar.py:VllmSidecarFactory",
+    "tests/utils/vllm_sidecar.py:_merge_serve_args",
+    "tests/utils/vllm_sidecar.py:_prepare_pinned_snapshot",
+    "tests/utils/vllm_sidecar.py:_prepare_docker_image",
+    "tests/utils/vllm_sidecar.py:_append_image_command",
+    "tests/utils/vllm_sidecar.py:_configured_model_urls",
+    "tests/utils/vllm_sidecar.py:_external_endpoints_from_workload",
+    "tests/utils/vllm_sidecar.py:_discover_external_model_urls",
+    "tests/utils/vllm_sidecar.py:reclaim_stale_exact_model_containers",
+    "tests/utils/vllm_sidecar.py:lease_exact_model_container",
+    "tests/utils/vllm_sidecar.py:exact_model_provisioning_lock",
+    "tests/utils/vllm_sidecar.py:EXACT_MODEL_LABEL",
+    "tests/utils/hermetic_llm.py:_spawn",
+    "tests/fixtures/inference.py:LocalEndpointProvider",
+]
+reason = "Tests of the local vLLM/LLM sidecar launch, image and snapshot provisioning, and exact-model reclaim, all removed: test models are served remotely."
+
+[[waiver]]
+file = "tests/utils/test_hermetic_llm.py"
+max_net_loss = 31
+removed_symbols = [
+    "tests/utils/hermetic_llm.py:_spawn",
+    "tests/utils/hermetic_llm.py:_guard_local_spawn",
+    "tests/utils/hermetic_llm.py:assert_local_spawn_fits",
+    "tests/utils/hermetic_llm.py:available_ram_gb",
+    "tests/utils/hermetic_llm.py:_LOCAL_SPAWN_MIN_AVAILABLE_GB",
+    "tests/utils/hermetic_llm.py:_SIDECARS",
+    "tests/utils/hermetic_llm.py:LocalModelWontFitError",
+    "tests/utils/hermetic_llm.py:RemoteModelUnavailableError",
+    "tests/utils/hermetic_llm.py:LmResolution",
+]
+reason = "Tests of the local LLM spawn, its host-memory guard and the cluster-discovery fallback, removed: chat LLMs resolve from Modal."
+
+[[waiver]]
+file = "tests/fixtures/test_inference.py"
+max_net_loss = 14
+removed_symbols = [
+    "tests/fixtures/inference.py:LocalEndpointProvider",
+    "tests/fixtures/inference.py:_CONTAINER_SPECS",
+    "tests/fixtures/inference.py:_VLLM_ARGS",
+]
+reason = "Tests of the local container build/launch provider, removed: inference services resolve from the cluster."
+
+[[waiver]]
+file = "tests/fixtures/inference.py"
+max_net_loss = 1
+removed_symbols = ["tests/fixtures/inference.py:LocalEndpointProvider"]
+reason = "The in-code assertion in LocalEndpointProvider's LLM release, removed with the provider."
+
+[[waiver]]
+file = "tests/common/unit/test_run_lock.py"
+max_net_loss = 8
+removed_symbols = [
+    "tests/e2e/run_lock.py:classify_exact_model_containers",
+    "tests/e2e/run_lock.py:_exact_model_rows",
+    "tests/e2e/run_lock.py:_live_exact_model_leases",
+    "tests/e2e/run_lock.py:_remove_exact_model_container",
+]
+reason = "Tests of the e2e preflight's exact-model sidecar reclaim and lease refusal, removed: no exact-model sidecar exists."
+
+[[waiver]]
+file = "tests/cli/integration/test_gliner_image_serving.py"
+max_net_loss = 4
+removed_symbols = [
+    "tests/cli/integration/test_gliner_image_serving.py:_container",
+    "tests/cli/integration/test_gliner_image_serving.py:gliner_image",
+    "tests/cli/integration/test_gliner_image_serving.py:_health_inside",
+]
+reason = "The no-network and missing-export runs of a locally started gliner container, removed: no test starts a model container; the export and thread checks read the cluster pod."
+
+[[waiver]]
+file = "tests/modal_inference/test_generation_service_definitions.py"
+max_net_loss = 1
+removed_symbols = [
+    "tests/agents/integration/conftest.py:_resolve_verified_local_endpoint",
+    "tests/agents/integration/conftest.py:pytest_collection_modifyitems",
+]
+reason = "The test of the agents collection hook that swapped the local LLM fixture for Modal Gemma, removed with the hook."

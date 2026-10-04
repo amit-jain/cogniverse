@@ -1717,13 +1717,16 @@ provider order is:
 1. the `cogniverse-e2e` k3d workload;
 2. the `cogniverse` development k3d workload;
 3. Modal, only for a service explicitly marked with
-   `@pytest.mark.requires_modal_inference("<service>")`;
-4. a test-owned exact local service.
+   `@pytest.mark.requires_modal_inference("<service>")`.
 
-Generic `requires_inference` tests use e2e, then dev, then local. They never
-enter the Modal lifecycle merely because `COGNIVERSE_INFERENCE_API_KEY` is
-present. A `requires_modal_inference` service uses Modal as a hard requirement
-and does not fall through to either k3d cluster or a local process. E2E tests
+The chat services (`vllm_llm_student`, `vllm_llm_teacher`) are the exception:
+they resolve only through `tests/utils/hermetic_llm.py`, from their Modal
+deployment. Nothing is ever started on the test host; a service no provider
+serves raises `RemoteServiceUnavailable` naming it. Generic
+`requires_inference` tests never enter the Modal lifecycle merely because
+`COGNIVERSE_INFERENCE_API_KEY` is present. A `requires_modal_inference` service
+uses Modal as a hard requirement and does not fall through to either k3d
+cluster. E2E tests
 carrying that marker are selected only by `RUN_MODAL_INFERENCE_E2E=1` or an
 explicit `-m requires_modal_inference` test run.
 

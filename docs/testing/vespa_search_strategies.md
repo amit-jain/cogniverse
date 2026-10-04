@@ -316,5 +316,5 @@ Choose based on:
 4. **Resource constraints**: Memory and compute limitations
 
 ## Related Tests
-- `tests/runtime/integration/test_ranking_strategies_real.py` — real-Vespa, real-ColPali (vLLM sidecar) integration test that drives every one of the 14 `video_colpali_smol500_mv_frame` rank profiles through `VespaSearchBackend.search` and asserts non-empty, descending-ranked results.
+- `tests/runtime/integration/test_ranking_strategies_real.py` — real-Vespa, real-ColPali (the cluster's vLLM service) integration test that drives every one of the 14 `video_colpali_smol500_mv_frame` rank profiles through `VespaSearchBackend.search` and asserts non-empty, descending-ranked results.
 - `tests/backends/unit/test_ranking_strategy_extractor.py` — regression tests for `RankingStrategyExtractor`: schema-name resolution when a schema JSON is keyed by `name` instead of `schema`, and `nearestNeighbor` enablement for `_lvt_` single-vector schemas.
