@@ -33,8 +33,6 @@ from cogniverse_dashboard.tabs.approval_queue import (
     _ensure_approval_agent_for_current_tenant,
     _parse_schema_corrections,
     _require_decision_result,
-    _review_reasoning,
-    _schema_correction_template,
 )
 from cogniverse_dashboard.tabs.tenant_management import get_runtime_api_url
 from cogniverse_dashboard.telemetry_gate import (
@@ -50,6 +48,10 @@ from cogniverse_dashboard.utils.runtime_client import (
     runtime_error_message,
 )
 from cogniverse_dashboard.utils.traces import span_window_end
+from cogniverse_synthetic.approval.corrections import (
+    correction_template,
+    review_reasoning,
+)
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 # Columns of the Recent Optimization History table, in render order.
@@ -2064,7 +2066,7 @@ def _render_inline_review_item(item, idx: int):
     entities = data.get("entities", [])
     metadata = data.get("metadata", {})
     generation_metadata = metadata.get("_generation_metadata", {})
-    reasoning = _review_reasoning(data)
+    reasoning = review_reasoning(data)
 
     # Display item data in columns
     col1, col2 = st.columns([3, 1])
@@ -2133,7 +2135,7 @@ def _render_inline_review_item(item, idx: int):
         )
 
         try:
-            schema_name, correction_template = _schema_correction_template(data)
+            schema_name, template = correction_template(data)
         except ValueError as exc:
             st.error(str(exc))
             return
@@ -2141,7 +2143,7 @@ def _render_inline_review_item(item, idx: int):
         corrected_fields = st.text_area(
             f"{schema_name} Corrections (JSON)",
             key=f"inline_schema_corrections_{idx}",
-            value=json.dumps(correction_template, indent=2, default=str),
+            value=json.dumps(template, indent=2, default=str),
             help="Submit only fields defined by this synthetic example schema.",
         )
 
@@ -2300,7 +2302,7 @@ def _process_approval_workflow(result: Dict, tenant_id: str):
 
         review_items = []
         for i, item_data in enumerate(result["data"]):
-            detected_schema, _ = _schema_correction_template(item_data)
+            detected_schema, _ = correction_template(item_data)
             if detected_schema != result["schema_name"]:
                 raise ValueError(
                     f"synthetic result schema {result['schema_name']!r} does not "

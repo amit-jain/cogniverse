@@ -464,6 +464,7 @@ The server uses modular routers for different functionality:
 | `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
+| `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -1352,6 +1353,20 @@ Two label selectors feed it, because Argo does not copy a CronWorkflow's labels 
 `trigger` is `manual` for a dashboard submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
 
 The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
+
+### Tenant Approvals
+
+Generated examples the confidence extractor did not auto-approve wait in the tenant's approval store (`ApprovalStorageImpl.from_system_config`: Phoenix spans and annotations, Redis electing each decision).
+
+**GET /admin/tenant/{tenant_id}/approvals** — The items awaiting review (`pending_review` or `regenerated`). Response: `{items: [{item_id, batch_id, status, confidence, data, metadata, created_at, schema_name, correction_template, reasoning}, ...]}`. `schema_name` and `correction_template` (the correctable fields with their current values) are `null` for data no synthetic example schema describes; such an item can be approved or rejected but not corrected. A store read failure answers **502** `approval_store_unavailable`; a store the system config cannot build answers **503** with the same code.
+
+**POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}** — Body `{approved, reviewer, feedback?, corrections?}`. Response: `{status, item}`.
+
+- An approval appends the item to the tenant's approved training dataset and answers `approved`.
+- A rejection needs `feedback` (**400** otherwise). For an item of a synthetic example schema it regenerates with the tenant's primary LM and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`. No LM for the tenant answers **503** `regeneration_unavailable`.
+- `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise).
+- An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
+- A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
 
 ### Knowledge Endpoints
 

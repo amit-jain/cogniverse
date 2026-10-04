@@ -9544,7 +9544,17 @@ class TestSyntheticGeneration:
             }
             return query_enhancer
 
+        from cogniverse_agents.approval.approval_storage import (
+            ApprovalStorageImpl,
+        )
+
         class RecordingStorage:
+            # The production constructor-from-config, so the recorded kwargs
+            # are the endpoints it resolves from the system config.
+            from_system_config = classmethod(
+                ApprovalStorageImpl.from_system_config.__func__
+            )
+
             def __init__(self, **kwargs):
                 storage_inits.append(kwargs)
 
