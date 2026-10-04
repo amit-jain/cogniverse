@@ -371,6 +371,7 @@ class TestMem0VespaIntegration:
         assert stats == {
             "enabled": True,
             "total_memories": len(memories_to_add),
+            "archived_memories": 0,
             "tenant_id": "test_tenant",
             "agent_name": "stats_agent",
         }
