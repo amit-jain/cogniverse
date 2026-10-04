@@ -388,8 +388,10 @@ def render_backend_profile_tab():
     manager = st.session_state.config_manager
     tenant_id = st.session_state["current_tenant"]
 
-    # Profile list — read directly off ConfigManager
-    profiles_dict = manager.list_backend_profiles(tenant_id, service="video_processing")
+    # Profile list — read from the store, so a runtime write shows at once
+    profiles_dict = manager.get_stored_backend_config(
+        tenant_id, service="backend"
+    ).profiles
     profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
 
     # Create new profile section
