@@ -1323,11 +1323,15 @@ class SimbaSelectionTenant:
         return len(self.seeded_queries)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
     """Create a dedicated tenant for gateway-threshold optimization runs and
     drive exactly BATCH_SPAN_COUNT (default 20) simple video decisions
-    through its gateway, recording each one so the calibration is exact."""
+    through its gateway, recording each one so the calibration is exact.
+
+    Class-scoped: a class that drives more gateway traffic to its tenant (the
+    round-trip test's post-restart query) never adds to another class's
+    recorded decisions, whatever order the classes run in."""
     org_id = unique_id("opt_gw")
     suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
@@ -1555,9 +1559,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     _seed_profile_selection_ground_truth()
     # The tenant's optimizer artifacts are this module's own state: seed from
     # the base modules, not from whatever an earlier optimization run left
-    # persisted (and loaded into the pod). Both resets run; bounce once.
+    # persisted (and loaded into the pod). Every reset runs; bounce once.
+    # Each test that reads one of these artifacts then finds it whatever
+    # order the module's classes run in.
     reset_qe, reset_qe_version = _reset_query_enhancement_artifact_in_pod()
     reset_entity, reset_entity_version = _reset_entity_extraction_artifact_in_pod()
+    reset_profile, reset_profile_version = _reset_profile_selection_artifact_in_pod()
     # The reset publishes base as a version and activates it, so the ledger's
     # active version and the blob the pod serves name the same artifact.
     assert _active_blob_version_in_pod("model", SIMBA_ARTIFACT_KEY) == reset_qe_version
@@ -1565,7 +1572,11 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         _active_blob_version_in_pod("model", "entity_extraction")
         == reset_entity_version
     )
-    if reset_qe or reset_entity:
+    assert (
+        _active_blob_version_in_pod("model", "profile_selection")
+        == reset_profile_version
+    )
+    if reset_qe or reset_entity or reset_profile:
         _bounce_runtime_pod()
 
     # Per-agent span count used by the live re-record path. BootstrapFewShot
@@ -2298,6 +2309,19 @@ def _reset_entity_extraction_artifact_in_pod(
         key_import="",
         key_expr="'entity_extraction'",
         label="entity_extraction",
+        tenant_id=tenant_id,
+    )
+
+
+def _reset_profile_selection_artifact_in_pod(
+    tenant_id: str = TENANT_ID,
+) -> tuple[bool, int]:
+    return _reset_module_artifact_in_pod(
+        module_import="from cogniverse_agents.profile_selection_agent import ProfileSelectionModule",
+        module_class="ProfileSelectionModule",
+        key_import="",
+        key_expr="'profile_selection'",
+        label="profile_selection",
         tenant_id=tenant_id,
     )
 
@@ -3515,9 +3539,10 @@ class TestSimbaOptimization:
 
         _assert_simba_served_the_best_module(result, blob_before)
 
-    def test_simba_second_run_is_consistent_with_the_first(self):
-        """A rerun scores the artifact the first run persisted as ``current``
-        and again serves the best module."""
+    def test_simba_rerun_is_consistent_with_the_served_artifact(self):
+        """A run scores the artifact the tenant serves now as ``current`` and
+        again serves the best module; when it keeps that artifact, the served
+        state is unchanged."""
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
         first = json.loads(blob_before)
 
@@ -4397,7 +4422,7 @@ class TestProfileSelectionArtifactReload:
 
     def test_profile_agent_loads_optimized_module_after_restart(self):
         blob_before = _load_blob_in_pod("model", "profile_selection")
-        assert blob_before != "", "Profile artifact blob is empty before restart"
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
@@ -5216,11 +5241,11 @@ class TestArtifactLoadingRoundTrip:
         )
 
     def test_simba_artifact_round_trip(self):
-        """Run simba after the pod bounce: the run honours its contract against
-        the artifact the earlier runs persisted, and the persisted state reads
-        back identically twice (it survived the restart)."""
+        """Run simba: the run honours its contract against the artifact the
+        tenant serves now, and the persisted state reads back identically
+        twice."""
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
-        assert blob_before != "", "earlier SIMBA runs persisted an artifact"
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("simba")
 
@@ -5342,9 +5367,7 @@ class TestArtifactLoadingRoundTrip:
     def test_profile_artifact_survives_restart(self):
         """Verify profile selection artifact is loadable after restart."""
         blob_before = _load_blob_in_pod("model", "profile_selection")
-        assert blob_before != "", (
-            "Profile selection artifact blob is empty before restart"
-        )
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
