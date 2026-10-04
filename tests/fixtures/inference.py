@@ -35,6 +35,7 @@ from cogniverse_runtime.ingestion.strategy_factory import (
     INFERENCE_SERVICE_PARAM,
     StrategyFactory,
 )
+from tests.utils.hermetic_llm import CHAT_SERVICES, ensure_llm_endpoint
 from tests.utils.model_resolution import ModelResolution, record
 from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
 
@@ -402,6 +403,20 @@ class DiscoveredEndpointProvider:
             )
 
 
+class ChatModelProvider:
+    """The only provider for the chat services: Modal, or an explicit
+    ``INFERENCE_SERVICE_URLS`` entry, through ``tests.utils.hermetic_llm``."""
+
+    name = "llm"
+    services = frozenset(CHAT_SERVICES)
+
+    def resolve(self, spec: InferenceServiceSpec):
+        return ensure_llm_endpoint(spec.model_id)
+
+    def close(self) -> None:
+        return None
+
+
 class ModalEndpointProvider:
     name = "modal"
 
@@ -499,11 +514,20 @@ class InferenceSessionResolver:
         if self._explicit.has_service(spec.name):
             return self._explicit.resolve(spec)
         failures: list[str] = []
-        providers = tuple(
+        # A service marked for Modal goes to the Modal provider alone. Otherwise
+        # a provider that names the services it owns is the only one asked for
+        # them, and is never asked for any other.
+        modal = spec.name in self._modal_services
+        owners = tuple(
             provider
             for provider in self._providers
-            if (getattr(provider, "name", None) == "modal")
-            == (spec.name in self._modal_services)
+            if not modal and spec.name in getattr(provider, "services", ())
+        )
+        providers = owners or tuple(
+            provider
+            for provider in self._providers
+            if not hasattr(provider, "services")
+            and (getattr(provider, "name", None) == "modal") == modal
         )
         provider_order = tuple(
             getattr(provider, "name", type(provider).__name__) for provider in providers
@@ -714,6 +738,7 @@ def _build_resolver(
     return InferenceSessionResolver(
         explicit_endpoints=explicit_endpoints_from_environment(required),
         providers=(
+            ChatModelProvider(),
             DiscoveredEndpointProvider(
                 "e2e",
                 lambda spec: _discover_e2e_model_urls(spec.model_id),

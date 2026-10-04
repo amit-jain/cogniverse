@@ -9,8 +9,9 @@ Either way it is registered once and its hooks run once per session:
 - ``pytest_sessionstart`` removes containers whose owning pytest process died
   without teardown, before collection, so a session that never provisions a
   sidecar still clears what a killed session left holding host RAM.
-- ``pytest_terminal_summary`` prints that reap and every LM endpoint decision
-  ``ensure_llm`` made, whatever the capture mode and whether tests passed.
+- ``pytest_terminal_summary`` prints that reap and every model endpoint
+  decision the session made (``tests/utils/model_resolution.py``), whatever
+  the capture mode and whether tests passed.
 """
 
 from __future__ import annotations
@@ -52,12 +53,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     reap = config.stash.get(_REAP_REPORT, None)
     if reap is not None:
         lines.append(reap)
-    # A process that never imported a resolver made no model decision.
-    for module_name in ("tests.utils.hermetic_llm", "tests.utils.model_resolution"):
-        resolver = sys.modules.get(module_name)
-        if resolver is None:
-            continue
-        for resolution, calls in resolver.resolution_counts():
+    # A process that never imported the resolvers made no model decision.
+    resolutions = sys.modules.get("tests.utils.model_resolution")
+    if resolutions is not None:
+        for resolution, calls in resolutions.resolution_counts():
             line = resolution.summary_line()
             lines.append(line if calls == 1 else f"{line} x{calls}")
     if not lines:

@@ -16,9 +16,9 @@ canary prompt forces a unique marker into the served report, so the
 assertion can only pass if the promoted prompt genuinely reaches the model
 and shapes the served output.
 
-Self-sufficient: the LM is a DEDICATED ``ollama serve`` this test starts on
-its own private port (cached binary + model), never the dev cluster; Phoenix
-is the self-managed ``phoenix_container``. Three runs on ONE shared agent
+The LM is the production Gemma served on Modal (``dspy_lm`` from
+``tests/agents/integration/conftest.py``); Phoenix is the self-managed
+``phoenix_container``. Three runs on ONE shared agent
 instance (the dispatcher shares a cached agent across requests):
 
   1. baseline, no canary  -> marker absent
@@ -29,15 +29,8 @@ instance (the dispatcher shares a cached agent across requests):
 
 from __future__ import annotations
 
-import os
-import socket
-import subprocess
-import time
-import urllib.request
 import uuid
-from pathlib import Path
 
-import dspy
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -49,7 +42,6 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 pytestmark = pytest.mark.integration
 
 _AGENT_TYPE = "detailed_report_agent"
-_MODEL = "qwen2.5:1.5b"
 _MARKER = "ZZCANARYMARKERZZ"
 _CANARY_PROMPT = (
     "You generate an executive report from search results. MANDATORY FORMAT: "
@@ -77,92 +69,6 @@ _SEARCH_RESULTS = [
         "content_type": "tutorial",
     },
 ]
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _ollama_binary() -> str:
-    import shutil
-
-    home_bin = Path.home() / ".ollama" / "bin" / "ollama"
-    if home_bin.exists():
-        return str(home_bin)
-    found = shutil.which("ollama")
-    if found:
-        return found
-    from tests.conftest import _install_ollama_to_home
-
-    return str(_install_ollama_to_home())
-
-
-@pytest.fixture(scope="module")
-def own_ollama():
-    """A DEDICATED ollama serve on a private port — this test's own LM, never
-    the ambient dev-cluster endpoint. Reuses the cached binary + model so no
-    download is needed; fails loudly (not skip) if the LM can't be brought up,
-    because an infra-skip would hide the very bug under test."""
-    binary = _ollama_binary()
-    port = _free_port()
-    host = f"127.0.0.1:{port}"
-    env = dict(os.environ)
-    env["OLLAMA_HOST"] = host
-    env.pop("OLLAMA_MODELS", None)  # default ~/.ollama/models (cached qwen2.5)
-    proc = subprocess.Popen(
-        [binary, "serve"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    base = f"http://{host}"
-    try:
-        deadline = time.time() + 60
-        ready = False
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError("ollama serve exited before becoming ready")
-            try:
-                with urllib.request.urlopen(f"{base}/api/tags", timeout=2) as r:
-                    if r.status == 200:
-                        ready = True
-                        break
-            except Exception:
-                time.sleep(0.5)
-        if not ready:
-            raise RuntimeError(f"dedicated ollama did not become ready on {host}")
-        # Ensure the cached model is registered on this server instance.
-        pull = subprocess.run(
-            [binary, "pull", _MODEL],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if pull.returncode != 0:
-            raise RuntimeError(f"ollama pull {_MODEL} failed: {pull.stderr}")
-        yield base
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
-@pytest.fixture(scope="module")
-def dspy_lm(own_ollama):
-    lm = dspy.LM(
-        model=f"ollama_chat/{_MODEL}",
-        api_base=own_ollama,
-        api_key="ollama",
-        temperature=0.0,
-        max_tokens=200,
-    )
-    dspy.configure(lm=lm)
-    yield lm
 
 
 @pytest.fixture

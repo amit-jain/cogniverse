@@ -743,6 +743,7 @@ def test_build_resolver_has_no_local_provider():
     resolver = inference_fixture._build_resolver({"vllm_colpali"})
     try:
         assert [provider.name for provider in resolver._providers] == [
+            "llm",
             "e2e",
             "dev",
             "modal",

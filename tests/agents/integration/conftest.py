@@ -121,50 +121,6 @@ def _gemma_llm_config(
     )
 
 
-def _resolve_verified_local_endpoint(
-    service: str,
-    *,
-    base_url: str,
-    api_key: str,
-) -> ResolvedInferenceEndpoint:
-    spec = get_inference_service_spec(service)
-    root_url = base_url.rstrip("/")
-    if root_url.endswith("/v1"):
-        root_url = root_url[: -len("/v1")]
-    return resolve_endpoint(
-        spec,
-        explicit=CandidateEndpoint(
-            provider="local",
-            base_url=root_url,
-            credentials=EndpointCredentials(bearer_token=api_key),
-            identity_evidence=EndpointIdentityEvidence.DEPLOYMENT,
-            model_revision=spec.model_revision,
-        ),
-    )
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(items):
-    """Use configured Modal Gemma where its fixture is available to the test."""
-
-    gemma_url = _configured_inference_service_urls().get("vllm_llm_student")
-    gemma_host = httpx.URL(gemma_url).host if gemma_url is not None else None
-    if gemma_host is None or not gemma_host.endswith(".modal.run"):
-        return
-    for item in items:
-        roles = getattr(item, "_cogniverse_lm_roles", ())
-        if (
-            roles == frozenset({"primary"})
-            and "ensure_host_ollama" in item.fixturenames
-            and item.session._fixturemanager.getfixturedefs(
-                "gemma_inference_endpoint", item
-            )
-        ):
-            item.fixturenames.remove("ensure_host_ollama")
-            if "gemma_inference_endpoint" not in item.fixturenames:
-                item.fixturenames.append("gemma_inference_endpoint")
-
-
 def is_llm_available() -> bool:
     """Cheap reachability probe for the test LM.
 
@@ -272,22 +228,12 @@ def ensure_deno() -> Path:
 
 
 @pytest.fixture(scope="session")
-def gemma_inference_endpoint(request):
-    """Prefer the authenticated Modal Gemma service, then the exact local LM."""
+def gemma_inference_endpoint():
+    """The exact production Gemma served on Modal (see tests/utils/hermetic_llm)."""
 
-    endpoint = _resolve_modal_generation_endpoint("vllm_llm_student")
-    if endpoint is None:
-        request.getfixturevalue("ensure_host_ollama")
-        from tests.fixtures.llm import (
-            resolve_api_key,
-            resolve_base_url,
-        )
+    from tests.utils.hermetic_llm import MODEL, ensure_llm_endpoint
 
-        endpoint = _resolve_verified_local_endpoint(
-            "vllm_llm_student",
-            base_url=resolve_base_url(),
-            api_key=resolve_api_key(),
-        )
+    endpoint = ensure_llm_endpoint(MODEL)
     config = _gemma_llm_config(endpoint)
     injected = {
         "TEST_LLM_API_BASE": config.api_base,
