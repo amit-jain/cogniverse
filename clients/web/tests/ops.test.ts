@@ -4,6 +4,7 @@ import { changedCorrections } from '../src/client/ops/ApprovalsView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { splitList } from '../src/client/ops/WorkflowReviewsView';
 import { errorMessage } from '../src/client/ops/http';
+import { delta, percent } from '../src/client/ops/metrics';
 import { formatArgoTime } from '../src/client/ops/OptimizationView';
 import { parseSse } from '../src/client/ops/sse';
 import { parseRoute, routeHash } from '../src/client/route';
@@ -162,5 +163,16 @@ describe('formatArgoTime', () => {
     expect(formatArgoTime('2026-09-16T10:05:59Z')).toBe('2026-09-16 10:05 UTC');
     expect(formatArgoTime(null)).toBe('—');
     expect(formatArgoTime('not a time')).toBe('not a time');
+  });
+});
+
+describe('metric formats', () => {
+  it('shows a rate as a percentage and a delta with its sign', () => {
+    expect(percent(0.4567)).toBe('45.7%');
+    expect(percent(1)).toBe('100.0%');
+    expect(delta(400)).toBe('+400.0');
+    expect(delta(-0.5, 3)).toBe('-0.500');
+    expect(delta(0)).toBe('0.0');
+    expect(delta(null)).toBe('—');
   });
 });

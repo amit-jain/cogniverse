@@ -5944,6 +5944,22 @@ async def run_synthetic_generation(
     }
 
 
+def emit_ab_compare_span(
+    tracer: Any, result: Any, tenant_id: str, queries_dataset: str
+) -> None:
+    """Record one compared row as an ``rlm.ab_compare`` span carrying
+    ``result.to_telemetry_dict()`` as ``openinference.*`` attributes."""
+    from cogniverse_foundation.telemetry.span_metrics import AB_COMPARE_SPAN_NAME
+
+    with tracer.start_as_current_span(AB_COMPARE_SPAN_NAME) as span:
+        for key, value in result.to_telemetry_dict().items():
+            if value is None:
+                continue
+            span.set_attribute(f"openinference.{key}", value)
+        span.set_attribute("openinference.tenant_id", tenant_id)
+        span.set_attribute("openinference.queries_dataset", queries_dataset)
+
+
 async def run_ab_compare(
     *,
     tenant_id: str,
@@ -6052,15 +6068,7 @@ async def run_ab_compare(
             logger.warning("ab-compare: arm failure on query=%r: %s", query[:60], exc)
             continue
 
-        # Emit a Phoenix span with the comparison attributes — the dashboard
-        # tile (when added) will aggregate over these.
-        with tracer.start_as_current_span("rlm.ab_compare") as span:
-            for k, v in result.to_telemetry_dict().items():
-                if v is None:
-                    continue
-                span.set_attribute(f"openinference.{k}", v)
-            span.set_attribute("openinference.tenant_id", tenant_id)
-            span.set_attribute("openinference.queries_dataset", queries_dataset)
+        emit_ab_compare_span(tracer, result, tenant_id, queries_dataset)
         rows.append(result)
 
     # This is a short-lived job: flush batched spans before returning so the

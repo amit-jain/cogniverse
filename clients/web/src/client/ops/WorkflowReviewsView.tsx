@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
 import { runtimeJson, seg } from './http';
+import { LookbackSelect } from './metrics';
 import { TenantChooser } from './tenants';
 
 interface Review {
@@ -31,12 +32,6 @@ interface Workflow {
 
 const QUALITY_LABELS = ['failed', 'poor', 'acceptable', 'good', 'excellent'];
 const PATTERNS = ['parallel', 'sequential', 'conditional', 'mixed'];
-const LOOKBACKS = [
-  { hours: 1, label: 'Last hour' },
-  { hours: 6, label: 'Last 6 hours' },
-  { hours: 24, label: 'Last day' },
-  { hours: 168, label: 'Last week' },
-];
 
 /** The non-blank entries of ``text`` split on commas and line breaks. */
 export function splitList(text: string): string[] {
@@ -120,16 +115,7 @@ function Workflows({
     <>
       <Panel title={`Workflows of ${tenant}`} actions={<button onClick={workflows.reload}>Refresh</button>}>
         <div className="inline-form">
-          <label>
-            Window
-            <select value={lookback} onChange={(e) => onLookback(Number(e.target.value))}>
-              {LOOKBACKS.map((option) => (
-                <option key={option.hours} value={option.hours}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <LookbackSelect value={lookback} onChange={onLookback} />
           <label>
             Reviewer
             <input value={reviewer} onChange={(e) => onReviewer(e.target.value)} placeholder="you@example.com" />

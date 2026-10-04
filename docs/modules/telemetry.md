@@ -32,6 +32,7 @@ libs/foundation/cogniverse_foundation/telemetry/
 ├── config.py                # TelemetryConfig and BatchExportConfig
 ├── context.py               # Span context helpers
 ├── span_contract.py         # Canonical span I/O contract (record_span_io / read_span_io)
+├── span_metrics.py          # Aggregates over span frames for the operations views
 ├── registry.py              # Provider registry for auto-discovery
 └── providers/               # Provider interfaces
     ├── __init__.py
@@ -46,6 +47,13 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryConfig`: Configuration for telemetry systems with BatchExportConfig
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
+- `span_metrics`: aggregates over a `TraceStore` span frame.
+  `profile_selection_metrics(spans)` gives per-modality count, p50/p95/p99
+  latency in ms and success rate, most-used first; `aggregate_ab_compare(spans)`
+  gives the `ABCompareAggregate` of `rlm.ab_compare` spans (`AB_COMPARE_SPAN_NAME`),
+  with averages, `per_dataset` and `per_row` (newest first) frames. `span_succeeded(status)` is
+  false only for `ERROR`, so a span that finished without setting a status
+  (`UNSET`) counts as a success.
 - `span_contract`: the one span I/O shape every operation uses, and the
   result annotation contract: `RESULT_RELEVANCE`, `RELEVANCE_SCORES` and
   `persist_result_relevance(provider, project, span_id, result_id, label)`,

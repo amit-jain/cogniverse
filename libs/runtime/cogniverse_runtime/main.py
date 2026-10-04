@@ -86,6 +86,7 @@ from cogniverse_runtime.routers import (
     openai_compat,
     orchestration_annotations,
     search,
+    telemetry_metrics,
     tenant,
     wiki,
 )
@@ -1993,6 +1994,9 @@ app.include_router(
     orchestration_annotations.router,
     prefix="/admin/tenant",
     tags=["orchestration-annotations"],
+)
+app.include_router(
+    telemetry_metrics.router, prefix="/admin/tenant", tags=["telemetry-metrics"]
 )
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])

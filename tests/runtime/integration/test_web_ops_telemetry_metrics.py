@@ -1,0 +1,249 @@
+"""The web client's Profile metrics and RLM A/B views, driven in Chromium
+against spans in real Phoenix.
+
+Spans are recorded the way their producers record them, with fixed values
+(``tests/utils/telemetry_metric_spans``). The runtime reads them through a
+forwarding proxy in front of Phoenix's HTTP API, so a test can fail the reads.
+"""
+
+from __future__ import annotations
+
+import time
+from uuid import uuid4
+
+import pytest
+from playwright.sync_api import Page, expect, sync_playwright
+
+import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+from cogniverse_runtime.optimization_cli import emit_ab_compare_span
+from tests.utils.approval_review import review_config_manager
+from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.telemetry_metric_spans import ab_result, record_profile_selection
+from tests.utils.web_client import (
+    build_web_client,
+    install_web_client,
+    recording_telemetry_sink,
+    serve_web,
+)
+from tests.utils.web_ops import serve_ops_runtime
+
+pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+
+KEY = "web-ops-harness-key"
+
+
+@pytest.fixture(scope="module")
+def phoenix_proxy(phoenix_container):
+    with InterceptFaultProxy(phoenix_container["http_endpoint"]) as proxy:
+        yield proxy
+
+
+@pytest.fixture(scope="module")
+def telemetry(phoenix_container, phoenix_proxy):
+    """The global telemetry manager: spans export to Phoenix, reads go
+    through ``phoenix_proxy``."""
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+    manager = TelemetryManager(
+        config=TelemetryConfig(
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_proxy.url,
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+    )
+    telemetry_manager_module._telemetry_manager = manager
+    yield manager
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+
+@pytest.fixture(scope="module")
+def built_client(tmp_path_factory):
+    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
+
+
+@pytest.fixture(scope="module")
+def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, telemetry):
+    with serve_ops_runtime(
+        review_config_manager(phoenix_container, workflow_state_redis_url),
+        schema_loader,
+        workflow_state_redis_url,
+    ) as url:
+        yield url
+
+
+@pytest.fixture()
+def web_url(built_client, runtime_url, phoenix_proxy):
+    with recording_telemetry_sink() as (sink_url, received):
+        with serve_web(
+            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+        ) as url:
+            yield url
+        assert received == []
+    phoenix_proxy.intercept = None
+
+
+@pytest.fixture(scope="module")
+def browser():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        yield browser
+        browser.close()
+
+
+@pytest.fixture()
+def page(browser):
+    context = browser.new_context()
+    page = context.new_page()
+    yield page
+    context.close()
+
+
+def _tenant(prefix):
+    return canonical_tenant_id(f"{prefix}{uuid4().hex[:8]}")
+
+
+def _show(page: Page, web_url: str, view: str, heading: str, action: str, tenant):
+    page.goto(f"{web_url}/#/ops/{view}")
+    expect(page.get_by_role("heading", name=heading, level=1)).to_be_visible()
+    chooser = page.get_by_role("form", name="Choose tenant")
+    chooser.get_by_label("Tenant ID").fill(tenant)
+    chooser.get_by_role("button", name=action).click()
+
+
+def _table(page: Page, table: str):
+    return page.get_by_role("table", name=table, exact=True)
+
+
+def _rows(page: Page, table: str):
+    return [
+        row.locator("td").all_inner_texts()
+        for row in _table(page, table).locator("tbody tr").all()
+    ]
+
+
+def _rows_until(page: Page, panel: str, table: str, want: int, timeout=90.0):
+    """The rows of ``table`` once it shows ``want``, refreshing ``panel``
+    meanwhile (Phoenix serves spans after a short indexing delay)."""
+    region = page.get_by_role("region", name=panel, exact=True)
+    deadline = time.monotonic() + timeout
+    while True:
+        expect(region.locator("table, dl, p.muted, .alert").first).to_be_visible()
+        rows = _rows(page, table) if _table(page, table).count() else []
+        if len(rows) == want or time.monotonic() > deadline:
+            return rows
+        region.get_by_role("button", name="Refresh").click()
+        page.wait_for_timeout(2000)
+
+
+def _bars(page: Page, title: str):
+    figure = page.get_by_role("figure", name=title, exact=True)
+    return list(
+        zip(
+            figure.locator(".bar-label").all_inner_texts(),
+            figure.locator(".bar-value").all_inner_texts(),
+            strict=True,
+        )
+    )
+
+
+def test_profile_metrics_show_each_modality(page, web_url, telemetry):
+    tenant = _tenant("webprofile")
+    for duration in (100, 200, 300, 400):
+        record_profile_selection(telemetry, tenant, "video", duration)
+    record_profile_selection(telemetry, tenant, "image", 50)
+    record_profile_selection(telemetry, tenant, "image", 150, failed=True)
+    telemetry.force_flush(timeout_millis=10000)
+
+    _show(page, web_url, "profile-metrics", "Profile metrics", "Show metrics", tenant)
+    assert _rows_until(
+        page, f"Profile selections of {tenant}", "Selections by modality", 2
+    ) == [
+        ["video", "4", "250.0 ms", "385.0 ms", "397.0 ms", "100.0%"],
+        ["image", "2", "100.0 ms", "145.0 ms", "149.0 ms", "50.0%"],
+    ]
+    assert _bars(page, "Selections per modality") == [("video", "4"), ("image", "2")]
+    assert _bars(page, "P95 latency per modality") == [
+        ("video", "385.0 ms"),
+        ("image", "145.0 ms"),
+    ]
+
+
+def test_profile_metrics_show_an_outage_rather_than_an_empty_window(
+    page, web_url, phoenix_proxy
+):
+    tenant = _tenant("webprofileoutage")
+    phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})
+    _show(page, web_url, "profile-metrics", "Profile metrics", "Show metrics", tenant)
+    panel = page.get_by_role(
+        "region", name=f"Profile selections of {tenant}", exact=True
+    )
+    expect(panel.get_by_role("alert")).to_have_text(
+        f"Could not read the cogniverse.profile_selection spans of tenant {tenant}."
+    )
+    expect(panel.get_by_text("No profile selections in this window.")).to_have_count(0)
+
+
+def test_rlm_ab_shows_averages_datasets_and_comparisons(page, web_url, telemetry):
+    tenant = _tenant("webrlmab")
+    tracer = telemetry._get_tracer_for_project(tenant, None)
+    rows = [
+        ("ab-1", "first question", 200.0, 30, 0.25, False, "lectures"),
+        ("ab-2", "second question", 400.0, 50, 0.25, True, "lectures"),
+        ("ab-3", "third question", 600.0, 10, -0.5, False, "podcasts"),
+    ]
+    for ab_id, query, latency, tokens, judge, fallback, dataset in rows:
+        emit_ab_compare_span(
+            tracer,
+            ab_result(ab_id, query, latency, tokens, judge, fallback),
+            tenant,
+            dataset,
+        )
+        time.sleep(0.01)
+    telemetry.force_flush(timeout_millis=10000)
+
+    _show(page, web_url, "rlm-ab", "RLM A/B", "Show comparisons", tenant)
+    rows_shown = _rows_until(page, f"RLM A/B comparisons of {tenant}", "Comparisons", 3)
+    assert [row[1:] for row in rows_shown] == [
+        ["third question", "podcasts", "+600.0", "+10.0", "-0.500", "no"],
+        ["second question", "lectures", "+400.0", "+50.0", "+0.250", "yes"],
+        ["first question", "lectures", "+200.0", "+30.0", "+0.250", "no"],
+    ]
+    expect(page.get_by_role("region", name="Comparisons", exact=True)).to_be_visible()
+    averages = page.locator('dl[aria-label="Comparison averages"]')
+    terms = averages.locator("dt").all_inner_texts()
+    values = averages.locator("dd").all_inner_texts()
+    assert dict(zip(terms, values, strict=True)) == {
+        "Comparisons": "3",
+        "Latency change with RLM": "+400.0 ms",
+        "Token change with RLM": "+30.0",
+        "Judge score change with RLM": "0.000",
+        "RLM fell back": "33.3%",
+    }
+    assert _rows(page, "Comparisons per dataset") == [
+        ["lectures", "2", "+300.0", "+40.0", "+0.250"],
+        ["podcasts", "1", "+600.0", "+10.0", "-0.500"],
+    ]
+    assert _bars(page, "Average latency change per dataset") == [
+        ("lectures", "+300.0 ms"),
+        ("podcasts", "+600.0 ms"),
+    ]
+
+
+def test_rlm_ab_with_no_comparisons_says_how_to_record_them(page, web_url, telemetry):
+    tenant = _tenant("webrlmabempty")
+    _show(page, web_url, "rlm-ab", "RLM A/B", "Show comparisons", tenant)
+    panel = page.get_by_role(
+        "region", name=f"RLM A/B comparisons of {tenant}", exact=True
+    )
+    expect(panel.locator("p.muted")).to_have_text(
+        "No comparisons in this window. Run cogniverse-optim --mode ab-compare "
+        "for this tenant to record some."
+    )

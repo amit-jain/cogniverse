@@ -36,11 +36,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
-from cogniverse_dashboard.tabs.rlm_ab_compare import (
-    SPAN_NAME,
+from cogniverse_dashboard.tabs.rlm_ab_compare import load_ab_compare_data
+from cogniverse_foundation.telemetry.span_metrics import (
+    AB_COMPARE_SPAN_NAME as SPAN_NAME,
+)
+from cogniverse_foundation.telemetry.span_metrics import (
     ABCompareAggregate,
     aggregate_ab_compare,
-    load_ab_compare_data,
 )
 
 pytestmark = pytest.mark.integration
@@ -58,6 +60,7 @@ def _attr_row(
     was_fallback: bool = False,
     queries_dataset: str = "ds_default",
     name: str = SPAN_NAME,
+    start_time: str = "2026-05-09T00:00:00Z",
 ) -> dict:
     """Build a Phoenix-shaped span row for the aggregator."""
     attrs = {
@@ -76,7 +79,7 @@ def _attr_row(
         "name": name,
         "trace_id": ab_id,
         "context.span_id": ab_id + "_span",
-        "start_time": "2026-05-09T00:00:00Z",
+        "start_time": start_time,
         "attributes": attrs,
     }
 
@@ -109,6 +112,25 @@ class TestAggregator:
         assert agg.rows == 2
         assert agg.avg_latency_delta_ms == 20.0
         assert agg.avg_tokens_delta == 30.0
+
+    def test_rows_are_listed_newest_first(self):
+        df = pd.DataFrame(
+            [
+                _attr_row(
+                    ab_id=ab_id, latency_delta=1.0, tokens_delta=1, start_time=start
+                )
+                for ab_id, start in (
+                    ("middle", "2026-05-09T00:00:01Z"),
+                    ("oldest", "2026-05-09T00:00:00Z"),
+                    ("newest", "2026-05-09T00:00:02Z"),
+                )
+            ]
+        )
+        assert list(aggregate_ab_compare(df).per_row["ab_id"]) == [
+            "newest",
+            "middle",
+            "oldest",
+        ]
 
     def test_per_dataset_grouping(self):
         df = pd.DataFrame(
