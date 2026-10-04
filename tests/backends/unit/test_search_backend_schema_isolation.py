@@ -328,7 +328,7 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
     backend._metadata_app = None
     backend._metadata_app_key = None
     backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
-    backend.schema_exists = MagicMock(return_value=True)
+    backend._read_path_deployed = MagicMock(return_value=True)
     client = MagicMock()
     client.query.return_value = SimpleNamespace(
         status_code=200,
@@ -345,7 +345,7 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
         )
 
     assert rows == [{"id": "best"}]
-    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
+    backend._read_path_deployed.assert_called_once_with("acme:acme", "wiki_pages")
     assert client.query.call_args.kwargs == {
         "body": {
             "hits": 2,

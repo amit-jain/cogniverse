@@ -148,6 +148,9 @@ class VespaBackend(Backend):
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
+        # Which tenant schemas are deployed, for read paths that skip a query
+        # on an undeployed schema; built on first use.
+        self._deployed_schema_names: Optional[DeployedSchemaNames] = None
 
     @property
     def config_manager(self):
@@ -2083,7 +2086,7 @@ class VespaBackend(Backend):
                     )
 
         try:
-            if tenant_id and not self.schema_exists(schema, tenant_id=tenant_id):
+            if tenant_id and not self._read_path_deployed(tenant_id, schema):
                 logger.info(
                     "Tenant-scoped metadata query skipped because schema %r is "
                     "not deployed for tenant %r",
@@ -2129,7 +2132,27 @@ class VespaBackend(Backend):
                 )
 
             # Execute query
-            results = vespa_client.query(body=query_params)
+            try:
+                results = vespa_client.query(body=query_params)
+            except Exception as exc:
+                # The deployed-schema answer may lag another process's drop by
+                # up to DEPLOYED_SCHEMAS_MAX_STALENESS_S; Vespa then no longer
+                # resolves the schema. The stored row decides: a schema it no
+                # longer registers has no rows, any other failure raises.
+                if not (
+                    tenant_id
+                    and _unresolved_source(exc, query_schema)
+                    and not self.schema_exists(schema, tenant_id=tenant_id)
+                ):
+                    raise
+                self._deployed_schema_names.invalidate(tenant_id)
+                logger.info(
+                    "Tenant-scoped metadata query answered no rows: schema %r "
+                    "of tenant %r was dropped",
+                    schema,
+                    tenant_id,
+                )
+                return []
 
             # Belt-and-braces: pyvespa >=1.1 raises VespaError on non-2xx via
             # raise_for_status, but keep the explicit check so a rejected query
@@ -2179,6 +2202,23 @@ class VespaBackend(Backend):
             # deliberately degrade (provenance fetch, memory list) catch this.
             logger.error(f"Failed to query metadata documents from {schema}: {e!r}")
             raise
+
+    def _read_path_deployed(self, tenant_id: str, base_schema_name: str) -> bool:
+        """Whether a read may query the tenant's schema, from the
+        ``DeployedSchemaNames`` this backend owns: a deployed answer costs no
+        store read and lags another process's drop by at most
+        ``DEPLOYED_SCHEMAS_MAX_STALENESS_S``. Never a deploy decision."""
+        if self._config_manager_instance is None:
+            raise RuntimeError(
+                "Tenant-scoped metadata queries need the backend's config manager"
+            )
+        with self._metadata_app_lock:
+            if self._deployed_schema_names is None:
+                self._deployed_schema_names = DeployedSchemaNames(
+                    self._config_manager_instance
+                )
+            reader = self._deployed_schema_names
+        return reader(tenant_id, base_schema_name)
 
     def delete_metadata_document(self, schema: str, doc_id: str) -> bool:
         """
@@ -2322,3 +2362,18 @@ def register() -> None:
 
 # Call registration on import
 register()
+
+
+def _unresolved_source(exc: BaseException, schema_name: str) -> bool:
+    """Whether ``exc`` is Vespa refusing a query because it cannot resolve
+    ``schema_name`` as a source: the schema is not deployed."""
+    errors = exc.args[0] if exc.args else None
+    if not isinstance(errors, list):
+        return False
+    return any(
+        isinstance(error, dict)
+        and error.get("code") == 4
+        and f"Could not resolve source ref '{schema_name}'"
+        in str(error.get("message", ""))
+        for error in errors
+    )

@@ -53,12 +53,38 @@ class Stub:
     pass
 
 
+def _config_manager_with_deployed(bases):
+    """A config store whose schema registry rows record ``bases`` deployed
+    for TENANT."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    for base in bases:
+        store.set_config(
+            tenant_id=TENANT,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=f"schema_{base}",
+            config_value={
+                "tenant_id": TENANT,
+                "base_schema_name": base,
+                "full_schema_name": f"{base}_{TENANT.replace(':', '_')}",
+                "schema_definition": "{}",
+                "config": {},
+                "deployment_time": "2026-10-04T00:00:00+00:00",
+            },
+        )
+    return ConfigManager(store=store)
+
+
 def test_tenant_scoped_metadata_queries_scope_once():
     cfg = BackendConfig(tenant_id=TENANT, url="http://vespa.invalid", port=8080)
     backend = VespaBackend(
         backend_config=cfg,
         schema_loader=Stub(),
-        config_manager=Stub(),
+        config_manager=_config_manager_with_deployed(RecordingRegistry.deployed_bases),
     )
     registry = RecordingRegistry()
     backend.schema_registry = registry
@@ -90,10 +116,12 @@ def test_tenant_scoped_metadata_queries_scope_once():
     provenance = ProvenanceStore(backend_resolver=lambda: backend, tenant_id=TENANT)
     assert provenance.get("m1") is None
 
-    assert registry.calls == [
-        (TENANT, "agent_memories"),
-        (TENANT, "provenance"),
-    ]
+    # Whether a read may query the schema comes from the stored registry
+    # rows held by the backend's DeployedSchemaNames, not from the registry
+    # double, whose schema_exists serves deploy decisions.
+    assert registry.calls == []
+    assert backend._deployed_schema_names(TENANT, "agent_memories") is True
+    assert backend._deployed_schema_names(TENANT, "provenance") is True
     assert app.bodies[0]["yql"] == (
         f"select * from {memory_schema} where true order by created_at desc, id desc"
     )
