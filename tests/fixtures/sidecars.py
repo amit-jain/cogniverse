@@ -97,6 +97,16 @@ def served_code_colbert(remote_inference):
         model._close()
 
 
+def inject_gliner_url(config_manager, url: str) -> None:
+    """Register the GLiNER service URL the runtime's dispatcher and
+    orchestrator read from ``SystemConfig.inference_service_urls``, beside the
+    endpoints already configured."""
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["gliner"] = url
+    config_manager.set_system_config(sys_cfg)
+
+
 @pytest.fixture(scope="session")
 def gliner_url(remote_inference):
     """Base URL of the cluster's GLiNER service, the production entity and

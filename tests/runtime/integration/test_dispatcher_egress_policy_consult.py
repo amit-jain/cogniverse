@@ -23,6 +23,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
+from tests.fixtures.sidecars import inject_gliner_url
 
 pytestmark = pytest.mark.integration
 
@@ -46,9 +47,10 @@ def sandbox_manager_with_real_policies() -> SandboxManager:
 
 @pytest.fixture
 def dispatcher_with_sandbox(
-    sandbox_manager_with_real_policies: SandboxManager,
+    sandbox_manager_with_real_policies: SandboxManager, gliner_url
 ) -> AgentDispatcher:
     cm = create_default_config_manager()
+    inject_gliner_url(cm, gliner_url)
     registry = AgentRegistry(tenant_id="p3_tenant", config_manager=cm)
     return AgentDispatcher(
         agent_registry=registry,
@@ -59,9 +61,10 @@ def dispatcher_with_sandbox(
 
 
 @pytest.fixture
-def dispatcher_without_sandbox() -> AgentDispatcher:
+def dispatcher_without_sandbox(gliner_url) -> AgentDispatcher:
     """Back-compat: deployments without a sandbox manager keep working."""
     cm = create_default_config_manager()
+    inject_gliner_url(cm, gliner_url)
     registry = AgentRegistry(tenant_id="p3_tenant_nosandbox", config_manager=cm)
     return AgentDispatcher(
         agent_registry=registry,

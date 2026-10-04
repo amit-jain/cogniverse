@@ -1271,7 +1271,7 @@ class TestDispatcherArtifactWiring:
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-        from tests.agents.integration.conftest import inject_gliner_url
+        from tests.fixtures.sidecars import inject_gliner_url
 
         # dispatch() canonicalizes tenant_id via require_tenant_id before the
         # generic path injects _artifact_tenant_id, so a simple (no-colon) id
@@ -1374,10 +1374,8 @@ class TestDispatcherArtifactWiring:
         from cogniverse_foundation.config.utils import get_config
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
         from cogniverse_runtime.routers import agents as agents_router
-        from tests.agents.integration.conftest import (
-            inject_gliner_url,
-            inject_tomoro_url,
-        )
+        from tests.agents.integration.conftest import inject_tomoro_url
+        from tests.fixtures.sidecars import inject_gliner_url
         from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
 
         # dispatch() canonicalizes tenant_id via require_tenant_id before it

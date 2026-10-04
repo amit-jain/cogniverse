@@ -575,15 +575,6 @@ def tomoro_inference_url(remote_inference):
     return remote_inference.resolve("vllm_colpali").base_url
 
 
-def inject_gliner_url(config_manager, url: str) -> None:
-    """Register the GLiNER service URL the runtime's dispatcher and
-    orchestrator read from ``SystemConfig.inference_service_urls``."""
-    sys_cfg = config_manager.get_system_config()
-    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
-    sys_cfg.inference_service_urls["gliner"] = url
-    config_manager.set_system_config(sys_cfg)
-
-
 def inject_tomoro_url(config_manager, url: str) -> None:
     """Point ``SystemConfig.inference_service_urls['vllm_colpali']`` at ``url``.
 
