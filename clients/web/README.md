@@ -5,7 +5,11 @@ the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar; picking
 one opens a CopilotKit chat with it. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token, status
 phases show above the chat, and search hits in the run's final state render as
-result cards.
+result cards. When the search recorded a telemetry span, each card can be
+rated Highly Relevant, Somewhat Relevant or Not Relevant; the rating is stored
+on the search's span (`POST /ag-ui/results/relevance`), where the embedding
+triplet miner reads it, and a rating that was not stored shows its reason on
+the card.
 
 The browser talks only to this package's Node server. The server hosts the
 CopilotKit runtime at `/api/copilotkit` and holds one harness key, which it

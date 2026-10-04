@@ -2651,11 +2651,11 @@ with main_tabs[10]:
                             "💾 Save Annotation",
                             key=f"save_{i}",
                         ):
-                            from cogniverse_dashboard.utils.annotations import (
-                                persist_result_relevance,
-                            )
                             from cogniverse_foundation.telemetry.manager import (
                                 get_telemetry_manager,
+                            )
+                            from cogniverse_foundation.telemetry.span_contract import (
+                                persist_result_relevance,
                             )
 
                             _tenant = st.session_state["current_tenant"]

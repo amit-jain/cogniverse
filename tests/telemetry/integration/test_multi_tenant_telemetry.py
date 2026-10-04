@@ -29,6 +29,21 @@ from cogniverse_foundation.telemetry.manager import (
 from tests.utils.async_polling import wait_for_phoenix_processing
 
 
+def _names_once_ingested(client, project, prefix, count, timeout_s=60.0):
+    """The names of ``project``'s spans starting with ``prefix`` once Phoenix
+    has ingested ``count`` of them (or the deadline passed), sorted. A flush
+    returns when the collector accepted the spans; Phoenix stores them later."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        frame = client.spans.get_spans_dataframe(
+            project_identifier=project, limit=10000, timeout=30
+        )
+        names = sorted(n for n in frame.get("name", []) if n.startswith(prefix))
+        if len(names) >= count or time.monotonic() > deadline:
+            return names
+        time.sleep(0.5)
+
+
 @pytest.mark.integration
 @pytest.mark.telemetry
 @pytest.mark.ci_fast
@@ -597,6 +612,61 @@ class TestGetSpansNameFilterRealPhoenix:
         }
         assert len(unfiltered) == 5
 
+    def test_span_id_filter_selects_one_span_of_its_project(self, phoenix_container):
+        import asyncio
+
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"spanid-{run_id}"
+        other_tenant = f"spanid-other-{run_id}"
+
+        span_ids = []
+        for i in range(3):
+            with manager.span(name=f"op_{i}", tenant_id=tenant) as span:
+                span_ids.append(f"{span.get_span_context().span_id:016x}")
+        with manager.span(name="op_0", tenant_id=other_tenant) as span:
+            foreign_span_id = f"{span.get_span_context().span_id:016x}"
+
+        assert manager.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(http_endpoint=phoenix_container["http_endpoint"])
+        project = phoenix_config.get_project_name(tenant)
+
+        def spans(**filters):
+            frame = asyncio.run(store.get_spans(project=project, filters=filters))
+            if frame.empty:
+                return []
+            return list(zip(frame["context.span_id"], frame["name"]))
+
+        assert spans(span_id=span_ids[1]) == [(span_ids[1], "op_1")]
+        assert spans(span_id=span_ids[1], name="op_1") == [(span_ids[1], "op_1")]
+        assert spans(span_id=span_ids[1], name="op_2") == []
+        # A span of another project is not found through this one.
+        assert spans(span_id=foreign_span_id) == []
+        # A quote in the id stays inside the literal.
+        assert spans(span_id="x' or name == 'op_0") == []
+        with pytest.raises(ValueError, match=r"do not support filters \['trace_id'\]"):
+            asyncio.run(store.get_spans(project=project, filters={"trace_id": "t"}))
+
+        manager.shutdown()
+        TelemetryManager._instance = None
+
     def test_limit_slice_client_side_filter_misses_gateway_span_but_spanquery_finds_it(
         self, phoenix_container
     ):
@@ -738,9 +808,10 @@ class TestWaitForSpanHelperRealPhoenix:
                 pass
 
         assert manager.force_flush(timeout_millis=10000)
-        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
         client = Client(base_url=phoenix_container["http_endpoint"])
+        # All 202 spans are stored before the slice is read.
+        assert len(_names_once_ingested(client, project, "", 202)) == 202
         legacy = client.spans.get_spans_dataframe(
             project_identifier=project,
             limit=200,
@@ -989,26 +1060,20 @@ class TestManagerResetRebuildRealPhoenix:
                     span.set_attribute("i", i)
             assert m2.force_flush(timeout_millis=10000)
 
-            wait_for_phoenix_processing(delay=2, description="Phoenix processing")
-
             from phoenix.client import Client
 
             client = Client(base_url=phoenix_container["http_endpoint"])
 
             alpha_project = cfg_obj.get_project_name("tenant-alpha", "routing")
-            alpha_df = client.spans.get_spans_dataframe(
-                project_identifier=alpha_project
-            )
-            pre = alpha_df[alpha_df["name"].str.startswith(f"pre_{run_id}_")]
-            assert sorted(pre["name"]) == [f"pre_{run_id}_{i}" for i in range(3)]
-            assert len(pre) == 3, f"pre-reset spans in {alpha_project}: {len(pre)}"
+            assert _names_once_ingested(client, alpha_project, f"pre_{run_id}_", 3) == [
+                f"pre_{run_id}_{i}" for i in range(3)
+            ]
 
             # The rebuilt manager emitted its spans to the live instance.
             beta_project = cfg_obj.get_project_name("tenant-beta", "routing")
-            beta_df = client.spans.get_spans_dataframe(project_identifier=beta_project)
-            post = beta_df[beta_df["name"].str.startswith(f"post_{run_id}_")]
-            assert sorted(post["name"]) == [f"post_{run_id}_{i}" for i in range(3)]
-            assert len(post) == 3, f"post-reset spans in {beta_project}: {len(post)}"
+            assert _names_once_ingested(client, beta_project, f"post_{run_id}_", 3) == [
+                f"post_{run_id}_{i}" for i in range(3)
+            ]
         finally:
             TelemetryManager.reset()
             manager_mod._telemetry_manager = None

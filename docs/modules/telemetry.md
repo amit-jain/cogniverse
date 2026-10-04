@@ -46,7 +46,11 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryConfig`: Configuration for telemetry systems with BatchExportConfig
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
-- `span_contract`: the one span I/O shape every operation uses.
+- `span_contract`: the one span I/O shape every operation uses, and the
+  result annotation contract: `RESULT_RELEVANCE`, `RELEVANCE_SCORES` and
+  `persist_result_relevance(provider, project, span_id, result_id, label)`,
+  which checks the span is in `project` (`SpanNotInProjectError` otherwise)
+  and stores the rating under the result's own identifier.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
   `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
@@ -450,8 +454,10 @@ class AnnotationStore(ABC):
         score: float,        # 0.0-1.0
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,  # several annotations of one name per span
     ) -> str:
-        """Add annotation to a span."""
+        """Add annotation to a span; replaces the span's annotation of the
+        same name and identifier."""
         pass
 
     @abstractmethod

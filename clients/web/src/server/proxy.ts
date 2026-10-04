@@ -12,6 +12,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
+  /^\/ag-ui\/results\/relevance$/,
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,
   /^\/agents\/annotations\/queue(\/[^/]+\/(assign|complete))?$/,

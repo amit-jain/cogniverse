@@ -1,5 +1,14 @@
+import { useState } from 'react';
+import { messageOf } from './ops/common';
+import { runtimeJson } from './ops/http';
+
 export interface ResultItem {
   id: string;
+  /**
+   * The id a relevance rating names: the one the search span records the hit
+   * under, and that the triplet miner reads back first.
+   */
+  ratingId?: string;
   score?: number;
   title?: string;
   snippet?: string;
@@ -35,6 +44,12 @@ export function resultsOf(state: unknown): ResultItem[] {
     return [
       {
         id,
+        ratingId:
+          text(hit.document_id) ??
+          text(hit.documentid) ??
+          text(hit.id) ??
+          text(hit.source_id) ??
+          text(hit.video_id),
         score: number(hit.rrf_score) ?? number(hit.score),
         title: text(hit.title) ?? text(metadata.title) ?? text(metadata.video_title),
         snippet:
@@ -49,13 +64,22 @@ export function resultsOf(state: unknown): ResultItem[] {
   });
 }
 
+/** The search's telemetry span id in a run's final payload, when it has one. */
+export function searchSpanOf(state: unknown): string | undefined {
+  const result = (state as { result?: { span_id?: unknown } } | undefined)?.result;
+  return text(result?.span_id);
+}
+
+/** The labels a reviewer rates a hit with, as the runtime stores them. */
+export const RELEVANCE_LABELS = ['Highly Relevant', 'Somewhat Relevant', 'Not Relevant'] as const;
+
 /** 75.4 -> "1:15". */
 export function clock(seconds: number): string {
   const whole = Math.floor(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function ResultCards({ results }: { results: ResultItem[] }) {
+export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId?: string }) {
   return (
     <ol className="result-list">
       {results.map((item, index) => (
@@ -75,8 +99,50 @@ export function ResultCards({ results }: { results: ResultItem[] }) {
             </div>
           )}
           {item.snippet && <p className="result-snippet">{item.snippet}</p>}
+          {spanId && item.ratingId && <Relevance spanId={spanId} resultId={item.ratingId} />}
         </li>
       ))}
     </ol>
+  );
+}
+
+function Relevance({ spanId, resultId }: { spanId: string; resultId: string }) {
+  const [rated, setRated] = useState<string>();
+  const [pending, setPending] = useState<string>();
+  const [error, setError] = useState('');
+  const rate = async (relevance: string) => {
+    setPending(relevance);
+    setError('');
+    try {
+      const stored = await runtimeJson<{ relevance: string }>('/ag-ui/results/relevance', {
+        method: 'POST',
+        body: { span_id: spanId, result_id: resultId, relevance },
+      });
+      setRated(stored.relevance);
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setPending(undefined);
+    }
+  };
+  return (
+    <div className="relevance" role="group" aria-label={`Relevance of ${resultId}`}>
+      {RELEVANCE_LABELS.map((label) => (
+        <button
+          key={label}
+          type="button"
+          aria-pressed={rated === label}
+          disabled={pending !== undefined}
+          onClick={() => rate(label)}
+        >
+          {pending === label ? 'Saving…' : label}
+        </button>
+      ))}
+      {error && (
+        <p className="relevance-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
