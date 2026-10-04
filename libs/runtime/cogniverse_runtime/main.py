@@ -1056,6 +1056,20 @@ def configure_ambient_dspy(primary_lm: Any) -> None:
     dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
 
 
+def preload_lm_client_modules() -> None:
+    """Import, before the worker serves, the modules its first LM call would
+    otherwise import on the LM thread mid-request: LiteLLM, which DSPy loads
+    lazily, and the OpenAI client's resource modules, which the client loads
+    on first use. Both build hundreds of pydantic models; while they do, the
+    serving loop waits for the interpreter at every socket read and write, so
+    liveness and every other request on the worker stall for that time."""
+    import importlib
+
+    # Reading an attribute executes LiteLLM if DSPy registered it lazily.
+    _ = importlib.import_module("litellm").completion
+    importlib.import_module("openai.resources")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -1570,6 +1584,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning(f"DSPy ambient configure skipped: {exc}")
     else:
         logger.info("DSPy ambient LM already configured for this process")
+    await asyncio.to_thread(preload_lm_client_modules)
     # NOTE: OpenInference DSPy instrumentation runs at module-top
     # bootstrap (see the top of this file) so DSPy classes are
     # wrapped BEFORE any agent imports bind references to the
