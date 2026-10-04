@@ -2182,3 +2182,46 @@ def test_explicit_url_no_workload_publishes_must_report_its_revision():
     assert str(caught.value) == (
         f"vllm_colpali: expected revision {COLPALI.model_revision!r}, got None"
     )
+
+
+@pytest.mark.unit
+def test_an_explicit_resolution_is_reported_in_the_session_summary():
+    from tests.utils.model_resolution import ModelResolution, resolution_counts
+
+    with _model_server(model=COLPALI.model_id, revision=COLPALI.model_revision) as (
+        url,
+        _,
+    ):
+        resolver = InferenceSessionResolver(
+            providers=(),
+            explicit_endpoints={"vllm_colpali": _explicit_candidate(url)},
+        )
+        try:
+            resolver.resolve("vllm_colpali")
+        finally:
+            resolver.close()
+
+    assert (
+        ModelResolution(
+            "inference vllm_colpali",
+            "resolved-remote",
+            url,
+            ("explicit",),
+            "INFERENCE_SERVICE_URLS",
+        ).summary_line()
+        == f"inference vllm_colpali: resolved-remote {url} (INFERENCE_SERVICE_URLS) "
+        "[candidates: explicit]"
+    )
+    assert [
+        resolution
+        for resolution, _ in resolution_counts()
+        if resolution.endpoint == url
+    ] == [
+        ModelResolution(
+            "inference vllm_colpali",
+            "resolved-remote",
+            url,
+            ("explicit",),
+            "INFERENCE_SERVICE_URLS",
+        )
+    ]

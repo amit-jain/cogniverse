@@ -541,7 +541,17 @@ class InferenceSessionResolver:
 
     def _resolve_once(self, spec: InferenceServiceSpec):
         if self._explicit.has_service(spec.name):
-            return self._explicit.resolve(spec)
+            endpoint = self._explicit.resolve(spec)
+            record(
+                ModelResolution(
+                    f"inference {spec.name}",
+                    "resolved-remote",
+                    endpoint.base_url,
+                    ("explicit",),
+                    "INFERENCE_SERVICE_URLS",
+                )
+            )
+            return endpoint
         failures: list[str] = []
         # A service marked for Modal goes to the Modal provider alone. Otherwise
         # a provider that names the services it owns is the only one asked for
