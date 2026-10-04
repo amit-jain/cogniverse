@@ -839,72 +839,6 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
         del os.environ["COGNIVERSE_CONFIG"]
 
 
-_OLLAMA_RELEASE_BASE = "https://github.com/ollama/ollama/releases/latest/download"
-
-
-def _resolve_ollama_artefact() -> str:
-    import platform as _pl
-
-    system = _pl.system()
-    machine = _pl.machine().lower()
-    if system == "Linux" and machine in ("x86_64", "amd64"):
-        return "ollama-linux-amd64.tar.zst"
-    if system == "Linux" and machine in ("aarch64", "arm64"):
-        return "ollama-linux-arm64.tar.zst"
-    raise RuntimeError(f"Unsupported platform for Ollama install: {system}/{machine}")
-
-
-def _install_ollama_to_home() -> Path:
-    """Download the Ollama binary archive into ``~/.ollama/bin/ollama``.
-
-    No sudo required — the canary overlay test consumes this explicit
-    installer without coupling the session-wide LM fixture to Ollama.
-    """
-    import shutil as _sh
-    import subprocess as _sp
-    import tempfile as _tmp
-    import urllib.request as _ur
-
-    home_root = Path.home() / ".ollama"
-    home_bin = home_root / "bin"
-    home_bin.mkdir(parents=True, exist_ok=True)
-    bin_path = home_bin / "ollama"
-    if bin_path.exists():
-        return bin_path
-
-    artefact = _resolve_ollama_artefact()
-    url = f"{_OLLAMA_RELEASE_BASE}/{artefact}"
-    with _tmp.TemporaryDirectory() as td:
-        archive_path = Path(td) / artefact
-        with _ur.urlopen(url, timeout=600) as resp, open(archive_path, "wb") as f:
-            _sh.copyfileobj(resp, f)
-        # Ollama ships .tar.zst; needs --zstd (tar 1.31+) or zstd | tar.
-        extract_dir = Path(td) / "extracted"
-        extract_dir.mkdir()
-        _sp.run(
-            ["tar", "--zstd", "-xf", str(archive_path), "-C", str(extract_dir)],
-            check=True,
-            capture_output=True,
-        )
-        src_bin = extract_dir / "bin" / "ollama"
-        if not src_bin.exists():
-            raise RuntimeError(
-                f"ollama archive extracted but bin/ollama missing under "
-                f"{extract_dir}; archive layout may have changed"
-            )
-        _sh.copy2(src_bin, bin_path)
-        # Copy bundled libs (CUDA shims, llama.cpp shared libs) alongside the binary.
-        src_lib = extract_dir / "lib"
-        if src_lib.exists():
-            dst_lib = home_root / "lib"
-            if dst_lib.exists():
-                _sh.rmtree(dst_lib)
-            _sh.copytree(src_lib, dst_lib)
-
-    bin_path.chmod(bin_path.stat().st_mode | 0o755)
-    return bin_path
-
-
 def _complete_primary_only_lm_config(config_path: Path) -> None:
     """Keep the required LMConfig shape while provisioning only the primary."""
     try:
@@ -1420,16 +1354,9 @@ def shared_vespa():
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
-    # Exact-model LLM sidecars are reused across sessions and carry no owner
-    # pid, so they are reclaimed by age instead: one left running for days
-    # holds its weights in host RAM and starves Vespa's memory pre-flight.
-    from tests.utils.vllm_sidecar import (
-        reap_dead_owner_containers,
-        reclaim_stale_exact_model_containers,
-    )
+    from tests.utils.vllm_sidecar import reap_dead_owner_containers
 
     reap_dead_owner_containers()
-    reclaim_stale_exact_model_containers()
 
     machine = platform.machine().lower()
     docker_platform = (
