@@ -39,8 +39,8 @@ DENSEON_MODEL = "lightonai/DenseOn"
 
 
 @pytest.fixture(scope="module")
-def denseon_url(vllm_sidecar):
-    return vllm_sidecar.spawn(model=DENSEON_MODEL)
+def denseon_url(remote_inference):
+    return remote_inference.resolve("denseon").base_url
 
 
 @pytest.fixture(scope="module")

@@ -23,7 +23,7 @@ from cogniverse_foundation.config.unified_config import (
 
 # Direct import (not pytest_plugins — rejected in non-rootdir conftests);
 # same pattern as tests/ingestion/conftest.py.
-from tests.fixtures.sidecars import vllm_sidecar  # noqa: F401, E402
+from tests.fixtures.inference import remote_inference  # noqa: F401, E402
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,7 @@ def dspy_lm(ensure_host_ollama):
 
     Depends on the session-scoped ``ensure_host_ollama`` provisioner
     (tests/conftest.py) so ``TEST_LLM_*`` is exported before the env
-    read below; here we only resolve and configure the LM. No per-suite
-    vLLM sidecar spawn — that duplicated the Ollama provisioner and the
-    two stomped on each other's ``TEST_LLM_MODEL``/``COGNIVERSE_CONFIG``.
+    read below; here we only resolve and configure the LM.
     """
     from tests.fixtures.llm import (
         resolve_api_key,

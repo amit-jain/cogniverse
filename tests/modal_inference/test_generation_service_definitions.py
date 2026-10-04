@@ -390,55 +390,32 @@ def test_gemma_fixture_publishes_and_restores_the_resolved_endpoint(monkeypatch)
     } == original_environment
 
 
-def test_whisper_fixture_fallback_uses_the_exact_production_arguments(monkeypatch):
+def test_whisper_fixture_falls_back_to_the_cluster_service(monkeypatch):
     monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    spec = get_inference_service_spec("vllm_asr")
+    resolved = agents_conftest.ResolvedInferenceEndpoint(
+        service=spec.name,
+        provider="e2e",
+        base_url="http://127.0.0.1:33905",
+        headers={},
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+    )
 
-    class Sidecar:
+    class Remote:
         def __init__(self):
-            self.calls: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = []
+            self.calls: list[str] = []
 
-        def spawn(
-            self,
-            *,
-            model,
-            model_revision,
-            required_snapshot_files,
-            extra_args,
-        ):
-            self.calls.append(
-                (
-                    model,
-                    model_revision,
-                    tuple(required_snapshot_files),
-                    tuple(extra_args),
-                )
-            )
-            return "http://127.0.0.1:31845/"
+        def resolve(self, service):
+            self.calls.append(service)
+            return resolved
 
-    sidecar = Sidecar()
+    remote = Remote()
 
-    endpoint = agents_conftest._resolve_whisper_inference_endpoint(sidecar)
+    endpoint = agents_conftest._resolve_whisper_inference_endpoint(remote)
 
-    assert sidecar.calls == [
-        (
-            "openai/whisper-large-v3-turbo",
-            "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
-            (
-                "added_tokens.json",
-                "config.json",
-                "generation_config.json",
-                "merges.txt",
-                "model.safetensors",
-                "normalizer.json",
-                "preprocessor_config.json",
-                "special_tokens_map.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "vocab.json",
-            ),
-            ("--runner", "generate", "--max-model-len", "448"),
-        )
-    ]
+    assert remote.calls == ["vllm_asr"]
+    assert endpoint is resolved
     assert (
         endpoint.service,
         endpoint.provider,
@@ -448,8 +425,8 @@ def test_whisper_fixture_fallback_uses_the_exact_production_arguments(monkeypatc
         endpoint.model_revision,
     ) == (
         "vllm_asr",
-        "local",
-        "http://127.0.0.1:31845",
+        "e2e",
+        "http://127.0.0.1:33905",
         {},
         "openai/whisper-large-v3-turbo",
         "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
@@ -541,7 +518,7 @@ def test_gemma_serving_process_failure_is_contextual(monkeypatch):
 
 @pytest.mark.integration
 def test_real_whisper_agent_returns_the_exact_normalized_transcript(
-    vllm_sidecar,
+    remote_inference,
     tmp_path,
 ):
     source = httpx.get(
@@ -573,7 +550,7 @@ def test_real_whisper_agent_returns_the_exact_normalized_transcript(
         check=True,
         timeout=30,
     )
-    endpoint = agents_conftest._resolve_whisper_inference_endpoint(vllm_sidecar)
+    endpoint = agents_conftest._resolve_whisper_inference_endpoint(remote_inference)
     from cogniverse_foundation.config.manager import ConfigManager
     from tests.utils.memory_store import InMemoryConfigStore
 

@@ -43,6 +43,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     split_for_whisper,
     wav_bytes,
 )
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 pytestmark = [
@@ -58,27 +59,8 @@ pytestmark = [
 
 
 @pytest.fixture(scope="module")
-def vllm_asr_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model="openai/whisper-tiny",
-        extra_args=[
-            "--runner",
-            "generate",
-            "--max-model-len",
-            "448",
-            "--gpu-memory-utilization",
-            "0.05",
-            # One sequence at a time, as the cluster's ROCm server runs, so
-            # the server decodes each chunk of a whole file alone, as it
-            # decodes each of the client's requests. One sequence caps the
-            # step at max-model-len unless the budget is named, and the
-            # encoder needs its 1500 audio tokens in one step.
-            "--max-num-seqs",
-            "1",
-            "--max-num-batched-tokens",
-            "2048",
-        ],
-    )
+def vllm_asr_url(remote_inference):
+    return remote_inference.resolve("vllm_asr").base_url
 
 
 def _silent_wav(path, seconds: float = 1.0, sample_rate: int = 16000) -> None:
@@ -96,7 +78,7 @@ def test_audio_processor_remote_against_real_vllm(vllm_asr_url, tmp_path):
 
     processor = AudioProcessor(
         logging.getLogger("test"),
-        model="openai/whisper-tiny",
+        model=MODEL,
         language="en",
         endpoint=vllm_asr_url,
     )
@@ -126,7 +108,7 @@ SPEECH_CLIP = (
 # Bells and clicks; whisper-tiny answers its first chunk's untimed request with
 # "[Bell]" repeated to the token limit.
 BELLS_CLIP = SPEECH_CLIP.with_name("v_-vnSFKJNB94.mp4")
-MODEL = "openai/whisper-tiny"
+MODEL = get_inference_service_spec("vllm_asr").model_id
 LOOP = " Over and over and over." * 30
 V, J = "verbose_json", "json"
 

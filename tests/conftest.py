@@ -41,112 +41,20 @@ def _restore_main_module():
 
 
 @pytest.fixture(scope="session")
-def face_embed_container():
-    """Self-provisioned face-embed sidecar container.
-
-    Builds the image from deploy/face_embed/Dockerfile when absent, runs
-    it with the shared HF/insightface cache volume, and yields the base
-    URL — integration tests never depend on a pre-started service.
-    """
-    import subprocess
-    import time as _time
-
-    import requests as _requests
-
-    repo = Path(__file__).resolve().parents[1]
-    # Same dev-tag scheme as the chart's sidecar builds (<appVersion>-dev),
-    # so the test image sits in the versioned family instead of an ad-hoc tag.
-    image = "cogniverse/face-embed:0.1.0-dev"
-    have = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
-    if have.returncode != 0:
-        subprocess.run(
-            [
-                "docker",
-                "build",
-                "-f",
-                str(repo / "deploy/face_embed/Dockerfile"),
-                "-t",
-                image,
-                str(repo),
-            ],
-            check=True,
-            timeout=1800,
-        )
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    name = f"face-embed-test-{port}"
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-    subprocess.run(
-        ["docker", "volume", "create", "face-embed-cache"], capture_output=True
-    )
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{port}:8080",
-            "-v",
-            "face-embed-cache:/root/.insightface",
-            "--oom-score-adj=500",
-            image,
-        ],
-        check=True,
-        timeout=120,
-    )
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = _time.time() + 120
-    while _time.time() < deadline:
-        try:
-            if _requests.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        _time.sleep(2)
-    else:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        pytest.fail("face-embed sidecar container did not become healthy")
-
-    try:
-        yield base_url
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+def face_embed_container(remote_inference):
+    """Base URL of the cluster's face-embed service."""
+    return remote_inference.resolve("face_embed").base_url
 
 
 @pytest.fixture(scope="session")
-def shared_denseon(vllm_sidecar):
-    """DenseOn served by a real vLLM container exposing the
-    OpenAI-compatible ``/v1/embeddings`` contract Mem0's openai provider
-    expects — session-scoped so the model loads once per test run.
-
-    Mirrors the chart's ``vllm_embed`` engine: ``--runner pooling
-    --convert embed`` pools to a single dense vector per input (no
-    per-token reshape), matching DenseOn's dense-retrieval semantics.
-    The chart pins float32 because DenseOn can emit NaNs for ordinary
-    document-prefixed text under vLLM's lower-precision CPU default.
-    """
-    return vllm_sidecar.spawn(
-        "lightonai/DenseOn",
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--dtype",
-            "float32",
-        ],
-    )
+def shared_denseon(remote_inference):
+    """DenseOn served by the cluster's vLLM ``vllm_embed`` engine, exposing
+    the OpenAI-compatible ``/v1/embeddings`` contract Mem0's openai provider
+    expects."""
+    return remote_inference.resolve("denseon").base_url
 
 
-# Credentials for remote inference. Without these, ensure_llm finds no
-# configured endpoint and builds a model container on this host instead.
+# Credentials for the remote inference endpoints every model test resolves.
 from tests.env_secrets import load_env_secrets  # noqa: E402
 
 load_env_secrets()

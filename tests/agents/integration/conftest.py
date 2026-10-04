@@ -254,44 +254,18 @@ def gemma_inference_endpoint():
                 os.environ[name] = value
 
 
-def _resolve_whisper_inference_endpoint(vllm_sidecar):
+def _resolve_whisper_inference_endpoint(remote_inference):
     endpoint = _resolve_modal_generation_endpoint("vllm_asr")
     if endpoint is not None:
         return endpoint
-    spec = get_inference_service_spec("vllm_asr")
-    base_url = vllm_sidecar.spawn(
-        model=spec.model_id,
-        model_revision=spec.model_revision,
-        required_snapshot_files=(
-            "added_tokens.json",
-            "config.json",
-            "generation_config.json",
-            "merges.txt",
-            "model.safetensors",
-            "normalizer.json",
-            "preprocessor_config.json",
-            "special_tokens_map.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "vocab.json",
-        ),
-        extra_args=["--runner", "generate", "--max-model-len", "448"],
-    )
-    return ResolvedInferenceEndpoint(
-        service=spec.name,
-        provider="local",
-        base_url=base_url.rstrip("/"),
-        headers={},
-        model_id=spec.model_id,
-        model_revision=spec.model_revision,
-    )
+    return remote_inference.resolve("vllm_asr")
 
 
 @pytest.fixture(scope="session")
-def whisper_inference_endpoint(vllm_sidecar):
-    """Prefer authenticated Modal Whisper, then an exact test-owned sidecar."""
+def whisper_inference_endpoint(remote_inference):
+    """Prefer an explicit authenticated Modal Whisper, then the cluster's."""
 
-    return _resolve_whisper_inference_endpoint(vllm_sidecar)
+    return _resolve_whisper_inference_endpoint(remote_inference)
 
 
 @pytest.fixture(scope="module")
@@ -588,7 +562,7 @@ TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 
 @pytest.fixture(scope="session")
-def tomoro_inference_url(vllm_sidecar):
+def tomoro_inference_url(remote_inference):
     """Session-scoped Tomoro ColQwen3 vLLM sidecar URL.
 
     Tomoro (qwen3_vl) is remote-only — any SearchAgent / encoder built from
@@ -596,19 +570,9 @@ def tomoro_inference_url(vllm_sidecar):
     encoding through this sidecar or the production factory falls back to a
     local load and hits the remote-only guard. Same ``--runner pooling
     --convert embed`` serving config the runtime / ingestion conftests use;
-    cached across the session by the vllm_sidecar factory.
+    resolved once per session by ``remote_inference``.
     """
-    return vllm_sidecar.spawn(
-        model=TOMORO_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 def inject_tomoro_url(config_manager, url: str) -> None:
