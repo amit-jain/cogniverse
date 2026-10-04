@@ -1027,6 +1027,52 @@ def test_whisper_fallback_installs_audio_extras_before_serving(monkeypatch):
     ]
 
 
+def test_generic_sidecar_gets_the_shared_memory_vllm_documents(monkeypatch, tmp_path):
+    """Every factory sidecar starts with vLLM's documented 4 GB of /dev/shm,
+    not docker's 64 MB default, ahead of its image and serve arguments."""
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    monkeypatch.setattr(sidecar_module, "writable_test_hf_cache", lambda: str(tmp_path))
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    VllmSidecarFactory(configured_urls=()).spawn(model=DENSEON)
+
+    assert sidecar_module.VLLM_SHM_SIZE == "4g"
+    assert len(docker_runs) == 1
+    command = docker_runs[0]
+    container = command[command.index("--name") + 1]
+    assert command[: command.index("vllm/vllm-openai-cpu:v0.23.0")] == [
+        "docker",
+        "run",
+        "-d",
+        "--pull=never",
+        "--name",
+        container,
+        "--label",
+        f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
+        "-p",
+        "30100:8000",
+        "-e",
+        "VLLM_CPU_MEMORY_UTILIZATION=0.05",
+        "-e",
+        "VLLM_CPU_KVCACHE_SPACE=2",
+        "--oom-score-adj=500",
+        "--shm-size=4g",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "-e",
+        f"HOME={sidecar_module.CONTAINER_HF_CACHE}",
+        "-e",
+        f"HF_HOME={sidecar_module.CONTAINER_HF_CACHE}",
+        "-e",
+        "LOGNAME=cogniverse",
+        "-e",
+        "USER=cogniverse",
+        "-v",
+        f"{tmp_path}:{sidecar_module.CONTAINER_HF_CACHE}",
+    ]
+
+
 def test_writable_test_hf_cache_creates_hub_and_returns_root(monkeypatch, tmp_path):
     import tests.utils.vllm_sidecar as sidecar_module
 
@@ -1253,6 +1299,92 @@ def test_hermetic_gemma_reuses_exact_explicit_test_override(monkeypatch):
 
     assert resolved == f"{cluster_url}/v1"
     assert hermetic_llm.MODEL == GEMMA
+
+
+def _no_cluster_discovery(monkeypatch) -> None:
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
+    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
+    for name in ("_discover_e2e_model_urls", "_discover_dev_model_urls"):
+        monkeypatch.setattr(sidecar_module, name, lambda model: ())
+    monkeypatch.setattr(
+        sidecar_module, "_discover_external_model_urls", lambda context: ()
+    )
+
+
+def _record_hermetic_spawns(monkeypatch) -> list[tuple[str, str, int]]:
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    spawned: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(hermetic_llm, "_container_state", lambda container: None)
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(
+        hermetic_llm,
+        "_spawn",
+        lambda model, container, host_port, device, gpu_utilization=0.25: (
+            spawned.append((model, container, host_port))
+        ),
+    )
+    monkeypatch.setattr(
+        hermetic_llm,
+        "listed_model_ids",
+        lambda base_url: {GEMMA} if spawned else None,
+    )
+    monkeypatch.setattr(hermetic_llm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        hermetic_llm.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="", stderr=""
+        ),
+    )
+    return spawned
+
+
+def test_other_services_published_urls_do_not_stop_the_gemma_sidecar(monkeypatch):
+    """A session that already published its LateOn and Whisper sidecars still
+    provisions Gemma: neither URL is a candidate for a model it does not serve."""
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    _no_cluster_discovery(monkeypatch)
+    spawned = _record_hermetic_spawns(monkeypatch)
+    with (
+        _models_server(LATEON) as lateon_url,
+        _models_server("openai/whisper-large-v3-turbo") as whisper_url,
+    ):
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            json.dumps({"colbert_pylate": lateon_url, "vllm_asr": whisper_url}),
+        )
+        assert hermetic_llm._configured_model_urls(GEMMA) == ()
+        assert hermetic_llm._configured_model_urls(LATEON) == (lateon_url,)
+
+        resolved = hermetic_llm.ensure_llm(model=GEMMA, deadline_s=0.01)
+
+    assert resolved == "http://127.0.0.1:29110/v1"
+    assert spawned == [(GEMMA, "cogniverse-test-llm", 29110)]
+
+
+def test_the_gemma_services_published_url_is_its_only_candidate(monkeypatch):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    _no_cluster_discovery(monkeypatch)
+    spawned = _record_hermetic_spawns(monkeypatch)
+    with (
+        _models_server(GEMMA) as gemma_url,
+        _models_server(LATEON) as lateon_url,
+    ):
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            json.dumps({"colbert_pylate": lateon_url, "vllm_llm_student": gemma_url}),
+        )
+        assert hermetic_llm._configured_model_urls(GEMMA) == (gemma_url,)
+
+        resolved = hermetic_llm.ensure_llm(model=GEMMA, deadline_s=0.01)
+
+    assert resolved == f"{gemma_url}/v1"
+    assert spawned == []
 
 
 def test_hermetic_teacher_fallback_spawns_the_exact_model(monkeypatch):
@@ -1820,6 +1952,7 @@ def test_exact_model_rocm_spawn_marks_the_container_and_keeps_every_flag(monkeyp
         "--dns",
         "8.8.8.8",
         "--oom-score-adj=400",
+        "--shm-size=4g",
         "--device",
         "/dev/kfd",
         "--device",
@@ -1859,6 +1992,7 @@ def test_exact_model_cpu_spawn_marks_the_container_and_keeps_every_flag(monkeypa
         "--dns",
         "8.8.8.8",
         "--oom-score-adj=400",
+        "--shm-size=4g",
         "-e",
         "VLLM_CPU_KVCACHE_SPACE=4",
         "vllm/vllm-openai-cpu:v0.23.0",

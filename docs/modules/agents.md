@@ -1849,7 +1849,11 @@ raised a typed encoder fault). Profiles sharing an embedding model share one
 `SharedQueryEncoder`, so one encode, and a leg encodes only when its ranking
 strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
-partial ensemble as partial. Every leg failing raises.
+partial ensemble as partial. Every leg failing raises. The legs run on a pool
+of their own that is shut down without waiting, so a caller whose budget
+cancels the ensemble gets control back at once while a leg blocked on its
+encoder or backend finishes in its worker thread; the event loop never waits
+on a leg.
 
 Both search paths rewrite the query once. `_rewrite_query_for_search` runs the
 DSPy rewrite (`SearchOptimizationSignature`) before the mode branch, so a

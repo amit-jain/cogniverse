@@ -133,6 +133,9 @@ class BodyBoundedLM(dspy.LM):
         return detail
 
     def _reraise(self, exc: BaseException, detail: str) -> None:
+        if isinstance(exc, openai.APIConnectionError):
+            # No response arrived; the status litellm stamps on is its own.
+            return
         status = http_status_of(exc)
         if status is not None and 400 <= status < 500:
             logger.error("LM rejected the request %d: %s", status, detail)
@@ -215,6 +218,15 @@ class BodyBoundedLM(dspy.LM):
             response = super().forward(messages=messages, **kwargs)
         except Exception as exc:
             original = provider_exception(exc)
+            deadline = current_lm_call_deadline()
+            if (
+                deadline is not None
+                and deadline.expired
+                and isinstance(original, openai.APITimeoutError)
+            ):
+                # The client hung up at the caller's deadline: the endpoint
+                # neither rejected the request nor failed it.
+                raise self._deadline_exceeded(deadline) from original
             not_serving = self._observe_failure(endpoint, original)
             if not_serving is not None:
                 raise not_serving from original

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import select
 import socket
 import threading
@@ -25,6 +26,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import dspy
+import litellm
 import numpy as np
 import pytest
 from dspy.utils.dummies import DummyLM
@@ -37,11 +39,17 @@ from cogniverse_agents.search_agent import (
     SearchAgent,
     SearchAgentDeps,
 )
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.lm_deadline import (
     LMCallDeadline,
     LMCallDeadlineExceeded,
     bound_lm_call_deadline,
 )
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    lm_endpoint_availability,
+)
+from cogniverse_foundation.config.lm_output_budget import budgeted_call_kwargs
+from cogniverse_foundation.config.lm_response_cache import key_digest
 from cogniverse_foundation.config.routed_lm import UpstreamUnavailable
 from cogniverse_foundation.config.semantic_router import create_routed_lm
 from cogniverse_foundation.config.unified_config import (
@@ -809,7 +817,10 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
         assert prediction.enhanced_query == _REWRITTEN
         assert len(upstream.arrivals) == 1
 
-    async def test_a_hung_upstream_raises_naming_the_endpoint_and_the_deadline(self):
+    async def test_a_hung_upstream_raises_naming_the_endpoint_and_the_deadline(
+        self, caplog
+    ):
+        caplog.set_level(logging.INFO, logger="cogniverse_foundation")
         agent = _dispatcher()[0]._get_search_agent(_SHIPPED_ACTIVE_PROFILE, _TENANT)
         with _ScriptedUpstream([(3 * _SHIPPED_REWRITE_BOUND_S, 200)]) as upstream:
             started = time.monotonic()
@@ -831,6 +842,13 @@ class TestABoundedCallThatCannotFinishNamesItsEndpointAndDeadline:
             f"LM call to {upstream.api_base} for {_REWRITE_MODEL} stopped, its "
             f"deadline passed: deadline {_SHIPPED_REWRITE_BOUND_S:.2f}s"
         )
+        # The routed call's stop is the caller's to report: nothing below it
+        # logs a routed failure or an LM error.
+        assert [
+            (name, level)
+            for name, level, _ in _foundation_records(caplog)
+            if name in _LM_CALL_LOGGERS
+        ] == [(_CACHE_LOGGER, "INFO")]
         assert elapsed < _SHIPPED_REWRITE_BOUND_S + _RETURN_MARGIN_S
         assert len(upstream.arrivals) == 1
 
@@ -1049,3 +1067,139 @@ class TestAnUndeployedEndpointSkipsTheRewrite:
             QUERY_REWRITE_FAILED
         ] * 2
         assert len(upstream.arrivals) == 2 * (_ENDPOINT_RETRIES + 1)
+
+
+_CACHE_LOGGER = "cogniverse_foundation.config.lm_response_cache"
+# The layers an LM call passes through on its way to the wire.
+_LM_CALL_LOGGERS = {
+    "cogniverse_foundation.config.body_bounded_lm",
+    _CACHE_LOGGER,
+    "cogniverse_foundation.config.routed_lm",
+}
+
+
+def _tenant_lm(api_base: str, **kwargs) -> BodyBoundedLM:
+    """The tenant-bound LM a dispatched search calls directly, through the
+    response cache."""
+    return BodyBoundedLM(
+        _REWRITE_MODEL,
+        api_base=api_base,
+        api_key="stub-key",
+        num_retries=0,
+        cache_tenant_id=_TENANT,
+        **kwargs,
+    )
+
+
+def _foundation_records(caplog) -> list[tuple[str, str, str]]:
+    return [
+        (record.name, record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name.startswith("cogniverse_foundation")
+        and record.levelno >= logging.INFO
+    ]
+
+
+def _failure_line(lm: BodyBoundedLM, messages, exc: BaseException) -> str:
+    key = lm.cache_key(messages, budgeted_call_kwargs(lm.kwargs, {}))
+    return (
+        f"LM call failed for tenant={_TENANT} model={_REWRITE_MODEL} "
+        f"key_digest={key_digest(key)}; nothing cached: "
+        f"{type(exc).__name__}: {exc}"
+    )
+
+
+def _availability(api_base: str) -> list[tuple[str, str | None]]:
+    return [
+        (entry["state"], entry["failure"])
+        for entry in lm_endpoint_availability().snapshot()
+        if entry["endpoint"] == api_base
+    ]
+
+
+class TestACallStoppedAtItsDeadlineIsNotAnLMFailure:
+    """A call the client hangs up on at its caller's deadline raises the
+    deadline error; it is named once at INFO, never as an LM error, and says
+    nothing about the endpoint's health. The caller reports the overrun."""
+
+    async def test_the_stop_raises_the_deadline_error_and_logs_no_error(self, caplog):
+        caplog.set_level(logging.INFO, logger="cogniverse_foundation")
+        messages = [{"role": "user", "content": _unique("stopped")}]
+        with _ScriptedUpstream([(3 * _SHIPPED_REWRITE_BOUND_S, 200)]) as upstream:
+            lm = _tenant_lm(upstream.api_base)
+            started = time.monotonic()
+            with (
+                bound_lm_call_deadline(LMCallDeadline.after(_SHIPPED_REWRITE_BOUND_S)),
+                pytest.raises(LMCallDeadlineExceeded) as raised,
+            ):
+                await asyncio.to_thread(lm.forward, messages=messages)
+            elapsed = time.monotonic() - started
+
+        assert str(raised.value) == (
+            f"LM call to {upstream.api_base} for {_REWRITE_MODEL} stopped, its "
+            f"deadline passed: deadline {_SHIPPED_REWRITE_BOUND_S:.2f}s"
+        )
+        assert type(raised.value.__cause__) is litellm.exceptions.Timeout
+        assert _foundation_records(caplog) == [
+            (_CACHE_LOGGER, "INFO", _failure_line(lm, messages, raised.value))
+        ]
+        assert _availability(upstream.api_base) == []
+        assert elapsed < _SHIPPED_REWRITE_BOUND_S + _RETURN_MARGIN_S
+        assert len(upstream.arrivals) == 1
+        assert len(upstream.hangups) == 1
+
+    async def test_concurrent_stops_each_raise_their_own_deadline_and_log_no_error(
+        self, caplog
+    ):
+        caplog.set_level(logging.INFO, logger="cogniverse_foundation")
+        calls = 8
+        messages = [
+            [{"role": "user", "content": _unique(f"stopped-{index}")}]
+            for index in range(calls)
+        ]
+        budgets = [_SHIPPED_REWRITE_BOUND_S + 0.1 * index for index in range(calls)]
+        barrier = threading.Barrier(calls, timeout=10)
+
+        def call(lm, index):
+            barrier.wait()
+            with bound_lm_call_deadline(LMCallDeadline.after(budgets[index])):
+                try:
+                    lm.forward(messages=messages[index])
+                except LMCallDeadlineExceeded as exc:
+                    return exc
+            return None
+
+        with _ScriptedUpstream([(3 * _SHIPPED_REWRITE_BOUND_S + 1.0, 200)]) as upstream:
+            lm = _tenant_lm(upstream.api_base)
+            outcomes = await asyncio.gather(
+                *(asyncio.to_thread(call, lm, index) for index in range(calls))
+            )
+
+        assert [str(outcome) for outcome in outcomes] == [
+            f"LM call to {upstream.api_base} for {_REWRITE_MODEL} stopped, its "
+            f"deadline passed: deadline {budget:.2f}s"
+            for budget in budgets
+        ]
+        assert sorted(_foundation_records(caplog)) == sorted(
+            (_CACHE_LOGGER, "INFO", _failure_line(lm, messages[index], outcome))
+            for index, outcome in enumerate(outcomes)
+        )
+        assert _availability(upstream.api_base) == []
+        assert len(upstream.arrivals) == calls
+        assert len(upstream.hangups) == calls
+
+    async def test_a_timeout_with_no_deadline_is_the_providers_error_and_an_lm_failure(
+        self, caplog
+    ):
+        caplog.set_level(logging.INFO, logger="cogniverse_foundation")
+        messages = [{"role": "user", "content": _unique("own-timeout")}]
+        with _ScriptedUpstream([(3.0, 200)]) as upstream:
+            lm = _tenant_lm(upstream.api_base, timeout=0.5)
+            with pytest.raises(litellm.exceptions.Timeout) as raised:
+                await asyncio.to_thread(lm.forward, messages=messages)
+
+        assert _foundation_records(caplog) == [
+            (_CACHE_LOGGER, "ERROR", _failure_line(lm, messages, raised.value))
+        ]
+        assert _availability(upstream.api_base) == [("failing", "Timeout")]
+        assert len(upstream.arrivals) == 1

@@ -45,6 +45,7 @@ import requests
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,12 @@ DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
 DOCKER_IMAGE_PULL_TIMEOUT_SECONDS = 300
 DOCKER_LAUNCH_TIMEOUT_SECONDS = 60
+# Shared memory for every test-owned vLLM container. vLLM's engine and its
+# workers exchange tensors through /dev/shm, and docker's 64 MB default is
+# too small for a multimodal batch; the CPU install guide's docker command
+# passes --shm-size=4g (docs/getting_started/installation/cpu.x86.inc.md,
+# v0.23.0).
+VLLM_SHM_SIZE = "4g"
 # Test-owned Hugging Face cache, deliberately separate from the user's
 # ~/.cache/huggingface: containers previously ran as root and wrote
 # root-owned entries into the personal cache, which breaks host-side
@@ -996,9 +1003,16 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
     if env_model == model and env_api_base:
         candidates.append(env_api_base)
 
+    # A URL named for a service is a candidate only for the model that service
+    # serves: the session's own LateOn or Whisper sidecar never serves Gemma.
     env_urls = parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
     if env_urls is not None:
-        candidates.extend(env_urls.values())
+        candidates.extend(
+            url
+            for service, url in env_urls.items()
+            if service in INFERENCE_SERVICE_SPECS
+            and INFERENCE_SERVICE_SPECS[service].model_id == model
+        )
 
     for candidate in _discover_e2e_model_urls(model):
         candidates.append(candidate.base_url)
@@ -1295,6 +1309,7 @@ class VllmSidecarFactory:
                 "-e",
                 "VLLM_CPU_KVCACHE_SPACE=2",
                 "--oom-score-adj=500",
+                f"--shm-size={VLLM_SHM_SIZE}",
             ]
             for env_key, env_value in resolved_env.items():
                 cmd.extend(["-e", f"{env_key}={env_value}"])

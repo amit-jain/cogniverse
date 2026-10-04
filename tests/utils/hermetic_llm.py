@@ -28,6 +28,7 @@ from pathlib import Path
 
 from tests.utils.vllm_sidecar import (
     EXACT_MODEL_LABEL,
+    VLLM_SHM_SIZE,
     ModelEndpointDiscoveryError,
     ModelListProbe,
     _configured_model_urls,
@@ -382,6 +383,7 @@ def _spawn(
         # Short-lived relative to the session Vespa — prefer killing this
         # over the shared containers under memory pressure.
         "--oom-score-adj=400",
+        f"--shm-size={VLLM_SHM_SIZE}",
     ]
     if device == "rocm":
         cmd += [

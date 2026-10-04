@@ -1781,6 +1781,8 @@ CMD ["python", "-m", "cogniverse_runtime.runtime_cli", \
 
 The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime --extra all --no-dev --frozen`, then `uv sync --only-group runtime-models --inexact --frozen` to install the pinned `en_core_web_sm` spaCy model from the lock.
 
+The runtime and dashboard images set `LITELLM_LOCAL_MODEL_COST_MAP=True`, so litellm loads its bundled model cost map instead of fetching it from raw.githubusercontent.com on a process's first LM call. Every chart workload that runs cogniverse code (runtime, ingestor, quality monitor, dashboard and the Argo workflow steps) runs one of these two images and leaves the value as the image sets it.
+
 ### Docker Compose
 
 ```yaml
