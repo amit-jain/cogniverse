@@ -1785,6 +1785,8 @@ The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime
 
 The runtime and dashboard images set `LITELLM_LOCAL_MODEL_COST_MAP=True`, so litellm loads its bundled model cost map instead of fetching it from raw.githubusercontent.com on a process's first LM call. Every chart workload that runs cogniverse code (runtime, ingestor, quality monitor, dashboard and the Argo workflow steps) runs one of these two images and leaves the value as the image sets it.
 
+The runtime image also sets `MALLOC_ARENA_MAX=2`. With glibc's default of one malloc arena per thread, the memory a thread frees stays resident in its arena, and the long-lived ingestion worker grew by about 140 MiB with every 1280x720 frame-profile job until it reached its 2 GiB limit. No chart workload overrides it.
+
 ### Docker Compose
 
 ```yaml
