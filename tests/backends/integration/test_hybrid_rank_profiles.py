@@ -35,6 +35,7 @@ import socket
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpr
@@ -43,6 +44,7 @@ import pytest
 import requests
 
 from cogniverse_core.common.utils.retry import RetryConfig
+from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -856,6 +858,65 @@ def _audio_search(vespa_instance, single_vector_corpus):
     )
 
 
+class _ClapSidecar(BaseHTTPRequestHandler):
+    """The clap_embed ``/embed/text`` contract, answering the seeded corpus's
+    acoustic query vector for the audio query text."""
+
+    def do_POST(self):  # noqa: N802
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        with self.server.lock:
+            self.server.texts.append((self.path, body.get("text")))
+        if self.path != "/embed/text" or body.get("text") != AUDIO_QUERY:
+            self.send_response(404)
+            self.end_headers()
+            return
+        raw = json.dumps({"vec": self.server.vector.tolist()}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def clap_sidecar(vespa_instance, single_vector_corpus):
+    """A clap_embed sidecar the system config names, for one test."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ClapSidecar)
+    server.vector = single_vector_corpus[0]["audio_query"]
+    server.texts = []
+    server.lock = threading.Lock()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    server.config_manager = make_config_manager(
+        vespa_instance, inference_service_urls={"clap_embed": url}
+    )
+    yield server
+    server.shutdown()
+    server.server_close()
+    make_config_manager(vespa_instance)
+    QueryEncoderFactory._encoder_cache.pop(("clap_embed", url), None)
+
+
+def _audio_search_from_text(vespa_instance, single_vector_corpus, clap_sidecar):
+    """The audio hybrid searched with the query text alone: the profile
+    encodes it for its acoustic input."""
+    _, tenant, _ = single_vector_corpus
+    return _backend_search(
+        vespa_instance,
+        clap_sidecar.config_manager,
+        AUDIO,
+        {
+            "query": AUDIO_QUERY,
+            "strategy": "hybrid_acoustic_bm25",
+            "top_k": 10,
+            "tenant_id": tenant,
+        },
+    )
+
+
 def _ranked(results, source_field: str) -> list[tuple]:
     return [
         (r.document.metadata[source_field], r.document.id, r.score) for r in results
@@ -980,6 +1041,49 @@ class TestSingleVectorHybridRanking:
         assert [row[2] for row in ranked] == pytest.approx(
             [row[2] for row in expected], abs=1e-6
         )
+
+    def test_audio_hybrid_encodes_the_query_text_with_clap(
+        self, vespa_instance, single_vector_corpus, clap_sidecar
+    ):
+        """Searched with text alone, the audio hybrid binds the CLAP text
+        vector to its acoustic input and ranks each clip by acoustic
+        closeness plus nativeRank."""
+        ranked = _ranked(
+            _audio_search_from_text(vespa_instance, single_vector_corpus, clap_sidecar),
+            "audio_id",
+        )
+
+        assert [row[:2] for row in ranked] == [row[:2] for row in AUDIO_RANKING]
+        assert [row[2] for row in ranked] == pytest.approx(
+            [row[2] for row in AUDIO_RANKING], abs=1e-6
+        )
+        assert clap_sidecar.texts == [("/embed/text", AUDIO_QUERY)]
+
+    def test_concurrent_audio_searches_from_text_each_encode_once(
+        self, vespa_instance, single_vector_corpus, clap_sidecar
+    ):
+        searches = 8
+        barrier = threading.Barrier(searches)
+
+        def released(_):
+            barrier.wait(timeout=60)
+            return _ranked(
+                _audio_search_from_text(
+                    vespa_instance, single_vector_corpus, clap_sidecar
+                ),
+                "audio_id",
+            )
+
+        with ThreadPoolExecutor(max_workers=searches) as pool:
+            concurrent = list(pool.map(released, range(searches)))
+
+        assert [[row[:2] for row in ranked] for ranked in concurrent] == [
+            [row[:2] for row in AUDIO_RANKING]
+        ] * searches
+        assert [row[2] for ranked in concurrent for row in ranked] == pytest.approx(
+            [row[2] for row in AUDIO_RANKING] * searches, abs=1e-6
+        )
+        assert clap_sidecar.texts == [("/embed/text", AUDIO_QUERY)] * searches
 
     def test_concurrent_hybrid_searches_return_their_recorded_rankings(
         self, vespa_instance, single_vector_corpus

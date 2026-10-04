@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Union
 
 import numpy as np
 import requests
@@ -1116,6 +1116,73 @@ class VespaSearchBackend(SearchBackend):
             detail=f"{type(exc).__name__}: {exc}",
         )
 
+    def _service_encoder(self, profile_name, service, tenant_id):
+        """The text encoder of ``service``, the inference service that embeds
+        a field the profile scores besides its own embedding."""
+        from cogniverse_core.query.encoders import QueryEncoderFactory
+        from cogniverse_foundation.config.utils import get_config
+
+        if self._config_manager is None:
+            from cogniverse_core.query.encoders import EncoderNotConfiguredError
+
+            raise EncoderNotConfiguredError(
+                f"Profile {profile_name!r} needs a config_manager to resolve "
+                f"the {service!r} query encoder, but this backend was built "
+                f"without one.",
+                profile=profile_name,
+            )
+        cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        return QueryEncoderFactory.create_service_encoder(profile_name, service, cfg)
+
+    def _encode_query(
+        self,
+        encoder,
+        query_text,
+        service,
+        profile_name,
+        profile_config,
+        tenant_id,
+        correlation_id,
+    ):
+        """Encode the query text with ``encoder`` inside an encode span.
+
+        ``service`` names the inference service of a field encoder, None for
+        the profile's query encoder; an outage is reported against it.
+        """
+        from cogniverse_core.query.encoders import EncoderUnavailableError
+        from cogniverse_foundation.telemetry.context import (
+            add_embedding_details_to_span,
+            encode_span,
+        )
+
+        encoder_type = type(encoder).__name__.lower().replace("queryencoder", "")
+        with encode_span(
+            tenant_id=tenant_id,
+            encoder_type=encoder_type,
+            query_length=len(query_text),
+            query=query_text,
+        ) as encode_span_ctx:
+            try:
+                embeddings = encoder.encode(query_text)
+            except encoder_outage_errors() as exc:
+                if service is None:
+                    raise self._encoder_fault(
+                        profile_name, profile_config, tenant_id, exc
+                    ) from exc
+                raise EncoderUnavailableError(
+                    profile=profile_name,
+                    service=service,
+                    endpoint=getattr(encoder, "inference_service_url", None),
+                    detail=f"{type(exc).__name__}: {exc}",
+                ) from exc
+            add_embedding_details_to_span(encode_span_ctx, embeddings)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"[{correlation_id}] {encoder_type} embeddings shape="
+                f"{embeddings.shape} dtype={embeddings.dtype}"
+            )
+        return embeddings
+
     def _resolve_encoder_for_profile(self, profile_name, profile_config, tenant_id):
         """Build the query encoder a profile declares so callers that delegate
         encoding to the backend need not thread one. Dense profiles resolve to
@@ -1505,56 +1572,55 @@ class VespaSearchBackend(SearchBackend):
                 "needs_float_embeddings", False
             ) or rank_config.get("needs_binary_embeddings", False)
 
-            # Generate embeddings on-demand if needed and not provided
+            # Generate embeddings on-demand if needed and not provided. Each
+            # query input takes the encoder of the field it is scored against
+            # (query_input_encodings): the profile's query encoder, or the
+            # text encoder of the service that embeds that field. Each
+            # encoder encodes the query once.
             if requires_embeddings and query_embeddings is None:
-                # No caller-supplied encoder: build the one the profile
-                # declares so a search that needs embeddings never runs
-                # without them (dense -> SemanticEmbedder, video -> factory).
-                if request_encoder is None:
-                    request_encoder = self._resolve_encoder_for_profile(
-                        profile_name, profile_config, tenant_id
-                    )
-                if request_encoder:
-                    from cogniverse_foundation.telemetry.context import (
-                        add_embedding_details_to_span,
-                        encode_span,
-                    )
+                from cogniverse_vespa.query_inputs import query_input_encodings
 
-                    logger.info(
-                        f"[{correlation_id}] Generating embeddings on-demand "
-                        f"for strategy '{strategy_name}'"
-                    )
-                    encoder_type = (
-                        type(request_encoder)
-                        .__name__.lower()
-                        .replace("queryencoder", "")
-                    )
-                    with encode_span(
-                        tenant_id=tenant_id,
-                        encoder_type=encoder_type,
-                        query_length=len(query_text),
-                        query=query_text,
-                    ) as encode_span_ctx:
-                        try:
-                            query_embeddings = request_encoder.encode(query_text)
-                        except encoder_outage_errors() as exc:
-                            raise self._encoder_fault(
-                                profile_name, profile_config, tenant_id, exc
-                            ) from exc
-                        add_embedding_details_to_span(encode_span_ctx, query_embeddings)
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            f"[{correlation_id}] Embeddings shape="
-                            f"{query_embeddings.shape} dtype={query_embeddings.dtype} "
-                            f"min/max={query_embeddings.min():.4f}/"
-                            f"{query_embeddings.max():.4f}"
+                encodings = query_input_encodings(profile_config, rank_config)
+                input_encoders = {}
+                for input_name, encoding in encodings.items():
+                    if encoding.service is not None:
+                        input_encoders[input_name] = self._service_encoder(
+                            profile_name, encoding.service, tenant_id
                         )
-                else:
-                    raise ValueError(
-                        f"Strategy '{strategy_name}' needs query embeddings but "
-                        f"none were provided and no encoder is available. Pass "
-                        f"'query_embeddings' or a 'query_encoder' in query_dict."
-                    )
+                        continue
+                    # No caller-supplied encoder: build the one the profile
+                    # declares so a search that needs embeddings never runs
+                    # without them (dense -> SemanticEmbedder, video -> factory).
+                    if request_encoder is None:
+                        request_encoder = self._resolve_encoder_for_profile(
+                            profile_name, profile_config, tenant_id
+                        )
+                    if not request_encoder:
+                        raise ValueError(
+                            f"Strategy '{strategy_name}' needs query embeddings but "
+                            f"none were provided and no encoder is available. Pass "
+                            f"'query_embeddings' or a 'query_encoder' in query_dict."
+                        )
+                    input_encoders[input_name] = request_encoder
+
+                logger.info(
+                    f"[{correlation_id}] Generating embeddings on-demand "
+                    f"for strategy '{strategy_name}'"
+                )
+                encoded = {}
+                query_embeddings = {}
+                for input_name, encoder in input_encoders.items():
+                    if id(encoder) not in encoded:
+                        encoded[id(encoder)] = self._encode_query(
+                            encoder,
+                            query_text,
+                            encodings[input_name].service,
+                            profile_name,
+                            profile_config,
+                            tenant_id,
+                            correlation_id,
+                        )
+                    query_embeddings[input_name] = encoded[id(encoder)]
 
             # Build query based on strategy
             # Use tenant-scoped schema_name for Vespa query (schemas are actually deployed per-tenant)
@@ -1713,7 +1779,7 @@ class VespaSearchBackend(SearchBackend):
     def _build_query(
         self,
         query_text: str,
-        query_embeddings: Optional[np.ndarray],
+        query_embeddings: Optional[Union[np.ndarray, Dict[str, np.ndarray]]],
         rank_config: Dict[str, Any],
         ranking_profile: str,
         schema_name: str,
@@ -1847,28 +1913,24 @@ class VespaSearchBackend(SearchBackend):
             logger.debug(
                 f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}"
             )
-            logger.debug(
-                f"[{correlation_id}] Input query_embeddings shape: {query_embeddings.shape}, dtype: {query_embeddings.dtype}"
-            )
-            if query_embeddings.ndim == 2:
-                logger.debug(
-                    f"[{correlation_id}] Input query_embeddings (2D) first vector (first 5): {query_embeddings[0][:5].tolist()}"
-                )
-            else:
-                logger.debug(
-                    f"[{correlation_id}] Input query_embeddings (1D) first 5 values: {query_embeddings[:5].tolist()}"
-                )
 
             for input_name, input_type in inputs_needed.items():
                 # The input names are like 'qt', 'qtb', etc. We need to construct the full Vespa query parameter name
                 vespa_param_name = f"input.query({input_name})"
+                # Embeddings encoded per input bind to their own input; a
+                # caller's single array binds to every input.
+                input_embeddings = (
+                    query_embeddings[input_name]
+                    if isinstance(query_embeddings, dict)
+                    else query_embeddings
+                )
 
                 if input_name in ("qt", "acoustic_query") and "float" in input_type:
                     logger.debug(
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
                     query_params[vespa_param_name] = _format_query_vector_param(
-                        query_embeddings, input_type
+                        input_embeddings, input_type
                     )
 
                 elif input_name == "qtb" and "int8" in input_type:
@@ -1876,7 +1938,7 @@ class VespaSearchBackend(SearchBackend):
                         f"[{correlation_id}] Adding binary embeddings for {vespa_param_name}"
                     )
                     binary_embeddings = self._generate_binary_embeddings(
-                        query_embeddings
+                        input_embeddings
                     )
                     logger.debug(
                         f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}"
@@ -1889,7 +1951,7 @@ class VespaSearchBackend(SearchBackend):
                     logger.debug(
                         f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}"
                     )
-                    emb = query_embeddings
+                    emb = input_embeddings
                     if emb.ndim == 2 and emb.shape[0] == 1:
                         emb = emb[0]
                     query_params[vespa_param_name] = emb.tolist()
@@ -2554,6 +2616,7 @@ class VespaSearchBackend(SearchBackend):
                         "timeout": strategy_info.timeout,
                         "description": strategy_info.description,
                         "inputs": strategy_info.inputs,
+                        "input_fields": strategy_info.input_fields,
                         "query_tensors_needed": strategy_info.query_tensors_needed,
                         "schema_name": strategy_info.schema_name,
                     }

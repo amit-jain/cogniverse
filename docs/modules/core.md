@@ -940,6 +940,7 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 320-d patch multi-vector; local or remote (`inference_service_url`) |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
+| `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
@@ -951,6 +952,11 @@ and `inference_services` carries `embedding: colbert_pylate`,
 for the declared services raise `ValueError` naming the profile and service
 rather than silently falling back to a local load, so a misconfigured sidecar
 fails loud.
+The profile's query encoder is the ColBERT one; the acoustic input takes
+`QueryEncoderFactory.create_service_encoder(profile, "clap_embed", config)`,
+the cached text encoder of the service (`SERVICE_TEXT_ENCODERS`). A service
+with no text encoder, or with no configured URL, raises
+`EncoderNotConfiguredError`.
 Search agents (document/image) resolve their encoders through this factory,
 passing the merged config, so they route through the deployed sidecar exactly
 as the `/search` path does.
