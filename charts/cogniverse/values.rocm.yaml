@@ -102,6 +102,7 @@ inference:
       - "1"
       - "--max-num-batched-tokens"
       - "2048"
+      - "--async-scheduling"
     resources:
       limits:
         cpu: "2"

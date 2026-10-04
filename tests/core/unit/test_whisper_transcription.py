@@ -1282,3 +1282,21 @@ def test_a_looping_timed_answer_running_to_the_end_is_asked_again():
         (0, "en", "verbose_json", 0.2),
     ]
     assert transcript["segments"] == _segments((0.0, 10.0, "Go! Stop cooking."))
+
+
+def test_a_timestamp_equal_to_the_duration_at_its_resolution_is_not_logged(caplog):
+    # vLLM times a segment end as 0.02 * 1470, one rounding step past the
+    # 29.4 s of a 470400-sample chunk.
+    timestamp = 0.02 * 1470
+    assert timestamp > 470400 / RATE
+
+    with caplog.at_level(logging.DEBUG, logger=whisper_transcription.__name__):
+        clamped = [
+            clamp_to_duration(timestamp, 470400 / RATE),
+            clamp_to_duration(29.41, 29.4),
+        ]
+
+    assert clamped == [29.4, 29.4]
+    assert [record.getMessage() for record in caplog.records] == [
+        "segment time 29.41s is past the chunk's 29.40s; clamped"
+    ]

@@ -2227,7 +2227,9 @@ temperature)` sends one request with `response_format(timestamps)` and
   join with a space, or with nothing for `ja` and `zh`.
 - `lenient_chunk_answer(body, chunk)` (the processor's and the loader's parser)
   and the agent's strict parser clamp a segment time past the chunk's duration
-  to it with `clamp_to_duration`, which logs the original value at DEBUG:
+  to it with `clamp_to_duration`, which logs the original value at DEBUG
+  unless it is past by less than half a timestamp step (vLLM's `0.02 * n`
+  rounds 29.4 to 29.400000000000002):
   Whisper times text into the padding after short audio (the live server gave
   29.98 s on an 18.77 s chunk).
 - Limits: the loop check measures a whole answer, so a short repetition inside

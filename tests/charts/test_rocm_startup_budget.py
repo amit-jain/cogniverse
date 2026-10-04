@@ -254,4 +254,5 @@ def test_whisper_rocm_startup_caps_sequences_and_batched_tokens():
         "1",
         "--max-num-batched-tokens",
         "2048",
+        "--async-scheduling",
     ]
