@@ -60,6 +60,7 @@ class _ConfigServer:
     def __init__(self, statuses, *, activated_session_id=4242, include_session_id=True):
         self.bodies: list[bytes] = []
         self.paths: list[str] = []
+        self.converge_reads = 0
         self.activations = 0
         statuses = list(statuses)
         recorder = self
@@ -95,6 +96,27 @@ class _ConfigServer:
                     self._answer(200)
                     return
                 self._answer(self._next_status())
+
+            def do_GET(self):
+                # serviceconverge: every service already runs the generation
+                # the last activation produced.
+                recorder.converge_reads += 1
+                payload = json.dumps(
+                    {
+                        "wantedGeneration": activated_session_id,
+                        "services": [
+                            {
+                                "type": "searchnode",
+                                "currentGeneration": activated_session_id,
+                            }
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
 
             def do_PUT(self):
                 recorder.paths.append(self.path)
@@ -480,11 +502,90 @@ def test_the_total_hold_cap_covers_the_longest_legitimate_activation(monkeypatch
 
     requests_made = len(server.paths)
     assert (requests_made, registry.visits, len(listings)) == (15, 13, 7)
+    # The one activation that removed the schema waits, bounded, for every
+    # service to apply it before the lease is released.
+    assert server.converge_reads == 1
     longest = (
         requests_made * sum(vespa_schema_manager.DEPLOY_REQUEST_TIMEOUT_S)
         + sum(backoffs)
         + registry.visits * visit_page
         + len(listings) * listing
+        + vespa_schema_manager.REMOVAL_CONVERGENCE_TIMEOUT_S
     )
-    assert longest == 8746.25
+    assert longest == 8866.25
     assert MAX_TOTAL_HOLD_SECONDS >= longest
+
+
+class _LaggingConvergeServer:
+    """serviceconverge with the content node one generation behind."""
+
+    def __init__(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload = json.dumps(
+                    {
+                        "wantedGeneration": 4242,
+                        "services": [
+                            {"type": "container", "currentGeneration": 4242},
+                            {"type": "searchnode", "currentGeneration": 4241},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._server.server_address[1]
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+def test_a_removal_the_content_node_has_not_applied_raises_at_its_deadline():
+    """The content node still runs the generation before the removal: the
+    wait ends at its deadline with an error naming the lagging service,
+    never a return that would let a re-add activate first."""
+    import time
+
+    with _LaggingConvergeServer() as server:
+        manager = _make_schema_manager(server.port)
+        started = time.monotonic()
+        with pytest.raises(RuntimeError) as caught:
+            manager._wait_until_removal_applied(timeout=2.0)
+        elapsed = time.monotonic() - started
+
+    assert str(caught.value) == (
+        "Schema removal not applied by every service after 2s: services behind "
+        "generation 4242: ['searchnode=4241']"
+    )
+    assert 2.0 <= elapsed < 3.0
+
+
+def test_a_removal_with_the_config_server_down_raises_at_its_deadline():
+    import socket
+
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        port = unused.getsockname()[1]
+    manager = _make_schema_manager(port)
+
+    with pytest.raises(RuntimeError) as caught:
+        manager._wait_until_removal_applied(timeout=1.0)
+
+    assert str(caught.value).startswith(
+        "Schema removal not applied by every service after 1s: serviceconverge "
+        "request failed: "
+    ), str(caught.value)

@@ -2407,3 +2407,95 @@ async def test_a_metadata_query_inside_the_staleness_window_of_a_peer_drop_answe
         assert again == []
     finally:
         await tm.delete_tenant_internal(tenant_id)
+
+
+def _signal_config_proxy(container: str, signal: str) -> list[str]:
+    """Stop or resume the config proxy that hands config to the content
+    node, so the node lags behind the activated generation."""
+    pids = subprocess.run(
+        ["docker", "exec", container, "pgrep", "-f", "config.proxy.ProxyServer"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.split()
+    for pid in pids:
+        subprocess.run(
+            ["docker", "exec", container, "kill", f"-{signal}", pid],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    return pids
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_schema_redeployed_never_serves_its_previous_documents(
+    wired_tenant_manager, vespa_instance
+):
+    """The content node is slow to take config while a tenant schema with a
+    document is dropped. The drop returns only once the node has applied
+    the removal, holding the deployment lease meanwhile, so the schema
+    deployed again afterwards starts empty: the previous incarnation's
+    document is gone. Without that wait a re-add could activate first and
+    the node, going straight to the newer generation, keep the document."""
+    tenant_id = _unique_tenant()
+    base_url = vespa_instance["base_url"]
+    provenance_schema = _schema_names(tenant_id)[1]
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    fed = []
+    Vespa(url=base_url).feed_iterable(
+        [{"id": "provenance-memory-1", "fields": _provenance_fields(tenant_id)}],
+        schema=provenance_schema,
+        namespace=provenance_schema,
+        callback=lambda response, doc_id: fed.append(response.status_code),
+    )
+    assert fed == [200]
+    assert _provenance_status(base_url, tenant_id) == 200
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    container = vespa_instance["container_name"]
+    outcome = {}
+
+    def drop():
+        try:
+            outcome["dropped"] = backend.schema_manager.delete_schema(
+                tenant_id, "provenance"
+            )
+        except Exception as exc:
+            outcome["dropped"] = f"{type(exc).__name__}: {exc}"
+
+    stopped = _signal_config_proxy(container, "STOP")
+    try:
+        assert len(stopped) == 1, stopped
+        dropping = threading.Thread(target=drop)
+        dropping.start()
+        await asyncio.to_thread(dropping.join, 8)
+        still_waiting = dropping.is_alive()
+    finally:
+        _signal_config_proxy(container, "CONT")
+    await asyncio.to_thread(dropping.join, 180)
+
+    try:
+        assert still_waiting is True
+        assert outcome == {"dropped": provenance_schema}
+        await asyncio.to_thread(
+            backend.schema_registry.deploy_schema, tenant_id, "provenance"
+        )
+        assert _deployed_for(tenant_id) == [provenance_schema]
+        assert _provenance_status(base_url, tenant_id) == 404
+        found = Vespa(url=base_url).query(
+            body={"yql": f"select * from {provenance_schema} where true", "hits": 1}
+        )
+        assert found.json["root"]["fields"]["totalCount"] == 0
+    finally:
+        await tm.delete_tenant_internal(tenant_id)
