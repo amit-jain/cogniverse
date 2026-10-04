@@ -1362,7 +1362,9 @@ class AgentDispatcher:
         if self._artifact_manager_factory is None:
             return None
         try:
-            am = self._artifact_manager_factory(tenant_id)
+            # A tenant's first dispatch builds its manager and telemetry
+            # provider, which imports and constructs the provider's client.
+            am = await asyncio.to_thread(self._artifact_manager_factory, tenant_id)
         except Exception as exc:
             return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
 
@@ -2794,8 +2796,8 @@ class AgentDispatcher:
         query_rewrite_timeout_s: Optional[float] = None,
     ) -> Dict[str, Any]:
         # Drift surfaces as a logged warning here; CNI is the kernel deny.
-        self.consult_egress_policy("search_agent")
-        self._verify_egress("search_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "search_agent")
+        await asyncio.to_thread(self._verify_egress, "search_agent", tenant_id)
 
         from cogniverse_agents.search_agent import (
             SearchInput,
@@ -3431,8 +3433,8 @@ class AgentDispatcher:
         the incoming query, output rails on the final response.
         """
         # Consult + verify routing_agent egress policy at dispatch.
-        self.consult_egress_policy("routing_agent")
-        self._verify_egress("routing_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "routing_agent")
+        await asyncio.to_thread(self._verify_egress, "routing_agent", tenant_id)
 
         from cogniverse_core.agents.rails import RailBlockedError
 
@@ -3560,8 +3562,8 @@ class AgentDispatcher:
         gateway_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute full orchestration pipeline via OrchestratorAgent."""
-        self.consult_egress_policy("orchestrator_agent")
-        self._verify_egress("orchestrator_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "orchestrator_agent")
+        await asyncio.to_thread(self._verify_egress, "orchestrator_agent", tenant_id)
 
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorInput,
@@ -3726,8 +3728,8 @@ class AgentDispatcher:
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Consult + verifysummarizer_agent egress policy at dispatch.
-        self.consult_egress_policy("summarizer_agent")
-        self._verify_egress("summarizer_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "summarizer_agent")
+        await asyncio.to_thread(self._verify_egress, "summarizer_agent", tenant_id)
 
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
@@ -4176,8 +4178,8 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        self.consult_egress_policy("coding_agent")
-        self._verify_egress("coding_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "coding_agent")
+        await asyncio.to_thread(self._verify_egress, "coding_agent", tenant_id)
 
         import dspy
 
