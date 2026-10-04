@@ -552,10 +552,15 @@ incremental resume time advance through one telemetry window at a time.
 
 | Label | Description |
 |-------|-------------|
-| CORRECT_ROUTING | Right agent chosen |
-| WRONG_ROUTING | Wrong agent chosen |
-| AMBIGUOUS | Multiple agents could work |
+| CORRECT | The agent's output was right |
+| WRONG | The agent's output was wrong |
+| AMBIGUOUS | Multiple outputs could work |
 | INSUFFICIENT_INFO | Cannot determine |
+| CORRECT_ROUTING | Right agent chosen (routing annotations only) |
+| WRONG_ROUTING | Wrong agent chosen (routing annotations only) |
+
+`REVIEW_LABELS` holds the labels a reviewer assigns: `CORRECT`, `WRONG`,
+`AMBIGUOUS` and `INSUFFICIENT_INFO`.
 
 **Key Methods**:
 
