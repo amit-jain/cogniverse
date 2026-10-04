@@ -822,6 +822,14 @@ uv run cogniverse inference modal deploy vllm_llm_student   # if status fails
 kubectl --context k3d-cogniverse-e2e -n cogniverse get deploy,svc
 ```
 
+When the deploy serves the chat models from Modal, the e2e session runs
+``cogniverse inference modal warm vllm_llm_student`` before its first test and
+``release`` at teardown: the query rewrite gives the student 2.8 s, which a
+runner starting from zero cannot meet. A failed warm fails the session. The
+deploy itself refuses to build when the host disk holding docker's data is at
+or above 75%, Vespa's feed-block limit; free space (``docker builder prune -f``)
+and rerun.
+
 The cluster is deployed through the e2e path (``tests/e2e/deployment``), not a
 plain ``cogniverse up``. ``tests/common/unit/test_no_local_model_servers.py``
 fails any test code that runs a model image's container, launches a

@@ -21,6 +21,7 @@ import re
 import shlex
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time as _time
@@ -1734,6 +1735,61 @@ def _reconcile_orphan_schemas() -> None:
             )
 
 
+# The chat model whose calls run under tight latency budgets: the query
+# rewrite gives it 2.8 s, and a Modal runner starting from zero takes minutes,
+# so a cold first call degrades the turn it serves. The teacher's calls carry
+# budgets a cold start fits in, so it is left to scale on demand.
+_MODAL_WARMED_CHAT_SERVICES = ("vllm_llm_student",)
+_MODAL_WARM_TIMEOUT_S = 1200
+
+
+def _modal_chat_lifecycle(action: str) -> subprocess.CompletedProcess:
+    command = [
+        str(Path(sys.executable).with_name("cogniverse")),
+        "inference",
+        "modal",
+        action,
+        *_MODAL_WARMED_CHAT_SERVICES,
+    ]
+    return subprocess.run(
+        command, capture_output=True, text=True, timeout=_MODAL_WARM_TIMEOUT_S
+    )
+
+
+def _warm_modal_chat_models() -> bool:
+    """Hold a runner of the Modal chat model for the session.
+
+    Only when the deploy serves the chat models from Modal. A failed warm
+    fails the session: its LLM results would otherwise depend on whether a
+    runner happened to be up.
+    """
+    from cogniverse_cli.config import LLM_SERVING_MODAL
+
+    from tests.e2e.deployment.conftest import e2e_llm_serving_mode
+
+    if e2e_llm_serving_mode() != LLM_SERVING_MODAL:
+        return False
+    result = _modal_chat_lifecycle("warm")
+    if result.returncode != 0:
+        pytest.fail(
+            "Session pre-flight: warming the Modal chat models "
+            f"{', '.join(_MODAL_WARMED_CHAT_SERVICES)} failed "
+            f"(exit {result.returncode}): {(result.stderr or result.stdout).strip()}"
+        )
+    return True
+
+
+def _release_modal_chat_models() -> None:
+    """Return the warmed chat models to scale-to-zero."""
+    result = _modal_chat_lifecycle("release")
+    if result.returncode != 0:
+        pytest.fail(
+            "Session teardown: releasing the Modal chat models "
+            f"{', '.join(_MODAL_WARMED_CHAT_SERVICES)} failed "
+            f"(exit {result.returncode}): {(result.stderr or result.stdout).strip()}"
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack(request, resolved_inference_endpoints):
     """Provide a healthy, bootstrapped e2e stack without replacing shared state.
@@ -1778,6 +1834,8 @@ def e2e_stack(request, resolved_inference_endpoints):
     if run_lock.acquire(run_lock.default_lock_path()):
         request.addfinalizer(lambda: run_lock.release(run_lock.default_lock_path()))
     run_lock.ensure_e2e_gpu_residency()
+    if _warm_modal_chat_models():
+        request.addfinalizer(_release_modal_chat_models)
 
     from cogniverse_cli.cluster import start_cluster
 
