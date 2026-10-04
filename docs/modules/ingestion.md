@@ -134,6 +134,10 @@ directory beneath the profile output directory, and the pipeline removes that
 directory when the run ends, whether it completed, failed or was cancelled. A
 cancelled run lets the in-flight decoding stage settle before releasing the
 directory, and a directory that survives its release is logged as a warning.
+The ingestion worker builds its pipeline with `retain_job_scratch=True`, so
+the keyframes stay on disk through the graph stage, whose face pipeline reads
+them; it calls `release_retained_scratch()` once the graph stage ends,
+whether it completed or failed.
 
 ### Key Features
 

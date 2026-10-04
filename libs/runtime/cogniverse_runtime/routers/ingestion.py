@@ -1296,7 +1296,9 @@ def _run_face_pipeline(
     ``linked_extraction.edges`` and ``.nodes`` before GraphManager.upsert.
     Both lists are empty on any internal failure — face-path errors
     are logged but never propagated, so a face-sidecar outage doesn't
-    break ingestion.
+    break ingestion. Every run logs its keyframe, face, cluster and edge
+    counts. The keyframe images must still be on disk: the ingestion worker
+    keeps the pipeline's scratch until the graph stage ends.
 
     Two passes run after face extraction + clustering:
       1. ``attribute_clusters_to_persons`` — emits face_cluster_temporal
@@ -1317,9 +1319,19 @@ def _run_face_pipeline(
         attribute_clusters_to_persons,
     )
     from cogniverse_agents.graph.face_clusterer import cluster_faces
-    from cogniverse_agents.graph.face_extractor import extract_faces_per_keyframe
+    from cogniverse_agents.graph.face_extractor import (
+        extract_faces_per_keyframe,
+        keyframes_of,
+    )
 
     empty: tuple = ([], [])
+    keyframe_count = len(keyframes_of(processing_results))
+    if not keyframe_count:
+        logger.info(
+            "Face pipeline for source_doc_id=%s: no keyframes in the result",
+            source_doc_id,
+        )
+        return empty
     try:
         face_mentions = extract_faces_per_keyframe(
             processing_results=processing_results,
@@ -1335,6 +1347,11 @@ def _run_face_pipeline(
         return empty
 
     if not face_mentions:
+        logger.info(
+            "Face pipeline for source_doc_id=%s: no faces in %d keyframes",
+            source_doc_id,
+            keyframe_count,
+        )
         return empty
 
     clusters = cluster_faces(face_mentions)
@@ -1352,6 +1369,16 @@ def _run_face_pipeline(
         orphan_clusters,
         source_doc_id=source_doc_id,
         tenant_id=tenant_id,
+    )
+    logger.info(
+        "Face pipeline for source_doc_id=%s: %d faces in %d keyframes, "
+        "%d clusters, %d same_as edges, %d anonymous face nodes",
+        source_doc_id,
+        len(face_mentions),
+        keyframe_count,
+        len(clusters),
+        len(temporal_edges),
+        len(anonymous_nodes),
     )
 
     return temporal_edges, anonymous_nodes

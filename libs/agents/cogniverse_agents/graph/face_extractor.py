@@ -1,10 +1,14 @@
 """Per-keyframe face extraction against the face-embed sidecar.
 
-Given a ``VideoIngestionPipeline`` result dict that contains a
-``keyframes.items`` list (each item carrying ``segment_id``, ``ts_start``,
-and either ``image_b64`` or ``image_url``), POST each keyframe to the
-face-embed sidecar and accumulate ``FaceMention`` records keyed by
-``(source_doc_id, segment_id, bbox)``.
+Reads the keyframes ``KeyframeProcessor`` wrote into a
+``VideoIngestionPipeline`` result (``results["keyframes"]["keyframes"]``, each
+``{frame_number, timestamp, filename, path}``), POSTs each frame's image to
+the face-embed sidecar and accumulates ``FaceMention`` records keyed by
+``(source_doc_id, segment_id, bbox)``. A keyframe's ``segment_id`` is its
+index in that list, the content schema's segment id (doc
+``<video_id>_seg_<index>``) and the keyframe-aligned transcript segments'.
+The image is read from ``path`` and sent base64-encoded, one request at a
+time; nothing is added to the result.
 
 Output is deterministic — records are sorted by ``(segment_id, bbox)``
 ascending before return so re-invocations on the same input produce
@@ -14,8 +18,10 @@ ordering for golden-file replay.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
 import httpx
@@ -39,34 +45,31 @@ def _canonical_bearer_headers(headers: Mapping[str, str] | None) -> Dict[str, st
     return {"Authorization": authorization}
 
 
+def keyframes_of(processing_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The keyframe records ``KeyframeProcessor`` wrote, in extraction order."""
+    section = processing_results.get("keyframes") or {}
+    items = section.get("keyframes") if isinstance(section, dict) else None
+    return list(items) if isinstance(items, list) else []
+
+
 def _iter_keyframes(processing_results: Dict[str, Any]):
-    """Yield (segment_id, ts_start, image_payload_dict) from a pipeline result.
+    """Yield ``(segment_id, ts_start, path)`` for every keyframe.
 
-    Accepts both flat ``keyframes`` lists and the nested
-    ``keyframes.items`` shape that ``VideoIngestionPipeline`` emits.
-    Missing-keyframes input → yields nothing (zero output records).
+    Raises ``ValueError`` naming the keyframe when one carries no ``path``
+    or ``timestamp``: a keyframe that cannot be read is a broken contract,
+    not an empty frame.
     """
-    kf = processing_results.get("keyframes") or {}
-    if isinstance(kf, dict):
-        items = kf.get("items") or kf.get("keyframes") or []
-    elif isinstance(kf, list):
-        items = kf
-    else:
-        items = []
-
-    for item in items:
-        segment_id = item.get("segment_id")
-        ts_start = float(item.get("ts_start", item.get("timestamp", 0.0)))
-        payload: Dict[str, str] = {}
-        if "image_b64" in item:
-            payload["image_b64"] = item["image_b64"]
-        elif "image_url" in item:
-            payload["image_url"] = item["image_url"]
-        else:
-            continue
-        if segment_id is None:
-            continue
-        yield segment_id, ts_start, payload
+    for index, item in enumerate(keyframes_of(processing_results)):
+        if (
+            not isinstance(item, dict)
+            or not item.get("path")
+            or (item.get("timestamp") is None)
+        ):
+            raise ValueError(
+                f"keyframe {index} has no readable path and timestamp: "
+                f"{sorted(item) if isinstance(item, dict) else type(item).__name__}"
+            )
+        yield str(index), float(item["timestamp"]), Path(item["path"])
 
 
 def _bbox_tuple(raw_bbox) -> Tuple[int, int, int, int]:
@@ -80,10 +83,18 @@ def _vec_tuple(raw_vec) -> Tuple[float, ...]:
 
 
 def _post_one(
-    client: httpx.Client, base_url: str, segment_id: str, payload: Dict[str, str]
+    client: httpx.Client, base_url: str, segment_id: str, path: Path
 ) -> Dict[str, Any]:
-    """POST a single keyframe to the sidecar. Raise on non-200 status."""
+    """POST a single keyframe image to the sidecar. Raise on non-200 status."""
     url = base_url.rstrip("/") + _EMBED_PATH
+    try:
+        image = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(
+            f"keyframe image for segment_id={segment_id!r} is unreadable at "
+            f"{path}: {exc}"
+        ) from exc
+    payload = {"image_b64": base64.b64encode(image).decode("ascii")}
     try:
         resp = client.post(url, json=payload, timeout=_DEFAULT_TIMEOUT_S)
     except httpx.HTTPError as exc:
@@ -111,9 +122,10 @@ def extract_faces_per_keyframe(
     Empty keyframes (no faces detected) contribute zero records. Multiple
     faces in one keyframe produce that many distinct records.
 
-    Raises ``RuntimeError`` with the failing ``segment_id`` and the HTTP
-    status code embedded in the message when the sidecar returns non-200
-    OR the request itself fails.
+    Raises ``ValueError`` for a keyframe without ``path`` or ``timestamp``,
+    and ``RuntimeError`` with the failing ``segment_id`` when its image is
+    unreadable, the sidecar returns non-200 (status in the message) or the
+    request itself fails.
     """
     explicit_headers = _canonical_bearer_headers(headers)
     configured_headers = inference_headers(face_embed_url.rstrip("/"))
@@ -144,7 +156,7 @@ def extract_faces_per_keyframe(
         else:
             responses = []
 
-        for (segment_id, ts_start, _payload), response in zip(keyframes, responses):
+        for (segment_id, ts_start, _path), response in zip(keyframes, responses):
             for face in response.get("faces", []):
                 records.append(
                     FaceMention(

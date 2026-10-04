@@ -15,7 +15,7 @@ from tests.ingestion.integration.test_required_transcription import make_video
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-def scratch_pipeline(tmp_path, *, pages=False):
+def scratch_pipeline(tmp_path, *, pages=False, retain=False):
     strategy = (
         {"class": "DocumentVisualSegmentationStrategy", "params": {"dpi": 72}}
         if pages
@@ -45,6 +45,7 @@ def scratch_pipeline(tmp_path, *, pages=False):
                 }
             }
         },
+        retain_job_scratch=retain,
     )
     pipeline.profile_output_dir = tmp_path / "processing"
     pipeline.profile_output_dir.mkdir()
@@ -242,4 +243,23 @@ async def test_scratch_that_cannot_be_released_is_reported(tmp_path, caplog):
         f"{len(list(held[0].rglob('*')))} path(s) after release"
     ]
     original(held[0])
+    assert list(pipeline.profile_output_dir.rglob("*")) == []
+
+
+async def test_retained_scratch_outlives_the_run_until_released(tmp_path):
+    # The ingestion worker's graph stage reads the generated files after the
+    # pipeline returns, so it asks for the scratch to be kept.
+    source = tmp_path / "source.mp4"
+    make_video(source, audio=False)
+    pipeline = scratch_pipeline(tmp_path, retain=True)
+
+    result = await pipeline.process_video_async_with_strategies(source)
+
+    assert result["status"] == "completed"
+    paths = [Path(c["path"]) for c in result["results"]["video_chunks"]["chunks"]]
+    assert [path.exists() for path in paths] == [True, True]
+
+    pipeline.release_retained_scratch()
+
+    assert [path.exists() for path in paths] == [False, False]
     assert list(pipeline.profile_output_dir.rglob("*")) == []

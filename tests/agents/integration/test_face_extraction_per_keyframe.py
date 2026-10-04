@@ -5,7 +5,9 @@ real FastAPI face-embed sidecar running in-process. The sidecar's
 InsightFace model is stubbed so vectors stay deterministic, but the
 HTTP boundary (uvicorn + httpx + Pydantic parsing) is real.
 
-Locks the F1–F7 assertion contract documented in
+Keyframes have the shape ``KeyframeProcessor`` writes (``frame_number``,
+``timestamp``, ``filename``, ``path``), with their images on disk. Locks the
+F1–F7 assertion contract documented in
 ``docs/plan/face-extraction-assertions.md``: total record count,
 byte-equal serialised record list (vectors pinned in a golden file),
 idempotency, empty-keyframe → zero records, multi-face keyframe →
@@ -99,11 +101,32 @@ _SPLIT_COLOR = (128, 128, 128)
 _EMPTY_COLOR = (10, 10, 10)
 
 
-def _solid_b64(color, size=(640, 480)) -> str:
+def _solid_png(color, size=(640, 480)) -> bytes:
     img = Image.new("RGB", size, color=color)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
+
+
+def _keyframes(directory: Path, frames) -> dict:
+    """A pipeline result holding ``KeyframeProcessor``'s keyframes: one
+    ``{frame_number, timestamp, filename, path}`` record per
+    ``(timestamp, colour)``, its image written to ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    records = []
+    for index, (timestamp, color) in enumerate(frames):
+        filename = f"debate_30s_keyframe_{index:04d}.png"
+        path = directory / filename
+        path.write_bytes(_solid_png(color))
+        records.append(
+            {
+                "frame_number": int(timestamp * 30),
+                "timestamp": timestamp,
+                "filename": filename,
+                "path": str(path),
+            }
+        )
+    return {"keyframes": {"keyframes": records}}
 
 
 class _ColorAwareFaceAnalysis:
@@ -223,33 +246,16 @@ def face_embed_url(face_model_root, monkeypatch_session=None):
 
 
 @pytest.fixture(scope="module")
-def debate_processing_results():
-    return {
-        "keyframes": {
-            "items": [
-                {
-                    "segment_id": "frame_5_0",
-                    "ts_start": 5.0,
-                    "image_b64": _solid_b64(_ALICE_COLOR),
-                },
-                {
-                    "segment_id": "frame_15_0",
-                    "ts_start": 15.0,
-                    "image_b64": _solid_b64(_BOB_COLOR),
-                },
-                {
-                    "segment_id": "frame_22_5",
-                    "ts_start": 22.5,
-                    "image_b64": _solid_b64(_SPLIT_COLOR),
-                },
-                {
-                    "segment_id": "frame_28_0",
-                    "ts_start": 28.0,
-                    "image_b64": _solid_b64(_EMPTY_COLOR),
-                },
-            ]
-        }
-    }
+def debate_processing_results(tmp_path_factory):
+    return _keyframes(
+        tmp_path_factory.mktemp("debate-keyframes"),
+        [
+            (5.0, _ALICE_COLOR),
+            (15.0, _BOB_COLOR),
+            (22.5, _SPLIT_COLOR),
+            (28.0, _EMPTY_COLOR),
+        ],
+    )
 
 
 # --------------------------------------------------------------------- #
@@ -300,7 +306,16 @@ def test_records_byte_equal_sorted(face_embed_url, debate_processing_results):
     expected = [
         {
             "source_doc_id": "debate_30s",
-            "segment_id": "frame_15_0",
+            "segment_id": "0",
+            "ts_start": 5.0,
+            "ts_end": 5.0,
+            "bbox": [100, 40, 200, 140],
+            "vec": list(ALICE_VEC),
+            "det_score": 0.987,
+        },
+        {
+            "source_doc_id": "debate_30s",
+            "segment_id": "1",
             "ts_start": 15.0,
             "ts_end": 15.0,
             "bbox": [80, 40, 180, 140],
@@ -309,7 +324,7 @@ def test_records_byte_equal_sorted(face_embed_url, debate_processing_results):
         },
         {
             "source_doc_id": "debate_30s",
-            "segment_id": "frame_22_5",
+            "segment_id": "2",
             "ts_start": 22.5,
             "ts_end": 22.5,
             "bbox": [20, 40, 120, 140],
@@ -318,21 +333,12 @@ def test_records_byte_equal_sorted(face_embed_url, debate_processing_results):
         },
         {
             "source_doc_id": "debate_30s",
-            "segment_id": "frame_22_5",
+            "segment_id": "2",
             "ts_start": 22.5,
             "ts_end": 22.5,
             "bbox": [300, 40, 400, 140],
             "vec": list(BOB_VEC),
             "det_score": 0.928,
-        },
-        {
-            "source_doc_id": "debate_30s",
-            "segment_id": "frame_5_0",
-            "ts_start": 5.0,
-            "ts_end": 5.0,
-            "bbox": [100, 40, 200, 140],
-            "vec": list(ALICE_VEC),
-            "det_score": 0.987,
         },
     ]
     assert json.dumps(serialised, sort_keys=True) == json.dumps(
@@ -362,18 +368,8 @@ def test_idempotent_byte_equal(face_embed_url, debate_processing_results):
 # --------------------------------------------------------------------- #
 
 
-def test_empty_keyframe_yields_empty_list(face_embed_url):
-    empty_only = {
-        "keyframes": {
-            "items": [
-                {
-                    "segment_id": "frame_28_0",
-                    "ts_start": 28.0,
-                    "image_b64": _solid_b64(_EMPTY_COLOR),
-                }
-            ]
-        }
-    }
+def test_empty_keyframe_yields_empty_list(face_embed_url, tmp_path):
+    empty_only = _keyframes(tmp_path, [(28.0, _EMPTY_COLOR)])
     assert extract_faces_per_keyframe(empty_only, "debate_30s", face_embed_url) == []
 
 
@@ -382,18 +378,8 @@ def test_empty_keyframe_yields_empty_list(face_embed_url):
 # --------------------------------------------------------------------- #
 
 
-def test_multi_face_keyframe_emits_distinct_records(face_embed_url):
-    split_only = {
-        "keyframes": {
-            "items": [
-                {
-                    "segment_id": "frame_22_5",
-                    "ts_start": 22.5,
-                    "image_b64": _solid_b64(_SPLIT_COLOR),
-                }
-            ]
-        }
-    }
+def test_multi_face_keyframe_emits_distinct_records(face_embed_url, tmp_path):
+    split_only = _keyframes(tmp_path, [(22.5, _SPLIT_COLOR)])
     records = extract_faces_per_keyframe(split_only, "debate_30s", face_embed_url)
     assert len(records) == 2
     assert {tuple(r.bbox) for r in records} == {
@@ -408,7 +394,7 @@ def test_multi_face_keyframe_emits_distinct_records(face_embed_url):
 # --------------------------------------------------------------------- #
 
 
-def test_sidecar_http_failure_raises_runtime_error_with_segment_id():
+def test_sidecar_http_failure_raises_runtime_error_with_segment_id(tmp_path):
     def boom_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": "model not warm"})
 
@@ -416,24 +402,15 @@ def test_sidecar_http_failure_raises_runtime_error_with_segment_id():
     with httpx.Client(transport=transport) as client:
         with pytest.raises(RuntimeError) as exc_info:
             extract_faces_per_keyframe(
-                {
-                    "keyframes": {
-                        "items": [
-                            {
-                                "segment_id": "frame_5_0",
-                                "ts_start": 5.0,
-                                "image_b64": _solid_b64(_ALICE_COLOR),
-                            }
-                        ]
-                    }
-                },
+                _keyframes(tmp_path, [(5.0, _ALICE_COLOR)]),
                 "debate_30s",
                 "http://boom.invalid",
                 client=client,
             )
-    msg = str(exc_info.value)
-    assert "frame_5_0" in msg
-    assert "503" in msg
+    assert str(exc_info.value) == (
+        "face-embed sidecar returned HTTP 503 for segment_id='0': "
+        '{"error":"model not warm"}'
+    )
 
 
 # --------------------------------------------------------------------- #
@@ -472,7 +449,7 @@ def test_facemention_shape_locked():
 # --------------------------------------------------------------------- #
 
 
-def test_keyframes_posted_concurrently():
+def test_keyframes_posted_concurrently(tmp_path):
     """A threading.Barrier of N only releases once all N keyframe POSTs are
     in flight at the same time. Serial POSTs (the pre-fix behaviour) leave the
     barrier one party short forever and time out."""
@@ -485,19 +462,10 @@ def test_keyframes_posted_concurrently():
         barrier.wait()
         return httpx.Response(200, json={"faces": []})
 
-    items = [
-        {
-            "segment_id": f"frame_{i}_0",
-            "ts_start": float(i),
-            "image_b64": _solid_b64(_EMPTY_COLOR),
-        }
-        for i in range(n)
-    ]
-
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as client:
         records = extract_faces_per_keyframe(
-            {"keyframes": {"items": items}},
+            _keyframes(tmp_path, [(float(i), _EMPTY_COLOR) for i in range(n)]),
             "debate_30s",
             "http://sidecar.invalid",
             client=client,
@@ -506,7 +474,7 @@ def test_keyframes_posted_concurrently():
     assert records == []
 
 
-def test_modal_face_client_uses_environment_credential(monkeypatch):
+def test_modal_face_client_uses_environment_credential(monkeypatch, tmp_path):
     token = "shared-production-key"
     created = []
 
@@ -529,20 +497,10 @@ def test_modal_face_client_uses_environment_credential(monkeypatch):
         "cogniverse_agents.graph.face_extractor.httpx.Client",
         _CredentialCapturingClient,
     )
-    image_b64 = _solid_b64(_EMPTY_COLOR)
+    image_b64 = base64.b64encode(_solid_png(_EMPTY_COLOR)).decode("ascii")
 
     records = extract_faces_per_keyframe(
-        {
-            "keyframes": {
-                "items": [
-                    {
-                        "segment_id": "frame_0_0",
-                        "ts_start": 0.0,
-                        "image_b64": image_b64,
-                    }
-                ]
-            }
-        },
+        _keyframes(tmp_path, [(0.0, _EMPTY_COLOR)]),
         "debate_30s",
         "https://face.modal.run",
     )
@@ -568,7 +526,7 @@ def test_modal_face_client_requires_environment_credential(monkeypatch):
         match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
     ):
         extract_faces_per_keyframe(
-            {"keyframes": {"items": []}},
+            {"keyframes": {"keyframes": []}},
             "debate_30s",
             "https://face.modal.run",
         )
@@ -579,8 +537,44 @@ def test_modal_face_client_rejects_caller_headers(monkeypatch):
 
     with pytest.raises(ValueError, match="headers.*Modal"):
         extract_faces_per_keyframe(
-            {"keyframes": {"items": []}},
+            {"keyframes": {"keyframes": []}},
             "debate_30s",
             "https://face.modal.run",
             headers={"Authorization": "Bearer caller-specific-key"},
         )
+
+
+# --------------------------------------------------------------------- #
+# F9 — A keyframe that cannot be read is an error, never a skip          #
+# --------------------------------------------------------------------- #
+
+
+def test_a_keyframe_without_a_path_raises_naming_it():
+    with pytest.raises(ValueError) as caught:
+        extract_faces_per_keyframe(
+            {
+                "keyframes": {
+                    "keyframes": [
+                        {"frame_number": 0, "timestamp": 0.0, "filename": "a.jpg"}
+                    ]
+                }
+            },
+            "debate_30s",
+            "http://sidecar.invalid",
+        )
+    assert str(caught.value) == (
+        "keyframe 0 has no readable path and timestamp: "
+        "['filename', 'frame_number', 'timestamp']"
+    )
+
+
+def test_a_keyframe_whose_image_is_gone_raises_naming_it(tmp_path):
+    results = _keyframes(tmp_path, [(5.0, _ALICE_COLOR)])
+    path = Path(results["keyframes"]["keyframes"][0]["path"])
+    path.unlink()
+
+    with pytest.raises(RuntimeError) as caught:
+        extract_faces_per_keyframe(results, "debate_30s", "http://sidecar.invalid")
+    assert str(caught.value).startswith(
+        f"keyframe image for segment_id='0' is unreadable at {path}: "
+    )
