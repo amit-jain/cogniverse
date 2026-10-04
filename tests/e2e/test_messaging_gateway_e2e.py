@@ -46,12 +46,28 @@ SEARCH_RESPONSE_FIELDS = {
 }
 
 
-def _assert_search_response(response: dict, query: str) -> None:
+def _assert_search_response(
+    response: dict, query: str, *, managed_context: bool = False
+) -> None:
     """The dispatcher's search_agent payload: fixed keys (plus the multi-turn
     pair when a conversation history was resolved), count == len(results), and
-    the message naming that count and the query the search actually ran."""
+    the message naming that count and the query the search actually ran.
+
+    A dispatch with a context_id has its history kept by the server, and the
+    envelope reports that history's read in a ``conversation`` block."""
     multi_turn = {"original_query", "rewritten_query"}
-    assert set(response) - multi_turn == SEARCH_RESPONSE_FIELDS, response
+    expected_fields = SEARCH_RESPONSE_FIELDS | (
+        {"conversation"} if managed_context else set()
+    )
+    assert set(response) - multi_turn == expected_fields, response
+    if managed_context:
+        conversation = response["conversation"]
+        assert set(conversation) == {"state", "turn_count", "reason"}, response
+        assert conversation["state"] == "loaded", response
+        assert conversation["reason"] is None, response
+        # Turns are saved as user/assistant pairs, so a loaded history is even.
+        assert isinstance(conversation["turn_count"], int), response
+        assert conversation["turn_count"] % 2 == 0, response
     assert set(response) & multi_turn in (set(), multi_turn), response
     if multi_turn <= set(response):
         assert response["original_query"] == query, response
@@ -203,7 +219,7 @@ class TestMessageHandlingIntegration:
                 top_k=3,
             )
 
-            _assert_search_response(response, parsed.query)
+            _assert_search_response(response, parsed.query, managed_context=True)
             assert response["results_count"] <= 3, response
             chunks = format_agent_response(response)
             assert_telegram_chunks(chunks, response)
