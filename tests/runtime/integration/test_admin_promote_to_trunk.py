@@ -87,18 +87,27 @@ def trunk_setup(vespa_instance, shared_denseon, memory_manager):
 
 
 @pytest.fixture
-def promote_client(trunk_setup, vespa_instance, admin_phoenix_endpoints):
+def promote_client(
+    trunk_setup, vespa_instance, admin_phoenix_endpoints, config_manager
+):
     tenant_mm, trunk_mm = trunk_setup
     # No registry monkeypatch: the endpoint resolves promotable kinds through
     # build_promotable_registry, where knowledge_summary is genuinely org-shared.
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    yield (
-        TestClient(app, raise_server_exceptions=False),
-        tenant_mm,
-        trunk_mm,
-        vespa_instance,
-    )
+    # The endpoint reads the tenant's pin quotas from the config store the
+    # admin router is wired to.
+    previous = admin._config_manager
+    admin.set_config_manager(config_manager)
+    try:
+        yield (
+            TestClient(app, raise_server_exceptions=False),
+            tenant_mm,
+            trunk_mm,
+            vespa_instance,
+        )
+    finally:
+        admin._config_manager = previous
 
 
 class TestPromoteToOrgTrunk:
