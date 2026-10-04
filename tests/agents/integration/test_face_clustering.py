@@ -2,15 +2,19 @@
 
 Drives ``cluster_faces`` over a deterministic 4-FaceMention debate
 fixture and locks the CL1–CL9 assertion contract from
-``docs/plan/face-clustering-assertions.md``. Uses sklearn's
-``AgglomerativeClustering`` against pinned float32-exact vectors
+``docs/plan/face-clustering-assertions.md``. Clusters pinned
+float32-exact vectors
 (``0.125`` and ``-0.125`` per 512 dims) so cosine distance between
 identities is exactly 2.0 and within identity exactly 0.0 — clustering
 is deterministic without any LM / encoder dependency.
 """
 
 import math
+import subprocess
+import sys
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from cogniverse_agents.graph.face_clusterer import cluster_faces
@@ -255,3 +259,89 @@ def test_facecluster_shape_locked():
     fields = dataclasses.fields(FaceCluster)
     assert len(fields) == 3
     assert [f.name for f in fields] == ["cluster_id", "members", "centroid_vec"]
+
+
+# --------------------------------------------------------------------- #
+# CL10 — Average-linkage partitions, without loading scikit-learn       #
+# --------------------------------------------------------------------- #
+
+
+def _partition(labels) -> list:
+    groups: dict = {}
+    for index, label in enumerate(labels):
+        groups.setdefault(int(label), []).append(index)
+    return sorted(tuple(g) for g in groups.values())
+
+
+def test_partitions_match_sklearn_average_linkage():
+    """The clusterer's partitions equal scikit-learn's cosine average-linkage
+    cut at the same threshold, over identities with varied spread."""
+    from sklearn.cluster import AgglomerativeClustering
+
+    from cogniverse_agents.graph.face_clusterer import _agglomerative_cosine
+
+    rng = np.random.default_rng(7)
+    compared = []
+    for _ in range(60):
+        identities = int(rng.integers(1, 10))
+        faces = int(rng.integers(2, 60))
+        centres = rng.normal(size=(identities, 512))
+        spread = float(rng.uniform(0.2, 1.2))
+        vecs = centres[rng.integers(0, identities, faces)] + spread * rng.normal(
+            size=(faces, 512)
+        )
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        for threshold in (0.3, 0.4, 0.5):
+            expected = AgglomerativeClustering(
+                n_clusters=None,
+                metric="cosine",
+                linkage="average",
+                distance_threshold=threshold,
+            ).fit_predict(vecs)
+            got = _agglomerative_cosine(vecs, threshold)
+            assert _partition(got) == _partition(expected), (threshold, faces)
+            compared.append(len(_partition(expected)))
+    # The draws cut into anything from one cluster to 59, at 41 distinct counts.
+    assert min(compared) == 1
+    assert max(compared) == 59
+    assert len(set(compared)) == 41
+
+
+def test_a_pair_exactly_at_the_threshold_stays_apart():
+    from sklearn.cluster import AgglomerativeClustering
+
+    from cogniverse_agents.graph.face_clusterer import _agglomerative_cosine
+
+    # Orthogonal faces sit at a cosine distance of exactly 1.0.
+    vecs = np.array([[1.0, 0.0], [0.0, 1.0]])
+    for threshold, expected in ((1.0, [(0,), (1,)]), (1.0000001, [(0, 1)])):
+        reference = AgglomerativeClustering(
+            n_clusters=None,
+            metric="cosine",
+            linkage="average",
+            distance_threshold=threshold,
+        ).fit_predict(vecs)
+        assert _partition(reference) == expected
+        assert _partition(_agglomerative_cosine(vecs, threshold)) == expected
+
+
+def test_clustering_does_not_load_scikit_learn():
+    """scikit-learn costs an ingestion worker about 70 MiB of resident
+    memory for the rest of its life; clustering a video's faces must not
+    import it."""
+    script = (
+        "import sys\n"
+        "from tests.agents.integration.test_face_clustering import _debate_mentions\n"
+        "from cogniverse_agents.graph.face_clusterer import cluster_faces\n"
+        "clusters = cluster_faces(_debate_mentions())\n"
+        "print(len(clusters), 'sklearn' in sys.modules, 'scipy' in sys.modules)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+        cwd=Path(__file__).resolve().parents[3],
+    )
+    assert done.stdout.strip() == "2 False False"
