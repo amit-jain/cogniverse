@@ -538,6 +538,31 @@ def e2e_llm_serving_mode() -> str:
     )
 
 
+def _extra_set_enablement_overlay(extra_set: dict[str, str] | None) -> Path | None:
+    """A values file carrying the ``inference.<svc>.enabled`` flags of *extra_set*.
+
+    Image builds and tag overrides follow the sidecars the values files
+    enable. A sidecar switched on or off only by ``--set`` must count too, or
+    it deploys on the chart's static tag, which was never built.
+    """
+    import hashlib
+    import tempfile
+
+    flags: dict[str, dict[str, bool]] = {}
+    for key, value in (extra_set or {}).items():
+        parts = key.split(".")
+        if len(parts) == 3 and parts[0] == "inference" and parts[2] == "enabled":
+            flags[parts[1]] = {"enabled": str(value).lower() == "true"}
+    if not flags:
+        return None
+    content = yaml.safe_dump({"inference": flags}, sort_keys=True)
+    digest = hashlib.sha256(content.encode()).hexdigest()[:16]
+    overlay = Path(tempfile.gettempdir()) / f"cogniverse-e2e-enabled-{digest}.yaml"
+    if not overlay.exists() or overlay.read_text() != content:
+        overlay.write_text(content)
+    return overlay
+
+
 def deployment_helm_inputs(
     project_root,
     *,
@@ -566,6 +591,8 @@ def deployment_helm_inputs(
         project_root=project_root,
     )
     assert helm_values[0] == values_file, helm_values
+    enablement_overlay = _extra_set_enablement_overlay(extra_set)
+    image_values = helm_values + ([enablement_overlay] if enablement_overlay else [])
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,
@@ -581,7 +608,7 @@ def deployment_helm_inputs(
         dev_image_set_values(
             project_root,
             torch_backend=backend,
-            values_files=helm_values,
+            values_files=image_values,
             versions=image_versions,
         )
     )
@@ -594,10 +621,12 @@ def deployment_helm_inputs(
         "image_tags": dev_image_tags(
             project_root,
             torch_backend=backend,
-            values_files=helm_values,
+            values_files=image_values,
             versions=image_versions,
         ),
         "helm_values": helm_values,
+        # helm_values plus the enablement --set overrides, for image work only.
+        "image_values": image_values,
         "helm_set_overrides": helm_set_overrides,
     }
 
@@ -717,13 +746,13 @@ def deploy_stack(
     built_tags = build_images(
         project_root,
         torch_backend=backend,
-        values_files=deployment_inputs["helm_values"],
+        values_files=deployment_inputs["image_values"],
         versions=image_versions,
     )
     import_images(cluster_name, built_tags)
     verify_local_images_cover_deploy(
         project_root,
-        deployment_inputs["helm_values"],
+        deployment_inputs["image_values"],
         built_tags=built_tags,
         versions=image_versions,
         torch_backend=backend,
@@ -832,7 +861,7 @@ def deploy_stack(
     # later as ErrImageNeverPull on a pod, far from its cause.
     from cogniverse_cli.images import enabled_sidecars
 
-    sidecars = enabled_sidecars(project_root, helm_values)
+    sidecars = enabled_sidecars(project_root, deployment_inputs["image_values"])
     unpinned = [
         svc
         for svc in sidecars

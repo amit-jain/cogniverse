@@ -101,6 +101,12 @@ def _expected_e2e_sandbox_overrides(llm_serving: str = "local") -> dict[str, str
     }
     overrides.update(
         {
+            f"inference.{service}.enabled": "true"
+            for service in sorted(inference._E2E_ENABLED_INFERENCE_SERVICES)
+        }
+    )
+    overrides.update(
+        {
             "runtime.sandbox.enabled": "true",
             "runtime.sandbox.inCluster.enabled": "false",
             "runtime.sandbox.gatewayEndpoint": _E2E_SANDBOX_GATEWAY_ENDPOINT,
@@ -1557,6 +1563,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2483,6 +2490,8 @@ class TestSharedClusterOwnership:
                 "runtime.imagesByBackend.rocm.tag": versions["runtime"],
                 "dashboard.imagesByBackend.rocm.tag": versions["dashboard"],
                 "inference.gliner.image.tag": versions["gliner"],
+                # Enabled by the e2e overrides alone, so pinned from them.
+                "inference.face_embed.image.tag": versions["face_embed"],
             },
             "image_tags": (
                 f"cogniverse/runtime-rocm:{versions['runtime']}",
@@ -2534,6 +2543,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2597,6 +2607,7 @@ class TestSharedClusterOwnership:
                     "runtime": base_version,
                     "dashboard": base_version,
                     "gliner": base_version,
+                    "face_embed": base_version,
                 },
                 llm_serving=llm_serving,
             ),
@@ -2605,6 +2616,7 @@ class TestSharedClusterOwnership:
                     "runtime": runtime_version,
                     "dashboard": base_version,
                     "gliner": base_version,
+                    "face_embed": base_version,
                 },
                 llm_serving=llm_serving,
             ),
@@ -2659,6 +2671,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2713,6 +2726,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )

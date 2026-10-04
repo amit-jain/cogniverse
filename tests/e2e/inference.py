@@ -57,6 +57,12 @@ def _e2e_docker_network_gateway_ip() -> str:
 _E2E_DISABLED_INFERENCE_SERVICES = frozenset({"code_colbert_pylate"})
 
 
+# Off in the chart and the k3s overlay, whose policy enables only the pods a
+# profile's inference_service names. Video ingestion calls face_embed when it
+# is deployed, so the e2e cluster serves it for the tests that exercise it.
+_E2E_ENABLED_INFERENCE_SERVICES = frozenset({"face_embed"})
+
+
 def _e2e_disabled_inference_services(llm_serving: str) -> frozenset[str]:
     from cogniverse_cli.config import LLM_SERVING_LOCAL
 
@@ -76,6 +82,10 @@ def _e2e_deployment_overrides() -> dict[str, str]:
             for service in sorted(
                 _e2e_disabled_inference_services(e2e_llm_serving_mode())
             )
+        },
+        **{
+            f"inference.{service}.enabled": "true"
+            for service in sorted(_E2E_ENABLED_INFERENCE_SERVICES)
         },
         "runtime.sandbox.enabled": "true",
         "runtime.sandbox.inCluster.enabled": "false",
