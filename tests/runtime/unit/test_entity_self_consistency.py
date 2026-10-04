@@ -24,10 +24,13 @@ from cogniverse_agents.optimizer.entity_self_consistency import (
     NEEDS_REVIEW_KEY,
     QUERY_KEY,
     SAMPLES_KEY,
+    SELF_CONSISTENCY_DRAW_ATTEMPTS,
     SELF_CONSISTENCY_ENTITY_KEYS,
+    SELF_CONSISTENCY_MAX_TOKENS,
     SELF_CONSISTENCY_METADATA_KEYS,
     SELF_CONSISTENCY_SAMPLES,
     SELF_CONSISTENCY_TEMPERATURE,
+    SelfConsistencyOutcome,
     agreement_entities,
     collect_self_consistency_rows,
     entity_agreement,
@@ -47,6 +50,14 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 TEACHER_MODEL = "Qwen/Qwen3-14B-AWQ"
 QUERY = "a man riding a dirt bike"
+
+DEGENERATE = "degenerate"
+"""Script entry for a draw that loops until the token limit: the served
+teacher's own failure, an answer whose JSON never closes."""
+
+DEGENERATE_CONTENT = (
+    '{"reasoning":"' + "The word 'the' is an article, not an entity. " * 40
+)
 
 
 class _SamplingTeacher:
@@ -100,12 +111,17 @@ class _SamplingTeacher:
                     return
                 script = outer._scripts[query]
                 entities = script[served % len(script)]
-                content = json.dumps(
-                    {
-                        "reasoning": f"draw {served} for {query}",
-                        "entities": entities,
-                    }
-                )
+                finish_reason = "stop"
+                if entities == DEGENERATE:
+                    content = DEGENERATE_CONTENT
+                    finish_reason = "length"
+                else:
+                    content = json.dumps(
+                        {
+                            "reasoning": f"draw {served} for {query}",
+                            "entities": entities,
+                        }
+                    )
                 self._send(
                     {
                         "id": "chatcmpl-stub",
@@ -116,7 +132,7 @@ class _SamplingTeacher:
                             {
                                 "index": 0,
                                 "message": {"role": "assistant", "content": content},
-                                "finish_reason": "stop",
+                                "finish_reason": finish_reason,
                             }
                         ],
                         "usage": {
@@ -163,6 +179,15 @@ def _endpoint(api_base: str) -> LLMEndpointConfig:
         request_timeout=30.0,
         num_retries=0,
         seed=17,
+    )
+
+
+def _sampling_lm(api_base: str):
+    """The sampling LM exactly as ``_sample_entity_self_consistency`` builds it."""
+    return create_sampling_dspy_lm(
+        _endpoint(api_base),
+        temperature=SELF_CONSISTENCY_TEMPERATURE,
+        max_tokens=SELF_CONSISTENCY_MAX_TOKENS,
     )
 
 
@@ -341,25 +366,33 @@ class TestSamplingReachesTheTeacherThreeTimes:
 
     def test_three_distinct_requests_sample_above_zero_with_no_seed(self):
         with _SamplingTeacher(self.SCRIPT) as teacher:
-            lm = create_sampling_dspy_lm(
-                _endpoint(teacher.api_base),
-                temperature=SELF_CONSISTENCY_TEMPERATURE,
-            )
+            lm = _sampling_lm(teacher.api_base)
             drawn = sample_entity_extraction(
                 EntityExtractionModule, QUERY, lm=lm, samples=SELF_CONSISTENCY_SAMPLES
             )
 
         posts = teacher.chat_posts
         assert len(posts) == SELF_CONSISTENCY_SAMPLES
-        assert [post["temperature"] for post in posts] == [
-            SELF_CONSISTENCY_TEMPERATURE
+        assert [
+            (
+                post["temperature"],
+                post["max_tokens"],
+                post.get("seed"),
+                post.get("repetition_penalty"),
+            )
+            for post in posts
+        ] == [
+            (SELF_CONSISTENCY_TEMPERATURE, SELF_CONSISTENCY_MAX_TOKENS, None, None)
         ] * SELF_CONSISTENCY_SAMPLES
-        assert SELF_CONSISTENCY_TEMPERATURE == 0.7
-        assert [post.get("seed") for post in posts] == [None] * SELF_CONSISTENCY_SAMPLES
+        assert (SELF_CONSISTENCY_TEMPERATURE, SELF_CONSISTENCY_MAX_TOKENS) == (
+            0.7,
+            1024,
+        )
         assert [post.get("extra_body") for post in posts] == [
             None
         ] * SELF_CONSISTENCY_SAMPLES
-        assert drawn == [
+        assert drawn.retries == 0
+        assert drawn.draws == [
             [
                 {"text": "man", "type": "PERSON"},
                 {"text": "dirt bike", "type": "CONCEPT"},
@@ -381,13 +414,26 @@ class TestSamplingReachesTheTeacherThreeTimes:
                 EntityExtractionModule, QUERY, lm=lm, samples=SELF_CONSISTENCY_SAMPLES
             )
         assert len(teacher.chat_posts) == 1
-        assert drawn == [self.SCRIPT[QUERY][0]] * SELF_CONSISTENCY_SAMPLES
+        assert drawn.draws == [self.SCRIPT[QUERY][0]] * SELF_CONSISTENCY_SAMPLES
+        assert drawn.retries == 0
         assert lm.cache is False
         assert lm.cache_tenant_id == "acme:prod"
 
     def test_sampling_lm_refuses_a_temperature_that_cannot_sample(self):
         with pytest.raises(ValueError, match="temperature above zero"):
-            create_sampling_dspy_lm(_endpoint("http://127.0.0.1:1/v1"), temperature=0.0)
+            create_sampling_dspy_lm(
+                _endpoint("http://127.0.0.1:1/v1"),
+                temperature=0.0,
+                max_tokens=SELF_CONSISTENCY_MAX_TOKENS,
+            )
+
+    def test_sampling_lm_refuses_a_completion_cap_that_cannot_answer(self):
+        with pytest.raises(ValueError, match="positive max_tokens, got 0"):
+            create_sampling_dspy_lm(
+                _endpoint("http://127.0.0.1:1/v1"),
+                temperature=SELF_CONSISTENCY_TEMPERATURE,
+                max_tokens=0,
+            )
 
 
 class TestServingPathIsUnchanged:
@@ -417,11 +463,8 @@ class TestFaultAndConcurrency:
         causes: list[str] = []
         with _SamplingTeacher(script) as teacher:
             teacher.fail_from_request = 2
-            lm = create_sampling_dspy_lm(
-                _endpoint(teacher.api_base),
-                temperature=SELF_CONSISTENCY_TEMPERATURE,
-            )
-            rows = asyncio.run(
+            lm = _sampling_lm(teacher.api_base)
+            outcome = asyncio.run(
                 collect_self_consistency_rows(
                     [{"query": QUERY, "example_id": "truth:0"}],
                     EntityExtractionModule,
@@ -431,11 +474,13 @@ class TestFaultAndConcurrency:
                 )
             )
 
-        assert rows == []
+        assert outcome.rows == []
+        assert outcome.retries == 0
         assert len(causes) == 1
         assert causes[0].startswith(
             "self-consistency sampling failed for query 'a man riding a dirt bike': "
         )
+        assert outcome.non_votes == [{"query": QUERY, "cause": causes[0]}]
 
     def test_concurrent_examples_keep_their_own_draws(self):
         queries = [
@@ -454,11 +499,8 @@ class TestFaultAndConcurrency:
         }
         causes: list[str] = []
         with _SamplingTeacher(script) as teacher:
-            lm = create_sampling_dspy_lm(
-                _endpoint(teacher.api_base),
-                temperature=SELF_CONSISTENCY_TEMPERATURE,
-            )
-            rows = asyncio.run(
+            lm = _sampling_lm(teacher.api_base)
+            outcome = asyncio.run(
                 collect_self_consistency_rows(
                     [
                         {"query": query, "example_id": f"truth:{index}"}
@@ -470,8 +512,10 @@ class TestFaultAndConcurrency:
                     record_cause=causes.append,
                 )
             )
+        rows = outcome.rows
 
         assert causes == []
+        assert (outcome.retries, outcome.non_votes) == (0, [])
         assert len(teacher.chat_posts) == 3 * SELF_CONSISTENCY_SAMPLES
         assert [(row["example_id"], row["data"]) for row in rows] == [
             (
@@ -531,3 +575,92 @@ class TestFaultAndConcurrency:
                 }
             ],
         ]
+
+
+class TestADegenerateDrawIsAskedOnceMore:
+    """A draw whose answer loops to the token limit is asked again from a new
+    seed; one that never parses is a non-vote with its cause, never a short
+    agreement."""
+
+    def _collect(self, script, queries):
+        causes: list[str] = []
+        with _SamplingTeacher(script) as teacher:
+            outcome = asyncio.run(
+                collect_self_consistency_rows(
+                    [
+                        {"query": query, "example_id": f"truth:{index}"}
+                        for index, query in enumerate(queries)
+                    ],
+                    EntityExtractionModule,
+                    lm=_sampling_lm(teacher.api_base),
+                    samples=SELF_CONSISTENCY_SAMPLES,
+                    record_cause=causes.append,
+                )
+            )
+        return outcome, causes, teacher.chat_posts
+
+    def test_a_degenerate_draw_then_a_good_one_is_one_retry_and_a_vote(self):
+        man = [{"text": "man", "type": "PERSON"}]
+        outcome, causes, posts = self._collect(
+            {QUERY: [man, DEGENERATE, man, man]}, [QUERY]
+        )
+
+        assert isinstance(outcome, SelfConsistencyOutcome)
+        assert (outcome.retries, outcome.non_votes, causes) == (1, [], [])
+        assert [(row["example_id"], row["data"]) for row in outcome.rows] == [
+            ("truth:0", {"query": QUERY, "entities": man, "relationships": []})
+        ]
+        assert outcome.rows[0]["metadata"][SAMPLES_KEY] == SELF_CONSISTENCY_SAMPLES
+        assert len(posts) == SELF_CONSISTENCY_SAMPLES + 1
+        # Only the retry names a seed, and it is a fresh one.
+        seeds = [post.get("seed") for post in posts]
+        assert seeds[:2] + seeds[3:] == [None, None, None]
+        assert isinstance(seeds[2], int) and seeds[2] != 17
+        assert [post["max_tokens"] for post in posts] == [
+            SELF_CONSISTENCY_MAX_TOKENS
+        ] * len(posts)
+        outcome, causes, posts = self._collect(
+            {QUERY: [man, DEGENERATE, DEGENERATE]}, [QUERY]
+        )
+
+        assert outcome.rows == []
+        assert outcome.retries == 1
+        assert len(causes) == 1
+        assert causes[0].startswith(
+            f"self-consistency sampling failed for query {QUERY!r}: DrawNotParsed: "
+            f"draw for query {QUERY!r} did not parse in "
+            f"{SELF_CONSISTENCY_DRAW_ATTEMPTS} attempts: AdapterParseError: "
+        )
+        assert outcome.non_votes == [{"query": QUERY, "cause": causes[0]}]
+        # The first draw, then the degenerate one and its single retry.
+        assert len(posts) == 1 + SELF_CONSISTENCY_DRAW_ATTEMPTS
+
+    def test_concurrent_queries_each_account_for_their_own_draws(self):
+        """Every requested query ends as a row or a non-vote, retries summed
+        across queries sampled at once."""
+        queries = [f"{QUERY} {index}" for index in range(6)]
+        man = [{"text": "man", "type": "PERSON"}]
+        script = {
+            queries[0]: [man],
+            queries[1]: [DEGENERATE, man, man, man],
+            queries[2]: [man, man, DEGENERATE, DEGENERATE],
+            queries[3]: [DEGENERATE, man, DEGENERATE, man, man],
+            queries[4]: [man],
+            queries[5]: [DEGENERATE, DEGENERATE],
+        }
+        outcome, causes, posts = self._collect(script, queries)
+
+        assert [row["data"]["query"] for row in outcome.rows] == [
+            queries[0],
+            queries[1],
+            queries[3],
+            queries[4],
+        ]
+        assert [vote["query"] for vote in outcome.non_votes] == [
+            queries[2],
+            queries[5],
+        ]
+        assert [vote["cause"] for vote in outcome.non_votes] == causes
+        assert len(outcome.rows) + len(outcome.non_votes) == len(queries)
+        assert outcome.retries == 1 + 1 + 2 + 1
+        assert len(posts) == 3 + 4 + 4 + 5 + 3 + 2

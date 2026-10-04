@@ -8,6 +8,8 @@ is the one a human is asked about.
 from __future__ import annotations
 
 import asyncio
+import secrets
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 SELF_CONSISTENCY_SAMPLES = 3
@@ -15,6 +17,22 @@ SELF_CONSISTENCY_SAMPLES = 3
 
 SELF_CONSISTENCY_TEMPERATURE = 0.7
 """Sampling temperature for those draws; zero would return one answer thrice."""
+
+SELF_CONSISTENCY_MAX_TOKENS = 1024
+"""Completion cap for one draw. On the served teacher (Qwen3-14B-AWQ,
+temperature 0.7) the longest answer that parsed, over 3,160 draws of the
+entity ground-truth queries, was 470 tokens (p99 292). A draw still running
+at the cap is a repetition loop whose JSON never closes; the cap ends it at
+half the teacher's 2,048-token completion budget."""
+
+SELF_CONSISTENCY_DRAW_ATTEMPTS = 2
+"""A draw whose answer does not parse is asked once more, with a new seed."""
+
+NON_VOTES_KEY = "non_votes"
+"""Report key listing every query that contributed no row, with its cause."""
+
+RETRIES_KEY = "retries"
+"""Report key counting the draws asked again after an unparsable answer."""
 
 AGREEMENT_KEY = "agreement"
 NEEDS_REVIEW_KEY = "needs_review"
@@ -115,37 +133,83 @@ def unanimous_entities(entities: Sequence[Mapping[str, Any]]) -> list[dict[str, 
     ]
 
 
+class DrawNotParsed(RuntimeError):
+    """A draw's answer did not parse on any of its attempts."""
+
+    def __init__(
+        self, query: str, attempts: int, last: BaseException, *, retries: int
+    ) -> None:
+        super().__init__(
+            f"draw for query {query!r} did not parse in {attempts} attempts: "
+            f"{type(last).__name__}: {last}"
+        )
+        self.attempts = attempts
+        self.retries = retries
+
+
+@dataclass
+class SampledQuery:
+    """Every draw for one query, and how many were asked again."""
+
+    draws: list[list[dict[str, str]]]
+    retries: int
+
+
+def _with_fresh_seed(lm):
+    """``lm`` asking for a draw from a new sampling seed."""
+    extra_body = dict(lm.kwargs.get("extra_body") or {})
+    extra_body["seed"] = secrets.randbelow(2**31)
+    return lm.copy(extra_body=extra_body)
+
+
+def _one_draw(module_factory: Callable[[], Any], query: str, lm) -> list[dict]:
+    import dspy
+
+    with dspy.context(lm=lm):
+        prediction = module_factory()(query=query)
+    return [
+        {
+            ENTITY_TEXT_KEY: str(text).strip(),
+            ENTITY_TYPE_KEY: str(entity_type).strip(),
+        }
+        for text, entity_type in (
+            _entity_fields(entity) for entity in prediction.entities
+        )
+    ]
+
+
 def sample_entity_extraction(
     module_factory: Callable[[], Any],
     query: str,
     *,
     lm,
     samples: int = SELF_CONSISTENCY_SAMPLES,
-) -> list[list[dict[str, str]]]:
+) -> SampledQuery:
     """Draw ``samples`` independent teacher extractions for one query.
 
     Each draw builds its own module and runs under ``lm``; the caller owns
-    ``lm``'s sampling settings. Any draw that raises propagates, so a caller
-    never sees agreement computed over fewer draws than it asked for.
+    ``lm``'s sampling settings. A draw whose answer does not parse is asked
+    again from a new seed, up to ``SELF_CONSISTENCY_DRAW_ATTEMPTS`` in all;
+    one that never parses raises ``DrawNotParsed``. Any other failure
+    propagates as raised. Either way a caller never sees agreement computed
+    over fewer draws than it asked for.
     """
-    import dspy
+    from dspy.utils.exceptions import AdapterParseError
 
     drawn: list[list[dict[str, str]]] = []
+    retries = 0
     for _ in range(samples):
-        with dspy.context(lm=lm):
-            prediction = module_factory()(query=query)
-        drawn.append(
-            [
-                {
-                    ENTITY_TEXT_KEY: str(text).strip(),
-                    ENTITY_TYPE_KEY: str(entity_type).strip(),
-                }
-                for text, entity_type in (
-                    _entity_fields(entity) for entity in prediction.entities
-                )
-            ]
-        )
-    return drawn
+        draw_lm = lm
+        for attempt in range(1, SELF_CONSISTENCY_DRAW_ATTEMPTS + 1):
+            try:
+                drawn.append(_one_draw(module_factory, query, draw_lm))
+                break
+            except AdapterParseError as exc:
+                if attempt == SELF_CONSISTENCY_DRAW_ATTEMPTS:
+                    raise DrawNotParsed(query, attempt, exc, retries=retries) from exc
+                retries += 1
+                draw_lm = _with_fresh_seed(lm)
+    return SampledQuery(drawn, retries)
 
 
 def review_row(query: str, samples: Sequence[Iterable[Any]]) -> dict[str, Any]:
@@ -180,6 +244,15 @@ def row_needs_review(row: Mapping[str, Any]) -> bool:
     return any(entity[NEEDS_REVIEW_KEY] for entity in row["metadata"][ENTITIES_KEY])
 
 
+@dataclass
+class SelfConsistencyOutcome:
+    """One row per sampled query, and an account of every query without one."""
+
+    rows: list[dict[str, Any]]
+    retries: int
+    non_votes: list[dict[str, str]] = field(default_factory=list)
+
+
 async def collect_self_consistency_rows(
     records: Sequence[Mapping[str, Any]],
     module_factory: Callable[[], Any],
@@ -187,32 +260,47 @@ async def collect_self_consistency_rows(
     lm,
     samples: int = SELF_CONSISTENCY_SAMPLES,
     record_cause: Callable[[str], None],
-) -> list[dict[str, Any]]:
-    """Sample every record concurrently and return one review row per success.
+) -> SelfConsistencyOutcome:
+    """Sample every record concurrently; every record yields a row or a non-vote.
 
-    A record whose draws did not all complete contributes no row; its cause is
-    recorded instead, so a partial draw can never be read as agreement.
+    A record whose draws did not all complete contributes no row: it is a
+    non-vote, listed with its cause and passed to ``record_cause``, so a
+    partial draw can never be read as agreement and no record goes
+    unaccounted.
     """
 
-    async def one(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    async def one(record: Mapping[str, Any]):
         query = record[QUERY_KEY]
         try:
-            drawn = await asyncio.to_thread(
+            sampled = await asyncio.to_thread(
                 sample_entity_extraction,
                 module_factory,
                 query,
                 lm=lm,
                 samples=samples,
             )
+        except DrawNotParsed as exc:
+            return None, exc.retries, query, exc
         except Exception as exc:  # noqa: BLE001
-            record_cause(
-                f"self-consistency sampling failed for query {query!r}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            return None
-        row = review_row(query, drawn)
+            return None, 0, query, exc
+        row = review_row(query, sampled.draws)
         row["example_id"] = record.get("example_id")
-        return row
+        return row, sampled.retries, query, None
 
-    results = await asyncio.gather(*(one(record) for record in records))
-    return [row for row in results if row is not None]
+    rows: list[dict[str, Any]] = []
+    retries = 0
+    non_votes: list[dict[str, str]] = []
+    for row, record_retries, query, exc in await asyncio.gather(
+        *(one(record) for record in records)
+    ):
+        retries += record_retries
+        if row is not None:
+            rows.append(row)
+            continue
+        cause = (
+            f"self-consistency sampling failed for query {query!r}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        record_cause(cause)
+        non_votes.append({QUERY_KEY: query, "cause": cause})
+    return SelfConsistencyOutcome(rows, retries, non_votes)

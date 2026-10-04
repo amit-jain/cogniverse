@@ -4852,6 +4852,9 @@ class TestEntityExtractionOptimization:
 
         from cogniverse_agents.optimizer.entity_self_consistency import (
             NO_UNANIMOUS_KEY,
+            NON_VOTES_KEY,
+            RETRIES_KEY,
+            SELF_CONSISTENCY_MAX_TOKENS,
             SELF_CONSISTENCY_SAMPLES,
             SELF_CONSISTENCY_TEMPERATURE,
         )
@@ -4860,8 +4863,11 @@ class TestEntityExtractionOptimization:
         assert set(self_consistency) == {
             "samples",
             "temperature",
+            "max_tokens",
             "examples_sampled",
             "examples_requested",
+            RETRIES_KEY,
+            NON_VOTES_KEY,
             "rows_needing_review",
             "batch_id",
             "rows_queued",
@@ -4871,15 +4877,35 @@ class TestEntityExtractionOptimization:
         assert self_consistency["temperature"] == SELF_CONSISTENCY_TEMPERATURE, (
             self_consistency
         )
+        assert self_consistency["max_tokens"] == SELF_CONSISTENCY_MAX_TOKENS, (
+            self_consistency
+        )
         # The pass draws the teacher for exactly the examples the bootstrap
-        # trains on, and a healthy run completes every draw.
+        # trains on, and accounts for every one: each is sampled, or is a
+        # non-vote naming the query and why its draw never completed. Whether
+        # a sampled draw loops (about 1 in 100 for some queries on the served
+        # teacher) is the model's; that none goes unaccounted is not.
         assert self_consistency["examples_requested"] == result["training_examples"], (
             self_consistency
         )
+        non_votes = self_consistency[NON_VOTES_KEY]
         assert (
-            self_consistency["examples_sampled"]
+            self_consistency["examples_sampled"] + len(non_votes)
             == self_consistency["examples_requested"]
         ), self_consistency
+        assert [set(vote) for vote in non_votes] == [{"query", "cause"}] * len(
+            non_votes
+        ), self_consistency
+        assert [
+            vote["cause"].startswith(
+                f"self-consistency sampling failed for query {vote['query']!r}: "
+            )
+            for vote in non_votes
+        ] == [True] * len(non_votes), self_consistency
+        non_vote_queries = [vote["query"] for vote in non_votes]
+        assert sorted(set(non_vote_queries)) == sorted(non_vote_queries), (
+            self_consistency
+        )
         # Every example the teacher was not unanimous on reaches a reviewer,
         # including the ones it agreed on no mention in.
         assert (
@@ -4901,6 +4927,8 @@ class TestEntityExtractionOptimization:
             for row in [*batch["ground_truth_rows"], *approved_examples]
         }
         assert set(no_unanimous) <= population_queries, self_consistency
+        assert set(non_vote_queries) <= population_queries, self_consistency
+        assert not set(non_vote_queries) & set(no_unanimous), self_consistency
 
         assert set(ledger) == {
             "version",
@@ -5013,10 +5041,15 @@ class TestEntityExtractionOptimization:
                 <= bootstrap["attempts"]
                 <= bootstrap["examples_walked"] * bootstrap["max_rounds"]
             ), bootstrap
-        assert bootstrap["errors"] == 0, bootstrap
-        # The count and the causes are the same record of the same failures:
-        # a run that drops an example carries why.
-        assert bootstrap["error_causes"] == [], bootstrap
+        # The bootstrap walk itself drops nothing; the only errors are the
+        # self-consistency draws that never parsed after their retry, each
+        # recorded with its cause. The count and the causes are the same
+        # record of the same failures.
+        non_vote_causes = [
+            vote["cause"] for vote in result["self_consistency"]["non_votes"]
+        ]
+        assert bootstrap["errors"] == len(non_vote_causes), bootstrap
+        assert bootstrap["error_causes"] == non_vote_causes, bootstrap
         assert len(bootstrap["error_causes"]) == bootstrap["errors"], bootstrap
         assert bootstrap["metric_values"] == sorted(bootstrap["metric_values"]), (
             bootstrap
