@@ -132,3 +132,95 @@ describe('GET /api/agents', () => {
     });
   });
 });
+
+describe('runtime proxy', () => {
+  it('forwards method, path, query, body and the harness key', async () => {
+    const seen: unknown[] = [];
+    const url = await runtimeServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        seen.push({
+          method: req.method,
+          url: req.url,
+          auth: req.headers.authorization,
+          type: req.headers['content-type'],
+          cookie: req.headers.cookie,
+          body,
+        });
+        res.statusCode = 409;
+        res.setHeader('content-type', 'application/json');
+        res.setHeader('x-internal', 'secret');
+        res.end(JSON.stringify({ detail: 'Tenant acme:prod already exists' }));
+      });
+    });
+    const response = await createApp(config(url)).request('/api/runtime/admin/tenants?dry=1', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: 'session=x' },
+      body: JSON.stringify({ tenant_id: 'acme:prod' }),
+    });
+    expect(seen).toEqual([
+      {
+        method: 'POST',
+        url: '/admin/tenants?dry=1',
+        auth: 'Bearer sk-test',
+        type: 'application/json',
+        cookie: undefined,
+        body: '{"tenant_id":"acme:prod"}',
+      },
+    ]);
+    expect(response.status).toBe(409);
+    expect(response.headers.get('x-internal')).toBe(null);
+    expect(await response.json()).toEqual({ detail: 'Tenant acme:prod already exists' });
+  });
+
+  it('refuses routes outside the operations views without calling the runtime', async () => {
+    let calls = 0;
+    const url = await runtimeServer((_req, res) => {
+      calls += 1;
+      res.end('{}');
+    });
+    const app = createApp(config(url));
+    for (const [method, path] of [
+      ['POST', '/admin/harness/keys'],
+      ['POST', '/admin/debug/memreset'],
+      ['GET', '/admin/tenants/acme:prod/../../harness/keys'],
+      ['GET', '/admin/tenants/acme:prod%2F..%2F..%2Fharness%2Fkeys'],
+      ['DELETE', '/admin/tenant/acme:prod/memories/x%2F..%2F..%2F..%2Fharness%2Fkeys'],
+      ['POST', '/v1/chat/completions'],
+    ]) {
+      const response = await app.request(`/api/runtime${path}`, { method });
+      expect(response.status).toBe(404);
+    }
+    expect(calls).toBe(0);
+  });
+
+  it('streams server-sent events as the runtime sends them', async () => {
+    let release: () => void = () => {};
+    const url = await runtimeServer((_req, res) => {
+      res.setHeader('content-type', 'text/event-stream');
+      res.write('data: {"state":"running"}\n\n');
+      release = () => res.end('data: {"state":"done"}\n\n');
+    });
+    const response = await createApp(config(url)).request('/api/runtime/events/ingestion/job-1');
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    // The first event arrives while the runtime still holds the stream open.
+    expect(decoder.decode((await reader.read()).value)).toBe('data: {"state":"running"}\n\n');
+    release();
+    let rest = '';
+    for (let part = await reader.read(); !part.done; part = await reader.read())
+      rest += decoder.decode(part.value);
+    expect(rest).toBe('data: {"state":"done"}\n\n');
+  });
+
+  it('answers 502 naming the runtime when it is down', async () => {
+    const url = await deadUrl();
+    const response = await createApp(config(url)).request('/api/runtime/admin/organizations');
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: `The Cogniverse runtime at ${url} did not answer (TypeError).`,
+    });
+  });
+});

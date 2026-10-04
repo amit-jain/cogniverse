@@ -6,6 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { CopilotRuntime, createCopilotHonoHandler } from '@copilotkit/runtime/v2';
 import { Hono } from 'hono';
 import type { ServerConfig } from './config.js';
+import { forwardToRuntime } from './proxy.js';
 import { RuntimeUnavailableError, cogniverseAgents, listAgents } from './runtime.js';
 
 export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
@@ -29,6 +30,7 @@ export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
     }
   });
   app.all('/api/copilotkit/*', (c) => copilotkit.fetch(c.req.raw));
+  app.all('/api/runtime/*', (c) => forwardToRuntime(config, c.req.raw, '/api/runtime', fetchFn));
 
   if (existsSync(path.join(config.clientDir, 'index.html'))) {
     app.use('/*', serveStatic({ root: path.relative(process.cwd(), config.clientDir) }));
