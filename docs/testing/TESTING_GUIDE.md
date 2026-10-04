@@ -972,6 +972,38 @@ selections do not count. `test-integrity.yml` runs the whole-tree guards with
 no `paths` filter, since any filter would skip them on the commits they exist
 to catch.
 
+### Assertion-strength guard and its waivers
+
+`tests/common/unit/test_assertion_strength_guard.py` fails a change that
+leaves any `tests/` file with fewer assertions than before (net of assertions
+moved verbatim into a file the change creates), or that adds a skip, an xfail
+or an unbounded assertion form. CI compares against the pull request's base or
+the push's previous commit (`ASSERTION_GUARD_BASE`); locally it defaults to
+`HEAD~1`:
+
+```bash
+ASSERTION_GUARD_BASE=$(git merge-base HEAD main) \
+  uv run pytest tests/common/unit/test_assertion_strength_guard.py
+```
+
+The one accepted loss is of assertions that tested code the change deletes.
+Each is declared in `tests/common/assertion_waivers.toml`:
+
+```toml
+[[waiver]]
+file = "tests/utils/test_vllm_sidecar.py"   # the test file that lost assertions
+max_net_loss = 173                          # its largest accepted net loss
+removed_symbols = ["tests/utils/vllm_sidecar.py:VllmSidecarFactory"]  # path:Name
+reason = "Tests of the local vLLM sidecar launch, removed with it."
+```
+
+The guard checks every waiver against the compared range: each named
+top-level symbol must be gone at HEAD and must have existed in HEAD's history,
+the file's net loss must not exceed `max_net_loss`, and a waiver for a file
+that lost nothing fails as stale. A waiver applies only when at least one of
+its symbols existed at the base; one whose symbols were all gone before the
+range covered an earlier change and waives nothing.
+
 ### CI Fast Integration Tests
 
 Workflows run integration tests with the `ci_fast` marker on every push to provide quick feedback:

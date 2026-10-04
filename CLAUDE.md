@@ -105,7 +105,9 @@ changed to and why. When a test fails, first decide product-bug vs stale-test
 and name the file:line that settles it — a test edit without that verdict is a
 cover-up. `tests/common/unit/test_assertion_strength_guard.py` enforces this in
 CI: it fails any change with a net assertion loss in a `tests/` file, or a newly
-added skip, xfail, `is not None`, `>= 1`, or `> 0`.
+added skip, xfail, `is not None`, `>= 1`, or `> 0`. The only accepted loss is of
+assertions that tested code the change deletes, declared and checked in
+`tests/common/assertion_waivers.toml`.
 
 ---
 
