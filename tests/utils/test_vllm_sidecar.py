@@ -29,7 +29,6 @@ import tests.utils.hermetic_llm as hermetic_llm
 from cogniverse_foundation.inference_specs import get_inference_service_spec
 from tests.fixtures.inference import (
     InferenceSessionResolver,
-    LocalEndpointProvider,
     publish_inference_endpoints,
 )
 from tests.fixtures.inference import (
@@ -3490,114 +3489,6 @@ def test_ingestion_teardown_failure_restores_environment(monkeypatch):
 
     assert os.environ["INFERENCE_SERVICE_URLS"] == original_urls
     assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == original_key
-
-
-def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
-    import tests.fixtures.inference as inference_fixture
-
-    commands: list[list[str]] = []
-    spec = get_inference_service_spec("face_embed")
-
-    def fail_launch(command, **kwargs):
-        commands.append(list(command))
-        if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[:3] == ["docker", "run", "-d"]:
-            raise subprocess.CalledProcessError(
-                125,
-                command,
-                stderr="container creation failed",
-            )
-        if command[:3] == ["docker", "logs", "--tail"]:
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout="model initialization failed",
-                stderr="",
-            )
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 34124)
-    monkeypatch.setattr(inference_fixture.subprocess, "run", fail_launch)
-    provider = LocalEndpointProvider(
-        llm_ensurer=lambda model: "",
-        llm_active=lambda model: True,
-        llm_releaser=lambda: None,
-    )
-
-    with pytest.raises(RuntimeError) as exc_info:
-        provider.resolve(spec)
-
-    message = str(exc_info.value)
-    assert "face_embed" in message
-    assert spec.model_id in message
-    assert "container creation failed" in message
-    assert "model initialization failed" in message
-    launch = next(
-        command for command in commands if command[:3] == ["docker", "run", "-d"]
-    )
-    container = launch[launch.index("--name") + 1]
-    assert container.startswith("cogniverse-face_embed-test-")
-    assert ["docker", "rm", "-f", container] in commands
-
-
-def test_ingestion_sidecar_inspect_timeout_raises_with_logs_and_cleanup(
-    monkeypatch,
-):
-    import httpx
-
-    import tests.fixtures.inference as inference_fixture
-
-    commands: list[list[str]] = []
-    spec = get_inference_service_spec("face_embed")
-
-    def fail_inspect(command, **kwargs):
-        commands.append(list(command))
-        if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[:3] == ["docker", "run", "-d"]:
-            return subprocess.CompletedProcess(command, 0, stdout="id", stderr="")
-        if command[:3] == ["docker", "logs", "--tail"]:
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout="health server never initialized",
-                stderr="",
-            )
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monotonic = iter((0.0, 1801.0))
-    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 34126)
-    monkeypatch.setattr(inference_fixture.subprocess, "run", fail_inspect)
-    monkeypatch.setattr(inference_fixture.time, "monotonic", lambda: next(monotonic))
-    monkeypatch.setattr(inference_fixture.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(
-        inference_fixture.httpx,
-        "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            httpx.ConnectError("health refused")
-        ),
-    )
-    provider = LocalEndpointProvider(
-        llm_ensurer=lambda model: "",
-        llm_active=lambda model: True,
-        llm_releaser=lambda: None,
-    )
-
-    with pytest.raises(RuntimeError) as exc_info:
-        provider.resolve(spec)
-
-    message = str(exc_info.value)
-    assert "face_embed" in message
-    assert spec.model_id in message
-    assert "did not become ready" in message
-    assert "health server never initialized" in message
-    container = next(
-        command[command.index("--name") + 1]
-        for command in commands
-        if command[:3] == ["docker", "run", "-d"]
-    )
-    assert commands.count(["docker", "rm", "-f", container]) == 1
 
 
 def test_tomoro_gets_gpu_mem_and_mm_limit_defaults():

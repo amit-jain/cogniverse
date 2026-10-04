@@ -4,13 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import socket
-import subprocess
-import time
-import uuid
 from concurrent.futures import Future
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from threading import Condition, Lock
 from types import MappingProxyType, TracebackType
@@ -40,9 +35,10 @@ from cogniverse_runtime.ingestion.strategy_factory import (
     INFERENCE_SERVICE_PARAM,
     StrategyFactory,
 )
+from tests.utils.model_resolution import ModelResolution, record
 from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
 
-_PROVIDER_ORDER = ("e2e", "dev", "modal", "local")
+_PROVIDER_ORDER = ("e2e", "dev", "modal")
 _REQUIRED_SERVICES_ATTR = "_cogniverse_required_inference_services"
 _MODAL_SERVICES_ATTR = "_cogniverse_modal_inference_services"
 TEST_INFERENCE_API_KEY = "cogniverse-test-inference"
@@ -81,42 +77,43 @@ def derive_service_dependencies(
 _SERVICE_DEPENDENCIES = derive_service_dependencies(
     json.loads(_SHIPPED_CONFIG.read_text(encoding="utf-8"))["backend"]["profiles"]
 )
-_VLLM_ARGS: Mapping[str, tuple[str, ...]] = MappingProxyType(
-    {
-        "vllm_colpali": (
-            "--max-model-len",
-            "4096",
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--limit-mm-per-prompt",
-            '{"video":0,"image":1}',
-        ),
-        "denseon": (
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--dtype",
-            "float32",
-        ),
-        "vllm_llm_student": (
-            "--max-model-len",
-            "8192",
-            "--enforce-eager",
-            "--max-num-seqs",
-            "1",
-            "--limit-mm-per-prompt",
-            '{"video":0,"image":4}',
-        ),
-        "vllm_asr": ("--runner", "generate", "--max-model-len", "448"),
-    }
+# Services whose engine is vLLM: they identify themselves through the OpenAI
+# model list rather than the custom servers' ``/health`` payload.
+_MODEL_LIST_SERVICES = frozenset(
+    {"vllm_colpali", "denseon", "vllm_llm_student", "vllm_llm_teacher", "vllm_asr"}
 )
 
 
 class ProviderUnavailable(RuntimeError):
     """A named provider has no reachable exact endpoint for the service."""
+
+
+class RemoteServiceUnavailable(ProviderUnavailable):
+    """No remote provider serves the service; nothing is started on this host."""
+
+    def __init__(
+        self,
+        spec: InferenceServiceSpec,
+        providers: tuple[str, ...],
+        failures: tuple[str, ...],
+        *,
+        modal: bool = False,
+    ) -> None:
+        self.service = spec.name
+        self.providers = providers
+        self.failures = failures
+        remedy = (
+            f"deploy it with `uv run cogniverse inference modal deploy {spec.name}`"
+            if modal
+            else "deploy the cogniverse-e2e cluster with this service enabled "
+            "(see docs/testing/TESTING_GUIDE.md)"
+        )
+        detail = f": {'; '.join(failures)}" if failures else ""
+        super().__init__(
+            f"{spec.name}: no remote endpoint serves {spec.model_id} in provider "
+            f"order {' -> '.join(providers) or 'none'}{detail}. Tests never start "
+            f"a model on this host; {remedy}."
+        )
 
 
 def _immutable_headers(candidate: CandidateEndpoint, spec: InferenceServiceSpec):
@@ -182,7 +179,7 @@ class EndpointValidator:
             )
         headers = _immutable_headers(candidate, spec)
         path = spec.models_path
-        if candidate.provider != "modal" and spec.name not in _VLLM_ARGS:
+        if candidate.provider != "modal" and spec.name not in _MODEL_LIST_SERVICES:
             path = spec.health_path
         try:
             response = self._client.get(
@@ -428,353 +425,6 @@ class ModalEndpointProvider:
         self.release_warmed_services()
 
 
-@dataclass(frozen=True, slots=True)
-class _ContainerSpec:
-    image: str
-    dockerfile: str
-    build_context: str
-    port: int
-    environment: Mapping[str, str]
-
-
-_CONTAINER_SPECS = {
-    "gliner": _ContainerSpec(
-        "cogniverse/gliner:0.1.0-dev",
-        "deploy/gliner/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType({"MODEL_NAME": INFERENCE_SERVICE_SPECS["gliner"].model_id}),
-    ),
-    "clap_embed": _ContainerSpec(
-        "cogniverse/clap-embed:0.1.0-dev",
-        "deploy/clap_embed/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType(
-            {"CLAP_EMBED_MODEL": INFERENCE_SERVICE_SPECS["clap_embed"].model_id}
-        ),
-    ),
-    "face_embed": _ContainerSpec(
-        "cogniverse/face-embed:0.1.0-dev",
-        "deploy/face_embed/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType(
-            {"FACE_EMBED_MODEL": INFERENCE_SERVICE_SPECS["face_embed"].model_id}
-        ),
-    ),
-    "video_embed": _ContainerSpec(
-        "cogniverse/video-embed:0.1.0-dev",
-        "deploy/video_embed/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType(
-            {
-                "VIDEO_EMBED_MODEL": INFERENCE_SERVICE_SPECS["video_embed"].model_id,
-                "VIDEO_EMBED_MODEL_REVISION": (
-                    INFERENCE_SERVICE_SPECS["video_embed"].model_revision
-                ),
-            }
-        ),
-    ),
-    # Both LateOn services run the same PyLate image with their own pinned
-    # model; the server performs PyLate's exact query expansion, which the
-    # vLLM /pooling path cannot reproduce (no attention-mask input).
-    "colbert_pylate": _ContainerSpec(
-        "cogniverse/pylate:0.1.0-dev",
-        "deploy/pylate/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType(
-            {
-                "MODEL_NAME": INFERENCE_SERVICE_SPECS["colbert_pylate"].model_id,
-                "MODEL_REVISION": (
-                    INFERENCE_SERVICE_SPECS["colbert_pylate"].model_revision
-                ),
-                "DEVICE": "cpu",
-            }
-        ),
-    ),
-    "code_colbert_pylate": _ContainerSpec(
-        "cogniverse/pylate:0.1.0-dev",
-        "deploy/pylate/Dockerfile",
-        ".",
-        8080,
-        MappingProxyType(
-            {
-                "MODEL_NAME": INFERENCE_SERVICE_SPECS["code_colbert_pylate"].model_id,
-                "MODEL_REVISION": (
-                    INFERENCE_SERVICE_SPECS["code_colbert_pylate"].model_revision
-                ),
-                "DEVICE": "cpu",
-            }
-        ),
-    ),
-}
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-class LocalEndpointProvider:
-    name = "local"
-
-    def __init__(
-        self,
-        validator: EndpointValidator | None = None,
-        credentials: EndpointCredentials | None = None,
-        llm_ensurer: Callable[[str, str], str] | None = None,
-        llm_active: Callable[[str, str], bool] | None = None,
-        llm_releaser: Callable[[], None] | None = None,
-    ) -> None:
-        from tests.utils.vllm_sidecar import VllmSidecarFactory
-
-        if llm_ensurer is not None and (llm_active is None or llm_releaser is None):
-            raise ValueError(
-                "custom Gemma provisioning requires active and release callbacks"
-            )
-
-        self._owns_validator = validator is None
-        self._validator = validator if validator is not None else EndpointValidator()
-        self._credentials = credentials or EndpointCredentials(
-            bearer_token=TEST_INFERENCE_API_KEY
-        )
-        self._llm_ensurer = llm_ensurer
-        self._llm_active = llm_active
-        self._llm_releaser = llm_releaser
-        self._owns_llm = False
-        self._vllm = VllmSidecarFactory(configured_urls=())
-        self._containers: list[str] = []
-
-    def resolve(self, spec: InferenceServiceSpec):
-        if spec.name == "vllm_llm_student" and self._llm_ensurer is not None:
-            self._owns_llm = not self._llm_active(
-                spec.model_id,
-                spec.model_revision,
-            )
-            try:
-                url = self._llm_ensurer(
-                    spec.model_id,
-                    spec.model_revision,
-                ).rstrip("/")
-            except Exception as exc:
-                try:
-                    self._release_owned_llm()
-                except Exception as cleanup_exc:
-                    exc.add_note(
-                        "vllm_llm_student cleanup failed: "
-                        f"{type(cleanup_exc).__name__}: {cleanup_exc}"
-                    )
-                raise
-            if url.endswith("/v1"):
-                url = url[: -len("/v1")]
-        elif spec.name in _VLLM_ARGS:
-            url = self._vllm.spawn(
-                spec.model_id,
-                extra_args=[
-                    "--revision",
-                    spec.model_revision,
-                    *_VLLM_ARGS[spec.name],
-                ],
-                env=None,
-            )
-        else:
-            url = self._start_container(spec)
-        candidate = CandidateEndpoint(
-            provider="local",
-            base_url=url,
-            credentials=self._credentials,
-            identity_evidence=EndpointIdentityEvidence.DEPLOYMENT,
-            model_revision=spec.model_revision,
-        )
-        return self._validator.validate(spec, candidate)
-
-    def _release_owned_llm(self) -> None:
-        if not self._owns_llm:
-            return
-        assert self._llm_releaser is not None
-        self._llm_releaser()
-        self._owns_llm = False
-
-    def _start_container(self, spec: InferenceServiceSpec) -> str:
-        try:
-            container_spec = _CONTAINER_SPECS[spec.name]
-        except KeyError as exc:
-            raise ProviderUnavailable(
-                f"{spec.name}: no exact test-owned local service is defined"
-            ) from exc
-        repo = Path(__file__).resolve().parents[2]
-        dockerfile = repo / container_spec.dockerfile
-        build_context = (repo / container_spec.build_context).resolve()
-        # One bounded retry: image builds download hundreds of MB of wheels,
-        # and a single transient registry/PyPI read-timeout must not sink the
-        # whole session (every already-built layer stays cached, so the retry
-        # only repeats the step that failed).
-        build_error: Exception | None = None
-        for attempt in range(2):
-            try:
-                subprocess.run(
-                    [
-                        "docker",
-                        "build",
-                        "-f",
-                        str(dockerfile),
-                        "-t",
-                        container_spec.image,
-                        str(build_context),
-                    ],
-                    check=True,
-                    timeout=1800,
-                )
-                build_error = None
-                break
-            except (OSError, subprocess.SubprocessError) as exc:
-                build_error = exc
-        if build_error is not None:
-            raise ProviderUnavailable(
-                f"{spec.name}: Docker image build failed twice using {dockerfile} "
-                f"with context {build_context} "
-                f"({type(build_error).__name__}: {build_error})"
-            ) from build_error
-        from tests.utils.vllm_sidecar import (
-            CONTAINER_HF_CACHE,
-            writable_test_hf_cache,
-        )
-
-        port = _free_port()
-        container = f"cogniverse-{spec.name}-test-{uuid.uuid4().hex[:8]}"
-        # Run as the invoking user against the test-owned cache so model
-        # downloads stay user-owned on the host. HOME inside the mount keeps
-        # every ~-derived cache path writable for the arbitrary uid;
-        # LOGNAME/USER keep getpass.getuser() working for a uid with no
-        # container passwd entry (torch inductor derives its cache dir from
-        # it and crashes on KeyError otherwise).
-        command = [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{port}:{container_spec.port}",
-            "--oom-score-adj=500",
-            "--user",
-            f"{os.getuid()}:{os.getgid()}",
-            "-e",
-            f"HOME={CONTAINER_HF_CACHE}",
-            "-e",
-            f"HF_HOME={CONTAINER_HF_CACHE}",
-            "-e",
-            "LOGNAME=cogniverse",
-            "-e",
-            "USER=cogniverse",
-            "-v",
-            f"{writable_test_hf_cache()}:{CONTAINER_HF_CACHE}",
-        ]
-        for key, value in container_spec.environment.items():
-            command.extend(("-e", f"{key}={value}"))
-        command.append(container_spec.image)
-        try:
-            subprocess.run(command, check=True, timeout=120)
-        except (OSError, subprocess.SubprocessError) as exc:
-            logs = self._container_logs(container)
-            cleanup_error = self._remove_container(container)
-            detail = getattr(exc, "stderr", None) or str(exc)
-            cleanup_context = (
-                f"; cleanup failed: {cleanup_error}" if cleanup_error else ""
-            )
-            raise RuntimeError(
-                f"{spec.name}: local model {spec.model_id} launch failed: "
-                f"{detail}; logs: {logs}{cleanup_context}"
-            ) from exc
-        self._containers.append(container)
-        url = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + 1800
-        last_probe_error = "no health response"
-        while time.monotonic() < deadline:
-            try:
-                response = httpx.get(f"{url}{spec.health_path}", timeout=5)
-                if response.status_code == 200:
-                    return url
-                last_probe_error = f"HTTP {response.status_code}"
-            except httpx.HTTPError as exc:
-                last_probe_error = f"{type(exc).__name__}: {exc}"
-            time.sleep(2)
-        logs = self._container_logs(container)
-        cleanup_error = self._remove_container(container)
-        cleanup_context = f"; cleanup failed: {cleanup_error}" if cleanup_error else ""
-        raise RuntimeError(
-            f"{spec.name}: local model {spec.model_id} did not become ready in "
-            f"1800s: {last_probe_error}; logs: {logs}{cleanup_context}"
-        )
-
-    @staticmethod
-    def _container_logs(container: str) -> str:
-        try:
-            result = subprocess.run(
-                ["docker", "logs", "--tail", "200", container],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"unavailable ({type(exc).__name__}: {exc})"
-        detail = "\n".join(
-            part for part in (result.stdout, result.stderr) if part
-        ).strip()
-        return detail or "empty"
-
-    def _remove_container(self, container: str) -> str | None:
-        try:
-            result = subprocess.run(
-                ["docker", "rm", "-f", container],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        else:
-            error = None
-            if result.returncode != 0:
-                detail = "\n".join(
-                    part for part in (result.stdout, result.stderr) if part
-                ).strip()
-                error = f"docker exited {result.returncode}: {detail}"
-        if error is None and container in self._containers:
-            self._containers.remove(container)
-        return error
-
-    def close(self) -> None:
-        errors: list[str] = []
-        try:
-            self._vllm.teardown()
-        except Exception as exc:
-            errors.append(str(exc))
-        try:
-            self._release_owned_llm()
-        except Exception as exc:
-            errors.append(f"vllm_llm_student: {exc}")
-        for container in tuple(self._containers):
-            cleanup_error = self._remove_container(container)
-            if cleanup_error:
-                errors.append(f"{container}: {cleanup_error}")
-        if self._owns_validator:
-            try:
-                self._validator.close()
-            except Exception as exc:
-                errors.append(f"endpoint validator: {exc}")
-        if errors:
-            raise RuntimeError("inference cleanup failed: " + "; ".join(errors))
-
-
 class InferenceSessionResolver:
     """Resolve each service once — endpoint or failure — and close every
     provider once."""
@@ -855,6 +505,9 @@ class InferenceSessionResolver:
             if (getattr(provider, "name", None) == "modal")
             == (spec.name in self._modal_services)
         )
+        provider_order = tuple(
+            getattr(provider, "name", type(provider).__name__) for provider in providers
+        )
         for provider in providers:
             try:
                 endpoint = provider.resolve(spec)
@@ -862,14 +515,32 @@ class InferenceSessionResolver:
                 failures.append(str(exc))
                 continue
             if endpoint is not None:
+                record(
+                    ModelResolution(
+                        f"inference {spec.name}",
+                        "resolved-remote",
+                        endpoint.base_url,
+                        provider_order,
+                        endpoint.provider,
+                    )
+                )
                 return endpoint
-        detail = f": {'; '.join(failures)}" if failures else ""
-        provider_order = " -> ".join(
-            getattr(provider, "name", type(provider).__name__) for provider in providers
+        refusal = RemoteServiceUnavailable(
+            spec,
+            provider_order,
+            tuple(failures),
+            modal=spec.name in self._modal_services,
         )
-        raise ProviderUnavailable(
-            f"{spec.name}: no exact endpoint in provider order {provider_order}{detail}"
+        record(
+            ModelResolution(
+                f"inference {spec.name}",
+                "refused",
+                None,
+                provider_order,
+                "; ".join(failures) or "no endpoint discovered",
+            )
         )
+        raise refusal
 
     def resolve_required(
         self,
@@ -1054,7 +725,6 @@ def _build_resolver(
                 credentials=shared_credentials,
             ),
             ModalEndpointProvider(lifecycle),
-            LocalEndpointProvider(credentials=shared_credentials),
         ),
         modal_services=modal_services,
     )
@@ -1250,3 +920,16 @@ def inference_endpoints(request, requested_inference_services):
 @pytest.fixture(scope="session")
 def resolved_inference_endpoints(requested_inference_services):
     return requested_inference_services
+
+
+@pytest.fixture(scope="session")
+def remote_inference():
+    """Resolve any named inference service to its remote endpoint, once per
+    session: an explicit ``INFERENCE_SERVICE_URLS`` entry, else the
+    ``cogniverse-e2e`` cluster, else the development cluster. A service no
+    remote provider serves raises ``RemoteServiceUnavailable``."""
+    resolver = _build_resolver(frozenset(INFERENCE_SERVICE_SPECS))
+    try:
+        yield resolver
+    finally:
+        resolver.close()
