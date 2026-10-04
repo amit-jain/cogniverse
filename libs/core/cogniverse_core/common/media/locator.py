@@ -100,8 +100,24 @@ def _shared_s3_filesystem(config: MediaConfig):
             return filesystem
         filesystem = fsspec.filesystem("s3", **_s3_filesystem_kwargs(config))
         filesystem.connect()
+        _open_http_session(filesystem)
         _S3_FILESYSTEMS[key] = filesystem
         return filesystem
+
+
+def _open_http_session(filesystem) -> None:
+    """Open the connected client's HTTP session.
+
+    s3fs rebuilds its client on a request when every HTTP session the client
+    holds is closed, and a client that has opened none counts as all closed:
+    the first request would build the client again, on fsspec's IO thread,
+    parsing botocore's service models mid-request. Opening the session here
+    keeps the client ``connect`` built.
+    """
+    from fsspec.asyn import sync
+
+    http_session = filesystem._s3._endpoint.http_session
+    sync(filesystem.loop, http_session._get_session, None)
 
 
 def prewarm_s3_filesystem(config: MediaConfig) -> None:

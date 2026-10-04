@@ -183,12 +183,14 @@ class TestSharedS3Filesystem:
                 return {"size": 17, "ETag": "shared-etag"}
 
         filesystem = Filesystem()
+        opened = []
 
         def build_filesystem(protocol, **kwargs):
             factory_calls.append((protocol, kwargs))
             return filesystem
 
         monkeypatch.setattr(fsspec, "filesystem", build_filesystem)
+        monkeypatch.setattr(locator_module, "_open_http_session", opened.append)
         config = MediaConfig.for_object_store("http://minio.internal:9000")
         prewarm(config)
         locators = [
@@ -223,6 +225,7 @@ class TestSharedS3Filesystem:
             )
         ]
         assert filesystem.connect_calls == 1
+        assert opened == [filesystem]
         assert sorted(filesystem.info_calls) == [
             "media/keyframes/0.jpg",
             "media/keyframes/1.jpg",
@@ -256,6 +259,7 @@ class TestSharedS3Filesystem:
             return filesystem
 
         monkeypatch.setattr(fsspec, "filesystem", build_filesystem)
+        monkeypatch.setattr(locator_module, "_open_http_session", lambda fs: None)
         config = MediaConfig.for_object_store("http://retry-minio.internal:9000")
 
         with pytest.raises(RuntimeError, match="client construction failed"):
@@ -470,3 +474,23 @@ class TestObjectStoreFaultContract:
             server.close()
             for conn in stalled:
                 conn.close()
+
+
+def test_the_prewarmed_client_serves_the_first_request(monkeypatch):
+    """s3fs counted a client that had opened no HTTP session as closed and
+    built it again on the first request, on its IO thread mid-request."""
+    from cogniverse_core.common.media import locator as locator_module
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "first-request-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "first-request-secret")
+    config = MediaConfig.for_object_store("http://127.0.0.1:1")
+    locator_module.prewarm_s3_filesystem(config)
+    filesystem = locator_module._shared_s3_filesystem(config)
+    client = filesystem._s3
+
+    from botocore.exceptions import EndpointConnectionError
+
+    with pytest.raises(EndpointConnectionError):
+        filesystem.info("s3://media/keyframes/0.jpg")
+
+    assert filesystem._s3 is client
