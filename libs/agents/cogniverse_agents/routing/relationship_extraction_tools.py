@@ -64,6 +64,7 @@ class GLiNERRelationshipExtractor:
         self,
         model_name: Optional[str] = None,
         inference_url: Optional[str] = None,
+        threshold: Optional[float] = None,
     ):
         """
         Initialize GLiNER relationship extractor.
@@ -75,9 +76,15 @@ class GLiNERRelationshipExtractor:
                 service instead of loading the model in-process. The
                 slim runtime image excludes torch+gliner by design;
                 production must always pass this URL.
+            threshold: Minimum entity score; falls back to
+                ``GLINER_ENTITY_THRESHOLD``. Sent to whichever model answers,
+                so the in-process and served paths keep the same entities.
         """
+        from cogniverse_core.common.models import GLINER_ENTITY_THRESHOLD
+
         self.model_name = model_name or DEFAULT_GLINER_MODEL
         self.inference_url = inference_url
+        self.threshold = GLINER_ENTITY_THRESHOLD if threshold is None else threshold
         self.gliner_model = None
 
     def _load_gliner_model(self):
@@ -150,7 +157,9 @@ class GLiNERRelationshipExtractor:
             ]
 
         try:
-            entities = self.gliner_model.predict_entities(text, labels)
+            entities = self.gliner_model.predict_entities(
+                text, labels, threshold=self.threshold
+            )
 
             # Convert to our standard format
             extracted_entities = []
@@ -610,6 +619,7 @@ class RelationshipExtractorTool:
         self,
         gliner_model: Optional[str] = None,
         spacy_model: str = "en_core_web_sm",
+        gliner_inference_url: Optional[str] = None,
     ):
         """
         Initialize the relationship extractor tool.
@@ -617,8 +627,13 @@ class RelationshipExtractorTool:
         Args:
             gliner_model: GLiNER model name
             spacy_model: spaCy model name
+            gliner_inference_url: The GLiNER inference service
+                (``SystemConfig.inference_service_urls["gliner"]``); without
+                it GLiNER loads in-process.
         """
-        self.gliner_extractor = GLiNERRelationshipExtractor(gliner_model)
+        self.gliner_extractor = GLiNERRelationshipExtractor(
+            gliner_model, inference_url=gliner_inference_url
+        )
         self.spacy_analyzer = SpaCyDependencyAnalyzer(spacy_model)
 
         logger.info("Relationship extractor tool initialized")
@@ -866,7 +881,9 @@ class RelationshipExtractorTool:
 
 # Factory function for easy instantiation
 def create_relationship_extractor(
-    gliner_model: Optional[str] = None, spacy_model: str = "en_core_web_sm"
+    gliner_model: Optional[str] = None,
+    spacy_model: str = "en_core_web_sm",
+    gliner_inference_url: Optional[str] = None,
 ) -> RelationshipExtractorTool:
     """
     Factory function to create a relationship extractor tool.
@@ -874,8 +891,11 @@ def create_relationship_extractor(
     Args:
         gliner_model: GLiNER model name
         spacy_model: spaCy model name
+        gliner_inference_url: The GLiNER inference service URL
 
     Returns:
         Configured RelationshipExtractorTool instance
     """
-    return RelationshipExtractorTool(gliner_model, spacy_model)
+    return RelationshipExtractorTool(
+        gliner_model, spacy_model, gliner_inference_url=gliner_inference_url
+    )

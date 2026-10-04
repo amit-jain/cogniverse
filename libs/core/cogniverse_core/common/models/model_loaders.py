@@ -1527,6 +1527,13 @@ _gliner_cache: OrderedDict[Tuple[str, str, str, str], Any] = OrderedDict()
 
 
 GLINER_REQUEST_TIMEOUT_S = 240.0
+
+# The minimum score an extracted entity needs. Every entity-extraction caller
+# that sets no threshold of its own uses this one value, whether it reaches
+# GLiNER in-process or through the inference service; the service's own
+# request default (cogniverse_cli/modal_inference/servers/gliner.py) is the
+# same 0.4.
+GLINER_ENTITY_THRESHOLD = 0.4
 """Per-request budget for the GLiNER inference service.
 
 The first request per (service, model) cold-loads HF weights: measured
@@ -1612,7 +1619,7 @@ class RemoteGlinerClient:
         return entities
 
     def predict_entities(
-        self, text: str, labels: List[str], threshold: float = 0.4
+        self, text: str, labels: List[str], threshold: float = GLINER_ENTITY_THRESHOLD
     ) -> List[Dict[str, Any]]:
         payload = {
             "text": text,
