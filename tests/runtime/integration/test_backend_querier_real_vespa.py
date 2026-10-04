@@ -276,12 +276,18 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.schema_checks = []
+            self.read_path_checks = []
             self.query_calls = []
 
         def schema_exists(self, schema_name, tenant_id=None):
             exists = super().schema_exists(schema_name, tenant_id=tenant_id)
             self.schema_checks.append((schema_name, tenant_id, exists))
             return exists
+
+        def _read_path_deployed(self, tenant_id, base_schema_name):
+            deployed = super()._read_path_deployed(tenant_id, base_schema_name)
+            self.read_path_checks.append((base_schema_name, tenant_id, deployed))
+            return deployed
 
         def query_metadata_documents(
             self,
@@ -452,10 +458,10 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         }
         for query in expected_queries
     ]
-    assert backend.schema_checks == [
-        (base_schema, tenant, True),
-        (base_schema, tenant, True),
-    ]
+    # The service asks whether the profile's schema is deployed before it
+    # samples; the metadata query's own skip asks the read-path answer.
+    assert backend.schema_checks == [(base_schema, tenant, True)]
+    assert backend.read_path_checks == [(base_schema, tenant, True)]
     assert backend.query_calls == [
         (
             base_schema,
