@@ -253,6 +253,54 @@ class XClipQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
+class ClapTextQueryEncoder(QueryEncoder):
+    """Encode a query into CLAP's joint audio-text space.
+
+    The ``clap_embed`` sidecar that embeds the indexed audio answers
+    ``POST /embed/text`` with one vector in the same space, so the query is
+    directly comparable to the stored acoustic embedding. Remote only, like
+    X-CLIP: a local fallback would answer from whatever checkpoint the
+    process happened to load.
+    """
+
+    multi_vector = False
+
+    def __init__(self, inference_service_url: str):
+        from cogniverse_core.common.models.model_loaders import RemoteClapClient
+
+        self._client = RemoteClapClient(inference_service_url)
+        self.inference_service_url = inference_service_url
+
+    def encode(self, query: str) -> np.ndarray:
+        import requests
+
+        from cogniverse_foundation.config.inference_service import (
+            InferenceServiceUnavailableError,
+        )
+
+        try:
+            return self._client.generate_acoustic_text_embedding(query)
+        except RuntimeError as exc:
+            if isinstance(exc.__cause__, requests.RequestException):
+                raise InferenceServiceUnavailableError(
+                    "clap_embed",
+                    f"clap_embed sidecar at {self.inference_service_url} did not "
+                    f"serve the query: {exc}",
+                ) from exc
+            raise
+
+    def get_embedding_dim(self) -> int:
+        from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+        return get_inference_service_spec("clap_embed").output_dimension
+
+
+# The text encoder of each inference service that embeds a document field
+# other than the profile's own embedding. A profile names the service under
+# the field's name in ``inference_services``.
+SERVICE_TEXT_ENCODERS: dict = {"clap_embed": ClapTextQueryEncoder}
+
+
 class EncoderNotConfiguredError(ValueError):
     """A profile declares no usable query encoder, or an incomplete one.
 
@@ -639,6 +687,46 @@ class QueryEncoderFactory:
         raise ValueError(
             f"Cannot determine encoder type for model: {model_name} in profile: {profile}"
         )
+
+    @classmethod
+    def create_service_encoder(
+        cls, profile: str, service: str, config: "SystemConfig"
+    ) -> QueryEncoder:
+        """The cached text encoder of inference service ``service``.
+
+        Raises:
+            EncoderNotConfiguredError: no text encoder exists for the service,
+                or the service has no configured URL.
+        """
+        encoder_class = SERVICE_TEXT_ENCODERS.get(service)
+        if encoder_class is None:
+            raise EncoderNotConfiguredError(
+                f"Profile {profile!r} scores a field embedded by the {service!r} "
+                f"inference service, which has no query text encoder. Known: "
+                f"{sorted(SERVICE_TEXT_ENCODERS)}.",
+                profile=profile,
+            )
+        service_urls = getattr(config, "inference_service_urls", {}) or {}
+        url = service_urls.get(service)
+        if not url:
+            raise EncoderNotConfiguredError(
+                f"Profile {profile!r} scores a field embedded by the {service!r} "
+                f"inference service, but no URL is configured for it. Deployed "
+                f"services: {sorted(service_urls)}.",
+                profile=profile,
+            )
+        cache_key = (service, url)
+        cached = cls._encoder_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        with cls._encoder_cache_lock:
+            key_lock = cls._encoder_key_locks.setdefault(cache_key, threading.Lock())
+        with key_lock:
+            cached = cls._encoder_cache.get(cache_key)
+            if cached is None:
+                cached = encoder_class(url)
+                cls._encoder_cache[cache_key] = cached
+            return cached
 
     @staticmethod
     def get_supported_profiles(config: Optional["SystemConfig"] = None) -> list:

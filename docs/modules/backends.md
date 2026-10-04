@@ -1650,6 +1650,17 @@ than the multi-profile `config` dict shown above.
 | `filters` | dict | no | Optional metadata filters |
 | `result_granularity` | str | no | `"source"` or `"segment"`; defaults from the profile |
 
+Without `query_embeddings`, a strategy that reads query tensors has the
+backend encode the query text, one encoder per input
+(`cogniverse_vespa.query_inputs.query_input_encodings`). An input scored
+against a field that the profile embeds with a service of its own, named under
+the field's name in `inference_services`, takes that service's text encoder:
+`acoustic_query`, scored against `acoustic_embedding`, takes the `clap_embed`
+CLAP text vector on `audio_clap_semantic`. Every other input takes the
+profile's query encoder, the `int8` inputs packing its float output. Each
+encoder encodes the query once. A caller's `query_embeddings` array binds to
+every input.
+
 ```python
 # Text search (tenant-scoped)
 results = backend.search({
@@ -3115,6 +3126,7 @@ print(strategy.needs_text_query)        # True
 print(strategy.use_nearestneighbor)     # False (patch-based schema; True for global schemas)
 print(strategy.first_phase_embedding_field)  # "embedding"
 print(strategy.inputs)                  # {"qt": "tensor<float>(...)"}
+print(strategy.input_fields)            # {"qt": "embedding"}
 print(strategy.query_tensors_needed)    # ["qt"]
 ```
 
@@ -3122,6 +3134,9 @@ print(strategy.query_tensors_needed)    # ["qt"]
 
 - **needs_text_query**: Profile name contains "bm25" or "text" OR first-phase has "bm25(" OR "userInput"
 - **needs_float_embeddings**: Input types contain "float"
+- **input_fields**: the field each input is scored against: the field
+  `nearestNeighbor` searches for its input, else the one attribute a phase
+  reads beside the input, functions expanded
 - **needs_binary_embeddings**: Input types contain "int8"
 - **use_nearestneighbor**: Global schemas + visual strategies
 - **first_phase_embedding_field**: The tensor field a visual or hybrid strategy's first phase scores, resolved through profile functions; a text-seeking strategy that has one matches every document and ranks by the query terms

@@ -72,6 +72,7 @@ class RankingStrategyInfo:
     timeout: float = 2.0
     description: str = ""
     inputs: Dict[str, str] = field(default_factory=dict)
+    input_fields: Dict[str, str] = field(default_factory=dict)
     query_tensors_needed: List[str] = field(default_factory=list)
     schema_name: str = ""
 
@@ -228,6 +229,9 @@ class RankingStrategyExtractor:
         )
 
         query_tensors_needed = list(inputs.keys())
+        input_fields = self._input_fields(
+            profile, inputs, nearestneighbor_field, nearestneighbor_tensor
+        )
 
         return RankingStrategyInfo(
             name=profile_name,
@@ -245,23 +249,58 @@ class RankingStrategyExtractor:
             timeout=profile.get("timeout", 2.0),
             description=description,
             inputs=inputs,
+            input_fields=input_fields,
             query_tensors_needed=query_tensors_needed,
             schema_name=schema_name,
         )
 
     @staticmethod
+    def _input_fields(
+        profile: Dict[str, Any],
+        inputs: Dict[str, str],
+        nearestneighbor_field: Optional[str],
+        nearestneighbor_tensor: Optional[str],
+    ) -> Dict[str, str]:
+        """The document field each query input is scored against.
+
+        The nearestNeighbor input pairs with the field it searches. Any other
+        input pairs with the one attribute a phase expression reads beside it,
+        functions expanded; an input read beside several attributes is left
+        unpaired.
+        """
+        paired = {}
+        if nearestneighbor_tensor and nearestneighbor_field:
+            paired[nearestneighbor_tensor] = nearestneighbor_field
+        for phase in ("first_phase", "second_phase", "global_phase"):
+            expr = RankingStrategyExtractor._expanded_phase(profile, phase)
+            attributes = set(re.findall(r"attribute\((\w+)\)", expr))
+            if len(attributes) != 1:
+                continue
+            (attribute,) = attributes
+            for name in re.findall(r"query\((\w+)\)", expr):
+                if name in inputs:
+                    paired.setdefault(name, attribute)
+        return paired
+
+    @staticmethod
     def _expanded_first_phase(profile: Dict[str, Any]) -> str:
         """The first-phase expression with every profile function substituted
         by its body (``visual_sim + text_sim`` -> the two bodies)."""
+        return RankingStrategyExtractor._expanded_phase(profile, "first_phase")
+
+    @staticmethod
+    def _expanded_phase(profile: Dict[str, Any], phase: str) -> str:
+        """A phase expression with every profile function substituted by its
+        body; empty when the profile declares no such phase."""
         functions = {
             f.get("name", ""): f.get("expression", "")
             for f in profile.get("functions", [])
         }
-        first_phase = profile.get("first_phase", profile.get("first-phase", ""))
-        if isinstance(first_phase, dict):
-            expr = first_phase.get("expression", "")
+        expression = profile.get(phase, profile.get(phase.replace("_", "-"), ""))
+        if isinstance(expression, dict):
+            expr = expression.get("expression", "")
         else:
-            expr = str(first_phase or "")
+            expr = str(expression or "")
 
         for _ in range(4):  # bounded function-indirection depth
             expanded = expr
@@ -465,6 +504,7 @@ def save_ranking_strategies(
                 "timeout": strategy_info.timeout,
                 "description": strategy_info.description,
                 "inputs": strategy_info.inputs,
+                "input_fields": strategy_info.input_fields,
                 "query_tensors_needed": strategy_info.query_tensors_needed,
                 "schema_name": strategy_info.schema_name,
             }
