@@ -5,7 +5,6 @@ import logging
 import os
 import subprocess
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -41,82 +40,18 @@ MODEL = "lightonai/LateOn"
 REVISION = "c01907b70557ee5c7753680d4819a5cce1674b83"
 
 
-@contextmanager
-def owned_container(image, args):
-    name = f"ingestion-windows-{uuid.uuid4().hex[:10]}"
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            *args,
-            image,
-        ],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        yield name
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], check=True, capture_output=True)
-
-
 @pytest.fixture(scope="module")
-def window_encoder():
-    server = Path("libs/cli/cogniverse_cli/modal_inference/servers/pylate.py").resolve()
-    cache = Path.home() / ".cache/cogniverse-tests/huggingface"
-    with owned_container(
-        "cogniverse/pylate:0.1.0-dev",
-        [
-            "-p",
-            "127.0.0.1::8080",
-            "-v",
-            f"{server}:/app/server.py:ro",
-            "-v",
-            f"{cache}:/hf:ro",
-            "-e",
-            "HF_HOME=/hf",
-            "-e",
-            "HF_HUB_OFFLINE=1",
-            "-e",
-            f"MODEL_NAME={MODEL}",
-            "-e",
-            f"MODEL_REVISION={REVISION}",
-            "-e",
-            "DEVICE=cpu",
-            "-e",
-            "OMP_NUM_THREADS=2",
-        ],
-    ) as name:
-        port = (
-            subprocess.check_output(["docker", "port", name, "8080"], text=True)
-            .strip()
-            .rsplit(":", 1)[1]
-        )
-        endpoint = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            try:
-                response = requests.get(f"{endpoint}/health", timeout=5)
-                if response.status_code == 200:
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(1)
-        else:
-            logs = subprocess.check_output(["docker", "logs", name], text=True)
-            pytest.fail(f"PyLate did not become ready: {logs}")
-        model, _ = RemoteColBERTLoader(
-            MODEL, {"remote_inference_url": endpoint}, _resolved_headers={}
-        ).load_model()
-        try:
-            yield model
-        finally:
-            model._close()
+def window_encoder(remote_inference):
+    endpoint = remote_inference.resolve("colbert_pylate")
+    model, _ = RemoteColBERTLoader(
+        MODEL,
+        {"remote_inference_url": endpoint.base_url},
+        _resolved_headers=dict(endpoint.headers),
+    ).load_model()
+    try:
+        yield model
+    finally:
+        model._close()
 
 
 @pytest.fixture(scope="module")
