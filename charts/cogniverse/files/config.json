@@ -1228,6 +1228,7 @@
         "schema_name": "wiki_pages",
         "embedding_model": "lightonai/DenseOn",
         "embedding_type": "single_vector",
+        "encoder": "denseon",
         "schema_config": {
           "embedding_dims": 768
         }
