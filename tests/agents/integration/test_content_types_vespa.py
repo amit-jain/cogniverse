@@ -5,6 +5,7 @@ Tests image_content and audio_content Vespa schemas with test Vespa Docker insta
 Validates schema uploads, data ingestion, and search functionality.
 """
 
+import logging
 import os
 import subprocess
 import time
@@ -42,6 +43,24 @@ def tomoro_client(remote_inference):
     )
     client, _ = loader.load_model()
     return {"client": client, "url": url}
+
+
+@pytest.fixture(scope="module")
+def denseon_embedder(remote_inference):
+    """The cluster's DenseOn, the 768-d semantic encoder the content-type
+    schemas' text and transcript embeddings hold."""
+    from cogniverse_core.common.models.semantic_embedder import RemoteOpenAIEmbedder
+
+    endpoint = remote_inference.resolve("denseon")
+    embedder = RemoteOpenAIEmbedder(
+        endpoint.base_url,
+        endpoint.model_id,
+        _resolved_headers=dict(endpoint.headers),
+    )
+    try:
+        yield embedder
+    finally:
+        embedder._close()
 
 
 @pytest.fixture(scope="module")
@@ -292,9 +311,10 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["image_id"] == "img_test_001"
         print("✅ Image document retrieved successfully")
 
-    @pytest.mark.requires_whisper
-    def test_audio_content_document_ingestion(self, test_vespa_manager):
-        """Test ingesting sample audio documents with real Whisper transcription and embeddings"""
+    def test_audio_content_document_ingestion(
+        self, test_vespa_manager, remote_inference, denseon_embedder
+    ):
+        """Ingest an audio document transcribed and embedded by the served models"""
         print("\n" + "-" * 80)
         print("Test: Audio Content Document Ingestion (Real Whisper + Embeddings)")
         print("-" * 80)
@@ -305,8 +325,8 @@ class TestContentTypeVespaSchemas:
         from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
             AudioEmbeddingGenerator,
         )
-        from cogniverse_runtime.ingestion.processors.audio_transcriber import (
-            AudioTranscriber,
+        from cogniverse_runtime.ingestion.processors.audio_processor import (
+            AudioProcessor,
         )
 
         # Create a simple test audio file (1 second of silence)
@@ -329,30 +349,39 @@ class TestContentTypeVespaSchemas:
 
         print(f"✅ Created test audio: {temp_audio.name}")
 
-        # Transcribe with Whisper
-        print("\n📦 Loading Whisper model...")
-        transcriber = AudioTranscriber(model_size="base")
-        print("✅ Whisper model loaded")
+        # Transcribe with the cluster's Whisper
+        asr = remote_inference.resolve("vllm_asr")
+        transcriber = AudioProcessor(
+            logging.getLogger(__name__),
+            model=asr.model_id,
+            language="auto",
+            endpoint=asr.base_url,
+        )
 
         print("\n🔊 Transcribing audio...")
-        result = transcriber.transcribe_audio(
-            video_path=Path(temp_audio.name), output_dir=None
-        )
+        result = transcriber.transcribe_audio(Path(temp_audio.name), output_dir=None)
         transcript = result.get("full_text", "")
         language = result.get("language", "unknown")
         print(f"✅ Transcription complete: '{transcript}' (language: {language})")
 
-        # Generate embeddings
-        print("\n🔢 Loading embedding models...")
-        embedding_generator = AudioEmbeddingGenerator()
-        print("✅ Embedding models loaded")
-
+        # Embed with the cluster's CLAP (acoustic) and DenseOn (semantic)
+        embedding_generator = AudioEmbeddingGenerator(
+            clap_endpoint_url=remote_inference.resolve("clap_embed").base_url
+        )
         print("\n🔢 Generating embeddings...")
-        acoustic_embedding, semantic_embedding = (
-            embedding_generator.generate_embeddings(
-                audio_path=Path(temp_audio.name),
-                transcript=transcript if transcript else "Test audio with silence",
-            )
+        acoustic_embedding = embedding_generator.generate_acoustic_embedding(
+            audio_path=Path(temp_audio.name)
+        )
+        semantic_embedding = np.asarray(
+            denseon_embedder.encode(
+                [transcript if transcript else "Test audio with silence"],
+                is_query=False,
+            )[0],
+            dtype=np.float32,
+        )
+        assert (acoustic_embedding.shape, semantic_embedding.shape) == (
+            (512,),
+            (768,),
         )
         print(
             f"✅ Generated embeddings: acoustic={acoustic_embedding.shape}, semantic={semantic_embedding.shape}"
@@ -577,14 +606,13 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["page_number"] == 1
         print("✅ Document page retrieved successfully (visual strategy)")
 
-    def test_document_text_ingestion(self, test_vespa_manager):
+    def test_document_text_ingestion(self, test_vespa_manager, denseon_embedder):
         """Test ingesting documents with text extraction and semantic embeddings"""
         print("\n" + "-" * 80)
         print("Test: Document Text Strategy Ingestion (Extraction + Semantic)")
         print("-" * 80)
 
         import requests
-        from sentence_transformers import SentenceTransformer
 
         # Sample extracted text (simulating PDF text extraction)
         sample_text = """
@@ -597,18 +625,13 @@ class TestContentTypeVespaSchemas:
         clustering, and neural networks.
         """
 
-        # Load text embedding model
-        print("\n📦 Loading text embedding model...")
-        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
-        print("✅ Text embedding model loaded")
-
-        # Generate semantic embedding
+        # Generate the semantic embedding with the cluster's DenseOn
         print("\n🔢 Generating semantic embedding...")
-        document_embedding = text_model.encode(
-            sample_text,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
+        document_embedding = np.asarray(
+            denseon_embedder.encode([sample_text], is_query=False)[0],
+            dtype=np.float32,
         )
+        assert document_embedding.shape == (768,)
         print(f"✅ Generated embedding shape: {document_embedding.shape}")
 
         # Sample document matching document_text schema
@@ -729,31 +752,23 @@ class TestContentTypeVespaSchemas:
         assert hits[0].get("relevance", 0.0) > 0
         print("✅ Ingested document page found in visual search results")
 
-    def test_document_text_search(self, test_vespa_manager):
+    def test_document_text_search(self, test_vespa_manager, denseon_embedder):
         """Test searching documents with text strategy (semantic + BM25)"""
         print("\n" + "-" * 80)
         print("Test: Document Text Search (Semantic + BM25)")
         print("-" * 80)
 
         import requests
-        from sentence_transformers import SentenceTransformer
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
         wait_for_vespa_indexing(delay=3)
 
-        # Load text embedding model
-        print("\n📦 Loading text embedding model...")
-        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
-        print("✅ Text embedding model loaded")
-
-        # Encode query
+        # Encode query with the cluster's DenseOn
         query = "machine learning algorithms"
         print(f"\n🔍 Encoding query: '{query}'")
-        query_embedding = text_model.encode(
-            query,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
+        query_embedding = np.asarray(
+            denseon_embedder.encode([query], is_query=True)[0], dtype=np.float32
         )
         print(f"✅ Query embedding generated: shape {query_embedding.shape}")
 

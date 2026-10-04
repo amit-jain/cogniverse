@@ -33,16 +33,19 @@ TEST_VIDEO_DURATION = 5  # seconds
 
 
 def pytest_configure(config):
-    """Register the sidecar plugin in sessions ``tests/conftest.py`` is not part of.
+    """Register the sidecar and no-local-model plugins in sessions ``tests/conftest.py`` is not part of.
 
     ``tests/ingestion/pytest.ini`` makes this directory the rootdir when
     ingestion tests run on their own, and pytest rejects ``pytest_plugins``
     in a conftest below the rootdir of a whole-tree run.
     """
-    from tests.fixtures import sidecars
+    from tests.fixtures import no_local_models, sidecars
 
     if not config.pluginmanager.is_registered(sidecars):
         config.pluginmanager.register(sidecars, "tests.fixtures.sidecars")
+    if not config.pluginmanager.is_registered(no_local_models):
+        config.pluginmanager.register(no_local_models, "tests.fixtures.no_local_models")
+        no_local_models.install()
 
 
 def pytest_collection_modifyitems(items):

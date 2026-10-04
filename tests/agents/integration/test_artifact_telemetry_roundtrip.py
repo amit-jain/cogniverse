@@ -252,7 +252,7 @@ class TestGatewayAgentArtifactRoundTrip:
 
     @pytest.mark.asyncio
     async def test_gateway_loads_real_artifact_and_applies_thresholds(
-        self, real_provider
+        self, real_provider, gliner_url
     ):
         """Full round-trip: save thresholds → load via _load_artifact → verify deps changed."""
         import json
@@ -279,7 +279,7 @@ class TestGatewayAgentArtifactRoundTrip:
         assert json.loads(loaded_blob) == optimized_config
 
         # Create a GatewayAgent with defaults
-        deps = GatewayDeps()
+        deps = GatewayDeps(gliner_inference_url=gliner_url)
         agent = GatewayAgent(deps=deps)
         assert agent.deps.fast_path_confidence_threshold == 0.4  # default
         assert agent.deps.gliner_threshold == 0.3  # default
@@ -303,12 +303,14 @@ class TestGatewayAgentArtifactRoundTrip:
         )
 
     @pytest.mark.asyncio
-    async def test_gateway_with_no_artifact_keeps_defaults(self, real_provider):
+    async def test_gateway_with_no_artifact_keeps_defaults(
+        self, real_provider, gliner_url
+    ):
         """Agent without an artifact in Phoenix should keep default thresholds."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        deps = GatewayDeps()
+        deps = GatewayDeps(gliner_inference_url=gliner_url)
         agent = GatewayAgent(deps=deps)
 
         tm = get_telemetry_manager()
@@ -321,7 +323,9 @@ class TestGatewayAgentArtifactRoundTrip:
         assert agent.deps.gliner_threshold == 0.3
 
     @pytest.mark.asyncio
-    async def test_gateway_threshold_affects_routing_decision(self, real_provider):
+    async def test_gateway_threshold_affects_routing_decision(
+        self, real_provider, gliner_url
+    ):
         """Changing fast_path_confidence_threshold changes which queries go to orchestrator.
 
         Uses real GLiNER model — no mocks. "cat videos on youtube" produces
@@ -354,7 +358,7 @@ class TestGatewayAgentArtifactRoundTrip:
         test_query = "cat videos on youtube"
 
         # --- Agent with DEFAULT thresholds (0.4) ---
-        agent_default = GatewayAgent(deps=GatewayDeps())
+        agent_default = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
         # Real GLiNER model loads on first use (lazy)
         tm = get_telemetry_manager()
         agent_default.telemetry_manager = tm
@@ -379,7 +383,9 @@ class TestGatewayAgentArtifactRoundTrip:
         )
 
         # --- Agent with OPTIMIZED thresholds (0.95 from artifact) ---
-        agent_optimized = GatewayAgent(deps=GatewayDeps())
+        agent_optimized = GatewayAgent(
+            deps=GatewayDeps(gliner_inference_url=gliner_url)
+        )
         # Share the already-loaded GLiNER model (avoid re-download)
         agent_optimized._gliner_model = agent_default._gliner_model
 
@@ -1252,7 +1258,9 @@ class TestDispatcherArtifactWiring:
     """Verify AgentDispatcher.dispatch() triggers _load_artifact on agents."""
 
     @pytest.mark.asyncio
-    async def test_dispatcher_generic_path_calls_load_artifact(self, real_provider):
+    async def test_dispatcher_generic_path_calls_load_artifact(
+        self, real_provider, gliner_url
+    ):
         """Generic agent dispatch path should inject tenant and call _load_artifact."""
         import json
         from pathlib import Path
@@ -1263,6 +1271,7 @@ class TestDispatcherArtifactWiring:
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+        from tests.agents.integration.conftest import inject_gliner_url
 
         # dispatch() canonicalizes tenant_id via require_tenant_id before the
         # generic path injects _artifact_tenant_id, so a simple (no-colon) id
@@ -1293,6 +1302,7 @@ class TestDispatcherArtifactWiring:
 
         # Set up dispatcher with real dependencies (same as runtime startup)
         config_manager = create_default_config_manager()
+        inject_gliner_url(config_manager, gliner_url)
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
@@ -1344,7 +1354,12 @@ class TestDispatcherArtifactWiring:
     @pytest.mark.asyncio
     @skip_if_no_lm
     async def test_dispatcher_gateway_path_loads_artifact(
-        self, real_provider, shared_memory_vespa, tomoro_inference_url, monkeypatch
+        self,
+        real_provider,
+        shared_memory_vespa,
+        tomoro_inference_url,
+        gliner_url,
+        monkeypatch,
     ):
         """Gateway dispatch path should save/load threshold artifact via _load_artifact."""
         import json
@@ -1359,7 +1374,10 @@ class TestDispatcherArtifactWiring:
         from cogniverse_foundation.config.utils import get_config
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
         from cogniverse_runtime.routers import agents as agents_router
-        from tests.agents.integration.conftest import inject_tomoro_url
+        from tests.agents.integration.conftest import (
+            inject_gliner_url,
+            inject_tomoro_url,
+        )
         from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
 
         # dispatch() canonicalizes tenant_id via require_tenant_id before it
@@ -1388,6 +1406,7 @@ class TestDispatcherArtifactWiring:
         config_manager = shared_memory_vespa["config_manager"]
         schema_loader = shared_memory_vespa["schema_loader"]
         inject_tomoro_url(config_manager, tomoro_inference_url)
+        inject_gliner_url(config_manager, gliner_url)
         profile = shipped_profile(
             profile_type="video",
             embedding_type="multi_vector",

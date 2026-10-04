@@ -83,11 +83,11 @@ class TestGatewayWithRealGLiNER:
     """
 
     @pytest.fixture
-    def gateway_agent(self, real_telemetry):
+    def gateway_agent(self, real_telemetry, gliner_url):
         """Gateway with default config (7-label set, threshold=0.4)."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
 
-        agent = GatewayAgent(deps=GatewayDeps())
+        agent = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
         agent.set_telemetry_manager(real_telemetry)
         return agent
 
@@ -182,13 +182,17 @@ class TestEntityExtractionRealGLiNERSpaCy:
     """
 
     @pytest.fixture
-    def entity_agent(self, configure_dspy, real_telemetry, config_manager_memory):
+    def entity_agent(
+        self, configure_dspy, real_telemetry, config_manager_memory, gliner_url
+    ):
         from cogniverse_agents.entity_extraction_agent import (
             EntityExtractionAgent,
             EntityExtractionDeps,
         )
 
-        agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent = EntityExtractionAgent(
+            deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+        )
         agent.bind_config_manager(config_manager_memory)
         agent.set_telemetry_manager(real_telemetry)
         return agent
@@ -433,7 +437,7 @@ class TestTelemetrySpansInPhoenix:
     """Verify agents emit telemetry spans queryable in real Phoenix."""
 
     @pytest.mark.asyncio
-    async def test_gateway_span_in_phoenix(self, real_telemetry):
+    async def test_gateway_span_in_phoenix(self, real_telemetry, gliner_url):
         """GatewayAgent.process() emits a span visible in real Phoenix."""
         from cogniverse_agents.gateway_agent import (
             GatewayAgent,
@@ -441,7 +445,7 @@ class TestTelemetrySpansInPhoenix:
             GatewayInput,
         )
 
-        agent = GatewayAgent(deps=GatewayDeps())
+        agent = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
         agent.set_telemetry_manager(real_telemetry)
 
         test_query = "test telemetry span for video search"
@@ -472,7 +476,7 @@ class TestTelemetrySpansInPhoenix:
         )
 
     @pytest.mark.asyncio
-    async def test_gateway_custom_span_has_query_text(self, real_telemetry):
+    async def test_gateway_custom_span_has_query_text(self, real_telemetry, gliner_url):
         """GatewayAgent's cogniverse.gateway span carries the query on
         ``input.value`` and the routing decision it returned on
         ``output.value``, tagged ``operation="gateway"`` and scoped to the
@@ -483,7 +487,7 @@ class TestTelemetrySpansInPhoenix:
             GatewayInput,
         )
 
-        agent = GatewayAgent(deps=GatewayDeps())
+        agent = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
         agent.set_telemetry_manager(real_telemetry)
 
         test_query = "find robotics engineering videos"

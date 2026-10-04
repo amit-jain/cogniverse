@@ -2205,7 +2205,7 @@ for profile in profiles_gpu1:
 
 ### Key Test Files
 
-The `tests/ingestion/` suite has 69 files (43 unit, 25 integration, 1 shared
+The `tests/ingestion/` suite has 69 files (42 unit, 26 integration, 1 shared
 `integration/conftest.py`).
 
 #### Unit Tests (`tests/ingestion/unit/`):
@@ -2220,7 +2220,6 @@ The `tests/ingestion/` suite has 69 files (43 unit, 25 integration, 1 shared
 | `test_audio_processor.py` | Real factory→manager wiring for the audio processor |
 | `test_audio_processor_real.py` | `AudioProcessor` against real audio |
 | `test_audio_ingestion.py` | Audio-file directory discovery (`AudioFileSegmentationStrategy`) |
-| `test_audio_acoustic_text_embedding.py` | CLAP-space 512-d acoustic embedding shape |
 | `test_audio_embedding_failure.py` | Acoustic embedding failure raises instead of returning zeros |
 | `test_document_ingestion.py` | Document-file directory discovery (`DocumentSegmentationStrategy`) |
 | `test_image_ingestion.py` | Image directory discovery (`ImageSegmentationStrategy`) |
@@ -2251,6 +2250,7 @@ The `tests/ingestion/` suite has 69 files (43 unit, 25 integration, 1 shared
 | `test_end_to_end_processing.py` | End-to-end processing with real processors |
 | `test_backend_ingestion.py` | Vespa document feeding |
 | `test_multimodal_content_processing.py` | `VespaPyClient` against the test Vespa instance |
+| `test_audio_acoustic_text_embedding.py` | CLAP-space 512-d text embedding from the cluster's CLAP service |
 | `test_pipeline_cache_live_path.py` | Live-path `PipelineArtifactCache` wiring |
 | `test_pipeline_minio_round_trip.py` | Pipeline reads from MinIO, writes to Vespa |
 | `test_upload_via_queue.py` | `POST /ingestion/upload` end-to-end |

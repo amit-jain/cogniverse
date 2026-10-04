@@ -1,6 +1,7 @@
-"""Real vLLM DenseOn parity — production embedder vs sentence-transformers oracle.
+"""Real vLLM DenseOn parity — production embedder vs the recorded
+sentence-transformers reference.
 
-Spawns ``vllm/vllm-openai-cpu`` serving ``lightonai/DenseOn`` and exercises:
+Resolves the cluster's ``denseon`` service and exercises:
 
 - the raw OpenAI-compatible ``/v1/embeddings`` contract (200, single consistent
   dim, in-order indices), and
@@ -9,7 +10,9 @@ Spawns ``vllm/vllm-openai-cpu`` serving ``lightonai/DenseOn`` and exercises:
   sidecar always applied, now restored client-side). We therefore test the
   production embedder, NOT a raw /v1/embeddings call with a manual prefix, and
   compare it against ``SentenceTransformer.encode([f"document: {text}"],
-  normalize_embeddings=True)``. If a change drops the prompt or the
+  normalize_embeddings=True)`` at the pinned revision, recorded on CPU in
+  ``tests/fixtures/model_references/denseon.json`` by
+  ``scripts/record_model_references.py``. If a change drops the prompt or the
   normalization, this cosine check fails.
 """
 
@@ -20,9 +23,9 @@ import shutil
 import numpy as np
 import pytest
 import requests
-import sentence_transformers
 
 from cogniverse_core.common.models.semantic_embedder import RemoteOpenAIEmbedder
+from tests.utils.model_references import load_reference, reference_embedding
 
 pytestmark = [
     pytest.mark.requires_docker,
@@ -44,8 +47,15 @@ def denseon_url(remote_inference):
 
 
 @pytest.fixture(scope="module")
-def sentence_transformer_oracle():
-    return sentence_transformers.SentenceTransformer(DENSEON_MODEL, device="cpu")
+def sentence_transformer_reference():
+    reference = load_reference("denseon")
+    assert (reference["model"], reference["prompt"], reference["normalized"]) == (
+        DENSEON_MODEL,
+        "document: ",
+        True,
+    )
+    assert reference["device"] == "cpu"
+    return reference
 
 
 def test_raw_v1_embeddings_contract(denseon_url):
@@ -67,29 +77,27 @@ def test_raw_v1_embeddings_contract(denseon_url):
     assert next(iter(dims)) > 0
 
 
-def test_production_embedder_matches_sentence_transformer_oracle(
-    denseon_url, sentence_transformer_oracle
+def test_production_embedder_matches_sentence_transformer_reference(
+    denseon_url, sentence_transformer_reference
 ):
     text = "Vespa is a vector database for low-latency retrieval."
 
     embedder = RemoteOpenAIEmbedder(base_url=denseon_url, model=DENSEON_MODEL)
     remote_vec = np.asarray(embedder.encode([text], is_query=False), dtype=np.float32)
 
-    # Production applies `document: ` + L2-normalize; mirror that in the oracle.
-    local_vec = np.asarray(
-        sentence_transformer_oracle.encode(
-            [f"document: {text}"], normalize_embeddings=True
-        ),
-        dtype=np.float32,
-    )
+    # Production applies `document: ` + L2-normalize; the reference was
+    # recorded with the same prompt and normalization.
+    local_vec = reference_embedding(
+        sentence_transformer_reference, text, is_query=False
+    )[np.newaxis, :]
 
     assert remote_vec.shape == local_vec.shape, (
-        f"remote shape {remote_vec.shape} must match oracle {local_vec.shape}"
+        f"remote shape {remote_vec.shape} must match reference {local_vec.shape}"
     )
 
     remote_row = remote_vec[0]
     local_row = local_vec[0]
-    # Production normalizes; the oracle was asked to normalize too — both unit.
+    # Production normalizes; the reference was asked to normalize too — both unit.
     np.testing.assert_allclose(
         np.linalg.norm(remote_row),
         1.0,

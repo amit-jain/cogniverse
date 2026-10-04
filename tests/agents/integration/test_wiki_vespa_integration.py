@@ -145,7 +145,7 @@ def wiki_vespa(shared_vespa):
 
 
 @pytest.fixture(scope="module")
-def wiki_manager(wiki_vespa):
+def wiki_manager(wiki_vespa, served_semantic_embedder):
     """WikiManager wired to the real test Vespa instance.
 
     The manager's document CRUD goes through the backend's namespace-aware
@@ -155,8 +155,8 @@ def wiki_manager(wiki_vespa):
     the focus of these tests, and _rebuild_index gracefully skips index
     population without hits.
 
-    _generate_embedding falls through to the built-in zero-vector
-    fallback when no embedding service is reachable — no mock needed.
+    _generate_embedding reaches the cluster's DenseOn through the shared
+    semantic embedder (``served_semantic_embedder``).
     """
     from pathlib import Path
 

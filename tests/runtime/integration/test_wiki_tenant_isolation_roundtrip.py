@@ -14,7 +14,9 @@ from cogniverse_runtime.routers import wiki as wiki_router
 
 
 @pytest.fixture
-def per_tenant_wiki_app(vespa_instance, config_manager, schema_loader):
+def per_tenant_wiki_app(
+    vespa_instance, config_manager, schema_loader, served_semantic_embedder
+):
     """Mount the wiki router with a per-tenant factory backed by real Vespa.
 
     Mirrors the production wiring in main.py:

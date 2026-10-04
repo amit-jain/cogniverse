@@ -1,42 +1,35 @@
-"""Real-model smoke test for LateOn.
+"""Real-model smoke test for LateOn, served by the cluster's PyLate service.
 
-Validates the foundational claim of the lateon_mv profile plan: PyLate can
-load ``lightonai/LateOn`` (with its custom residual-MLP projection head) and
-produces per-token embeddings of shape ``(N, 128)``. If this fails, the
-lateon_mv schema's ``v[128]`` tensor size is wrong and the sidecar/Vespa
-wiring won't work.
-
-Marked ``requires_models`` + ``slow`` because it downloads ~520MB on first
-run. Run explicitly via: ``uv run pytest -m requires_models -v``.
+Validates the foundational claim of the lateon_mv profile: the pinned
+``lightonai/LateOn`` (with its custom residual-MLP projection head) produces
+per-token embeddings of shape ``(N, 128)``. If this fails, the lateon_mv
+schema's ``v[128]`` tensor size is wrong and the Vespa wiring won't work.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.integration]
+from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 
-LATEON_REVISION = "c01907b70557ee5c7753680d4819a5cce1674b83"
+pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.integration]
 
 
 @pytest.fixture(scope="module")
-def lateon_model():
-    """The pinned LateOn revision loaded from the writable test-owned cache
-    (the personal ~/.cache/huggingface can hold root-owned entries written
-    by earlier containers, which break host-side loads)."""
-    import pylate.models as pylate_models
-
-    from tests.utils.vllm_sidecar import writable_test_hf_cache
-
-    return pylate_models.ColBERT(
-        "lightonai/LateOn",
-        device="cpu",
-        revision=LATEON_REVISION,
-        cache_folder=str(Path(writable_test_hf_cache()) / "hub"),
-    )
+def lateon_model(remote_inference):
+    """The cluster's ``colbert_pylate`` service, identity-checked against the
+    pinned LateOn revision by the resolver."""
+    endpoint = remote_inference.resolve("colbert_pylate")
+    model, _ = RemoteColBERTLoader(
+        model_name=endpoint.model_id,
+        config={"remote_inference_url": endpoint.base_url},
+        _resolved_headers=dict(endpoint.headers),
+    ).load_model()
+    try:
+        yield model
+    finally:
+        model._close()
 
 
 def test_lateon_encodes_document_to_128_dim_per_token(lateon_model):

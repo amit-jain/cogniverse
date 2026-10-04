@@ -28,7 +28,9 @@ from cogniverse_runtime.routers import wiki as wiki_router
 
 
 @pytest.fixture
-def real_runtime_app(vespa_instance, config_manager, schema_loader):
+def real_runtime_app(
+    vespa_instance, config_manager, schema_loader, served_semantic_embedder
+):
     """A real FastAPI app with the wiki and tenant routers mounted, wired
     to the test Vespa via DI. The gateway will hit this app via ASGI
     transport — no network, but real router code, real Vespa I/O."""

@@ -59,7 +59,7 @@ def telemetry_manager(phoenix_container):
 
 @pytest.mark.asyncio
 async def test_run_reports_pending_approval_not_failure(
-    phoenix_container, telemetry_manager, shared_vespa
+    phoenix_container, telemetry_manager, shared_vespa, gliner_url
 ):
     from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
     from cogniverse_agents.entity_extraction_agent import (
@@ -179,7 +179,9 @@ async def test_run_reports_pending_approval_not_failure(
     assert indexed[0]["video_title"] == title
     assert indexed[0]["segment_description"] == description
 
-    entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent = EntityExtractionAgent(
+        deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+    )
     entity_agent.bind_config_manager(config_manager)
     entity_agent.telemetry_manager = telemetry_manager
     extraction_paths = []

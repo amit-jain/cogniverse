@@ -587,31 +587,48 @@ class TestRelationshipExtraction:
             # Should handle gracefully even if models aren't available
             assert "error" in str(e).lower() or "not found" in str(e).lower()
 
-    def test_entity_extraction_fallback(self):
-        """Test entity extraction with fallback when models unavailable"""
+    @staticmethod
+    def _unavailable(query):
         from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNEREntityExtractionUnavailableError,
             GLiNERRelationshipExtractor,
         )
 
-        # Create extractor (may not have actual model loaded)
-        extractor = GLiNERRelationshipExtractor()
+        with pytest.raises(GLiNEREntityExtractionUnavailableError) as caught:
+            GLiNERRelationshipExtractor().extract_entities(query)
+        return caught.value
 
-        # Test extraction (should return empty list if model unavailable)
-        entities = extractor.extract_entities("test query")
-        assert isinstance(entities, list)
+    def test_an_entity_free_query_without_a_model_raises_naming_it(self):
+        """With no GLiNER service and no in-process model the extractor raises;
+        it never reports "no entities". The served model's entities are pinned
+        in tests/agents/integration/test_entity_extraction_served_gliner.py."""
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            DEFAULT_GLINER_MODEL,
+        )
 
-        # If model is available, should extract some entities from a rich query
-        test_query = "Apple Inc. develops iPhone using advanced technology"
-        entities = extractor.extract_entities(test_query)
-        assert isinstance(entities, list)
+        error = self._unavailable("test query")
 
-        # If model loaded and working, should find entities
-        if extractor.gliner_model and entities:
-            assert len(entities) > 0
-            for entity in entities:
-                assert "text" in entity
-                assert "label" in entity
-                assert "confidence" in entity
+        assert error.model_name == DEFAULT_GLINER_MODEL
+        assert error.inference_url is None
+        assert str(error).startswith(
+            f"GLiNER model {DEFAULT_GLINER_MODEL!r} could not be loaded "
+            "(inference_url=None): "
+        )
+
+    def test_a_rich_query_without_a_model_raises_instead_of_dropping_entities(
+        self,
+    ):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            DEFAULT_GLINER_MODEL,
+        )
+
+        error = self._unavailable(
+            "Apple Inc. develops iPhone using advanced technology"
+        )
+
+        assert error.model_name == DEFAULT_GLINER_MODEL
+        assert error.inference_url is None
+        assert type(error.__cause__) is RuntimeError
 
 
 @pytest.mark.unit

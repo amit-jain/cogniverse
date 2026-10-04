@@ -498,6 +498,7 @@ class TestTopicMergeIdempotency:
 
         with (
             patch.object(mgr, "_get_document_http", return_value=existing),
+            patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
             patch.object(
                 mgr, "_conditional_feed_topic", return_value=True
             ) as mock_feed,
@@ -518,6 +519,7 @@ class TestTopicMergeIdempotency:
         with (
             patch.object(mgr, "_get_document_http", return_value=existing),
             patch.object(mgr, "_should_use_rlm_for_merge", return_value=False),
+            patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
             patch.object(mgr, "_conditional_feed_topic", return_value=True),
         ):
             page = mgr._get_or_create_topic(

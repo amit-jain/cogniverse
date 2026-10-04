@@ -4,7 +4,7 @@ Integration tests for multi-modal content processing through the full production
 Tests exercise the real end-to-end path against real models and a real Vespa Docker instance:
 1. Load schemas from configs/schemas/*.json via JsonSchemaParser (production schema loading)
 2. Feed documents through EmbeddingGeneratorImpl → VespaPyClient pipeline:
-   a. EmbeddingGeneratorImpl loads ColBERT/CLAP models via get_or_load_model
+   a. EmbeddingGeneratorImpl reaches the cluster's ColBERT (PyLate) and CLAP services
    b. Encodes real text/audio to real embeddings
    c. Creates Document objects with production metadata structure
    d. Feeds through backend_client.ingest_documents()
@@ -102,6 +102,12 @@ def colbert_model(pylate_server):
 
 
 @pytest.fixture(scope="module")
+def clap_url(remote_inference):
+    """The cluster's CLAP service, which both the feed and the queries use."""
+    return remote_inference.resolve("clap_embed").base_url
+
+
+@pytest.fixture(scope="module")
 def audio_wav_files(tmp_path_factory):
     """Create synthesized WAV files at distinct frequencies for CLAP embedding tests."""
     tmp_dir = tmp_path_factory.mktemp("audio")
@@ -168,7 +174,7 @@ def vespa_with_schemas():
 
 
 @pytest.fixture(scope="module")
-def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
+def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server, clap_url):
     """Feed all content through the production EmbeddingGeneratorImpl → VespaPyClient pipeline.
 
     Document path:
@@ -241,6 +247,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
                 "schema_name": "audio_content",
                 "inference_services": {"embedding": "colbert_pylate"},
                 "remote_inference_url": pylate_server,
+                "clap_endpoint_url": clap_url,
             },
             backend_client=IngestionBackendAdapter(audio_client),
         )
@@ -282,14 +289,16 @@ def doc_embeddings(colbert_model):
 
 
 @pytest.fixture(scope="module")
-def audio_acoustic_embeddings(audio_wav_files):
+def audio_acoustic_embeddings(audio_wav_files, clap_url):
     """Generate CLAP acoustic embeddings from the same WAV files used for feeding.
 
     These are re-generated from the same deterministic WAV files, producing identical
     embeddings to what EmbeddingGeneratorImpl._process_audio_segments() fed to Vespa.
     Used by acoustic similarity query tests.
     """
-    generator = AudioEmbeddingGenerator(clap_model=CLAP_MODEL_NAME)
+    generator = AudioEmbeddingGenerator(
+        clap_model=CLAP_MODEL_NAME, clap_endpoint_url=clap_url
+    )
     result = {}
     for audio_id, wav_path in audio_wav_files.items():
         result[audio_id] = generator.generate_acoustic_embedding(audio_path=wav_path)
