@@ -1421,6 +1421,9 @@ class TestColdBuildOffload:
             def __init__(self, **kwargs):
                 pass
 
+            def release_retained_scratch(self):
+                pass
+
             async def process_video_async(self, path, source_uri=None):
                 return {"status": "success", "video_id": "v1", "results": {}}
 
@@ -1858,6 +1861,9 @@ class TestGraphStageDurability:
             def __init__(self, **kwargs):
                 pass
 
+            def release_retained_scratch(self):
+                pass
+
             async def process_video_async(self, path, source_uri=None):
                 return {
                     "status": "success",
@@ -1976,6 +1982,9 @@ class TestGraphStageDurability:
 
             def __init__(self, **kwargs):
                 assert kwargs["tenant_id"] == tenant
+
+            def release_retained_scratch(self):
+                pass
 
             async def process_video_async(self, path, source_uri=None):
                 response = await asyncio.to_thread(

@@ -564,18 +564,44 @@ async def _ingest_and_extract_graph(
     """
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
     from cogniverse_runtime.ingestion_worker import minio_client
-    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
 
     original_filename = await asyncio.to_thread(
         minio_client.get_original_filename, job.source_url
     )
+    # The graph stage's face pipeline reads the keyframe images the pipeline
+    # wrote, so the run's scratch is kept until the graph stage ends.
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
         config_manager=config_manager,
         schema_loader=schema_loader,
         schema_name=job.profile,
+        retain_job_scratch=True,
     )
     pipeline.original_filename = original_filename
+    try:
+        return await _run_pipeline_and_graph(
+            job,
+            pipeline=pipeline,
+            local_path=local_path,
+            config_manager=config_manager,
+            mark_graph_pending=mark_graph_pending,
+            graph_deadline_s=graph_deadline_s,
+        )
+    finally:
+        await asyncio.to_thread(pipeline.release_retained_scratch)
+
+
+async def _run_pipeline_and_graph(
+    job: IngestJob,
+    *,
+    pipeline,
+    local_path,
+    config_manager,
+    mark_graph_pending: Callable[[IngestJob], Awaitable[None]],
+    graph_deadline_s: float,
+) -> dict:
+    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
+
     # Process the already-localized file, but record job.source_url (s3://…) as
     # the canonical source_url on every indexed document — answer-time keyframe
     # resolution derives the object-store bucket from it. Passing source_uri

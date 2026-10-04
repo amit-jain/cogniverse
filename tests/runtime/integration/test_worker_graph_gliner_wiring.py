@@ -166,9 +166,14 @@ def test_concurrent_worker_graph_extraction_uses_each_captured_real_http_endpoin
 async def test_worker_marks_graph_stage_retryable_when_boundary_fails(
     monkeypatch,
 ):
+    scratch = []
+
     class Pipeline:
         def __init__(self, **kwargs):
-            pass
+            scratch.append(("retain", kwargs["retain_job_scratch"]))
+
+        def release_retained_scratch(self):
+            scratch.append(("release", None))
 
         async def process_video_async(self, path, source_uri=None):
             return {
@@ -225,6 +230,9 @@ async def test_worker_marks_graph_stage_retryable_when_boundary_fails(
         )
 
     assert marked == [("0-1", "ing-graph-fault")]
+    # The keyframe files stay for the graph stage and go when it ends, even
+    # when it fails.
+    assert scratch == [("retain", True), ("release", None)]
     assert isinstance(exc_info.value.__cause__, ConnectionError)
     assert str(exc_info.value.__cause__) == "GLiNER sidecar reset the connection"
 
@@ -233,6 +241,9 @@ async def test_worker_marks_graph_stage_retryable_when_boundary_fails(
 async def test_worker_treats_graph_marker_write_failure_as_retryable(monkeypatch):
     class Pipeline:
         def __init__(self, **kwargs):
+            pass
+
+        def release_retained_scratch(self):
             pass
 
         async def process_video_async(self, path, source_uri=None):
@@ -301,6 +312,9 @@ async def test_worker_treats_graph_marker_write_failure_as_retryable(monkeypatch
 async def test_worker_retries_partial_graph_write_result(monkeypatch):
     class Pipeline:
         def __init__(self, **kwargs):
+            pass
+
+        def release_retained_scratch(self):
             pass
 
         async def process_video_async(self, path, source_uri=None):
@@ -381,6 +395,9 @@ async def test_a_deploy_lease_wait_in_the_graph_stage_is_not_read_as_its_deadlin
 ):
     class Pipeline:
         def __init__(self, **kwargs):
+            pass
+
+        def release_retained_scratch(self):
             pass
 
         async def process_video_async(self, path, source_uri=None):
