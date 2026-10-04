@@ -4,6 +4,7 @@ pytest_plugins = [
     "tests.fixtures.inference",
     "tests.fixtures.instafail",
     "tests.fixtures.llm",
+    "tests.fixtures.no_local_models",
     "tests.fixtures.sidecars",
     "tests.fixtures.telemetry_loss_guard",
 ]

@@ -204,6 +204,56 @@ def _launches_a_server(tree: ast.AST) -> bool:
     return False
 
 
+# Calls that load model weights into the calling process. A load reached
+# through the repository's own loaders (a model loader, the in-process
+# transcriber or embedder) is refused at runtime by
+# tests/fixtures/no_local_models.py, which sees through any call chain.
+_LOADER_CALLS = frozenset(
+    {
+        "SentenceTransformer",
+        "CrossEncoder",
+        "WhisperModel",
+        "FaceAnalysis",
+        "ColBERT",
+    }
+)
+_LOADER_FUNCTIONS = frozenset(
+    {
+        ("whisper", "load_model"),
+        ("open_clip", "create_model"),
+        ("open_clip", "create_model_and_transforms"),
+    }
+)
+# ``from_pretrained`` on these loads no weights.
+_WEIGHTLESS = ("Tokenizer", "Processor", "Config", "FeatureExtractor")
+
+
+def _call_name(func: ast.AST) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def in_process_model_loads(source: str) -> list[str]:
+    """Each call in ``source`` that loads a model into the calling process."""
+    loads = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = _call_name(func)
+        owner = _call_name(func.value) if isinstance(func, ast.Attribute) else None
+        if name in _LOADER_CALLS:
+            loads.append(f"line {node.lineno}: {name}(...)")
+        elif name == "from_pretrained" and owner and not owner.endswith(_WEIGHTLESS):
+            loads.append(f"line {node.lineno}: {owner}.from_pretrained(...)")
+        elif (owner, name) in _LOADER_FUNCTIONS:
+            loads.append(f"line {node.lineno}: {owner}.{name}(...)")
+    return loads
+
+
 def local_model_launches(source: str, markers: frozenset[str]) -> list[str]:
     """Why ``source`` can start a model server on this host; empty when it cannot."""
     tree = ast.parse(source)
@@ -216,24 +266,50 @@ def local_model_launches(source: str, markers: frozenset[str]) -> list[str]:
         reasons.append(f"runs a container and names model image {named[0]!r}")
     if _launches_a_server(tree):
         reasons.append("launches a vllm/ollama model server process")
+    reasons.extend(
+        f"loads a model in-process at {load}" for load in in_process_model_loads(source)
+    )
     return reasons
 
 
-def offenders(root: Path = TESTS_ROOT) -> dict[str, list[str]]:
+# The one file allowed to load models in-process: it records the references
+# the parity tests compare against, and tests never run it.
+RECORDING_SCRIPT = "scripts/record_model_references.py"
+ALLOWLIST = frozenset({RECORDING_SCRIPT})
+
+
+def offenders(
+    root: Path = TESTS_ROOT, allowlist: frozenset[str] = ALLOWLIST
+) -> dict[str, list[str]]:
     markers = model_image_markers()
     this_file = Path(__file__).resolve()
+    paths = [*sorted(root.rglob("*.py")), root.parent / RECORDING_SCRIPT]
     found = {}
-    for path in sorted(root.rglob("*.py")):
-        if path.resolve() == this_file or ".venv" in path.parts:
+    for path in paths:
+        if not path.is_file() or path.resolve() == this_file or ".venv" in path.parts:
+            continue
+        relative = str(path.relative_to(root.parent))
+        if relative in allowlist:
             continue
         reasons = local_model_launches(path.read_text(encoding="utf-8"), markers)
         if reasons:
-            found[str(path.relative_to(root.parent))] = reasons
+            found[relative] = reasons
     return found
 
 
 def test_no_test_code_starts_a_model_server() -> None:
     assert offenders() == {}
+
+
+def test_the_allowlisted_recording_script_is_the_one_in_process_loader() -> None:
+    """The allowlist names a file that really loads models, so it cannot go
+    stale while still excusing something."""
+    script = (REPO_ROOT / RECORDING_SCRIPT).read_text(encoding="utf-8")
+    assert [load.split(": ", 1)[1] for load in in_process_model_loads(script)] == [
+        "ColBERT(...)",
+        "SentenceTransformer(...)",
+    ]
+    assert set(offenders(allowlist=frozenset())) == {RECORDING_SCRIPT}
 
 
 def test_model_image_markers_cover_every_model_service() -> None:
@@ -294,6 +370,22 @@ import shlex, subprocess
 command = shlex.join(["vllm", "serve", "openai/whisper-tiny"])
 subprocess.Popen(["sh", "-c", f"exec {command}"])
 """,
+    "sentence-transformers reference": """
+import sentence_transformers
+model = sentence_transformers.SentenceTransformer("lightonai/DenseOn", device="cpu")
+""",
+    "pylate oracle": """
+import pylate.models as pylate_models
+oracle = pylate_models.ColBERT("lightonai/LateOn", device="cpu")
+""",
+    "transformers model": """
+from transformers import AutoModel
+model = AutoModel.from_pretrained("bert-base-uncased")
+""",
+    "faster-whisper": """
+from faster_whisper import WhisperModel
+model = WhisperModel("base", device="cpu")
+""",
     "vllm entrypoint module": """
 import subprocess, sys
 subprocess.Popen([sys.executable, "-m", "vllm.entrypoints.openai.api_server"])
@@ -317,6 +409,10 @@ subprocess.run(["docker", "image", "inspect", "cogniverse/pylate:0.1.0-dev"])
 def test_chart_args(container):
     assert container["args"] == ["vllm", "serve", "openai/whisper-large-v3-turbo"]
 """,
+    "a tokenizer, which carries no weights": """
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("lightonai/LateOn", local_files_only=True)
+""",
     "remote resolution": """
 def pylate_server(remote_inference):
     return remote_inference.resolve("colbert_pylate").base_url
@@ -336,6 +432,14 @@ _EXPECTED = {
     "ollama serve with a variable binary": [_PROCESS],
     "vllm serve command string": [_PROCESS],
     "vllm entrypoint module": [_PROCESS],
+    "sentence-transformers reference": [
+        "loads a model in-process at line 3: SentenceTransformer(...)"
+    ],
+    "pylate oracle": ["loads a model in-process at line 3: ColBERT(...)"],
+    "transformers model": [
+        "loads a model in-process at line 3: AutoModel.from_pretrained(...)"
+    ],
+    "faster-whisper": ["loads a model in-process at line 3: WhisperModel(...)"],
 }
 
 

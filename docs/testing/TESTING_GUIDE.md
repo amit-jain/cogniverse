@@ -824,8 +824,31 @@ kubectl --context k3d-cogniverse-e2e -n cogniverse get deploy,svc
 
 The cluster is deployed through the e2e path (``tests/e2e/deployment``), not a
 plain ``cogniverse up``. ``tests/common/unit/test_no_local_model_servers.py``
-fails any test code that runs a model image's container or launches a
-vLLM/Ollama server.
+fails any test code that runs a model image's container, launches a
+vLLM/Ollama server, or loads a model in-process (``SentenceTransformer``,
+PyLate ``ColBERT``, ``from_pretrained`` on a model class, Whisper,
+faster-whisper, ``FaceAnalysis``).
+
+No test loads model weights into the pytest process either: the session
+plugin ``tests/fixtures/no_local_models.py`` replaces the weight-loading entry
+points of transformers, sentence-transformers (and so PyLate), GLiNER, the
+Hugging Face hub mixin, Whisper, faster-whisper, InsightFace and open_clip with
+a refusal (``LocalModelLoadForbidden``), however the call is reached. Product
+code that degrades when a model is missing keeps degrading; a test whose result
+needs the model fails on its assertions. Every refused load is listed, by test,
+in the session's ``refused in-process model loads`` summary. A test that needs
+a model's output uses the cluster service that serves it (``remote_inference``,
+``gliner_url``, ``served_semantic_embedder``).
+
+Parity tests compare the served model against reference outputs recorded once,
+on CPU, from the model's own library at the pinned revision:
+``tests/fixtures/model_references/{lateon,denseon}.json`` carry the model,
+revision, library versions, device and inputs beside the outputs. Tests never
+run the recorder; re-record after a pinned revision changes:
+
+```bash
+uv run python scripts/record_model_references.py
+```
 
 Every pytest session prints a ``test sidecars`` section in its terminal summary,
 captured output or not: each model resolution (``resolved-remote`` with its
