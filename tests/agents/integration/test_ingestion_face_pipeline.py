@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -264,7 +265,7 @@ def test_face_pipeline_emits_temporal_attribution_edges(
         if r.name == "cogniverse_runtime.routers.ingestion"
     ] == [
         "Face pipeline for source_doc_id=debate_30s: 2 faces in 2 keyframes, "
-        "2 clusters, 2 same_as edges, 0 anonymous face nodes"
+        "0 failed keyframes, 2 clusters, 2 same_as edges, 0 anonymous face nodes"
     ]
     # Two clusters (Alice@5, Bob@15) each overlap exactly one Person.
     assert len(edges) == 2
@@ -356,6 +357,53 @@ def test_keyframes_the_extractor_cannot_read_are_logged_as_a_failure(
             "['filename', 'frame_number', 'timestamp']",
         )
     ]
+
+
+def test_a_keyframe_that_fails_twice_is_logged_and_the_others_proceed(
+    face_embed_url, debate_keyframes, tmp_path, caplog
+):
+    """Bob's keyframe image is gone, so both of its attempts fail; Alice's
+    face is still clustered and attributed, and the failure is named."""
+    import copy
+    import shutil
+
+    from cogniverse_runtime.routers.ingestion import _run_face_pipeline
+
+    results = copy.deepcopy(debate_keyframes)
+    alice, bob = results["keyframes"]["keyframes"]
+    alice_copy = tmp_path / Path(alice["path"]).name
+    shutil.copyfile(alice["path"], alice_copy)
+    alice["path"] = str(alice_copy)
+    bob["path"] = str(tmp_path / "gone.png")
+
+    with caplog.at_level("INFO", logger="cogniverse_runtime.routers.ingestion"):
+        edges, nodes = _run_face_pipeline(
+            processing_results=results,
+            linked_extraction=_debate_linked_extraction(),
+            source_doc_id="debate_30s",
+            tenant_id="test",
+            face_embed_url=face_embed_url,
+        )
+
+    messages = [
+        (r.levelname, r.getMessage())
+        for r in caplog.records
+        if r.name == "cogniverse_runtime.routers.ingestion"
+    ]
+    gone = tmp_path / "gone.png"
+    assert [level for level, _ in messages] == ["WARNING", "INFO"]
+    assert messages[0][1].startswith(
+        "Face extraction for source_doc_id=debate_30s skipped keyframe "
+        f"segment_id=1: keyframe image for segment_id='1' is unreadable at {gone}: "
+    )
+    assert messages[1][1] == (
+        "Face pipeline for source_doc_id=debate_30s: 1 faces in 2 keyframes, "
+        "1 failed keyframes, 1 clusters, 1 same_as edges, 0 anonymous face nodes"
+    )
+    assert [(e.source, e.target) for e in edges] == [
+        ("face_cluster::0::100_40", "Alice Chen")
+    ]
+    assert nodes == []
 
 
 # --------------------------------------------------------------------- #

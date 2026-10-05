@@ -2669,8 +2669,14 @@ keyframe request.
 `{frame_number, timestamp, filename, path}`. A keyframe's segment id is its
 index in that list, the id of its content document and of the transcript
 segment aligned to it. Each request reads the image at `path` and sends it as
-`image_b64`. A keyframe without a `path` or `timestamp` raises `ValueError`; an
-image that cannot be read raises `RuntimeError` naming the segment and path.
+`image_b64`, with at most `max_concurrency` requests in flight (default
+`FACE_EMBED_MAX_CONCURRENCY`, which the chart sets to the sidecar's CPU count)
+and a 120 s budget per request. It returns a `FaceExtraction`: `mentions`, the
+faces sorted by `(segment_id, bbox)`, and `failed`, a `FailedKeyframe`
+(`segment_id`, `cause`) for each keyframe whose image could not be read or
+whose request failed on its retry; the other keyframes' faces are kept. A
+keyframe without a `path` or `timestamp` raises `ValueError`, and
+`RuntimeError` names every keyframe's cause when all of them failed.
 
 ---
 

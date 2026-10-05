@@ -34,6 +34,8 @@ from cogniverse_cli.modal_inference.servers import face as face_embed_server
 from PIL import Image
 
 from cogniverse_agents.graph.face_extractor import (
+    FaceExtraction,
+    FailedKeyframe,
     extract_faces_per_keyframe,
     face_mention_as_jsonable,
 )
@@ -267,7 +269,7 @@ def test_total_record_count(face_embed_url, debate_processing_results):
     """1 (Alice@5) + 1 (Bob@15) + 2 (split@22.5) + 0 (empty@28) == 4."""
     records = extract_faces_per_keyframe(
         debate_processing_results, "debate_30s", face_embed_url
-    )
+    ).mentions
     assert len(records) == 4
 
 
@@ -287,7 +289,7 @@ def test_sidecar_loads_model_from_configured_root(
 ):
     records = extract_faces_per_keyframe(
         debate_processing_results, "debate_30s", face_embed_url
-    )
+    ).mentions
 
     assert len(records) == 4
     assert _ColorAwareFaceAnalysis.last_root == str(face_model_root)
@@ -301,7 +303,7 @@ def test_sidecar_loads_model_from_configured_root(
 def test_records_byte_equal_sorted(face_embed_url, debate_processing_results):
     records = extract_faces_per_keyframe(
         debate_processing_results, "debate_30s", face_embed_url
-    )
+    ).mentions
     serialised = [face_mention_as_jsonable(m) for m in records]
     expected = [
         {
@@ -354,10 +356,10 @@ def test_records_byte_equal_sorted(face_embed_url, debate_processing_results):
 def test_idempotent_byte_equal(face_embed_url, debate_processing_results):
     first = extract_faces_per_keyframe(
         debate_processing_results, "debate_30s", face_embed_url
-    )
+    ).mentions
     second = extract_faces_per_keyframe(
         debate_processing_results, "debate_30s", face_embed_url
-    )
+    ).mentions
     assert [face_mention_as_jsonable(m) for m in first] == [
         face_mention_as_jsonable(m) for m in second
     ]
@@ -370,7 +372,9 @@ def test_idempotent_byte_equal(face_embed_url, debate_processing_results):
 
 def test_empty_keyframe_yields_empty_list(face_embed_url, tmp_path):
     empty_only = _keyframes(tmp_path, [(28.0, _EMPTY_COLOR)])
-    assert extract_faces_per_keyframe(empty_only, "debate_30s", face_embed_url) == []
+    assert extract_faces_per_keyframe(
+        empty_only, "debate_30s", face_embed_url
+    ) == FaceExtraction(mentions=[], failed=[])
 
 
 # --------------------------------------------------------------------- #
@@ -380,7 +384,9 @@ def test_empty_keyframe_yields_empty_list(face_embed_url, tmp_path):
 
 def test_multi_face_keyframe_emits_distinct_records(face_embed_url, tmp_path):
     split_only = _keyframes(tmp_path, [(22.5, _SPLIT_COLOR)])
-    records = extract_faces_per_keyframe(split_only, "debate_30s", face_embed_url)
+    records = extract_faces_per_keyframe(
+        split_only, "debate_30s", face_embed_url
+    ).mentions
     assert len(records) == 2
     assert {tuple(r.bbox) for r in records} == {
         (20, 40, 120, 140),
@@ -394,23 +400,74 @@ def test_multi_face_keyframe_emits_distinct_records(face_embed_url, tmp_path):
 # --------------------------------------------------------------------- #
 
 
-def test_sidecar_http_failure_raises_runtime_error_with_segment_id(tmp_path):
+def test_sidecar_http_failure_on_every_keyframe_raises_naming_each(tmp_path):
+    """Every keyframe failing twice leaves no faces to report: extraction
+    raises with each keyframe's cause."""
+    calls = []
+
     def boom_handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
         return httpx.Response(503, json={"error": "model not warm"})
 
     transport = httpx.MockTransport(boom_handler)
     with httpx.Client(transport=transport) as client:
         with pytest.raises(RuntimeError) as exc_info:
             extract_faces_per_keyframe(
-                _keyframes(tmp_path, [(5.0, _ALICE_COLOR)]),
+                _keyframes(tmp_path, [(5.0, _ALICE_COLOR), (15.0, _BOB_COLOR)]),
                 "debate_30s",
                 "http://boom.invalid",
                 client=client,
             )
     assert str(exc_info.value) == (
+        "face extraction failed for all 2 keyframes: "
         "face-embed sidecar returned HTTP 503 for segment_id='0': "
+        '{"error":"model not warm"}; '
+        "face-embed sidecar returned HTTP 503 for segment_id='1': "
         '{"error":"model not warm"}'
     )
+    assert calls == ["/embed"] * 4
+
+
+def test_a_keyframe_failing_twice_is_reported_and_the_others_kept(tmp_path):
+    """Keyframe 1 times out on both attempts; keyframe 0 succeeds, keyframe 2
+    succeeds on its retry. Old behaviour: the first failure raised and every
+    keyframe's faces were dropped."""
+    results = _keyframes(
+        tmp_path, [(5.0, _ALICE_COLOR), (15.0, _BOB_COLOR), (22.5, _SPLIT_COLOR)]
+    )
+    bodies = {
+        base64.b64encode(Path(k["path"]).read_bytes()).decode("ascii"): str(index)
+        for index, k in enumerate(results["keyframes"]["keyframes"])
+    }
+    attempts: dict = {}
+    lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        segment = bodies[json.loads(request.content)["image_b64"]]
+        with lock:
+            attempts[segment] = attempts.get(segment, 0) + 1
+            attempt = attempts[segment]
+        if segment == "1" or (segment == "2" and attempt == 1):
+            raise httpx.ReadTimeout("timed out", request=request)
+        face = {"bbox": [int(segment), 0, 10, 10], "vec": [0.125] * 512}
+        return httpx.Response(200, json={"faces": [{**face, "det_score": 0.9}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        extraction = extract_faces_per_keyframe(
+            results, "debate_30s", "http://sidecar.invalid", client=client
+        )
+
+    assert [(m.segment_id, m.bbox) for m in extraction.mentions] == [
+        ("0", (0, 0, 10, 10)),
+        ("2", (2, 0, 10, 10)),
+    ]
+    assert extraction.failed == [
+        FailedKeyframe(
+            segment_id="1",
+            cause="face-embed sidecar request failed for segment_id='1': timed out",
+        )
+    ]
+    assert attempts == {"0": 1, "1": 2, "2": 2}
 
 
 # --------------------------------------------------------------------- #
@@ -449,29 +506,58 @@ def test_facemention_shape_locked():
 # --------------------------------------------------------------------- #
 
 
-def test_keyframes_posted_concurrently(tmp_path):
-    """A threading.Barrier of N only releases once all N keyframe POSTs are
-    in flight at the same time. Serial POSTs (the pre-fix behaviour) leave the
-    barrier one party short forever and time out."""
-    import threading
-
-    n = 4
-    barrier = threading.Barrier(n, timeout=5)
+def test_in_flight_requests_are_bounded_by_the_sidecar_concurrency(
+    tmp_path, monkeypatch
+):
+    """A scripted slow sidecar records how many requests it holds at once.
+    Six keyframes with FACE_EMBED_MAX_CONCURRENCY=2 keep exactly two in
+    flight; the old extractor sent up to eight."""
+    monkeypatch.setenv("FACE_EMBED_MAX_CONCURRENCY", "2")
+    in_flight = 0
+    peak = 0
+    lock = threading.Lock()
 
     def handler(request: httpx.Request) -> httpx.Response:
-        barrier.wait()
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        time.sleep(0.2)
+        with lock:
+            in_flight -= 1
         return httpx.Response(200, json={"faces": []})
 
-    transport = httpx.MockTransport(handler)
-    with httpx.Client(transport=transport) as client:
-        records = extract_faces_per_keyframe(
-            _keyframes(tmp_path, [(float(i), _EMPTY_COLOR) for i in range(n)]),
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        extraction = extract_faces_per_keyframe(
+            _keyframes(tmp_path, [(float(i), _EMPTY_COLOR) for i in range(6)]),
             "debate_30s",
             "http://sidecar.invalid",
             client=client,
         )
 
-    assert records == []
+    assert extraction == FaceExtraction(mentions=[], failed=[])
+    assert peak == 2
+
+
+def test_keyframes_are_posted_concurrently_up_to_the_bound(tmp_path):
+    """A threading.Barrier of 3 only releases once 3 POSTs are in flight
+    together, so serial POSTs time out."""
+    barrier = threading.Barrier(3, timeout=5)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        barrier.wait()
+        return httpx.Response(200, json={"faces": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        extraction = extract_faces_per_keyframe(
+            _keyframes(tmp_path, [(float(i), _EMPTY_COLOR) for i in range(3)]),
+            "debate_30s",
+            "http://sidecar.invalid",
+            client=client,
+            max_concurrency=3,
+        )
+
+    assert extraction == FaceExtraction(mentions=[], failed=[])
 
 
 def test_modal_face_client_uses_environment_credential(monkeypatch, tmp_path):
@@ -499,20 +585,20 @@ def test_modal_face_client_uses_environment_credential(monkeypatch, tmp_path):
     )
     image_b64 = base64.b64encode(_solid_png(_EMPTY_COLOR)).decode("ascii")
 
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         _keyframes(tmp_path, [(0.0, _EMPTY_COLOR)]),
         "debate_30s",
         "https://face.modal.run",
     )
 
-    assert records == []
+    assert extraction == FaceExtraction(mentions=[], failed=[])
     assert len(created) == 1
     assert created[0].headers == {"Authorization": f"Bearer {token}"}
     assert created[0].calls == [
         (
             "https://face.modal.run/embed",
             {"image_b64": image_b64},
-            30.0,
+            120.0,
         )
     ]
     assert created[0].closed is True
@@ -568,7 +654,7 @@ def test_a_keyframe_without_a_path_raises_naming_it():
     )
 
 
-def test_a_keyframe_whose_image_is_gone_raises_naming_it(tmp_path):
+def test_a_keyframe_whose_image_is_gone_is_reported_with_its_path(tmp_path):
     results = _keyframes(tmp_path, [(5.0, _ALICE_COLOR)])
     path = Path(results["keyframes"]["keyframes"][0]["path"])
     path.unlink()
@@ -576,5 +662,6 @@ def test_a_keyframe_whose_image_is_gone_raises_naming_it(tmp_path):
     with pytest.raises(RuntimeError) as caught:
         extract_faces_per_keyframe(results, "debate_30s", "http://sidecar.invalid")
     assert str(caught.value).startswith(
+        "face extraction failed for all 1 keyframes: "
         f"keyframe image for segment_id='0' is unreadable at {path}: "
     )

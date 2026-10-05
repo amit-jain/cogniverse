@@ -479,12 +479,13 @@ def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch, tmp_path):
             f"{endpoint}/v1/models",
             headers=_authorization(),
         )
-        records = extract_faces_per_keyframe(
+        extraction = extract_faces_per_keyframe(
             processing_results,
             "fixed-videos",
             endpoint,
             headers=_authorization(),
         )
+        records = extraction.mentions
 
     assert identity.json() == {
         "data": [
@@ -498,6 +499,7 @@ def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch, tmp_path):
         ],
         "object": "list",
     }
+    assert extraction.failed == []
     assert [record.segment_id for record in records] == ["0", "1", "2"]
     assert [record.bbox for record in records] == [
         (320, 180, 960, 540),

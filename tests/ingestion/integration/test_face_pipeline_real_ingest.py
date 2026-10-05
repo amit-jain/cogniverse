@@ -225,7 +225,7 @@ async def test_a_speakers_faces_are_tied_to_the_person_the_transcript_names(
     assert result["status"] == "completed", result.get("error")
     assert face_logs == [
         "Face pipeline for source_doc_id=v_-D1gdv_gQyw: 4 faces in 10 keyframes, "
-        "3 clusters, 3 same_as edges, 0 anonymous face nodes"
+        "0 failed keyframes, 3 clusters, 3 same_as edges, 0 anonymous face nodes"
     ]
     assert _face_edges(documents) == [
         ("bear_grylls", "0", 0.0, 1.0),
@@ -252,7 +252,7 @@ async def test_faces_no_transcript_person_covers_become_anonymous_face_nodes(
     assert result["status"] == "completed", result.get("error")
     assert face_logs == [
         "Face pipeline for source_doc_id=v_-6dz6tBH77I: 24 faces in 5 keyframes, "
-        "23 clusters, 19 same_as edges, 4 anonymous face nodes"
+        "0 failed keyframes, 23 clusters, 19 same_as edges, 4 anonymous face nodes"
     ]
     assert _face_nodes(documents) == ["4", "4", "4", "4"]
     # Which keyframe anchors a cluster that spans two moves between runs, so
