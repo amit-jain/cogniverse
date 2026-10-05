@@ -2225,3 +2225,114 @@ def test_an_explicit_resolution_is_reported_in_the_session_summary():
             "INFERENCE_SERVICE_URLS",
         )
     ]
+
+
+_ITEM_SCOPED_CONFTEST = """
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+
+import pytest
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
+from tests.utils import vllm_sidecar
+
+CLAP = get_inference_service_spec("clap_embed")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(
+            {
+                "status": "ready",
+                "model": CLAP.model_id,
+                "model_revision": CLAP.model_revision,
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+Thread(target=_server.serve_forever, daemon=True).start()
+CLAP_URL = f"http://127.0.0.1:{_server.server_address[1]}"
+
+
+def _discover(model):
+    if model == CLAP.model_id:
+        return (vllm_sidecar._DiscoveredClusterEndpoint(CLAP_URL, None),)
+    return ()
+
+
+vllm_sidecar._discover_e2e_model_urls = _discover
+vllm_sidecar._discover_dev_model_urls = lambda model: ()
+
+
+@pytest.fixture
+def clap_url():
+    return CLAP_URL
+"""
+
+_ITEM_SCOPED_TESTS = """
+import json
+import os
+
+import pytest
+
+
+def test_before_any_resolution():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.requires_inference("clap_embed")
+def test_publishes_its_own_endpoints(clap_url):
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {"clap_embed": clap_url}
+    assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "cogniverse-test-inference"
+
+
+def test_after_a_publishing_test():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.requires_inference("clap_embed")
+def test_a_later_test_gets_the_cached_endpoint_published_again(clap_url):
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {"clap_embed": clap_url}
+
+
+def test_after_the_second_publishing_test():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+"""
+
+
+@pytest.mark.unit
+def test_published_endpoints_never_outlive_the_test_that_declared_them(
+    pytester, monkeypatch
+):
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    pytester.makeconftest(_ITEM_SCOPED_CONFTEST)
+    pytester.makepyfile(test_scope=_ITEM_SCOPED_TESTS)
+
+    result = pytester.runpytest_subprocess(
+        "-p", "tests.fixtures.inference", "-p", "no:cacheprovider", "-rA"
+    )
+
+    result.assert_outcomes(passed=5)
+    assert [line for line in result.outlines if line.startswith("PASSED ")] == [
+        "PASSED test_scope.py::test_before_any_resolution",
+        "PASSED test_scope.py::test_publishes_its_own_endpoints",
+        "PASSED test_scope.py::test_after_a_publishing_test",
+        "PASSED test_scope.py::test_a_later_test_gets_the_cached_endpoint_published_again",
+        "PASSED test_scope.py::test_after_the_second_publishing_test",
+    ]

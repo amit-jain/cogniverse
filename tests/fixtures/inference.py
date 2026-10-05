@@ -957,13 +957,33 @@ def _session_endpoints(session) -> SessionInferenceEndpoints:
     return endpoints
 
 
+_ITEM_ENVIRONMENT_KEY = pytest.StashKey[InferenceEndpointEnvironment]()
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item) -> None:
     """Resolve the item's declared services before any of its fixtures run,
     so a module- or class-scoped fixture never builds infrastructure for a
-    test whose service is unavailable, and the published endpoints are
-    visible to every fixture of the item."""
-    _session_endpoints(item.session).require(getattr(item, _REQUIRED_SERVICES_ATTR, ()))
+    test whose service is unavailable, and publish exactly those endpoints
+    for the item. The environment the item started with is restored after its
+    teardown, so one test's endpoints never reach a later test."""
+    environment = InferenceEndpointEnvironment()
+    item.stash[_ITEM_ENVIRONMENT_KEY] = environment
+    endpoints = _session_endpoints(item.session).require(
+        getattr(item, _REQUIRED_SERVICES_ATTR, ())
+    )
+    if endpoints:
+        environment.publish(endpoints)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    try:
+        return (yield)
+    finally:
+        environment = item.stash.get(_ITEM_ENVIRONMENT_KEY, None)
+        if environment is not None:
+            environment.restore()
 
 
 def pytest_sessionfinish(session) -> None:
