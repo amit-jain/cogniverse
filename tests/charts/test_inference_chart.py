@@ -705,17 +705,19 @@ def test_chart_visual_profiles_serve_tomoro():
         assert p["inference_services"]["embedding"] == "vllm_colpali", name
 
 
-# Document token pooling factor each shipped visual profile declares. The
-# frame profile ships its documents unpooled: on the exported production
-# frame corpus and golden set, pooling at factor 3 lowered MRR and R@1 of
-# every binary-MaxSim strategy with paired 95% CIs below zero (binary_binary
-# MRR -0.052, hybrid_binary_bm25 -0.056, hybrid_bm25_binary -0.051), and at
-# factor 2 the two binary hybrids still lost MRR (-0.028, -0.030).
+# Document token pooling factor each shipped visual profile declares: 1, no
+# pooling, for all four. On the exported production frame corpus and golden
+# set, pooling at factor 3 lowered MRR and R@1 of every binary-MaxSim strategy
+# with paired 95% CIs below zero (binary_binary MRR -0.052, hybrid_binary_bm25
+# -0.056, hybrid_bm25_binary -0.051), and at factor 2 the two binary hybrids
+# still lost MRR (-0.028, -0.030). The chunk corpus (34 documents) was level
+# with its binary strategies trending the same way, and the image and
+# document-visual profiles have no evaluation corpus.
 SHIPPED_TOKEN_POOL_FACTORS = {
     "video_colpali_smol500_mv_frame": 1,
-    "video_colqwen_omni_mv_chunk_30s": 3,
-    "image_colpali_mv": 3,
-    "document_visual_colpali": 3,
+    "video_colqwen_omni_mv_chunk_30s": 1,
+    "image_colpali_mv": 1,
+    "document_visual_colpali": 1,
 }
 
 
@@ -761,7 +763,7 @@ def test_shipped_video_chunk_profile_has_one_exact_colqwen3_contract():
             "service. 320-dim per-patch multi-vector embeddings."
         )
         assert profile["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
-        assert profile["model_config"] == {"token_pool_factor": 3}
+        assert profile["model_config"] == {"token_pool_factor": 1}
         assert profile["model_loader"] == "colqwen"
         assert profile["inference_services"] == {
             "embedding": "vllm_colpali",

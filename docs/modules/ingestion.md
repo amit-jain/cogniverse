@@ -1621,6 +1621,16 @@ These plain classes back the processors above and are not auto-discovered by
 - `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
 - `VLMDescriptor` (`vlm_descriptor.py`) — HTTP client for an OpenAI-compatible `/v1` vision chat endpoint; used by `VLMProcessor`.
 - `pool_document_tokens` (`embedding_generator/token_pooling.py`) — hierarchical token pooling of a document's multi-vector before feed (Ward-linkage clusters of its tokens, cut at `n_tokens // pool_factor`, each mean-pooled and L2-renormalized), the method of colpali_engine's `HierarchicalTokenPooler` in numpy and scipy. `EmbeddingGeneratorImpl` applies it to frame, chunk and image multi-vectors when the profile sets `model_config.token_pool_factor`; queries are never pooled.
+
+  The four visual profiles (`video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`, `image_colpali_mv`, `document_visual_colpali`) ship unpooled, `model_config.token_pool_factor: 1`, so every document token is stored (227 for a 640x360 frame). The generator honours the factor, so changing it takes effect at the next ingest. It ships at 1 because pooling was measured on the exported production corpora with the golden set (125 queries), paired 95% bootstrap CIs:
+
+  | Profile | Tokens unpooled → factor 2 → 3 | Result |
+  |---|---|---|
+  | frame (361 documents) | 153,947 → 76,851 → 51,146 (104.7 → 52.3 → 34.8 MB) | float strategies and `default` level; at factor 3 every binary-MaxSim strategy loses (`binary_binary` MRR −0.052, R@1 −0.088; `hybrid_binary_bm25` −0.056, −0.104; `hybrid_bm25_binary` −0.051, −0.088); at factor 2 the two binary hybrids still lose MRR (−0.028, −0.030) |
+  | chunk_30s (34 documents) | 14,538 → 7,257 → 4,830 | level, with the binary strategies trending down at factor 3 (MRR −0.036) |
+  | image, document visual | — | no evaluation corpus |
+
+  Pooling cut the backend search p50 (frame `default` 45 → 26 → 22 ms), but not enough to outweigh the binary-strategy loss.
 - `resolve_served_model_id(...)` (`served_model.py`) — returns the model id an OpenAI-compatible `/v1` endpoint serves, used by `VLMDescriptor` and `AudioProcessor`'s remote path. The remote services scale to zero, so discovery retries a cold endpoint until the service spec's `boot_deadline_seconds`, caches the answer per process per endpoint, and raises `ServedModelUnavailable` naming the endpoint when the budget runs out or the endpoint answers a status waiting cannot repair.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
