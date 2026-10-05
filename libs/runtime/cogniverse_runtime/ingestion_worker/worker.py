@@ -1102,6 +1102,15 @@ async def run(
     runtime_defaults = resolve_library_env_defaults()
     configure_runtime_library_defaults(runtime_defaults)
     telemetry_otlp_endpoint = runtime_defaults["telemetry_otlp_endpoint"]
+    # Every path that builds the telemetry manager exports to the deployment's
+    # Phoenix, the reaper's re-drive of an orphaned job included: after a
+    # restart it is the first job this process runs.
+    from cogniverse_foundation.telemetry.manager import configure_telemetry_endpoints
+
+    configure_telemetry_endpoints(
+        otlp_endpoint=telemetry_otlp_endpoint,
+        http_endpoint=runtime_defaults["telemetry_http_endpoint"],
+    )
     media_config = _media_config_from_defaults(runtime_defaults)
     config = WorkerConfig()
     if stop is None:
