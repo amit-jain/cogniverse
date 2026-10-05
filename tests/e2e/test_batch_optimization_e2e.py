@@ -7017,19 +7017,28 @@ class TestOptimizationRunListing:
             row.locator('[role="gridcell"]').all_text_contents()
             for row in grid.locator('tbody [role="row"]').all()
         ]
-        assert [row[:3] + row[4:5] for row in rows] == [
-            [
-                run["workflow_name"],
-                run["mode"] or "—",
-                run["trigger"],
-                run["started_at"] or "—",
-            ]
-            for run in runs
+        assert [row[:3] for row in rows] == [
+            [run["workflow_name"], run["mode"] or "—", run["trigger"]] for run in runs
         ], rows
-        # A run can move on while the page renders; its phase and finish are
-        # the listing's on either side of the render.
+        # A run can move on while the page renders: its phase, start and
+        # finish are the listing's on either side of the render, or a phase
+        # Argo passes through between them, which has the later listing's
+        # start and no finish yet.
         for row, before, after in zip(rows, runs, runs_after, strict=True):
-            assert (row[3], row[5]) in {
-                (listed["phase"] or "Pending", listed["finished_at"] or "—")
+            listed_states = {
+                (
+                    listed["phase"] or "Pending",
+                    listed["started_at"] or "—",
+                    listed["finished_at"] or "—",
+                )
                 for listed in (before, after)
-            }, (row, before, after)
+            }
+            passed_through = argo_phases_between(before["phase"], after["phase"])[1:-1]
+            listed_states |= {
+                (phase, after["started_at"] or "—", "—") for phase in passed_through
+            }
+            assert (row[3], row[4], row[5]) in listed_states, (
+                row,
+                before,
+                after,
+            )
