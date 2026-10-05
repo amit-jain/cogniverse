@@ -90,7 +90,7 @@ _LEGACY_PREFIXES = (
 )
 
 
-_E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:19090"
+_E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:28080"
 _E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
 
 
@@ -310,20 +310,44 @@ class TestCollectionOrdering:
             assert items[-1].nodeid == browser_item.nodeid, browser_item.nodeid
 
 
+def _register_gateway(root: Path, name: str, port: int) -> None:
+    gateway = root / "gateways" / name
+    gateway.mkdir(parents=True)
+    (gateway / "metadata.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "gateway_endpoint": f"https://127.0.0.1:{port}",
+                "is_remote": False,
+                "gateway_port": port,
+            }
+        )
+    )
+
+
+def _openshell_home(monkeypatch, tmp_path: Path, *, active: str | None) -> Path:
+    """A HOME whose OpenShell config registers the e2e gateway (``openshell``
+    on 28080) and a test gateway (``cogniverse-test-gw`` on 19090)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENSHELL_GATEWAY_HOST_PORT", raising=False)
+    root = tmp_path / ".config" / "openshell"
+    _register_gateway(root, "openshell", 28080)
+    _register_gateway(root, "cogniverse-test-gw", 19090)
+    if active is not None:
+        (root / "active_gateway").write_text(active)
+    return root
+
+
 class TestE2EDeploymentOverrides:
     """The e2e Helm overrides wire the host-mode sandbox from live sources: the
     active gateway's own port and the k3d network's gateway IP."""
 
     @pytest.mark.parametrize("llm_serving", ["local", "modal"])
-    def test_overrides_derive_endpoint_and_host_ip(self, monkeypatch, llm_serving):
-        import cogniverse_cli.sandbox as sandbox_mod
-
+    def test_overrides_derive_endpoint_and_host_ip(
+        self, monkeypatch, tmp_path, llm_serving
+    ):
         monkeypatch.setenv("COGNIVERSE_LLM_SERVING", llm_serving)
-        monkeypatch.setattr(
-            sandbox_mod,
-            "active_gateway_metadata",
-            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
-        )
+        _openshell_home(monkeypatch, tmp_path, active="openshell")
         commands: list[list[str]] = []
 
         def fake_run(command, **kwargs):
@@ -346,15 +370,9 @@ class TestE2EDeploymentOverrides:
             ]
         ]
 
-    def test_missing_network_gateway_is_an_error(self, monkeypatch):
-        import cogniverse_cli.sandbox as sandbox_mod
-
+    def test_missing_network_gateway_is_an_error(self, monkeypatch, tmp_path):
         monkeypatch.setenv("COGNIVERSE_LLM_SERVING", "local")
-        monkeypatch.setattr(
-            sandbox_mod,
-            "active_gateway_metadata",
-            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
-        )
+        _openshell_home(monkeypatch, tmp_path, active="openshell")
         monkeypatch.setattr(
             e2e_conftest.subprocess,
             "run",
@@ -366,6 +384,78 @@ class TestE2EDeploymentOverrides:
             RuntimeError, match="docker network gateway inspection failed"
         ):
             e2e_conftest._e2e_deployment_overrides()
+
+    def test_a_test_gateway_left_active_is_never_deployed(self, monkeypatch, tmp_path):
+        """A private test gateway left active on the host must not become the
+        cluster's sandbox endpoint."""
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", "local")
+        _openshell_home(monkeypatch, tmp_path, active="cogniverse-test-gw")
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda command, **kwargs: SimpleNamespace(
+                returncode=0, stdout="172.18.0.1\n", stderr=""
+            ),
+        )
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            e2e_conftest._e2e_deployment_overrides()
+
+        assert str(caught.value) == (
+            "the active OpenShell gateway is 'cogniverse-test-gw', not the e2e "
+            "gateway 'openshell'; refusing to deploy another gateway into the "
+            "cluster. Select it with `openshell gateway select openshell`."
+        )
+
+
+class TestE2EGatewayMetadata:
+    """The e2e stack's gateway is resolved by name and must be the active one."""
+
+    def test_the_active_e2e_gateway_is_returned(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active="openshell")
+
+        assert inference.e2e_gateway_metadata(root) == {
+            "name": "openshell",
+            "gateway_endpoint": "https://127.0.0.1:28080",
+            "is_remote": False,
+            "gateway_port": 28080,
+        }
+
+    def test_no_active_gateway_is_refused(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active=None)
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            inference.e2e_gateway_metadata(root)
+
+        assert str(caught.value).startswith(
+            "the active OpenShell gateway is None, not the e2e gateway 'openshell'"
+        )
+
+    def test_an_unregistered_e2e_gateway_is_refused(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("OPENSHELL_GATEWAY_HOST_PORT", raising=False)
+        root = tmp_path / ".config" / "openshell"
+        _register_gateway(root, "cogniverse-test-gw", 19090)
+        (root / "active_gateway").write_text("cogniverse-test-gw")
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            inference.e2e_gateway_metadata(root)
+
+        assert str(caught.value) == (
+            "the e2e OpenShell gateway 'openshell' is not registered "
+            f"({root / 'gateways' / 'openshell' / 'metadata.json'} is missing); "
+            "the active gateway is 'cogniverse-test-gw'. Start it with "
+            "`openshell gateway start --port 28080`."
+        )
+
+    def test_an_e2e_gateway_on_another_port_is_refused(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active="openshell")
+        monkeypatch.setenv("OPENSHELL_GATEWAY_HOST_PORT", "29999")
+
+        with pytest.raises(
+            inference.E2EGatewayError, match="expected 'openshell' on 29999"
+        ):
+            inference.e2e_gateway_metadata(root)
 
 
 def _expected_e2e_deployment_set_overrides() -> dict[str, str]:

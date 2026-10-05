@@ -18,6 +18,62 @@ _E2E_ASR_MODELS = {
 }
 
 
+# The e2e stack's own OpenShell gateway: ``ensure_host_gateway`` runs
+# ``openshell gateway start --port <OPENSHELL_GATEWAY_HOST_PORT>`` (28080 by
+# default), which registers it under the CLI's default name.
+E2E_OPENSHELL_GATEWAY = "openshell"
+E2E_OPENSHELL_DEFAULT_PORT = 28080
+
+
+class E2EGatewayError(RuntimeError):
+    """The e2e stack's own OpenShell gateway is missing or not the active one."""
+
+
+def e2e_gateway_metadata(config_root: Path | None = None) -> dict:
+    """The e2e stack's own gateway's ``metadata.json``.
+
+    The deploy and the cert sync read the host's active gateway, so this
+    refuses unless the active gateway is the e2e one, registered with the
+    port the e2e path starts it on. A test's private gateway, or any other one,
+    left active on the host would otherwise be deployed into the cluster.
+    """
+    import json
+    import os
+
+    root = config_root or Path.home() / ".config" / "openshell"
+    expected_port = int(
+        os.environ.get("OPENSHELL_GATEWAY_HOST_PORT", E2E_OPENSHELL_DEFAULT_PORT)
+    )
+    active_file = root / "active_gateway"
+    active = active_file.read_text().strip() if active_file.exists() else None
+    metadata_file = root / "gateways" / E2E_OPENSHELL_GATEWAY / "metadata.json"
+    if not metadata_file.exists():
+        raise E2EGatewayError(
+            f"the e2e OpenShell gateway {E2E_OPENSHELL_GATEWAY!r} is not "
+            f"registered ({metadata_file} is missing); the active gateway is "
+            f"{active!r}. Start it with `openshell gateway start --port "
+            f"{expected_port}`."
+        )
+    if active != E2E_OPENSHELL_GATEWAY:
+        raise E2EGatewayError(
+            f"the active OpenShell gateway is {active!r}, not the e2e gateway "
+            f"{E2E_OPENSHELL_GATEWAY!r}; refusing to deploy another gateway into "
+            f"the cluster. Select it with `openshell gateway select "
+            f"{E2E_OPENSHELL_GATEWAY}`."
+        )
+    metadata = json.loads(metadata_file.read_text())
+    if (metadata.get("name"), metadata.get("gateway_port")) != (
+        E2E_OPENSHELL_GATEWAY,
+        expected_port,
+    ):
+        raise E2EGatewayError(
+            f"the e2e OpenShell gateway's metadata names "
+            f"{metadata.get('name')!r} on port {metadata.get('gateway_port')!r}, "
+            f"expected {E2E_OPENSHELL_GATEWAY!r} on {expected_port}: {metadata!r}"
+        )
+    return metadata
+
+
 def _e2e_docker_network_gateway_ip() -> str:
     network_name = f"k3d-{E2E_CLUSTER_NAME}"
     command = [
@@ -72,7 +128,7 @@ def _e2e_disabled_inference_services(llm_serving: str) -> frozenset[str]:
 
 
 def _e2e_deployment_overrides() -> dict[str, str]:
-    from cogniverse_cli.sandbox import active_gateway_metadata, pod_gateway_endpoint
+    from cogniverse_cli.sandbox import pod_gateway_endpoint
 
     from tests.e2e.deployment.conftest import e2e_llm_serving_mode
 
@@ -89,9 +145,7 @@ def _e2e_deployment_overrides() -> dict[str, str]:
         },
         "runtime.sandbox.enabled": "true",
         "runtime.sandbox.inCluster.enabled": "false",
-        "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(
-            active_gateway_metadata()
-        ),
+        "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(e2e_gateway_metadata()),
         "runtime.sandbox.hostGatewayIP": _e2e_docker_network_gateway_ip(),
     }
     for service in (

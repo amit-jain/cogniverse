@@ -5,10 +5,13 @@ Uses the OpenShell Python SDK (protobuf conflict resolved by upgrading
 mem0ai and grpcio-status to allow protobuf 6.x).
 
 Tests manage their own OpenShell gateway lifecycle — start on setup,
-destroy on teardown. No pre-existing gateway required.
+destroy on teardown — in a private config root, so the host's OpenShell
+configuration and its other gateways are never touched.
 """
 
+import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -53,135 +56,80 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
-def openshell_gateway():
-    """
-    Start an OpenShell gateway for integration tests.
+def _host_openshell_config() -> dict[str, bytes]:
+    """Every file of the host's OpenShell config (registrations and the
+    active-gateway pointer), by path relative to its root."""
+    root = Path.home() / ".config" / "openshell"
+    if not root.exists():
+        return {}
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
-    Uses a unique name and port to avoid conflicts with user's dev gateway.
-    Destroys on teardown.
-    """
-    import time as _time
 
-    # Check if gateway is already running (reuse from previous run or manual start)
-    info_result = subprocess.run(
-        ["openshell", "gateway", "info", "--gateway", GATEWAY_NAME],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if info_result.returncode == 0 and "ready" in info_result.stdout.lower():
-        subprocess.run(
-            ["openshell", "gateway", "select", GATEWAY_NAME],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-        yield GATEWAY_NAME
-        return  # Don't destroy — we didn't create it
-
-    # Kill any container holding the port (from crashed previous runs)
-    port_check = subprocess.run(
-        ["docker", "ps", "-q", "--filter", f"publish={GATEWAY_PORT}"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    for cid in port_check.stdout.strip().splitlines():
-        subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
-
-    # Drop ALL stale openshell-cluster-* containers AND their volumes,
-    # not just the one matching our gateway name. A stopped sibling
-    # cluster (e.g. left over from a different gateway in a prior run)
-    # holds a volume that the new bootstrap touches during helm-install,
-    # which makes the helm job loop and the gateway "fail to start"
-    # after ~12s with no useful error from `openshell gateway start`.
-    stale = subprocess.run(
+def _other_gateway_containers() -> dict[str, tuple[str, str]]:
+    """``openshell-cluster-*`` containers other than this module's, by name,
+    with their id and creation time."""
+    listing = subprocess.run(
         [
             "docker",
             "ps",
-            "-aq",
+            "-a",
             "--filter",
             "name=openshell-cluster-",
+            "--format",
+            "{{.Names}}\t{{.ID}}\t{{.CreatedAt}}",
         ],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=30,
+        check=True,
     )
-    for cid in stale.stdout.strip().splitlines():
-        subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
-    stale_vols = subprocess.run(
-        [
-            "docker",
-            "volume",
-            "ls",
-            "-q",
-            "--filter",
-            "name=openshell-cluster-",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    for vol in stale_vols.stdout.strip().splitlines():
-        subprocess.run(["docker", "volume", "rm", vol], capture_output=True, timeout=10)
+    containers = {}
+    for line in listing.stdout.splitlines():
+        name, container_id, created = line.split("\t")
+        if name != f"openshell-cluster-{GATEWAY_NAME}":
+            containers[name] = (container_id, created)
+    return containers
 
-    # Destroy stale gateway metadata
-    subprocess.run(
-        ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
-    _time.sleep(5)  # Let Docker release ports
 
-    # OpenShell gateway start can fail with "Corrupted cluster state"
-    # if a previous run was interrupted; the CLI auto-cleans the bad
-    # state and instructs the caller to retry. Wrap up to 3 attempts so
-    # the test doesn't fail on a single transient corruption.
-    last_err = ""
-    for attempt in range(3):
-        result = subprocess.run(
-            [
-                "openshell",
-                "gateway",
-                "start",
-                "--name",
-                GATEWAY_NAME,
-                "--port",
-                str(GATEWAY_PORT),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode == 0:
-            break
-        last_err = result.stderr
-        if "Corrupted cluster state" in result.stderr:
-            # CLI cleaned up; give Docker a beat then retry.
-            _time.sleep(5)
-            continue
-        # Other failure — don't retry; surface the original error.
-        break
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start OpenShell gateway: {last_err[:500]}")
+@pytest.fixture(scope="module")
+def openshell_gateway(tmp_path_factory):
+    """Start this module's OpenShell gateway in a private config root.
 
-    subprocess.run(
-        ["openshell", "gateway", "select", GATEWAY_NAME],
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
+    ``XDG_CONFIG_HOME`` points at that root for the module, so the CLI
+    registers and activates ``GATEWAY_NAME`` there and the SDK resolves it
+    there. The host's OpenShell registrations, its active-gateway pointer and
+    every other gateway's container (the e2e stack's ``openshell`` among them)
+    stay exactly as they were: only this module's own container is created and
+    removed.
+    """
+    from tests.agents.integration.conftest import OpenShellTestGateway
 
-    yield GATEWAY_NAME
-
-    subprocess.run(
-        ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True,
-        timeout=120,
-        check=False,
-    )
+    host_config_before = _host_openshell_config()
+    other_containers_before = _other_gateway_containers()
+    config_home = tmp_path_factory.mktemp("openshell-config")
+    gateway = OpenShellTestGateway(GATEWAY_NAME, GATEWAY_PORT, config_home)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("XDG_CONFIG_HOME", str(config_home))
+        mp.delenv("OPENSHELL_GATEWAY", raising=False)
+        mp.delenv("OPENSHELL_GATEWAY_ENDPOINT", raising=False)
+        gateway.start()
+        try:
+            assert json.loads(gateway.metadata_path.read_text()) == {
+                "name": GATEWAY_NAME,
+                "gateway_endpoint": f"https://127.0.0.1:{GATEWAY_PORT}",
+                "is_remote": False,
+                "gateway_port": GATEWAY_PORT,
+            }
+            assert _host_openshell_config() == host_config_before
+            yield GATEWAY_NAME
+        finally:
+            gateway.destroy()
+    assert _host_openshell_config() == host_config_before
+    assert _other_gateway_containers() == other_containers_before
 
 
 class TestSandboxExecutionSDK:

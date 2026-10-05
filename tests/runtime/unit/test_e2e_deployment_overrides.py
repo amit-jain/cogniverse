@@ -20,7 +20,7 @@ class TestE2EDeploymentOverrides:
             patch.object(
                 inference, "_e2e_docker_network_gateway_ip", return_value="172.20.0.1"
             ),
-            patch("cogniverse_cli.sandbox.active_gateway_metadata", return_value={}),
+            patch.object(inference, "e2e_gateway_metadata", return_value={}),
             patch(
                 "cogniverse_cli.sandbox.pod_gateway_endpoint",
                 return_value="https://host:28080",
