@@ -11,11 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from cogniverse_agents.entity_extraction_agent import (
-    EntityExtractionAgent,
-    EntityExtractionDeps,
-    EntityExtractionInput,
-)
 from cogniverse_synthetic.generators.base import normalize_text
 from cogniverse_synthetic.topics import (
     MIN_SALIENCY_CORPUS_RECORDS,
@@ -23,7 +18,6 @@ from cogniverse_synthetic.topics import (
     extract_topic,
     topic_source_text,
 )
-from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.memory_store import InMemoryConfigStore
 
 CORPUS_DIR = Path(__file__).resolve().parent / "data" / "human_captions"
@@ -218,61 +212,6 @@ def test_identifier_only_record_yields_no_topic():
     assert extract_topic({"topic": "v_-6dz6tBH77I.txt"}, saliency=saliency) is None
 
 
-@pytest.mark.asyncio
-async def test_big_buck_bunny_corpus_pins_zero_and_rich_entity_outputs():
-    records = _big_buck_bunny_records()
-    saliency = TopicSaliency.from_records(records)
-
-    zero_record = records[0]
-    rich_record = records[20]
-
-    zero_topic = extract_topic(zero_record, saliency=saliency)
-    rich_topic = extract_topic(rich_record, saliency=saliency)
-
-    assert zero_topic == "challenging to identify specific colors comprehensively"
-    assert rich_topic == "atmospheric conditions such as wildfires causing"
-
-    agent = EntityExtractionAgent(deps=EntityExtractionDeps())
-    agent.telemetry_manager = RecordingTelemetryManager()
-    agent.bind_config_manager(_memory_config_manager())
-
-    zero_result = await agent._process_impl(
-        EntityExtractionInput(query=zero_topic, tenant_id="acme")
-    )
-    assert zero_result.query == zero_topic
-    assert zero_result.entity_count == 0
-    assert zero_result.has_entities is False
-    assert zero_result.entities == []
-    assert zero_result.relationships == []
-    assert zero_result.path_used == "fast"
-
-    rich_result = await agent._process_impl(
-        EntityExtractionInput(query=rich_topic, tenant_id="acme")
-    )
-    assert rich_result.query == rich_topic
-    assert rich_result.entity_count == 2
-    assert rich_result.has_entities is True
-    assert [
-        (entity.text, entity.type, entity.context) for entity in rich_result.entities
-    ] == [
-        (
-            "atmospheric conditions",
-            "CONCEPT",
-            "atmospheric conditions such as wildfires causing",
-        ),
-        (
-            "wildfires",
-            "EVENT",
-            "tmospheric conditions such as wildfires causing",
-        ),
-    ]
-    assert [
-        (relationship.subject, relationship.relation, relationship.object)
-        for relationship in rich_result.relationships
-    ] == [("atmospheric conditions", "as", "wildfires")]
-    assert rich_result.path_used == "fast"
-
-
 def _ingested_segment_records() -> list[dict[str, str]]:
     """Records shaped exactly as ``metadata.sampled_content`` carries them."""
     captions = json.loads(INGESTED_SEGMENT_CORPUS.read_text())
@@ -438,3 +377,18 @@ def test_sample_video_corpus_pins_exact_topics():
         "also some trees dotted around, contributing",
         "vegetation looks somewhat dry, with patches",
     ]
+
+
+def test_big_buck_bunny_corpus_picks_each_records_topic_from_its_own_text():
+    """The topics the served-GLiNER test extracts entities from
+    (tests/synthetic/integration/test_topic_saliency_served_gliner.py)."""
+    records = _big_buck_bunny_records()
+    saliency = TopicSaliency.from_records(records)
+
+    zero_topic = extract_topic(records[0], saliency=saliency)
+    rich_topic = extract_topic(records[20], saliency=saliency)
+
+    assert zero_topic == "challenging to identify specific colors comprehensively"
+    assert rich_topic == "atmospheric conditions such as wildfires causing"
+    assert zero_topic in normalize_text(records[0]["description"])
+    assert rich_topic in normalize_text(records[20]["description"])

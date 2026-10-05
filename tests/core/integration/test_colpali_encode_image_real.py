@@ -1,4 +1,4 @@
-"""Real ColPali model behind ColPaliFamilyQueryEncoder.encode_image.
+"""The served ColPali-family model behind ColPaliFamilyQueryEncoder.encode_image.
 
 encode_image exists so a query IMAGE can be embedded by the same model that
 embedded the stored images, making image-to-image MaxSim meaningful. The thing
@@ -8,11 +8,9 @@ encoder to score each one closer to itself than to the other. An encoder that
 returned a constant, ignored its input, or embedded only the image dimensions
 would pass a shape check and fail here.
 
-Uses a real ColPali model (colsmol-500m) loaded locally on CPU — no stub, no
-canned vectors. The model that image search deploys is Tomoro ColQwen3, which
-is remote-only and needs a GPU vLLM sidecar; colsmol is the same ColPali family
-and the same code path (processor.process_images -> model forward), so it pins
-encode_image's real behaviour on hardware that is available here.
+Uses the model image search deploys, Tomoro ColQwen3, served by the
+cogniverse-e2e cluster's ``vllm_colpali`` service — no stub, no canned vectors,
+nothing loaded in-process.
 """
 
 from __future__ import annotations
@@ -29,8 +27,6 @@ pytestmark = [
     pytest.mark.requires_inference("vllm_colpali"),
     pytest.mark.slow,
 ]
-
-MODEL = "vidore/colsmol-500m"
 
 
 def _max_sim(query: np.ndarray, doc: np.ndarray) -> float:
@@ -54,18 +50,26 @@ def _horizontal_stripes() -> Image.Image:
 
 
 @pytest.fixture(scope="module")
-def encoder():
-    return ColPaliFamilyQueryEncoder(model_name=MODEL, model_loader="colpali")
+def encoder(resolved_inference_endpoints):
+    endpoint = resolved_inference_endpoints["vllm_colpali"]
+    return ColPaliFamilyQueryEncoder(
+        model_name=endpoint.model_id,
+        model_loader="colqwen",
+        inference_service_url=endpoint.base_url,
+    )
 
 
-class TestEncodeImageRealModel:
+class TestEncodeImageServedModel:
     def test_emits_multi_vector_patches_of_the_model_dim(self, encoder):
         emb = encoder.encode_image(_vertical_split())
 
         assert isinstance(emb, np.ndarray)
         assert emb.ndim == 2, f"expected (patches, dim), got {emb.shape}"
         patches, dim = emb.shape
-        assert dim == 128, f"colsmol emits 128-d ColPali patches, got {dim}"
+        assert dim == ColPaliFamilyQueryEncoder.embedding_dim, (
+            f"Tomoro emits {ColPaliFamilyQueryEncoder.embedding_dim}-d patches, "
+            f"got {dim}"
+        )
         assert patches > 1, f"expected a multi-vector, got {patches} patch"
         assert emb.dtype == np.float32
         assert np.isfinite(emb).all()

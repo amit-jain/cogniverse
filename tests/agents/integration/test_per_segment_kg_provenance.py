@@ -293,7 +293,7 @@ def graph_vespa(shared_memory_vespa):
 
 
 @pytest.fixture(scope="module")
-def graph_manager(graph_vespa, pylate_server):
+def graph_manager(graph_vespa, pylate_server, gliner_url):
     """GraphManager wired to test Vespa + real PyLate sidecar."""
     from cogniverse_core.registries.backend_registry import BackendRegistry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -319,19 +319,18 @@ def graph_manager(graph_vespa, pylate_server):
             backend_port=http_port,
             telemetry_url="",
             telemetry_collector_endpoint="",
+            inference_service_urls={"gliner": gliner_url},
         )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     # DocExtractor resolves the GLiNER endpoint via the ConfigManager
-    # singleton. Against a k3d-backed singleton that returns the in-cluster
-    # service URL (``http://cogniverse-gliner:8080``, unresolvable from the
-    # host), GLiNER prediction fails and entity extraction silently degrades
-    # to a capitalized-phrase heuristic — which drops lowercase/number
-    # entities (``radium``/``1898``) and leaks pronouns (``She``), diverging
-    # from the goldens. Point the singleton at this fixture's config_manager
-    # (empty ``inference_service_urls``) so ``_discover_gliner_url`` returns
-    # None and GLiNER loads locally and deterministically.
+    # singleton. A k3d-backed singleton returns the in-cluster service URL
+    # (``http://cogniverse-gliner:8080``, unresolvable from the host), GLiNER
+    # prediction fails and entity extraction degrades to a capitalized-phrase
+    # heuristic that diverges from the goldens. Point the singleton at this
+    # fixture's config_manager, which names the cluster's GLiNER service as
+    # seen from the host.
     import cogniverse_foundation.config.utils as _cfg_utils
 
     _prev_singleton = _cfg_utils._config_manager_singleton

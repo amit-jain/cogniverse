@@ -328,7 +328,7 @@ def colbert_endpoint(request):
 
 
 @pytest.fixture(scope="module")
-def content_backref_env(shared_memory_vespa, colbert_endpoint):
+def content_backref_env(shared_memory_vespa, colbert_endpoint, gliner_url):
     """Deploy the KG schema + the content frame schema, wire factories.
 
     Returns a dict with everything the back-ref tests need:
@@ -361,6 +361,7 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
     os.environ["VESPA_URL"] = base_url
     inference_urls = json.loads(prior_inference_urls or "{}")
     inference_urls["colbert_pylate"] = colbert_endpoint
+    inference_urls["gliner"] = gliner_url
     os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(inference_urls)
 
     # Wire a GraphManager factory into the graph router so the ingestion
