@@ -186,7 +186,7 @@ _CI_SELECTION_COMMANDS = [
     " --ignore=tests/cli/integration/test_release_scripts.py"
     " --ignore=tests/cli/integration/test_release_clean_install.py"
     " --ignore=tests/cli/integration/test_image_model_provisioning.py"
-    " -v -p no:cacheprovider --tb=long",
+    " -m 'not local_only' -v -p no:cacheprovider --tb=long",
     "JAX_PLATFORM_NAME=cpu uv run python -m pytest"
     " tests/cli/integration/test_release_scripts.py"
     " tests/cli/integration/test_release_clean_install.py"
