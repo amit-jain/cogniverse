@@ -103,7 +103,8 @@ def _format_run_age(started_at: Optional[str], now: datetime) -> str:
 
     Argo sets ``startedAt`` when its controller starts the Workflow, so a run
     without one has ``"not started"``; a start Argo reports but that does not
-    parse is ``"unknown"``.
+    parse is ``"unknown"``. A start slightly ahead of ``now`` (the controller's
+    clock ahead of the reader's) is ``"0m ago"``, never a negative age.
     """
     if not started_at:
         return "not started"
@@ -113,7 +114,7 @@ def _format_run_age(started_at: Optional[str], now: datetime) -> str:
         return "unknown"
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
-    minutes = int((now - started).total_seconds() // 60)
+    minutes = int(max((now - started).total_seconds(), 0.0) // 60)
     if minutes < 60:
         return f"{minutes}m ago"
     if minutes < 1440:

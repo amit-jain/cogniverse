@@ -92,6 +92,7 @@ from tests.e2e.batch_optimization import (
     _subprocess_failure_message,
     _synthetic_top_up_counts,
     _wait_for_seeded_span_lower_bound_in_pod,
+    argo_phases_between,
     optimization_cli_document,
 )
 from tests.e2e.cluster import IN_POD_TELEMETRY_PRELUDE, KUBECTL_CONTEXT, TENANT_ID
@@ -6950,13 +6951,27 @@ class TestOptimizationRunListing:
         rendered_by = datetime.now(timezone.utc)
         runs_after = _runs_agreeing_with_status(owner, submitted)
 
-        # The newest run can start, or its age can cross a minute, while the
-        # page renders; the tile is the newest run as listed on either side of
-        # the render, aged at either end of it.
+        # The newest run can move through Argo's phases, and its age can cross
+        # a minute, while the page renders; the tile shows the newest run in
+        # one of the phases from the listing before the render through the
+        # listing after it, aged at either end of the render.
+        newest, newest_after = runs[0], runs_after[0]
+        assert newest["workflow_name"] == newest_after["workflow_name"], (
+            runs,
+            runs_after,
+        )
+        phases = argo_phases_between(newest["phase"], newest_after["phase"])
+        # The first phase starts as listed before the render; every later
+        # phase, Running included, has the start Argo listed after it.
+        started_ats = {phase: {newest_after["started_at"]} for phase in phases}
+        if len(phases) > 1:
+            started_ats[phases[0]] = {newest["started_at"]}
+        else:
+            started_ats[phases[0]].add(newest["started_at"])
         last_optimization = {
-            f"{_format_run_age(listed[0]['started_at'], at)} "
-            f"({listed[0]['phase'] or 'Pending'})"
-            for listed in (runs, runs_after)
+            f"{_format_run_age(started_at, at)} ({phase})"
+            for phase in phases
+            for started_at in started_ats[phase]
             for at in (rendered_from, rendered_by)
         }
         assert set(tiles) == {

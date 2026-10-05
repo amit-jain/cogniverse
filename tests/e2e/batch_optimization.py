@@ -717,3 +717,29 @@ def _reset_module_artifact_script(
         "print('__RESET__' + ('1' if differs else '0') + ':' + str(version))"
     )
     return script
+
+
+ARGO_TERMINAL_PHASES = ("Succeeded", "Failed", "Error")
+
+
+def argo_phases_between(before: str | None, after: str | None) -> tuple[str, ...]:
+    """Every phase a workflow can show between two reads, in Argo's order.
+
+    Argo moves a workflow Pending -> Running -> one terminal phase; an empty
+    phase is Pending. A read between ``before`` and ``after`` shows one of
+    the phases from ``before`` through ``after``. A pair Argo cannot produce
+    (a step backwards, or out of a terminal phase) raises.
+    """
+    order = {"Pending": 0, "Running": 1, **{p: 2 for p in ARGO_TERMINAL_PHASES}}
+    first, last = before or "Pending", after or "Pending"
+    if first not in order or last not in order:
+        raise ValueError(f"not an Argo workflow phase: {before!r} -> {after!r}")
+    if first == last:
+        return (first,)
+    if order[last] <= order[first]:
+        raise ValueError(f"Argo cannot move a workflow from {first} to {last}")
+    return tuple(
+        phase
+        for phase in ("Pending", "Running")
+        if order[first] <= order[phase] < order[last]
+    ) + (last,)
