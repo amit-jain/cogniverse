@@ -3038,6 +3038,56 @@ class TestSimbaQueryEnhancement:
         assert lineage[0]["score"] is None
         assert self._active_version(provider, "simba_query_enhancement") == 1
 
+    def test_a_served_base_state_is_not_rescored_into_a_rollback(self):
+        """The served artifact is the base module itself: its score is the
+        baseline, not a second, noisier draw that reads as worse than base."""
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model",
+                "simba_query_enhancement",
+                json.dumps(QueryEnhancementModule().dump_state(), default=str),
+            )
+        )
+        base_scores = iter([0.5, 0.4])
+
+        def noisy(module, holdout):
+            if getattr(module, "_compiled_marker", False):
+                return 0.45, len(holdout)
+            return next(base_scores), len(holdout)
+
+        result = self._run(provider, min_improvement=0.0, scorer=noisy)
+
+        assert (
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+        ) == (0.5, 0.5, 0.45, "keep")
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
+        # keep persists the candidate as an inactive version and serves the
+        # base state the tenant already had.
+        assert self._active_version(provider, "simba_query_enhancement") is None
+        assert self._persisted_state(provider) == json.loads(
+            json.dumps(QueryEnhancementModule().dump_state(), default=str)
+        )
+
     def test_keeps_a_persisted_artifact_the_candidate_does_not_beat(self):
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
@@ -5761,6 +5811,58 @@ class TestProfileSelectionOptimization:
         ] == [warning_message]
 
     @pytest.mark.asyncio
+    async def test_a_served_base_state_is_not_rescored_into_a_rollback(self):
+        """The served artifact is the base module itself: its score is the
+        baseline, so a noisier second draw cannot roll back to that same
+        state and discard the run's candidate."""
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        base_state = json.dumps(ProfileSelectionModule().dump_state(), default=str)
+        base_scores = iter([1.0, 0.9])
+
+        def noisy(module, holdout):
+            state = json.loads(json.dumps(module.dump_state(), default=str))
+            if state == json.loads(base_state):
+                return next(base_scores)
+            return 0.95
+
+        state, result = await self._run(
+            provider,
+            current_blob=base_state,
+            floor=(1, 1),
+            min_improvement=0.05,
+            score_by_module=noisy,
+        )
+
+        assert (
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+        ) == (1.0, 1.0, 0.95, "keep")
+        assert [save["decision"] for save in state["versioned_saves"]] == ["keep"]
+        assert state["versioned_saves"][0]["content"] != base_state
+        assert state["activate_calls"] == []
+
     async def test_profile_rollback_persists_and_activates_base_state(self):
         from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 
@@ -7985,6 +8087,49 @@ class TestEntityExtractionOptimization:
         assert state["active_blob"] == current_blob
 
     @pytest.mark.asyncio
+    async def test_a_served_base_state_is_not_rescored_into_a_rollback(self):
+        """The served artifact is the base module itself: its score is the
+        baseline, so the run's version holds the compiled candidate rather
+        than a rollback to that same base state."""
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        base_scores = iter([1.0, 0.9])
+
+        def noisy(module, holdout):
+            state = json.loads(json.dumps(module.dump_state(), default=str))
+            if state.get("compiled") == "entity_extraction":
+                return 0.95
+            return next(base_scores)
+
+        state, result = await self._run(
+            provider,
+            current_blob=self._base_state(),
+            floor=(1, 1),
+            score_by_module=noisy,
+        )
+
+        assert (
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+        ) == (1.0, 1.0, 0.95, "keep")
+        assert [
+            (save["decision"], save["content"]) for save in state["versioned_saves"]
+        ] == [("keep", '{"compiled": "entity_extraction"}')]
+        assert state["activate_calls"] == []
+
     async def test_entity_extraction_rollback_persists_and_activates_base_state(self):
         rows = [
             {

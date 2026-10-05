@@ -1143,6 +1143,29 @@ async def _load_current_artifact_for_scoring(
     return current_module
 
 
+def _current_score(
+    current_module: Optional[Any],
+    module_factory: Callable[[], Any],
+    baseline_score: float,
+    score: Callable[[Any], float],
+) -> Optional[float]:
+    """The served artifact's score, or None when nothing is served.
+
+    An artifact whose state is the base module's (a fresh tenant's reset, a
+    rollback) is the module ``baseline_score`` already scored. Scoring it a
+    second time measures only the LM's run-to-run noise, and a draw below the
+    baseline would read as "the served artifact is worse than base" and roll
+    back to the very same state, discarding the run's candidate.
+    """
+    if current_module is None:
+        return None
+    if json.dumps(current_module.dump_state(), sort_keys=True, default=str) == (
+        json.dumps(module_factory().dump_state(), sort_keys=True, default=str)
+    ):
+        return baseline_score
+    return score(current_module)
+
+
 def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     """(query -> entities) training pairs from entity_extraction spans.
 
@@ -4103,10 +4126,11 @@ async def run_simba_optimization(
             )
             compiled = teleprompter.compile(QueryEnhancementModule(), trainset=trainset)
 
-        current_score = (
-            _query_enhancement_scores(current_module, holdout)[0]
-            if current_module is not None
-            else None
+        current_score = _current_score(
+            current_module,
+            QueryEnhancementModule,
+            baseline_score,
+            lambda module: _query_enhancement_scores(module, holdout)[0],
         )
         candidate_score = (
             _query_enhancement_scores(compiled, holdout)[0]
@@ -5066,10 +5090,11 @@ async def run_profile_optimization(
             )
             compiled = teleprompter.compile(ProfileSelectionModule(), trainset=trainset)
 
-        current_score = (
-            _profile_selection_scores(current_module, holdout)
-            if current_module is not None
-            else None
+        current_score = _current_score(
+            current_module,
+            ProfileSelectionModule,
+            baseline_score,
+            lambda module: _profile_selection_scores(module, holdout),
         )
         candidate_score = (
             _profile_selection_scores(compiled, holdout)
@@ -5354,10 +5379,11 @@ async def run_entity_extraction_optimization(
             current_blob=current_blob,
             module_factory=EntityExtractionModule,
         )
-        current_score = (
-            _entity_extraction_scores(current_module, holdout)
-            if current_module is not None
-            else None
+        current_score = _current_score(
+            current_module,
+            EntityExtractionModule,
+            baseline_score,
+            lambda module: _entity_extraction_scores(module, holdout),
         )
 
         compiled = None

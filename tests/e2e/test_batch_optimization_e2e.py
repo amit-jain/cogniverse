@@ -4976,6 +4976,13 @@ class TestEntityExtractionOptimization:
         version_blob = batch["version_blob"]
 
         assert result["status"] == "success", result
+        # The module setup serves the base module, and only this job writes
+        # the tenant's entity_extraction artifact, so the served artifact is
+        # the module the baseline scored: the job scores it as the baseline,
+        # never rolls back to that same state, and its version holds the
+        # compiled candidate whose demos the bootstrap report counts.
+        assert result["current_score"] == result["baseline_score"], result
+        assert result["decision"] in {"promote", "keep"}, result
         artifact = json.loads(version_blob)
         assert list(artifact) == ["extractor.predict"], artifact
         module = artifact["extractor.predict"]

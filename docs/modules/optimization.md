@@ -412,7 +412,11 @@ the enhanced query differs from the query, has expansion terms and, given a grou
 of its entities; else 0.0). The base module, the persisted artifact and the compiled candidate are scored
 on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
 served module by the tenant's `optimization_improvement_threshold`), `keep` leaves the artifact, `rollback`
-persists the base state over an artifact that scores below base, `reject` persists nothing. Without a
+persists the base state over an artifact that scores below base, `reject` persists nothing. A persisted
+artifact whose state is the base module's (`_current_score`) takes the baseline score instead of being
+scored again: a second scoring of the same module measures only the LM's noise, and a lower draw would
+roll back to that same state and discard the candidate. The SIMBA, profile and entity-extraction runs all
+score the served artifact this way. Without a
 holdout the run returns `no_eval_material` and persists nothing. The artifact key is
 `("model", "simba_query_enhancement")`; `QueryEnhancementAgent` reloads it via
 `am.load_blob("model", "simba_query_enhancement")`.
