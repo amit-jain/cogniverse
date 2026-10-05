@@ -908,7 +908,7 @@ class TestEmbeddingGeneratorImpl:
         """
         from PIL import Image as PILImage
 
-        config = {**frame_based_config, "token_pool_factor": 3}
+        config = {**frame_based_config, "model_config": {"token_pool_factor": 3}}
         generator, client = self._make_remote_generator(
             config, mock_logger, mock_backend_client
         )
@@ -928,6 +928,62 @@ class TestEmbeddingGeneratorImpl:
         assert result is not None
         assert result.shape == (10, 320)
         assert result.dtype == np.float32
+
+    @pytest.mark.parametrize(
+        "profile_name",
+        [
+            "video_colpali_smol500_mv_frame",
+            "image_colpali_mv",
+            "document_visual_colpali",
+            "video_colqwen_omni_mv_chunk_30s",
+        ],
+    )
+    def test_shipped_profiles_store_every_document_token(
+        self, profile_name, mock_logger, mock_backend_client, tmp_path
+    ):
+        """The shipped profiles declare token_pool_factor 1 under model_config,
+        the nesting BackendProfileConfig hands the generator: a frame of 227
+        tokens (a 640x360 frame) is fed with all 227, float and binary, exactly
+        as a generator configured without pooling feeds it."""
+        import json
+
+        from PIL import Image as PILImage
+
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
+
+        repo = Path(__file__).resolve().parents[3]
+        shipped = json.loads((repo / "configs/config.json").read_text())
+        profile = BackendProfileConfig.from_dict(
+            profile_name, shipped["backend"]["profiles"][profile_name]
+        ).to_dict()
+        unpooled_profile = {k: v for k, v in profile.items() if k != "model_config"}
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((227, 320)).astype(np.float32)
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+
+        fed, factors = {}, {}
+        for name, config in (("shipped", profile), ("unpooled", unpooled_profile)):
+            generator, client = self._make_remote_generator(
+                config, mock_logger, mock_backend_client
+            )
+            with patch.object(
+                client, "process_images", return_value={"embeddings": tokens}
+            ):
+                embeddings = generator._generate_frame_embeddings(frame_path)
+            document = generator._create_segment_document(
+                "video", {"start_time": 0.0, "end_time": 1.0}, 0, 1, embeddings
+            )
+            factors[name] = generator._token_pool_factor
+            fed[name] = VespaEmbeddingProcessor(
+                schema_name=profile["schema_name"], single_vector=False
+            ).process_embeddings(document.embeddings["embedding"]["data"])
+
+        assert factors == {"shipped": 1, "unpooled": None}
+        assert len(fed["shipped"]["embedding"]) == 227
+        assert len(fed["shipped"]["embedding_binary"]) == 227
+        assert fed["shipped"] == fed["unpooled"]
 
     def test_generate_frame_embeddings_no_pooling_without_factor(
         self, frame_based_config, mock_logger, mock_backend_client, tmp_path
@@ -977,7 +1033,7 @@ class TestEmbeddingGeneratorImpl:
             "fps": 1.0,
             "embedding_type": "multi_vector",
             "model_loader": "colqwen",
-            "token_pool_factor": 3,
+            "model_config": {"token_pool_factor": 3},
         }
         generator, client = self._make_remote_generator(
             config, mock_logger, mock_backend_client
@@ -1024,7 +1080,7 @@ class TestEmbeddingGeneratorImpl:
             **frame_based_config,
             "embedding_type": "multi_vector",
             "model_loader": "xclip",
-            "token_pool_factor": 3,
+            "model_config": {"token_pool_factor": 3},
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.xclip_loader = Mock()
