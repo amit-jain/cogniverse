@@ -49,7 +49,7 @@ libs/runtime/cogniverse_runtime/ingestion/
         ├── embedding_generator.py      # Base classes and interfaces
         ├── embedding_generator_impl.py # Backend-agnostic embedding implementation
         ├── embedding_generator_factory.py # Factory for creating generators
-        ├── token_pooling.py            # Token-level pooling utilities
+        ├── token_pooling.py            # Hierarchical token pooling (numpy/scipy), model_config.token_pool_factor
         └── backend_factory.py          # Backend client creation
 ```
 
@@ -1620,6 +1620,7 @@ These plain classes back the processors above and are not auto-discovered by
 - `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
 - `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
 - `VLMDescriptor` (`vlm_descriptor.py`) — HTTP client for an OpenAI-compatible `/v1` vision chat endpoint; used by `VLMProcessor`.
+- `pool_document_tokens` (`embedding_generator/token_pooling.py`) — hierarchical token pooling of a document's multi-vector before feed (Ward-linkage clusters of its tokens, cut at `n_tokens // pool_factor`, each mean-pooled and L2-renormalized), the method of colpali_engine's `HierarchicalTokenPooler` in numpy and scipy. `EmbeddingGeneratorImpl` applies it to frame, chunk and image multi-vectors when the profile sets `model_config.token_pool_factor`; queries are never pooled.
 - `resolve_served_model_id(...)` (`served_model.py`) — returns the model id an OpenAI-compatible `/v1` endpoint serves, used by `VLMDescriptor` and `AudioProcessor`'s remote path. The remote services scale to zero, so discovery retries a cold endpoint until the service spec's `boot_deadline_seconds`, caches the answer per process per endpoint, and raises `ServedModelUnavailable` naming the endpoint when the budget runs out or the endpoint answers a status waiting cannot repair.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
