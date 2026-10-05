@@ -232,7 +232,14 @@ cluster before Helm installs the runtime, and deploys with
 `runtime.sandbox.enabled=true`, `runtime.sandbox.gatewayEndpoint` set to the
 gateway's own port and `runtime.sandbox.hostGatewayIP` set to the k3d network
 gateway (so `host.docker.internal` resolves in the runtime pod). Those values
-are part of the deploy identity. On reuse the sync runs again and a changed
+are part of the deploy identity. The gateway is the e2e stack's own, by name:
+`openshell` on port 28080 (`OPENSHELL_GATEWAY_HOST_PORT`). The deploy and the
+cert sync fail, naming the active gateway, when that gateway is unregistered,
+on another port, or not the host's active gateway, so no other gateway is ever
+deployed into the cluster. Integration tests that start their own gateway
+(`OpenShellTestGateway` in `tests/agents/integration/conftest.py`) register it
+under a private `XDG_CONFIG_HOME`, remove only their own container, and assert
+that the host's `~/.config/openshell` stays byte-identical. On reuse the sync runs again and a changed
 secret rolls the runtime deployment, because the pod mounts the files with
 `subPath`.
 

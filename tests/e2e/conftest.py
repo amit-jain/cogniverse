@@ -66,8 +66,10 @@ from tests.e2e.cron_guard import (
     _suspend_cronworkflows_for_session,
 )
 from tests.e2e.inference import (
+    E2EGatewayError,
     _e2e_deployment_overrides,
     _e2e_required_model_probes,
+    e2e_gateway_metadata,
     e2e_required_health_probes,
 )
 from tests.e2e.report import E2E_REPORT_JSON, E2E_REPORT_MD, E2EReportCollector
@@ -2207,6 +2209,10 @@ def _ensure_host_sandbox_gateway() -> None:
             "OpenShell host gateway bootstrap returned false; expected=True",
             pytrace=False,
         )
+    try:
+        e2e_gateway_metadata()
+    except E2EGatewayError as exc:
+        pytest.fail(str(exc), pytrace=False)
 
 
 def _openshell_mtls_fingerprint(kube_context: str) -> str:
@@ -2238,6 +2244,12 @@ def _sync_sandbox_into_cluster(kube_context: str, *, roll_runtime: bool) -> None
     """
     from cogniverse_cli.sandbox import sync_gateway_certs_to_cluster
 
+    # The sync copies the active gateway's certs: refuse unless that is the
+    # e2e stack's own gateway.
+    try:
+        e2e_gateway_metadata()
+    except E2EGatewayError as exc:
+        pytest.fail(str(exc), pytrace=False)
     before = _openshell_mtls_fingerprint(kube_context)
     try:
         synced = sync_gateway_certs_to_cluster(kube_context=kube_context)

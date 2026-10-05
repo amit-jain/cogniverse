@@ -889,9 +889,9 @@ class OpenShellTestGateway:
         )
 
     def _remove_docker_state(self) -> None:
-        port_holders = _docker("ps", "-aq", "--filter", f"publish={self.port}")
-        for cid in port_holders.stdout.split():
-            _docker("rm", "-f", cid)
+        # Only this gateway's own container, volume and network: a container
+        # of any other name holding the port is not ours to remove, and the
+        # start then fails naming the port.
         _docker("rm", "-f", self.container)
         _docker("volume", "rm", "-f", self.container)
         _docker("network", "rm", self.container)
