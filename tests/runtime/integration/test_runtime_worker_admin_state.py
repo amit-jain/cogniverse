@@ -42,6 +42,9 @@ def runtime(
     with _runtime(
         tmp_path_factory.mktemp("admin_state"),
         workflow_state_redis_url,
+        # No inference service is configured: the invite test asserts the
+        # Mem0 refusal that names exactly this empty set.
+        extra_env={"INFERENCE_SERVICE_URLS": json.dumps({})},
         embedder_env=semantic_embedder_env,
     ) as (
         process,
