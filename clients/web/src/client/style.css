@@ -110,3 +110,8 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .bar-track { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
 .bar-fill { display: block; height: 100%; background: var(--accent); }
 .bar-value { font-variant-numeric: tabular-nums; }
+.section-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.section-tabs button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.plot { margin: 14px 0 0; }
+.plot-area { width: 100%; min-height: 360px; }
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; }

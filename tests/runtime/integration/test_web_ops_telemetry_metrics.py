@@ -8,9 +8,11 @@ forwarding proxy in front of Phoenix's HTTP API, so a test can fail the reads.
 
 from __future__ import annotations
 
+import re
 import time
 from uuid import uuid4
 
+import pandas as pd
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
@@ -22,7 +24,12 @@ from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_runtime.optimization_cli import emit_ab_compare_span
 from tests.utils.approval_review import review_config_manager
 from tests.utils.http_fault_proxy import InterceptFaultProxy
-from tests.utils.telemetry_metric_spans import ab_result, record_profile_selection
+from tests.utils.telemetry_metric_spans import (
+    SEARCH,
+    ab_result,
+    record_profile_selection,
+    record_sample_traces,
+)
 from tests.utils.web_client import (
     build_web_client,
     install_web_client,
@@ -247,3 +254,206 @@ def test_rlm_ab_with_no_comparisons_says_how_to_record_them(page, web_url, telem
         "No comparisons in this window. Run cogniverse-optim --mode ab-compare "
         "for this tenant to record some."
     )
+
+
+def _plot(page: Page, title: str):
+    """The series Plotly drew in the chart ``title``."""
+    area = page.get_by_role("figure", name=title, exact=True).locator(".plot-area")
+    expect(area).to_have_class(re.compile(r"\bjs-plotly-plot\b"))
+    return area.evaluate(
+        """el => el.data.map(t => {
+            const series = {name: t.name ?? null, type: t.type};
+            for (const key of ['x', 'y', 'z']) if (t[key] !== undefined) series[key] = t[key];
+            return series;
+        })"""
+    )
+
+
+def _facts(page: Page, label: str):
+    facts = page.locator(f'dl[aria-label="{label}"]')
+    return dict(
+        zip(
+            facts.locator("dt").all_inner_texts(),
+            facts.locator("dd").all_inner_texts(),
+            strict=True,
+        )
+    )
+
+
+def _section(page: Page, name: str):
+    page.get_by_role("navigation", name="Analytics sections").get_by_role(
+        "button", name=name, exact=True
+    ).click()
+    return page.get_by_role("region", name=name, exact=True)
+
+
+def _show_traces(page, web_url, tenant, want):
+    _show(page, web_url, "analytics", "Analytics", "Show traces", tenant)
+    region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
+    deadline = time.monotonic() + 90
+    while True:
+        expect(region.locator("dl, p.muted, .alert").first).to_be_visible()
+        facts = _facts(page, "Trace summary") if region.locator("dl").count() else {}
+        if facts.get("Traces") == str(want) or time.monotonic() > deadline:
+            return region, facts
+        region.get_by_role("button", name="Refresh").click()
+        page.wait_for_timeout(2000)
+
+
+def _buckets(rows, width_ms):
+    buckets = {}
+    for row in rows:
+        start = pd.Timestamp(row["start_time"]).value // 1_000_000
+        key = start // width_ms * width_ms
+        buckets.setdefault(key, []).append(row["duration_ms"].expected)
+    return {
+        pd.Timestamp(key, unit="ms", tz="UTC").strftime("%Y-%m-%dT%H:%M:%S.000Z"): v
+        for key, v in sorted(buckets.items())
+    }
+
+
+def test_analytics_charts_and_explores_a_tenants_traces(page, web_url, telemetry):
+    tenant = _tenant("webtraces")
+    rows = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+
+    region, facts = _show_traces(page, web_url, tenant, 6)
+    assert facts == {
+        "Traces": "6",
+        "Succeeded": "5 (83.3%)",
+        "Mean latency": "341.7 ms",
+        "P95 latency": "850.0 ms",
+    }
+
+    overview = page.get_by_role("region", name="Overview", exact=True)
+    assert _rows(page, "Traces by operation") == [
+        [SEARCH, "5", "83.3%", "400.0 ms", "880.0 ms", "20.0%"],
+        ["agent.dispatch", "1", "16.7%", "50.0 ms", "50.0 ms", "0.0%"],
+    ]
+    expect(overview).to_be_visible()
+    assert _bars(page, "Latency percentiles") == [
+        ("Min", "50.0 ms"),
+        ("P50", "250.0 ms"),
+        ("P75", "375.0 ms"),
+        ("P90", "700.0 ms"),
+        ("P95", "850.0 ms"),
+        ("P99", "970.0 ms"),
+        ("Max", "1000.0 ms"),
+    ]
+
+    _section(page, "Time series")
+    buckets = _buckets(rows, 300_000)
+    assert _plot(page, "Traces over time") == [
+        {
+            "name": "Traces",
+            "type": "bar",
+            "x": list(buckets),
+            "y": [len(v) for v in buckets.values()],
+        }
+    ]
+    latency = _plot(page, "Latency over time")
+    assert [(s["name"], s["x"]) for s in latency] == [
+        ("Mean", list(buckets)),
+        ("P50", list(buckets)),
+        ("P95", list(buckets)),
+    ]
+    assert latency[0]["y"] == pytest.approx([sum(v) / len(v) for v in buckets.values()])
+
+    _section(page, "Distribution")
+    page.get_by_label("Group by").select_option("operation")
+    expect(page.get_by_role("figure", name="Latency histogram")).to_be_visible()
+    page.wait_for_function(
+        """() => document.querySelector('figure[aria-label="Latency histogram"] .plot-area')
+            ?.data?.length === 2"""
+    )
+    assert _plot(page, "Latency histogram") == [
+        {"name": "agent.dispatch", "type": "histogram", "x": [50.0]},
+        {
+            "name": SEARCH,
+            "type": "histogram",
+            "x": [r["duration_ms"].expected for r in rows if r["operation"] == SEARCH],
+        },
+    ]
+
+    _section(page, "Heatmap")
+    page.get_by_label("Columns").select_option("operation")
+    page.get_by_label("Rows").select_option("status")
+    assert _plot(page, "Mean latency by status and operation") == [
+        {
+            "name": None,
+            "type": "heatmap",
+            "x": ["agent.dispatch", SEARCH],
+            "y": ["failed", "succeeded"],
+            "z": [[None, 1000.0], [50.0, 250.0]],
+        }
+    ]
+
+    outliers = _section(page, "Outliers")
+    expect(outliers.locator("p.muted").first).to_have_text(
+        "Traces outside -250.0 ms to 750.0 ms (1.5 times the interquartile "
+        "range beyond the quartiles)."
+    )
+    assert [row[1:] for row in _rows(page, "Outlier traces")] == [
+        [
+            SEARCH,
+            "1000.0 ms",
+            "failed: backend down",
+            "video_colpali",
+            "bm25",
+            rows[4]["trace_id"],
+        ]
+    ]
+
+    _section(page, "Trace explorer")
+    assert [row[-1] for row in _rows(page, "Traces")] == [r["trace_id"] for r in rows]
+    page.get_by_label("Trace ID or operation").fill("DISPATCH")
+    assert [row[1:] for row in _rows(page, "Traces")] == [
+        [
+            "agent.dispatch",
+            "50.0 ms",
+            "succeeded",
+            "audio",
+            "semantic",
+            rows[5]["trace_id"],
+        ]
+    ]
+    page.get_by_label("Trace ID or operation").fill("")
+    page.get_by_label("Order").select_option("Slowest first")
+    assert [row[2] for row in _rows(page, "Traces")] == [
+        "1000.0 ms",
+        "400.0 ms",
+        "300.0 ms",
+        "200.0 ms",
+        "100.0 ms",
+        "50.0 ms",
+    ]
+
+    filters = region.get_by_role("form", name="Trace filters")
+    filters.get_by_label("Strategies").select_option(["bm25", "semantic"])
+    filters.get_by_role("button", name="Apply filters").click()
+    expect(page.locator('dl[aria-label="Trace summary"] dd').first).to_have_text("2")
+    assert _facts(page, "Trace summary") == {
+        "Traces": "2",
+        "Succeeded": "1 (50.0%)",
+        "Mean latency": "525.0 ms",
+        "P95 latency": "952.5 ms",
+    }
+
+
+def test_analytics_shows_an_outage_rather_than_no_traces(page, web_url, phoenix_proxy):
+    tenant = _tenant("webtracesoutage")
+    phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})
+    _show(page, web_url, "analytics", "Analytics", "Show traces", tenant)
+    region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
+    expect(region.get_by_role("alert")).to_have_text(
+        f"Could not read the traces of tenant {tenant}."
+    )
+    expect(region.get_by_text("No traces match in this window.")).to_have_count(0)
+
+
+def test_analytics_of_a_quiet_tenant_says_there_are_no_traces(page, web_url, telemetry):
+    tenant = _tenant("webtracesempty")
+    _show(page, web_url, "analytics", "Analytics", "Show traces", tenant)
+    region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
+    expect(region.locator("p.muted")).to_have_text("No traces match in this window.")
+    expect(page.get_by_role("navigation", name="Analytics sections")).to_have_count(0)

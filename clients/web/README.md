@@ -36,6 +36,7 @@ runtime's existing routes through `/api/runtime/*`.
 | Workflow reviews | For a chosen tenant and window, the orchestration workflows the orchestrator recorded, newest first, with their query, pattern, agents, time, outcome and latest review. As a named reviewer, rate a workflow's quality and say whether its pattern, agents and execution order were right, with suggestions and notes; the review is stored on the workflow's span. A telemetry outage shows as an error, never as an empty list. | `/admin/tenant/{tenant}/orchestration-workflows`, `/admin/tenant/{tenant}/orchestration-workflows/{span}/annotation` |
 | Profile metrics | For a chosen tenant and window, its profile selections per modality: count, P50, P95 and P99 latency and success rate, with bars for selections and P95 latency per modality. A telemetry outage shows as an error, never as an empty window. | `/admin/tenant/{tenant}/telemetry/profile-selection` |
 | RLM A/B | For a chosen tenant and window, its RLM A/B comparisons: average latency, token and judge-score change with RLM and how often RLM fell back, the same per queries dataset with a latency bar per dataset, and each comparison newest first. | `/admin/tenant/{tenant}/telemetry/rlm-ab` |
+| Analytics | For a chosen tenant and window, its traces filtered by operation, profiles and strategies: counts, success rate and latency, then an overview (latency percentiles and traces per operation), latency and trace counts over time, latency histograms and spread grouped by operation, profile, strategy or outcome, a mean-latency heatmap over two chosen fields, the traces outside Tukey's outlier bounds, and a searchable, sortable list of every trace. Charts are Plotly, loaded the first time one is shown. A telemetry outage shows as an error, never as no traces. | `/admin/tenant/{tenant}/telemetry/traces` |
 
 ## Setup
 
@@ -57,6 +58,10 @@ npm run build && npm start   # one server serving the built client
 
 The server turns off CopilotKit's usage telemetry unless
 `COPILOTKIT_TELEMETRY_DISABLED=false` is set.
+
+On `SIGTERM` or `SIGINT` the server stops accepting connections and exits once
+its requests finish; a request still running after 5 seconds (an ingest event
+stream, a runtime that does not answer) is cut.
 
 ## Tests
 

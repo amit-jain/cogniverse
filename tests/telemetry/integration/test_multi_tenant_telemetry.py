@@ -667,6 +667,71 @@ class TestGetSpansNameFilterRealPhoenix:
         manager.shutdown()
         TelemetryManager._instance = None
 
+    def test_roots_only_filter_keeps_one_span_per_trace(self, phoenix_container):
+        import asyncio
+
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"roots-{run_id}"
+        for trace in ("a", "b"):
+            with manager.span(name=f"root_{trace}", tenant_id=tenant):
+                with manager.span(name=f"child_{trace}", tenant_id=tenant):
+                    with manager.span(name=f"grandchild_{trace}", tenant_id=tenant):
+                        pass
+        assert manager.force_flush(timeout_millis=10000)
+
+        from phoenix.client import Client
+
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(http_endpoint=phoenix_container["http_endpoint"])
+        project = phoenix_config.get_project_name(tenant)
+        client = Client(base_url=phoenix_container["http_endpoint"])
+        assert len(_names_once_ingested(client, project, "", 6)) == 6
+
+        def all_names(**filters):
+            frame = asyncio.run(store.get_all_spans(project=project, filters=filters))
+            return sorted(frame["name"]) if not frame.empty else []
+
+        def projected_names(**filters):
+            async def collect():
+                return [
+                    name
+                    async for frame in store.iter_spans(
+                        project=project, filters=filters, columns=["name"]
+                    )
+                    for name in frame["name"]
+                ]
+
+            return sorted(asyncio.run(collect()))
+
+        for names in (all_names, projected_names):
+            assert names(roots_only=True) == ["root_a", "root_b"]
+            assert names(roots_only=True, name=["root_a", "child_a"]) == ["root_a"]
+            assert names(roots_only=False) == [
+                "child_a",
+                "child_b",
+                "grandchild_a",
+                "grandchild_b",
+                "root_a",
+                "root_b",
+            ]
+        manager.shutdown()
+        TelemetryManager._instance = None
+
     def test_limit_slice_client_side_filter_misses_gateway_span_but_spanquery_finds_it(
         self, phoenix_container
     ):

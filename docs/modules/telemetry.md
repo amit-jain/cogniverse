@@ -48,6 +48,9 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
 - `span_metrics`: aggregates over a `TraceStore` span frame.
+  `trace_rows(spans)` turns root spans into trace rows newest first,
+  `trace_statistics(rows)` gives their counts, latency percentiles, outlier
+  bounds (`outlier_bounds(durations)`) and per-operation figures.
   `profile_selection_metrics(spans)` gives per-modality count, p50/p95/p99
   latency in ms and success rate, most-used first; `aggregate_ab_compare(spans)`
   gives the `ABCompareAggregate` of `rlm.ab_compare` spans (`AB_COMPARE_SPAN_NAME`),
@@ -446,6 +449,9 @@ callers never interpret a partial history as the complete project. Its
 `start_time` and `end_time` columns are normalized to timezone-aware UTC
 datetimes; an invalid timestamp raises with project and column context before
 the frame is returned.
+`iter_spans` and `get_all_spans` take `filters={"name": ..., "roots_only": True}`:
+`name` keeps spans of one name or several, `roots_only` keeps spans without a
+parent (one per trace); any other key raises `ValueError`.
 
 ### AnnotationStore Interface
 

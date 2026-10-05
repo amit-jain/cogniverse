@@ -9,7 +9,7 @@ that fails the read answers 502; it never reads as an empty window.
 import logging
 import math
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, Query
@@ -23,6 +23,8 @@ from cogniverse_foundation.telemetry.span_metrics import (
     aggregate_ab_compare,
     profile_selection_metrics,
     recorded_flag,
+    trace_rows,
+    trace_statistics,
 )
 from cogniverse_runtime.http_errors import failure_response
 
@@ -75,23 +77,82 @@ class RlmAbComparison(BaseModel):
     comparisons: List[Comparison]
 
 
-async def _window_spans(tenant_id: str, span_name: str, lookback_hours: int):
+class Trace(BaseModel):
+    trace_id: Optional[str]
+    span_id: Optional[str]
+    start_time: str
+    duration_ms: float
+    operation: str
+    succeeded: bool
+    profile: Optional[str]
+    strategy: Optional[str]
+    error: Optional[str]
+
+
+class Latency(BaseModel):
+    mean: Optional[float]
+    min: Optional[float]
+    p50: Optional[float]
+    p75: Optional[float]
+    p90: Optional[float]
+    p95: Optional[float]
+    p99: Optional[float]
+    max: Optional[float]
+
+
+class OperationStatistics(BaseModel):
+    operation: str
+    count: int
+    mean_ms: float
+    p95_ms: float
+    error_rate: float
+
+
+class TraceStatistics(BaseModel):
+    requests: int
+    succeeded: int
+    failed: int
+    success_rate: Optional[float]
+    latency_ms: Latency
+    outlier_bounds_ms: Optional[Dict[str, float]]
+    by_operation: List[OperationStatistics]
+
+
+class TraceFacets(BaseModel):
+    operations: List[str]
+    profiles: List[str]
+    strategies: List[str]
+
+
+class TraceAnalytics(BaseModel):
+    facets: TraceFacets
+    statistics: TraceStatistics
+    traces: List[Trace]
+
+
+async def _window_spans(
+    tenant_id: str, lookback_hours: int, *, span_name: str = "", roots_only=False
+):
     manager = get_telemetry_manager()
     project = manager.config.get_project_name(tenant_id)
     end = datetime.now(timezone.utc)
+    filters: Dict[str, Any] = {"roots_only": True} if roots_only else {}
+    if span_name:
+        filters["name"] = span_name
     try:
         provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
         return await provider.traces.get_all_spans(
             project=project,
             start_time=end - timedelta(hours=lookback_hours),
             end_time=end,
-            filters={"name": span_name},
+            filters=filters,
         )
     except Exception as exc:
+        what = f"the {span_name} spans" if span_name else "the traces"
         raise failure_response(
             502,
             "telemetry_unavailable",
-            f"Could not read the {span_name} spans of tenant {tenant_id}.",
+            f"Could not read {what} of tenant {tenant_id}.",
             exc,
             tenant_id=tenant_id,
         ) from exc
@@ -120,7 +181,9 @@ async def profile_selection(tenant_id: str, lookback_hours: int = Lookback):
     """Per-modality count, latency and success rate of the tenant's profile
     selections in the last ``lookback_hours``."""
     tenant_id = canonical_tenant_id(tenant_id)
-    spans = await _window_spans(tenant_id, SPAN_NAME_PROFILE_SELECTION, lookback_hours)
+    spans = await _window_spans(
+        tenant_id, lookback_hours, span_name=SPAN_NAME_PROFILE_SELECTION
+    )
     return ProfileSelectionMetrics(modalities=profile_selection_metrics(spans))
 
 
@@ -129,7 +192,9 @@ async def rlm_ab(tenant_id: str, lookback_hours: int = Lookback):
     """The tenant's RLM A/B comparisons in the last ``lookback_hours``:
     averages, per queries dataset, and each compared row newest first."""
     tenant_id = canonical_tenant_id(tenant_id)
-    spans = await _window_spans(tenant_id, AB_COMPARE_SPAN_NAME, lookback_hours)
+    spans = await _window_spans(
+        tenant_id, lookback_hours, span_name=AB_COMPARE_SPAN_NAME
+    )
     aggregate = aggregate_ab_compare(spans)
     return RlmAbComparison(
         rows=aggregate.rows,
@@ -162,4 +227,41 @@ async def rlm_ab(tenant_id: str, lookback_hours: int = Lookback):
             )
             for _, row in aggregate.per_row.iterrows()
         ],
+    )
+
+
+@router.get("/{tenant_id}/telemetry/traces", response_model=TraceAnalytics)
+async def traces(
+    tenant_id: str,
+    lookback_hours: int = Lookback,
+    operation: str = "",
+    profile: List[str] = Query([]),
+    strategy: List[str] = Query([]),
+):
+    """The tenant's traces (root spans) in the last ``lookback_hours``,
+    newest first, with their statistics.
+
+    ``operation`` keeps traces whose name contains it (any case); ``profile``
+    and ``strategy`` keep traces with one of the given values. ``facets``
+    lists the values present in the whole window.
+    """
+    tenant_id = canonical_tenant_id(tenant_id)
+    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
+    facets = TraceFacets(
+        operations=sorted({row["operation"] for row in rows}),
+        profiles=sorted({row["profile"] for row in rows if row["profile"]}),
+        strategies=sorted({row["strategy"] for row in rows if row["strategy"]}),
+    )
+    needle = operation.casefold()
+    kept = [
+        row
+        for row in rows
+        if needle in row["operation"].casefold()
+        and (not profile or row["profile"] in profile)
+        and (not strategy or row["strategy"] in strategy)
+    ]
+    return TraceAnalytics(
+        facets=facets,
+        statistics=TraceStatistics(**trace_statistics(kept)),
+        traces=[Trace(**row) for row in kept],
     )

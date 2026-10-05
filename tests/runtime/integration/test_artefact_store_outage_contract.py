@@ -67,6 +67,8 @@ def owned_phoenix():
             f"{OWNER_LABEL}={os.getpid()}",
             "-e",
             "PHOENIX_WORKING_DIR=/phoenix",
+            "-e",
+            "PHOENIX_ALLOW_EXTERNAL_RESOURCES=false",
         ],
     )
     http_endpoint = f"http://localhost:{http_port}"
