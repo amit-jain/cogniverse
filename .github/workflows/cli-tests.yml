@@ -92,6 +92,7 @@ jobs:
           --ignore tests/cli/integration/test_release_scripts.py \
           --ignore tests/cli/integration/test_release_clean_install.py \
           --ignore tests/cli/integration/test_image_model_provisioning.py \
+          -m "not local_only" \
           -v --tb=short
 
   release-tests:

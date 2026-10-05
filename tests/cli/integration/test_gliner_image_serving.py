@@ -20,7 +20,7 @@ import pytest
 
 from tests.utils.vllm_sidecar import E2E_CONTEXT
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.local_only]
 
 MODEL = "urchade/gliner_large-v2.1"
 REVISION = "abd49a1f1ebc12af1be84d06f6848221cf96dcad"
