@@ -6,12 +6,20 @@ export const LOOKBACKS = [
   { hours: 168, label: 'Last week' },
 ];
 
-export function LookbackSelect({ value, onChange }: { value: number; onChange: (hours: number) => void }) {
+export function LookbackSelect({
+  value,
+  onChange,
+  options = LOOKBACKS,
+}: {
+  value: number;
+  onChange: (hours: number) => void;
+  options?: { hours: number; label: string }[];
+}) {
   return (
     <label>
       Window
       <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
-        {LOOKBACKS.map((option) => (
+        {options.map((option) => (
           <option key={option.hours} value={option.hours}>
             {option.label}
           </option>

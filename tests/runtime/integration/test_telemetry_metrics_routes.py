@@ -11,12 +11,14 @@ the reads.
 from __future__ import annotations
 
 import asyncio
+import math
 import threading
 import time
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import pandas as pd
 import pytest
 from fastapi import FastAPI
 
@@ -32,7 +34,7 @@ from cogniverse_foundation.telemetry.context import search_span
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_runtime.optimization_cli import emit_ab_compare_span
-from cogniverse_runtime.routers import telemetry_metrics
+from cogniverse_runtime.routers import admin, telemetry_metrics
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.telemetry_metric_spans import (
@@ -40,6 +42,7 @@ from tests.utils.telemetry_metric_spans import (
     ab_result,
     record_profile_selection,
     record_sample_traces,
+    record_search,
     record_trace,
 )
 
@@ -75,9 +78,16 @@ def telemetry(phoenix_container, phoenix_proxy):
 
 
 @pytest.fixture()
-def app(phoenix_proxy):
+def app(phoenix_container, phoenix_proxy, monkeypatch):
+    """The telemetry metrics routes, and the admin routes that upload a
+    tenant's golden set straight to Phoenix."""
+    monkeypatch.setattr(admin, "_phoenix_endpoints", {})
+    admin.set_phoenix_endpoints(
+        phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
+    )
     app = FastAPI()
     app.include_router(telemetry_metrics.router, prefix="/admin/tenant")
+    app.include_router(admin.router, prefix="/admin")
     yield app
     phoenix_proxy.intercept = None
 
@@ -272,17 +282,24 @@ async def test_concurrent_reads_each_answer_their_own_tenant(
     telemetry, app, phoenix_proxy
 ):
     tenants = [_tenant("concurrent"), _tenant("concurrent")]
+    golden_tenants = [_tenant("concurrentgolden"), _tenant("concurrentgolden")]
     for count, tenant in enumerate(tenants, start=1):
         for age in range(count):
             record_profile_selection(telemetry, tenant, "video", 20)
             record_trace(telemetry, tenant, SEARCH, 20, minutes_ago=age + 1)
+    for count, tenant in enumerate(golden_tenants, start=1):
+        for query in (SUNSET, RED_CAR)[:count]:
+            record_search(tenant, query, "video_colpali", "hybrid", ["sunset.mp4"])
     telemetry.force_flush(timeout_millis=10000)
 
     async with _client(app) as client:
         for count, tenant in enumerate(tenants, start=1):
             await _until(client, _profile_path(tenant), _counted(count))
             await _until(client, _traces_path(tenant), _requests(2 * count))
-        reads = 8
+        for count, tenant in enumerate(golden_tenants, start=1):
+            await _upload_golden(client, tenant)
+            await _until(client, _golden_path(tenant), _searched(count))
+        reads = 10
         barrier = threading.Barrier(reads, timeout=60)
         held = []
 
@@ -295,9 +312,8 @@ async def test_concurrent_reads_each_answer_their_own_tenant(
 
         phoenix_proxy.intercept = hold_span_reads
         paths = [
-            (_profile_path if i < 4 else _traces_path)(tenants[i % 2])
-            for i in range(reads)
-        ]
+            (_profile_path if i < 4 else _traces_path)(tenants[i % 2]) for i in range(8)
+        ] + [_golden_path(tenant) for tenant in golden_tenants]
         responses = await asyncio.gather(*(client.get(path) for path in paths))
         phoenix_proxy.intercept = None
 
@@ -311,12 +327,15 @@ async def test_concurrent_reads_each_answer_their_own_tenant(
             r.json()["statistics"]["requests"],
             {t["operation"] for t in r.json()["traces"]},
         )
-        for r in responses[4:]
+        for r in responses[4:8]
     ] == [
         # A profile selection is a root span too.
         (2, {SEARCH, SPAN_NAME_PROFILE_SELECTION}),
         (4, {SEARCH, SPAN_NAME_PROFILE_SELECTION}),
     ] * 2
+    assert [
+        [(q["query"], q["mrr"]) for q in r.json()["queries"]] for r in responses[8:]
+    ] == [[(SUNSET, 1.0)], [(SUNSET, 1.0), (RED_CAR, 0.0)]]
 
 
 async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
@@ -501,3 +520,182 @@ async def test_a_search_traced_by_the_search_service_is_reported(telemetry, app)
         "strategy": "hybrid",
         "error": None,
     }
+
+
+SUNSET, RED_CAR, DOG = "sunset over the sea", "a red car", "dog on a beach"
+GOLDEN = [
+    {"query": SUNSET, "expected_videos": "sunset"},
+    {"query": RED_CAR, "expected_videos": ["red_car", "garage"]},
+    {"query": DOG, "expected_videos": ["dog"]},
+]
+
+
+def _golden_path(tenant):
+    return f"/admin/tenant/{tenant}/evaluation/golden?lookback_hours=1"
+
+
+async def _upload_golden(client, tenant):
+    response = await client.put(
+        f"/admin/tenants/{tenant}/golden_set_ground_truth", json=GOLDEN
+    )
+    assert (response.status_code, response.json()["row_count"]) == (200, 3)
+
+
+def _searched(scored, failed=0):
+    return lambda body: (
+        (len(body["queries"]), body["failed_searches"])
+        == (
+            scored,
+            failed,
+        )
+    )
+
+
+async def test_golden_evaluation_scores_the_tenants_latest_searches(telemetry, app):
+    tenant = _tenant("golden")
+    record_search(tenant, SUNSET, "video_colpali", "hybrid", ["sunset.mp4"])
+    sunset = record_search(
+        tenant, SUNSET, "video_colpali", "hybrid", ["beach.mp4", "sunset.mp4"]
+    )
+    red_car = record_search(
+        tenant,
+        RED_CAR,
+        "video_colpali",
+        "hybrid",
+        ["red_car.mp4", "red_car.mp4", "beach.mp4", "garage.mov"],
+    )
+    record_search(tenant, SUNSET, "video_colpali", "bm25", [], error="backend down")
+    record_search(tenant, "not a golden query", "video_colpali", "bm25", ["dog.mp4"])
+    other = _tenant("othergolden")
+    record_search(other, DOG, "video_colpali", "bm25", ["dog.mp4"])
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        await _upload_golden(client, tenant)
+        await _upload_golden(client, other)
+        # Phoenix shows the second sunset search only after the first.
+        body = await _until(
+            client,
+            _golden_path(tenant),
+            lambda body: (
+                _searched(2, 1)(body) and body["queries"][0]["trace_id"] == sunset[0]
+            ),
+        )
+        other_body = await _until(client, _golden_path(other), _searched(1))
+        traces = (await client.get(_traces_path(tenant))).json()["traces"]
+
+    # Phoenix keeps a span's start to the microsecond; the evaluation reports
+    # the start the trace analytics report for the same trace.
+    started = {trace["trace_id"]: trace["start_time"] for trace in traces}
+    for trace_id, recorded in (sunset, red_car):
+        stored = pd.Timestamp(started[trace_id])
+        assert abs(stored - recorded) <= pd.Timedelta(1, "us")
+    sunset_ndcg = 1 / math.log2(3)
+    red_car_ndcg = (1 + 1 / math.log2(4)) / (1 + 1 / math.log2(3))
+    assert body == {
+        "golden_queries": 3,
+        "strategies": [
+            {
+                "profile": "video_colpali",
+                "strategy": "hybrid",
+                "queries": 2,
+                "mrr": 0.75,
+                "ndcg": pytest.approx((sunset_ndcg + red_car_ndcg) / 2),
+                "recall_at_1": 0.25,
+                "recall_at_5": 1.0,
+                "precision_at_5": pytest.approx((1 / 2 + 2 / 3) / 2),
+                "success_rate": 0.5,
+            }
+        ],
+        "queries": [
+            {
+                "profile": "video_colpali",
+                "strategy": "hybrid",
+                "query": SUNSET,
+                "expected": ["sunset"],
+                "retrieved": ["beach", "sunset"],
+                "searched_at": started[sunset[0]],
+                "trace_id": sunset[0],
+                "mrr": 0.5,
+                "ndcg": pytest.approx(sunset_ndcg),
+                "recall_at_1": 0.0,
+                "recall_at_5": 1.0,
+                "precision_at_5": 0.5,
+            },
+            {
+                "profile": "video_colpali",
+                "strategy": "hybrid",
+                "query": RED_CAR,
+                "expected": ["red_car", "garage"],
+                "retrieved": ["red_car", "beach", "garage"],
+                "searched_at": started[red_car[0]],
+                "trace_id": red_car[0],
+                "mrr": 1.0,
+                "ndcg": pytest.approx(red_car_ndcg),
+                "recall_at_1": 0.5,
+                "recall_at_5": 1.0,
+                "precision_at_5": pytest.approx(2 / 3),
+            },
+        ],
+        "unsearched_queries": [DOG],
+        "failed_searches": 1,
+        "unscored_searches": 0,
+    }
+    assert [(q["query"], q["mrr"]) for q in other_body["queries"]] == [(DOG, 1.0)]
+    assert other_body["unsearched_queries"] == [SUNSET, RED_CAR]
+
+
+async def test_golden_evaluation_of_a_tenant_without_a_golden_set_answers_404(app):
+    tenant = _tenant("nogolden")
+    async with _client(app) as client:
+        response = await client.get(_golden_path(tenant))
+    assert response.status_code == 404
+    assert {
+        k: response.json()["detail"][k] for k in ("error", "message", "tenant_id")
+    } == {
+        "error": "golden_set_missing",
+        "message": f"Tenant {tenant} has no golden set. Upload one with "
+        f"PUT /admin/tenants/{tenant}/golden_set_ground_truth.",
+        "tenant_id": tenant,
+    }
+
+
+async def test_golden_evaluation_reports_an_unreadable_backend_as_502(
+    app, phoenix_proxy
+):
+    tenant = _tenant("goldenoutage")
+    async with _client(app) as client:
+        await _upload_golden(client, tenant)
+        await _until(client, _golden_path(tenant), _searched(0))
+
+        phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})
+        golden_down = await client.get(_golden_path(tenant))
+
+        def fail_span_reads(method, path, body):
+            return (503, {"detail": "down"}) if "/spans" in path else None
+
+        phoenix_proxy.intercept = fail_span_reads
+        spans_down = await client.get(_golden_path(tenant))
+
+    assert [
+        (
+            response.status_code,
+            {k: response.json()["detail"][k] for k in ("error", "message")},
+        )
+        for response in (golden_down, spans_down)
+    ] == [
+        (
+            502,
+            {
+                "error": "golden_set_store_unavailable",
+                "message": f"Could not read the golden set of tenant {tenant}.",
+            },
+        ),
+        (
+            502,
+            {
+                "error": "telemetry_unavailable",
+                "message": f"Could not read the {SEARCH} spans of tenant {tenant}.",
+            },
+        ),
+    ]

@@ -1,9 +1,11 @@
 """Metrics over a tenant's telemetry spans for the operations views.
 
-Every route reads all of the tenant's spans of one name in the window (not a
-first page of them) from the tenant's telemetry project and aggregates them
-with ``cogniverse_foundation.telemetry.span_metrics``. A telemetry backend
-that fails the read answers 502; it never reads as an empty window.
+Every route reads all of the tenant's spans in the window (not a first page
+of them) from the tenant's telemetry project and aggregates them with
+``cogniverse_foundation.telemetry.span_metrics``, or scores them against the
+tenant's golden set with ``cogniverse_evaluation.recorded_searches``. A
+telemetry backend that fails the read answers 502; it never reads as an empty
+window.
 """
 
 import logging
@@ -15,7 +17,18 @@ import pandas as pd
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.golden_set_ground_truth import (
+    GoldenSetGroundTruthError,
+    GoldenSetGroundTruthMissingError,
+    GoldenSetGroundTruthStoreUnavailableError,
+    load_golden_set_ground_truth_rows,
+)
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_evaluation.recorded_searches import (
+    SEARCH_SPAN_NAME,
+    score_recorded_searches,
+)
 from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.span_metrics import (
@@ -27,6 +40,7 @@ from cogniverse_foundation.telemetry.span_metrics import (
     trace_statistics,
 )
 from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.quality_monitor_cli import GOLDEN_SET_UPLOAD_ROUTE
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +142,42 @@ class TraceAnalytics(BaseModel):
     facets: TraceFacets
     statistics: TraceStatistics
     traces: List[Trace]
+
+
+class StrategyScores(BaseModel):
+    profile: str
+    strategy: str
+    queries: int
+    mrr: float
+    ndcg: float
+    recall_at_1: float
+    recall_at_5: float
+    precision_at_5: float
+    success_rate: float
+
+
+class QueryScores(BaseModel):
+    profile: str
+    strategy: str
+    query: str
+    expected: List[str]
+    retrieved: List[str]
+    searched_at: str
+    trace_id: Optional[str]
+    mrr: float
+    ndcg: float
+    recall_at_1: float
+    recall_at_5: float
+    precision_at_5: float
+
+
+class GoldenEvaluation(BaseModel):
+    golden_queries: int
+    strategies: List[StrategyScores]
+    queries: List[QueryScores]
+    unsearched_queries: List[str]
+    failed_searches: int
+    unscored_searches: int
 
 
 async def _window_spans(
@@ -265,3 +315,59 @@ async def traces(
         statistics=TraceStatistics(**trace_statistics(kept)),
         traces=[Trace(**row) for row in kept],
     )
+
+
+async def _golden_rows(tenant_id: str) -> List[Dict[str, Any]]:
+    manager = get_telemetry_manager()
+    try:
+        provider = manager.get_provider(tenant_id=tenant_id)
+        return await load_golden_set_ground_truth_rows(
+            ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+        )
+    except GoldenSetGroundTruthMissingError as exc:
+        raise failure_response(
+            404,
+            exc.reason,
+            f"Tenant {tenant_id} has no golden set. Upload one with "
+            f"{GOLDEN_SET_UPLOAD_ROUTE.format(tenant_id=tenant_id)}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    except GoldenSetGroundTruthStoreUnavailableError as exc:
+        raise failure_response(
+            502,
+            exc.reason,
+            f"Could not read the golden set of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    except GoldenSetGroundTruthError as exc:
+        raise failure_response(
+            409,
+            exc.reason,
+            f"The golden set of tenant {tenant_id} cannot be used. Upload it "
+            f"again with {GOLDEN_SET_UPLOAD_ROUTE.format(tenant_id=tenant_id)}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    except Exception as exc:
+        raise failure_response(
+            502,
+            "golden_set_store_unavailable",
+            f"Could not read the golden set of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+
+
+@router.get("/{tenant_id}/evaluation/golden", response_model=GoldenEvaluation)
+async def golden_evaluation(
+    tenant_id: str, lookback_hours: int = Query(168, ge=1, le=24 * 90)
+):
+    """The tenant's searches of its golden queries in the last
+    ``lookback_hours``, scored against its golden set: per profile and
+    strategy, and per query for the latest search of each."""
+    tenant_id = canonical_tenant_id(tenant_id)
+    golden_rows = await _golden_rows(tenant_id)
+    spans = await _window_spans(tenant_id, lookback_hours, span_name=SEARCH_SPAN_NAME)
+    return GoldenEvaluation(**score_recorded_searches(spans, golden_rows))

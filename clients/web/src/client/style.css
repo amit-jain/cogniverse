@@ -115,3 +115,6 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .plot { margin: 14px 0 0; }
 .plot-area { width: 100%; min-height: 360px; }
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; }
+.retrieved { margin: 0; padding-left: 18px; }
+.retrieved .hit { color: #2e8b57; }
+.retrieved .miss { color: #c0392b; }
