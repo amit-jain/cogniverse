@@ -346,7 +346,7 @@ class TestJobExecutorRealLLM:
     produces meaningful agent selections for different query types."""
 
     @pytest.mark.asyncio
-    async def test_search_query_routes_to_search(self):
+    async def test_search_query_routes_to_search(self, gliner_url):
         """'Find AI papers' should route to a search-related agent."""
         import dspy
 
@@ -366,7 +366,7 @@ class TestJobExecutorRealLLM:
 
         # dspy.configure is owned by whichever async task calls it first —
         # inside an async test body, scope the LM with dspy.context instead.
-        router = DSPyAdvancedRoutingModule()
+        router = DSPyAdvancedRoutingModule(gliner_inference_url=gliner_url)
         with dspy.context(lm=lm):
             result = router.forward(
                 query="Find the latest AI research papers on transformers",
@@ -411,7 +411,7 @@ class TestJobExecutorRealLLM:
         )
 
     @pytest.mark.asyncio
-    async def test_summary_query_produces_meaningful_analysis(self):
+    async def test_summary_query_produces_meaningful_analysis(self, gliner_url):
         """A summary query produces a non-trivial analysis with entities."""
         import dspy
 
@@ -429,7 +429,7 @@ class TestJobExecutorRealLLM:
         endpoint = llm.resolve("primary")
         lm = create_dspy_lm(endpoint)
 
-        router = DSPyAdvancedRoutingModule()
+        router = DSPyAdvancedRoutingModule(gliner_inference_url=gliner_url)
 
         with dspy.context(lm=lm):
             result = router.forward(
