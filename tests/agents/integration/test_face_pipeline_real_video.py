@@ -272,9 +272,11 @@ def test_real_face_extraction_detects_one_face_per_keyframe(
     processing_results, face_embed_container
 ):
     """The three real keyframes each contain exactly one face."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     assert len(records) == 3
     by_segment = {r.segment_id: r for r in records}
     assert set(by_segment.keys()) == {"0", "1", "2"}
@@ -295,9 +297,11 @@ def test_real_clustering_groups_same_subject_into_one_cluster(
     processing_results, face_embed_container
 ):
     """Three frames of the same on-camera person cluster into one identity."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
     # The three keyframes are within 4 seconds of the same single
     # speaker on camera. InsightFace embedding cosine for the same
@@ -328,9 +332,11 @@ def test_real_attribution_links_cluster_to_transcript_subject(
     processing_results, face_embed_container
 ):
     """Hand-built Person whose window covers the cluster's faces gets the same_as."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
 
     test_subject = Node(
@@ -390,9 +396,11 @@ def test_real_vespa_round_trip_persists_face_cluster_edge(
     processing_results, graph_manager_live, face_embed_container
 ):
     """Upsert face-cluster nodes + same_as edge to real Vespa, then visit."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
 
     test_subject = Node(

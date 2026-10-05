@@ -721,3 +721,17 @@ runtime.workers reuses its values.
 {{- define "cogniverse.runtime.shutdown.a2aDrainSeconds" -}}
 {{- dig "shutdown" "a2aDrainSeconds" 30 .Values.runtime -}}
 {{- end -}}
+
+{{/*
+Face-embed requests a client keeps in flight: the sidecar's CPU limit in whole
+CPUs, at least 1. The sidecar runs one single-threaded inference per CPU, so
+more requests than CPUs only queue against their own timeouts.
+*/}}
+{{- define "cogniverse.faceEmbedConcurrency" -}}
+{{- $cpu := toString .Values.inference.face_embed.resources.limits.cpu -}}
+{{- if hasSuffix "m" $cpu -}}
+{{- max 1 (div (trimSuffix "m" $cpu | atoi) 1000) -}}
+{{- else -}}
+{{- max 1 (atoi $cpu) -}}
+{{- end -}}
+{{- end -}}

@@ -1333,7 +1333,7 @@ def _run_face_pipeline(
         )
         return empty
     try:
-        face_mentions = extract_faces_per_keyframe(
+        extraction = extract_faces_per_keyframe(
             processing_results=processing_results,
             source_doc_id=source_doc_id,
             face_embed_url=face_embed_url,
@@ -1345,12 +1345,22 @@ def _run_face_pipeline(
             exc,
         )
         return empty
+    face_mentions = extraction.mentions
+    for failure in extraction.failed:
+        logger.warning(
+            "Face extraction for source_doc_id=%s skipped keyframe segment_id=%s: %s",
+            source_doc_id,
+            failure.segment_id,
+            failure.cause,
+        )
 
     if not face_mentions:
         logger.info(
-            "Face pipeline for source_doc_id=%s: no faces in %d keyframes",
+            "Face pipeline for source_doc_id=%s: no faces in %d keyframes, "
+            "%d failed keyframes",
             source_doc_id,
             keyframe_count,
+            len(extraction.failed),
         )
         return empty
 
@@ -1372,10 +1382,12 @@ def _run_face_pipeline(
     )
     logger.info(
         "Face pipeline for source_doc_id=%s: %d faces in %d keyframes, "
-        "%d clusters, %d same_as edges, %d anonymous face nodes",
+        "%d failed keyframes, %d clusters, %d same_as edges, "
+        "%d anonymous face nodes",
         source_doc_id,
         len(face_mentions),
         keyframe_count,
+        len(extraction.failed),
         len(clusters),
         len(temporal_edges),
         len(anonymous_nodes),

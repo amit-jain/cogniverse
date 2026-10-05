@@ -409,6 +409,9 @@ spec:
         - name: INFERENCE_SERVICE_URLS
           value: |-
             {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
+        # Face-embed requests in flight at once: one per CPU the sidecar has.
+        - name: FACE_EMBED_MAX_CONCURRENCY
+          value: {{ include "cogniverse.faceEmbedConcurrency" $ | quote }}
         # Bearer key for Modal-hosted entries in the URL map. External
         # inference URLs consume the synced Secret; fully in-cluster renders
         # keep the placeholder so the stack starts without any Secret.
