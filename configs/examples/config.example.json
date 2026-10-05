@@ -692,7 +692,7 @@
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
-          "token_pool_factor": 3
+          "token_pool_factor": 1
         },
         "pipeline_config": {
           "extract_keyframes": true,
