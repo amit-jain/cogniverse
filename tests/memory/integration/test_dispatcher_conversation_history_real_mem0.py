@@ -513,9 +513,12 @@ async def test_recorded_persistence_failures_evict_oldest_first(conversation_led
     contexts = [
         f"chat{index:04d}" for index in range(CONVERSATION_PERSIST_FAILURE_CAPACITY + 3)
     ]
+    # Saves run in the background and the record orders failures as they are
+    # recorded, so each save is drained before the next chat dispatches; that
+    # makes recording order the chats' order.
     for context_id in contexts:
         await _dispatch(d, "q", context_id)
-    assert await d.drain_conversation_saves() is True
+        assert await d.drain_conversation_saves() is True
 
     status = await d.conversation_persist_status()
     assert status["pending"] == 0
