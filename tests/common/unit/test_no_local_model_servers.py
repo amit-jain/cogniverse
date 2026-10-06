@@ -12,8 +12,9 @@ The scan reads every Python file under ``tests/`` and flags:
   docker SDK's ``containers.run``) and names a model image or a model image's
   Dockerfile. Model images are every image the chart deploys for an inference
   or LLM service, read from ``charts/cogniverse/values.yaml``, plus the image
-  builds ``cogniverse_cli.images.LOCAL_IMAGE_BUILDS`` declares, so a new model
-  service is covered without editing this file;
+  builds ``cogniverse_cli.images.LOCAL_IMAGE_BUILDS`` and
+  ``DEVICE_IMAGE_BUILDS`` declare, so a new model service is covered without
+  editing this file;
 - a launch of a model server process: ``vllm serve``, ``ollama serve`` or
   ``python -m vllm.entrypoints...`` in a subprocess argument list or command
   string.
@@ -30,7 +31,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from cogniverse_cli.images import LOCAL_IMAGE_BUILDS
+from cogniverse_cli.images import DEVICE_IMAGE_BUILDS, LOCAL_IMAGE_BUILDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TESTS_ROOT = REPO_ROOT / "tests"
@@ -69,6 +70,11 @@ def model_image_markers() -> frozenset[str]:
     markers = {_image_family(repository) for repository in _chart_model_images()}
     for repository, dockerfile, _context in LOCAL_IMAGE_BUILDS.values():
         markers.add(_image_family(repository))
+        markers.add(dockerfile)
+    for repositories, dockerfile, _context in DEVICE_IMAGE_BUILDS.values():
+        markers.update(
+            _image_family(repository) for repository in repositories.values()
+        )
         markers.add(dockerfile)
     return frozenset(markers)
 
@@ -328,6 +334,8 @@ def test_model_image_markers_cover_every_model_service() -> None:
         "deploy/clap_embed/Dockerfile",
         "deploy/face_embed/Dockerfile",
         "deploy/video_embed/Dockerfile",
+        "cogniverse/vllm-audio",
+        "deploy/vllm_audio/Dockerfile",
     } == markers
 
 

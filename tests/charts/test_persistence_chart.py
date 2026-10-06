@@ -95,6 +95,20 @@ def _inference_pod_specs(docs: list[dict]) -> dict[str, dict]:
     return out
 
 
+# Default-enabled inference services that load Hub weights. GLiNER serves an
+# ONNX export baked into its image, so it has nothing to warm.
+_WARMED_BY_DEFAULT = {"colbert_pylate", "denseon", "vllm_asr", "vllm_llm_teacher"}
+
+
+def _warm_containers(docs: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for name, spec in _inference_pod_specs(docs).items():
+        warm = _container(spec, "model-warm")
+        if warm is not None:
+            out[name] = warm
+    return out
+
+
 def test_default_mode_uses_legacy_hostpath_and_no_pvcs():
     docs = _render()
     runtime = _runtime_pod_spec(docs)
@@ -110,16 +124,18 @@ def test_default_mode_uses_legacy_hostpath_and_no_pvcs():
     assert pvcs == [], "default mode should not create hf-cache PVCs"
 
 
-def test_default_mode_inference_pods_have_no_model_warm_init():
+def test_default_mode_warms_hub_weights_from_each_pods_own_image():
+    """The servers run with HF_HUB_OFFLINE in every cache mode, so the legacy
+    hostPath cache is warmed too, from the server's own image: no other image
+    is pulled, and a runtime release leaves the pod template unchanged."""
     docs = _render()
-    for name, spec in _inference_pod_specs(docs).items():
-        assert _container(spec, "model-warm") is None, (
-            f"inference svc {name} should not have model-warm init in default mode"
-        )
-        assert _container(spec, "model-warm-minio") is None, (
-            f"inference svc {name} should not have model-warm-minio init "
-            f"in default mode"
-        )
+    specs = _inference_pod_specs(docs)
+    warm = _warm_containers(docs)
+    assert sorted(warm) == sorted(_WARMED_BY_DEFAULT)
+    assert sorted(specs) == sorted(_WARMED_BY_DEFAULT | {"gliner"})
+    for name, container in warm.items():
+        assert container["image"] == specs[name]["containers"][0]["image"], name
+        assert [c["name"] for c in specs[name]["initContainers"]] == ["model-warm"]
 
 
 def test_host_storage_mode_uses_hostpath_bind_mount():
@@ -197,53 +213,45 @@ def test_persistence_mode_inference_pods_use_their_own_pvc():
         )
 
 
-def test_model_warm_init_uses_runtime_image_for_consistent_deps():
-    """The init container needs python + huggingface_hub + boto3 + tar.
-    Inference images are inconsistent (pylate has tar but no boto3;
-    vllm-rocm has both but is GPU-flavored). The runtime image is the
-    only one we can pin: it ships all four and is already pulled on
-    every cluster (the runtime pod uses it)."""
+def test_model_warm_without_minio_runs_from_the_server_image():
+    """Without the MinIO mirror the warm needs only huggingface_hub, which
+    every model server image ships; only the mirror needs the runtime
+    image's boto3."""
     docs = _render("hfCache.persistence.enabled=true")
-    runtime_pod = _runtime_pod_spec(docs)
-    runtime_image = runtime_pod["containers"][0]["image"]
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
-        assert warm is not None
-        assert warm["image"] == runtime_image, (
-            f"{name}: model-warm must reuse the runtime image "
-            f"({runtime_image}) to guarantee boto3+tar+hf_hub. "
-            f"Got {warm['image']}"
-        )
+    specs = _inference_pod_specs(docs)
+    warm = _warm_containers(docs)
+    assert sorted(warm) == sorted(_WARMED_BY_DEFAULT)
+    for name, container in warm.items():
+        assert container["image"] == specs[name]["containers"][0]["image"], name
 
 
-def test_model_warm_init_avoids_pipefail():
-    """Regression: ``set -o pipefail`` is bash-only; vllm-rocm /bin/sh
-    is dash which rejects it (``Illegal option -o pipefail``). The init
-    script has no pipes, so plain ``set -eu`` is sufficient."""
+def test_model_warm_runs_python_directly_not_through_a_shell():
+    """The images' /bin/sh differs (vllm-rocm's is dash, which rejects
+    bash-only options such as ``pipefail``); the warm runs no shell at all."""
     docs = _render("hfCache.persistence.enabled=true")
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
-        assert warm is not None
-        script = warm["args"][-1]
-        assert "pipefail" not in script, (
-            f"inference {name}: model-warm script must not use pipefail "
-            f"(dash rejects it). Got:\n{script}"
-        )
+    warm = _warm_containers(docs)
+    assert sorted(warm) == sorted(_WARMED_BY_DEFAULT)
+    for name, container in warm.items():
+        assert container["command"] == ["python3", "-c"], name
+        assert len(container["args"]) == 1, name
+        assert "pipefail" not in container["args"][0], name
 
 
 def test_persistence_mode_inference_pods_have_model_warm_init():
     docs = _render("hfCache.persistence.enabled=true")
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
-        assert warm is not None, (
-            f"inference {name} must have model-warm init container in persistence mode"
+    warm = _warm_containers(docs)
+    assert sorted(warm) == sorted(_WARMED_BY_DEFAULT)
+    for name, container in warm.items():
+        script = container["args"][-1]
+        # The cache is consulted offline first; only a miss reaches the Hub.
+        local = script.index("local_files_only=True")
+        fetch = script.index(
+            "path = snapshot_download(repo_id=model, revision=revision)"
         )
-        assert "snapshot_download" in (warm.get("args", [""])[-1]), (
-            f"model-warm init for {name} should call snapshot_download, got {warm}"
-        )
+        assert local < fetch, name
         # init container must mount the same PVC the runtime container uses.
-        mounts = {m["name"]: m["mountPath"] for m in warm.get("volumeMounts", [])}
-        assert mounts.get("model-cache") == "/root/.cache/huggingface"
+        mounts = {m["name"]: m["mountPath"] for m in container.get("volumeMounts", [])}
+        assert mounts == {"model-cache": "/root/.cache/huggingface"}, name
 
 
 def test_persistence_mode_without_minio_omits_minio_env_and_no_job():
@@ -251,9 +259,9 @@ def test_persistence_mode_without_minio_omits_minio_env_and_no_job():
     env (so the script skips the mirror branch) and the populate Job must
     not render."""
     docs = _render("hfCache.persistence.enabled=true")
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
-        assert warm is not None
+    warm_containers = _warm_containers(docs)
+    assert sorted(warm_containers) == sorted(_WARMED_BY_DEFAULT)
+    for name, warm in warm_containers.items():
         env_names = {e["name"] for e in warm.get("env", [])}
         assert "MINIO_ENDPOINT" not in env_names, (
             f"{name}: model-warm must not carry MINIO_* env when minio disabled, "
@@ -273,7 +281,11 @@ def test_minio_mode_injects_minio_env_into_model_warm():
         "hfCache.persistence.minio.existingSecret=cogniverse-minio",
         "hfCache.persistence.minio.models[0]=hf-internal-testing/tiny-random-bert",
     )
-    for name, spec in _inference_pod_specs(docs).items():
+    specs = _inference_pod_specs(docs)
+    assert sorted(specs) == sorted(_WARMED_BY_DEFAULT | {"gliner"})
+    assert "initContainers" not in specs["gliner"]
+    for name in sorted(_WARMED_BY_DEFAULT):
+        spec = specs[name]
         init_names = [c["name"] for c in spec.get("initContainers", [])]
         assert init_names == ["model-warm"], (
             f"inference {name} should have a single ``model-warm`` init "
@@ -655,9 +667,9 @@ def test_model_warm_uses_runtime_image_for_boto3_and_tar():
     )
     runtime_pod = _runtime_pod_spec(docs)
     runtime_image = runtime_pod["containers"][0]["image"]
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
-        assert warm is not None
+    warm_containers = _warm_containers(docs)
+    assert sorted(warm_containers) == sorted(_WARMED_BY_DEFAULT)
+    for name, warm in warm_containers.items():
         assert warm["image"] == runtime_image, (
             f"inference {name}: model-warm must use the runtime image "
             f"({runtime_image}) which has boto3 + tar. Got {warm['image']}"
@@ -676,8 +688,9 @@ def test_model_warm_script_extracts_tar_not_per_file_mirror():
         "hfCache.persistence.minio.existingSecret=cogniverse-minio",
         "hfCache.persistence.minio.models[0]=hf-internal-testing/tiny-random-bert",
     )
-    for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm")
+    warm_containers = _warm_containers(docs)
+    assert sorted(warm_containers) == sorted(_WARMED_BY_DEFAULT)
+    for name, warm in warm_containers.items():
         script = warm["args"][-1]
         assert '"tar", "-xf"' in script or "tar -xf" in script, (
             f"{name}: script must extract a tarball with ``tar -xf`` "

@@ -41,6 +41,7 @@ DEV_VERSIONS = {
     "clap_embed": "0.1.dev15+geee555eee",
     "face_embed": "0.1.dev16+gfff666fff",
     "video_embed": "0.1.dev17+gggg777ggg",
+    "vllm_audio": "0.1.dev18+ghhh888hhh",
 }
 DEV_TAGS = {image: version.replace("+", "-") for image, version in DEV_VERSIONS.items()}
 UNIFORM_DEV_VERSIONS = dict.fromkeys(DEV_VERSIONS, DEV_VERSION)
@@ -113,6 +114,7 @@ class TestPerImageDevVersion:
         "clap_embed",
         "face_embed",
         "video_embed",
+        "vllm_audio",
     }
     INPUT_CASES = [
         (
@@ -243,6 +245,12 @@ class TestPerImageDevVersion:
             "deploy/clap_embed/Dockerfile",
             "FROM busybox\n",
             {"clap_embed"},
+        ),
+        (
+            "deploy/vllm_audio/Dockerfile",
+            "deploy/vllm_audio/Dockerfile",
+            "FROM busybox\n",
+            {"vllm_audio"},
         ),
         (
             "deploy/clap_embed/requirements.txt",
@@ -1006,6 +1014,122 @@ def test_release_gliner_build_includes_canonical_server() -> None:
     assert "videoprism" not in entries
 
 
+def _with_vllm_asr(root: Path, device: str, repository: str) -> Path:
+    chart_dir = root / "charts" / "cogniverse"
+    values = yaml.safe_load((chart_dir / "values.yaml").read_text())
+    values["inference"]["vllm_asr"] = {
+        "enabled": True,
+        "device": device,
+        "image": {"repository": repository, "tag": "0.1.0"},
+    }
+    (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
+    return root
+
+
+class TestDeviceImageBuilds:
+    """The transcription image derives from its device's vLLM image, so the
+    service's device picks both the repository and the build argument."""
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_rocm_transcription_builds_the_rocm_audio_image(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        _completed(mock_run)
+        root = _with_vllm_asr(
+            _make_project_root(tmp_path), "rocm", "cogniverse/vllm-audio-rocm"
+        )
+
+        built = build_images(root, torch_backend="cpu", versions=DEV_VERSIONS)
+
+        audio_tag = f"cogniverse/vllm-audio-rocm:{DEV_TAGS['vllm_audio']}"
+        assert built == [
+            f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+            audio_tag,
+        ]
+        audio_cmds = [
+            call[0][0] for call in mock_run.call_args_list if audio_tag in call[0][0]
+        ]
+        assert audio_cmds == [
+            [
+                "docker",
+                "build",
+                "-f",
+                "deploy/vllm_audio/Dockerfile",
+                "--build-arg",
+                "TORCH_BACKEND=rocm",
+                "-t",
+                audio_tag,
+                ".",
+            ]
+        ]
+        assert dev_image_set_values(
+            root, torch_backend="cpu", versions=DEV_VERSIONS
+        ) == {
+            "runtime.imagesByBackend.cpu.tag": DEV_TAGS["runtime"],
+            "dashboard.imagesByBackend.cpu.tag": DEV_TAGS["dashboard"],
+            "inference.gliner.image.tag": DEV_TAGS["gliner"],
+            "inference.vllm_asr.imagesByDevice.rocm.tag": DEV_TAGS["vllm_audio"],
+        }
+
+    def test_another_devices_audio_image_is_refused(self, tmp_path: Path) -> None:
+        from cogniverse_cli.images import device_image_services
+
+        root = _with_vllm_asr(
+            _make_project_root(tmp_path), "rocm", "cogniverse/vllm-audio-cpu"
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            device_image_services(root, None)
+        assert str(excinfo.value) == (
+            "inference.vllm_asr runs on device 'rocm' but resolves image "
+            "'cogniverse/vllm-audio-cpu'; the rocm build is "
+            "'cogniverse/vllm-audio-rocm'."
+        )
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_upstream_image_is_not_built(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        _completed(mock_run)
+        root = _with_vllm_asr(_make_project_root(tmp_path), "cuda", "vllm/vllm-openai")
+
+        built = build_images(root, torch_backend="cpu", versions=DEV_VERSIONS)
+
+        assert built == [
+            f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+        ]
+
+    def test_verification_names_a_missing_audio_image(self, tmp_path: Path) -> None:
+        from cogniverse_cli.images import verify_local_images_cover_deploy
+
+        root = _with_vllm_asr(
+            _make_project_root(tmp_path), "cuda", "cogniverse/vllm-audio-cuda"
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            verify_local_images_cover_deploy(
+                root,
+                None,
+                built_tags=[f"cogniverse/vllm-audio-cpu:{DEV_TAGS['vllm_audio']}"],
+                versions=DEV_VERSIONS,
+                torch_backend="cpu",
+            )
+        assert str(excinfo.value) == (
+            "Deploy enables first-party images that were not built: vllm_asr -> "
+            f"cogniverse/vllm-audio-cuda:{DEV_TAGS['vllm_audio']}. "
+            "Build with the same values files helm receives."
+        )
+        verify_local_images_cover_deploy(
+            root,
+            None,
+            built_tags=[f"cogniverse/vllm-audio-cuda:{DEV_TAGS['vllm_audio']}"],
+            versions=DEV_VERSIONS,
+            torch_backend="cpu",
+        )
+
+
 class TestDevImageSetValues:
     """The chart --set overrides that point first-party images at the built tag."""
 
@@ -1522,6 +1646,16 @@ class TestReadThirdPartyImages:
     then each enabled inference.<svc> including imagesByDevice; pullPolicy
     Never and enabled:false are skipped."""
 
+    @pytest.mark.parametrize(
+        "device_overlay", ["values.cpu.yaml", "values.rocm.yaml", "values.cuda.yaml"]
+    )
+    def test_dev_deploy_pulls_no_locally_built_image(self, device_overlay: str) -> None:
+        chart = Path(__file__).resolve().parents[3] / "charts" / "cogniverse"
+        images = _read_third_party_images(
+            [chart / "values.yaml", chart / "values.k3s.yaml", chart / device_overlay]
+        )
+        assert [image for image in images if image.startswith("cogniverse/")] == []
+
     def _values_file(self, tmp_path: Path) -> Path:
         data = {
             "vespa": {"image": {"repository": "vespaengine/vespa", "tag": "8.1"}},
@@ -1897,23 +2031,35 @@ class TestFirstPartyImageCoverage:
     ) -> None:
         """Every enabled ``cogniverse/*`` inference service the deploy renders
         must have a build spec whose Dockerfile exists on disk."""
-        from cogniverse_cli.images import LOCAL_IMAGE_BUILDS, first_party_services
-
-        required = first_party_services(
-            self.REPO_ROOT, [self._chart(name) for name in overlays]
+        from cogniverse_cli.images import (
+            DEVICE_IMAGE_BUILDS,
+            LOCAL_IMAGE_BUILDS,
+            device_image_services,
+            first_party_services,
         )
 
-        missing = sorted(set(required) - set(LOCAL_IMAGE_BUILDS))
+        values_files = [self._chart(name) for name in overlays]
+        required = first_party_services(self.REPO_ROOT, values_files)
+        devices = device_image_services(self.REPO_ROOT, values_files)
+
+        missing = sorted(
+            set(required) - set(LOCAL_IMAGE_BUILDS) - set(DEVICE_IMAGE_BUILDS)
+        )
         assert missing == [], (
             f"chart enables first-party images with no build spec: {missing}"
         )
         for svc, repo in required.items():
-            spec_repo, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]
+            if svc in DEVICE_IMAGE_BUILDS:
+                repos, dockerfile, _ = DEVICE_IMAGE_BUILDS[svc]
+                spec_repo = repos[devices[svc]]
+            else:
+                spec_repo, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]
             assert spec_repo == repo, f"{svc}: chart repo {repo} != build {spec_repo}"
             assert (self.REPO_ROOT / dockerfile).exists(), f"{svc}: {dockerfile}"
 
     def test_first_party_services_ignores_registry_backed_services(self) -> None:
-        """vLLM-served services are pulled from a registry, never built."""
+        """Stock vLLM services are pulled from a registry, never built; the
+        transcription service runs the derived audio image for its device."""
         from cogniverse_cli.images import first_party_services
 
         required = first_party_services(
@@ -1921,7 +2067,42 @@ class TestFirstPartyImageCoverage:
         )
 
         assert "denseon" not in required
-        assert "vllm_asr" not in required
+        assert required["vllm_asr"] == "cogniverse/vllm-audio-cpu"
+
+    @pytest.mark.parametrize(
+        ("overlay", "device"),
+        [
+            (None, "cpu"),
+            ("values.cpu.yaml", "cpu"),
+            ("values.rocm.yaml", "rocm"),
+            ("values.cuda.yaml", "cuda"),
+        ],
+    )
+    def test_each_device_overlay_builds_the_audio_image_for_its_device(
+        self, overlay: str | None, device: str
+    ) -> None:
+        from cogniverse_cli.images import dev_image_set_values, dev_image_tags
+
+        values_files = [self._chart("values.k3s.yaml")]
+        if overlay:
+            values_files.append(self._chart(overlay))
+        tags = dev_image_tags(
+            self.REPO_ROOT,
+            torch_backend="cpu",
+            values_files=values_files,
+            versions=DEV_VERSIONS,
+        )
+        audio = [tag for tag in tags if tag.startswith("cogniverse/vllm-audio")]
+        assert audio == [f"cogniverse/vllm-audio-{device}:{DEV_TAGS['vllm_audio']}"]
+        overrides = dev_image_set_values(
+            self.REPO_ROOT,
+            torch_backend="cpu",
+            values_files=values_files,
+            versions=DEV_VERSIONS,
+        )
+        assert {k: v for k, v in overrides.items() if "vllm_asr" in k} == {
+            f"inference.vllm_asr.imagesByDevice.{device}.tag": DEV_TAGS["vllm_audio"]
+        }
 
     def test_external_url_excludes_the_first_party_image(self, tmp_path: Path) -> None:
         """A Modal-hosted first-party service renders no pod, so its image is

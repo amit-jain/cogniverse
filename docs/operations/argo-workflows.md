@@ -142,7 +142,8 @@ workflow without starting it. This also covers a cron firing while Helm is
 still bringing Vespa up.
 
 Runtime-derived pods—including scheduled jobs, optimization and backup
-workflows, HF-cache population, and model-warm init containers—use only
+workflows, HF-cache population, and model-warm init containers that read
+the MinIO mirror—use only
 `runtime.imagesByBackend[runtime.backend]`. Helm rendering fails when the
 backend or its image entry is absent; there is no implicit CUDA backend or
 `runtime.image` fallback.

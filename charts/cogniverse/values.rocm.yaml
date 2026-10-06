@@ -87,7 +87,6 @@ inference:
   vllm_asr:
     device: rocm
     gpuCount: 1
-    imagesByDevice: *vllmRocmImage
     extraArgs:
       - "--runner"
       - "generate"
