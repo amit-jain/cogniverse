@@ -31,6 +31,9 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 
 logger = logging.getLogger(__name__)
 
+# Document v1 path prefix of config version documents (not version counters).
+_VERSION_DOCUMENTS = "/document/v1/config_metadata/config_metadata/docid/"
+
 
 @pytest.fixture(scope="module")
 def vespa_config_store(vespa_instance):
@@ -353,10 +356,11 @@ class TestVespaConfigStoreListAllConfigs:
                 if method in ("POST", "PUT")
             ]
 
-            assert str(raised.value).startswith(
-                "Failed to read Vespa config visit after "
-                f"{config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
-            ), str(raised.value)
+            # The write's first read is the version counter document.
+            assert str(raised.value) == (
+                "Failed to read the version counter of config "
+                f"{tenant}:backend:{service}:{key}: VespaError: document reads refused"
+            )
             assert fed == []
             # v1 untouched, latest unchanged, no spurious/rewritten row.
             assert store.get_config(
@@ -926,9 +930,11 @@ class TestExportImportRoundTrip:
 
     @staticmethod
     def _feeds_key(method: str, path: str, body: bytes, key: str) -> bool:
+        """A version document write for ``key``; version counter writes
+        carry no config_key and live under another namespace."""
         return (
             method == "POST"
-            and path.startswith("/document/v1/")
+            and path.startswith(_VERSION_DOCUMENTS)
             and json.loads(body)["fields"]["config_key"] == key
         )
 
@@ -1141,7 +1147,7 @@ class TestExportImportRoundTrip:
                     importer.close()
 
             methods = [
-                (method, path.startswith("/document/v1/"))
+                (method, path.startswith(_VERSION_DOCUMENTS))
                 for method, path, _body in proxy.requests
             ]
             feeds = [i for i, call in enumerate(methods) if call == ("POST", True)]
@@ -1699,3 +1705,65 @@ class TestImmutablePagesAreBounded:
             len(visited),
             max(visited, default=0),
         )
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestAVersionIsWonOnce:
+    """A writer that chose its version, then stalled while other writers
+    appended and pruned past it, must not win a version another writer
+    already won. Pruning deletes a version's document, and Vespa applies a
+    conditional put with ``create`` to a missing document whatever its
+    condition says, so a version document's absence cannot be what grants
+    the version."""
+
+    def test_a_writer_stalled_before_its_write_wins_no_version_twice(
+        self, vespa_instance
+    ):
+        tenant, service, key = (
+            f"cs_stall_{uuid.uuid4().hex[:8]}",
+            "stall_probe",
+            "k1",
+        )
+        coordinates = (tenant, ConfigScope.BACKEND, service, key)
+        fast, slow = (
+            VespaConfigStore(
+                backend_url="http://localhost",
+                backend_port=vespa_instance["http_port"],
+                keep_versions=3,
+            )
+            for _ in range(2)
+        )
+        stalled, go = threading.Event(), threading.Event()
+        write_version = slow.vespa_app.feed_data_point
+
+        def stall_before_the_version_write(*args, **kwargs):
+            if "::" in kwargs["data_id"] and not stalled.is_set():
+                stalled.set()
+                assert go.wait(60)
+            return write_version(*args, **kwargs)
+
+        slow.vespa_app.feed_data_point = stall_before_the_version_write
+        try:
+            first = fast.set_config(*coordinates, {"writer": "fast", "write": 0})
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pending = pool.submit(slow.set_config, *coordinates, {"writer": "slow"})
+                assert stalled.wait(60)
+                fast_versions = [
+                    fast.set_config(
+                        *coordinates, {"writer": "fast", "write": n}
+                    ).version
+                    for n in range(1, 7)
+                ]
+                go.set()
+                slow_version = pending.result(timeout=60).version
+
+            # Six fast writes landed and pruned past the stalled writer's
+            # version before it wrote; every version went to one writer.
+            assert sorted([first.version, *fast_versions, slow_version]) == list(
+                range(1, 9)
+            )
+        finally:
+            fast.delete_config(*coordinates)
+            fast.close()
+            slow.close()
