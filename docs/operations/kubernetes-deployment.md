@@ -742,14 +742,15 @@ inferenceStartup:
   progressAllowanceSeconds: 900
 ```
 
-- Position 0 and any key absent from the list load immediately. An
+- The first entry that runs a pod and any key absent from the list load
+  immediately. An
   empty list disables pacing, which is the right setting for a
   discrete-GPU host with headroom.
 - Order the list by descending `--gpu-memory-utilization` so the
   largest allocation lands against an unfragmented pool.
-- The gate is skipped when the named predecessor is disabled, so its
-  successor starts rather than waiting on a Service that will never
-  have an endpoint.
+- Each pod waits on the nearest earlier entry that runs a pod in the
+  release. Entries that are disabled or served from an `externalUrl` are
+  skipped, never waited on, and never leave their successor ungated.
 - Waiting happens in an init container, so readiness and liveness —
   both measured from the main container's start — are unaffected, and
   a waiting pod never reports unhealthy.
