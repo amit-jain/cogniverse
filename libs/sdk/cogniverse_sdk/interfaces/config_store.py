@@ -531,8 +531,10 @@ class ImmutableConfigStore(ConfigStore):
         page_size: int = 100,
         continuation: Optional[str] = None,
     ) -> tuple[List[ConfigEntry], Optional[str]]:
-        """Visit one bounded page of version-one records with an opaque cursor.
+        """Visit one page of at most ``page_size`` version-one records.
 
-        An empty page can have a continuation; callers must follow it to
-        exhaust the namespace. Concurrent insertions need a subsequent scan.
+        The continuation is an opaque cursor; following it to None returns
+        every record present for the whole scan exactly once. An empty page
+        can have a continuation; callers must follow it to exhaust the
+        namespace. Concurrent insertions need a subsequent scan.
         """

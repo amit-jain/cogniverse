@@ -2387,7 +2387,9 @@ by `cogniverse_vespa/config`. The `cogniverse_runtime/routers` admin endpoints
 `DELETE /admin/harness/keys/{key_hash}` create, page through, and revoke credentials.
 Only creation returns plaintext; listings include a 12-character hash prefix and
 revocation state. List pages accept `page_size` (1–1000) and an opaque `continuation`,
-which must be followed even on an empty page. Store outages return 503 with their
+which must be followed even on an empty page. A page holds at most `page_size` keys,
+and following the continuation to its end returns each key exactly once; a cursor the
+store did not issue is refused with 422. Store outages return 503 with their
 cause. Tenant deletion in `cogniverse_runtime/admin` revokes credentials before
 removing tenant metadata.
 
