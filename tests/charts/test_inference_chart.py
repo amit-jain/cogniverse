@@ -1845,18 +1845,22 @@ def test_external_url_skips_the_model_cache_pvc():
     assert "cogniverse-denseon-model-cache" in pvcs
 
 
-def test_external_url_predecessor_does_not_gate_its_successor():
-    """In the rocm startup chain denseon waits on vllm_asr; a Modal-hosted
-    vllm_asr deploys no local Service, so denseon must start ungated instead
-    of waiting on a /health that can never answer."""
+def test_external_url_predecessor_is_skipped_by_its_successors_gate():
+    """In the rocm startup chain denseon follows vllm_asr; a Modal-hosted
+    vllm_asr deploys no local Service, so denseon waits on the nearest earlier
+    entry with a pod (vllm_llm_student) rather than on a /health that can
+    never answer, and rather than starting ungated."""
     docs = _render(
         "inference.vllm_asr.externalUrl=https://amit--cogniverse-vllm-asr.modal.run",
         values="values.rocm.yaml",
     )
     deps = _inference_deployments(docs)
     assert "vllm_asr" not in deps
-    inits = deps["denseon"]["spec"]["template"]["spec"].get("initContainers", [])
-    assert [c["name"] for c in inits if c["name"] == "startup-gate"] == []
+    inits = deps["denseon"]["spec"]["template"]["spec"]["initContainers"]
+    gates = [c for c in inits if c["name"] == "startup-gate"]
+    assert [
+        {e["name"]: e["value"] for e in gate["env"]}["GATE_URL"] for gate in gates
+    ] == ["http://cogniverse-vllm-llm-student:8000/health"]
 
 
 def test_external_url_on_denseon_redirects_the_semantic_embed_url():

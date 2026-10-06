@@ -1441,23 +1441,28 @@ spec:
 {{- $resolvedImage := default $imageDefault $imageOverride }}
 {{- /*
      Startup pacing. ``inferenceStartup.sequence`` is an ordered list of
-     inference keys; a pod at position N holds its model load until the pod
-     at N-1 answers /health, so GPU memory is reserved one model at a time
-     instead of by every pod at once. Position 0 and any key absent from the
-     list are ungated. The gate is skipped when the predecessor is disabled,
-     which would otherwise wait on a Service that never gets an endpoint.
+     inference keys; a pod holds its model load until the nearest earlier
+     entry that runs a pod in this release answers /health, so GPU memory is
+     reserved one model at a time instead of by every pod at once. Entries
+     that are disabled or served from an externalUrl are skipped, since their
+     Service never gets an endpoint. The first running entry and any key
+     absent from the list are ungated.
 */ -}}
 {{- $startup := $.Values.inferenceStartup | default dict }}
 {{- $sequence := $startup.sequence | default (list) }}
 {{- $seqIndex := -1 }}
+{{- $predecessor := "" }}
 {{- range $i, $svc := $sequence }}
 {{- if eq $svc $name }}{{ $seqIndex = $i }}{{ end }}
+{{- if lt $seqIndex 0 }}
+{{- $candidate := (index $.Values.inference $svc) | default dict }}
+{{- if and $candidate.enabled (not $candidate.externalUrl) }}{{ $predecessor = $svc }}{{ end }}
 {{- end }}
-{{- $predecessor := "" }}
-{{- if gt $seqIndex 0 }}{{ $predecessor = index $sequence (sub $seqIndex 1) }}{{ end }}
+{{- end }}
+{{- if lt $seqIndex 0 }}{{ $predecessor = "" }}{{ end }}
 {{- $predecessorCfg := dict }}
-{{- if $predecessor }}{{ $predecessorCfg = (index $.Values.inference $predecessor) | default dict }}{{ end }}
-{{- $gateOn := and (ne $predecessor "") $predecessorCfg.enabled (not $predecessorCfg.externalUrl) }}
+{{- if $predecessor }}{{ $predecessorCfg = index $.Values.inference $predecessor }}{{ end }}
+{{- $gateOn := ne $predecessor "" }}
 {{- /*
      Each pod's gate deadline is its own clock: every init container starts
      when the release is applied, so a flat deadline would release the whole

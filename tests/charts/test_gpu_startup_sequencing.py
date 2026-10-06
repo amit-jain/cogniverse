@@ -81,9 +81,11 @@ def test_rocm_chain_gates_each_model_on_its_predecessor():
         if _gate(deployment) is not None
     }
 
-    # Both chat models are served from Modal, so the sequence re-forms behind
-    # the encoders and each surviving position keeps its own budget.
+    # Both chat models are served from Modal, so the sequence re-forms over
+    # the pods that run: vllm_asr waits on vllm_colpali, the nearest earlier
+    # entry with a pod, and each position keeps its own budget.
     assert chain == {
+        "vllm_asr": ("http://cogniverse-vllm-colpali:8000/health", "1800"),
         "denseon": ("http://cogniverse-vllm-asr:8000/health", "2400"),
         "colbert_pylate": ("http://cogniverse-denseon:8000/health", "3000"),
         "code_colbert_pylate": ("http://cogniverse-colbert-pylate:8000/health", "3600"),
@@ -95,10 +97,9 @@ def test_chain_head_and_non_sequenced_services_start_immediately():
 
     ungated = {name for name, d in deployments.items() if _gate(d) is None}
 
-    # vllm_asr is ungated because its predecessor (the student) is served from
-    # Modal: a disabled predecessor releases its successor rather than
-    # stranding it behind a health check that can never answer.
-    assert ungated == {"vllm_colpali", "vllm_asr", "gliner"}
+    # vllm_colpali is the first sequenced entry with a pod here (the teacher
+    # is served from Modal); gliner is not in the sequence.
+    assert ungated == {"vllm_colpali", "gliner"}
 
 
 def test_gated_deployments_extend_the_rollout_progress_deadline():
@@ -112,7 +113,7 @@ def test_gated_deployments_extend_the_rollout_progress_deadline():
     assert deadlines == {
         "gliner": None,
         "vllm_colpali": None,
-        "vllm_asr": None,
+        "vllm_asr": 2700,
         "denseon": 3300,
         "colbert_pylate": 3900,
         "code_colbert_pylate": 4500,
@@ -163,7 +164,10 @@ def test_gating_leaves_the_readiness_contract_untouched():
     }
 
 
-def test_disabled_predecessor_releases_its_successor_instead_of_stranding_it():
+def test_disabled_entry_mid_sequence_is_skipped_not_ungating_its_successor():
+    """A disabled entry has no Service to wait on, so its successor waits on
+    the nearest earlier entry that runs a pod instead of starting at once
+    and reserving GPU memory alongside it."""
     deployments = _inference_deployments(
         "--set",
         "inference.vllm_colpali.enabled=false",
@@ -179,15 +183,36 @@ def test_disabled_predecessor_releases_its_successor_instead_of_stranding_it():
 
     assert "vllm_colpali" not in deployments
     assert gated == {
+        "vllm_llm_student": "http://cogniverse-vllm-llm-teacher:8000/health",
         "vllm_asr": "http://cogniverse-vllm-llm-student:8000/health",
         "denseon": "http://cogniverse-vllm-asr:8000/health",
         "colbert_pylate": "http://cogniverse-denseon:8000/health",
         "code_colbert_pylate": "http://cogniverse-colbert-pylate:8000/health",
     }
-    assert _gate(deployments["vllm_llm_student"]) is None
-    assert (
-        deployments["vllm_llm_student"]["spec"].get("progressDeadlineSeconds") is None
+    assert _gate(deployments["vllm_llm_teacher"]) is None
+
+
+def test_consecutive_disabled_entries_are_all_skipped():
+    deployments = _inference_deployments(
+        *MODAL_LLM_VALUES,
+        "--set",
+        "inference.vllm_asr.enabled=false",
+        "--set",
+        "inference.denseon.enabled=false",
+        "--set",
+        "config.defaultProfiles.video=",
     )
+
+    gated = {
+        name: _gate_env(d)["GATE_URL"]
+        for name, d in deployments.items()
+        if _gate(d) is not None
+    }
+
+    assert gated == {
+        "colbert_pylate": "http://cogniverse-vllm-colpali:8000/health",
+        "code_colbert_pylate": "http://cogniverse-colbert-pylate:8000/health",
+    }
 
 
 def test_default_values_pace_nothing():
@@ -314,7 +339,52 @@ def test_the_release_check_covers_gated_model_pods():
             "vllm_colpali",
             "vllm_llm_student",
         ],
-        "k3s+rocm+modal": ["code_colbert_pylate", "colbert_pylate", "denseon"],
+        "k3s+rocm+modal": [
+            "code_colbert_pylate",
+            "colbert_pylate",
+            "denseon",
+            "vllm_asr",
+        ],
+    }
+
+
+def _merged_sequence(stack_args: tuple[str, ...]) -> list[str]:
+    values: dict = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
+    files = [stack_args[i + 1] for i, arg in enumerate(stack_args) if arg == "-f"]
+    sequence = (values.get("inferenceStartup") or {}).get("sequence") or []
+    for path in files:
+        overlay = yaml.safe_load(Path(path).read_text()) or {}
+        if "sequence" in (overlay.get("inferenceStartup") or {}):
+            sequence = overlay["inferenceStartup"]["sequence"]
+    return list(sequence)
+
+
+@pytest.mark.parametrize("stack", sorted(STACKS))
+def test_every_running_sequenced_pod_after_the_first_waits_on_the_previous_one(
+    stack,
+):
+    """No sequenced pod starts ungated just because the entry before it in the
+    list runs no pod: the running entries form one chain, in list order."""
+    deployments = _inference_deployments(*STACKS[stack])
+    running = [name for name in _merged_sequence(STACKS[stack]) if name in deployments]
+
+    waits_on = {
+        name: (
+            _gate_env(deployments[name])["GATE_URL"]
+            if _gate(deployments[name]) is not None
+            else None
+        )
+        for name in running
+    }
+
+    assert waits_on == {
+        name: (
+            None
+            if position == 0
+            else f"http://cogniverse-{running[position - 1].replace('_', '-')}:"
+            f"{deployments[running[position - 1]]['spec']['template']['spec']['containers'][0]['ports'][0]['containerPort']}/health"
+        )
+        for position, name in enumerate(running)
     }
 
 
@@ -337,7 +407,7 @@ def test_the_gate_runs_from_the_curl_image_the_jobs_already_pull():
     )
     assert gates == {
         name: (CURL_IMAGE, "IfNotPresent", ["sh", "-c"])
-        for name in ("denseon", "colbert_pylate", "code_colbert_pylate")
+        for name in ("vllm_asr", "denseon", "colbert_pylate", "code_colbert_pylate")
     }
 
 
