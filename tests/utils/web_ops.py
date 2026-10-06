@@ -42,6 +42,7 @@ from cogniverse_runtime.routers import (
     approvals,
     ingestion,
     orchestration_annotations,
+    routing_decisions,
     telemetry_metrics,
     tenant,
 )
@@ -126,6 +127,7 @@ def serve_ops_runtime(
     app.include_router(approvals.router, prefix="/admin/tenant")
     app.include_router(orchestration_annotations.router, prefix="/admin/tenant")
     app.include_router(telemetry_metrics.router, prefix="/admin/tenant")
+    app.include_router(routing_decisions.router, prefix="/admin/tenant")
     app.include_router(agents.router, prefix="/agents")
     app.include_router(ingestion.router, prefix="/ingestion")
     app.include_router(status_api.router, prefix="/ingestion")

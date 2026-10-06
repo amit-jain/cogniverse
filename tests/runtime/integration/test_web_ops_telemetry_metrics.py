@@ -1,5 +1,5 @@
-"""The web client's Profile metrics, RLM A/B, Analytics and Evaluation views,
-driven in Chromium against spans in real Phoenix.
+"""The web client's Profile metrics, RLM A/B, Analytics, Evaluation and Routing
+evaluation views, driven in Chromium against spans in real Phoenix.
 
 Spans are recorded the way their producers record them, with fixed values
 (``tests/utils/telemetry_metric_spans``). The runtime reads them through a
@@ -9,6 +9,7 @@ forwarding proxy in front of Phoenix's HTTP API, so a test can fail the reads.
 from __future__ import annotations
 
 import re
+import statistics
 import time
 from uuid import uuid4
 
@@ -18,18 +19,24 @@ import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
 import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    AutoAnnotation,
+)
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_runtime.optimization_cli import emit_ab_compare_span
 from cogniverse_runtime.routers import admin
-from tests.utils.approval_review import review_config_manager
+from tests.utils.approval_review import review_config_manager, run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.telemetry_metric_spans import (
     SEARCH,
     ab_result,
     record_profile_selection,
+    record_routing,
     record_sample_traces,
     record_search,
 )
@@ -647,4 +654,274 @@ def test_evaluation_shows_an_outage_rather_than_no_searches(
         panel.get_by_text(
             "No searches of the golden queries were recorded in this window."
         )
+    ).to_have_count(0)
+
+
+def _show_routing(page, web_url, tenant):
+    _show(page, web_url, "routing", "Routing evaluation", "Show decisions", tenant)
+    return page.get_by_role("region", name=f"Routing decisions of {tenant}", exact=True)
+
+
+def _routing_decisions(runtime_url, tenant, want, timeout=90.0):
+    """The tenant's decisions as the runtime serves them, once it serves
+    ``want`` (Phoenix serves spans after a short indexing delay)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        response = httpx.get(
+            f"{runtime_url}/admin/tenant/{tenant}/routing-decisions",
+            params={"lookback_hours": 1},
+            timeout=60,
+        )
+        assert response.status_code == 200, response.text
+        decisions = response.json()["decisions"]
+        if len(decisions) == want or time.monotonic() > deadline:
+            return decisions
+
+
+def _decision_rows(page: Page):
+    # The last cell holds the row's buttons.
+    return [row[:-1] for row in _rows(page, "Decisions")]
+
+
+def test_routing_evaluation_reviews_a_tenants_decisions(
+    page, web_url, runtime_url, telemetry
+):
+    tenant = _tenant("webrouting")
+    confident = record_routing(
+        telemetry, tenant, "search_agent", 0.9, 100, minutes_ago=3
+    )
+    failed = record_routing(
+        telemetry, tenant, "search_agent", 0.3, 300, minutes_ago=2, failed=True
+    )
+    boundary = record_routing(
+        telemetry, tenant, "summarizer_agent", 0.65, 200, minutes_ago=1
+    )
+    telemetry.force_flush(timeout_millis=10000)
+    served = _routing_decisions(runtime_url, tenant, 3)
+    assert [d["span_id"] for d in served] == [boundary, failed, confident]
+    storage = AnnotationStorage(tenant_id=tenant)
+    run_in_own_loop(
+        storage.store_llm_annotation(
+            failed,
+            AutoAnnotation(
+                span_id=failed,
+                label=AnnotationLabel.WRONG_ROUTING,
+                confidence=0.8,
+                reasoning="Summaries belong to the summarizer.",
+                suggested_correct_agent="summarizer_agent",
+                requires_human_review=True,
+            ),
+        )
+    )
+    started = {
+        d["span_id"]: page.evaluate(
+            "iso => new Date(iso).toLocaleString()", d["start_time"]
+        )
+        for d in served
+    }
+    unlabelled_row = [
+        started[boundary],
+        "a query for summarizer_agent",
+        "summarizer_agent",
+        "0.65",
+        "success",
+        "200.0 ms",
+        "Unlabelled",
+    ]
+    llm_row = [
+        started[failed],
+        "a query for search_agent",
+        "search_agent",
+        "0.30",
+        "failure",
+        "300.0 ms",
+        "wrong_routing (should be summarizer_agent)\nLLM",
+    ]
+    confident_row = [
+        started[confident],
+        "a query for search_agent",
+        "search_agent",
+        "0.90",
+        "success",
+        "100.0 ms",
+        "Unlabelled",
+    ]
+
+    panel = _show_routing(page, web_url, tenant)
+    deadline = time.monotonic() + 60
+    while True:
+        expect(panel.locator("dl").first).to_be_visible()
+        if _decision_rows(page) == [unlabelled_row, llm_row, confident_row]:
+            break
+        assert time.monotonic() < deadline, _decision_rows(page)
+        panel.get_by_role("button", name="Refresh").click()
+        page.wait_for_timeout(2000)
+    assert _facts(page, "Routing summary") == {
+        "Decisions": "3",
+        "Succeeded": "2",
+        "Failed": "1",
+        "Ambiguous": "0",
+        "Unreadable": "0",
+        "Accuracy": "66.7%",
+        "Confidence calibration": f"{statistics.correlation([0.65, 0.3, 0.9], [1, 0, 1]):.2f}",
+        "Latency p50": "200.0 ms",
+        "Latency p95": "290.0 ms",
+    }
+    assert _rows(page, "Decisions by agent") == [
+        ["search_agent", "2", "1", "1", "0", "50.0%", "0.60", "200.0 ms"],
+        ["summarizer_agent", "1", "1", "0", "0", "100.0%", "0.65", "200.0 ms"],
+    ]
+    assert _plot(page, "Confidence by outcome") == [
+        {"name": "success", "type": "histogram", "x": [0.65, 0.9]},
+        {"name": "failure", "type": "histogram", "x": [0.3]},
+        {"name": "ambiguous", "type": "histogram", "x": []},
+    ]
+    assert _plot(page, "Success rate by confidence") == [
+        {
+            "name": "Success rate",
+            "type": "scatter",
+            "x": ["0.0–0.2", "0.2–0.4", "0.4–0.6", "0.6–0.8", "0.8–1.0"],
+            "y": [None, 0, None, 1, 1],
+        }
+    ]
+    hours = sorted(
+        {
+            pd.Timestamp(d["start_time"]).floor("h").strftime("%Y-%m-%dT%H:00:00Z")
+            for d in served
+        }
+    )
+    per_hour = [
+        [
+            d
+            for d in served
+            if pd.Timestamp(d["start_time"]).floor("h").strftime("%Y-%m-%dT%H:00:00Z")
+            == hour
+        ]
+        for hour in hours
+    ]
+    assert _plot(page, "Decisions per hour") == [
+        {
+            "name": "Decisions",
+            "type": "bar",
+            "x": hours,
+            "y": [len(ds) for ds in per_hour],
+        },
+        {
+            "name": "Succeeded",
+            "type": "bar",
+            "x": hours,
+            "y": [sum(d["outcome"] == "success" for d in ds) for ds in per_hour],
+        },
+    ]
+
+    decisions = page.get_by_role("region", name="Decisions", exact=True)
+    decisions.get_by_label("Show").select_option("LLM labels to review")
+    assert _decision_rows(page) == [llm_row]
+    approve = decisions.get_by_role("button", name=f"Approve the LLM label of {failed}")
+    approve.click()
+    expect(decisions.get_by_role("alert")).to_have_text(
+        "Enter your name as the reviewer first."
+    )
+    panel.get_by_label("Reviewer").fill("dana")
+    approve.click()
+    expect(page.get_by_role("status")).to_have_text(
+        f"Approved the LLM label of {failed}."
+    )
+    expect(decisions.get_by_text("No decisions match.")).to_be_visible()
+    decisions.get_by_label("Show").select_option("Reviewed")
+    assert _decision_rows(page) == [
+        [
+            *llm_row[:-1],
+            "wrong_routing (should be summarizer_agent)\nLLM, approved by dana",
+        ]
+    ]
+
+    decisions.get_by_label("Show").select_option("All decisions")
+    decisions.get_by_role("button", name=f"Relabel {boundary}").click()
+    form = page.get_by_role("form", name=f"Label {boundary}")
+    form.get_by_role("combobox").select_option("wrong")
+    form.get_by_label("Reasoning").fill("Needs a search.")
+    form.get_by_label("Should have gone to").fill("search_agent")
+    form.get_by_role("button", name="Save label").click()
+    expect(page.get_by_role("status")).to_have_text(f"Labelled {boundary} wrong.")
+    expect(form).to_have_count(0)
+    assert _decision_rows(page) == [
+        [*unlabelled_row[:-1], "wrong (should be search_agent)\ndana"],
+        [
+            *llm_row[:-1],
+            "wrong_routing (should be summarizer_agent)\nLLM, approved by dana",
+        ],
+        confident_row,
+    ]
+
+    stored = {
+        span_id: run_in_own_loop(storage.get_annotation(span_id))
+        for span_id in (failed, boundary)
+    }
+    assert {
+        span_id: (
+            annotation["label"],
+            {
+                key: annotation["metadata"].get(key)
+                for key in (
+                    "annotator",
+                    "human_reviewed",
+                    "approved_by",
+                    "suggested_agent",
+                    "reasoning",
+                )
+            },
+        )
+        for span_id, annotation in stored.items()
+    } == {
+        failed: (
+            "wrong_routing",
+            {
+                "annotator": "llm",
+                "human_reviewed": True,
+                "approved_by": "dana",
+                "suggested_agent": "summarizer_agent",
+                "reasoning": "Summaries belong to the summarizer.",
+            },
+        ),
+        boundary: (
+            "wrong",
+            {
+                "annotator": "dana",
+                "human_reviewed": True,
+                "approved_by": None,
+                "suggested_agent": "search_agent",
+                "reasoning": "Needs a search.",
+            },
+        ),
+    }
+
+
+def test_routing_evaluation_of_a_quiet_tenant_says_there_are_no_decisions(
+    page, web_url, telemetry
+):
+    tenant = _tenant("webquietrouting")
+    panel = _show_routing(page, web_url, tenant)
+    expect(
+        panel.get_by_text("No routing decisions were recorded in this window.")
+    ).to_be_visible()
+    assert _facts(page, "Routing summary")["Decisions"] == "0"
+    expect(page.get_by_role("table", name="Decisions")).to_have_count(0)
+
+
+def test_routing_evaluation_shows_an_outage_rather_than_no_decisions(
+    page, web_url, phoenix_proxy
+):
+    tenant = _tenant("webroutingoutage")
+
+    def fail_span_reads(method, path, body):
+        return (503, {"detail": "down"}) if "/spans" in path else None
+
+    phoenix_proxy.intercept = fail_span_reads
+    panel = _show_routing(page, web_url, tenant)
+    expect(panel.get_by_role("alert")).to_have_text(
+        f"Could not read the routing decisions of tenant {tenant}."
+    )
+    expect(
+        panel.get_by_text("No routing decisions were recorded in this window.")
     ).to_have_count(0)

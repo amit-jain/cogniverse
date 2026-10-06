@@ -704,6 +704,7 @@ _MANUAL_OPTIMIZE_MODES = {
     "workflow",
     "profile",
     "entity-extraction",
+    "llm-annotate",
 }
 
 

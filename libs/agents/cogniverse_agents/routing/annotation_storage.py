@@ -36,6 +36,14 @@ def _meta_get(ann_row: "pd.Series", key: str, default: Any = None) -> Any:
     return default
 
 
+class LLMAnnotationNotFoundError(LookupError):
+    """The span carries no annotation to approve."""
+
+
+class NotAnLLMAnnotationError(ValueError):
+    """The span's annotation was not made by the LLM annotator."""
+
+
 def _routing_get(span_row: "pd.Series", field: str, default: Any = None) -> Any:
     """Read a routing.* span attribute. Phoenix nests dotted attributes into an
     ``attributes.routing`` dict column; fall back to a flat column if present."""
@@ -177,29 +185,64 @@ class AnnotationStorage:
 
         return await self._update_span_attributes(span_id, annotation_data)
 
+    async def get_annotation(self, span_id: str) -> Optional[Dict[str, Any]]:
+        """The span's latest annotation of this storage's name as
+        ``{"label", "score", "metadata"}``, or ``None`` when it has none."""
+        annotations = await self.provider.annotations.get_annotations(
+            spans_df=pd.DataFrame({"context.span_id": [span_id]}),
+            project=self.project_name,
+            annotation_names=[self.annotation_name],
+        )
+        if annotations is None or annotations.empty:
+            return None
+        if "updated_at" in annotations.columns:
+            annotations = annotations.sort_values("updated_at")
+        latest = annotations.iloc[-1]
+        metadata = latest.get("metadata")
+        return {
+            "label": latest.get("result.label"),
+            "score": latest.get("result.score"),
+            "metadata": dict(metadata) if isinstance(metadata, dict) else {},
+        }
+
     async def approve_llm_annotation(
         self, span_id: str, annotator_id: str = "human"
-    ) -> bool:
-        """
-        Mark LLM annotation as reviewed and approved by human
+    ) -> Dict[str, Any]:
+        """Mark the span's LLM annotation as reviewed and approved by
+        ``annotator_id``, keeping its label, confidence and reasoning.
 
-        Args:
-            span_id: Span ID
-            annotator_id: Human annotator identifier
-
-        Returns:
-            True if updated successfully
+        Returns the approved annotation. Raises
+        ``LLMAnnotationNotFoundError`` when the span has no annotation and
+        ``NotAnLLMAnnotationError`` when a person made it.
         """
         logger.info(f"✅ Approving LLM annotation for span {span_id}")
 
-        update_data = {
-            "annotation.human_reviewed": True,
-            "annotation.requires_review": False,
-            "annotation.approved_by": annotator_id,
-            "annotation.approval_timestamp": datetime.now(timezone.utc).isoformat(),
+        annotation = await self.get_annotation(span_id)
+        if annotation is None:
+            raise LLMAnnotationNotFoundError(
+                f"span {span_id} has no {self.annotation_name} to approve"
+            )
+        if annotation["metadata"].get("annotator") != "llm":
+            raise NotAnLLMAnnotationError(
+                f"the {self.annotation_name} of span {span_id} was made by "
+                f"{annotation['metadata'].get('annotator')!r}, not the LLM"
+            )
+        metadata = {
+            **annotation["metadata"],
+            "human_reviewed": True,
+            "requires_review": False,
+            "approved_by": annotator_id,
+            "approval_timestamp": datetime.now(timezone.utc).isoformat(),
         }
-
-        return await self._update_span_attributes(span_id, update_data)
+        await self.provider.annotations.add_annotation(
+            span_id=span_id,
+            name=self.annotation_name,
+            label=annotation["label"],
+            score=annotation["score"],
+            metadata=metadata,
+            project=self.project_name,
+        )
+        return {**annotation, "metadata": metadata}
 
     async def _update_span_attributes(self, span_id: str, attributes: Dict) -> bool:
         """

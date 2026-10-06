@@ -99,6 +99,7 @@ cogniverse_runtime/
 │   ├── graph.py                     # Graph traversal API
 │   ├── knowledge.py                 # Knowledge-graph query API
 │   ├── openai_compat.py             # OpenAI-dialect /v1 surface for harness clients
+│   ├── routing_decisions.py         # A tenant's routing decisions, their quality and review
 │   ├── telemetry_metrics.py         # Per-tenant span metrics for the operations views
 │   ├── tenant.py                    # Per-tenant admin endpoints
 │   └── wiki.py                      # Wiki API endpoints
@@ -468,6 +469,7 @@ The server uses modular routers for different functionality:
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
 | `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans, and its searches scored against its golden set |
+| `routing_decisions` | `/admin/tenant` | A tenant's routing decisions with their outcomes, labels and per-agent quality; approving and correcting their labels |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -1390,6 +1392,14 @@ The orchestrator records each workflow as a `cogniverse.orchestration` span in t
 **GET /admin/tenant/{tenant_id}/telemetry/traces** — The tenant's traces (its root spans), newest first: `{facets: {operations, profiles, strategies}, statistics: {requests, succeeded, failed, success_rate, latency_ms: {mean, min, p50, p75, p90, p95, p99, max}, outlier_bounds_ms: {lower, upper}, by_operation: [{operation, count, mean_ms, p95_ms, error_rate}, ...]}, traces: [{trace_id, span_id, start_time, duration_ms, operation, succeeded, profile, strategy, error}, ...]}`. `operation` keeps traces whose name contains it (any case); repeatable `profile` and `strategy` keep traces with one of the given values; statistics cover the kept traces and `facets` the whole window. A trace's profile is its `profile` or `metadata.profile` attribute, its strategy its `strategy`, `ranking_strategy` or `metadata.strategy`. Outlier bounds are Tukey's fences (`Q1 - 1.5 IQR`, `Q3 + 1.5 IQR`), `null` below four traces; latency figures are `null` without traces.
 
 **GET /admin/tenant/{tenant_id}/evaluation/golden** — The tenant's `search_service.search` spans over the last `lookback_hours` (1–2160, default 168), scored against the tenant's golden set (the blob `PUT /admin/tenants/{tenant_id}/golden_set_ground_truth` stores) by `cogniverse_evaluation.recorded_searches.score_recorded_searches`: `{golden_queries, strategies: [{profile, strategy, queries, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5, success_rate}, ...], queries: [{profile, strategy, query, expected, retrieved, searched_at, trace_id, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5}, ...], unsearched_queries, failed_searches, unscored_searches}`. The latest successful search per profile, strategy and query is scored. A tenant without a golden set answers **404** `golden_set_missing` naming the upload route; a golden set that cannot be canonicalized **409** `golden_set_invalid`; a store that does not answer **502** `golden_set_store_unavailable`.
+
+**Routing decisions** (`libs/runtime/cogniverse_runtime/routers/routing_decisions.py`). A decision is a `cogniverse.routing` span in the tenant's telemetry project; its label is the span's `routing_annotation`.
+
+**GET /admin/tenant/{tenant_id}/routing-decisions** — Every routing decision of the last `lookback_hours` (1–720, default 24), summarized by `cogniverse_evaluation.evaluators.routing_evaluator.summarize_routing_decisions`, each decision carrying its latest `label` (`{label, confidence, reasoning, suggested_agent, annotator, human_reviewed, requires_review, approved_by}`, or `null`). A telemetry read failure answers **502** `telemetry_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/routing-decisions/{span_id}/approve** — Body `{start_time, reviewer}`, where `start_time` is the decision's start time as the list serves it (with a timezone, else **422**). Approves the LLM's label of the decision (`AnnotationStorage.approve_llm_annotation`) and answers the decision with it. **404** when the tenant has no such decision at that time or it has no LLM label; **409** when a reviewer labelled it; **502** `telemetry_unavailable` when it cannot be read and `annotation_not_stored` when the label is not written.
+
+**PUT /admin/tenant/{tenant_id}/routing-decisions/{span_id}/label** — Body `{start_time, reviewer, label (correct | wrong | ambiguous | insufficient_info), reasoning, suggested_agent}`. Stores the reviewer's label, replacing any LLM label, and answers the decision with it; the same 404, 422 and 502 answers.
 
 ### Knowledge Endpoints
 
@@ -2377,7 +2387,7 @@ and config version count explicitly; its file reports include the resolved root,
 scanned and deleted counts, and deletion errors. Memory retention follows each
 registered kind's schema TTL.
 
-**Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
+**Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `llm-annotate`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
 
 ```bash
 python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
@@ -2393,6 +2403,9 @@ python -m cogniverse_runtime.optimization_cli --mode triggered \
 # Rollback: restore a previously active artefact version
 python -m cogniverse_runtime.optimization_cli --mode rollback \
     --tenant-id acme:production --agent search_agent --prompts-version 2
+# Label the routing decisions that need review with the LLM (see routing.md)
+python -m cogniverse_runtime.optimization_cli --mode llm-annotate \
+    --tenant-id acme:production --lookback-hours 24
 # Score recent routing spans (routing_outcome + confidence_calibration) for drift
 python -m cogniverse_runtime.optimization_cli --mode online-routing-eval \
     --tenant-id acme:production --lookback-hours 24
