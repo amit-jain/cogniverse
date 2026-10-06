@@ -68,7 +68,7 @@ jobs:
     # only local_only (human-driven boundary tests) opts out.
     - name: Run tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/messaging/unit/ tests/messaging/integration/ \
           -m "not local_only" \
           -v --tb=short

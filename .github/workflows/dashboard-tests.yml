@@ -61,7 +61,7 @@ jobs:
 
     - name: Run tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/dashboard/unit \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/dashboard/unit \
           -v --tb=short \
           --cov=libs/dashboard/cogniverse_dashboard \
           --cov-report=term-missing \
@@ -126,7 +126,7 @@ jobs:
     - name: Test module imports
       run: |
         # Dashboard has complex Streamlit dependencies, just verify the package is installed
-        uv run python -c "import cogniverse_dashboard; print('Dashboard package import successful')"
+        uv run --no-sync python -c "import cogniverse_dashboard; print('Dashboard package import successful')"
         echo "All dashboard imports successful"
 
   integration-tests:
@@ -155,7 +155,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 8
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/dashboard/ \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

@@ -101,7 +101,7 @@ jobs:
     - name: Install system libraries
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        sudo apt-get install -y --no-install-recommends ffmpeg
 
     - name: Prefetch DenseOn tokenizer
       run: |
@@ -136,7 +136,7 @@ jobs:
       env:
         ASSERTION_GUARD_BASE: ${{ steps.guard_base.outputs.sha }}
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/common/unit -m "unit or not integration" \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/common/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov=libs/foundation/cogniverse_foundation \
@@ -145,7 +145,7 @@ jobs:
 
     - name: Run core unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/core/unit tests/memory/unit \
           tests/utils/test_kg_lookup.py tests/utils/test_memory_store.py \
           -m unit \
@@ -156,7 +156,7 @@ jobs:
 
     - name: Run memory unit fast subset
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/memory/unit -m "unit and ci_fast" \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/memory/unit -m "unit and ci_fast" \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov-append \
@@ -220,9 +220,9 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_core.registries.registry import get_registry; print('Registry import successful')"
-        uv run python -c "from cogniverse_foundation.config import BootstrapConfig; print('BootstrapConfig import successful')"
-        uv run python -c "from cogniverse_sdk.interfaces import Backend; print('Backend import successful')"
+        uv run --no-sync python -c "from cogniverse_core.registries.registry import get_registry; print('Registry import successful')"
+        uv run --no-sync python -c "from cogniverse_foundation.config import BootstrapConfig; print('BootstrapConfig import successful')"
+        uv run --no-sync python -c "from cogniverse_sdk.interfaces import Backend; print('Backend import successful')"
         echo "All core imports successful"
 
   integration-tests:

@@ -83,7 +83,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/backends/unit -m "unit or not integration" \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/backends/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/vespa/cogniverse_vespa \
           --cov-report=term-missing \
@@ -146,8 +146,8 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_vespa import VespaBackend; print('VespaBackend import successful')"
-        uv run python -c "from cogniverse_vespa.config.config_store import VespaConfigStore; print('VespaConfigStore import successful')"
+        uv run --no-sync python -c "from cogniverse_vespa import VespaBackend; print('VespaBackend import successful')"
+        uv run --no-sync python -c "from cogniverse_vespa.config.config_store import VespaConfigStore; print('VespaConfigStore import successful')"
         echo "All vespa imports successful"
 
   integration-tests:
