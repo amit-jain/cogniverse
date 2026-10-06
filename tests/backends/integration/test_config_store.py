@@ -1634,3 +1634,68 @@ class TestAPointReadParsesOnlyItsOwnKey:
         # A pinned version still reads the whole history to find it.
         assert pinned.config_value == {"revision": 1}
         assert sorted(decoded) == [1, 2, 3]
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestImmutablePagesAreBounded:
+    """A visit's ``wantedDocumentCount`` is a hint, and Vespa returns whole
+    buckets; ``list_immutable_configs`` still returns at most ``page_size``
+    records per page and each record exactly once across the scan."""
+
+    RECORDS = 60
+
+    @pytest.fixture(scope="class")
+    def namespace(self, vespa_config_store):
+        service = f"pages_{uuid.uuid4().hex[:8]}"
+        keys = [f"{index:03d}_{uuid.uuid4().hex}" for index in range(self.RECORDS)]
+        for key in keys:
+            vespa_config_store.put_immutable_config(
+                "pages:tenant", ConfigScope.SYSTEM, service, key, {"key": key}
+            )
+        return service, keys
+
+    @pytest.mark.parametrize("page_size", [1, 2, 3, 7, 59, 60, 1000])
+    def test_every_page_size_returns_each_record_exactly_once(
+        self, vespa_config_store, namespace, monkeypatch, page_size
+    ):
+        service, keys = namespace
+        visited: list[int] = []
+        read_json = config_store_module._config_store_read_json
+
+        def recording(path, *, params, timeout, operation="visit"):
+            payload = read_json(
+                path, params=params, timeout=timeout, operation=operation
+            )
+            if path.endswith("/docid/") and payload is not None:
+                visited.append(len(payload["documents"]))
+            return payload
+
+        monkeypatch.setattr(config_store_module, "_config_store_read_json", recording)
+
+        pages: list[list[str]] = []
+        continuation = None
+        while True:
+            entries, continuation = vespa_config_store.list_immutable_configs(
+                "pages:tenant",
+                ConfigScope.SYSTEM,
+                service,
+                page_size=page_size,
+                continuation=continuation,
+            )
+            pages.append([entry.config_key for entry in entries])
+            if continuation is None:
+                break
+
+        assert [len(page) for page in pages if len(page) > page_size] == []
+        returned = [key for page in pages for key in page]
+        assert sorted(returned) == keys
+        assert len(returned) == len(set(returned))
+        assert sum(visited) == self.RECORDS
+        logger.info(
+            "PAGING page_size=%s largest_page=%s visits=%s largest_visit=%s",
+            page_size,
+            max(len(page) for page in pages),
+            len(visited),
+            max(visited, default=0),
+        )

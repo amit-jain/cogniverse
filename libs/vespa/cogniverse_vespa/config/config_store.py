@@ -3,6 +3,8 @@ Vespa-based configuration storage with multi-tenant support.
 Stores configurations directly in Vespa backend for unified storage.
 """
 
+import base64
+import binascii
 import json
 import logging
 import time
@@ -115,6 +117,47 @@ def _literal_glob_suffix(suffix: str) -> str:
             "globs cannot escape one"
         )
     return suffix
+
+
+_IMMUTABLE_CURSOR_PREFIX = "v1."
+
+
+def _encode_immutable_cursor(
+    visit_continuation: Optional[str], pending_keys: List[str]
+) -> Optional[str]:
+    """The page cursor: where the visit resumes, plus the config keys a visit
+    already returned beyond the last page.
+
+    A visit's ``wantedDocumentCount`` is a hint; one visit can return more
+    documents than asked. Those extras are carried here by key and served
+    first on the next page, so a page never exceeds its size and no record is
+    skipped or repeated.
+    """
+    if visit_continuation is None and not pending_keys:
+        return None
+    body = json.dumps(
+        {"visit": visit_continuation, "pending": pending_keys},
+        separators=(",", ":"),
+    ).encode()
+    return _IMMUTABLE_CURSOR_PREFIX + base64.urlsafe_b64encode(body).decode()
+
+
+def _decode_immutable_cursor(cursor: str) -> tuple[Optional[str], List[str]]:
+    if not cursor.startswith(_IMMUTABLE_CURSOR_PREFIX):
+        raise ValueError("continuation is not a config-store page cursor")
+    try:
+        body = json.loads(
+            base64.urlsafe_b64decode(cursor[len(_IMMUTABLE_CURSOR_PREFIX) :])
+        )
+        visit = body["visit"]
+        pending = body["pending"]
+    except (binascii.Error, ValueError, KeyError, TypeError) as exc:
+        raise ValueError("continuation is not a config-store page cursor") from exc
+    if not (visit is None or isinstance(visit, str)) or not (
+        isinstance(pending, list) and all(isinstance(key, str) for key in pending)
+    ):
+        raise ValueError("continuation is not a config-store page cursor")
+    return visit, pending
 
 
 def _config_store_read_json(
@@ -476,6 +519,24 @@ class VespaConfigStore(ImmutableConfigStore):
     ) -> tuple[List[ConfigEntry], Optional[str]]:
         if not 1 <= page_size <= 1000:
             raise ValueError("page_size must be between 1 and 1000")
+        visit_continuation: Optional[str] = None
+        pending: List[str] = []
+        if continuation is not None:
+            visit_continuation, pending = _decode_immutable_cursor(continuation)
+        if pending:
+            # Records an earlier visit returned past its page. One that was
+            # deleted since is simply gone; the rest are served in order.
+            page = [
+                entry
+                for key in pending[:page_size]
+                if (entry := self.get_immutable_config(tenant_id, scope, service, key))
+                is not None
+            ]
+            return page, _encode_immutable_cursor(
+                visit_continuation, pending[page_size:]
+            )
+        if continuation is not None and visit_continuation is None:
+            return [], None
         path = f"{self.vespa_app.url}/document/v1/{self.schema_name}/{self.schema_name}/docid/"
         params = {
             "wantedDocumentCount": page_size,
@@ -489,14 +550,17 @@ class VespaConfigStore(ImmutableConfigStore):
                 ]
             ),
         }
-        if continuation is not None:
-            params["continuation"] = continuation
+        if visit_continuation is not None:
+            params["continuation"] = visit_continuation
         payload = _config_store_read_json(path, params=params, timeout=5)
         if payload is None:
             return [], None
-        return (
-            [self._entry_from_fields(doc["fields"]) for doc in payload["documents"]],
+        entries = [
+            self._entry_from_fields(doc["fields"]) for doc in payload["documents"]
+        ]
+        return entries[:page_size], _encode_immutable_cursor(
             payload.get("continuation"),
+            [entry.config_key for entry in entries[page_size:]],
         )
 
     def _get_latest_version(
