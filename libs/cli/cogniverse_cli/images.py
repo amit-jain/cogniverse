@@ -62,10 +62,24 @@ LOCAL_IMAGE_BUILDS = {
     "gliner": (GLINER_REPO, "deploy/gliner/Dockerfile", "."),
     **SIDECAR_BUILDS,
 }
-# colpali, whisper, and the DenseOn dense embedder are served by vLLM, not
+# Whisper runs on vLLM, but from an image derived from the device's vLLM image
+# with the audio packages installed, so its pod starts without network access.
+# One repository per device, keyed by inference service name; the service's
+# ``device`` picks both the repository and the upstream image it derives from.
+DEVICE_IMAGE_BUILDS = {
+    "vllm_asr": (
+        {
+            "cpu": "cogniverse/vllm-audio-cpu",
+            "cuda": "cogniverse/vllm-audio-cuda",
+            "rocm": "cogniverse/vllm-audio-rocm",
+        },
+        "deploy/vllm_audio/Dockerfile",
+        ".",
+    ),
+}
+# colpali and the DenseOn dense embedder are served by stock vLLM, not
 # built here:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
-# openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
 # lightonai/DenseOn via inference.denseon (vllm_embed engine)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 
@@ -90,6 +104,7 @@ IMAGE_DOCKERFILES = {
     "clap_embed": "deploy/clap_embed/Dockerfile",
     "face_embed": "deploy/face_embed/Dockerfile",
     "video_embed": "deploy/video_embed/Dockerfile",
+    "vllm_audio": "deploy/vllm_audio/Dockerfile",
 }
 
 # Host-side inputs read by each Docker build. Every set includes the Dockerfile
@@ -139,6 +154,10 @@ IMAGE_INPUT_PATHS = {
         IMAGE_DOCKERFILES["video_embed"],
         "deploy/video_embed/requirements.txt",
         "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
+        ".dockerignore",
+    ),
+    "vllm_audio": (
+        IMAGE_DOCKERFILES["vllm_audio"],
         ".dockerignore",
     ),
 }
@@ -396,6 +415,38 @@ def first_party_services(
     return required
 
 
+def device_image_services(
+    project_root: Path, values_files: list[Path] | None
+) -> dict[str, str]:
+    """Enabled ``DEVICE_IMAGE_BUILDS`` services that render a first-party
+    image, mapped to the device they run on.
+
+    A service pointed at an upstream image is not built. One pointed at
+    another device's repository is refused: that image derives from the wrong
+    vLLM build for the pod's device.
+    """
+    inference = _merged_inference(project_root, values_files)
+    first_party = first_party_services(project_root, values_files)
+    devices: dict[str, str] = {}
+    for svc, (repos, _, _) in DEVICE_IMAGE_BUILDS.items():
+        repo = first_party.get(svc)
+        if repo is None:
+            continue
+        device = inference[svc].get("device") or "cpu"
+        if repos.get(device) != repo:
+            raise RuntimeError(
+                f"inference.{svc} runs on device {device!r} but resolves image "
+                f"{repo!r}; the {device} build is {repos.get(device)!r}."
+            )
+        devices[svc] = device
+    return devices
+
+
+def _device_image_tag(svc: str, device: str, versions: dict[str, str]) -> str:
+    repos, dockerfile, _ = DEVICE_IMAGE_BUILDS[svc]
+    return _dev_tag(repos[device], versions[_image_family_for_dockerfile(dockerfile)])
+
+
 def _resolved_versions(
     project_root: Path, versions: dict[str, str] | None
 ) -> dict[str, str]:
@@ -423,7 +474,9 @@ def _resolved_builds(
     versions: dict[str, str],
 ) -> list[tuple[str, str, str, list[str]]]:
     unbuildable = sorted(
-        set(first_party_services(project_root, values_files)) - set(LOCAL_IMAGE_BUILDS)
+        set(first_party_services(project_root, values_files))
+        - set(LOCAL_IMAGE_BUILDS)
+        - set(DEVICE_IMAGE_BUILDS)
     )
     if unbuildable:
         raise RuntimeError(
@@ -467,7 +520,7 @@ def _resolved_builds(
     to_build += [
         svc
         for svc in first_party_services(project_root, values_files)
-        if svc not in to_build and svc != "gliner"
+        if svc not in to_build and svc != "gliner" and svc not in DEVICE_IMAGE_BUILDS
     ]
     for svc in to_build:
         repo, dockerfile, context = LOCAL_IMAGE_BUILDS[svc]
@@ -481,6 +534,16 @@ def _resolved_builds(
             else []
         )
         builds.append((_dev_tag(repo, version), dockerfile, context, sidecar_args))
+    for svc, device in device_image_services(project_root, values_files).items():
+        _, dockerfile, context = DEVICE_IMAGE_BUILDS[svc]
+        builds.append(
+            (
+                _device_image_tag(svc, device, versions),
+                dockerfile,
+                context,
+                ["--build-arg", f"TORCH_BACKEND={device}"],
+            )
+        )
     return builds
 
 
@@ -557,7 +620,13 @@ def verify_local_images_cover_deploy(
     backend = torch_backend or detect_torch_backend()
     have = set(built_tags)
     missing: dict[str, str] = {}
+    device_services = device_image_services(project_root, values_files)
     for svc, repo in first_party_services(project_root, values_files).items():
+        if svc in device_services:
+            expected = _device_image_tag(svc, device_services[svc], resolved)
+            if expected not in have:
+                missing[svc] = expected
+            continue
         build_spec = LOCAL_IMAGE_BUILDS.get(svc)
         if build_spec is None:
             missing[svc] = repo
@@ -597,7 +666,8 @@ def build_images(
     passing the overlays helm receives is what brings an enabled sidecar into
     the build; omitting them builds the chart-default set only. The PyLate
     image is shared by colbert_pylate and code_colbert_pylate and builds once.
-    ColPali, Whisper, and DenseOn are served by vLLM and pulled directly.
+    Whisper builds the ``DEVICE_IMAGE_BUILDS`` image for its device. ColPali
+    and DenseOn are served by stock vLLM and pulled directly.
 
     Raises when those values enable a first-party (``cogniverse/*``) service
     that has no ``LOCAL_IMAGE_BUILDS`` spec, rather than leaving its pod to
@@ -665,6 +735,10 @@ def dev_image_set_values(
         if svc in _TORCH_BACKEND_SIDECARS:
             version = f"{version}-{backend}"
         overrides[f"inference.{svc}.image.tag"] = _docker_tag(version)
+    for svc, device in device_image_services(project_root, values_files).items():
+        _, dockerfile, _ = DEVICE_IMAGE_BUILDS[svc]
+        version = resolved[_image_family_for_dockerfile(dockerfile)]
+        overrides[f"inference.{svc}.imagesByDevice.{device}.tag"] = _docker_tag(version)
     return overrides
 
 

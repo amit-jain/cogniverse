@@ -760,9 +760,10 @@ inferenceStartup:
   mirror the image with the rest of the third-party set.
 - Weight downloads run in the `model-warm` init container ahead of the
   gate; they touch network and disk rather than the GPU, so they still
-  run concurrently across pods. `model-warm` runs from the runtime image
-  (it needs `boto3` and `huggingface_hub`), so with
-  `hfCache.persistence.enabled` a runtime release does change, and
+  run concurrently across pods. `model-warm` runs from the pod's own
+  server image, except with the MinIO mirror
+  (`hfCache.persistence.minio.enabled`), where it needs `boto3` and runs
+  from the runtime image; only then does a runtime release change, and
   restart, the inference pods.
 - Position N gives up after `N x perLinkTimeoutSeconds`. The deadline
   scales with position because all init containers start together, so a

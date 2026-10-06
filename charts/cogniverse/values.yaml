@@ -1391,11 +1391,25 @@ inference:
     gpuCount: 1
     nodeSelector: {}
     tolerations: []
+    # deploy/vllm_audio: the device's vLLM v0.23.0 image with the audio
+    # packages installed at build time.
     image:
-      repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
+      repository: cogniverse/vllm-audio-cpu
+      tag: "0.1.0"
       pullPolicy: IfNotPresent
-    imagesByDevice: {}
+    imagesByDevice:
+      cpu:
+        repository: cogniverse/vllm-audio-cpu
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      cuda:
+        repository: cogniverse/vllm-audio-cuda
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      rocm:
+        repository: cogniverse/vllm-audio-rocm
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
     # vLLM 0.20+ replaced ``--task transcription`` with the implicit
     # ``--runner generate`` path — the OpenAI-compatible /v1/audio/
     # transcriptions endpoint is registered automatically when the model
@@ -1523,8 +1537,13 @@ inference:
       type: NodePort
       port: 8000
       nodePort: 29008
+    # model + revision name the weights model-warm puts in the cache; they
+    # must match the CLAP_EMBED_MODEL* env the server loads.
+    model: laion/clap-htsat-unfused
+    revision: 8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a
     env:
       CLAP_EMBED_MODEL: laion/clap-htsat-unfused
+      CLAP_EMBED_MODEL_REVISION: 8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a
       CLAP_EMBED_SAMPLE_RATE: "48000"
     resources:
       limits:
@@ -1615,6 +1634,10 @@ inference:
     # Must match INFERENCE_SERVICE_SPECS["video_embed"]; the width is
     # asserted on every response, so a drift here fails the request rather
     # than writing a mis-shaped vector.
+    # model + revision name the weights model-warm puts in the cache; they
+    # must match the VIDEO_EMBED_MODEL* env the server loads.
+    model: microsoft/xclip-large-patch14
+    revision: a9dd1429a16cf305df2aaea232d5e8dceba1c675
     env:
       VIDEO_EMBED_MODEL: microsoft/xclip-large-patch14
       VIDEO_EMBED_MODEL_REVISION: a9dd1429a16cf305df2aaea232d5e8dceba1c675

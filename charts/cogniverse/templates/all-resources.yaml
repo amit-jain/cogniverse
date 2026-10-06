@@ -1535,21 +1535,37 @@ spec:
       {{- if $.Values.runtime.imagesByBackend }}
       {{- $warmImage = (index $.Values.runtime.imagesByBackend $runtimeBackendInf) | default $.Values.runtime.image }}
       {{- end }}
-      {{- if or $persistenceOn $gateOn }}
+      {{- /*
+           Every service that loads Hub weights gets them through model-warm,
+           whatever backs the model cache. GLiNER and InsightFace serve
+           artifacts baked into their images and name no warm model.
+      */}}
+      {{- $warmModel := ternary "" ($cfg.model | default "") (eq $engine "gliner") }}
+      {{- $warmRevision := $cfg.revision | default $cfg.modelRevision | default "" }}
+      {{- $warmFromMinio := and $persistenceOn $minio.enabled }}
+      {{- if or $warmModel $gateOn }}
       initContainers:
       {{- end }}
-      {{- if $persistenceOn }}
-      # Pre-warm the model-cache PVC. Single init container does both
-      # paths: try MinIO tarball mirror first (fast, air-gap friendly,
-      # preserves HF cache symlinks), fall back to HF Hub
-      # snapshot_download. The runtime image is used because it ships
-      # boto3 + huggingface_hub + tar — required for both paths and
-      # already pulled on every cluster (the runtime pod uses it).
-      # Ordered ahead of any startup gate: weight downloads touch network
-      # and disk, not the GPU, so they run concurrently across pods.
+      {{- if $warmModel }}
+      # Put the pinned weights in the model cache before the server starts,
+      # so the server itself runs with HF_HUB_OFFLINE and never needs the
+      # network. A cache that already holds the revision is resolved with
+      # local_files_only and makes no network call, so a restart after a
+      # reboot with no DNS starts from the cache. Only a missing revision is
+      # fetched: from the MinIO tarball mirror when one is configured, then
+      # from the Hub. Runs from the server's own image (every one ships
+      # huggingface_hub), so no other image is pulled and a runtime release
+      # leaves this pod's template unchanged; the MinIO mirror needs boto3
+      # and runs from the runtime image. Ordered ahead of any startup gate:
+      # weight downloads touch network and disk, not the GPU.
       - name: model-warm
+        {{- if $warmFromMinio }}
         image: "{{ $warmImage.repository }}:{{ $warmImage.tag }}"
         imagePullPolicy: {{ $warmImage.pullPolicy }}
+        {{- else }}
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        {{- end }}
         # UID 0 so the init can traverse ``/root`` (image default 0700,
         # blocking UID 1000 traversal). ``fsGroup: 1000`` on the pod
         # makes new files group-writable so the main container (which
@@ -1559,10 +1575,12 @@ spec:
           runAsNonRoot: false
         env:
         - name: MODEL
-          value: {{ $cfg.model | quote }}
+          value: {{ $warmModel | quote }}
+        - name: REVISION
+          value: {{ $warmRevision | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
-        {{- if $minio.enabled }}
+        {{- if $warmFromMinio }}
         - name: MINIO_ENDPOINT
           value: {{ $minio.endpoint | quote }}
         - name: MINIO_BUCKET
@@ -1585,64 +1603,71 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
-        command: ["sh", "-c"]
+        command: ["python3", "-c"]
         args:
         - |
-          set -eu
-          python <<'PY'
-          import os, subprocess, sys
+          import os
+          import subprocess
           from pathlib import Path
+
           from huggingface_hub import snapshot_download
+          from huggingface_hub.utils import LocalEntryNotFoundError
 
           model = os.environ["MODEL"]
-          hub = Path("/root/.cache/huggingface/hub")
-          hub.mkdir(parents=True, exist_ok=True)
+          revision = os.environ["REVISION"] or None
 
+
+          def cached():
+              try:
+                  return snapshot_download(
+                      repo_id=model, revision=revision, local_files_only=True
+                  )
+              except LocalEntryNotFoundError:
+                  return None
+
+
+          path = cached()
           endpoint = os.environ.get("MINIO_ENDPOINT")
-          if endpoint:
-              # Path 1: pull tarball from MinIO and tar-extract. Tar
-              # preserves the snapshots/<sha>/<file> → blobs/<hash>
-              # symlinks that snapshot_download's verifier requires.
+          if path is None and endpoint:
+              # Tar preserves the snapshots/<sha>/<file> -> blobs/<hash>
+              # symlinks the cache lookup resolves.
               import boto3
               from botocore.exceptions import ClientError
+
               s3 = boto3.client(
                   "s3",
                   endpoint_url=endpoint,
                   aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
                   aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
               )
-              key = f"{model}.tar"
+              hub = Path(os.environ["HF_HOME"]) / "hub"
+              hub.mkdir(parents=True, exist_ok=True)
               tarball = Path(f"/tmp/{model.replace('/', '--')}.tar")
               try:
-                  s3.download_file(os.environ["MINIO_BUCKET"], key, str(tarball))
+                  s3.download_file(os.environ["MINIO_BUCKET"], f"{model}.tar", str(tarball))
               except ClientError as e:
                   print(f"MinIO tarball miss for {model}: {e.response['Error']['Code']}")
               else:
                   print(f"MinIO hit: extracting {tarball.stat().st_size:,} bytes")
-                  subprocess.run(
-                      ["tar", "-xf", str(tarball), "-C", str(hub)],
-                      check=True,
-                  )
+                  subprocess.run(["tar", "-xf", str(tarball), "-C", str(hub)], check=True)
                   tarball.unlink()
-
-          # Path 2: snapshot_download. No-op if the cache is already
-          # populated by the MinIO path; full HF Hub fetch otherwise.
-          snapshot_download(
-              repo_id=model,
-              cache_dir="/root/.cache/huggingface",
-          )
-          print(f"model-warm complete: {model}")
-          PY
+                  path = cached()
+          if path is None:
+              path = snapshot_download(repo_id=model, revision=revision)
+              print(f"model-warm fetched {model}@{revision or 'main'} into {path}")
+          else:
+              print(f"model-warm found {model}@{revision or 'main'} in the cache at {path}")
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/huggingface
         resources:
           limits:
             cpu: "2"
-            memory: "4Gi"
+            memory: "2Gi"
           requests:
             cpu: "500m"
-            memory: "512Mi"
+            # Equal to the limit, like every init container here.
+            memory: "2Gi"
       {{- end }}
       {{- if $gateOn }}
       # Hold this model's load until {{ $predecessor }} is serving. An init
@@ -1713,15 +1738,17 @@ spec:
           value: {{ $cfg.service.port | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         {{- range $key, $value := $cfg.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
       {{- else if eq $engine "vllm_transcription" }}
       # vLLM serving OpenAI-compatible /v1/audio/transcriptions for
-      # Whisper. The container ``command`` overrides the upstream image's
-      # ENTRYPOINT so we can pip-install the [audio] extras before exec-ing
-      # vllm serve.
+      # Whisper, from the deploy/vllm_audio image: the upstream vLLM image
+      # plus the audio packages, installed at build time. ``command:
+      # ["vllm"]`` overrides the image ENTRYPOINT so ``args[0] = "serve"``
+      # isn't duplicated.
       - name: vllm-transcription
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -1732,6 +1759,7 @@ spec:
         {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         {{- if $cfg.kvCacheGiB }}
         # vLLM's CPU worker doesn't honour pod cgroup limits; without an
         # explicit cap it pre-allocates from full node memory and OOMKills.
@@ -1745,23 +1773,21 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
-        # Upstream vllm-openai images ship without [audio] extras, so
-        # /v1/audio/transcriptions returns 400 until soundfile + librosa
-        # are installed. exec keeps vLLM as PID 1 for signal propagation.
-        command:
-          - "sh"
-          - "-c"
+        command: ["vllm"]
         args:
-          - |
-            pip install --no-cache-dir --quiet soundfile librosa || exit 1
-            exec vllm serve {{ $cfg.model | squote }} \
-              --host 0.0.0.0 --port 8000 \
-              {{- if $cfg.revision }}
-              --revision {{ $cfg.revision | squote }} \
-              {{- end }}
-              {{- range $cfg.extraArgs }}
-              {{ . | squote }} \
-              {{- end }}
+          - "serve"
+          - {{ $cfg.model | quote }}
+          {{- if $cfg.revision }}
+          - "--revision"
+          - {{ $cfg.revision | quote }}
+          {{- end }}
+          - "--host"
+          - "0.0.0.0"
+          - "--port"
+          - "8000"
+          {{- range $cfg.extraArgs }}
+          - {{ . | quote }}
+          {{- end }}
       {{- else if eq $engine "vllm_token_embed" }}
       # vLLM serving an OpenAI-compatible /v1/embeddings endpoint with
       # per-token (multi-vector) outputs. Used by vllm_colpali for
@@ -1789,6 +1815,7 @@ spec:
           value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         # Persist vLLM's torch.compile cache alongside HF weights.
         - name: VLLM_CACHE_ROOT
           value: /root/.cache/huggingface/.vllm
@@ -1847,6 +1874,7 @@ spec:
           value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         # Persist vLLM's torch.compile cache alongside HF weights.
         - name: VLLM_CACHE_ROOT
           value: /root/.cache/huggingface/.vllm
@@ -1894,6 +1922,7 @@ spec:
           value: {{ $cfg.model | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:
@@ -1940,6 +1969,7 @@ spec:
           value: {{ dig "requestLimits" "encodeBatchSize" 32 $cfg | int | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:
@@ -1973,6 +2003,7 @@ spec:
           value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         # Persist vLLM's torch.compile cache alongside HF weights.
         - name: VLLM_CACHE_ROOT
           value: /root/.cache/huggingface/.vllm
@@ -2023,6 +2054,7 @@ spec:
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- include "cogniverse.hubOfflineEnv" $ | nindent 8 }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:

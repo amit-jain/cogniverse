@@ -559,6 +559,17 @@ stalling the request that first meets them.
 {{- end -}}
 
 {{/*
+Model-server env that keeps the Hugging Face libraries off the network. The
+model-warm init container has already put the pinned weights in the cache, so
+the server loads from there; without this, vLLM asks the Hub for a repo file
+listing on every start and fails to boot when DNS is down.
+*/}}
+{{- define "cogniverse.hubOfflineEnv" -}}
+- name: HF_HUB_OFFLINE
+  value: "1"
+{{- end -}}
+
+{{/*
 INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
 inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
 Modal endpoint service root) replaces the cluster-internal Service URL. The

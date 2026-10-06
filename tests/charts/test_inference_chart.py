@@ -412,6 +412,7 @@ def test_default_colbert_pylate_serves_lateon_via_pylate():
         "MAX_INPUT_CHARS": "2000000",
         "ENCODE_BATCH_SIZE": "32",
         "HF_HOME": "/root/.cache/huggingface",
+        "HF_HUB_OFFLINE": "1",
     }
     assert container["ports"] == [{"name": "http", "containerPort": 8000}]
 
@@ -576,12 +577,11 @@ def test_vllm_asr_serves_whisper_turbo_transcription():
     dep = _inference_deployments(docs)["vllm_asr"]
     assert dep["metadata"]["name"] == "cogniverse-vllm-asr"
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    assert c["image"].startswith("vllm/vllm-openai")
-    # The transcription engine renders a single shell command string that
-    # pip-installs the audio extras then execs `vllm serve <model>`.
-    cmd = " ".join(c["args"])
-    assert "vllm serve 'openai/whisper-large-v3-turbo'" in cmd
-    assert "'--runner' \\\n  'generate'" in cmd
+    # The audio packages are baked into the image; the pod runs vLLM directly.
+    assert c["image"] == "cogniverse/vllm-audio-cpu:0.1.0"
+    assert c["command"] == ["vllm"]
+    assert c["args"][:2] == ["serve", "openai/whisper-large-v3-turbo"]
+    assert c["args"][-4:] == ["--runner", "generate", "--max-model-len", "448"]
     urls = _service_urls(docs)
     assert urls["vllm_asr"] == "http://cogniverse-vllm-asr:8000"
 
@@ -1663,18 +1663,26 @@ def test_vllm_embed_serve_args_pin_the_revision():
     ]
 
 
-def test_vllm_transcription_serve_script_pins_the_revision():
-    """The transcription engine renders a shell script rather than an argv
-    list; the pinned whisper revision lands on the exec'd serve line."""
+def test_vllm_transcription_serve_args_pin_the_revision():
+    """The pinned whisper revision precedes the engine's own flags."""
     docs = _render("inference.vllm_asr.enabled=true")
     c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
         "containers"
     ][0]
-    assert (
-        "exec vllm serve 'openai/whisper-large-v3-turbo' \\\n"
-        "  --host 0.0.0.0 --port 8000 \\\n"
-        "  --revision '41f01f3fe87f28c78e2fbf8b568835947dd65ed9' \\\n"
-    ) in "".join(c["args"])
+    assert c["args"] == [
+        "serve",
+        "openai/whisper-large-v3-turbo",
+        "--revision",
+        "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "generate",
+        "--max-model-len",
+        "448",
+    ]
 
 
 def test_service_without_a_pinned_revision_renders_no_revision_flag():
@@ -1696,10 +1704,19 @@ def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
     c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
         "containers"
     ][0]
-    script = "".join(c["args"])
-    assert "exec vllm serve 'openai/whisper-tiny' \\\n" in script
-    assert "--revision" not in script
-    assert "41f01f3fe87f28c78e2fbf8b568835947dd65ed9" not in script
+    assert c["image"] == "cogniverse/vllm-audio-cpu:0.1.0"
+    assert c["args"] == [
+        "serve",
+        "openai/whisper-tiny",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "generate",
+        "--max-model-len",
+        "448",
+    ]
 
 
 def _runtime_container(docs: list[dict]) -> dict:
@@ -1745,8 +1762,10 @@ def test_k3s_rocm_clap_embed_pod_is_cpu_only():
     }
     assert {e["name"]: e["value"] for e in container["env"]} == {
         "CLAP_EMBED_MODEL": "laion/clap-htsat-unfused",
+        "CLAP_EMBED_MODEL_REVISION": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
         "CLAP_EMBED_SAMPLE_RATE": "48000",
         "HF_HOME": "/root/.cache/huggingface",
+        "HF_HUB_OFFLINE": "1",
         "HOST": "0.0.0.0",
         "PORT": "8000",
     }
