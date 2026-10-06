@@ -55,7 +55,7 @@ jobs:
       env:
         ASSERTION_GUARD_BASE: ${{ steps.base.outputs.sha }}
       run: |
-        uv run pytest tests/common/unit/test_assertion_strength_guard.py \
+        uv run --no-sync pytest tests/common/unit/test_assertion_strength_guard.py \
           --tb=long -v
 
   repo-wide-tests:
