@@ -5,6 +5,7 @@ Tests backend profile CRUD operations and schema deployment.
 """
 
 import json
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +25,18 @@ def _cleanup_tenant_profiles(client: TestClient, tenant_ids: list[str]) -> None:
                     f"/admin/profiles/{profile['profile_name']}",
                     params={"tenant_id": tenant_id},
                 )
+
+
+def _system_profile_names() -> set[str]:
+    """Profiles stored under the system tenant, which every tenant inherits."""
+    from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_runtime.routers import admin
+
+    return set(
+        admin._config_manager.get_stored_backend_config(
+            tenant_id=SYSTEM_TENANT_ID
+        ).profiles
+    )
 
 
 @pytest.mark.integration
@@ -738,7 +751,7 @@ class TestProfileAPICRUD:
         templates = {
             t["profile_name"]: t["config"] for t in response.json()["templates"]
         }
-        assert list(templates) == sorted(shipped)
+        assert list(templates) == sorted(set(shipped) | _system_profile_names())
         for name in sorted(shipped):
             if name != "wiki_semantic":
                 assert templates[name] == shipped[name], name
@@ -757,8 +770,41 @@ class TestProfileAPICRUD:
         assert created.status_code == 201, created.text
         after = test_client.get("/admin/profile-templates?tenant_id=tmpl_tenant")
         assert [t["profile_name"] for t in after.json()["templates"]] == sorted(
-            set(shipped) - {"image_colpali_mv"}
+            (set(shipped) | _system_profile_names()) - {"image_colpali_mv"}
         )
+
+    def test_a_profile_stored_for_the_system_is_offered_to_every_tenant(
+        self, test_client: TestClient
+    ):
+        """Tenants inherit the profiles stored under the system tenant, so
+        those are templates too."""
+        from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.routers import admin
+
+        name = f"system_only_{uuid.uuid4().hex[:6]}"
+        stored = BackendProfileConfig(
+            profile_name=name,
+            type="document",
+            schema_name="video_test",
+            embedding_model="lightonai/LateOn",
+            embedding_type="multi_vector",
+            model_loader="colbert",
+            extra_config={"inference_services": {"embedding": "colbert_pylate"}},
+        )
+        admin._config_manager.add_backend_profile(stored, tenant_id=SYSTEM_TENANT_ID)
+        try:
+            response = test_client.get(
+                "/admin/profile-templates?tenant_id=inherit_tenant"
+            )
+            templates = {
+                t["profile_name"]: t["config"] for t in response.json()["templates"]
+            }
+            assert templates[name] == stored.to_dict()
+        finally:
+            admin._config_manager.delete_backend_profile(
+                name, tenant_id=SYSTEM_TENANT_ID
+            )
 
     def test_concurrent_template_reads_keep_each_tenants_own_list(
         self, test_client: TestClient
@@ -769,11 +815,14 @@ class TestProfileAPICRUD:
         from concurrent.futures import ThreadPoolExecutor
 
         shipped = sorted(
-            json.loads(
-                (
-                    Path(__file__).resolve().parents[2] / "configs" / "config.json"
-                ).read_text()
-            )["backend"]["profiles"]
+            set(
+                json.loads(
+                    (
+                        Path(__file__).resolve().parents[2] / "configs" / "config.json"
+                    ).read_text()
+                )["backend"]["profiles"]
+            )
+            | _system_profile_names()
         )
         created = test_client.post(
             "/admin/profiles",
