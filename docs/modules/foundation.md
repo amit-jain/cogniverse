@@ -644,15 +644,17 @@ Configurations are organized by scope for isolation:
 | `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
 `VespaConfigStore.compare_and_set_config(tenant_id, scope, service, config_key,
-config_value, expected_version=...)` conditionally creates the immutable
-`expected_version + 1` version slot. The required keyword `expected_version`
-must be nonnegative: zero requires an absent key, and negative values raise
-`ValueError`. It returns the committed `ConfigEntry` after confirming it is
-the latest version, or `None` on a version mismatch or conditional-write
-conflict. Strong Document API reads before and after the write reject stale
-writers whose old version slots have been pruned. Every successful version
-write applies the same `keep_versions` history retention as `set_config`,
-including a stale candidate that loses the final read; pruning is best-effort.
+config_value, expected_version=...)` writes the version after
+`expected_version` when that is still the latest. The required keyword
+`expected_version` must be nonnegative: zero requires an absent key, and
+negative values raise `ValueError`. The version is reserved on the key's
+version counter only while no other writer holds an unwritten reservation;
+one older than 30 seconds is treated as abandoned and reserved past. It
+returns the committed `ConfigEntry` after a strong read confirms it is the
+latest version, or `None` on a version mismatch, a live reservation, or a
+conditional-write conflict. Every successful version write applies the same
+`keep_versions` history retention as `set_config`, including a stale write
+that loses the final read; pruning is best-effort.
 Read/write failures raise. Schema deployment journals and registration
 completion use this operation to fence stale writers and deletion tombstones.
 

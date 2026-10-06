@@ -2932,7 +2932,7 @@ per-attempt budget is 5s for a single document and for one bounded page,
 failures raise. A completed `set_config` is therefore immediately visible to
 those readers without sleeps or search-index convergence retries.
 
-A write first reads the key's latest version with the same visit `get_config` uses, so it never depends on search coverage: Vespa answers a query with partial coverage (`coverage.degraded.non-ideal-state`) for milliseconds while a concurrent write lands. A read the store does not answer raises `ConfigStoreUnavailableError` instead of reading as "no versions yet", which would write version 1 below the real latest; nothing is written. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors` or a `coverage.degraded` flag) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
+A write takes its version from the key's version counter: one document per config under the `config_version_counter` namespace, which pruning never deletes. The writer reads the counter, moves it one version forward with a conditional update (`version == <read>`), and only then writes that version's document, so no two writers are handed the same version however long either stalls. A version document's absence cannot grant a version: pruning deletes old version documents, and Vespa applies a conditional put with `create` to a missing document without evaluating its condition. A missing counter is created, conditionally on its absence, at the latest stored version, read with the same visit `get_config` uses. A counter or version read the store does not answer raises `ConfigStoreUnavailableError`; nothing is written. Visits run in the `config_metadata` namespace and the prune query matches on `config_id`, which the counter does not carry, so no reader sees a counter. `delete_config` removes the counter after the versions, so a recreated key starts at version 1. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors` or a `coverage.degraded` flag) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
 
 `compare_and_set_config(..., expected_version=n)` conditionally writes revision
 `n + 1` and returns `None` on contention. Its version checks and history retention
@@ -2958,9 +2958,8 @@ entry = store.set_config(
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
 )
-# Creates new version on each update. Concurrent writers use conditional
-# Document v1 puts, so each receives a distinct version instead of
-# overwriting a shared document ID.
+# Creates new version on each update. Concurrent writers reserve versions
+# on the key's version counter, so each receives a distinct version.
 
 # Retrieve latest version
 entry = store.get_config(
