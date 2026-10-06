@@ -63,3 +63,37 @@ def test_the_concurrency_follows_the_sidecar_cpu_limit(cpu, expected):
         "cogniverse-runtime": expected,
         "cogniverse-ingestor": expected,
     }
+
+
+def test_the_sidecar_runs_one_onnx_thread_per_in_flight_request():
+    """Clients keep one request in flight per sidecar CPU and the sidecar
+    gives each one ONNX Runtime thread, so inference fills the CPU limit
+    and no more."""
+    command = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "-f",
+        str(CHART_PATH / "values.k3s.yaml"),
+        "-f",
+        str(CHART_PATH / "values.rocm.yaml"),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        "--set",
+        "inference.face_embed.enabled=true",
+    ]
+    rendered = subprocess.run(command, capture_output=True, text=True, check=True)
+    (sidecar,) = [
+        container
+        for document in yaml.safe_load_all(rendered.stdout)
+        if document
+        and document.get("kind") == "Deployment"
+        and document["metadata"]["name"] == "cogniverse-face-embed"
+        for container in document["spec"]["template"]["spec"]["containers"]
+    ]
+    env = {entry["name"]: entry.get("value") for entry in sidecar["env"]}
+
+    assert env["FACE_EMBED_INTRA_OP_THREADS"] == "1"
+    assert sidecar["resources"]["limits"]["cpu"] == "2"
+    assert _concurrency()["cogniverse-ingestor"] == "2"

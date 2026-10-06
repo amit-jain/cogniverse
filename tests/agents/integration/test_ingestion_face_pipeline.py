@@ -76,11 +76,15 @@ class _ColorAwareFaceAnalysis:
         self,
         name: str = FACE_MODEL_NAME,
         root: str | None = None,
+        allowed_modules: list[str] | None = None,
         providers: list[str] | None = None,
     ) -> None:
         self.name = name
         self.root = root
+        self.allowed_modules = allowed_modules
         self.providers = providers
+        # No ONNX sessions to reopen: the stub answers from image colour.
+        self.models = {}
         type(self).last_root = root
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002

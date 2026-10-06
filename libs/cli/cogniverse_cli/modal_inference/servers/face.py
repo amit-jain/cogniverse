@@ -10,9 +10,18 @@ Two endpoints:
 * ``GET /health`` — readiness for the pinned model artifact.
 
 One model, one process. InsightFace's ``Buffalo_L`` bundles the
-``RetinaFace`` detector + the ``ArcFace`` ``w600k_r50`` recogniser. The
-verified model pack is present in the image before the process starts;
-first-request initialization only opens those local ONNX files.
+``RetinaFace`` detector + the ``ArcFace`` ``w600k_r50`` recogniser, plus
+landmark and gender/age models this service never returns, so only the
+detector and recogniser are loaded. The verified model pack is present in the
+image before the process starts; first-request initialization only opens
+those local ONNX files.
+
+On CPU each ONNX session runs ``intra_op_threads`` threads (1 by default).
+ONNX Runtime otherwise sizes its pool from the host's cores, not the
+container's CPU quota: on a 32-core node with a 2-CPU limit every inference
+then contends with itself, and a multi-face frame took 7-20 s instead of
+under 1 s. Concurrent requests each run on their own thread, so clients
+keep one request in flight per CPU.
 
 The face-cluster consumer POSTs one image per keyframe and clusters
 the returned vectors per ``source_doc_id`` to discover anonymous
@@ -98,6 +107,8 @@ class FaceEmbedConfig:
     model_revision: str = FACE_MODEL_REVISION
     model_root: str = FACE_MODEL_ROOT
     ctx_id: int = -1  # -1 = CPU; a GPU index for CUDA
+    # ONNX Runtime threads per CPU inference session.
+    intra_op_threads: int = 1
     url_timeout_s: float = 5.0
     host: str = "0.0.0.0"
     port: int = 8080
@@ -117,6 +128,27 @@ def _require_model_artifact(cfg: FaceEmbedConfig) -> None:
     if missing:
         raise FileNotFoundError(
             "face model artifact is incomplete; missing: " + ", ".join(missing)
+        )
+
+
+# The models whose outputs /embed returns: boxes and scores from the
+# detector, vectors from the recogniser (aligned on the detector's keypoints).
+_SERVED_MODULES = ["detection", "recognition"]
+
+
+def _bound_cpu_sessions(app_, intra_op_threads: int) -> None:
+    """Reopen each model's ONNX session on the CPU provider with
+    ``intra_op_threads`` threads; InsightFace opens them with ONNX Runtime's
+    default pool, one thread per host core."""
+    onnxruntime = import_module("onnxruntime")
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = intra_op_threads
+    options.inter_op_num_threads = 1
+    for model in app_.models.values():
+        model.session = onnxruntime.InferenceSession(
+            model.model_file,
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
         )
 
 
@@ -146,13 +178,16 @@ def _load_model(cfg: FaceEmbedConfig):
             app_ = face_analysis.FaceAnalysis(
                 name=cfg.model_name,
                 root=cfg.model_root,
+                allowed_modules=_SERVED_MODULES,
                 providers=["CUDAExecutionProvider"],
             )
         else:
             app_ = face_analysis.FaceAnalysis(
                 name=cfg.model_name,
                 root=cfg.model_root,
+                allowed_modules=_SERVED_MODULES,
             )
+            _bound_cpu_sessions(app_, cfg.intra_op_threads)
         app_.prepare(ctx_id=cfg.ctx_id, det_size=(640, 640))
         _MODEL = app_
         logger.info("InsightFace ready")
@@ -283,6 +318,11 @@ def main() -> None:
         ),
         model_root=os.environ.get("FACE_EMBED_MODEL_ROOT", defaults.model_root),
         ctx_id=int(os.environ.get("FACE_EMBED_CTX_ID", str(defaults.ctx_id))),
+        intra_op_threads=int(
+            os.environ.get(
+                "FACE_EMBED_INTRA_OP_THREADS", str(defaults.intra_op_threads)
+            )
+        ),
         url_timeout_s=float(
             os.environ.get("FACE_EMBED_URL_TIMEOUT_S", str(defaults.url_timeout_s))
         ),
