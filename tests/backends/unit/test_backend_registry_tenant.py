@@ -47,6 +47,12 @@ class MockSearchBackend(SearchBackend):
     def get_statistics(self) -> dict:
         return {}
 
+    def export_embeddings(
+        self, schema=None, max_documents=None, filters=None, include_embeddings=True
+    ):
+
+        return []
+
     def get_embedding_requirements(self, schema_name: str) -> dict:
         """Mock implementation of get_embedding_requirements"""
         return {
@@ -97,6 +103,7 @@ def test_the_search_interface_declares_no_profile_mutation():
     per request; the interface holds nothing a profile write must update."""
     assert sorted(SearchBackend.__abstractmethods__) == [
         "batch_get_documents",
+        "export_embeddings",
         "get_document",
         "get_embedding_requirements",
         "get_statistics",
@@ -345,6 +352,16 @@ class TestBackendRegistryIngestionTenantIsolation:
 
             def get_statistics(self) -> dict:
                 return {}
+
+            def export_embeddings(
+                self,
+                schema=None,
+                max_documents=None,
+                filters=None,
+                include_embeddings=True,
+            ):
+
+                return []
 
             def get_embedding_requirements(self, schema_name: str) -> dict:
                 return {

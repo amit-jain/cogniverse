@@ -77,7 +77,9 @@ from cogniverse_runtime.routers import (
     ag_ui,
     agents,
     approvals,
+    config_entries,
     debug,
+    embedding_atlas,
     events,
     graph,
     health,
@@ -1983,6 +1985,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(config_entries.router, prefix="/admin", tags=["config"])
 app.include_router(knowledge.router, prefix="/admin", tags=["knowledge-agents"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
@@ -2001,6 +2004,9 @@ app.include_router(
 )
 app.include_router(
     routing_decisions.router, prefix="/admin/tenant", tags=["routing-decisions"]
+)
+app.include_router(
+    embedding_atlas.router, prefix="/admin/tenant", tags=["embedding-atlas"]
 )
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])

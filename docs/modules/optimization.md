@@ -261,7 +261,9 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 ```python
 # Dashboard or any client submits via runtime API:
 # POST /admin/tenant/{tenant_id}/optimize
-# Body: {"mode": "gateway-thresholds"}
+# Body: {"mode": "gateway-thresholds", "lookback_hours": 48}
+# Synthetic training data for chosen optimizer types, queued for review:
+# Body: {"mode": "synthetic", "optimizers": ["profile", "routing"]}
 # Returns: {workflow_name, namespace, mode, status_url}
 
 # Check run status:
@@ -1071,11 +1073,12 @@ The WorkflowTemplate declares a **per-tenant mutex** so multiple submits
 for the same tenant serialise (prevents the dashboard Run button from
 stacking pods); different tenants optimize independently.
 
-The dashboard only exposes the modes in `_MANUAL_OPTIMIZE_MODES`
+On-demand runs take the modes in `_MANUAL_OPTIMIZE_MODES`
 (`libs/runtime/cogniverse_runtime/routers/tenant.py`): `gateway-thresholds`,
-`simba`, `workflow`, `profile`, `entity-extraction`, `llm-annotate`. `triggered` and `cleanup`
-aren't meant for interactive use, and `synthetic` has its own scheduled
-CronWorkflow — all three are CLI/cron-only.
+`simba`, `workflow`, `profile`, `entity-extraction`, `llm-annotate` and
+`synthetic` (with the optimizer types to generate data for, passed as
+`--agents`). `triggered` and `cleanup` aren't meant for interactive use and
+are CLI/cron-only.
 
 ```python
 # The Argo Workflow runs optimization_cli internally:

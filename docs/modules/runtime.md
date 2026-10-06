@@ -1223,9 +1223,10 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 ### Admin Endpoints
 
 **GET /admin/system/stats** - Get system statistics
+**GET /admin/profile-templates** - The shipped profiles a tenant's new profile can start from, each with its whole configuration; a shipped name the tenant created its own profile under is left out
 **GET /admin/profiles** - List processing profiles
 **GET /admin/profiles/{profile_name}** - Get profile details
-**POST /admin/profiles** - Create profile; `version` is the tenant's backend config version the create produced
+**POST /admin/profiles** - Create profile; `model_loader`, `process_type` and `extra_config` carry the keys ingestion reads beside the named fields; `version` is the tenant's backend config version the create produced
 **PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted
@@ -1236,6 +1237,29 @@ replica created or deleted a moment ago is found or answered 404 at once; the
 list and get routes serve the process's held copy. A profile deleted between
 the update's or delete's read and its write answers 404.
 **GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. 503 `schema_drift_unavailable` when the registry or the recorded refusals cannot be read; `failure` is `SchemaRegistryInitializationError` for the registry and `RegistryStorageError` for the refusals.
+
+**Configuration** (`libs/runtime/cogniverse_runtime/routers/config_entries.py`)
+
+The editable configs are the sections of `cogniverse_foundation.config.sections`
+(see [Foundation Module](./foundation.md)): `system`, and per tenant `routing`,
+`telemetry`, `agent` (one per agent, named by `service`) and
+`durable_execution`. A tenant id is canonicalized; system configs are stored
+under the tenant `_system` and take no `tenant_id`.
+
+**GET /admin/config/sections** - Each section's `name`, `title`, `tenant_scoped`, fixed `service` (null for `agent`) and `schema`: its dataclass's JSON schema without the fields the location sets (`tenant_id`), secrets marked `writeOnly`
+**GET /admin/config/sections/{section}?tenant_id=&service=** - The stored config as its form edits it: `value`, `version` (0 with the section's defaults when nothing is stored), `updated_at`, and `secrets` saying which secrets hold a value; a secret's value is always null. 400 when a tenant section has no `tenant_id`, a system one has one, or `agent` has no `service`; 404 for an unknown section
+**PUT /admin/config/sections/{section}** - `{tenant_id, service, value, version}`: applies `value`'s fields to the `version` the editor read and stores the result as the next version. A field left out keeps its stored value; a secret left null keeps its value and `""` clears it. 409 `config_version_conflict` with `current_version` when another write replaced that version (nothing written); 422 `config_value_invalid` with `errors` naming each unknown field and each value the dataclass refuses
+**GET /admin/config/entries?tenant_id=** - The tenant's (absent: the system's) stored configs, latest versions, with the `section` that edits each (null for configs edited elsewhere, such as backend profiles); schema rows are left out
+**GET /admin/config/history?scope=&service=&config_key=&tenant_id=** - A config's versions, newest first, at most 100; values of a section are shown through its form, secrets withheld. 404 when the config has no versions
+**POST /admin/config/rollback** - `{tenant_id, scope, service, config_key, version, expected_version}`: stores version `version`'s value as the next version when `expected_version` is still the latest. 409 when it is not; 404 when `version` is no longer kept
+**GET /admin/config/export?tenant_id=&include_history=** - The tenant's configs as the store exports them, secrets included: a backup that the import restores whole
+**POST /admin/config/import** - `{tenant_id, configs}`: writes an export into the tenant, whole or not at all, ignoring tenant ids inside it; 400 `config_import_refused` for schema-scope rows
+**GET /admin/config/stats** - The store's `total_configs`, `total_versions`, `total_tenants` and `configs_per_scope`
+
+A store that does not answer gives 503 `config_store_unavailable` on every
+route, never defaults or an empty list. Writes go through
+`ConfigManager.compare_and_set_entry`, so the serving process reads the new
+version at once and other processes within the manager's staleness bound.
 
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)
 
@@ -1351,7 +1375,9 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 ### Tenant Optimization Runs
 
-**GET /admin/tenant/optimize-modes** — The modes `POST /admin/tenant/{tenant_id}/optimize` accepts, sorted: `{modes: [...]}`.
+**GET /admin/tenant/optimize-modes** — The modes `POST /admin/tenant/{tenant_id}/optimize` accepts and the optimizer types its `synthetic` mode generates training data for, sorted: `{modes: [...], synthetic_optimizers: [...]}`.
+
+**POST /admin/tenant/{tenant_id}/optimize** — `{mode, lookback_hours, optimizers}` submits a one-off Workflow running `optimization_cli --mode <mode>` for the tenant. `lookback_hours` (above 0, at most 8760, default 48) is the run's `lookback-hours`. `optimizers` is required for `synthetic`, whose generated examples land as approval batches for review, and becomes its `agents` argument; it is refused for every other mode. 400 for an unknown mode or optimizer.
 
 **GET /admin/tenant/{tenant_id}/optimize/runs** — List the tenant's optimization Workflows from Argo, newest first. Query param `limit` (1–100, default 20) caps the response. Response: `{runs: [{workflow_name, mode, trigger, phase, started_at, finished_at}, ...]}`.
 
@@ -1391,7 +1417,11 @@ The orchestrator records each workflow as a `cogniverse.orchestration` span in t
 
 **GET /admin/tenant/{tenant_id}/telemetry/traces** — The tenant's traces (its root spans), newest first: `{facets: {operations, profiles, strategies}, statistics: {requests, succeeded, failed, success_rate, latency_ms: {mean, min, p50, p75, p90, p95, p99, max}, outlier_bounds_ms: {lower, upper}, by_operation: [{operation, count, mean_ms, p95_ms, error_rate}, ...]}, traces: [{trace_id, span_id, start_time, duration_ms, operation, succeeded, profile, strategy, error}, ...]}`. `operation` keeps traces whose name contains it (any case); repeatable `profile` and `strategy` keep traces with one of the given values; statistics cover the kept traces and `facets` the whole window. A trace's profile is its `profile` or `metadata.profile` attribute, its strategy its `strategy`, `ranking_strategy` or `metadata.strategy`. Outlier bounds are Tukey's fences (`Q1 - 1.5 IQR`, `Q3 + 1.5 IQR`), `null` below four traces; latency figures are `null` without traces.
 
+**GET /admin/tenant/{tenant_id}/telemetry/root-causes** — `cogniverse_evaluation.analysis.root_cause_analysis.RootCauseAnalyzer` over the traces `/telemetry/traces` keeps for the same `lookback_hours`, `operation`, `profile` and `strategy`: the failed ones, and with `include_slow` (default true) the successful ones slower than `slow_percentile` (50–99, default 95) of the successful durations. `{traces, failed, slow, failure_rate, slow_threshold_ms, root_causes: [{hypothesis, confidence, category, evidence, affected_traces, suggested_action}], recommendations: [{priority, category, recommendation, details, affected_components}]}`, hypotheses most confident first; `slow_threshold_ms` is null when no slow trace was sought or found. A telemetry outage answers **502** `telemetry_unavailable`.
+
 **GET /admin/tenant/{tenant_id}/evaluation/golden** — The tenant's `search_service.search` spans over the last `lookback_hours` (1–2160, default 168), scored against the tenant's golden set (the blob `PUT /admin/tenants/{tenant_id}/golden_set_ground_truth` stores) by `cogniverse_evaluation.recorded_searches.score_recorded_searches`: `{golden_queries, strategies: [{profile, strategy, queries, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5, success_rate}, ...], queries: [{profile, strategy, query, expected, retrieved, searched_at, trace_id, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5}, ...], unsearched_queries, failed_searches, unscored_searches}`. The latest successful search per profile, strategy and query is scored. A tenant without a golden set answers **404** `golden_set_missing` naming the upload route; a golden set that cannot be canonicalized **409** `golden_set_invalid`; a store that does not answer **502** `golden_set_store_unavailable`.
+
+**GET /admin/tenant/{tenant_id}/embeddings/atlas?profile=&limit=** — A 2D map of up to `limit` (1–2000, default 500) of the tenant's documents under `profile`, in Vespa's visit order (`routers/embedding_atlas.py`): each document's stored embedding (the schema's first float tensor field; a multi-vector one pooled to the mean of its vectors) placed on the set's first two principal axes, each axis oriented so its largest loading is positive. `{tenant_id, profile, schema_name, embedding_field, dimensions, explained_variance: [across, up], without_embedding, points: [{id, x, y, title, text}]}`, with `text` cut to 280 characters. **404** for an unknown profile or a schema not deployed for the tenant; **422** for a schema with no float embedding field; **502** `embedding_export_failed` when Vespa cannot be read and `embedding_unreadable` for a tensor the route does not read.
 
 **Routing decisions** (`libs/runtime/cogniverse_runtime/routers/routing_decisions.py`). A decision is a `cogniverse.routing` span in the tenant's telemetry project; its label is the span's `routing_annotation`.
 

@@ -179,6 +179,8 @@ class Backend(IngestionBackend, SearchBackend):
     # get_statistics() -> Dict[str, Any]
     # health_check() -> bool
     # get_embedding_requirements(schema_name) -> Dict[str, Any]
+    # export_embeddings(schema=None, max_documents=None, filters=None,
+    #                   include_embeddings=True) -> List[Dict[str, Any]]
 
     # Inherited from IngestionBackend (abstract - must implement):
     # ingest_documents(documents, schema_name, operation_type="feed") -> Dict[str, Any]
@@ -778,6 +780,7 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
+- `export_embeddings(schema=None, max_documents=None, filters=None, include_embeddings=True)`: Read up to `max_documents` documents of a deployed schema, each as its `id` and stored fields (embeddings included unless `include_embeddings` is False); raises when the backend cannot be read
 
 **Methods (IngestionBackend):**
 
@@ -1249,6 +1252,14 @@ class MyCustomSearchBackend(SearchBackend):
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """Get embedding requirements for schema"""
         return {"dimension": 768, "type": "float"}
+
+    def export_embeddings(
+        self, schema=None, max_documents=None, filters=None, include_embeddings=True
+    ) -> List[Dict[str, Any]]:
+        """Read documents with their stored fields"""
+        return [{"id": doc_id, **doc} for doc_id, doc in self.documents.items()][
+            :max_documents
+        ]
 
 # Usage
 backend = MyCustomSearchBackend()

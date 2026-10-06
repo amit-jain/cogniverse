@@ -162,6 +162,7 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
             "pipeline_config": {},
             "strategies": {},
             "embedding_type": "single_vector",
+            "model_loader": "xclip",
             "schema_config": {"embedding_dims": 768},
             "deploy_schema": True,
         },

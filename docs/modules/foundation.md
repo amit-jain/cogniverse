@@ -350,6 +350,46 @@ backend_config = BackendConfig(
 )
 ```
 
+`model_loader` names the loader ingestion embeds with and `process_type` (one
+of `PROCESS_TYPES`: `direct_video`, `frame_based`, `video_chunks`) the
+processing type ingestion would otherwise infer. `extra_config` holds every
+other profile key (`inference_services`, `model_config`, `result_granularity`,
+`semantic_model`, ...); `to_dict()` writes it beside the named fields and
+`from_dict()` collects any unnamed key into it.
+
+**Config sections** (`config/sections.py`) - the configs an operator edits as forms:
+
+```python
+from cogniverse_foundation.config.sections import CONFIG_SECTIONS, ConfigValueError
+
+routing = CONFIG_SECTIONS["routing"]
+schema = routing.schema()            # the form's JSON schema
+current = routing.default("acme:prod", "gateway_agent")
+edited = routing.from_form({"routing_mode": "direct"}, current)
+stored = routing.dump(edited, "acme:prod")   # what ConfigManager stores
+```
+
+Each `ConfigSection` is a config dataclass (`model`) and where it is stored
+(`scope`, `config_key`, a fixed `service` or one per entry, tenant or system),
+with `load`/`dump` between the stored dict and the dataclass. `schema()` is the
+dataclass's JSON schema without the `fixed_fields` the location sets, with
+`secret_fields` marked `writeOnly`; `form_value()` dumps a config for the form
+with secrets null. `from_form(value, current)` applies the submitted fields to
+`current`: a field left out keeps its value, a null secret keeps it and `""`
+clears it, and a key the schema does not know or a value the dataclass refuses
+raises `ConfigValueError` naming each. Sections: `system` (`SystemConfig`),
+`routing` (`RoutingConfigUnified`), `telemetry` (`TelemetryConfig`), `agent`
+(`AgentConfig`, one per agent) and `durable_execution`
+(`DurableExecutionConfig`); `section_for(scope, config_key)` finds the section
+of a stored entry.
+
+`ConfigManager.compare_and_set_entry(tenant_id, scope, service, config_key,
+value, expected_version=...)` stores a value as the next version when the stored
+one is `expected_version` (0: none) and returns None when another write landed
+first; `forget_held_configs(tenant_id)` drops what the manager holds for a
+tenant (the system config for `_system`). `SystemConfig.to_dict()` shows
+`llm_api_key` as `"***"`; `to_dict(redact=False)` is the stored form.
+
 **Profile servability** - whether a tenant can be served a profile:
 
 ```python

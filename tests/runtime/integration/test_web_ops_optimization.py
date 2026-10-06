@@ -17,6 +17,7 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant as tenant_router
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from tests.utils.argo_api import argo_api_server, set_workflow_status
 from tests.utils.k8s_api_server import _kubectl
 from tests.utils.web_client import (
@@ -112,7 +113,14 @@ def _runs_view(page: Page, web_url: str, tenant: str) -> None:
 def _start(page: Page, mode: str) -> str:
     form = page.get_by_role("form", name="Start optimization")
     form.get_by_label("Mode").select_option(mode)
-    form.get_by_role("button", name="Start run").click()
+    return _start_submitted(page, mode)
+
+
+def _start_submitted(page: Page, mode: str) -> str:
+    """Click Start run on the filled form; the started run's name."""
+    page.get_by_role("form", name="Start optimization").get_by_role(
+        "button", name="Start run"
+    ).click()
     notice = page.get_by_role("status")
     expect(notice).to_contain_text(f"Started a {mode} run: manual-optimize-{mode}-")
     return re.fullmatch(
@@ -128,6 +136,41 @@ def _row(page: Page, tenant: str, name: str):
     )
 
 
+def _nodes(name: str, phase: str) -> dict:
+    """A run's node tree as Argo's controller records it: the root steps
+    node, its optimizer pod in ``phase``, and the profile step it skipped."""
+    pod, skipped = f"{name}-1", f"{name}-2"
+    return {
+        name: {
+            "id": name,
+            "name": name,
+            "displayName": name,
+            "type": "Steps",
+            "templateName": "main",
+            "phase": phase,
+            "children": [pod, skipped],
+        },
+        pod: {
+            "id": pod,
+            "name": f"{name}[0].run-optimizer",
+            "displayName": "run-optimizer",
+            "type": "Pod",
+            "templateName": "run-optimizer",
+            "boundaryID": name,
+            "phase": phase,
+        },
+        skipped: {
+            "id": skipped,
+            "name": f"{name}[1].profile",
+            "displayName": "profile",
+            "type": "Skipped",
+            "templateName": "run-optimizer",
+            "boundaryID": name,
+            "phase": "Omitted",
+        },
+    }
+
+
 def _workflow(argo, name: str) -> dict:
     got = _kubectl(
         argo["kubeconfig"],
@@ -141,6 +184,47 @@ def _workflow(argo, name: str) -> dict:
     )
     assert got.returncode == 0, got.stderr
     return json.loads(got.stdout)
+
+
+class TestSyntheticRun:
+    def test_a_synthetic_run_carries_the_chosen_optimizers_and_lookback(
+        self, page, web_url, argo
+    ):
+        tenant = f"webopt{uuid.uuid4().hex[:8]}:main"
+        _runs_view(page, web_url, tenant)
+        form = page.get_by_role("form", name="Start optimization")
+        form.get_by_label("Mode").select_option("synthetic")
+        choices = form.get_by_role("group", name="Generate training data for")
+        expect(choices.get_by_role("checkbox")).to_have_count(
+            len(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+        )
+        expect(choices.locator("label")).to_have_text(
+            sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+        )
+
+        form.get_by_role("button", name="Start run").click()
+        expect(form.get_by_role("alert")).to_have_text(
+            "Choose the optimizers to generate data for."
+        )
+        form.get_by_label("Lookback hours").fill("0")
+        choices.get_by_label("profile").check()
+        form.get_by_role("button", name="Start run").click()
+        expect(form.get_by_role("alert")).to_have_text(
+            "Lookback hours must be a number above 0."
+        )
+
+        form.get_by_label("Lookback hours").fill("12")
+        choices.get_by_label("routing").check()
+        name = _start_submitted(page, "synthetic")
+        stored = _workflow(argo, name)
+        assert {
+            p["name"]: p["value"] for p in stored["spec"]["arguments"]["parameters"]
+        } == {
+            "mode": "synthetic",
+            "tenant-id": tenant,
+            "lookback-hours": "12",
+            "agents": "profile,routing",
+        }
 
 
 class TestOptimizationRuns:
@@ -178,30 +262,19 @@ class TestOptimizationRuns:
             {
                 "phase": "Running",
                 "startedAt": "2026-10-04T09:00:00Z",
-                "nodes": {
-                    "a": {
-                        "type": "Pod",
-                        "displayName": "run-optimizer",
-                        "phase": "Running",
-                    },
-                    "b": {
-                        "type": "Skipped",
-                        "displayName": "profile",
-                        "phase": "Omitted",
-                    },
-                },
+                "nodes": _nodes(name, "Running"),
             },
         )
         expect(_row(page, tenant, name).get_by_role("cell")).to_have_text(
             [name, "simba", "manual", "Running", "2026-10-04 09:00 UTC", "—"],
             timeout=POLL_TIMEOUT_MS,
         )
-        expect(
-            detail.get_by_role("table", name="Steps").get_by_role("row")
-        ).to_have_text(
-            ["Step Phase", "run-optimizer Running", "profile Skipped"],
+        steps = detail.get_by_role("table", name="Steps")
+        expect(steps.get_by_role("cell")).to_have_text(
+            ["run-optimizer", "Running", "profile", "Skipped"],
             timeout=POLL_TIMEOUT_MS,
         )
+        expect(steps.get_by_role("columnheader")).to_have_text(["Step", "Phase"])
 
         detail.get_by_role("button", name="Cancel run").click()
         expect(page.get_by_role("status")).to_have_text(
@@ -214,8 +287,10 @@ class TestOptimizationRuns:
             name,
             {
                 "phase": "Failed",
+                "startedAt": "2026-10-04T09:00:00Z",
                 "finishedAt": "2026-10-04T09:10:00Z",
                 "message": "Stopped with strategy 'Terminate'",
+                "nodes": _nodes(name, "Failed"),
             },
         )
         detail = page.get_by_role("region", name=f"Run {name}")
@@ -228,7 +303,7 @@ class TestOptimizationRuns:
         expect(detail.get_by_role("button", name="Cancel run")).to_have_count(0)
         detail.get_by_role("button", name="Retry failed steps").click()
         expect(page.get_by_role("status")).to_contain_text(
-            f"Retried {name}; Argo reports "
+            f"Retried {name}; Argo reports ", timeout=POLL_TIMEOUT_MS
         )
         retried = _workflow(argo, name)
         expect(page.get_by_role("status")).to_have_text(

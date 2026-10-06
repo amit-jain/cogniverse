@@ -50,25 +50,32 @@ class ProfileValidator:
         """
         self.config_manager = config_manager
         self.schema_templates_dir = schema_templates_dir or Path("configs/schemas")
-        self._valid_profile_types, self._profile_type_source_error = (
-            self._load_valid_profile_types()
-        )
+        (
+            self._valid_profile_types,
+            self._profile_type_source_error,
+            self._model_loader_types,
+        ) = self._load_valid_profile_types()
         self._valid_profile_type_set = frozenset(self._valid_profile_types)
 
-    def _load_valid_profile_types(self) -> tuple[list[str], Optional[str]]:
-        """Derive valid profile types from the shipped backend config."""
+    def _load_valid_profile_types(
+        self,
+    ) -> tuple[list[str], Optional[str], frozenset[str]]:
+        """Derive valid profile types from the shipped backend config, with
+        the types every shipped profile of which names a ``model_loader``:
+        content of those types is embedded at ingestion, so a profile of one
+        without a loader cannot be ingested into."""
         try:
             json_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR, frozenset()
 
         backend_config = json_config.get("backend")
         if not isinstance(backend_config, dict):
-            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR, frozenset()
 
         profiles = backend_config.get("profiles")
         if not isinstance(profiles, dict) or not profiles:
-            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR, frozenset()
 
         valid_profile_types: list[str] = []
         for profile_name, profile_config in profiles.items():
@@ -78,6 +85,7 @@ class ProfileValidator:
                     "Profile type validation failed: backend profile "
                     f"'{profile_name}' must be an object in "
                     "configs/config.json backend.profiles",
+                    frozenset(),
                 )
 
             profile_type = profile_config.get("type")
@@ -87,6 +95,7 @@ class ProfileValidator:
                     "Profile type validation failed: backend profile "
                     f"'{profile_name}' must declare a non-empty string type in "
                     "configs/config.json backend.profiles",
+                    frozenset(),
                 )
             if profile_type != profile_type.strip():
                 return (
@@ -94,12 +103,19 @@ class ProfileValidator:
                     "Profile type validation failed: backend profile "
                     f"'{profile_name}' type contains surrounding whitespace in "
                     "configs/config.json backend.profiles",
+                    frozenset(),
                 )
 
             if profile_type not in valid_profile_types:
                 valid_profile_types.append(profile_type)
 
-        return valid_profile_types, None
+        loaderless_types = {
+            profile_config["type"]
+            for profile_config in profiles.values()
+            if not profile_config.get("model_loader")
+        }
+        model_loader_types = frozenset(valid_profile_types) - loaderless_types
+        return valid_profile_types, None, model_loader_types
 
     def validate_profile(
         self, profile: "BackendProfileConfig", tenant_id: str, is_update: bool = False
@@ -125,6 +141,9 @@ class ProfileValidator:
         errors.extend(self._validate_schema_template(profile.schema_name))
         errors.extend(self._validate_embedding_model(profile.embedding_model))
         errors.extend(self._validate_embedding_type(profile.embedding_type))
+        errors.extend(self._validate_model_loader(profile))
+        errors.extend(self._validate_process_type(profile.process_type))
+        errors.extend(self._validate_extra_config(profile.extra_config))
         errors.extend(self._validate_strategies(profile.strategies))
         errors.extend(self._validate_embedding_dimensions(profile))
 
@@ -266,6 +285,53 @@ class ProfileValidator:
             )
 
         return errors
+
+    def _validate_model_loader(self, profile: "BackendProfileConfig") -> List[str]:
+        """The loader must be one ingestion embeds with, and is required for
+        the types whose content is embedded."""
+        from cogniverse_core.common.models.model_loaders import (
+            EMBEDDING_MODEL_LOADERS,
+        )
+
+        if not profile.model_loader:
+            if profile.type in self._model_loader_types:
+                return [
+                    f"Profile type '{profile.type}' requires a model_loader, "
+                    f"one of: {sorted(EMBEDDING_MODEL_LOADERS)}"
+                ]
+            return []
+        if profile.model_loader not in EMBEDDING_MODEL_LOADERS:
+            return [
+                f"Invalid model_loader '{profile.model_loader}'. "
+                f"Must be one of: {sorted(EMBEDDING_MODEL_LOADERS)}"
+            ]
+        return []
+
+    def _validate_process_type(self, process_type: Optional[str]) -> List[str]:
+        """An unset process type lets ingestion infer it from the profile."""
+        from cogniverse_foundation.config.unified_config import PROCESS_TYPES
+
+        if process_type is None or process_type in PROCESS_TYPES:
+            return []
+        return [
+            f"Invalid process_type '{process_type}'. "
+            f"Must be one of: {list(PROCESS_TYPES)}"
+        ]
+
+    def _validate_extra_config(self, extra_config: dict) -> List[str]:
+        """Extra keys sit beside the named fields in the stored profile, so
+        one named like a field would overwrite it."""
+        from cogniverse_foundation.config.unified_config import (
+            BackendProfileConfig,
+        )
+
+        clashing = sorted(set(extra_config) & BackendProfileConfig._KNOWN_KEYS)
+        if clashing:
+            return [
+                f"extra_config keys {clashing} are profile fields; "
+                "set them as fields instead"
+            ]
+        return []
 
     def _validate_embedding_type(self, embedding_type: str) -> List[str]:
         """Validate embedding type."""

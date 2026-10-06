@@ -144,10 +144,14 @@ def _socket_inodes(pid: int) -> set[int]:
 
 
 def _tcp_rows() -> list[tuple[int, int, str, int]]:
-    """(local port, remote port, state, inode) for every TCP socket."""
+    """(local port, remote port, state, inode) for every TCP socket. A kernel
+    built without IPv6 has no tcp6 table, and no IPv6 sockets to list."""
     rows = []
-    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
-        for line in Path(table).read_text().splitlines()[1:]:
+    tables = [Path("/proc/net/tcp")]
+    if Path("/proc/net/tcp6").exists():
+        tables.append(Path("/proc/net/tcp6"))
+    for table in tables:
+        for line in table.read_text().splitlines()[1:]:
             fields = line.split()
             rows.append(
                 (

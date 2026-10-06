@@ -79,6 +79,7 @@ from tests.e2e.sample_corpus import (
     profile_selection_corpus_videos,
 )
 from tests.e2e.tab_selection import tab_candidates_in_scope
+from tests.utils.profile_payload import profile_create_payload
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
@@ -743,20 +744,7 @@ def _bootstrap_tenant_and_schemas() -> None:
             print(f"Profile pre-delete failed (non-fatal): {exc}")
 
         try:
-            payload = {
-                "profile_name": profile_name,
-                "tenant_id": TENANT_ID,
-                "type": profile_def.get("type", "video"),
-                "description": profile_def.get("description", ""),
-                "schema_name": profile_def.get("schema_name", profile_name),
-                "embedding_model": profile_def.get("embedding_model", ""),
-                "pipeline_config": profile_def.get("pipeline_config", {}),
-                "strategies": profile_def.get("strategies", {}),
-                "embedding_type": profile_def.get("embedding_type", "multi_vector"),
-                "schema_config": profile_def.get("schema_config", {}),
-                "model_specific": profile_def.get("model_specific"),
-                "deploy_schema": True,
-            }
+            payload = profile_create_payload(profile_name, profile_def, TENANT_ID)
             resp = httpx.post(
                 f"{RUNTIME}/admin/profiles",
                 json=payload,

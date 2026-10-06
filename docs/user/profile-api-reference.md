@@ -116,6 +116,11 @@ Create a new backend profile for a tenant.
     "embedding_dim": 128,
     "num_patches": 1024
   },
+  "model_loader": "string (required for embedded types, enum: colbert|colpali|colqwen|xclip)",
+  "process_type": "string (optional, enum: direct_video|frame_based|video_chunks)",
+  "extra_config": {
+    "inference_services": {"embedding": "vllm_colpali"}
+  },
   "deploy_schema": "boolean (optional, default: false)"
 }
 ```
@@ -132,6 +137,8 @@ curl -X POST http://localhost:8000/admin/profiles \
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
     "embedding_type": "multi_vector",
+    "model_loader": "colpali",
+    "extra_config": {"inference_services": {"embedding": "vllm_colpali"}},
     "description": "ColPali model with frame-based embedding for video search",
     "strategies": {
       "segmentation": {
@@ -169,7 +176,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 
 - `profile_name`: Must be unique within tenant, max 100 chars, alphanumeric + underscore + hyphen only
 - `tenant_id`: Required, non-empty — identifies the tenant owning the profile
-- `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "document", "code"
+- `type`: Optional (defaults to "video"), must be a type of a shipped profile in `configs/config.json` `backend.profiles` ("video", "image", "audio", "document", "code", "wiki")
 - `schema_name`: Must have a matching template file `{schema_name}_schema.json` in the configured schema templates directory (defaults to `configs/schemas/`); the template must contain top-level `name` and `document.fields`
 - `embedding_model`: Format `org/model` or `model-name`
 - `embedding_type`: Must be `multi_vector` or `single_vector`
@@ -177,11 +184,57 @@ curl -X POST http://localhost:8000/admin/profiles \
 - `pipeline_config`: Optional (defaults to empty dict), must be valid JSON object
 - `model_specific`: Optional (defaults to null), must be valid JSON object
 - `schema_config`: Optional (defaults to empty dict); if it includes `embedding_dim`, the value must be an integer between 1 and 100000
+- `model_loader`: The loader ingestion embeds with: `colbert`, `colpali`, `colqwen` or `xclip` (`EMBEDDING_MODEL_LOADERS`). Required when every shipped profile of the profile's `type` names one (today every type but `wiki`); a profile without it could be deployed but not ingested into
+- `process_type`: Optional (defaults to null, inferred by ingestion); one of `direct_video`, `frame_based`, `video_chunks` (`PROCESS_TYPES`)
+- `extra_config`: Optional (defaults to empty dict); further profile keys stored beside the named fields, such as `inference_services`, `model_config`, `result_granularity` or `semantic_model`. A key named like a profile field is refused
 - `deploy_schema`: Optional (defaults to false), boolean flag
 
 ---
 
-### 2. List Profiles
+### 2. List Profile Templates
+
+The shipped profiles a tenant's new profile can start from, each with its whole
+configuration as ingestion reads it. A shipped name the tenant has created its
+own profile under is left out.
+
+**Endpoint:** `GET /admin/profile-templates`
+
+**Query Parameters:**
+
+- `tenant_id` (required): Tenant identifier
+
+**Response:** `200 OK`
+
+```json
+{
+  "tenant_id": "acme_corp",
+  "templates": [
+    {
+      "profile_name": "document_text_semantic",
+      "config": {
+        "type": "document",
+        "schema_name": "document_text",
+        "embedding_model": "lightonai/LateOn",
+        "embedding_type": "multi_vector",
+        "model_loader": "colbert",
+        "inference_services": {"embedding": "colbert_pylate"},
+        "result_granularity": "source",
+        "...": "..."
+      }
+    }
+  ]
+}
+```
+
+A template becomes a create request by moving its named keys to the fields of
+the same name and every other key into `extra_config`.
+
+**Error Response:** `500` with `error: "profile_templates_failed"` when the
+config store cannot be read.
+
+---
+
+### 3. List Profiles
 
 Get all backend profiles for a tenant.
 
@@ -236,7 +289,7 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
 
 ---
 
-### 3. Get Profile
+### 4. Get Profile
 
 Get a specific backend profile by name.
 
@@ -285,6 +338,9 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
   },
   "schema_config": {},
   "model_specific": null,
+  "model_loader": "colpali",
+  "process_type": null,
+  "extra_config": {"inference_services": {"embedding": "vllm_colpali"}},
   "schema_deployed": false,
   "tenant_schema_name": null,
   "created_at": "2024-01-15T10:00:00.000Z",
@@ -302,7 +358,7 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
 
 ---
 
-### 4. Update Profile
+### 5. Update Profile
 
 Update mutable fields of an existing profile.
 
@@ -394,7 +450,7 @@ If `strategies` is one of the provided mutable fields, its value is re-validated
 
 ---
 
-### 5. Delete Profile
+### 6. Delete Profile
 
 Delete a backend profile and optionally its backend schema.
 
@@ -466,7 +522,7 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tena
 
 ---
 
-### 6. Deploy Schema
+### 7. Deploy Schema
 
 Deploy backend schema for a profile to the configured backend.
 
@@ -564,6 +620,9 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   pipeline_config?: object,    // Optional (default: {}, Dict[str, Any])
   model_specific?: object,     // Optional (default: null, Dict[str, Any])
   schema_config?: object,      // Optional (default: {}, Dict[str, Any])
+  model_loader?: string,       // colbert | colpali | colqwen | xclip; required for embedded types
+  process_type?: string | null, // direct_video | frame_based | video_chunks (default: null)
+  extra_config?: object,       // Optional (default: {}), keys stored beside the fields
   deploy_schema?: boolean      // Optional (default: false)
 }
 ```
@@ -607,6 +666,9 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   pipeline_config: object,         // Dict[str, Any]
   schema_config: object,           // Dict[str, Any]
   model_specific: object | null,
+  model_loader: string,
+  process_type: string | null,
+  extra_config: object,            // Dict[str, Any]
   schema_deployed: boolean,
   tenant_schema_name: string | null,
   created_at: string,              // ISO 8601 timestamp

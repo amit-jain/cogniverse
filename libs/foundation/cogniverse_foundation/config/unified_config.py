@@ -435,8 +435,9 @@ class SystemConfig:
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+    def to_dict(self, redact: bool = True) -> Dict[str, Any]:
+        """Convert to dictionary. ``redact=False`` on the persistence path so
+        the real llm_api_key is stored."""
         return {
             "summarizer_agent_url": self.summarizer_agent_url,
             "ingestion_api_url": self.ingestion_api_url,
@@ -447,7 +448,7 @@ class SystemConfig:
             "llm_model": self.llm_model,
             "llm_engine": self.llm_engine,
             "base_url": self.base_url,
-            "llm_api_key": "***" if self.llm_api_key else None,
+            "llm_api_key": ("***" if redact and self.llm_api_key else self.llm_api_key),
             "semantic_router": self.semantic_router.to_dict(),
             "telemetry_url": self.telemetry_url,
             "telemetry_collector_endpoint": self.telemetry_collector_endpoint,
@@ -721,6 +722,10 @@ def profile_is_servable(
         profile_servability(profile_name, profile, service_urls, deployed_schemas)
         == PROFILE_SERVABLE
     )
+
+
+# The process types ingestion's strategy resolution reads from a profile.
+PROCESS_TYPES = ("direct_video", "frame_based", "video_chunks")
 
 
 @dataclass

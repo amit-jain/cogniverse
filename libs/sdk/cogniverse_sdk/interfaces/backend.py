@@ -243,6 +243,33 @@ class SearchBackend(ABC):
         """
         pass
 
+    @abstractmethod
+    def export_embeddings(
+        self,
+        schema: Optional[str] = None,
+        max_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        include_embeddings: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Read up to ``max_documents`` documents of a deployed schema with all
+        their stored fields, embeddings included unless
+        ``include_embeddings`` is False.
+
+        Args:
+            schema: Deployed schema name; the backend's own schema when None
+            max_documents: Most documents to return
+            filters: Field equality filters
+            include_embeddings: Whether embedding fields are returned
+
+        Returns:
+            One dict per document: its ``id`` and its fields
+
+        Raises:
+            RuntimeError: The backend could not be read
+        """
+        pass
+
 
 class Backend(IngestionBackend, SearchBackend):
     """

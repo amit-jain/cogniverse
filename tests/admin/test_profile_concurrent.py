@@ -129,6 +129,7 @@ class TestProfileConcurrentOperations:
                         "schema_name": "video_test",
                         "embedding_model": f"model_{thread_id}",
                         "embedding_type": "multi_vector",
+                        "model_loader": "colpali",
                     },
                 )
                 results.append(
@@ -189,6 +190,7 @@ class TestProfileConcurrentOperations:
                 "schema_name": "video_test",
                 "embedding_model": "model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "pipeline_config": {"initial": "value"},
             },
         )
@@ -280,6 +282,7 @@ class TestProfileConcurrentOperations:
                         "schema_name": "video_test",
                         "embedding_model": f"model_{tenant_id}",
                         "embedding_type": "multi_vector",
+                        "model_loader": "colpali",
                     },
                 )
                 results.append(
@@ -329,6 +332,7 @@ class TestProfileConcurrentOperations:
                 "schema_name": "video_test",
                 "embedding_model": "model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "description": "Initial",
             },
         )
@@ -422,6 +426,7 @@ class TestProfileConcurrentOperations:
                     "schema_name": "video_test",
                     "embedding_model": "model",
                     "embedding_type": "multi_vector",
+                    "model_loader": "colpali",
                 },
             )
 
@@ -458,6 +463,7 @@ class TestProfileConcurrentOperations:
                         "schema_name": "video_test",
                         "embedding_model": "model",
                         "embedding_type": "multi_vector",
+                        "model_loader": "colpali",
                     },
                 )
                 results.append({"type": "add", "thread_id": thread_id})
@@ -507,6 +513,7 @@ class TestProfileConcurrentOperations:
                     "schema_name": "video_test",
                     "embedding_model": "model",
                     "embedding_type": "multi_vector",
+                    "model_loader": "colpali",
                 },
             )
 

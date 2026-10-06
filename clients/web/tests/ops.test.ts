@@ -3,6 +3,7 @@ import { queueSummary } from '../src/client/ops/AnnotationsView';
 import { changedCorrections } from '../src/client/ops/ApprovalsView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { splitList } from '../src/client/ops/WorkflowReviewsView';
+import { matchingPoints } from '../src/client/ops/EmbeddingAtlasView';
 import { errorMessage } from '../src/client/ops/http';
 import { delta, percent } from '../src/client/ops/metrics';
 import { formatArgoTime } from '../src/client/ops/OptimizationView';
@@ -174,5 +175,23 @@ describe('metric formats', () => {
     expect(delta(-0.5, 3)).toBe('-0.500');
     expect(delta(0)).toBe('0.0');
     expect(delta(null)).toBe('—');
+  });
+});
+
+describe('matchingPoints', () => {
+  const points = [
+    { id: 'b', x: 0, y: 0, title: 'volcanoes.txt', text: 'Volcanoes build islands' },
+    { id: 'a', x: 1, y: 1, title: 'Rivers.txt', text: 'Rivers carve canyons' },
+    { id: 'c', x: 2, y: 2, title: null, text: 'Glaciers grind valleys' },
+  ];
+
+  it('orders every point by title, then id, when nothing is searched', () => {
+    expect(matchingPoints(points, '  ').map((p) => p.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('keeps the points whose title or text holds the query in any case', () => {
+    expect(matchingPoints(points, 'CARVE').map((p) => p.id)).toEqual(['a']);
+    expect(matchingPoints(points, 'volcanoes.txt').map((p) => p.id)).toEqual(['b']);
+    expect(matchingPoints(points, 'lava')).toEqual([]);
   });
 });

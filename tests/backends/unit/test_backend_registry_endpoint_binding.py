@@ -54,6 +54,12 @@ class RecordingSearchBackend(SearchBackend):
     def get_statistics(self) -> dict:
         return {}
 
+    def export_embeddings(
+        self, schema=None, max_documents=None, filters=None, include_embeddings=True
+    ):
+
+        return []
+
     def get_embedding_requirements(self, schema_name: str) -> dict:
         return {}
 

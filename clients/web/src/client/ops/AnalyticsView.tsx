@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, Panel, useLoad } from './common';
+import { Alert, Panel, useAction, useLoad } from './common';
 import { runtimeJson, seg } from './http';
 import { Bars, LookbackSelect, percent } from './metrics';
 import { Plot } from './Plot';
@@ -23,7 +23,7 @@ import {
   type Window,
 } from './traces';
 
-const SECTIONS = ['Overview', 'Time series', 'Distribution', 'Heatmap', 'Outliers', 'Trace explorer'] as const;
+const SECTIONS = ['Overview', 'Time series', 'Distribution', 'Heatmap', 'Outliers', 'Trace explorer', 'Root causes'] as const;
 type Section = (typeof SECTIONS)[number];
 const PAGE_SIZE = 20;
 
@@ -50,14 +50,15 @@ export function AnalyticsView() {
 function Traces({ tenant, lookback, onLookback }: { tenant: string; lookback: number; onLookback: (hours: number) => void }) {
   const [filters, setFilters] = useState<Filters>({ operation: '', profiles: [], strategies: [] });
   const [section, setSection] = useState<Section>('Overview');
+  const query = useMemo(() => {
+    const params = new URLSearchParams({ lookback_hours: String(lookback), operation: filters.operation });
+    filters.profiles.forEach((value) => params.append('profile', value));
+    filters.strategies.forEach((value) => params.append('strategy', value));
+    return params;
+  }, [lookback, filters]);
   const analytics = useLoad(
-    (signal) => {
-      const query = new URLSearchParams({ lookback_hours: String(lookback), operation: filters.operation });
-      filters.profiles.forEach((value) => query.append('profile', value));
-      filters.strategies.forEach((value) => query.append('strategy', value));
-      return runtimeJson<TraceAnalytics>(`/admin/tenant/${seg(tenant)}/telemetry/traces?${query}`, { signal });
-    },
-    [tenant, lookback, filters],
+    (signal) => runtimeJson<TraceAnalytics>(`/admin/tenant/${seg(tenant)}/telemetry/traces?${query}`, { signal }),
+    [tenant, query],
   );
   const data = analytics.data;
   const statistics = data?.statistics;
@@ -104,6 +105,7 @@ function Traces({ tenant, lookback, onLookback }: { tenant: string; lookback: nu
           {section === 'Heatmap' && <HeatmapSection traces={data.traces} />}
           {section === 'Outliers' && <Outliers data={data} />}
           {section === 'Trace explorer' && <Explorer traces={data.traces} />}
+          {section === 'Root causes' && <RootCauses key={query.toString()} tenant={tenant} query={query} />}
         </>
       )}
     </>
@@ -457,5 +459,137 @@ function TraceTable({ label, traces }: { label: string; traces: Trace[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+interface RootCause {
+  hypothesis: string;
+  confidence: number;
+  category: string;
+  evidence: string[];
+  affected_traces: string[];
+  suggested_action: string;
+}
+
+interface Recommendation {
+  priority: string;
+  category: string;
+  recommendation: string;
+  details: string[];
+  affected_components: string[];
+}
+
+interface RootCauseAnalysis {
+  traces: number;
+  failed: number;
+  slow: number;
+  failure_rate: number;
+  slow_threshold_ms: number | null;
+  root_causes: RootCause[];
+  recommendations: Recommendation[];
+}
+
+function RootCauses({ tenant, query }: { tenant: string; query: URLSearchParams }) {
+  const [includeSlow, setIncludeSlow] = useState(true);
+  const [percentile, setPercentile] = useState('95');
+  const [analysis, setAnalysis] = useState<RootCauseAnalysis>();
+  const action = useAction();
+  return (
+    <Panel title="Root causes">
+      <form
+        className="inline-form"
+        aria-label="Find root causes"
+        onSubmit={(e) => {
+          e.preventDefault();
+          action.run(async () => {
+            const value = Number(percentile);
+            if (!Number.isInteger(value) || value < 50 || value > 99)
+              throw new Error('The slow percentile must be a whole number from 50 to 99.');
+            const params = new URLSearchParams(query);
+            params.set('include_slow', String(includeSlow));
+            params.set('slow_percentile', String(value));
+            setAnalysis(
+              await runtimeJson<RootCauseAnalysis>(`/admin/tenant/${seg(tenant)}/telemetry/root-causes?${params}`),
+            );
+          });
+        }}
+      >
+        <label className="check">
+          <input type="checkbox" checked={includeSlow} onChange={(e) => setIncludeSlow(e.target.checked)} />
+          Include slow traces
+        </label>
+        <label>
+          Slow percentile
+          <input inputMode="numeric" value={percentile} onChange={(e) => setPercentile(e.target.value)} />
+        </label>
+        <button type="submit" disabled={action.pending}>
+          {action.pending ? 'Analyzing…' : 'Find root causes'}
+        </button>
+        {action.error && <Alert>{action.error}</Alert>}
+      </form>
+      {!analysis && <p className="muted">Runs over the traces the filters above keep.</p>}
+      {analysis && (
+        <>
+          <dl className="facts" aria-label="Root cause summary">
+            <dt>Traces analyzed</dt>
+            <dd>{analysis.traces}</dd>
+            <dt>Failed</dt>
+            <dd>
+              {analysis.failed} ({percent(analysis.failure_rate)})
+            </dd>
+            <dt>Slow</dt>
+            <dd>
+              {analysis.slow_threshold_ms === null
+                ? analysis.slow
+                : `${analysis.slow} (slower than ${ms(analysis.slow_threshold_ms)})`}
+            </dd>
+          </dl>
+          {analysis.root_causes.length === 0 ? (
+            <p className="muted">No root cause stands out in these traces.</p>
+          ) : (
+            <ol className="root-causes" aria-label="Hypotheses">
+              {analysis.root_causes.map((cause) => (
+                <li key={`${cause.category}-${cause.hypothesis}`}>
+                  <details>
+                    <summary>
+                      {cause.hypothesis} ({percent(cause.confidence)} confidence, {cause.category})
+                    </summary>
+                    <ul>
+                      {cause.evidence.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                    <p>Suggested action: {cause.suggested_action}</p>
+                    <p>Affected traces: {cause.affected_traces.join(', ')}</p>
+                  </details>
+                </li>
+              ))}
+            </ol>
+          )}
+          {analysis.recommendations.length > 0 && (
+            <table aria-label="Recommendations">
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Category</th>
+                  <th>Recommendation</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.recommendations.map((item) => (
+                  <tr key={`${item.category}-${item.recommendation}`}>
+                    <td>{item.priority}</td>
+                    <td>{item.category}</td>
+                    <td>{item.recommendation}</td>
+                    <td>{item.details.join('; ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </Panel>
   );
 }

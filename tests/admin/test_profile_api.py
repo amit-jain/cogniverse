@@ -138,6 +138,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response = test_client.post("/admin/profiles", json=profile_data)
@@ -169,6 +170,7 @@ class TestProfileAPICRUD:
                 }
             },
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "schema_config": {"embedding_dim": 128, "num_patches": 1024},
             "model_specific": {"batch_size": 32},
             "deploy_schema": False,
@@ -194,6 +196,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response = test_client.post("/admin/profiles", json=body_without_tenant)
@@ -216,6 +219,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response = test_client.post("/admin/profiles", json=invalid_data)
@@ -232,6 +236,7 @@ class TestProfileAPICRUD:
             "schema_name": "nonexistent_schema",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response = test_client.post("/admin/profiles", json=profile_data)
@@ -247,6 +252,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         # Create first profile
@@ -282,6 +288,7 @@ class TestProfileAPICRUD:
                 "schema_name": "video_test",
                 "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             }
             response = test_client.post("/admin/profiles", json=profile_data)
             assert response.status_code == 201
@@ -323,6 +330,7 @@ class TestProfileAPICRUD:
             "pipeline_config": {"keyframe_fps": 30.0},
             "strategies": {"segmentation": {"class": "FrameSegmentationStrategy"}},
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "schema_config": {"embedding_dim": 128},
         }
 
@@ -378,6 +386,7 @@ class TestProfileAPICRUD:
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "pipeline_config": {"keyframe_fps": 30.0},
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -427,6 +436,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -458,6 +468,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         create_response = test_client.post("/admin/profiles", json=profile_data)
@@ -508,6 +519,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
         create_response = test_client.post("/admin/profiles", json=profile_data)
         assert create_response.status_code == 201
@@ -578,6 +590,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response1 = test_client.post("/admin/profiles", json=profile_data_1)
@@ -592,6 +605,7 @@ class TestProfileAPICRUD:
             "schema_name": "video_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
         }
 
         response2 = test_client.post("/admin/profiles", json=profile_data_2)
@@ -613,6 +627,207 @@ class TestProfileAPICRUD:
         # List profiles for tenant2
         list2 = test_client.get("/admin/profiles?tenant_id=tenant2")
         assert list2.json()["total_count"] == 1
+
+    def test_ingestion_keys_round_trip_through_create_and_detail(
+        self, test_client: TestClient
+    ):
+        """model_loader, process_type and extra_config reach the stored
+        profile as the keys ingestion reads, and come back in the detail."""
+        from cogniverse_runtime.routers import admin
+
+        extra = {
+            "inference_services": {"embedding": "vllm_colpali"},
+            "result_granularity": "segment",
+            "model_config": {"token_pool_factor": 3},
+        }
+        response = test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "ingestable",
+                "tenant_id": "test_tenant",
+                "schema_name": "video_test",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_type": "multi_vector",
+                "model_loader": "colqwen",
+                "process_type": "video_chunks",
+                "extra_config": extra,
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        detail = test_client.get("/admin/profiles/ingestable?tenant_id=test_tenant")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert (body["model_loader"], body["process_type"], body["extra_config"]) == (
+            "colqwen",
+            "video_chunks",
+            extra,
+        )
+
+        stored = admin._config_manager.get_stored_backend_config(
+            tenant_id="test_tenant", service="backend"
+        )
+        assert stored.to_dict()["profiles"]["ingestable"] == {
+            "type": "video",
+            "description": "",
+            "schema_name": "video_test",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+            "pipeline_config": {},
+            "strategies": {},
+            "embedding_type": "multi_vector",
+            "schema_config": {},
+            "model_loader": "colqwen",
+            "process_type": "video_chunks",
+            **extra,
+        }
+
+    def test_a_profile_ingestion_cannot_embed_with_is_refused(
+        self, test_client: TestClient
+    ):
+        base = {
+            "tenant_id": "test_tenant",
+            "schema_name": "video_test",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+            "embedding_type": "multi_vector",
+        }
+        refusals = {
+            "no_loader": (
+                {},
+                "Profile type 'video' requires a model_loader, one of: "
+                "['colbert', 'colpali', 'colqwen', 'xclip']",
+            ),
+            "bad_loader": (
+                {"model_loader": "whisper"},
+                "Invalid model_loader 'whisper'. Must be one of: "
+                "['colbert', 'colpali', 'colqwen', 'xclip']",
+            ),
+            "bad_process": (
+                {"model_loader": "colpali", "process_type": "chunks"},
+                "Invalid process_type 'chunks'. Must be one of: "
+                "['direct_video', 'frame_based', 'video_chunks']",
+            ),
+            "shadowing": (
+                {"model_loader": "colpali", "extra_config": {"strategies": {}}},
+                "extra_config keys ['strategies'] are profile fields; "
+                "set them as fields instead",
+            ),
+        }
+        for name, (fields, error) in refusals.items():
+            response = test_client.post(
+                "/admin/profiles", json={"profile_name": name, **base, **fields}
+            )
+            assert response.status_code == 400, name
+            assert response.json()["detail"] == {
+                "message": "Profile validation failed",
+                "errors": [error],
+            }
+        listed = test_client.get("/admin/profiles?tenant_id=test_tenant").json()
+        assert listed["profiles"] == []
+
+    def test_templates_are_the_shipped_profiles_the_tenant_has_not_created(
+        self, test_client: TestClient
+    ):
+        shipped = json.loads(
+            (
+                Path(__file__).resolve().parents[2] / "configs" / "config.json"
+            ).read_text()
+        )["backend"]["profiles"]
+
+        response = test_client.get("/admin/profile-templates?tenant_id=tmpl_tenant")
+        assert response.status_code == 200
+        templates = {
+            t["profile_name"]: t["config"] for t in response.json()["templates"]
+        }
+        assert list(templates) == sorted(shipped)
+        for name in sorted(shipped):
+            if name != "wiki_semantic":
+                assert templates[name] == shipped[name], name
+
+        created = test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "image_colpali_mv",
+                "tenant_id": "tmpl_tenant",
+                "schema_name": "video_test",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_type": "multi_vector",
+                "model_loader": "colpali",
+            },
+        )
+        assert created.status_code == 201, created.text
+        after = test_client.get("/admin/profile-templates?tenant_id=tmpl_tenant")
+        assert [t["profile_name"] for t in after.json()["templates"]] == sorted(
+            set(shipped) - {"image_colpali_mv"}
+        )
+
+    def test_concurrent_template_reads_keep_each_tenants_own_list(
+        self, test_client: TestClient
+    ):
+        """Reads for two tenants at once, one of which created a shipped
+        name, each return that tenant's list."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        shipped = sorted(
+            json.loads(
+                (
+                    Path(__file__).resolve().parents[2] / "configs" / "config.json"
+                ).read_text()
+            )["backend"]["profiles"]
+        )
+        created = test_client.post(
+            "/admin/profiles",
+            json={
+                "profile_name": "lateon_mv",
+                "tenant_id": "conc_a",
+                "type": "document",
+                "schema_name": "video_test",
+                "embedding_model": "lightonai/LateOn",
+                "embedding_type": "multi_vector",
+                "model_loader": "colbert",
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        barrier = threading.Barrier(8)
+
+        def read(tenant: str) -> tuple[str, list[str]]:
+            barrier.wait()
+            body = test_client.get(f"/admin/profile-templates?tenant_id={tenant}")
+            assert body.status_code == 200, body.text
+            return tenant, [t["profile_name"] for t in body.json()["templates"]]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(read, ["conc_a", "conc_b"] * 4))
+
+        expected = {
+            "conc_a": [name for name in shipped if name != "lateon_mv"],
+            "conc_b": shipped,
+        }
+        assert [names == expected[tenant] for tenant, names in results] == [True] * 8
+
+    def test_templates_fail_loudly_when_the_config_store_is_down(
+        self, test_client: TestClient, monkeypatch
+    ):
+        """An outage must not read as a tenant with no shipped profiles."""
+        from cogniverse_runtime.routers import admin
+        from cogniverse_sdk.interfaces.config_store import (
+            ConfigStoreUnavailableError,
+        )
+
+        def down(*args, **kwargs):
+            raise ConfigStoreUnavailableError("config store unreachable")
+
+        monkeypatch.setattr(admin._config_manager.store, "get_config", down)
+        response = test_client.get("/admin/profile-templates?tenant_id=down_tenant")
+        assert response.status_code == 500
+        assert response.json()["detail"] == {
+            "error": "profile_templates_failed",
+            "message": "Listing profile templates for tenant 'down_tenant' "
+            "failed; the runtime log names the cause.",
+            "failure": "ConfigStoreUnavailableError",
+            "tenant_id": "down_tenant",
+        }
 
 
 @pytest.mark.integration
@@ -781,6 +996,7 @@ class TestProfileAPISchemaDeployment:
             "schema_name": "video_deploy_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "deploy_schema": True,
         }
 
@@ -802,6 +1018,7 @@ class TestProfileAPISchemaDeployment:
             "schema_name": "video_deploy_test3",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "deploy_schema": False,
         }
 
@@ -843,6 +1060,7 @@ class TestProfileAPISchemaDeployment:
             "schema_name": "video_deploy_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "deploy_schema": True,
         }
 
@@ -875,6 +1093,7 @@ class TestProfileAPISchemaDeployment:
             "schema_name": "video_deploy_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "deploy_schema": True,
         }
 
@@ -915,6 +1134,7 @@ class TestProfileAPISchemaDeployment:
             "schema_name": "video_deploy_test",
             "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "schema_config": {"embedding_dim": 128},
             "deploy_schema": True,
         }

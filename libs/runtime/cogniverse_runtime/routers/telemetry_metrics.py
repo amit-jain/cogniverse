@@ -8,9 +8,11 @@ telemetry backend that fails the read answers 502; it never reads as an empty
 window.
 """
 
+import asyncio
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -25,6 +27,7 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
     load_golden_set_ground_truth_rows,
 )
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_evaluation.analysis.root_cause_analysis import RootCauseAnalyzer
 from cogniverse_evaluation.recorded_searches import (
     SEARCH_SPAN_NAME,
     score_recorded_searches,
@@ -142,6 +145,33 @@ class TraceAnalytics(BaseModel):
     facets: TraceFacets
     statistics: TraceStatistics
     traces: List[Trace]
+
+
+class RootCause(BaseModel):
+    hypothesis: str
+    confidence: float
+    category: str
+    evidence: List[str]
+    affected_traces: List[str]
+    suggested_action: str
+
+
+class Recommendation(BaseModel):
+    priority: str
+    category: str
+    recommendation: str
+    details: List[str]
+    affected_components: List[str]
+
+
+class RootCauseAnalysis(BaseModel):
+    traces: int
+    failed: int
+    slow: int
+    failure_rate: float
+    slow_threshold_ms: Optional[float]
+    root_causes: List[RootCause]
+    recommendations: List[Recommendation]
 
 
 class StrategyScores(BaseModel):
@@ -302,18 +332,106 @@ async def traces(
         profiles=sorted({row["profile"] for row in rows if row["profile"]}),
         strategies=sorted({row["strategy"] for row in rows if row["strategy"]}),
     )
+    kept = _filtered(rows, operation, profile, strategy)
+    return TraceAnalytics(
+        facets=facets,
+        statistics=TraceStatistics(**trace_statistics(kept)),
+        traces=[Trace(**row) for row in kept],
+    )
+
+
+def _filtered(
+    rows: List[Dict[str, Any]], operation: str, profile: List[str], strategy: List[str]
+) -> List[Dict[str, Any]]:
+    """Rows whose operation contains ``operation`` (any case) and whose
+    profile and strategy are among the given ones, when any are given."""
     needle = operation.casefold()
-    kept = [
+    return [
         row
         for row in rows
         if needle in row["operation"].casefold()
         and (not profile or row["profile"] in profile)
         and (not strategy or row["strategy"] in strategy)
     ]
-    return TraceAnalytics(
-        facets=facets,
-        statistics=TraceStatistics(**trace_statistics(kept)),
-        traces=[Trace(**row) for row in kept],
+
+
+def root_cause_analysis(
+    rows: List[Dict[str, Any]], *, include_slow: bool, slow_percentile: int
+) -> RootCauseAnalysis:
+    """``RootCauseAnalyzer`` over trace rows: failures, and (when
+    ``include_slow``) successful traces slower than ``slow_percentile`` of
+    the successful ones."""
+    traces = [
+        SimpleNamespace(
+            trace_id=row["trace_id"] or row["span_id"] or "",
+            status="success" if row["succeeded"] else "error",
+            error=row["error"],
+            operation=row["operation"],
+            profile=row["profile"],
+            strategy=row["strategy"],
+            duration_ms=row["duration_ms"],
+            timestamp=datetime.fromisoformat(row["start_time"]),
+        )
+        for row in rows
+    ]
+    analysis = RootCauseAnalyzer().analyze_failures(
+        traces,
+        include_performance=include_slow,
+        performance_threshold_percentile=slow_percentile,
+    )
+    summary = analysis["summary"]
+    threshold = analysis["performance_analysis"].get("threshold")
+    return RootCauseAnalysis(
+        traces=summary["total_traces"],
+        failed=summary["failed_traces"],
+        slow=summary["performance_degraded"],
+        failure_rate=summary["failure_rate"],
+        slow_threshold_ms=float(threshold) if threshold is not None else None,
+        root_causes=[
+            RootCause(
+                hypothesis=cause.hypothesis,
+                confidence=float(cause.confidence),
+                category=cause.category,
+                evidence=list(cause.evidence),
+                affected_traces=list(cause.affected_traces),
+                suggested_action=cause.suggested_action,
+            )
+            for cause in analysis["root_causes"]
+        ],
+        recommendations=[
+            Recommendation(
+                priority=item["priority"],
+                category=item["category"],
+                recommendation=item["recommendation"],
+                details=list(item["details"]),
+                affected_components=sorted(item["affected_components"]),
+            )
+            for item in analysis["recommendations"]
+        ],
+    )
+
+
+@router.get("/{tenant_id}/telemetry/root-causes", response_model=RootCauseAnalysis)
+async def root_causes(
+    tenant_id: str,
+    lookback_hours: int = Lookback,
+    operation: str = "",
+    profile: List[str] = Query([]),
+    strategy: List[str] = Query([]),
+    include_slow: bool = True,
+    slow_percentile: int = Query(95, ge=50, le=99),
+):
+    """Root-cause hypotheses for the failed (and slow) traces among the
+    tenant's traces in the last ``lookback_hours``, filtered as
+    ``/telemetry/traces`` filters them."""
+    tenant_id = canonical_tenant_id(tenant_id)
+    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
+    kept = _filtered(rows, operation, profile, strategy)
+    return await asyncio.to_thread(
+        root_cause_analysis,
+        kept,
+        include_slow=include_slow,
+        slow_percentile=slow_percentile,
     )
 
 

@@ -80,6 +80,7 @@ from tests.e2e.tenants import (
     register_tenant_and_wait,
     unique_id,
 )
+from tests.utils.profile_payload import profile_create_payload
 
 CAPTION_CORPUS_DIR = (
     Path(__file__).resolve().parents[2]
@@ -174,20 +175,7 @@ def _deploy_profile_for_tenant(
 
     resp = client.post(
         "/admin/profiles",
-        json={
-            "profile_name": profile_name,
-            "tenant_id": tenant_id,
-            "type": profile_def.get("type", "video"),
-            "description": profile_def.get("description", ""),
-            "schema_name": profile_def.get("schema_name", profile_name),
-            "embedding_model": profile_def.get("embedding_model", ""),
-            "pipeline_config": profile_def.get("pipeline_config", {}),
-            "strategies": profile_def.get("strategies", {}),
-            "embedding_type": profile_def.get("embedding_type", "multi_vector"),
-            "schema_config": profile_def.get("schema_config", {}),
-            "model_specific": profile_def.get("model_specific"),
-            "deploy_schema": True,
-        },
+        json=profile_create_payload(profile_name, profile_def, tenant_id),
         timeout=TENANT_DEPLOY_TIMEOUT_S,
     )
     assert resp.status_code in (200, 201, 409), resp.text
@@ -676,6 +664,7 @@ class TestProfileCRUD:
                         "schema_name": PROFILE,
                         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                         "embedding_type": "multi_vector",
+                        "model_loader": "colpali",
                         "deploy_schema": False,
                     },
                 )
@@ -727,6 +716,7 @@ class TestProfileCRUD:
                         "schema_name": PROFILE,
                         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                         "embedding_type": "multi_vector",
+                        "model_loader": "colpali",
                         "deploy_schema": False,
                     },
                 )

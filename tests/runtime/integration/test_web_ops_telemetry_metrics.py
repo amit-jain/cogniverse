@@ -450,6 +450,77 @@ def test_analytics_charts_and_explores_a_tenants_traces(page, web_url, telemetry
     }
 
 
+def test_analytics_finds_the_root_causes_of_the_filtered_traces(
+    page, web_url, telemetry
+):
+    tenant = _tenant("webrootcauses")
+    rows = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+    slow = next(row["trace_id"] for row in rows if row["duration_ms"] == 400)
+    region, _ = _show_traces(page, web_url, tenant, 6)
+
+    causes = _section(page, "Root causes")
+    form = causes.get_by_role("form", name="Find root causes")
+    form.get_by_label("Slow percentile").fill("100")
+    form.get_by_role("button", name="Find root causes").click()
+    expect(form.get_by_role("alert")).to_have_text(
+        "The slow percentile must be a whole number from 50 to 99."
+    )
+    form.get_by_label("Slow percentile").fill("75")
+    form.get_by_role("button", name="Find root causes").click()
+    expect(page.locator('dl[aria-label="Root cause summary"]')).to_be_visible()
+    assert _facts(page, "Root cause summary") == {
+        "Traces analyzed": "6",
+        "Failed": "1 (16.7%)",
+        "Slow": "1 (slower than 300.0 ms)",
+    }
+    hypotheses = causes.get_by_role("list", name="Hypotheses")
+    expect(hypotheses.locator("summary")).to_have_text(
+        [
+            f"Operation '{SEARCH}' experiencing performance degradation "
+            "(90.0% confidence, performance)",
+            "Profile 'video_colpali' has performance issues "
+            "(85.0% confidence, configuration)",
+        ]
+    )
+    hypotheses.locator("summary").first.click()
+    expect(hypotheses.locator("details").first).to_contain_text(
+        f"Affected traces: {slow}"
+    )
+    assert _rows(page, "Recommendations") == [
+        [
+            "medium",
+            "performance",
+            "Optimize slow operations",
+            "Profile slow operations; Add caching where appropriate; Consider "
+            "asynchronous processing",
+        ],
+        [
+            "medium",
+            "configuration",
+            "Review configuration settings",
+            "Check Profile 'video_colpali' has performance issues",
+        ],
+    ]
+
+    filters = region.get_by_role("form", name="Trace filters")
+    filters.get_by_label("Strategies").select_option(["bm25"])
+    filters.get_by_role("button", name="Apply filters").click()
+    expect(page.locator('dl[aria-label="Trace summary"] dd').first).to_have_text("1")
+    causes = _section(page, "Root causes")
+    form = causes.get_by_role("form", name="Find root causes")
+    form.get_by_label("Include slow traces").uncheck()
+    form.get_by_role("button", name="Find root causes").click()
+    expect(
+        causes.get_by_text("No root cause stands out in these traces.")
+    ).to_be_visible()
+    assert _facts(page, "Root cause summary") == {
+        "Traces analyzed": "1",
+        "Failed": "1 (100.0%)",
+        "Slow": "0",
+    }
+
+
 def test_analytics_shows_an_outage_rather_than_no_traces(page, web_url, phoenix_proxy):
     tenant = _tenant("webtracesoutage")
     phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})

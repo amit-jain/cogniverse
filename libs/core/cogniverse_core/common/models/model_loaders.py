@@ -1418,6 +1418,11 @@ class ModelLoaderFactory:
         return loader_cls(model_name, config, logger)
 
 
+# The model_loader values ingestion embeds with: the loaders
+# EmbeddingGeneratorImpl dispatches to, each with a remote loader.
+EMBEDDING_MODEL_LOADERS = frozenset({"colbert", "colpali", "colqwen", "xclip"})
+
+
 # Global bounded LRU model cache to avoid reloading.
 # Thread lock prevents concurrent from_pretrained calls which cause
 # meta tensor corruption in accelerate's dispatch hooks.

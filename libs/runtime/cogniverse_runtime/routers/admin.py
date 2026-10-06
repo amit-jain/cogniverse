@@ -49,6 +49,8 @@ from cogniverse_runtime.admin.profile_models import (
     ProfileDetail,
     ProfileListResponse,
     ProfileSummary,
+    ProfileTemplate,
+    ProfileTemplateListResponse,
     ProfileUpdateRequest,
     ProfileUpdateResponse,
     SchemaDeploymentRequest,
@@ -270,6 +272,9 @@ async def create_profile(
             embedding_type=request.embedding_type,
             schema_config=request.schema_config,
             model_specific=request.model_specific,
+            model_loader=request.model_loader,
+            process_type=request.process_type,
+            extra_config=request.extra_config,
         )
 
         def _validate_and_add() -> int:
@@ -360,6 +365,46 @@ async def create_profile(
             profile_name=request.profile_name,
             tenant_id=request.tenant_id,
         )
+
+
+@router.get("/profile-templates", response_model=ProfileTemplateListResponse)
+async def list_profile_templates(
+    tenant_id: str,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> ProfileTemplateListResponse:
+    """The shipped profiles a tenant's new profile can start from, each with
+    its whole configuration as ingestion reads it.
+
+    Raises:
+        HTTPException 500: The config store could not be read
+    """
+
+    def _read() -> List[ProfileTemplate]:
+        """Config-store reads: off the serving loop."""
+        backend = get_config(tenant_id=tenant_id, config_manager=config_manager).get(
+            "backend"
+        )
+        created = config_manager.get_stored_backend_config(
+            tenant_id=tenant_id, service="backend"
+        ).profiles
+        return [
+            ProfileTemplate(profile_name=name, config=config)
+            for name, config in sorted(backend["profiles"].items())
+            if name not in created
+        ]
+
+    try:
+        templates = await asyncio.to_thread(_read)
+    except Exception as e:
+        raise failure_response(
+            500,
+            "profile_templates_failed",
+            f"Listing profile templates for tenant '{tenant_id}' failed; the "
+            "runtime log names the cause.",
+            e,
+            tenant_id=tenant_id,
+        )
+    return ProfileTemplateListResponse(tenant_id=tenant_id, templates=templates)
 
 
 @router.get("/profiles", response_model=ProfileListResponse)
@@ -506,6 +551,9 @@ async def get_profile(
             embedding_type=profile.embedding_type,
             schema_config=profile.schema_config,
             model_specific=profile.model_specific,
+            model_loader=profile.model_loader,
+            process_type=profile.process_type,
+            extra_config=profile.extra_config,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
             created_at=config_entry.created_at.isoformat()
