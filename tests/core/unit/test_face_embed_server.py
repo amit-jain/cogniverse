@@ -52,6 +52,17 @@ class _FakeFace:
         self.det_score = det_score
 
 
+class _FakeSession:
+    def __init__(self, model_file: str) -> None:
+        self.model_file = model_file
+
+
+class _FakeModel:
+    def __init__(self, model_file: str) -> None:
+        self.model_file = model_file
+        self.session = _FakeSession(model_file)
+
+
 class _FakeFaceAnalysis:
     """Stand-in for ``insightface.app.FaceAnalysis`` used only in tests."""
 
@@ -59,11 +70,17 @@ class _FakeFaceAnalysis:
         self,
         name: str = FACE_MODEL_NAME,
         root: str | None = None,
+        allowed_modules: list[str] | None = None,
         providers: list[str] | None = None,
     ) -> None:
         self.name = name
         self.root = root
+        self.allowed_modules = allowed_modules
         self.providers = providers
+        self.models = {
+            "detection": _FakeModel(f"{root}/models/{name}/det_10g.onnx"),
+            "recognition": _FakeModel(f"{root}/models/{name}/w600k_r50.onnx"),
+        }
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002
         return None
@@ -96,8 +113,43 @@ def face_model_root(tmp_path):
     return root
 
 
+class _RecordingOnnxRuntime(types.ModuleType):
+    """Stand-in for ``onnxruntime`` that records the sessions opened."""
+
+    def __init__(self) -> None:
+        super().__init__("onnxruntime")
+        self.opened: list[tuple] = []
+        runtime = self
+
+        class SessionOptions:
+            intra_op_num_threads = 0
+            inter_op_num_threads = 0
+
+        class InferenceSession:
+            def __init__(self, model_file, *, sess_options, providers):
+                runtime.opened.append(
+                    (
+                        model_file,
+                        sess_options.intra_op_num_threads,
+                        sess_options.inter_op_num_threads,
+                        tuple(providers),
+                    )
+                )
+                self.model_file = model_file
+
+        self.SessionOptions = SessionOptions
+        self.InferenceSession = InferenceSession
+
+
 @pytest.fixture
-def server_module(monkeypatch, face_model_root):
+def onnxruntime_stub(monkeypatch):
+    stub = _RecordingOnnxRuntime()
+    monkeypatch.setitem(sys.modules, "onnxruntime", stub)
+    return stub
+
+
+@pytest.fixture
+def server_module(monkeypatch, face_model_root, onnxruntime_stub):
     """Import ``server.py`` with insightface mocked. Return the module."""
     fake_insightface = types.ModuleType("insightface")
     fake_app_module = types.ModuleType("insightface.app")
@@ -205,6 +257,49 @@ class TestEmbedResponseShape:
         first_instance = server_module._MODEL
         client.post("/embed", json={"image_b64": sample_png_b64})
         assert server_module._MODEL is first_instance
+
+    def test_cpu_load_opens_only_the_served_models_on_one_thread_each(
+        self, server_module, client, sample_png_b64, face_model_root, onnxruntime_stub
+    ):
+        """Only the detector and recogniser are loaded, each ONNX session on
+        one thread: ONNX Runtime's default pool is sized from the host's
+        cores, and on a 32-core node with a 2-CPU limit a multi-face frame
+        took 10-12 s instead of under 1 s."""
+        client.post("/embed", json={"image_b64": sample_png_b64})
+
+        model = server_module._MODEL
+        assert model.allowed_modules == ["detection", "recognition"]
+        model_dir = f"{face_model_root}/models/{FACE_MODEL_NAME}"
+        assert onnxruntime_stub.opened == [
+            (f"{model_dir}/det_10g.onnx", 1, 1, ("CPUExecutionProvider",)),
+            (f"{model_dir}/w600k_r50.onnx", 1, 1, ("CPUExecutionProvider",)),
+        ]
+        assert [m.session.model_file for m in model.models.values()] == [
+            f"{model_dir}/det_10g.onnx",
+            f"{model_dir}/w600k_r50.onnx",
+        ]
+
+    def test_the_thread_count_comes_from_the_environment(
+        self, monkeypatch, server_module
+    ):
+        monkeypatch.setenv("FACE_EMBED_INTRA_OP_THREADS", "2")
+        served = []
+        fake_uvicorn = types.SimpleNamespace(
+            run=lambda app, **kwargs: served.append(kwargs)
+        )
+        monkeypatch.setattr(server_module, "import_module", lambda name: fake_uvicorn)
+        configs = []
+        real_build_app = server_module.build_app
+        monkeypatch.setattr(
+            server_module,
+            "build_app",
+            lambda cfg: configs.append(cfg) or real_build_app(cfg),
+        )
+
+        server_module.main()
+
+        assert [cfg.intra_op_threads for cfg in configs] == [2]
+        assert served == [{"host": "0.0.0.0", "port": 8080, "log_level": "info"}]
 
 
 class TestInputValidation:

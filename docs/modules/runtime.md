@@ -153,7 +153,8 @@ The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain
 data, `build_app(cfg)` is the app factory, and `main()` is the deployed
 entrypoint — the only place the container env (`FACE_EMBED_MODEL`,
 `FACE_EMBED_MODEL_REVISION`, `FACE_EMBED_MODEL_ROOT`, `FACE_EMBED_CTX_ID`,
-`FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
+`FACE_EMBED_INTRA_OP_THREADS`, `FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is
+read.
 `POST /embed` returns `n` and a `faces` list. Every face record contains a
 four-coordinate `bbox`, an L2-normalized 512-value ArcFace `vec`, and
 `det_score`, the RetinaFace detection confidence in `[0, 1]`.

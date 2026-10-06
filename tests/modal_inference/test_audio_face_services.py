@@ -579,8 +579,17 @@ def test_face_concurrent_cold_health_requests_build_one_gpu_model(
     _face_artifact(tmp_path)
 
     class _FaceAnalysis:
-        def __new__(cls, *, name: str, root: str, providers: list[str]):
-            events.append(("construct", name, root, tuple(providers)))
+        def __new__(
+            cls,
+            *,
+            name: str,
+            root: str,
+            allowed_modules: list[str],
+            providers: list[str],
+        ):
+            events.append(
+                ("construct", name, root, tuple(allowed_modules), tuple(providers))
+            )
             time.sleep(0.05)
             return SimpleNamespace(
                 prepare=lambda *, ctx_id, det_size: events.append(
@@ -606,7 +615,13 @@ def test_face_concurrent_cold_health_requests_build_one_gpu_model(
             )
 
     assert events == [
-        ("construct", "buffalo_l", str(tmp_path), ("CUDAExecutionProvider",)),
+        (
+            "construct",
+            "buffalo_l",
+            str(tmp_path),
+            ("detection", "recognition"),
+            ("CUDAExecutionProvider",),
+        ),
         ("prepare", 0, (640, 640)),
     ]
     assert [response.status_code for response in responses] == [200] * 12
@@ -684,12 +699,17 @@ def test_face_health_load_failure_is_not_ready_and_next_request_retries(
     attempts = 0
 
     class _FaceAnalysis:
-        def __init__(self, *, name: str, root: str):
+        def __init__(self, *, name: str, root: str, allowed_modules: list[str]):
             nonlocal attempts
             attempts += 1
-            assert (name, root) == ("buffalo_l", str(tmp_path))
+            assert (name, root, allowed_modules) == (
+                "buffalo_l",
+                str(tmp_path),
+                ["detection", "recognition"],
+            )
             if attempts == 1:
                 raise OSError("recognizer graph is unreadable")
+            self.models = {}
 
         def prepare(self, *, ctx_id: int, det_size: tuple[int, int]) -> None:
             assert (ctx_id, det_size) == (-1, (640, 640))

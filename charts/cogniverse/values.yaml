@@ -1571,6 +1571,10 @@ inference:
     env:
       FACE_EMBED_MODEL: buffalo_l
       FACE_EMBED_CTX_ID: "-1"            # -1 = CPU; set to a GPU index for CUDA
+      # ONNX Runtime threads per inference. Clients keep one request in flight
+      # per CPU (FACE_EMBED_MAX_CONCURRENCY), each on one thread; ONNX
+      # Runtime's default pool is sized from the node's cores, not this limit.
+      FACE_EMBED_INTRA_OP_THREADS: "1"
     resources:
       limits:
         cpu: "2"

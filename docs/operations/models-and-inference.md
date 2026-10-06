@@ -432,6 +432,18 @@ model data on the first inference request. A load failure returns HTTP 503; its
 `detail` matches
 `face_embed: model buffalo_l load failed (<ExceptionType>): <cause>`.
 
+Only the detector and recogniser are loaded (the pack's landmark and
+gender/age models produce nothing `/embed` returns). On CPU each ONNX session
+runs `FACE_EMBED_INTRA_OP_THREADS` threads (chart value `"1"`, with clients
+keeping one request in flight per sidecar CPU); ONNX Runtime's own default
+sizes its pool from the node's cores, not the pod's CPU limit. At the chart's
+2-CPU limit a 640x480 frame of 5-7 faces takes 0.4-0.6 s, and at most 1.1 s
+with 4 requests in flight; with the default pool and all five models the same
+frames took 10-12 s each, and up to 43 s with 4 in flight. Boxes, vectors and
+scores are unchanged: `test_face_embed_reference_parity` compares the served
+faces with `tests/fixtures/model_references/face_embed.json`, recorded from the
+full pack with default sessions.
+
 The service is stateless — no persistence. The knowledge-graph face pipeline
 (`libs/agents/cogniverse_agents/graph/face_extractor.py`) reads each keyframe
 `KeyframeProcessor` wrote from its `path`, POSTs it as `image_b64`, one

@@ -9,12 +9,20 @@ revision, on CPU:
 - ``lateon.json``: per-token matrices from ``pylate.models.ColBERT`` for
   ``lightonai/LateOn`` (``colbert_pylate``), query and document side;
 - ``denseon.json``: the normalized ``sentence_transformers`` vector for
-  ``lightonai/DenseOn`` (``denseon``) of a ``document: `` prompted text.
+  ``lightonai/DenseOn`` (``denseon``) of a ``document: `` prompted text;
+- ``face_embed.json``: InsightFace ``FaceAnalysis`` faces (box, normalized
+  ArcFace vector, detection score) for the frames in
+  ``tests/fixtures/model_references/face_embed/``, from the full Buffalo_L
+  pack with ONNX Runtime's default sessions. InsightFace is not a project
+  dependency; record it inside the face-embed image:
+
+    docker run --rm -u "$(id -u)" -v "$PWD:/repo" -w /repo \
+        cogniverse/face-embed:<tag> python scripts/record_model_references.py face_embed
 
 Each file records the model, revision, library versions, device and inputs
 beside the outputs. Regenerate after a pinned revision changes:
 
-    uv run python scripts/record_model_references.py
+    uv run python scripts/record_model_references.py lateon denseon
 """
 
 from __future__ import annotations
@@ -130,9 +138,66 @@ def record_denseon() -> None:
     )
 
 
+FACE_FRAMES_DIR = OUTPUT_DIR / "face_embed"
+
+
+def record_face_embed() -> None:
+    import cv2
+    import insightface
+    import onnxruntime
+    from insightface.app import FaceAnalysis
+
+    sys.path.insert(
+        0, str(REPO_ROOT / "libs/cli/cogniverse_cli/modal_inference/servers")
+    )
+    from face import FACE_MODEL_NAME, FACE_MODEL_REVISION  # noqa: PLC0415
+
+    model_root = os.environ.get("FACE_EMBED_MODEL_ROOT", "/opt/insightface")
+    app = FaceAnalysis(name=FACE_MODEL_NAME, root=model_root)
+    app.prepare(ctx_id=-1, det_size=(640, 640))
+    cases = []
+    for frame in sorted(FACE_FRAMES_DIR.glob("*.jpg")):
+        faces = sorted(app.get(cv2.imread(str(frame))), key=lambda f: tuple(f.bbox))
+        cases.append(
+            {
+                "frame": frame.name,
+                "faces": [
+                    {
+                        "bbox": [int(c) for c in face.bbox.astype(int).tolist()],
+                        "vec": [float(v) for v in face.normed_embedding.tolist()],
+                        "det_score": float(face.det_score),
+                    }
+                    for face in faces
+                ],
+            }
+        )
+    _write(
+        "face_embed.json",
+        {
+            "service": "face_embed",
+            "model": FACE_MODEL_NAME,
+            "revision": FACE_MODEL_REVISION,
+            "library": {
+                "insightface": insightface.__version__,
+                "onnxruntime": onnxruntime.__version__,
+            },
+            "device": "cpu",
+            "recorded_by": "scripts/record_model_references.py",
+            "cases": cases,
+        },
+    )
+
+
+RECORDERS = {
+    "lateon": record_lateon,
+    "denseon": record_denseon,
+    "face_embed": record_face_embed,
+}
+
+
 def main() -> None:
-    record_lateon()
-    record_denseon()
+    for name in sys.argv[1:] or ("lateon", "denseon"):
+        RECORDERS[name]()
 
 
 if __name__ == "__main__":

@@ -308,6 +308,7 @@ def test_the_allowlisted_recording_script_is_the_one_in_process_loader() -> None
     assert [load.split(": ", 1)[1] for load in in_process_model_loads(script)] == [
         "ColBERT(...)",
         "SentenceTransformer(...)",
+        "FaceAnalysis(...)",
     ]
     assert set(offenders(allowlist=frozenset())) == {RECORDING_SCRIPT}
 
