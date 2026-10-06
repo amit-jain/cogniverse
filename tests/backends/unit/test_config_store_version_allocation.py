@@ -368,3 +368,104 @@ def test_an_unreadable_counter_raises_before_any_write(fake):
         "ConnectionError: connection refused"
     )
     assert fake.operations == []
+
+
+def _answer_counter_reads_with(app: App, answers: list[tuple[int, dict]]) -> list[int]:
+    """Serve the next counter GETs from ``answers``, then the fake's own; the
+    returned list grows by one entry per counter GET."""
+    real_get = app.get_data
+    reads: list[int] = []
+
+    def get_data(schema, data_id, namespace=None, raise_on_not_found=False):
+        if namespace == config_store_module._VERSION_COUNTER_NAMESPACE:
+            reads.append(len(reads))
+            if answers:
+                status, body = answers.pop(0)
+                return SimpleNamespace(status_code=status, get_json=lambda: body)
+        return real_get(schema, data_id, namespace, raise_on_not_found)
+
+    app.get_data = get_data
+    return reads
+
+
+@pytest.fixture
+def backoffs(monkeypatch) -> list[int]:
+    attempts: list[int] = []
+
+    def no_wait(attempt: int) -> float:
+        attempts.append(attempt)
+        return 0.0
+
+    monkeypatch.setattr(
+        config_store_module, "_config_store_visit_backoff_seconds", no_wait
+    )
+    return attempts
+
+
+def test_an_overloaded_counter_read_is_retried_and_the_write_lands(fake, backoffs):
+    store, app = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    overloaded = {"pathId": f"/document/v1/{CONFIG_ID}", "message": "overloaded"}
+    reads = _answer_counter_reads_with(app, [(503, overloaded), (429, overloaded)])
+
+    entry = store.set_config(*COORDINATES, {"n": 2})
+
+    assert entry.version == 2
+    assert store.get_config(*COORDINATES).config_value == {"n": 2}
+    assert backoffs == [1, 2]
+    assert reads == [0, 1, 2]
+
+
+def test_a_counter_read_that_stays_overloaded_raises_before_any_write(fake, backoffs):
+    store, app = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    fake.operations.clear()
+    overloaded = {"message": "overloaded"}
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    _answer_counter_reads_with(app, [(503, overloaded)] * attempts)
+
+    with pytest.raises(config_store_module.ConfigStoreUnavailableError) as raised:
+        store.set_config(*COORDINATES, {"n": 2})
+
+    assert str(raised.value) == (
+        f"Failed to read the version counter of config {CONFIG_ID} after "
+        f"{attempts} attempts: HTTP 503: {overloaded}"
+    )
+    assert backoffs == list(range(1, attempts))
+    assert fake.operations == []
+
+
+def test_a_rejected_counter_read_raises_without_retrying(fake, backoffs):
+    store, app = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    fake.operations.clear()
+    rejected = {"message": "bad request"}
+    reads = _answer_counter_reads_with(app, [(400, rejected)])
+
+    with pytest.raises(config_store_module.ConfigStoreUnavailableError) as raised:
+        store.set_config(*COORDINATES, {"n": 2})
+
+    assert str(raised.value) == (
+        f"Failed to read the version counter of config {CONFIG_ID} after "
+        f"1 attempts: HTTP 400: {rejected}"
+    )
+    assert reads == [0]
+    assert backoffs == []
+    assert fake.operations == []
+
+
+def test_a_counter_answer_without_fields_raises_before_any_write(fake, backoffs):
+    store, app = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    fake.operations.clear()
+    bare = {"pathId": f"/document/v1/{CONFIG_ID}", "id": CONFIG_ID}
+    _answer_counter_reads_with(app, [(200, bare)])
+
+    with pytest.raises(config_store_module.ConfigStoreUnavailableError) as raised:
+        store.set_config(*COORDINATES, {"n": 2})
+
+    assert str(raised.value) == (
+        f"Version counter of config {CONFIG_ID} came back without fields: {bare}"
+    )
+    assert backoffs == []
+    assert fake.operations == []

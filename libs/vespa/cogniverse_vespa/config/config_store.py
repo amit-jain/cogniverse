@@ -633,22 +633,52 @@ class VespaConfigStore(ImmutableConfigStore):
         its counter on every lost reservation, and a fresh connection per
         read exhausts the backend's connection handling under that load.
         """
-        try:
-            response = self.vespa_app.get_data(
-                schema=self.schema_name,
-                namespace=_VERSION_COUNTER_NAMESPACE,
-                data_id=config_id,
-                raise_on_not_found=False,
+        for attempt in range(1, _CONFIG_STORE_READ_MAX_ATTEMPTS + 1):
+            try:
+                response = self.vespa_app.get_data(
+                    schema=self.schema_name,
+                    namespace=_VERSION_COUNTER_NAMESPACE,
+                    data_id=config_id,
+                    raise_on_not_found=False,
+                )
+            except Exception as exc:
+                if (
+                    not _config_store_is_retryable(exc)
+                    or attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS
+                ):
+                    raise ConfigStoreUnavailableError(
+                        f"Failed to read the version counter of config "
+                        f"{config_id}: {type(exc).__name__}: {exc}"
+                    ) from exc
+                time.sleep(_config_store_visit_backoff_seconds(attempt))
+                continue
+            status = response.status_code
+            if status == _CONFIG_STORE_READ_MISSING_HTTP_STATUS:
+                return None
+            if status == 200:
+                fields = response.get_json().get("fields")
+                if not isinstance(fields, dict):
+                    raise ConfigStoreUnavailableError(
+                        f"Version counter of config {config_id} came back "
+                        f"without fields: {response.get_json()}"
+                    )
+                return (
+                    int(fields["version"]),
+                    datetime.fromisoformat(fields["updated_at"]),
+                )
+            # An overloaded backend answers a document GET with 429 or 5xx
+            # and an error body; that read is retried like any other.
+            retryable = (
+                status == 429 or _CONFIG_STORE_READ_RETRYABLE_HTTP_STATUS_MIN <= status
             )
-        except Exception as exc:
-            raise ConfigStoreUnavailableError(
-                f"Failed to read the version counter of config {config_id}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        if response.status_code == _CONFIG_STORE_READ_MISSING_HTTP_STATUS:
-            return None
-        fields = response.get_json()["fields"]
-        return int(fields["version"]), datetime.fromisoformat(fields["updated_at"])
+            if not retryable or attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS:
+                raise ConfigStoreUnavailableError(
+                    f"Failed to read the version counter of config {config_id} "
+                    f"after {attempt} attempts: HTTP {status}: "
+                    f"{response.get_json()}"
+                )
+            time.sleep(_config_store_visit_backoff_seconds(attempt))
+        raise AssertionError("unreachable")
 
     def _counter(
         self,
