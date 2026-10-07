@@ -43,6 +43,7 @@ SEARCH_RESPONSE_FIELDS = {
     "degraded_profiles",
     "query_rewrite",
     "search_mode",
+    "span_id",
 }
 
 
@@ -73,6 +74,9 @@ def _assert_search_response(
         assert response["original_query"] == query, response
     assert response["status"] == "success", response
     assert response["agent"] == "search_agent", response
+    # The search span a client rates the results on: the cluster runs with
+    # telemetry on, so it is always the span's 16-hex-digit id.
+    assert re.fullmatch(r"[0-9a-f]{16}", response["span_id"]), response
     # The rewrite reports here and nowhere else: a top-level enhanced_query is
     # the inline-routing shape the A2A response does not carry.
     assert set(response["query_rewrite"]) == {"enhanced_query", "degraded"}, response
