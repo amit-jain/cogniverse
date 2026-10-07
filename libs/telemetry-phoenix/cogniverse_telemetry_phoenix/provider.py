@@ -376,6 +376,7 @@ def _build_span_query_condition(
     *,
     name_filter: Optional[Any],
     excluded_span_ids: Sequence[str] = (),
+    roots_only: bool = False,
 ) -> Optional[str]:
     predicate_parts: List[str] = []
 
@@ -403,6 +404,9 @@ def _build_span_query_condition(
             for span_id in sorted(set(excluded_span_ids))
         )
         predicate_parts.append(f"span_id not in [{joined}]")
+
+    if roots_only:
+        predicate_parts.append("parent_id is None")
 
     return " and ".join(predicate_parts) if predicate_parts else None
 
@@ -602,11 +606,14 @@ class PhoenixTraceStore(TraceStore):
     ) -> AsyncIterator[pd.DataFrame]:
         """Stream every matching span through Phoenix pagination.
 
+        ``filters`` takes ``name`` (one name or several) and ``roots_only``
+        (true keeps only spans without a parent, one per trace).
+
         Projected columns use adaptive time windows over the requested range:
         full windows split in half, and the leaf window only falls back to
         ``span_id`` exclusions when the window can no longer be split.
         """
-        unsupported_filters = set(filters or {}).difference({"name"})
+        unsupported_filters = set(filters or {}).difference({"name", "roots_only"})
         if unsupported_filters:
             raise ValueError(
                 "Phoenix all-span queries do not support filters "
@@ -621,6 +628,7 @@ class PhoenixTraceStore(TraceStore):
             end_time = end_time.replace(tzinfo=timezone.utc)
 
         name_filter = (filters or {}).get("name")
+        roots_only = bool((filters or {}).get("roots_only"))
         if isinstance(name_filter, set):
             name_filter = sorted(name_filter)
         elif isinstance(name_filter, tuple):
@@ -658,6 +666,7 @@ class PhoenixTraceStore(TraceStore):
                     predicate = _build_span_query_condition(
                         name_filter=name_filter,
                         excluded_span_ids=excluded_span_ids,
+                        roots_only=roots_only,
                     )
                     if predicate:
                         query = query.where(predicate)
@@ -806,6 +815,8 @@ class PhoenixTraceStore(TraceStore):
                         if isinstance(name_filter, str)
                         else list(name_filter)
                     )
+                if roots_only:
+                    params["parent_id"] = "null"
                 if page_cursor:
                     params["cursor"] = page_cursor
 

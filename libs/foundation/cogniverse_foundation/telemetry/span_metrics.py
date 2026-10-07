@@ -12,7 +12,10 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from cogniverse_foundation.telemetry.span_contract import read_span_io
+from cogniverse_foundation.telemetry.span_contract import (
+    read_span_attributes,
+    read_span_io,
+)
 
 # The span ``cogniverse-optim --mode ab-compare`` emits per compared row,
 # carrying ``RLMABRunner.to_telemetry_dict()`` as ``openinference.*``
@@ -95,6 +98,116 @@ def profile_selection_metrics(spans: pd.DataFrame) -> List[Dict[str, Any]]:
         }
         for _, row in grouped.iterrows()
     ]
+
+
+def _attribute(attributes: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = attributes.get(key)
+        if value is not None and not (isinstance(value, float) and value != value):
+            return str(value)
+    return None
+
+
+def _text_or_none(value: Any) -> Optional[str]:
+    if value is None or (isinstance(value, float) and value != value):
+        return None
+    return str(value) or None
+
+
+def trace_rows(spans: pd.DataFrame) -> List[Dict[str, Any]]:
+    """One row per root span, newest first: ``trace_id``, ``span_id``,
+    ``start_time`` (ISO-8601 UTC), ``duration_ms``, ``operation`` (the span
+    name), ``succeeded``, ``profile``, ``strategy`` and ``error`` (the status
+    message of a failed span)."""
+    if spans.empty:
+        return []
+    starts = pd.to_datetime(spans["start_time"], utc=True)
+    durations = (
+        pd.to_datetime(spans["end_time"], utc=True) - starts
+    ).dt.total_seconds()
+    rows = []
+    for (_, span), start, duration in zip(spans.iterrows(), starts, durations):
+        attributes = read_span_attributes(span)
+        succeeded = span_succeeded(span.get("status_code"))
+        rows.append(
+            {
+                "trace_id": _text_or_none(
+                    span.get("context.trace_id", span.get("trace_id"))
+                ),
+                "span_id": _text_or_none(
+                    span.get("context.span_id", span.get("span_id"))
+                ),
+                "start_time": start.isoformat(),
+                "duration_ms": float(duration) * 1000,
+                "operation": str(span.get("name")),
+                "succeeded": succeeded,
+                "profile": _attribute(attributes, "profile", "metadata.profile"),
+                "strategy": _attribute(
+                    attributes, "strategy", "ranking_strategy", "metadata.strategy"
+                ),
+                "error": None
+                if succeeded
+                else _text_or_none(span.get("status_message")),
+            }
+        )
+    rows.sort(key=lambda row: row["start_time"], reverse=True)
+    return rows
+
+
+def outlier_bounds(durations_ms: List[float]) -> Optional[Dict[str, float]]:
+    """Tukey's fences over the durations: ``Q1 - 1.5 IQR`` and
+    ``Q3 + 1.5 IQR``. Fewer than four values have no bounds."""
+    if len(durations_ms) < 4:
+        return None
+    q1, q3 = pd.Series(durations_ms).quantile([0.25, 0.75])
+    spread = q3 - q1
+    return {"lower": float(q1 - 1.5 * spread), "upper": float(q3 + 1.5 * spread)}
+
+
+def trace_statistics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Counts, latency percentiles (ms), outlier bounds and per-operation
+    figures of ``trace_rows`` output. Latency figures are ``None`` without
+    traces; operations are listed most requests first."""
+    durations = pd.Series([row["duration_ms"] for row in rows], dtype=float)
+    succeeded = sum(1 for row in rows if row["succeeded"])
+    latency: Dict[str, Optional[float]] = {
+        key: None for key in ("mean", "min", "p50", "p75", "p90", "p95", "p99", "max")
+    }
+    if rows:
+        latency = {
+            "mean": float(durations.mean()),
+            "min": float(durations.min()),
+            **{
+                f"p{int(q * 100)}": float(durations.quantile(q))
+                for q in (0.50, 0.75, 0.90, 0.95, 0.99)
+            },
+            "max": float(durations.max()),
+        }
+    operations: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        operations.setdefault(row["operation"], []).append(row)
+    by_operation = [
+        {
+            "operation": operation,
+            "count": len(members),
+            "mean_ms": float(pd.Series([m["duration_ms"] for m in members]).mean()),
+            "p95_ms": float(
+                pd.Series([m["duration_ms"] for m in members]).quantile(0.95)
+            ),
+            "error_rate": sum(1 for m in members if not m["succeeded"]) / len(members),
+        }
+        for operation, members in operations.items()
+    ]
+    by_operation.sort(key=lambda entry: (-entry["count"], entry["operation"]))
+    return {
+        "requests": len(rows),
+        "succeeded": succeeded,
+        "failed": len(rows) - succeeded,
+        "success_rate": succeeded / len(rows) if rows else None,
+        "latency_ms": latency,
+        "outlier_bounds_ms": outlier_bounds(list(durations)),
+        "by_operation": by_operation,
+    }
 
 
 @dataclass

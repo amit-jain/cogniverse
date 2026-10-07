@@ -28,13 +28,20 @@ from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
 )
+from cogniverse_foundation.telemetry.context import search_span
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_runtime.optimization_cli import emit_ab_compare_span
 from cogniverse_runtime.routers import telemetry_metrics
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
-from tests.utils.telemetry_metric_spans import ab_result, record_profile_selection
+from tests.utils.telemetry_metric_spans import (
+    SEARCH,
+    ab_result,
+    record_profile_selection,
+    record_sample_traces,
+    record_trace,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
@@ -266,14 +273,16 @@ async def test_concurrent_reads_each_answer_their_own_tenant(
 ):
     tenants = [_tenant("concurrent"), _tenant("concurrent")]
     for count, tenant in enumerate(tenants, start=1):
-        for _ in range(count):
+        for age in range(count):
             record_profile_selection(telemetry, tenant, "video", 20)
+            record_trace(telemetry, tenant, SEARCH, 20, minutes_ago=age + 1)
     telemetry.force_flush(timeout_millis=10000)
 
     async with _client(app) as client:
         for count, tenant in enumerate(tenants, start=1):
             await _until(client, _profile_path(tenant), _counted(count))
-        reads = 6
+            await _until(client, _traces_path(tenant), _requests(2 * count))
+        reads = 8
         barrier = threading.Barrier(reads, timeout=60)
         held = []
 
@@ -285,15 +294,29 @@ async def test_concurrent_reads_each_answer_their_own_tenant(
             return None
 
         phoenix_proxy.intercept = hold_span_reads
-        responses = await asyncio.gather(
-            *(client.get(_profile_path(tenants[i % 2])) for i in range(reads))
-        )
+        paths = [
+            (_profile_path if i < 4 else _traces_path)(tenants[i % 2])
+            for i in range(reads)
+        ]
+        responses = await asyncio.gather(*(client.get(path) for path in paths))
         phoenix_proxy.intercept = None
 
     assert len(held) == reads
     assert [
-        [(m["modality"], m["count"]) for m in r.json()["modalities"]] for r in responses
-    ] == [[("video", 1)], [("video", 2)]] * 3
+        [(m["modality"], m["count"]) for m in r.json()["modalities"]]
+        for r in responses[:4]
+    ] == [[("video", 1)], [("video", 2)]] * 2
+    assert [
+        (
+            r.json()["statistics"]["requests"],
+            {t["operation"] for t in r.json()["traces"]},
+        )
+        for r in responses[4:]
+    ] == [
+        # A profile selection is a root span too.
+        (2, {SEARCH, SPAN_NAME_PROFILE_SELECTION}),
+        (4, {SEARCH, SPAN_NAME_PROFILE_SELECTION}),
+    ] * 2
 
 
 async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
@@ -302,6 +325,7 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
     async with _client(app) as client:
         profile = await client.get(_profile_path(tenant))
         rlm = await client.get(f"/admin/tenant/{tenant}/telemetry/rlm-ab")
+        traces = await client.get(_traces_path(tenant))
     assert [
         (
             response.status_code,
@@ -310,7 +334,7 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
                 for k in ("error", "message", "tenant_id")
             },
         )
-        for response in (profile, rlm)
+        for response in (profile, rlm, traces)
     ] == [
         (
             502,
@@ -329,4 +353,151 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
                 "tenant_id": tenant,
             },
         ),
+        (
+            502,
+            {
+                "error": "telemetry_unavailable",
+                "message": f"Could not read the traces of tenant {tenant}.",
+                "tenant_id": tenant,
+            },
+        ),
     ]
+
+
+def _traces_path(tenant, **params):
+    query = "&".join(
+        f"{key}={value}"
+        for key, values in params.items()
+        for value in (values if isinstance(values, list) else [values])
+    )
+    return f"/admin/tenant/{tenant}/telemetry/traces?lookback_hours=1&{query}"
+
+
+def _requests(expected):
+    return lambda body: body["statistics"]["requests"] >= expected
+
+
+async def test_traces_are_the_root_spans_with_their_statistics(telemetry, app):
+    tenant = _tenant("traces")
+    expected = record_sample_traces(telemetry, tenant)
+    record_trace(telemetry, _tenant("othertraces"), SEARCH, 5, minutes_ago=1)
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        body = await _until(client, _traces_path(tenant), _requests(6))
+
+    assert body["traces"] == expected
+    assert body["facets"] == {
+        "operations": ["agent.dispatch", SEARCH],
+        "profiles": ["audio", "video_colpali"],
+        "strategies": ["bm25", "hybrid", "semantic"],
+    }
+    assert body["statistics"] == {
+        "requests": 6,
+        "succeeded": 5,
+        "failed": 1,
+        "success_rate": pytest.approx(5 / 6),
+        "latency_ms": {
+            "mean": pytest.approx(2050 / 6),
+            "min": pytest.approx(50.0),
+            "p50": pytest.approx(250.0),
+            "p75": pytest.approx(375.0),
+            "p90": pytest.approx(700.0),
+            "p95": pytest.approx(850.0),
+            "p99": pytest.approx(970.0),
+            "max": pytest.approx(1000.0),
+        },
+        "outlier_bounds_ms": {
+            "lower": pytest.approx(-250.0),
+            "upper": pytest.approx(750.0),
+        },
+        "by_operation": [
+            {
+                "operation": SEARCH,
+                "count": 5,
+                "mean_ms": pytest.approx(400.0),
+                "p95_ms": pytest.approx(880.0),
+                "error_rate": pytest.approx(0.2),
+            },
+            {
+                "operation": "agent.dispatch",
+                "count": 1,
+                "mean_ms": pytest.approx(50.0),
+                "p95_ms": pytest.approx(50.0),
+                "error_rate": 0.0,
+            },
+        ],
+    }
+
+
+async def test_traces_filter_by_operation_profile_and_strategy(telemetry, app):
+    tenant = _tenant("tracefilters")
+    expected = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        await _until(client, _traces_path(tenant), _requests(6))
+        by_name = (await client.get(_traces_path(tenant, operation="SEARCH"))).json()
+        by_values = (
+            await client.get(
+                _traces_path(
+                    tenant, profile=["video_colpali", "audio"], strategy="hybrid"
+                )
+            )
+        ).json()
+        none = (await client.get(_traces_path(tenant, operation="ingest"))).json()
+
+    assert [t["span_id"] for t in by_name["traces"]] == [
+        row["span_id"] for row in expected[:5]
+    ]
+    assert [t["span_id"] for t in by_values["traces"]] == [
+        row["span_id"] for row in expected[:4]
+    ]
+    assert by_values["statistics"]["by_operation"] == [
+        {
+            "operation": SEARCH,
+            "count": 4,
+            "mean_ms": pytest.approx(250.0),
+            "p95_ms": pytest.approx(385.0),
+            "error_rate": 0.0,
+        }
+    ]
+    # Facets describe the window, whatever the filters keep.
+    assert by_name["facets"] == by_values["facets"] == none["facets"]
+    assert none["facets"]["operations"] == ["agent.dispatch", SEARCH]
+    assert none["statistics"] == {
+        "requests": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "success_rate": None,
+        "latency_ms": dict.fromkeys(
+            ("mean", "min", "p50", "p75", "p90", "p95", "p99", "max")
+        ),
+        "outlier_bounds_ms": None,
+        "by_operation": [],
+    }
+    assert none["traces"] == []
+
+
+async def test_a_search_traced_by_the_search_service_is_reported(telemetry, app):
+    tenant = _tenant("searchtrace")
+    with search_span(
+        tenant, "keynote", top_k=5, ranking_strategy="hybrid", profile="video_colpali"
+    ):
+        pass
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        body = await _until(client, _traces_path(tenant), _requests(1))
+
+    [trace] = body["traces"]
+    assert {
+        key: trace[key]
+        for key in ("operation", "succeeded", "profile", "strategy", "error")
+    } == {
+        "operation": SEARCH,
+        "succeeded": True,
+        "profile": "video_colpali",
+        "strategy": "hybrid",
+        "error": None,
+    }

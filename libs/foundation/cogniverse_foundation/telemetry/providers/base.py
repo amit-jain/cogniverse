@@ -68,7 +68,11 @@ class TraceStore(ABC):
         page_size: int = 1000,
         columns: Optional[Sequence[str]] = None,
     ) -> AsyncIterator[pd.DataFrame]:
-        """Stream matching spans as page-sized DataFrames."""
+        """Stream matching spans as page-sized DataFrames.
+
+        ``filters`` takes ``name`` (one name or several) and ``roots_only``
+        (true keeps only spans without a parent).
+        """
         pass
 
     @abstractmethod
@@ -79,7 +83,8 @@ class TraceStore(ABC):
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> pd.DataFrame:
-        """Query every matching span using provider-native pagination."""
+        """Query every matching span using provider-native pagination;
+        ``filters`` as for ``iter_spans``."""
         pass
 
     @abstractmethod

@@ -17,9 +17,13 @@ npm are required; their absence is a failure, not a skip.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import shutil
+import socket
 import subprocess
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -498,3 +502,48 @@ def test_a_down_runtime_fails_the_run_and_the_agent_list(
         "listedStatus": 502,
         "listed": {"error": reason},
     }
+
+
+def test_the_server_stops_after_a_grace_period_with_a_request_in_flight(
+    web_client_dir, telemetry_sink
+):
+    """A request the runtime never answers is cut once the shutdown grace
+    period (5 s) has passed."""
+    hung = socket.create_server(("127.0.0.1", 0))
+    accepted = []
+    acceptor = threading.Thread(
+        target=lambda: accepted.append(hung.accept()), daemon=True
+    )
+    acceptor.start()
+    outcome = []
+    try:
+        with serve_web(
+            web_client_dir,
+            f"http://127.0.0.1:{hung.getsockname()[1]}",
+            KEY,
+            telemetry_url=telemetry_sink[0],
+        ) as web_url:
+            connection = http.client.HTTPConnection(
+                web_url.removeprefix("http://"), timeout=30
+            )
+
+            def call():
+                try:
+                    connection.request("GET", "/api/runtime/agents/")
+                    outcome.append(connection.getresponse().status)
+                except (http.client.HTTPException, OSError) as exc:
+                    outcome.append(type(exc).__name__)
+
+            caller = threading.Thread(target=call, daemon=True)
+            caller.start()
+            acceptor.join(timeout=20)
+            assert len(accepted) == 1, "the request never reached the runtime"
+            stopping = time.monotonic()
+        stopped_after = time.monotonic() - stopping
+        caller.join(timeout=10)
+    finally:
+        for connection_, _ in accepted:
+            connection_.close()
+        hung.close()
+    assert 5 <= stopped_after < 8
+    assert outcome == ["RemoteDisconnected"]

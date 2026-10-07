@@ -255,6 +255,7 @@ describe('runtime proxy', () => {
       ['POST', '/ag-ui/results/relevance'],
       ['GET', '/admin/tenant/acme:prod/telemetry/profile-selection?lookback_hours=24'],
       ['GET', '/admin/tenant/acme:prod/telemetry/rlm-ab?lookback_hours=168'],
+      ['GET', '/admin/tenant/acme:prod/telemetry/traces?lookback_hours=24&operation=search&profile=a&profile=b'],
     ];
     for (const [method, path] of calls) {
       const response = await app.request(`/api/runtime${path}`, { method });

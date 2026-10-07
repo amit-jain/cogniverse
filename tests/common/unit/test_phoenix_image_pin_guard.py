@@ -59,3 +59,40 @@ def test_every_local_and_ci_phoenix_run_uses_the_chart_image():
             "tests/runtime/integration/test_artefact_store_outage_contract.py",
         ]
     }
+
+
+_NO_EXTERNAL = "PHOENIX_ALLOW_EXTERNAL_RESOURCES=false"
+
+
+def _spawns_reaching_out(source: str) -> int:
+    """How many Phoenix images ``source`` starts without
+    ``PHOENIX_ALLOW_EXTERNAL_RESOURCES=false``. With external resources
+    allowed, Phoenix connects to its docs host while starting, so a test
+    server's startup depends on the internet."""
+    return len(_PHOENIX_IMAGE_REF.findall(source)) - source.count(_NO_EXTERNAL)
+
+
+def test_a_spawn_that_allows_external_resources_is_counted():
+    image = f'"{_chart_image()}"'
+    isolated = f'"-e", "{_NO_EXTERNAL}", {image}'
+    assert [
+        _spawns_reaching_out(source)
+        for source in (isolated, image, f"{isolated}\n{image}", "")
+    ] == [0, 1, 1, 0]
+
+
+def test_every_test_phoenix_server_keeps_to_the_local_network():
+    spawns = {
+        path.relative_to(REPO).as_posix(): _spawns_reaching_out(
+            path.read_text(encoding="utf-8")
+        )
+        for path in (REPO / "tests").rglob("*.py")
+        if path.relative_to(REPO).as_posix() not in NOT_A_RUN
+        and path != pathlib.Path(__file__)
+        and _PHOENIX_IMAGE_REF.search(path.read_text(encoding="utf-8"))
+    }
+    assert spawns == {
+        "tests/conftest.py": 0,
+        "tests/evaluation/conftest.py": 0,
+        "tests/runtime/integration/test_artefact_store_outage_contract.py": 0,
+    }

@@ -467,7 +467,7 @@ The server uses modular routers for different functionality:
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
-| `telemetry_metrics` | `/admin/tenant` | Profile-selection and RLM A/B metrics over a tenant's spans |
+| `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -1386,6 +1386,8 @@ The orchestrator records each workflow as a `cogniverse.orchestration` span in t
 **GET /admin/tenant/{tenant_id}/telemetry/profile-selection** — Per modality of the `cogniverse.profile_selection` spans, most selections first: `{modalities: [{modality, count, p50_ms, p95_ms, p99_ms, success_rate}, ...]}`. A span counts as failed only when its status is `ERROR`.
 
 **GET /admin/tenant/{tenant_id}/telemetry/rlm-ab** — The `rlm.ab_compare` spans `cogniverse-optim --mode ab-compare` records: `{rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta, fallback_rate, per_dataset: [{queries_dataset, rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta}, ...], comparisons: [{ab_id, query, queries_dataset, latency_delta_ms, tokens_delta, judge_delta, with_rlm_was_fallback, start_time}, ...]}`, comparisons newest first. Averages are `null` when no row carries the value.
+
+**GET /admin/tenant/{tenant_id}/telemetry/traces** — The tenant's traces (its root spans), newest first: `{facets: {operations, profiles, strategies}, statistics: {requests, succeeded, failed, success_rate, latency_ms: {mean, min, p50, p75, p90, p95, p99, max}, outlier_bounds_ms: {lower, upper}, by_operation: [{operation, count, mean_ms, p95_ms, error_rate}, ...]}, traces: [{trace_id, span_id, start_time, duration_ms, operation, succeeded, profile, strategy, error}, ...]}`. `operation` keeps traces whose name contains it (any case); repeatable `profile` and `strategy` keep traces with one of the given values; statistics cover the kept traces and `facets` the whole window. A trace's profile is its `profile` or `metadata.profile` attribute, its strategy its `strategy`, `ranking_strategy` or `metadata.strategy`. Outlier bounds are Tukey's fences (`Q1 - 1.5 IQR`, `Q3 + 1.5 IQR`), `null` below four traces; latency figures are `null` without traces.
 
 ### Knowledge Endpoints
 

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { AnalyticsView } from './AnalyticsView';
 import { AnnotationsView } from './AnnotationsView';
 import { ApprovalsView } from './ApprovalsView';
 import { IngestionView } from './IngestionView';
@@ -27,4 +28,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'workflows', label: 'Workflow reviews', component: WorkflowReviewsView },
   { id: 'profile-metrics', label: 'Profile metrics', component: ProfileMetricsView },
   { id: 'rlm-ab', label: 'RLM A/B', component: RlmAbView },
+  { id: 'analytics', label: 'Analytics', component: AnalyticsView },
 ];
