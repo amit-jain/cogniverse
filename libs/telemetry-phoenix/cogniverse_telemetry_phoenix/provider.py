@@ -5,7 +5,6 @@ Implements all store interfaces using Phoenix AsyncClient.
 """
 
 import asyncio
-import csv
 import io
 import logging
 import re
@@ -160,6 +159,27 @@ def _dataset_keys(
     return columns, [], []
 
 
+def _csv_cell_strings(data: pd.DataFrame) -> list[dict[str, str]]:
+    """Each row of ``data`` as ``{column: cell}``, every cell the string the
+    frame's CSV rendering holds for it (an empty cell is ``""``).
+
+    The rendering is parsed back with pandas' parser, which has no per-field
+    size limit; the ``csv`` module rejects any field over 128 KiB, which an
+    optimizer version's content or ledger exceeds routinely.
+    """
+    parsed = pd.read_csv(
+        io.StringIO(data.to_csv(index=False)),
+        header=None,
+        skiprows=1,
+        dtype=str,
+        keep_default_na=False,
+        na_filter=False,
+        skip_blank_lines=False,
+    )
+    names = [str(column) for column in data.columns]
+    return [dict(zip(names, values)) for values in parsed.itertuples(index=False)]
+
+
 def upload_dataset_rows(
     http_endpoint: str,
     *,
@@ -195,7 +215,7 @@ def upload_dataset_rows(
     if missing:
         raise ValueError(f"Dataset {name!r} upload has no columns {missing}")
     columns = list(dict.fromkeys((*inputs, *outputs, *metadata)))
-    rows = list(csv.DictReader(io.StringIO(data[columns].to_csv(index=False))))
+    rows = _csv_cell_strings(data[columns])
     response = httpx.post(
         f"{http_endpoint.rstrip('/')}/v1/datasets/upload",
         params={"sync": "true"},

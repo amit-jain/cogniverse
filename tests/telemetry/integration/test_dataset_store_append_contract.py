@@ -140,3 +140,71 @@ async def test_create_against_an_unreachable_phoenix_raises():
 
     with pytest.raises(httpx.ConnectError):
         await store.create_dataset("unreachable", _qa("q", "a"), metadata=_QA_KEYS)
+
+
+# Python's csv module refuses a field longer than this by default.
+_CSV_DEFAULT_FIELD_LIMIT = 131072
+
+
+def _large_payload(tag: str) -> str:
+    """A ~160 KiB value with every character class CSV quoting touches."""
+    unit = f'{tag}: "quoted", comma\r\nCRLF\nLF — ゴール; '
+    payload = unit * (160 * 1024 // len(unit) + 1)
+    assert len(payload) > _CSV_DEFAULT_FIELD_LIMIT
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_values_beyond_the_csv_field_limit_round_trip(store):
+    name = f"large-values-{uuid.uuid4().hex[:8]}"
+    payload = _large_payload("big")
+    frame = pd.DataFrame(
+        {"content": [payload, ""], "ledger": ['{"version": 1}', payload]}
+    )
+
+    await store.create_dataset(
+        name, frame, metadata={"input_keys": ["content", "ledger"], "output_keys": []}
+    )
+
+    loaded = await store.get_dataset(name)
+    assert [row["input"] for _, row in loaded.iterrows()] == [
+        {"content": payload, "ledger": '{"version": 1}'},
+        {"content": "", "ledger": payload},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_creates_of_large_values_keep_every_byte(store):
+    name = f"large-race-{uuid.uuid4().hex[:8]}"
+    writers = 6
+    payloads = [_large_payload(f"writer-{i}") for i in range(writers)]
+    keys = {"input_keys": ["payload"], "output_keys": []}
+
+    ids = await asyncio.gather(
+        *[
+            store.create_dataset(name, pd.DataFrame({"payload": [p]}), metadata=keys)
+            for p in payloads
+        ]
+    )
+
+    assert len(set(ids)) == 1
+    loaded = await store.get_dataset(name)
+    assert sorted(row["input"]["payload"] for _, row in loaded.iterrows()) == sorted(
+        payloads
+    )
+
+
+@pytest.mark.asyncio
+async def test_large_create_against_an_unreachable_phoenix_raises_connect_error():
+    """A large row reaches the network and fails there, with the endpoint in
+    the error, rather than failing before the request is made."""
+    store = PhoenixDatasetStore("http://127.0.0.1:1")
+    frame = pd.DataFrame({"payload": [_large_payload("down")]})
+
+    with pytest.raises(httpx.ConnectError) as err:
+        await store.create_dataset(
+            "unreachable-large",
+            frame,
+            metadata={"input_keys": ["payload"], "output_keys": []},
+        )
+    assert err.value.request.url == "http://127.0.0.1:1/v1/datasets/upload?sync=true"

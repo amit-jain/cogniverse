@@ -9,6 +9,8 @@ rollback / reject leave the pointer where it is.
 
 from __future__ import annotations
 
+import csv
+import json
 import uuid
 
 import pytest
@@ -20,6 +22,23 @@ pytestmark = pytest.mark.integration
 
 # Any stable id: the ledger only has to say which metric produced a score.
 METRIC_ID = "query_enhancement.grounded_usable.v1"
+
+# Python's csv module refuses a field longer than this by default.
+CSV_DEFAULT_FIELD_LIMIT = 131072
+
+
+def _simba_sized_run() -> tuple[str, list[str]]:
+    """A SIMBA run's state and consumed ids at the size a week of traffic
+    produces: 7440 consumed span ids (the run that failed in the cluster) and
+    a dumped module whose demos hold quotes, commas, CRLF and non-ASCII text."""
+    consumed = [f"span:{i:016x}" for i in range(7440)]
+    demo = {
+        "query": 'robot "soccer" match, final\r\nhighlights — ゴール',
+        "enhanced_query": "robot soccer final highlights\ngoal celebration",
+        "reasoning": "x" * 400,
+    }
+    state = {"enhancer.predict": {"demos": [dict(demo, n=i) for i in range(400)]}}
+    return json.dumps(state), consumed
 
 
 @pytest.fixture
@@ -331,3 +350,40 @@ async def test_save_blob_versioned_rejects_unattributable_input(manager):
         "'reject', 'rollback'], got 'shipped'"
     )
     assert await manager.get_version_lineage("model", "simba_query_enhancement") == []
+
+
+@pytest.mark.asyncio
+async def test_version_larger_than_the_csv_field_limit_round_trips(manager):
+    """A version whose content and ledger each exceed the csv module's field
+    limit is saved, read back and activated byte-for-byte."""
+    key = "simba_query_enhancement"
+    content, consumed = _simba_sized_run()
+    assert len(content) > CSV_DEFAULT_FIELD_LIMIT
+    assert len(json.dumps(consumed)) > CSV_DEFAULT_FIELD_LIMIT
+    assert csv.field_size_limit() == CSV_DEFAULT_FIELD_LIMIT
+
+    _, version = await manager.save_blob_versioned(
+        "model",
+        key,
+        content,
+        consumed_example_ids=consumed,
+        decision="promote",
+        scored=True,
+        score=0.71,
+        base_score=0.6,
+        candidate_score=0.71,
+        metric_id=METRIC_ID,
+    )
+    assert version == 1
+
+    loaded, ledger = await manager.load_blob_version("model", key, 1)
+    assert loaded == content
+    assert ledger["consumed_example_ids"] == consumed
+    assert ledger["decision"] == "promote"
+    assert ledger["score"] == 0.71
+
+    state = await manager.activate_version("model", key, 1)
+    assert state["active"]["version"] == 1
+    assert await manager.load_blob("model", key) == content
+    # The upload must not widen the process-wide csv limit as a side effect.
+    assert csv.field_size_limit() == CSV_DEFAULT_FIELD_LIMIT
