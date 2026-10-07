@@ -150,6 +150,27 @@ def tier_stack(semantic_router_stack, shared_vespa):
     BackendRegistry.get_instance().clear_instances()
 
 
+@pytest.fixture
+async def tier_events(tier_stack, workflow_state_redis_url, monkeypatch):
+    """Tier sets reach this process's readers over a real cluster-events
+    channel, wired as the runtime wires every worker."""
+    import uuid
+
+    from cogniverse_runtime.cluster_events import ClusterEvents
+
+    tm = tier_stack["tenant_manager"]
+    events = ClusterEvents(
+        workflow_state_redis_url,
+        "tier-join-worker",
+        {"tenant_tier_set": tm.release_tenant_tier},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+    )
+    await events.start()
+    monkeypatch.setattr(tm, "_cluster_events", events)
+    yield events
+    await events.close()
+
+
 def _router_events(container: str, msg: str) -> list[dict]:
     """Every ``msg`` event the stack's router has logged so far."""
     logs = subprocess.run(
@@ -255,7 +276,7 @@ def _leg_cache() -> TenantScopedLMCache:
     return TenantScopedLMCache(ttl_seconds=3600, max_entries=1024)
 
 
-async def test_the_stored_tier_decides_the_router(tier_stack):
+async def test_the_stored_tier_decides_the_router(tier_stack, tier_events):
     """Set each tier through the admin route; the router's decision follows."""
     config_manager = tier_stack["config_manager"]
     tenant_manager = tier_stack["tenant_manager"]
@@ -407,7 +428,9 @@ async def test_the_stored_tier_decides_the_router(tier_stack):
     assert elapsed < TENANT_TIER_REFRESH_S
 
 
-async def test_a_repeat_answered_in_process_never_reaches_the_router(tier_stack):
+async def test_a_repeat_answered_in_process_never_reaches_the_router(
+    tier_stack, tier_events
+):
     """The process LM response cache answers a tenant's byte-identical repeat,
     so the router records neither a routed call nor a cache hit for it."""
     config_manager = tier_stack["config_manager"]
