@@ -63,3 +63,28 @@ button { font: inherit; cursor: pointer; }
   .workspace-body { flex-direction: column; }
   .results { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; }
 }
+
+a.dot-item { text-decoration: none; }
+.nav-heading { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 10px 6px; }
+.ops-scroll { flex: 1; overflow-y: auto; }
+.ops-view { display: grid; gap: 16px; padding: 16px 20px 40px; max-width: 1100px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.panel-head h2 { font-size: 14px; margin: 0; }
+.panel h3 { font-size: 13px; margin: 0 0 4px; width: 100%; }
+.panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.panel th { text-align: left; color: var(--muted); font-weight: 550; border-bottom: 1px solid var(--border); padding: 6px 8px; }
+.panel td { border-bottom: 1px solid var(--border); padding: 6px 8px; vertical-align: top; overflow-wrap: anywhere; }
+.panel tr.selected td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.panel button, .panel select, .panel input, .panel textarea { font: inherit; font-size: 13px; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.panel button[type=submit] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.panel button:disabled { opacity: .55; cursor: default; }
+.panel button.danger { color: #c0392b; }
+.panel button.link { border: 0; background: none; padding: 0; color: var(--accent); }
+.inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 14px; }
+.inline-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.confirm { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.alert { margin: 8px 0 0; font-size: 13px; width: 100%; }
+.alert.error { color: #c0392b; }
+.alert.ok { color: #2e8b57; }
+.muted { color: var(--muted); font-size: 13px; }
