@@ -130,6 +130,44 @@ class TestRoutingDecisionEvaluation:
         assert outcome == RoutingOutcome.AMBIGUOUS
         assert metrics["downstream_status"] == "no_parent_span"
 
+    def test_a_routing_span_left_unset_with_a_chosen_agent_succeeded(
+        self, mock_provider
+    ):
+        """The span writer leaves a successful span UNSET; only ERROR fails."""
+        evaluator = _routing_evaluator(mock_provider)
+        span_data = {
+            "name": "cogniverse.routing",
+            "parent_id": "parent-123",
+            "status_code": "UNSET",
+            "attributes.output.value": '{"chosen_agent": "search_agent", '
+            '"confidence": 0.9}',
+        }
+
+        outcome, metrics = evaluator.evaluate_routing_decision(span_data)
+
+        assert (outcome, metrics["downstream_status"]) == (
+            RoutingOutcome.SUCCESS,
+            "completed_successfully",
+        )
+
+    def test_a_root_routing_span_read_from_a_frame_is_ambiguous(self, mock_provider):
+        """A span frame gives a root span a NaN parent."""
+        evaluator = _routing_evaluator(mock_provider)
+        span_data = {
+            "name": "cogniverse.routing",
+            "parent_id": float("nan"),
+            "status_code": "UNSET",
+            "attributes.output.value": '{"chosen_agent": "search_agent", '
+            '"confidence": 0.9}',
+        }
+
+        outcome, metrics = evaluator.evaluate_routing_decision(span_data)
+
+        assert (outcome, metrics["downstream_status"]) == (
+            RoutingOutcome.AMBIGUOUS,
+            "no_parent_span",
+        )
+
     def test_evaluate_invalid_span_name(self, mock_provider):
         """Test that evaluator raises error for non-routing spans"""
         evaluator = _routing_evaluator(mock_provider)

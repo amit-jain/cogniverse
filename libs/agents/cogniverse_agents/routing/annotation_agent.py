@@ -23,6 +23,7 @@ from cogniverse_evaluation.evaluators.routing_evaluator import (
 )
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.span_metrics import span_succeeded
 
 if TYPE_CHECKING:
     from cogniverse_agents.routing.config import AutomationRulesConfig
@@ -324,16 +325,13 @@ class AnnotationAgent:
         else:
             # Non-routing agents have no downstream-agent handoff to classify;
             # the span's own status is the outcome signal.
-            status_code = span_row.get("status_code", "OK")
-            if status_code == "ERROR":
-                outcome, outcome_details = RoutingOutcome.FAILURE, "span_error"
-            elif status_code == "OK":
+            if span_succeeded(span_row.get("status_code")):
                 outcome, outcome_details = (
                     RoutingOutcome.SUCCESS,
                     "completed_successfully",
                 )
             else:
-                outcome, outcome_details = RoutingOutcome.AMBIGUOUS, "unclear_outcome"
+                outcome, outcome_details = RoutingOutcome.FAILURE, "span_error"
 
         # Determine if annotation needed and priority
         needs_annotation, priority, reason = self._needs_annotation(

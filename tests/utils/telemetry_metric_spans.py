@@ -14,9 +14,13 @@ from cogniverse_agents.inference.ab_harness import (
     ABComparison,
     ABResult,
 )
-from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
+from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_PROFILE_SELECTION,
+    SPAN_NAME_ROUTING,
+)
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
+    OP_ROUTING,
     record_span_io,
 )
 
@@ -194,3 +198,51 @@ def record_search(tenant_id, query, profile, strategy, titles, *, error=None):
             raise
     started = pd.Timestamp(span.start_time, unit="ns", tz="UTC")
     return f"{span.get_span_context().trace_id:032x}", started
+
+
+def record_routing(
+    telemetry,
+    tenant_id,
+    agent,
+    confidence,
+    duration_ms,
+    *,
+    minutes_ago,
+    within_request=True,
+    failed=False,
+):
+    """A routing decision of ``duration_ms`` started ``minutes_ago`` with the
+    output slot ``GatewayAgent._emit_routing_span`` writes, inside a request
+    span unless ``within_request`` is false. Returns its span ID."""
+    from opentelemetry import context, trace
+
+    tracer = telemetry._get_tracer_for_project(tenant_id, None)
+    start = time.time_ns() // 1000 * 1000 - int(minutes_ago * 60_000) * MS
+    parent = None
+    if within_request:
+        parent = tracer.start_span(
+            "a2a.request", context=context.Context(), start_time=start
+        )
+    span = tracer.start_span(
+        SPAN_NAME_ROUTING,
+        context=trace.set_span_in_context(parent) if parent else context.Context(),
+        start_time=start,
+    )
+    record_span_io(
+        span,
+        input_value=f"a query for {agent}",
+        output={
+            "chosen_agent": agent,
+            "recommended_agent": agent,
+            "confidence": confidence,
+            "reasoning": "a reason",
+            "entity_extraction_failed": False,
+        },
+        operation=OP_ROUTING,
+    )
+    if failed:
+        span.set_status(Status(StatusCode.ERROR, "routing failed"))
+    span.end(end_time=start + int(duration_ms * MS))
+    if parent:
+        parent.end(end_time=start + int(duration_ms * MS))
+    return f"{span.get_span_context().span_id:016x}"

@@ -4581,6 +4581,76 @@ async def run_online_routing_evaluation(
     }
 
 
+async def run_llm_annotation(
+    tenant_id: str,
+    lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
+) -> dict:
+    """Label the tenant's unlabelled routing decisions that need review.
+
+    ``AnnotationAgent`` picks the decisions the tenant's
+    ``automation_rules.annotation_thresholds`` flag (low confidence, failed or
+    ambiguous outcome); those that already carry a ``routing_annotation`` are
+    left as they are. Up to ``max_annotations_per_batch`` of the rest go to
+    ``LLMAutoAnnotator`` on the ``llm_auto_annotator`` endpoint, and each
+    label is stored for a reviewer to approve or correct. The rest wait for
+    the next run. An LM or store failure propagates; labels stored before it
+    stay stored, and a re-run skips them.
+    """
+    from cogniverse_agents.routing.annotation_agent import AnnotationAgent
+    from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+    from cogniverse_agents.routing.config import AutomationRulesConfig
+    from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    cfg = get_config(tenant_id=tenant_id, config_manager=_cli_config_manager())
+    rules = AutomationRulesConfig.from_dict(cfg.get_all().get("automation_rules") or {})
+    get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
+
+    agent = AnnotationAgent(tenant_id=tenant_id, automation_rules=rules)
+    requests = await agent.identify_spans_needing_annotation(
+        lookback_hours=lookback_hours, agent_type="routing"
+    )
+    storage = AnnotationStorage(tenant_id=tenant_id)
+    end = datetime.now(timezone.utc)
+    labelled = {
+        span["span_id"]
+        for span in await storage.query_annotated_spans(
+            start_time=end - timedelta(hours=lookback_hours),
+            end_time=end,
+            only_human_reviewed=False,
+        )
+    }
+    pending = [request for request in requests if request.span_id not in labelled]
+    batch = pending[: rules.annotation_thresholds.max_annotations_per_batch]
+
+    annotator = LLMAutoAnnotator(
+        llm_config=cfg.get_llm_config().resolve("llm_auto_annotator")
+    )
+    annotations = await asyncio.to_thread(annotator.batch_annotate, batch)
+    labels: dict[str, int] = {}
+    for annotation in annotations:
+        await storage.store_llm_annotation(annotation.span_id, annotation)
+        labels[annotation.label.value] = labels.get(annotation.label.value, 0) + 1
+
+    logger.info(
+        "LLM annotation of %s: %d need review, %d already labelled, %d labelled",
+        tenant_id,
+        len(requests),
+        len(requests) - len(pending),
+        len(annotations),
+    )
+    return {
+        "status": "success" if requests else "no_data",
+        "needing_review": len(requests),
+        "already_labelled": len(requests) - len(pending),
+        "labelled": len(annotations),
+        "deferred": len(pending) - len(batch),
+        "labels": dict(sorted(labels.items())),
+    }
+
+
 def _online_eval_agent_types() -> list[str]:
     """Agent types the online span-eval cycle scores: registry entries with
     structural evaluators over their own ``cogniverse.*`` domain spans. The
@@ -6460,6 +6530,7 @@ def build_parser() -> argparse.ArgumentParser:
             "workflow",
             "gateway-thresholds",
             "online-routing-eval",
+            "llm-annotate",
             "online-eval",
             "profile",
             "profile-ground-truth-check",
@@ -6759,6 +6830,14 @@ def main():
         elif args.mode == "online-routing-eval":
             result = asyncio.run(
                 run_online_routing_evaluation(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                )
+            )
+        elif args.mode == "llm-annotate":
+            result = asyncio.run(
+                run_llm_annotation(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,

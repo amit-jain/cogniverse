@@ -542,6 +542,7 @@ _REAL_MODES = [
     "workflow",
     "gateway-thresholds",
     "online-routing-eval",
+    "llm-annotate",
     "profile",
     "entity-extraction",
     "synthetic",

@@ -9,6 +9,7 @@ import { OptimizationView } from './OptimizationView';
 import { ProfileMetricsView } from './ProfileMetricsView';
 import { ProfilesView } from './ProfilesView';
 import { RlmAbView } from './RlmAbView';
+import { RoutingView } from './RoutingView';
 import { TenantsView } from './TenantsView';
 import { WorkflowReviewsView } from './WorkflowReviewsView';
 
@@ -31,4 +32,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'rlm-ab', label: 'RLM A/B', component: RlmAbView },
   { id: 'analytics', label: 'Analytics', component: AnalyticsView },
   { id: 'evaluation', label: 'Evaluation', component: EvaluationView },
+  { id: 'routing', label: 'Routing evaluation', component: RoutingView },
 ];
