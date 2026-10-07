@@ -166,3 +166,31 @@ def record_sample_traces(telemetry, tenant):
             }
         )
     return rows
+
+
+def record_search(tenant_id, query, profile, strategy, titles, *, error=None):
+    """A search recorded by the search service's span writers, its result
+    rows naming the sources ``titles``; it fails with ``error`` when given.
+    Returns the search's trace ID and its start time to the nanosecond
+    (Phoenix keeps microseconds)."""
+    from cogniverse_foundation.telemetry.context import (
+        add_search_results_to_span,
+        search_span,
+    )
+
+    results = [
+        {"id": f"{title}_segment_{rank}", "score": 1.0 / rank, "source_title": title}
+        for rank, title in enumerate(titles, start=1)
+    ]
+    try:
+        with search_span(
+            tenant_id, query, ranking_strategy=strategy, profile=profile
+        ) as span:
+            if error:
+                raise RuntimeError(error)
+            add_search_results_to_span(span, results)
+    except RuntimeError as exc:
+        if str(exc) != error:
+            raise
+    started = pd.Timestamp(span.start_time, unit="ns", tz="UTC")
+    return f"{span.get_span_context().trace_id:032x}", started

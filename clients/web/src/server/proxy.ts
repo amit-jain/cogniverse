@@ -13,6 +13,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
   /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces)$/,
+  /^\/admin\/tenant\/[^/]+\/evaluation\/golden$/,
   /^\/ag-ui\/results\/relevance$/,
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,

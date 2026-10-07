@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import { AnalyticsView } from './AnalyticsView';
 import { AnnotationsView } from './AnnotationsView';
 import { ApprovalsView } from './ApprovalsView';
+import { EvaluationView } from './EvaluationView';
 import { IngestionView } from './IngestionView';
 import { MemoryView } from './MemoryView';
 import { OptimizationView } from './OptimizationView';
@@ -29,4 +30,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'profile-metrics', label: 'Profile metrics', component: ProfileMetricsView },
   { id: 'rlm-ab', label: 'RLM A/B', component: RlmAbView },
   { id: 'analytics', label: 'Analytics', component: AnalyticsView },
+  { id: 'evaluation', label: 'Evaluation', component: EvaluationView },
 ];

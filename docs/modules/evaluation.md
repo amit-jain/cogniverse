@@ -13,6 +13,7 @@ libs/evaluation/cogniverse_evaluation/
 ├── cli.py                               # CLI for evaluation tasks
 ├── online_evaluator.py                  # Online evaluation pipeline
 ├── quality_monitor.py                   # Quality monitoring
+├── recorded_searches.py                 # Recorded searches scored against a tenant's golden set
 ├── span_evaluator.py                    # SpanEvaluator for retrospective evaluation
 ├── core/                                # Core evaluation framework
 │   ├── __init__.py
@@ -1844,6 +1845,14 @@ monitor = QualityMonitor(
     thresholds=QualityThresholds(live_score_floor=0.6),
 )
 ```
+
+### Scoring recorded searches
+
+**File:** `libs/evaluation/cogniverse_evaluation/recorded_searches.py`
+
+`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
+
+It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `queries`, the mean of each metric, and `success_rate`, the share of queries whose first result is expected); `queries` (per profile and strategy, in golden order: `query`, `expected`, `retrieved` (first 10), `searched_at`, `trace_id` and the metrics); `unsearched_queries` (golden order); `failed_searches` (searches with an `ERROR` status); and `unscored_searches` (searches with a result that has no source title, or no result rows). The runtime serves it as `GET /admin/tenant/{tenant_id}/evaluation/golden`.
 
 ---
 

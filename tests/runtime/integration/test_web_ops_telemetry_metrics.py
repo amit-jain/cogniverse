@@ -1,5 +1,5 @@
-"""The web client's Profile metrics and RLM A/B views, driven in Chromium
-against spans in real Phoenix.
+"""The web client's Profile metrics, RLM A/B, Analytics and Evaluation views,
+driven in Chromium against spans in real Phoenix.
 
 Spans are recorded the way their producers record them, with fixed values
 (``tests/utils/telemetry_metric_spans``). The runtime reads them through a
@@ -12,6 +12,7 @@ import re
 import time
 from uuid import uuid4
 
+import httpx
 import pandas as pd
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
@@ -22,6 +23,7 @@ from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryC
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_runtime.optimization_cli import emit_ab_compare_span
+from cogniverse_runtime.routers import admin
 from tests.utils.approval_review import review_config_manager
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.telemetry_metric_spans import (
@@ -29,6 +31,7 @@ from tests.utils.telemetry_metric_spans import (
     ab_result,
     record_profile_selection,
     record_sample_traces,
+    record_search,
 )
 from tests.utils.web_client import (
     build_web_client,
@@ -457,3 +460,191 @@ def test_analytics_of_a_quiet_tenant_says_there_are_no_traces(page, web_url, tel
     region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
     expect(region.locator("p.muted")).to_have_text("No traces match in this window.")
     expect(page.get_by_role("navigation", name="Analytics sections")).to_have_count(0)
+
+
+SUNSET, RED_CAR, DOG = "sunset over the sea", "a red car", "dog on a beach"
+
+
+@pytest.fixture()
+def upload_golden(runtime_url, phoenix_container, monkeypatch):
+    """Uploads a tenant's golden set through the runtime's admin route."""
+    monkeypatch.setattr(admin, "_phoenix_endpoints", {})
+    admin.set_phoenix_endpoints(
+        phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
+    )
+
+    def upload(tenant):
+        response = httpx.put(
+            f"{runtime_url}/admin/tenants/{tenant}/golden_set_ground_truth",
+            json=[
+                {"query": SUNSET, "expected_videos": ["sunset"]},
+                {"query": RED_CAR, "expected_videos": ["red_car", "garage"]},
+                {"query": DOG, "expected_videos": ["dog"]},
+            ],
+            timeout=60,
+        )
+        assert (response.status_code, response.json()["row_count"]) == (200, 3)
+
+    return upload
+
+
+def _show_evaluation(page, web_url, tenant):
+    _show(page, web_url, "evaluation", "Evaluation", "Evaluate", tenant)
+    return page.get_by_role(
+        "region", name=f"Golden set evaluation of {tenant}", exact=True
+    )
+
+
+def test_evaluation_scores_a_tenants_searches_of_its_golden_set(
+    page, web_url, telemetry, upload_golden
+):
+    tenant = _tenant("webgolden")
+    upload_golden(tenant)
+    sunset = record_search(
+        tenant, SUNSET, "video_colpali", "hybrid", ["beach.mp4", "sunset.mp4"]
+    )
+    red_car = record_search(
+        tenant,
+        RED_CAR,
+        "video_colpali",
+        "hybrid",
+        ["red_car.mp4", "beach.mp4", "garage.mov", "a.mp4", "b.mp4", "c.mp4"],
+    )
+    sunset_bm25 = record_search(tenant, SUNSET, "video_colpali", "bm25", ["sunset.mp4"])
+    record_search(tenant, RED_CAR, "audio", "bm25", [], error="backend down")
+    telemetry.force_flush(timeout_millis=10000)
+
+    _show_evaluation(page, web_url, tenant)
+    assert _rows_until(
+        page,
+        f"Golden set evaluation of {tenant}",
+        "Scores by profile and strategy",
+        2,
+    ) == [
+        [
+            "video_colpali",
+            "bm25",
+            "1",
+            "1.000",
+            "1.000",
+            "1.000",
+            "1.000",
+            "1.000",
+            "100.0%",
+        ],
+        [
+            "video_colpali",
+            "hybrid",
+            "2",
+            "0.750",
+            "0.775",
+            "0.250",
+            "1.000",
+            "0.450",
+            "50.0%",
+        ],
+    ]
+    summary = {
+        "Golden queries": "3",
+        "Searched": "2",
+        "Not searched": "1",
+        "Failed searches": "1",
+        "Unscored searches": "0",
+    }
+    # The failed search may reach Phoenix's index after the others.
+    panel = page.get_by_role(
+        "region", name=f"Golden set evaluation of {tenant}", exact=True
+    )
+    deadline = time.monotonic() + 60
+    while _facts(page, "Evaluation summary") != summary and time.monotonic() < deadline:
+        panel.get_by_role("button", name="Refresh").click()
+        page.wait_for_timeout(2000)
+    assert _facts(page, "Evaluation summary") == summary
+    assert _plot(page, "Success by profile and strategy") == [
+        {
+            "name": None,
+            "type": "heatmap",
+            "x": ["bm25", "hybrid"],
+            "y": ["video_colpali"],
+            "z": [[1, 0.5]],
+        }
+    ]
+    assert page.get_by_role("list", name="Golden queries not searched").locator(
+        "li"
+    ).all_inner_texts() == [DOG]
+
+    results = page.get_by_role("region", name="Query results", exact=True)
+    results.get_by_label("Profile and strategy").select_option("video_colpali / hybrid")
+    assert _rows(page, "Query results") == [
+        [
+            SUNSET,
+            "sunset",
+            "✗ beach\n✓ sunset",
+            "0.500",
+            "0.000",
+            "1.000",
+            _local(page, sunset),
+        ],
+        [
+            RED_CAR,
+            "red_car, garage",
+            "✓ red_car\n✗ beach\n✓ garage\n✗ a\n✗ b",
+            "1.000",
+            "0.500",
+            "1.000",
+            _local(page, red_car),
+        ],
+    ]
+    results.get_by_label("Profile and strategy").select_option("video_colpali / bm25")
+    assert _rows(page, "Query results") == [
+        [
+            SUNSET,
+            "sunset",
+            "✓ sunset",
+            "1.000",
+            "1.000",
+            "1.000",
+            _local(page, sunset_bm25),
+        ]
+    ]
+
+
+def _local(page: Page, search):
+    """The browser's local rendering of a recorded search's start time."""
+    return page.evaluate(
+        "iso => new Date(iso).toLocaleString()",
+        search[1].isoformat(timespec="milliseconds"),
+    )
+
+
+def test_evaluation_of_a_tenant_without_a_golden_set_says_how_to_upload_one(
+    page, web_url
+):
+    tenant = _tenant("webnogolden")
+    panel = _show_evaluation(page, web_url, tenant)
+    expect(panel.get_by_role("alert")).to_have_text(
+        f"Tenant {tenant} has no golden set. Upload one with "
+        f"PUT /admin/tenants/{tenant}/golden_set_ground_truth."
+    )
+    expect(panel.locator('dl[aria-label="Evaluation summary"]')).to_have_count(0)
+
+
+def test_evaluation_shows_an_outage_rather_than_no_searches(
+    page, web_url, phoenix_proxy, upload_golden
+):
+    tenant = _tenant("webgoldenoutage")
+    upload_golden(tenant)
+
+    def fail_span_reads(method, path, body):
+        return (503, {"detail": "down"}) if "/spans" in path else None
+
+    phoenix_proxy.intercept = fail_span_reads
+    panel = _show_evaluation(page, web_url, tenant)
+    expect(panel.get_by_role("alert")).to_have_text(
+        f"Could not read the {SEARCH} spans of tenant {tenant}."
+    )
+    expect(
+        panel.get_by_text(
+            "No searches of the golden queries were recorded in this window."
+        )
+    ).to_have_count(0)
