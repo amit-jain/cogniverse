@@ -789,6 +789,16 @@ def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+class OptimizeModes(BaseModel):
+    modes: List[str]
+
+
+@router.get("/optimize-modes", response_model=OptimizeModes)
+async def list_optimization_modes():
+    """The modes ``POST /{tenant_id}/optimize`` accepts, sorted."""
+    return OptimizeModes(modes=sorted(_MANUAL_OPTIMIZE_MODES))
+
+
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
 async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     """Manually trigger an optimization run for a tenant via Argo.

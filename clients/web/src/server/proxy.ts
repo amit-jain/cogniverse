@@ -7,10 +7,10 @@ const ALLOWED = [
   /^\/admin\/tenants(\/[^/]+(\/tier)?)?$/,
   /^\/admin\/router-tiers$/,
   /^\/admin\/profiles(\/[^/]+(\/deploy)?)?$/,
-  /^\/admin\/tenant\/[^/]+\/(optimize|memories|jobs)(\/.*)?$/,
+  /^\/admin\/tenant\/optimize-modes$/,
+  /^\/admin\/tenant\/[^/]+\/optimize(\/runs(\/[^/]+(\/(cancel|retry))?)?)?$/,
   /^\/ingestion\/upload$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,
-  /^\/events\/workflows\/[^/]+(\/cancel)?$/,
 ];
 
 const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept'];

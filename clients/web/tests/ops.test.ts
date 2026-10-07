@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { errorMessage } from '../src/client/ops/http';
+import { formatArgoTime } from '../src/client/ops/OptimizationView';
 import { parseSse } from '../src/client/ops/sse';
 import { parseRoute, routeHash } from '../src/client/route';
 
@@ -108,5 +109,13 @@ describe('parseSse', () => {
 
   it('drops heartbeats and data-less frames', () => {
     expect(parseSse(': keep-alive\n\nid: 3-0\n\n')).toEqual({ frames: [], rest: '' });
+  });
+});
+
+describe('formatArgoTime', () => {
+  it('renders an Argo time in UTC to the minute and a missing one as a dash', () => {
+    expect(formatArgoTime('2026-09-16T10:05:59Z')).toBe('2026-09-16 10:05 UTC');
+    expect(formatArgoTime(null)).toBe('—');
+    expect(formatArgoTime('not a time')).toBe('not a time');
   });
 });

@@ -25,7 +25,8 @@ export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>, deps: unkn
       });
     return () => controller.abort();
   }, [run, attempt]);
-  return { ...state, reload: () => setAttempt((n) => n + 1) };
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  return { ...state, reload };
 }
 
 export function messageOf(error: unknown): string {

@@ -186,7 +186,9 @@ describe('runtime proxy', () => {
       ['POST', '/admin/debug/memreset'],
       ['GET', '/admin/tenants/acme:prod/../../harness/keys'],
       ['GET', '/admin/tenants/acme:prod%2F..%2F..%2Fharness%2Fkeys'],
-      ['DELETE', '/admin/tenant/acme:prod/memories/x%2F..%2F..%2F..%2Fharness%2Fkeys'],
+      ['POST', '/admin/tenant/acme:prod/optimize/runs/x%2F..%2F..%2F..%2Fharness%2Fkeys'],
+      ['GET', '/admin/tenant/acme:prod/jobs'],
+      ['GET', '/events/workflows/wf-1'],
       ['POST', '/v1/chat/completions'],
       ['POST', '/ingestion/start'],
       ['GET', '/events/ingestion/job-1'],
@@ -195,6 +197,41 @@ describe('runtime proxy', () => {
       expect(response.status).toBe(404);
     }
     expect(calls).toBe(0);
+  });
+
+  it('forwards every route the operations views call', async () => {
+    const seen: string[] = [];
+    const url = await runtimeServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      res.end('{}');
+    });
+    const app = createApp(config(url));
+    const calls = [
+      ['GET', '/admin/organizations'],
+      ['DELETE', '/admin/organizations/acme'],
+      ['GET', '/admin/organizations/acme/tenants'],
+      ['POST', '/admin/tenants'],
+      ['DELETE', '/admin/tenants/acme:prod'],
+      ['PUT', '/admin/tenants/acme:prod/tier'],
+      ['GET', '/admin/router-tiers'],
+      ['GET', '/admin/profiles?tenant_id=acme:prod'],
+      ['PUT', '/admin/profiles/p1'],
+      ['POST', '/admin/profiles/p1/deploy'],
+      ['POST', '/ingestion/upload?force=true'],
+      ['GET', '/ingestion/ingest_1/events?last-event-id=1-0'],
+      ['GET', '/ingestion/ingest_1/status'],
+      ['GET', '/admin/tenant/optimize-modes'],
+      ['POST', '/admin/tenant/acme:prod/optimize'],
+      ['GET', '/admin/tenant/acme:prod/optimize/runs'],
+      ['GET', '/admin/tenant/acme:prod/optimize/runs/wf-1'],
+      ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/cancel'],
+      ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/retry'],
+    ];
+    for (const [method, path] of calls) {
+      const response = await app.request(`/api/runtime${path}`, { method });
+      expect(response.status).toBe(200);
+    }
+    expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
   });
 
   it('streams server-sent events as the runtime sends them', async () => {
