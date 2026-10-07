@@ -209,14 +209,21 @@ def intra_branch_weakening(
     Keyed ``"<sha> <path>"`` by the commit that held the peak. The range diff
     against ``base`` reports such a file as wholly added, so every commit that
     touched it is counted and the final state must hold at least the peak.
+    An assertion a commit moves verbatim into a file that commit creates
+    stays counted, as it does in the range diff.
     """
     offenders: dict[str, dict[str, object]] = {}
     for path in added_test_files(base, repo):
         shas = _run_git(
             ["log", "--no-merges", "--format=%H", f"{base}..HEAD", "--", path], repo
         ).split()
-        counts = [(sha, _assertion_count(sha, path, repo)) for sha in reversed(shas)]
-        final = _assertion_count("HEAD", path, repo)
+        moved = 0
+        counts = []
+        for sha in reversed(shas):
+            diff = _run_git(["diff", f"{sha}~1", sha], repo)
+            moved += moved_assertions(diff).get(path, 0)
+            counts.append((sha, _assertion_count(sha, path, repo) + moved))
+        final = _assertion_count("HEAD", path, repo) + moved
         peak_sha, peak = max(counts, key=lambda item: item[1])
         if final < peak:
             offenders[f"{peak_sha} {path}"] = {"peak": peak, "final": final}
@@ -366,6 +373,49 @@ def test_detector_catches_a_restore_that_stops_short_of_the_peak(tmp_path):
 def test_detector_passes_a_rewrite_that_keeps_every_assertion(tmp_path):
     repo, _ = _branch_repo(tmp_path, _PRESERVED)
     assert intra_branch_weakening("main", repo) == {}
+
+
+def _move_into_new_helper(repo: Path, kept: str, helper: str) -> None:
+    """Commit, in one change, ``test_x.py`` rewritten to ``kept`` and a newly
+    created ``tests/foo/helpers.py`` holding ``helper``."""
+    (repo / "tests" / "foo" / "test_x.py").write_text(kept)
+    (repo / "tests" / "foo" / "helpers.py").write_text(helper)
+    _run_git(["add", "--", "tests/foo"], repo)
+    _run_git(["commit", "-q", "-m", "Move a check into a helper"], repo)
+
+
+_PRESERVED_LESS_ONE = (
+    "def test_notices():\n"
+    "    notices = [element.value for element in app.error]\n"
+    "    assert [m.value for m in app.info] == []\n"
+    "    assert len(notices) == 1\n"
+    "    assert notices == [_EMPTY_WINDOW_NOTICE]\n"
+)
+
+
+def test_detector_credits_an_assertion_moved_verbatim_into_a_new_helper(tmp_path):
+    repo, _ = _branch_repo(tmp_path, _PRESERVED)
+    _move_into_new_helper(
+        repo,
+        _PRESERVED_LESS_ONE,
+        "def check(notices):\n    assert '503' in notices[0]\n",
+    )
+    assert intra_branch_weakening("main", repo) == {}
+
+
+def test_detector_catches_a_moved_assertion_that_changed_on_the_way(tmp_path):
+    repo, sha = _branch_repo(tmp_path, _PRESERVED)
+    _move_into_new_helper(
+        repo,
+        _PRESERVED_LESS_ONE,
+        "def check(notices):\n    assert '50' in notices[0]\n",
+    )
+    offenders = intra_branch_weakening("main", repo)
+    assert list(offenders.values()) == [{"peak": 4, "final": 3}]
+    (key,) = offenders
+    assert (
+        key == f"{_run_git(['rev-parse', 'HEAD~1'], repo).strip()} tests/foo/test_x.py"
+    )
 
 
 def test_range_diff_alone_misses_the_branch_added_weakening(tmp_path):

@@ -83,6 +83,15 @@ a.dot-item { text-decoration: none; }
 .panel button.link { border: 0; background: none; padding: 0; color: var(--accent); }
 .inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 14px; }
 .inline-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.stacked-form { display: grid; gap: 10px; margin-top: 14px; }
+.stacked-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.stacked-form textarea { font-family: ui-monospace, monospace; }
+.stacked-form .inline-form { margin-top: 0; }
+label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.facts pre { margin: 0; font-size: 12px; white-space: pre-wrap; }
 .confirm { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .alert { margin: 8px 0 0; font-size: 13px; width: 100%; }
 .alert.error { color: #c0392b; }

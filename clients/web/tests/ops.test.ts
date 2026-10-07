@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { errorMessage } from '../src/client/ops/http';
 import { parseRoute, routeHash } from '../src/client/route';
 
@@ -14,6 +15,19 @@ describe('errorMessage', () => {
         500,
       ),
     ).toBe('Listing profiles failed.');
+    expect(
+      errorMessage(
+        {
+          detail: {
+            message: 'Profile validation failed',
+            errors: ['Profile name too long (101 chars, max 100)', "Strategy 'x' missing 'class' field."],
+          },
+        },
+        400,
+      ),
+    ).toBe(
+      "Profile validation failed: Profile name too long (101 chars, max 100); Strategy 'x' missing 'class' field.",
+    );
     expect(
       errorMessage(
         {
@@ -47,5 +61,32 @@ describe('routes', () => {
     expect(parseRoute('')).toEqual({ kind: 'agent' });
     expect(parseRoute('#/ops')).toEqual({ kind: 'agent' });
     expect(parseRoute('#/elsewhere/x')).toEqual({ kind: 'agent' });
+  });
+});
+
+describe('JSON form fields', () => {
+  it('parses an object, treats blank as unset, and names the field it rejects', () => {
+    expect(parseJsonObject('Strategies', '{"embedding": {"class": "X"}}')).toEqual({
+      embedding: { class: 'X' },
+    });
+    expect(parseJsonObject('Strategies', '  \n ')).toBeUndefined();
+    expect(() => parseJsonObject('Strategies', '{"a": ')).toThrow(
+      new Error('Strategies is not valid JSON.'),
+    );
+    expect(() => parseJsonObject('Pipeline config', '[1, 2]')).toThrow(
+      new Error('Pipeline config must be a JSON object.'),
+    );
+    expect(() => parseJsonObject('Pipeline config', 'null')).toThrow(
+      new Error('Pipeline config must be a JSON object.'),
+    );
+  });
+
+  it('round-trips a value through its textarea text and compares ignoring key order', () => {
+    const value = { b: [1, { d: 2, c: 3 }], a: 'x' };
+    expect(parseJsonObject('Value', jsonText(value))).toEqual(value);
+    expect(jsonText(null)).toBe('');
+    expect(sameJson({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(true);
+    expect(sameJson({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
+    expect(sameJson({ a: 1 }, { a: 1, b: null })).toBe(false);
   });
 });
