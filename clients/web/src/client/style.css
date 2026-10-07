@@ -103,3 +103,10 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .alert.error { color: #c0392b; }
 .alert.ok { color: #2e8b57; }
 .muted { color: var(--muted); font-size: 13px; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 14px; }
+.bars { margin: 10px 0 0; display: grid; gap: 6px; font-size: 12px; }
+.bars figcaption { font-weight: 550; color: var(--muted); }
+.bar-row { display: grid; grid-template-columns: minmax(70px, max-content) 1fr max-content; gap: 8px; align-items: center; }
+.bar-track { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--accent); }
+.bar-value { font-variant-numeric: tabular-nums; }

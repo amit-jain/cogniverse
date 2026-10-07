@@ -99,6 +99,7 @@ cogniverse_runtime/
 │   ├── graph.py                     # Graph traversal API
 │   ├── knowledge.py                 # Knowledge-graph query API
 │   ├── openai_compat.py             # OpenAI-dialect /v1 surface for harness clients
+│   ├── telemetry_metrics.py         # Per-tenant span metrics for the operations views
 │   ├── tenant.py                    # Per-tenant admin endpoints
 │   └── wiki.py                      # Wiki API endpoints
 ├── admin/                           # Admin domain models + tenant tooling
@@ -466,6 +467,7 @@ The server uses modular routers for different functionality:
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
+| `telemetry_metrics` | `/admin/tenant` | Profile-selection and RLM A/B metrics over a tenant's spans |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -1378,6 +1380,12 @@ The orchestrator records each workflow as a `cogniverse.orchestration` span in t
 **GET /admin/tenant/{tenant_id}/orchestration-workflows** — Workflows of the last `lookback_hours` (1–720, default 24), newest first, at most `limit` (1–500, default 50). Response: `{workflows: [{span_id, start_time, query, workflow_id, pattern, agent_sequence, execution_order, execution_time, tasks_completed, success, error_summary, review}, ...]}`, where `review` is the latest `{annotator, label, score, annotation_source, pattern_is_optimal, agents_are_correct, execution_order_is_optimal, improvement_notes}` or `null`. A telemetry read failure answers **502** `telemetry_unavailable`.
 
 **POST /admin/tenant/{tenant_id}/orchestration-workflows/{span_id}/annotation** — Body: `start_time` (the listed value, with its timezone), `annotator`, `quality_label` (`failed`, `poor`, `acceptable`, `good`, `excellent`), `quality_score` (0–1), `pattern_is_optimal`, `agents_are_correct`, `execution_order_is_optimal`, and optionally `suggested_pattern` (`parallel`, `sequential`, `conditional`, `mixed`), `pattern_feedback`, `missing_agents`, `unnecessary_agents`, `suggested_execution_order`, `execution_order_feedback`, `what_went_well`, `what_went_wrong`, `improvement_notes`. The workflow's recorded values are read from its span, not from the request; suggested agents are its agent sequence plus `missing_agents` minus `unnecessary_agents`. Response: the workflow with its new `review`. A span not found at `start_time` answers **404**; a failed annotation write answers **502** `annotation_not_stored`.
+
+**Telemetry metrics** (`libs/runtime/cogniverse_runtime/routers/telemetry_metrics.py`). Each route reads every span of one name in the tenant's telemetry project over the last `lookback_hours` (1–720, default 24), not a first page of them, and aggregates with `cogniverse_foundation.telemetry.span_metrics`. A telemetry read failure answers **502** `telemetry_unavailable`, never an empty window.
+
+**GET /admin/tenant/{tenant_id}/telemetry/profile-selection** — Per modality of the `cogniverse.profile_selection` spans, most selections first: `{modalities: [{modality, count, p50_ms, p95_ms, p99_ms, success_rate}, ...]}`. A span counts as failed only when its status is `ERROR`.
+
+**GET /admin/tenant/{tenant_id}/telemetry/rlm-ab** — The `rlm.ab_compare` spans `cogniverse-optim --mode ab-compare` records: `{rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta, fallback_rate, per_dataset: [{queries_dataset, rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta}, ...], comparisons: [{ab_id, query, queries_dataset, latency_delta_ms, tokens_delta, judge_delta, with_rlm_was_fallback, start_time}, ...]}`, comparisons newest first. Averages are `null` when no row carries the value.
 
 ### Knowledge Endpoints
 

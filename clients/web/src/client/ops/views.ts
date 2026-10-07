@@ -4,7 +4,9 @@ import { ApprovalsView } from './ApprovalsView';
 import { IngestionView } from './IngestionView';
 import { MemoryView } from './MemoryView';
 import { OptimizationView } from './OptimizationView';
+import { ProfileMetricsView } from './ProfileMetricsView';
 import { ProfilesView } from './ProfilesView';
+import { RlmAbView } from './RlmAbView';
 import { TenantsView } from './TenantsView';
 import { WorkflowReviewsView } from './WorkflowReviewsView';
 
@@ -23,4 +25,6 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'approvals', label: 'Approvals', component: ApprovalsView },
   { id: 'annotations', label: 'Annotation queue', component: AnnotationsView },
   { id: 'workflows', label: 'Workflow reviews', component: WorkflowReviewsView },
+  { id: 'profile-metrics', label: 'Profile metrics', component: ProfileMetricsView },
+  { id: 'rlm-ab', label: 'RLM A/B', component: RlmAbView },
 ];
