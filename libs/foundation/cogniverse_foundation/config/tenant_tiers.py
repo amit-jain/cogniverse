@@ -12,8 +12,9 @@ only for a tenant it holds nothing for, or holds a tier
 ``TENANT_TIER_MAX_STALENESS_S`` old. Every write through ``set_tenant_tier``
 drops the written tenant from every reader in this process, so an operator's
 change is visible to the next request here; ``TENANT_TIER_MAX_STALENESS_S``
-bounds how long another replica keeps serving the tier it read before that
-write.
+bounds how long another process keeps serving the tier it read before that
+write, unless the writer drops it there too (the runtime's tier route does,
+through its cluster events).
 """
 
 from __future__ import annotations
@@ -40,8 +41,8 @@ TENANT_TIER_VALUE_FIELD = "tier"
 # Age at which a held tier is re-read on a background thread while it keeps
 # answering.
 TENANT_TIER_REFRESH_S = 15.0
-# Oldest held tier that answers: how long another replica's write can go unseen
-# here.
+# Oldest held tier that answers: how long another process's write can go
+# unseen here.
 TENANT_TIER_MAX_STALENESS_S = 30.0
 # Most tenants one reader holds.
 TENANT_TIER_MAX_TENANTS = 512

@@ -84,6 +84,7 @@ def serve_ops_runtime(
             f"web-ops-test-{uuid.uuid4().hex[:8]}",
             {
                 "tenant_deleted": tm.release_deleted_tenant,
+                "tenant_tier_set": tm.release_tenant_tier,
                 "session_closed": admin.sweep_closed_session,
             },
             channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
