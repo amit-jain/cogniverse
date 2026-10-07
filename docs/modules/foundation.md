@@ -1113,12 +1113,12 @@ evicted = evict_tenant_from_registered_caches("acme:production")
 `evict_tenant_from_registered_caches` pops both the given key and its
 canonical `org:tenant` form from every registered cache, so simple-form
 entries are covered too; `on_evict` does not fire — deletion is a hard drop.
-It returns the number of entries dropped. The runtime registers four such
-caches — the per-tenant `GatewayAgent` cache and the generic-A2A-agent
-cache (keyed `(tenant, agent_name)`; both capacity 64) in
-`agent_dispatcher.py`, the per-tenant `GraphManager` cache (capacity 64) in
-`main.py`, and the per-tenant `ArtifactManager` cache (capacity 64) in
-`routers/agents.py` — and calls
+It returns the number of entries dropped. The runtime registers six such
+caches, each of capacity 64 — the per-tenant `GatewayAgent` cache, the
+generic-A2A-agent cache (keyed `(tenant, agent_name)`) and the orchestrator
+agent cache in `agent_dispatcher.py`, the per-tenant `GraphManager` and
+`WikiManager` caches in `main.py`, and the per-tenant `ArtifactManager` cache
+in `routers/agents.py` — and calls
 `evict_tenant_from_registered_caches` from `release_deleted_tenant`, the
 handler every runtime worker process runs for a tenant delete, so a deleted
 tenant's cached state is released as part of the delete, not left to linger.

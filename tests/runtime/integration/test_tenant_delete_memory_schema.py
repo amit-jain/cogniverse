@@ -2499,3 +2499,338 @@ async def test_a_dropped_schema_redeployed_never_serves_its_previous_documents(
         assert found.json["root"]["fields"]["totalCount"] == 0
     finally:
         await tm.delete_tenant_internal(tenant_id)
+
+
+def _deleting_peer_paused_after_tenant_read(
+    redis_url, channel, task_prefix, vespa_port, tenant_id, read, resume, report
+) -> None:
+    """Another runtime process serving a delete of the tenant that stops,
+    holding the deployment lease, right after it read the tenant's
+    registered schemas and before it lists what Vespa deploys."""
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+    tenant_schemas = SchemaRegistry.get_tenant_schemas
+    paused = []
+
+    def read_then_pause(self, tid, strict=False):
+        rows = tenant_schemas(self, tid, strict=strict)
+        if tid == tenant_id and strict and not paused:
+            paused.append(tid)
+            read.set()
+            assert resume.wait(600) is True
+        return rows
+
+    SchemaRegistry.get_tenant_schemas = read_then_pause
+    _deleting_peer(redis_url, channel, task_prefix, vespa_port, tenant_id, report)
+
+
+def _wiki_deploy_fixture(tenant_id: str):
+    """The registry the deploy runs through and the backend it activates
+    through, which may be another tenant's instance sharing the registry."""
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        "vespa",
+        tenant_id=tenant_id,
+        config_manager=tm._config_manager,
+        schema_loader=tm._schema_loader,
+    )
+    return backend.schema_registry, backend.schema_registry._backend
+
+
+async def _assert_nothing_of_the_tenant_comes_back(tenant_id: str) -> None:
+    """A later deploy rebuilds the application package from the registry; a
+    schema of the deleted tenant registered there would be activated again."""
+    peer = _unique_tenant()
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=peer, created_by="memory-orphan-test", base_schemas=["provenance"]
+        )
+    )
+    try:
+        assert _deployed_for(tenant_id) == []
+    finally:
+        await tm.delete_tenant_internal(peer)
+
+
+@pytest.mark.asyncio
+async def test_a_registration_landing_between_a_deletes_reads_is_dropped_with_it(
+    wired_tenant_manager,
+    vespa_instance,
+    cluster_events,
+    task_events,
+    workflow_state_redis_url,
+    monkeypatch,
+):
+    """A tenant's first wiki access activates its wiki schema on one runtime
+    process; another serves the tenant's delete and has read the tenant's
+    registered schemas when the wiki deploy finishes converging and goes to
+    register. The registration never lands inside the delete: the delete
+    drops the wiki schema with the tenant's others, the registration is
+    refused, and no later deploy brings the schema back."""
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+    from cogniverse_vespa.backend import VespaBackend
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    wiki = f"wiki_pages_{tenant_id.replace(':', '_')}"
+    provenance_schema = _schema_names(tenant_id)[1]
+    registry, _ = _wiki_deploy_fixture(tenant_id)
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    read = context.Event()
+    resume = context.Event()
+    peer = context.Process(
+        target=_deleting_peer_paused_after_tenant_read,
+        args=(
+            workflow_state_redis_url,
+            cluster_events.channel,
+            task_events._prefix,
+            vespa_instance["http_port"],
+            tenant_id,
+            read,
+            resume,
+            report,
+        ),
+    )
+    deploying = []
+    # Set when the wiki registration has landed, or is waiting for the
+    # deployment lease the paused delete holds.
+    registration_reached = threading.Event()
+    converge = VespaBackend._wait_for_schema_convergence
+    register = registry.register_schema
+    acquire = SchemaDeployLease.acquire
+
+    def converged_while_a_delete_reads(self, generation, names, timeout):
+        converge(self, generation, names, timeout=timeout)
+        if wiki in names:
+            deploying.append(threading.get_ident())
+            peer.start()
+            assert read.wait(600) is True
+
+    def registering(**registration):
+        try:
+            return register(**registration)
+        finally:
+            if registration["full_schema_name"] == wiki:
+                registration_reached.set()
+
+    def acquiring(self):
+        if deploying and threading.get_ident() == deploying[0]:
+            registration_reached.set()
+        return acquire(self)
+
+    monkeypatch.setattr(
+        VespaBackend, "_wait_for_schema_convergence", converged_while_a_delete_reads
+    )
+    monkeypatch.setattr(registry, "register_schema", registering)
+    monkeypatch.setattr(SchemaDeployLease, "acquire", acquiring)
+
+    def resume_once_the_registration_is_reached():
+        assert registration_reached.wait(600) is True
+        resume.set()
+
+    releaser = threading.Thread(target=resume_once_the_registration_is_reached)
+    releaser.start()
+    try:
+        [deployed] = await asyncio.gather(
+            asyncio.to_thread(
+                registry.deploy_schema,
+                tenant_id=tenant_id,
+                base_schema_name="wiki_pages",
+            ),
+            return_exceptions=True,
+        )
+        result = await asyncio.to_thread(report.get, True, 600)
+        await asyncio.to_thread(peer.join, 60)
+    finally:
+        registration_reached.set()
+        resume.set()
+        releaser.join(60)
+        if peer.is_alive():
+            peer.kill()
+        monkeypatch.undo()
+    assert peer.exitcode == 0
+    assert (
+        type(deployed).__name__,
+        str(deployed),
+        result["deleted_schemas"],
+        _deployed_for(tenant_id),
+        _tenant_rows(store, tenant_id),
+    ) == (
+        TenantDeletedError.__name__,
+        _deleted_message(tenant_id),
+        sorted([provenance_schema, wiki]),
+        [],
+        [],
+    )
+    await _assert_nothing_of_the_tenant_comes_back(tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_a_registration_after_a_completed_delete_is_refused(
+    wired_tenant_manager,
+    vespa_instance,
+    cluster_events,
+    task_events,
+    workflow_state_redis_url,
+    monkeypatch,
+):
+    """The wiki schema activates and converges on one runtime process; another
+    serves the tenant's whole delete before the deploy registers it. The
+    delete drops the live, unregistered schema; the registration that follows
+    is refused, so no row of the deleted tenant brings the schema back on the
+    next deploy."""
+    from cogniverse_vespa.backend import VespaBackend
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    wiki = f"wiki_pages_{tenant_id.replace(':', '_')}"
+    provenance_schema = _schema_names(tenant_id)[1]
+    registry, _ = _wiki_deploy_fixture(tenant_id)
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    deleted = []
+    converge = VespaBackend._wait_for_schema_convergence
+
+    def converged_then_deleted_elsewhere(self, generation, names, timeout):
+        converge(self, generation, names, timeout=timeout)
+        if wiki not in names:
+            return
+        peer = context.Process(
+            target=_deleting_peer,
+            args=(
+                workflow_state_redis_url,
+                cluster_events.channel,
+                task_events._prefix,
+                vespa_instance["http_port"],
+                tenant_id,
+                report,
+            ),
+        )
+        peer.start()
+        try:
+            deleted.append(report.get(True, 600))
+            peer.join(60)
+        finally:
+            if peer.is_alive():
+                peer.kill()
+        deleted.append(peer.exitcode)
+
+    monkeypatch.setattr(
+        VespaBackend, "_wait_for_schema_convergence", converged_then_deleted_elsewhere
+    )
+    try:
+        [deployed] = await asyncio.gather(
+            asyncio.to_thread(
+                registry.deploy_schema,
+                tenant_id=tenant_id,
+                base_schema_name="wiki_pages",
+            ),
+            return_exceptions=True,
+        )
+    finally:
+        monkeypatch.undo()
+    [result, exitcode] = deleted
+    assert exitcode == 0
+    assert (
+        type(deployed).__name__,
+        str(deployed),
+        result["deleted_schemas"],
+        _deployed_for(tenant_id),
+        _tenant_rows(store, tenant_id),
+    ) == (
+        TenantDeletedError.__name__,
+        _deleted_message(tenant_id),
+        sorted([provenance_schema, wiki]),
+        [],
+        [],
+    )
+    await _assert_nothing_of_the_tenant_comes_back(tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_a_registration_that_cannot_take_the_deployment_lease_writes_no_row(
+    wired_tenant_manager, monkeypatch
+):
+    """A peer holds the deployment lease for the whole wait when a deploy that
+    activated and converged goes to register: the wait's own timeout reaches
+    the caller, the registry gains no row, the journal keeps the deploy's
+    intent for recovery and the schema stays live, so the tenant's delete
+    still finds and drops it."""
+    from cogniverse_core.registries.schema_deploy_lease import (
+        LeaseWaitTimeout,
+        SchemaDeployLease,
+    )
+    from cogniverse_core.registries.schema_deployment_intents import (
+        SchemaDeploymentIntents,
+    )
+    from cogniverse_vespa.backend import VespaBackend
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id,
+            created_by="memory-orphan-test",
+            base_schemas=["provenance"],
+        )
+    )
+    wiki = f"wiki_pages_{tenant_id.replace(':', '_')}"
+    provenance_schema = _schema_names(tenant_id)[1]
+    registry, _ = _wiki_deploy_fixture(tenant_id)
+    converge = VespaBackend._wait_for_schema_convergence
+    acquire = SchemaDeployLease.acquire
+    deploying = []
+    timeout = LeaseWaitTimeout("deployment lease held by peer-holder for 120 s")
+
+    def converged(self, generation, names, timeout):
+        converge(self, generation, names, timeout=timeout)
+        if wiki in names:
+            deploying.append(threading.get_ident())
+
+    def held_by_a_peer(self):
+        if deploying and threading.get_ident() == deploying[0]:
+            raise timeout
+        return acquire(self)
+
+    monkeypatch.setattr(VespaBackend, "_wait_for_schema_convergence", converged)
+    monkeypatch.setattr(SchemaDeployLease, "acquire", held_by_a_peer)
+    try:
+        with pytest.raises(LeaseWaitTimeout) as caught:
+            await asyncio.to_thread(
+                registry.deploy_schema,
+                tenant_id=tenant_id,
+                base_schema_name="wiki_pages",
+            )
+    finally:
+        monkeypatch.undo()
+    assert caught.value is timeout
+    assert _tenant_rows(store, tenant_id) == sorted(
+        [
+            "schema_deployment_intents:" + provenance_schema,
+            "schema_deployment_intents:" + wiki,
+            "schema_registry:schema_provenance",
+        ]
+    )
+    assert [
+        record["registration"]["full_schema_name"]
+        for record in SchemaDeploymentIntents(store).pending_for_tenant(tenant_id)
+    ] == [wiki]
+    assert _deployed_for(tenant_id) == sorted([provenance_schema, wiki])
+    result = await tm.delete_tenant_internal(tenant_id)
+    assert result["deleted_schemas"] == sorted([provenance_schema, wiki])
+    assert _deployed_for(tenant_id) == []
+    assert _tenant_rows(store, tenant_id) == []

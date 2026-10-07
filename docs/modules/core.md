@@ -706,7 +706,13 @@ passed; a change Vespa refuses raises
 Vespa's reason, and the row keeps the definition that is live. Empty and
 duplicate name lists are rejected. Intents become complete only after every
 registration succeeds, so a partial registration leaves the whole new batch
-reserved for recovery. `deploy_schema()` delegates to this path with one name.
+reserved for recovery. Registration runs under the backend's
+`deployment_lease()`, the lease a tenant delete reads the registry and drops
+the tenant's schemas under, and first re-reads the tenant's deletion marker: a
+tenant marked deleted after activation gets no row (`TenantDeletedError`), its
+intents stay pending and the delete drops the live schema with the tenant's
+others. A lease a peer holds for the whole wait raises its `LeaseWaitTimeout`
+with nothing registered. `deploy_schema()` delegates to this path with one name.
 `SchemaDeploymentIntents(store)` in
 `cogniverse_core/registries/schema_deployment_intents.py` reserves the full
 schema name under the system tenant's `SCHEMA` scope and
