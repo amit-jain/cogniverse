@@ -38,7 +38,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
+from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
 from tests.utils.node_env import node_env
 from tests.utils.web_client import (
@@ -320,7 +321,7 @@ def session_state_lifespan(workflow_state_redis_url):
 
     @asynccontextmanager
     async def lifespan(_app):
-        redis = await open_session_redis(workflow_state_redis_url)
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
         openai_compat.set_continuation_store(
             ContinuationStore(redis, key_prefix=f"test:web:{uuid.uuid4().hex}")
         )

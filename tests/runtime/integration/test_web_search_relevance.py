@@ -37,7 +37,8 @@ from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_foundation.telemetry.span_contract import RESULT_RELEVANCE
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
+from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.stub_search import (
@@ -146,7 +147,7 @@ def runtime_url(telemetry, workflow_state_redis_url):
 
     @asynccontextmanager
     async def lifespan(_app):
-        redis = await open_session_redis(workflow_state_redis_url)
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
         openai_compat.set_continuation_store(
             ContinuationStore(redis, key_prefix=f"test:relevance:{uuid.uuid4().hex}")
         )
