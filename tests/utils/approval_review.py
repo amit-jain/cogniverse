@@ -22,7 +22,7 @@ from tests.utils.memory_store import InMemoryConfigStore
 
 ROUTING = {
     "query": "find the lecture on gradient descent",
-    "entities": [{"text": "gradient descent", "type": "TOPIC"}],
+    "entities": [{"text": "gradient descent", "type": "CONCEPT"}],
     "relationships": [],
     "enhanced_query": "find the lecture video on gradient descent",
     "chosen_agent": "video_search_agent",
