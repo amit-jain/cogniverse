@@ -11,6 +11,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/optimize(\/runs(\/[^/]+(\/(cancel|retry))?)?)?$/,
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
+  /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,
   /^\/agents\/annotations\/queue(\/[^/]+\/(assign|complete))?$/,

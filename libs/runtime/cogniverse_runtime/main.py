@@ -84,6 +84,7 @@ from cogniverse_runtime.routers import (
     ingestion,
     knowledge,
     openai_compat,
+    orchestration_annotations,
     search,
     tenant,
     wiki,
@@ -1988,6 +1989,11 @@ app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(approvals.router, prefix="/admin/tenant", tags=["approvals"])
+app.include_router(
+    orchestration_annotations.router,
+    prefix="/admin/tenant",
+    tags=["orchestration-annotations"],
+)
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
 app.include_router(ag_ui.router, prefix="/ag-ui", tags=["ag-ui"])
