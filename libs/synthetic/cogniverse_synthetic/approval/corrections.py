@@ -28,6 +28,12 @@ SCHEMA_CORRECTION_FIELDS: dict[type[BaseModel], tuple[str, ...]] = {
     WorkflowExecutionSchema: tuple(WorkflowExecutionSchema.model_fields),
 }
 
+# Schemas whose rejection merges the reviewer's corrections into the record
+# instead of regenerating it, so a rejection needs at least one correction.
+CORRECTION_ONLY_SCHEMAS: frozenset[type[BaseModel]] = frozenset(
+    {WorkflowExecutionSchema}
+)
+
 
 def schema_for_item_data(data: dict) -> type[BaseModel]:
     """The synthetic example schema ``data`` is a record of."""

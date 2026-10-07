@@ -10,6 +10,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/optimize-modes$/,
   /^\/admin\/tenant\/[^/]+\/optimize(\/runs(\/[^/]+(\/(cancel|retry))?)?)?$/,
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
+  /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
   /^\/agents\/$/,
   /^\/ingestion\/upload$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,

@@ -663,7 +663,9 @@ corrections = parse_corrections(item.data, {"chosen_agent": "summarizer_agent"})
 reasoning = review_reasoning(item.data)
 ```
 
-`correction_template` returns the item's schema name and its correctable
+`CORRECTION_ONLY_SCHEMAS` names the schemas whose rejection merges the
+corrections rather than regenerating (`WorkflowExecutionSchema`), so their
+rejection needs at least one correction. `correction_template` returns the item's schema name and its correctable
 fields with their current values; `parse_corrections` validates reviewer
 corrections against that schema and canonicalizes entities and relationships.
 Both raise `ValueError` for data no synthetic schema describes, and
@@ -1245,7 +1247,7 @@ See source files for detailed docstrings:
 
 - `libs/synthetic/cogniverse_synthetic/approval/corrections.py` —
   `correction_template`, `parse_corrections`, `review_reasoning`,
-  `SCHEMA_CORRECTION_FIELDS`
+  `SCHEMA_CORRECTION_FIELDS`, `CORRECTION_ONLY_SCHEMAS`
 
 - `libs/runtime/cogniverse_runtime/routers/approvals.py` — review routes under
   `/admin/tenant/{tenant_id}/approvals`

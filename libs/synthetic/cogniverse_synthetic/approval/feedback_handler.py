@@ -21,6 +21,7 @@ from cogniverse_core.approval.interfaces import (
 from cogniverse_core.approval.training_schema import (
     validate_approved_training_values,
 )
+from cogniverse_synthetic.approval.corrections import CORRECTION_ONLY_SCHEMAS
 from cogniverse_synthetic.dspy_modules import ValidatedSyntheticExampleRegenerator
 from cogniverse_synthetic.generators.routing import _enhance_entity_query
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_SCHEMA
@@ -254,7 +255,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             item_id=item.item_id,
             label="item data",
         )
-        if schema is WorkflowExecutionSchema:
+        if schema in CORRECTION_ONLY_SCHEMAS:
             return self._apply_schema_corrections(
                 item=item,
                 decision=decision,

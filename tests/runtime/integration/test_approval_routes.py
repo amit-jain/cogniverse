@@ -16,107 +16,37 @@ import pytest
 from fastapi import FastAPI
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-from cogniverse_core.approval.interfaces import (
-    ApprovalBatch,
-    ApprovalStatus,
-    ReviewDecision,
-    ReviewItem,
-    approved_synthetic_dataset_name,
-)
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_core.approval.interfaces import ReviewDecision
 from cogniverse_runtime.routers import approvals
 from cogniverse_synthetic.approval.corrections import SCHEMA_CORRECTION_FIELDS
 from cogniverse_synthetic.schemas import (
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.approval_review import (
+    ROUTING,
+    WORKFLOW,
+    approved_rows,
+    approved_rows_until,
+    review_config_manager,
+    save_review_batch,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
-
-ROUTING = {
-    "query": "find the lecture on gradient descent",
-    "entities": [{"text": "gradient descent", "type": "TOPIC"}],
-    "relationships": [],
-    "enhanced_query": "find the lecture video on gradient descent",
-    "chosen_agent": "video_search_agent",
-    "routing_confidence": 0.4,
-    "search_quality": 0.0,
-    "agent_success": False,
-    "processing_time": 0.0,
-    "metadata": {},
-}
-WORKFLOW = {
-    "workflow_id": "wf-review-1",
-    "query": "summarize the lecture and write a report",
-    "query_type": "video",
-    "execution_time": 12.5,
-    "success": True,
-    "agent_sequence": ["video_search_agent", "summarizer_agent"],
-    "task_count": 2,
-    "parallel_efficiency": 0.5,
-    "confidence_score": 0.3,
-    "metadata": {},
-}
-
-
-def _config_manager(phoenix, redis_url, *, telemetry_url=None) -> ConfigManager:
-    manager = ConfigManager(store=InMemoryConfigStore())
-    manager.set_system_config(
-        SystemConfig(
-            telemetry_url=telemetry_url or phoenix["http_endpoint"],
-            telemetry_collector_endpoint=phoenix["grpc_endpoint"],
-            redis_url=redis_url,
-        )
-    )
-    return manager
 
 
 @pytest.fixture
 def review(phoenix_container, telemetry_manager_with_phoenix, workflow_state_redis_url):
     """A tenant with one saved batch: a routing and a workflow item awaiting
     review and one auto-approved item."""
-    config_manager = _config_manager(phoenix_container, workflow_state_redis_url)
+    config_manager = review_config_manager(phoenix_container, workflow_state_redis_url)
     approvals.set_config_manager(config_manager)
     tenant_id = f"apprv{uuid4().hex[:8]}:main"
     batch_id = f"batch_{uuid4().hex[:8]}"
     storage = ApprovalStorageImpl.from_system_config(
         config_manager, telemetry_manager_with_phoenix, tenant_id
     )
-    items = [
-        ReviewItem(
-            item_id=f"{batch_id}_routing",
-            data=dict(ROUTING),
-            metadata={"agent_type": "routing"},
-            confidence=0.4,
-            status=ApprovalStatus.PENDING_REVIEW,
-        ),
-        ReviewItem(
-            item_id=f"{batch_id}_workflow",
-            data=dict(WORKFLOW),
-            metadata={"agent_type": "workflow"},
-            confidence=0.3,
-            status=ApprovalStatus.PENDING_REVIEW,
-        ),
-        ReviewItem(
-            item_id=f"{batch_id}_confident",
-            data=dict(ROUTING, query="play the intro clip"),
-            metadata={"agent_type": "routing"},
-            confidence=0.95,
-            status=ApprovalStatus.AUTO_APPROVED,
-        ),
-    ]
-    asyncio.run(
-        storage.save_batch(
-            ApprovalBatch(
-                batch_id=batch_id,
-                items=items,
-                context={"tenant_id": tenant_id, "optimizer": "routing"},
-            )
-        )
-    )
+    save_review_batch(storage, batch_id)
     app = FastAPI()
     app.include_router(approvals.router, prefix="/admin/tenant")
     yield {
@@ -148,35 +78,6 @@ async def _pending_until(client, tenant, want, timeout=60.0):
         if set(items) == want or time.monotonic() > deadline:
             return items
         await asyncio.sleep(2)
-
-
-def _approved_rows(storage, item_id) -> int:
-    try:
-        frame = asyncio.run(
-            storage.provider.datasets.get_dataset(
-                approved_synthetic_dataset_name(storage.tenant_id)
-            )
-        )
-    except DatasetNotFoundError:
-        return 0
-    return sum(
-        1
-        for _, row in frame.iterrows()
-        if any(
-            isinstance(row[column], dict) and row[column].get("item_id") == item_id
-            for column in ("input", "output", "metadata")
-            if column in frame.columns
-        )
-    )
-
-
-def _approved_rows_until(storage, item_id, want, timeout=30.0) -> int:
-    deadline = time.monotonic() + timeout
-    while (count := _approved_rows(storage, item_id)) != want:
-        if time.monotonic() > deadline:
-            return count
-        time.sleep(2)
-    return count
 
 
 async def test_pending_items_carry_their_schema_and_correctable_fields(review):
@@ -213,6 +114,10 @@ async def test_pending_items_carry_their_schema_and_correctable_fields(review):
             if field in WORKFLOW
         },
     )
+    assert (routing["corrections_required"], workflow["corrections_required"]) == (
+        False,
+        True,
+    )
 
 
 async def test_an_approval_leaves_the_queue_for_the_training_dataset(review):
@@ -234,8 +139,7 @@ async def test_an_approval_leaves_the_queue_for_the_training_dataset(review):
         remaining = await _pending_until(client, tenant, {f"{batch}_workflow"})
     assert set(remaining) == {f"{batch}_workflow"}
     assert (
-        await asyncio.to_thread(_approved_rows_until, review["storage"], item_id, 1)
-        == 1
+        await asyncio.to_thread(approved_rows_until, review["storage"], item_id, 1) == 1
     )
 
 
@@ -296,6 +200,10 @@ async def test_a_decision_the_item_cannot_take_is_refused_and_changes_nothing(
                 "corrections": {"bogus": 1},
             },
         )
+        no_corrections = await client.post(
+            f"{url}/{workflow}",
+            json={"approved": False, "reviewer": "r", "feedback": "wrong"},
+        )
         unknown = await client.post(
             f"{url}/{batch}_missing", json={"approved": True, "reviewer": "r"}
         )
@@ -311,6 +219,12 @@ async def test_a_decision_the_item_cannot_take_is_refused_and_changes_nothing(
     assert (bad_field.status_code, bad_field.json()) == (
         400,
         {"detail": "WorkflowExecutionSchema unsupported correction fields: bogus"},
+    )
+    assert (no_corrections.status_code, no_corrections.json()) == (
+        400,
+        {
+            "detail": "A WorkflowExecutionSchema rejection needs at least one correction."
+        },
     )
     for response, item in ((unknown, "missing"), (auto, "confident")):
         assert (response.status_code, response.json()) == (
@@ -357,8 +271,7 @@ async def test_two_reviewers_approving_one_item_at_once_add_one_training_row(
             f"Item {item_id} of batch {batch} is not awaiting review.",
         )
     assert (
-        await asyncio.to_thread(_approved_rows_until, review["storage"], item_id, 1)
-        == 1
+        await asyncio.to_thread(approved_rows_until, review["storage"], item_id, 1) == 1
     )
 
 
@@ -394,14 +307,14 @@ async def test_a_decision_redis_already_elected_for_another_reviewer_is_a_confli
         },
     )
     assert after[item_id]["status"] == "pending_review"
-    assert await asyncio.to_thread(_approved_rows, review["storage"], item_id) == 0
+    assert await asyncio.to_thread(approved_rows, review["storage"], item_id) == 0
 
 
 async def test_an_unreachable_store_reads_as_an_outage_not_an_empty_queue(
     phoenix_container, telemetry_manager_with_phoenix, workflow_state_redis_url
 ):
     approvals.set_config_manager(
-        _config_manager(
+        review_config_manager(
             phoenix_container,
             workflow_state_redis_url,
             telemetry_url="http://127.0.0.1:9",
