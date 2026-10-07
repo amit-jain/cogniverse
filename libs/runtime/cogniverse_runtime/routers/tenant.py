@@ -263,6 +263,34 @@ def _is_owned(agent_name: str) -> bool:
     return agent_name == _USER_MEMORY_AGENT
 
 
+def _is_writable(agent_name: str) -> bool:
+    """User memories and agents' own namespaces; ``_``-prefixed partitions
+    other than the user's belong to the runtime."""
+    return agent_name == _USER_MEMORY_AGENT or not agent_name.startswith("_")
+
+
+def _memory_read_failed(
+    exc: Exception, tenant_id: str, namespaces: List[str]
+) -> HTTPException:
+    """503 for a memory read the store did not answer."""
+    return failure_response(
+        503,
+        "memory_unavailable",
+        f"Could not read the memories of {', '.join(namespaces)} for tenant "
+        f"{tenant_id}.",
+        exc,
+        tenant_id=tenant_id,
+    )
+
+
+def _require_writable(agent_name: str) -> None:
+    if not _is_writable(agent_name):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{agent_name} is a system memory namespace; the runtime manages it.",
+        )
+
+
 class MemoryCreateRequest(BaseModel):
     text: str
     category: Optional[str] = None
@@ -274,12 +302,23 @@ class MemoryCreateRequest(BaseModel):
     # are optional so the original {text, category} caller is unaffected.
     kind: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # The namespace the memory lands in: the user's memories, or an agent's
+    # own (its mem0 agent_id). System namespaces answer 403.
+    agent_name: str = _USER_MEMORY_AGENT
+
+
+class MemoryStats(BaseModel):
+    agent_name: str
+    total: int
+    archived: int
+    writable: bool
 
 
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
-    """Save a user-defined memory with optional category, kind, metadata."""
+    """Save a memory with optional category, kind, metadata."""
     tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(request.agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     metadata: Dict[str, Any] = {}
     if request.category:
@@ -296,14 +335,15 @@ async def create_memory(tenant_id: str, request: MemoryCreateRequest):
         mgr.add_memory,
         content=request.text,
         tenant_id=tenant_id,
-        agent_name=_USER_MEMORY_AGENT,
+        agent_name=request.agent_name,
         metadata=metadata,
         infer=False,
     )
     return {
         "status": "saved",
         "id": str(memory_id),
-        "type": "preference",
+        "type": _namespace_to_type(request.agent_name),
+        "agent_name": request.agent_name,
         "category": request.category,
         "kind": request.kind,
     }
@@ -365,25 +405,28 @@ async def list_memories(
 
     items: List[MemoryItem] = []
     for ns in namespaces:
-        if q:
-            raw = await asyncio.to_thread(
-                mgr.search_memory,
-                query=q,
-                tenant_id=tenant_id,
-                agent_name=ns,
-                top_k=limit,
-            )
-        else:
-            # A category filter is applied in Python below, so the whole
-            # partition must be walked (limit=None) — a capped read would
-            # drop matches sitting past the store's 100-row page. Without a
-            # category, the display limit bounds the read.
-            raw = await asyncio.to_thread(
-                mgr.get_all_memories,
-                tenant_id=tenant_id,
-                agent_name=ns,
-                limit=None if category else limit,
-            )
+        try:
+            if q:
+                raw = await asyncio.to_thread(
+                    mgr.search_memory,
+                    query=q,
+                    tenant_id=tenant_id,
+                    agent_name=ns,
+                    top_k=limit,
+                )
+            else:
+                # A category filter is applied in Python below, so the whole
+                # partition must be walked (limit=None) — a capped read would
+                # drop matches sitting past the store's 100-row page. Without
+                # a category, the display limit bounds the read.
+                raw = await asyncio.to_thread(
+                    mgr.get_all_memories,
+                    tenant_id=tenant_id,
+                    agent_name=ns,
+                    limit=None if category else limit,
+                )
+        except Exception as exc:
+            raise _memory_read_failed(exc, tenant_id, namespaces) from exc
 
         for entry in raw:
             item = _entry_to_item(entry, ns)
@@ -397,23 +440,69 @@ async def list_memories(
     return MemoryListResponse(memories=items, count=len(items))
 
 
-@router.delete("/{tenant_id}/memories/{memory_id}")
-async def delete_memory(tenant_id: str, memory_id: str):
-    """Delete a single user-owned memory by ID.
+@router.get("/{tenant_id}/memories/stats", response_model=MemoryStats)
+async def memory_stats(
+    tenant_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to count"
+    ),
+):
+    """Count a namespace's live and archived memories over its whole partition.
 
-    Returns 403 if the memory belongs to a system namespace.
+    The count reads the store, so a backend outage answers 503 rather than 0.
     """
     tenant_id = canonical_tenant_id(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
-
-    success = await asyncio.to_thread(
-        mgr.delete_memory,
-        memory_id=memory_id,
-        tenant_id=tenant_id,
-        agent_name=_USER_MEMORY_AGENT,
+    try:
+        stats = await asyncio.to_thread(
+            mgr.get_memory_stats, tenant_id=tenant_id, agent_name=agent_name
+        )
+    except Exception as exc:
+        raise _memory_read_failed(exc, tenant_id, [agent_name]) from exc
+    return MemoryStats(
+        agent_name=agent_name,
+        total=stats["total_memories"],
+        archived=stats["archived_memories"],
+        writable=_is_writable(agent_name),
     )
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+
+
+@router.delete("/{tenant_id}/memories/{memory_id}")
+async def delete_memory(
+    tenant_id: str,
+    memory_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT,
+        description="The namespace the memory must belong to",
+    ),
+):
+    """Delete one memory of ``agent_name`` by ID.
+
+    Answers 404 unless the memory is this tenant's and in that namespace,
+    and 403 for a system namespace.
+    """
+    tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(agent_name)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
+
+    def _delete() -> bool:
+        # The store deletes by ID alone, so membership is checked first.
+        row = mgr.memory.get(memory_id)
+        if (
+            row is None
+            or row.get("agent_id") != agent_name
+            or canonical_tenant_id(str(row.get("user_id") or "")) != tenant_id
+        ):
+            return False
+        return mgr.delete_memory(
+            memory_id=memory_id, tenant_id=tenant_id, agent_name=agent_name
+        )
+
+    if not await asyncio.to_thread(_delete):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Memory {memory_id} not found among the memories of {agent_name}",
+        )
     return {"status": "deleted"}
 
 
@@ -422,14 +511,18 @@ async def clear_memories(
     tenant_id: str,
     category: Optional[str] = Query(
         default=None,
-        description="Clear only this category, or all user memories if omitted",
+        description="Clear only this category, or the whole namespace if omitted",
+    ),
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to clear"
     ),
 ):
-    """Clear user-owned memories. System memories (strategies) are not affected.
+    """Clear a namespace's memories, optionally only one category of them.
 
-    Optionally filter by category to only clear a subset.
+    System namespaces answer 403.
     """
     tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if category:
@@ -443,7 +536,7 @@ async def clear_memories(
             # thing by "cleared".
             results = mgr.get_all_memories(
                 tenant_id=tenant_id,
-                agent_name=_USER_MEMORY_AGENT,
+                agent_name=agent_name,
                 limit=None,
                 include_archived=True,
             )
@@ -451,29 +544,38 @@ async def clear_memories(
             for r in results:
                 if not isinstance(r, dict):
                     continue
-                meta = r.get("metadata", {})
+                meta = r.get("metadata") or {}
                 if meta.get("category") == category:
                     mid = r.get("id")
                     if mid:
                         mgr.delete_memory(
                             memory_id=str(mid),
                             tenant_id=tenant_id,
-                            agent_name=_USER_MEMORY_AGENT,
+                            agent_name=agent_name,
                         )
                         deleted += 1
             return deleted
 
         deleted = await asyncio.to_thread(_clear_category)
         logger.info(
-            "Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id
+            "Cleared %d '%s' memories of %s for tenant=%s",
+            deleted,
+            category,
+            agent_name,
+            tenant_id,
         )
-        return {"status": "cleared", "category": category, "deleted": deleted}
+        return {
+            "status": "cleared",
+            "agent_name": agent_name,
+            "category": category,
+            "deleted": deleted,
+        }
 
     await asyncio.to_thread(
-        mgr.clear_agent_memory, tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT
+        mgr.clear_agent_memory, tenant_id=tenant_id, agent_name=agent_name
     )
-    logger.info("Cleared all user memories for tenant=%s", tenant_id)
-    return {"status": "cleared"}
+    logger.info("Cleared all memories of %s for tenant=%s", agent_name, tenant_id)
+    return {"status": "cleared", "agent_name": agent_name}
 
 
 _JOBS_SERVICE = "tenant_jobs"

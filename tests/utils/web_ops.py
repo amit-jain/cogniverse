@@ -7,13 +7,22 @@ of their own so tenant deletes and session closes reach this worker the way
 they reach a runtime replica.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL``, as a worker pod runs it.
+
+``serve_token_embedder`` answers the OpenAI ``/v1/embeddings`` contract the
+memory store's DenseOn client speaks, for hosts that cannot fetch DenseOn.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import math
+import re
+import threading
 import uuid
 from contextlib import asynccontextmanager, contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Awaitable, Callable, Iterator, Optional
 
 from fastapi import FastAPI
@@ -109,3 +118,67 @@ def serve_ops_runtime(
         admin.reset_dependencies()
         tenant.set_config_manager(None)
         BackendRegistry.get_instance().clear_instances()
+
+
+EMBEDDING_DIMS = 768
+_PROMPT = re.compile(r"^(document|query): ")
+
+
+def token_embedding(text: str) -> list[float]:
+    """A unit vector summing one signed hashed axis per word of ``text``,
+    without the DenseOn prompt prefix: texts sharing words lie close."""
+    vector = [0.0] * EMBEDDING_DIMS
+    for word in re.findall(r"[a-z0-9]+", _PROMPT.sub("", text.lower())):
+        digest = hashlib.sha256(word.encode()).digest()
+        axis = int.from_bytes(digest[:4], "big") % EMBEDDING_DIMS
+        vector[axis] += 1.0 if digest[4] & 1 else -1.0
+    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+    return [value / norm for value in vector]
+
+
+@contextmanager
+def serve_token_embedder() -> Iterator[str]:
+    """Serve ``token_embedding`` at ``/v1/embeddings``; yields the base URL."""
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):  # noqa: N802 (http.server API)
+            request = json.loads(
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            )
+            inputs = request["input"]
+            inputs = [inputs] if isinstance(inputs, str) else inputs
+            body = json.dumps(
+                {
+                    "object": "list",
+                    "model": request["model"],
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": i,
+                            "embedding": token_embedding(text),
+                        }
+                        for i, text in enumerate(inputs)
+                    ],
+                    "usage": {"prompt_tokens": 0, "total_tokens": 0},
+                }
+            ).encode()
+            self.send_response(200 if self.path == "/v1/embeddings" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

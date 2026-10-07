@@ -1196,6 +1196,12 @@ memory.delete_memory(
     tenant_id="acme",
     agent_name="search_agent"
 )
+
+# Count live and archived memories over the whole partition; a backend
+# failure raises rather than counting zero
+memory.get_memory_stats(tenant_id="acme", agent_name="search_agent")
+# {"total_memories": 12, "archived_memories": 2, "enabled": True,
+#  "tenant_id": "acme", "agent_name": "search_agent"}
 ```
 
 `Mem0MemoryManager.tenant_partition_schema_exists(tenant_id)` reports

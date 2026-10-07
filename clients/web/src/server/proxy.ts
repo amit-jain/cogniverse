@@ -9,6 +9,8 @@ const ALLOWED = [
   /^\/admin\/profiles(\/[^/]+(\/deploy)?)?$/,
   /^\/admin\/tenant\/optimize-modes$/,
   /^\/admin\/tenant\/[^/]+\/optimize(\/runs(\/[^/]+(\/(cancel|retry))?)?)?$/,
+  /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
+  /^\/agents\/$/,
   /^\/ingestion\/upload$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,
 ];

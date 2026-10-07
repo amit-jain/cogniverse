@@ -192,6 +192,9 @@ describe('runtime proxy', () => {
       ['POST', '/v1/chat/completions'],
       ['POST', '/ingestion/start'],
       ['GET', '/events/ingestion/job-1'],
+      ['DELETE', '/admin/memories/acme:prod'],
+      ['DELETE', '/admin/tenant/acme:prod/memories/m1/archive'],
+      ['POST', '/agents/register'],
     ]) {
       const response = await app.request(`/api/runtime${path}`, { method });
       expect(response.status).toBe(404);
@@ -226,6 +229,12 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/optimize/runs/wf-1'],
       ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/cancel'],
       ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/retry'],
+      ['GET', '/agents/'],
+      ['GET', '/admin/tenant/acme:prod/memories/stats?agent_name=search_agent'],
+      ['GET', '/admin/tenant/acme:prod/memories?agent_name=search_agent&limit=200&q=dark'],
+      ['POST', '/admin/tenant/acme:prod/memories'],
+      ['DELETE', '/admin/tenant/acme:prod/memories/m1?agent_name=search_agent'],
+      ['DELETE', '/admin/tenant/acme:prod/memories?agent_name=search_agent'],
     ];
     for (const [method, path] of calls) {
       const response = await app.request(`/api/runtime${path}`, { method });

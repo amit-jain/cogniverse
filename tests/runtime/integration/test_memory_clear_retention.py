@@ -1,4 +1,5 @@
-"""Complete memory deletion and pin-aware retention against Mem0 and Vespa."""
+"""Memory deletion, namespace guards, counts and pin-aware retention against
+Mem0 and Vespa."""
 
 from __future__ import annotations
 
@@ -140,7 +141,7 @@ async def test_clear_all_removes_205_active_and_archived_rows(
             response = await client.delete(route)
         assert response.status_code == 200
         assert response.json() == (
-            {"status": "cleared"}
+            {"status": "cleared", "agent_name": "_user_memories"}
             if entry == "tenant"
             else {"status": "cleared", "type": "preference"}
         )
@@ -212,6 +213,7 @@ async def test_clear_by_category_removes_archived_rows_of_that_category(
     assert response.status_code == 200
     assert response.json() == {
         "status": "cleared",
+        "agent_name": "_user_memories",
         "category": "preference",
         "deleted": 120,
     }
@@ -247,8 +249,8 @@ async def test_independent_tenant_clears_interleave_without_cross_deletion(
             *(client.delete(f"/{mm.tenant_id}/memories") for mm in managers)
         )
     assert [response.json() for response in responses] == [
-        {"status": "cleared"},
-        {"status": "cleared"},
+        {"status": "cleared", "agent_name": "_user_memories"},
+        {"status": "cleared", "agent_name": "_user_memories"},
     ]
     assert seen == {mm.tenant_id for mm in managers}
     proxy.intercept = None
@@ -286,8 +288,254 @@ async def test_clear_refused_midway_fails_and_retry_removes_every_row(
         assert _ids(mm, "_user_memories") == seeded - set(deleted)
         proxy.intercept = None
         retried = await client.delete(f"/{mm.tenant_id}/memories")
-    assert retried.json() == {"status": "cleared"}
+    assert retried.json() == {"status": "cleared", "agent_name": "_user_memories"}
     assert _ids(mm, "_user_memories") == set()
+
+
+def _seed_rows(mm, rows):
+    """Seed ``(id, namespace)`` rows, none archived."""
+    ids = [mid for mid, _ in rows]
+    payloads = [
+        {
+            "data": f"stored content {mid}",
+            "user_id": mm.tenant_id,
+            "agent_id": namespace,
+            "created_at": 1700000000,
+            "archived": False,
+        }
+        for mid, namespace in rows
+    ]
+    mm.memory.vector_store.insert([[0.01] * 768] * len(ids), payloads, ids)
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_only_a_memory_of_the_named_namespace(
+    memory_store, memory_app
+):
+    managers, _, _ = memory_store
+    target, peer = managers
+    rows = {
+        "user": f"{target.tenant_id}-user",
+        "agent": f"{target.tenant_id}-agent",
+        "strategy": f"{target.tenant_id}-strategy",
+    }
+    _seed_rows(
+        target,
+        [
+            (rows["user"], "_user_memories"),
+            (rows["agent"], "search_agent"),
+            (rows["strategy"], "_strategy_store"),
+        ],
+    )
+    peer_row = f"{peer.tenant_id}-user"
+    _seed_rows(peer, [(peer_row, "_user_memories")])
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        # The user namespace is the default; a strategy's ID is not in it.
+        wrong_namespace = await client.delete(
+            f"/{target.tenant_id}/memories/{rows['strategy']}"
+        )
+        system = await client.delete(
+            f"/{target.tenant_id}/memories/{rows['strategy']}",
+            params={"agent_name": "_strategy_store"},
+        )
+        other_tenant = await client.delete(f"/{target.tenant_id}/memories/{peer_row}")
+        agent = await client.delete(
+            f"/{target.tenant_id}/memories/{rows['agent']}",
+            params={"agent_name": "search_agent"},
+        )
+
+    assert (wrong_namespace.status_code, wrong_namespace.json()) == (
+        404,
+        {
+            "detail": f"Memory {rows['strategy']} not found among the memories "
+            "of _user_memories"
+        },
+    )
+    assert (system.status_code, system.json()) == (
+        403,
+        {
+            "detail": "_strategy_store is a system memory namespace; "
+            "the runtime manages it."
+        },
+    )
+    assert (other_tenant.status_code, other_tenant.json()) == (
+        404,
+        {"detail": f"Memory {peer_row} not found among the memories of _user_memories"},
+    )
+    assert (agent.status_code, agent.json()) == (200, {"status": "deleted"})
+    assert _ids(target, "_user_memories") == {rows["user"]}
+    assert _ids(target, "search_agent") == set()
+    assert _ids(target, "_strategy_store") == {rows["strategy"]}
+    assert _ids(peer, "_user_memories") == {peer_row}
+
+
+@pytest.mark.asyncio
+async def test_clear_names_its_namespace_and_refuses_a_system_one(
+    memory_store, memory_app
+):
+    managers, _, _ = memory_store
+    target, _peer = managers
+    users = _seed(target, "_user_memories", 3, prefix="user")
+    _seed(target, "search_agent", 120, prefix="agent")
+    strategies = _seed(target, "_strategy_store", 2, prefix="strategy")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        system = await client.delete(
+            f"/{target.tenant_id}/memories", params={"agent_name": "_strategy_store"}
+        )
+        cleared = await client.delete(
+            f"/{target.tenant_id}/memories", params={"agent_name": "search_agent"}
+        )
+
+    assert (system.status_code, system.json()) == (
+        403,
+        {
+            "detail": "_strategy_store is a system memory namespace; "
+            "the runtime manages it."
+        },
+    )
+    assert (cleared.status_code, cleared.json()) == (
+        200,
+        {"status": "cleared", "agent_name": "search_agent"},
+    )
+    assert _ids(target, "search_agent") == set()
+    assert _ids(target, "_user_memories") == users
+    assert _ids(target, "_strategy_store") == strategies
+
+
+@pytest.mark.asyncio
+async def test_stats_count_live_and_archived_rows_past_the_page(
+    memory_store, memory_app
+):
+    managers, _, _ = memory_store
+    target, peer = managers
+    # _seed archives every third row: 69 of 205.
+    _seed(target, "_user_memories", 205)
+    _seed(target, "_strategy_store", 4, prefix="strategy")
+    _seed(peer, "_user_memories", 7, prefix="peer")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        users = await client.get(f"/{target.tenant_id}/memories/stats")
+        strategies = await client.get(
+            f"/{target.tenant_id}/memories/stats",
+            params={"agent_name": "_strategy_store"},
+        )
+        empty = await client.get(
+            f"/{target.tenant_id}/memories/stats",
+            params={"agent_name": "search_agent"},
+        )
+
+    assert users.json() == {
+        "agent_name": "_user_memories",
+        "total": 136,
+        "archived": 69,
+        "writable": True,
+    }
+    assert strategies.json() == {
+        "agent_name": "_strategy_store",
+        "total": 2,
+        "archived": 2,
+        "writable": False,
+    }
+    assert empty.json() == {
+        "agent_name": "search_agent",
+        "total": 0,
+        "archived": 0,
+        "writable": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_stats_during_a_store_outage_fail_rather_than_count_zero(
+    memory_store, memory_app
+):
+    managers, proxy, _ = memory_store
+    target, _peer = managers
+    _seed(target, "_user_memories", 5)
+    refused = []
+
+    def intercept(method, path, body):
+        if method == "POST" and path.startswith("/search/"):
+            refused.append(path)
+            return 503, {"message": "injected search outage"}
+
+    proxy.intercept = intercept
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        response = await client.get(f"/{target.tenant_id}/memories/stats")
+    proxy.intercept = None
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert {key: detail[key] for key in ("error", "message", "tenant_id")} == {
+        "error": "memory_unavailable",
+        "message": f"Could not read the memories of _user_memories for tenant "
+        f"{target.tenant_id}.",
+        "tenant_id": target.tenant_id,
+    }
+    assert len(refused) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_deletes_racing_past_the_membership_check_leave_it_deleted(
+    memory_store, memory_app
+):
+    managers, proxy, _ = memory_store
+    target, _peer = managers
+    mid = f"{target.tenant_id}-raced"
+    kept = f"{target.tenant_id}-kept"
+    _seed_rows(target, [(mid, "search_agent"), (kept, "search_agent")])
+    barrier = threading.Barrier(2, timeout=30)
+    reads = []
+    lock = threading.Lock()
+
+    def intercept(method, path, body):
+        # The first two reads of the row are the two membership checks; each
+        # completes only once both have arrived, so both requests pass the
+        # check before either deletes.
+        if method == "GET" and "/document/v1/" in path and mid in unquote(path):
+            with lock:
+                reads.append(path)
+                checking = len(reads) <= 2
+            if checking:
+                barrier.wait()
+
+    proxy.intercept = intercept
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        responses = await asyncio.gather(
+            *(
+                client.delete(
+                    f"/{target.tenant_id}/memories/{mid}",
+                    params={"agent_name": "search_agent"},
+                )
+                for _ in range(2)
+            )
+        )
+    proxy.intercept = None
+
+    deleted = (200, {"status": "deleted"})
+    gone = (
+        404,
+        {"detail": f"Memory {mid} not found among the memories of search_agent"},
+    )
+    outcomes = sorted(
+        ((response.status_code, response.json()) for response in responses),
+        key=lambda outcome: outcome[0],
+    )
+    # Whichever reaches the store second finds the row deleted or deletes
+    # nothing; neither fails.
+    assert outcomes in ([deleted, deleted], [deleted, gone])
+    assert _ids(target, "search_agent") == {kept}
 
 
 @pytest.fixture

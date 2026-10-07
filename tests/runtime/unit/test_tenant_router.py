@@ -419,6 +419,12 @@ class TestDeleteMemory:
         client, _ = tenant_client
         mgr = MagicMock()
         mgr.memory = MagicMock()
+        mgr.memory.get.return_value = {
+            "id": "mem-abc123",
+            "memory": "dark mode",
+            "user_id": "acme:acme",
+            "agent_id": "_user_memories",
+        }
         mgr.delete_memory.return_value = True
 
         with patch(
@@ -434,11 +440,11 @@ class TestDeleteMemory:
             agent_name="_user_memories",
         )
 
-    def test_404_when_delete_returns_false(self, tenant_client):
+    def test_404_when_the_memory_does_not_exist(self, tenant_client):
         client, _ = tenant_client
         mgr = MagicMock()
         mgr.memory = MagicMock()
-        mgr.delete_memory.return_value = False
+        mgr.memory.get.return_value = None
 
         with patch(
             "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
@@ -446,6 +452,10 @@ class TestDeleteMemory:
             resp = client.delete("/acme/memories/no-such-id")
 
         assert resp.status_code == 404
+        assert resp.json() == {
+            "detail": "Memory no-such-id not found among the memories of _user_memories"
+        }
+        mgr.delete_memory.assert_not_called()
 
 
 @pytest.mark.unit

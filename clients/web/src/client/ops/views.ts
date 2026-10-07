@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { IngestionView } from './IngestionView';
+import { MemoryView } from './MemoryView';
 import { OptimizationView } from './OptimizationView';
 import { ProfilesView } from './ProfilesView';
 import { TenantsView } from './TenantsView';
@@ -15,4 +16,5 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'profiles', label: 'Backend profiles', component: ProfilesView },
   { id: 'ingestion', label: 'Ingestion', component: IngestionView },
   { id: 'optimization', label: 'Optimization runs', component: OptimizationView },
+  { id: 'memory', label: 'Memory', component: MemoryView },
 ];
