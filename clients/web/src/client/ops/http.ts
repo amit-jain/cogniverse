@@ -9,13 +9,15 @@ export class RuntimeRequestError extends Error {
 
 /**
  * The human-readable reason in a failed runtime or web-server response:
- * the web server's ``error``, FastAPI's string ``detail``, a structured
- * ``detail.message`` followed by its ``detail.errors``, or each validation
- * error as ``field: message``.
+ * the web server's ``error``, an OpenAI-style ``error.message``, FastAPI's
+ * string ``detail``, a structured ``detail.message`` followed by its
+ * ``detail.errors``, or each validation error as ``field: message``.
  */
 export function errorMessage(body: unknown, status: number): string {
   const value = body as { error?: unknown; detail?: unknown } | null;
   if (typeof value?.error === 'string') return value.error;
+  const envelope = value?.error as { message?: unknown } | null | undefined;
+  if (typeof envelope?.message === 'string') return envelope.message;
   const detail = value?.detail;
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {

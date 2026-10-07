@@ -115,9 +115,14 @@ class AnnotationStore(ABC):
         score: float,
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,
     ) -> str:
         """
         Add annotation to a span.
+
+        An annotation replaces the span's earlier annotation of the same name
+        and ``identifier``; distinct identifiers keep several annotations of
+        one name on one span.
 
         Args:
             span_id: Target span identifier
@@ -126,6 +131,7 @@ class AnnotationStore(ABC):
             score: Numeric score (0.0-1.0)
             metadata: Additional metadata dictionary
             project: Project/namespace identifier
+            identifier: Which of the span's annotations of this name this is
 
         Returns:
             Annotation identifier (if supported by backend)

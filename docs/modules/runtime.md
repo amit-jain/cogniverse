@@ -1583,6 +1583,23 @@ exception type (`code` `internal_error`, `service_unavailable` for an
 unanswering continuation store, `run_cancelled` for a cancelled run). A client
 that hangs up cancels the turn behind its run.
 
+A search run's `result` carries `span_id`, the id of the search's
+`SearchAgent.process` span, which records the query and the results (`null`
+when telemetry is off).
+
+**POST /ag-ui/results/relevance** — stores a reviewer's rating of one result
+of a search as a `result_relevance` annotation on its span, in the key's
+tenant. Body `{span_id, result_id, relevance}`: `span_id` is 16 hex digits,
+`result_id` the id the span records the result under, `relevance` one of
+`Highly Relevant` (score 1.0), `Somewhat Relevant` (0.5) or `Not Relevant`
+(0.0). Each result keeps its own rating, and rating it again replaces it. The
+answer is `{span_id, result_id, relevance, score}`. An unknown key is 401, a
+key-store outage 503, an invalid body 400 naming the field, a span that is not
+in the tenant's telemetry project 404 `span_not_found`, and a telemetry
+backend that fails the read or the write 502 `annotation_not_stored`. The
+triplet miner (`TripletExtractor`) counts a `Highly Relevant` result as a
+positive for the search's query.
+
 The browser UI in `clients/web` drives this surface through a CopilotKit
 runtime that holds the harness key; see its [README](../../clients/web/README.md).
 

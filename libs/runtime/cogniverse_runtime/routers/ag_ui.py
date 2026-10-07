@@ -17,6 +17,10 @@ a run is self-contained exactly as a ``/v1`` request is. A run streams:
   a client renders as results cards;
 - ``RUN_FINISHED``, or ``RUN_ERROR`` when the turn failed.
 
+A search payload carries the ``span_id`` of the search; ``POST
+/ag-ui/results/relevance`` stores a reviewer's relevance label for one of its
+results as that span's ``result_relevance`` annotation, in the key's tenant.
+
 Frontend tools: the run's ``tools`` reach the agent as its external tools. An
 agent that suspends on them streams one ``TOOL_CALL_START`` / ``_ARGS`` /
 ``_END`` sequence per call and finishes with ``outcome.pendingToolCallIds``;
@@ -31,7 +35,7 @@ import json
 import logging
 import uuid
 from contextlib import aclosing
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from ag_ui.core import (
     AssistantMessage,
@@ -61,10 +65,16 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, Header, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, ValidationError
 
 from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.span_contract import (
+    RELEVANCE_SCORES,
+    SpanNotInProjectError,
+    persist_result_relevance,
+)
 from cogniverse_runtime.routers.openai_compat import (
     UNAUTHORIZED,
     DispatcherNotReady,
@@ -409,6 +419,84 @@ async def _run_frames(
             yield frame
 
 
+class RelevanceRequest(BaseModel):
+    span_id: str = Field(pattern=r"^[0-9a-f]{16}$")
+    result_id: str = Field(min_length=1)
+    relevance: Literal[tuple(RELEVANCE_SCORES)]  # type: ignore[valid-type]
+
+
+def _invalid_body(exc: ValidationError, what: str) -> JSONResponse:
+    problems = "; ".join(
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+        for error in exc.errors()
+    )
+    return error_response(400, f"Invalid {what}: {problems}", "invalid_request")
+
+
+@router.post("/results/relevance")
+async def rate_result(
+    raw_request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Store a reviewer's relevance label for one result of a search span of
+    the key's tenant; answers the stored label and score."""
+    try:
+        tenant_id = await resolve_tenant_off_loop(authorization)
+    except ConfigStoreUnavailableError as exc:
+        logger.warning("harness key store unavailable on /ag-ui: %s", exc)
+        return dependency_unavailable(exc, "harness key store")
+    if tenant_id is None:
+        return error_response(**UNAUTHORIZED)
+    try:
+        request = RelevanceRequest.model_validate(await raw_request.json())
+    except json.JSONDecodeError as exc:
+        return error_response(
+            400,
+            f"Invalid relevance rating: body is not JSON ({exc})",
+            "invalid_request",
+        )
+    except ValidationError as exc:
+        return _invalid_body(exc, "relevance rating")
+
+    try:
+        manager = get_telemetry_manager()
+        project = manager.config.get_project_name(tenant_id)
+        score = await persist_result_relevance(
+            manager.get_provider(tenant_id=tenant_id, project_name=project),
+            project,
+            request.span_id,
+            request.result_id,
+            request.relevance,
+        )
+    except SpanNotInProjectError:
+        return error_response(
+            404,
+            f"Search span {request.span_id} is not a span of this tenant.",
+            "span_not_found",
+        )
+    except Exception as exc:
+        logger.exception(
+            "relevance of result %s on span %s for tenant %s was not stored",
+            request.result_id,
+            request.span_id,
+            tenant_id,
+        )
+        return error_response(
+            502,
+            f"The relevance of result {request.result_id} was not stored "
+            f"({type(exc).__name__}). See server logs for detail.",
+            "annotation_not_stored",
+            err_type="server_error",
+            error_type=type(exc).__name__,
+        )
+    return {
+        "span_id": request.span_id,
+        "result_id": request.result_id,
+        "relevance": request.relevance,
+        "score": score,
+    }
+
+
 @router.post("/{agent_name}")
 async def run_agent(
     agent_name: str,
@@ -430,13 +518,7 @@ async def run_agent(
             400, f"Invalid AG-UI run input: body is not JSON ({exc})", "invalid_request"
         )
     except ValidationError as exc:
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-            for error in exc.errors()
-        )
-        return error_response(
-            400, f"Invalid AG-UI run input: {problems}", "invalid_request"
-        )
+        return _invalid_body(exc, "AG-UI run input")
     try:
         dispatch_args = build_dispatch_args(to_openai_messages(run_input))
     except RequestShapeError as exc:

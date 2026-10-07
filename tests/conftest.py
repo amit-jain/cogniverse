@@ -1598,6 +1598,30 @@ def _reset_request_contextvars():
 
 
 @pytest.fixture(autouse=True)
+def _restore_telemetry_endpoint_overrides():
+    """Keep the process's telemetry endpoint overrides to the test that set
+    them.
+
+    ``configure_telemetry_endpoints`` records process-wide endpoints that every
+    later ``get_telemetry_manager`` build applies over its own config. The
+    dashboard sets them on import, so without this a manager a later test
+    builds from its own config exports to the dashboard's endpoints instead.
+    """
+    import sys
+
+    manager = sys.modules.get("cogniverse_foundation.telemetry.manager")
+    saved = dict(manager._endpoint_overrides) if manager is not None else None
+    yield
+    manager = sys.modules.get("cogniverse_foundation.telemetry.manager")
+    if manager is not None:
+        with manager._telemetry_manager_lock:
+            manager._endpoint_overrides.clear()
+            manager._endpoint_overrides.update(
+                saved or {"otlp_endpoint": None, "http_endpoint": None}
+            )
+
+
+@pytest.fixture(autouse=True)
 def _reset_dataset_frame_cache():
     """Give every test its own ``evaluation_task`` dataset-frame memo.
 

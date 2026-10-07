@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { agentHue, agentLabel } from '../src/client/api';
-import { clock, resultsOf } from '../src/client/ResultCards';
+import { clock, resultsOf, searchSpanOf } from '../src/client/ResultCards';
 
 describe('resultsOf', () => {
   it('reads public-shaped single-profile hits in order', () => {
@@ -26,8 +26,24 @@ describe('resultsOf', () => {
       },
     };
     expect(resultsOf(state)).toEqual([
-      { id: 'v1_seg_3', score: 0.91, title: 'Cats', snippet: 'a cat jumps', start: 75.4, end: 81 },
-      { id: 'v2_seg_0', score: 0.42, title: undefined, snippet: 'a dog', start: undefined, end: undefined },
+      {
+        id: 'v1_seg_3',
+        ratingId: 'id:video:video::v1_seg_3',
+        score: 0.91,
+        title: 'Cats',
+        snippet: 'a cat jumps',
+        start: 75.4,
+        end: 81,
+      },
+      {
+        id: 'v2_seg_0',
+        ratingId: 'id:video:video::v2_seg_0',
+        score: 0.42,
+        title: undefined,
+        snippet: 'a dog',
+        start: undefined,
+        end: undefined,
+      },
     ]);
   });
 
@@ -36,7 +52,7 @@ describe('resultsOf', () => {
       result: { results: [{ id: 'a', score: 12.5, rrf_score: 0.033, metadata: {} }] },
     };
     expect(resultsOf(state)).toEqual([
-      { id: 'a', score: 0.033, title: undefined, snippet: undefined, start: undefined, end: undefined },
+      { id: 'a', ratingId: 'a', score: 0.033, title: undefined, snippet: undefined, start: undefined, end: undefined },
     ]);
   });
 
@@ -55,11 +71,43 @@ describe('resultsOf', () => {
     expect(resultsOf(state).map((hit) => hit.id)).toEqual(['doc-7', 'v9']);
   });
 
+  it('rates a hit by the id its search span records it under', () => {
+    const state = {
+      result: {
+        results: [
+          { id: 'seg_1', document_id: 'doc_1', video_id: 'v1' },
+          { id: 'seg_2', documentid: 'doc_2' },
+          { id: 'seg_3', video_id: 'v3' },
+          { source_id: 'src_4', video_id: 'v4', metadata: { video_id: 'v4' } },
+          { video_id: 'v5' },
+          { metadata: { video_id: 'v6' } },
+        ],
+      },
+    };
+    expect(resultsOf(state).map((hit) => [hit.id, hit.ratingId])).toEqual([
+      ['seg_1', 'doc_1'],
+      ['seg_2', 'doc_2'],
+      ['seg_3', 'seg_3'],
+      ['v4', 'src_4'],
+      ['v5', 'v5'],
+      ['v6', undefined],
+    ]);
+  });
+
   it('returns no hits for a payload without a results array', () => {
     expect(resultsOf(undefined)).toEqual([]);
     expect(resultsOf({})).toEqual([]);
     expect(resultsOf({ result: { answer: 'hi' } })).toEqual([]);
     expect(resultsOf({ result: { results: 'nope' } })).toEqual([]);
+  });
+});
+
+describe('searchSpanOf', () => {
+  it("reads the search's span id from the final payload", () => {
+    expect(searchSpanOf({ result: { span_id: '00000000000000ab', results: [] } })).toBe('00000000000000ab');
+    expect(searchSpanOf({ result: { span_id: null, results: [] } })).toBeUndefined();
+    expect(searchSpanOf({ result: { results: [] } })).toBeUndefined();
+    expect(searchSpanOf(undefined)).toBeUndefined();
   });
 });
 

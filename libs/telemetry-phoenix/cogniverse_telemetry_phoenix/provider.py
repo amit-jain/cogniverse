@@ -475,15 +475,16 @@ class PhoenixTraceStore(TraceStore):
             project: Project name (full name like "cogniverse-tenant-service")
             start_time: Optional start time filter
             end_time: Optional end time filter
-            filters: Optional server-side filters. ``{"name": <span name>}``
-                becomes a SpanQuery predicate so only matching spans cross
-                the wire — pulling the whole project window and filtering
-                client-side costs the full frame per call. ``name`` may be a
-                single string (``name == '...'``) or a list/tuple/set of
-                names (``name in ['a', 'b']``) — the list form is required
-                when the caller reconstructs an object from more than one
-                span type in the returned frame (e.g. approval batch + its
-                item children).
+            filters: Optional server-side filters, applied as a SpanQuery
+                predicate so only matching spans cross the wire — pulling the
+                whole project window and filtering client-side costs the full
+                frame per call. ``name`` may be a single string
+                (``name == '...'``) or a list/tuple/set of names
+                (``name in ['a', 'b']``) — the list form is required when the
+                caller reconstructs an object from more than one span type in
+                the returned frame (e.g. approval batch + its item children).
+                ``span_id`` selects one span (``span_id == '...'``). Any other
+                key raises ``ValueError``.
             limit: Maximum number of spans to return
             columns: Optional projection of standardized columns to return.
                 Phoenix selects only the requested columns when supported;
@@ -497,6 +498,11 @@ class PhoenixTraceStore(TraceStore):
             - start_time: Span start timestamp
             - end_time: Span end timestamp
         """
+        unsupported_filters = set(filters or {}).difference({"name", "span_id"})
+        if unsupported_filters:
+            raise ValueError(
+                f"Phoenix span queries do not support filters {sorted(unsupported_filters)}"
+            )
         try:
             client = self._get_client()
 
@@ -507,23 +513,27 @@ class PhoenixTraceStore(TraceStore):
             if end_time is not None and end_time.tzinfo is None:
                 end_time = end_time.replace(tzinfo=timezone.utc)
 
+            def _esc(n: object) -> str:
+                # Backslash first, then quote — quoting first would let a
+                # trailing backslash re-escape the closing quote.
+                return str(n).replace("\\", "\\\\").replace("'", "\\'")
+
             # Pass time filters directly to Phoenix API for efficient server-side filtering
-            query = None
+            predicates = []
             if filters and filters.get("name"):
-                from phoenix.client.types.spans import SpanQuery
-
-                def _esc(n: object) -> str:
-                    # Backslash first, then quote — quoting first would let a
-                    # trailing backslash re-escape the closing quote.
-                    return str(n).replace("\\", "\\\\").replace("'", "\\'")
-
                 name_filter = filters["name"]
                 if isinstance(name_filter, (list, tuple, set)):
                     joined = ", ".join(f"'{_esc(n)}'" for n in name_filter)
-                    predicate = f"name in [{joined}]"
+                    predicates.append(f"name in [{joined}]")
                 else:
-                    predicate = f"name == '{_esc(name_filter)}'"
-                query = SpanQuery().where(predicate)
+                    predicates.append(f"name == '{_esc(name_filter)}'")
+            if filters and "span_id" in filters:
+                predicates.append(f"span_id == '{_esc(filters['span_id'])}'")
+            query = None
+            if predicates:
+                from phoenix.client.types.spans import SpanQuery
+
+                query = SpanQuery().where(" and ".join(predicates))
             if columns is not None:
                 from phoenix.client.types.spans import SpanQuery
 
@@ -892,9 +902,13 @@ class PhoenixAnnotationStore(AnnotationStore):
         score: float,
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,
     ) -> str:
         """
         Add annotation to a span.
+
+        Phoenix keys an annotation by span, name and identifier: a write with
+        the same three replaces the earlier annotation.
 
         Args:
             span_id: Target span identifier
@@ -903,6 +917,7 @@ class PhoenixAnnotationStore(AnnotationStore):
             score: Numeric score (0.0-1.0)
             metadata: Additional metadata dictionary
             project: Project name (used for logging)
+            identifier: Which of the span's annotations of this name this is
 
         Returns:
             Annotation identifier (span_id in Phoenix's case)
@@ -917,6 +932,7 @@ class PhoenixAnnotationStore(AnnotationStore):
                 score=score,
                 explanation=f"{name}: {label}",
                 metadata=metadata,
+                identifier=identifier,
             )
 
             logger.debug(

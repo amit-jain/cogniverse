@@ -1,7 +1,7 @@
 import { CopilotChat, useAgent } from '@copilotkit/react-core/v2';
 import { useEffect, useState } from 'react';
 import { agentLabel } from './api';
-import { ResultCards, resultsOf } from './ResultCards';
+import { ResultCards, resultsOf, searchSpanOf } from './ResultCards';
 
 /** The CUSTOM event the runtime emits for each agent progress update. */
 export const STATUS_EVENT = 'cogniverse.status';
@@ -25,6 +25,7 @@ export function AgentWorkspace({ agentName }: { agentName: string }) {
   }, [agent]);
 
   const results = resultsOf(agent.state);
+  const spanId = searchSpanOf(agent.state);
   return (
     <div className="workspace">
       <header className="workspace-header">
@@ -44,7 +45,7 @@ export function AgentWorkspace({ agentName }: { agentName: string }) {
         </section>
         {results.length > 0 && (
           <aside className="results" aria-label="Results">
-            <ResultCards results={results} />
+            <ResultCards key={spanId} results={results} spanId={spanId} />
           </aside>
         )}
       </div>

@@ -43,6 +43,9 @@ _REWRITE_FIELDS = {
     "confidence": "0.95",
 }
 
+# The id of the search's telemetry span, as SearchAgent reads it.
+_SEARCH_SPAN_ID = "00000000000000ab"
+
 _HIT = {
     "document_id": "v_001",
     "score": 0.9123,
@@ -63,6 +66,7 @@ _SEARCH_ENVELOPE_KEYS = {
     "degraded_profiles",
     "query_rewrite",
     "search_mode",
+    "span_id",
 }
 
 # What the gateway adds on top of the downstream agent's own envelope.
@@ -117,7 +121,13 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
     async def test_a_rewritten_query_is_reported_under_query_rewrite(self):
         dispatcher, _ = _dispatcher([_HIT])
 
-        with dspy.context(lm=DummyLM([dict(_REWRITE_FIELDS)])):
+        with (
+            dspy.context(lm=DummyLM([dict(_REWRITE_FIELDS)])),
+            patch(
+                "cogniverse_agents.search_agent._current_span_id",
+                return_value=_SEARCH_SPAN_ID,
+            ),
+        ):
             response = await dispatcher._execute_search_task(
                 _ORIGINAL_QUERY, _TENANT, top_k=3
             )
@@ -136,6 +146,7 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
         assert response["profiles"] == []
         assert response["degraded_profiles"] == []
         assert response["search_mode"] == "single_profile"
+        assert response["span_id"] == _SEARCH_SPAN_ID
 
     async def test_a_rewrite_with_no_lm_to_call_names_itself_in_the_same_block(self):
         """The rewrite degrades in place: the search still runs and reports."""

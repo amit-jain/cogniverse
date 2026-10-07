@@ -11,6 +11,12 @@ import { parseRoute, routeHash } from '../src/client/route';
 describe('errorMessage', () => {
   it('reads each failure shape the runtime and web server answer with', () => {
     expect(errorMessage({ error: 'runtime down' }, 502)).toBe('runtime down');
+    expect(
+      errorMessage(
+        { error: { message: 'Search span 00000000000000ab is not a span of this tenant.', code: 'span_not_found' } },
+        404,
+      ),
+    ).toBe('Search span 00000000000000ab is not a span of this tenant.');
     expect(errorMessage({ detail: 'Tenant acme:prod already exists' }, 409)).toBe(
       'Tenant acme:prod already exists',
     );
