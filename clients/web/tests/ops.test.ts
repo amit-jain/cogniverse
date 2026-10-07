@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { queueSummary } from '../src/client/ops/AnnotationsView';
 import { changedCorrections } from '../src/client/ops/ApprovalsView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { errorMessage } from '../src/client/ops/http';
@@ -110,6 +111,12 @@ describe('changedCorrections', () => {
       }),
     ).toEqual({ chosen_agent: 'summarizer_agent', topics: ['optimization'] });
     expect(changedCorrections(template, template)).toEqual({});
+  });
+});
+
+describe('queueSummary', () => {
+  it('counts every status in a fixed order, zero for one the queue does not report', () => {
+    expect(queueSummary({ expired: 2, pending: 7 })).toBe('7 pending, 0 assigned, 2 expired, 0 completed.');
   });
 });
 

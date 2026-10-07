@@ -5,6 +5,7 @@ ingestion routers are mounted at the paths the runtime mounts them on, over the
 caller's real config store and schema loader, with a cluster-events channel
 of their own so tenant deletes and session closes reach this worker the way
 they reach a runtime replica.
+The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL``, as a worker pod runs it.
 
@@ -27,6 +28,7 @@ from typing import Awaitable, Callable, Iterator, Optional
 
 from fastapi import FastAPI
 
+from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_runtime.admin import tenant_manager as tm
@@ -35,6 +37,7 @@ from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
 from cogniverse_runtime.routers import admin, agents, approvals, ingestion, tenant
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.web_client import serve_app
 
 
@@ -45,6 +48,7 @@ def serve_ops_runtime(
     redis_url: str,
     *,
     ingest_processor: Optional[Callable[..., Awaitable[dict]]] = None,
+    annotation_queue_prefix: Optional[str] = None,
 ) -> Iterator[str]:
     """Serve the operations routes on a real uvicorn socket; yields its URL."""
     previous = (tm._config_manager, tm._schema_loader)
@@ -73,6 +77,14 @@ def serve_ops_runtime(
         await events.start()
         tm.set_cluster_events(events)
         admin.set_cluster_events(events)
+        shared_state = await connect_shared_state_redis(redis_url)
+        agents.set_annotation_queue(
+            AnnotationQueue(
+                shared_state,
+                key_prefix=annotation_queue_prefix
+                or f"web-ops-test:annotation-queue:{uuid.uuid4().hex[:8]}",
+            )
+        )
         stop = asyncio.Event()
         worker = None
         if ingest_processor is not None:
@@ -93,6 +105,8 @@ def serve_ops_runtime(
             if worker is not None:
                 await asyncio.wait_for(worker, timeout=20)
             await close_redis()
+            agents.set_annotation_queue(None)
+            await shared_state.aclose()
             tm.set_cluster_events(None)
             admin.set_cluster_events(None)
             await events.close()

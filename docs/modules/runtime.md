@@ -996,6 +996,8 @@ curl -X POST http://localhost:8000/agents/annotations/queue/span-123/complete \
 ```
 The request is claimed before its label is written to telemetry, so of concurrent completions on any processes exactly one writes the label; the others answer 409. A failed telemetry write releases the claim and answers 502 with the request still open. When the queue's Redis fails after the label is written, the route answers 503 and the request stays claimed; a claim lapses after 300 seconds, and a completion after that writes the label again, replacing the span's annotation of the same name.
 
+**GET /agents/annotations/labels** - The labels a reviewer completes an annotation with, from `llm_auto_annotator.REVIEW_LABELS`: `{"labels": ["correct", "wrong", "ambiguous", "insufficient_info"]}`. The `correct_routing`/`wrong_routing` values are read from stored annotations but not offered.
+
 **GET /agents/by-capability/{capability}** - Find agents by capability
 ```bash
 curl http://localhost:8000/agents/by-capability/video_search

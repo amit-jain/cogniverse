@@ -12,6 +12,8 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
   /^\/agents\/$/,
+  /^\/agents\/annotations\/labels$/,
+  /^\/agents\/annotations\/queue(\/[^/]+\/(assign|complete))?$/,
   /^\/ingestion\/upload$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,
 ];
