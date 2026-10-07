@@ -9,14 +9,14 @@ store, so this exercises the whole chain the cluster runs: admin write -> the
 runtime's per-tenant reader (and its in-process invalidation) -> the router's
 decision -> the backend Envoy dials -> the model the backend reports.
 
-One summarizer dispatch makes one routed LM call per DSPy signature it runs -
-the search-query rewrite and the summary - so the routed count is derived from
-those signatures rather than restated. The rewrite is a bounded call and enters
-on the classification entrypoint, whose decisions serve basic-chat for every
-tier; the summary enters on the auto alias, where a pro tenant's decision
-serves pro-reasoning. Every counter movement in the window is attributable per
-decision, this tenant's and anyone else's, so a concurrent tenant cannot move
-a pin.
+One summarizer dispatch makes one routed LM call per call site it runs - the
+search-query rewrite and the summary - so the routed count and the router
+entrypoints are derived from those call sites rather than restated. The rewrite
+is a bounded call and enters on the classification entrypoint, whose decisions
+serve basic-chat for every tier; the summary enters on the auto alias, where a
+pro tenant's decision serves pro-reasoning. Every counter movement in the
+window is attributable per decision, this tenant's and anyone else's, so a
+concurrent tenant cannot move a pin.
 
 The deployed chart binds each catalog model to a backend - basic-chat to the
 student, pro-reasoning to the teacher - on their own Envoy clusters. Beyond
@@ -50,12 +50,12 @@ import httpx
 import pytest
 import yaml
 
-from cogniverse_agents.search_agent import SearchOptimizationSignature
-from cogniverse_agents.summarizer_agent import SummaryGenerationSignature
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.semantic_router import routed_model_for
 from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     ROUTER_TIERS,
+    SemanticRouterConfig,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.telemetry.span_contract import (
@@ -92,15 +92,15 @@ TIER_REFRESH_AGENT = "search_agent"
 # returns, so the read polls up to this long before it reports what it saw.
 SERVED_MODEL_READ_BUDGET_S = 90.0
 
-# The input-field sets of the DSPy signatures one summarizer dispatch runs, as
-# the served modules declare them. The router logs each request's rendered user
-# message, whose ``[[ ## field ## ]]`` markers are exactly the signature's
-# input fields, so this is what identifies a routed call and how many there are.
-DISPATCH_SIGNATURE_INPUTS = frozenset(
-    {
-        frozenset(SearchOptimizationSignature.input_fields),
-        frozenset(SummaryGenerationSignature.input_fields),
-    }
+# The call sites of the LM calls one summarizer dispatch routes: the search
+# agent's query rewrite and the summary. Each sends the router model name its
+# call site maps to, which the router logs as the decision's ``original_model``
+# without the litellm provider prefix, so this is what identifies a routed
+# call and how many there are.
+DISPATCH_CALL_SITES = (TIER_REFRESH_AGENT, AGENT)
+DISPATCH_ENTRYPOINTS = sorted(
+    routed_model_for(SemanticRouterConfig(), call_site).split("/", 1)[1]
+    for call_site in DISPATCH_CALL_SITES
 )
 
 _SAMPLE = re.compile(
@@ -114,7 +114,6 @@ _AUTHZ_MATCHED = re.compile(
 _CACHE_UPDATED = re.compile(
     r"^Cache updated for request ID: (?P<request_id>[0-9a-fA-F-]+)$"
 )
-_PROMPT_FIELD = re.compile(r"\[\[ ## ([a-zA-Z0-9_]+) ## \]\]")
 
 
 @dataclass(frozen=True)
@@ -382,7 +381,8 @@ class RoutedTraffic:
 
     roles: list[tuple[str, str]]
     user_by_request: dict[str, str]
-    prompt_by_request: dict[str, str]
+    entrypoint_by_request: dict[str, str]
+    cache_written: frozenset[str]
     call_by_request: dict[str, tuple[str, str]]
     latency_ms_by_request: dict[str, int]
     cache_hits: int
@@ -392,25 +392,23 @@ class RoutedTraffic:
 def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     roles: list[tuple[str, str]] = []
     user_by_request: dict[str, str] = {}
-    prompt_by_request: dict[str, str] = {}
+    entrypoint_by_request: dict[str, str] = {}
+    cache_written: set[str] = set()
     call_by_request: dict[str, tuple[str, str]] = {}
     roles_by_request: dict[str, frozenset[str]] = {}
     latency_ms_by_request: dict[str, int] = {}
     cache_hits = 0
-    pending_prompt: str | None = None
     pending_user: str | None = None
     pending_roles: frozenset[str] = frozenset()
     for entry in entries:
         event = entry.get("event")
         message = entry.get("msg", "")
-        if event == "cache_entry_added":
-            pending_prompt = entry.get("query", "")
-            continue
         if event == "routing_decision":
             call_by_request[entry["request_id"]] = (
                 entry["decision"],
                 entry["selected_model"],
             )
+            entrypoint_by_request[entry["request_id"]] = entry["original_model"]
             roles_by_request[entry["request_id"]] = pending_roles
             if pending_user is not None:
                 user_by_request[entry["request_id"]] = pending_user
@@ -427,9 +425,7 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
             continue
         updated = _CACHE_UPDATED.match(message)
         if updated is not None:
-            if pending_prompt is not None:
-                prompt_by_request[updated.group("request_id")] = pending_prompt
-            pending_prompt = None
+            cache_written.add(updated.group("request_id"))
             continue
         matched = _AUTHZ_MATCHED.match(message)
         if matched is not None:
@@ -442,7 +438,8 @@ def _routed_traffic(entries: list[dict]) -> RoutedTraffic:
     return RoutedTraffic(
         roles,
         user_by_request,
-        prompt_by_request,
+        entrypoint_by_request,
+        frozenset(cache_written),
         call_by_request,
         latency_ms_by_request,
         cache_hits,
@@ -662,7 +659,8 @@ class Leg:
     clusters: list[str]
     timed_out: int
     served_models: set[str]
-    prompt_fields: set[frozenset[str]]
+    entrypoints: list[str]
+    cache_writes: int
     timings: dict
 
     def __str__(self) -> str:
@@ -672,7 +670,8 @@ class Leg:
             f"decisions {self.decisions} on models {self.selected_models} via "
             f"clusters {self.clusters} ({self.timed_out} cut by the client), "
             f"served models {sorted(self.served_models)}, "
-            f"signature inputs {sorted(sorted(f) for f in self.prompt_fields)}; "
+            f"entrypoints {self.entrypoints} with {self.cache_writes} response-"
+            "cache writes; "
             f"router response-cache hits {self.cache_hit_delta} counted / "
             f"{self.logged_cache_hits} logged; timings {self.timings}"
         )
@@ -745,11 +744,8 @@ def _run_leg(
         clusters=[envoy[r].cluster for r in mine if r in envoy],
         timed_out=sum(1 for r in mine if r in envoy and "DC" in envoy[r].flags),
         served_models=served,
-        prompt_fields={
-            frozenset(_PROMPT_FIELD.findall(traffic.prompt_by_request[r]))
-            for r in mine
-            if r in traffic.prompt_by_request
-        },
+        entrypoints=sorted(traffic.entrypoint_by_request[r] for r in mine),
+        cache_writes=sum(1 for r in mine if r in traffic.cache_written),
         timings={
             "dispatch_s": round(dispatch_s, 2),
             "backend_completion_ms": [
@@ -812,11 +808,9 @@ def _leg_verdict(
         [routing.cluster_for(model) for model in leg.selected_models],
     )
     check("served models", leg.served_models, expected_served)
-    check(
-        "signature inputs",
-        leg.prompt_fields,
-        set() if repeat else set(DISPATCH_SIGNATURE_INPUTS),
-    )
+    check("entrypoints", leg.entrypoints, [] if repeat else DISPATCH_ENTRYPOINTS)
+    # Every routed call is a miss the router writes to its response cache.
+    check("response-cache writes", leg.cache_writes, len(leg.decisions))
     check("counter deltas", leg.deltas, leg.expected_deltas)
     check("response-cache hits", leg.cache_hit_delta, leg.logged_cache_hits)
     return problems
@@ -846,7 +840,7 @@ def test_the_stored_tier_steers_the_deployed_router(
     legs = [(tier, f"{QUERY} ({tenant_id} leg {i})") for i, tier in enumerate(walk)]
     legs.append(legs[-1])
 
-    routed = len(DISPATCH_SIGNATURE_INPUTS)
+    routed = len(DISPATCH_CALL_SITES)
     timings: list[dict] = []
     previous: Leg | None = None
     for index, (tier, query) in enumerate(legs):
@@ -972,7 +966,8 @@ def _synthetic_pro_leg() -> Leg:
         clusters=["llm_upstream", "llm_teacher"],
         timed_out=0,
         served_models={"student-model", "teacher-model"},
-        prompt_fields=set(DISPATCH_SIGNATURE_INPUTS),
+        entrypoints=list(DISPATCH_ENTRYPOINTS),
+        cache_writes=2,
         timings={},
     )
 
@@ -1064,6 +1059,7 @@ def test_the_counter_deltas_count_every_decision_each_logged_call_matched():
             "request_id": "r1",
             "decision": "pro-technical",
             "selected_model": "pro-reasoning",
+            "original_model": "auto",
         },
         {"msg": authz},
         {
@@ -1071,6 +1067,7 @@ def test_the_counter_deltas_count_every_decision_each_logged_call_matched():
             "request_id": "r2",
             "decision": "classification-pro",
             "selected_model": "basic-chat",
+            "original_model": "cogniverse-classification",
         },
     ]
     assert _expected_match_deltas(_SYNTHETIC_POLICY, _routed_traffic(entries)) == {
@@ -1080,6 +1077,47 @@ def test_the_counter_deltas_count_every_decision_each_logged_call_matched():
         "base-default": 0,
         "classification-base": 0,
     }
+
+
+# One routed call as the pinned router logs it, verbatim: the caller's authz
+# match, the routing decision, its usage line and the response-cache write.
+_PINNED_ROUTER_CALL_LOG = [
+    r'{"level":"info","ts":"2026-09-27T11:34:06.970","caller":"authz_classifier.go:174","msg":"[Authz Signal] Matched 1 roles for user \"rc_hit_de8d6d5bx\": [base_tier]"}',
+    r'{"level":"info","ts":"2026-09-27T11:34:06.971","caller":"logging.go:264","msg":"routing_decision","reasoning_enabled":false,"component":"extproc","original_model":"cogniverse-classification","reason_code":"entrypoint_routing","selected_model":"basic-chat","decision":"classification-base","routing_latency_ms":1,"event":"routing_decision","request_id":"b9801ef9-201f-497f-8f45-827a29f69f7b","reasoning_effort":""}',
+    r'{"level":"info","ts":"2026-09-27T11:34:06.974","caller":"logging.go:160","msg":"llm_usage","pricing":"not_configured","request_id":"b9801ef9-201f-497f-8f45-827a29f69f7b","model":"basic-chat","cache_write_tokens":0,"currency":"unknown","cached_prompt_tokens":0,"completion_latency_ms":3,"total_tokens":20,"event":"llm_usage","prompt_tokens":8,"completion_tokens":12,"cost":0}',
+    r'{"level":"info","ts":"2026-09-27T11:34:06.974","caller":"processor_res_cache.go:73","msg":"Cache updated for request ID: b9801ef9-201f-497f-8f45-827a29f69f7b"}',
+]
+
+
+def test_the_traffic_reads_each_call_off_the_pinned_router_log():
+    request_id = "b9801ef9-201f-497f-8f45-827a29f69f7b"
+    traffic = _routed_traffic([json.loads(line) for line in _PINNED_ROUTER_CALL_LOG])
+    assert traffic == RoutedTraffic(
+        roles=[("rc_hit_de8d6d5bx", "base_tier")],
+        user_by_request={request_id: "rc_hit_de8d6d5bx"},
+        entrypoint_by_request={request_id: "cogniverse-classification"},
+        cache_written=frozenset({request_id}),
+        call_by_request={request_id: ("classification-base", "basic-chat")},
+        latency_ms_by_request={request_id: 3},
+        cache_hits=0,
+        roles_by_request={request_id: frozenset({"base_tier"})},
+    )
+
+
+def test_the_dispatch_enters_on_the_classification_and_auto_entrypoints():
+    assert DISPATCH_ENTRYPOINTS == ["auto", "cogniverse-classification"]
+
+
+def test_the_verdict_rejects_a_call_sent_to_the_wrong_entrypoint():
+    leg = replace(_synthetic_pro_leg(), entrypoints=["auto", "auto"])
+    assert _synthetic_verdict(leg) == [
+        "entrypoints: ['auto', 'auto'] != ['auto', 'cogniverse-classification']"
+    ]
+
+
+def test_the_verdict_rejects_a_routed_call_the_router_did_not_cache():
+    leg = replace(_synthetic_pro_leg(), cache_writes=1)
+    assert _synthetic_verdict(leg) == ["response-cache writes: 1 != 2"]
 
 
 def test_the_verdict_rejects_a_decision_the_counters_did_not_record():
