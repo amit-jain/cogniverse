@@ -25,12 +25,16 @@ call and the served model the runtime stamps on its span from the completion's
 own ``model`` field. Both expectations are read from the ConfigMaps the
 cluster runs, never restated here.
 
-Each leg carries its own query text. Identical messages with identical routing
-headers hit the runtime's DSPy cache, which answers without reaching the router
-at all; the last leg repeats the previous leg's query verbatim to pin that -
-zero routed calls and no movement in the router's own response-cache counter,
-which is a different layer - while the replayed completion still names the
-model that produced it.
+Each leg carries its own query text. The last leg repeats the previous leg's
+query verbatim, and the repeat never reaches the upstream model. The runtime's
+LM response cache is per worker process, so which cache answers depends on the
+worker the repeat lands on, and the leg names it: the worker that answered the
+original replays it without routing anything; any other worker routes every
+call site's call again on the previous leg's tier, and the router answers each
+from its response cache - one counted and logged hit per call, the original
+decisions counted again, no decision logged, no Envoy upstream and no backend
+completion. Either way the replayed completion still names the model that
+produced it.
 """
 
 from __future__ import annotations
@@ -102,6 +106,11 @@ DISPATCH_ENTRYPOINTS = sorted(
     routed_model_for(SemanticRouterConfig(), call_site).split("/", 1)[1]
     for call_site in DISPATCH_CALL_SITES
 )
+
+# What answered a repeated query: the serving worker's own LM response cache,
+# or - on any other worker - the router's response cache.
+WORKER_CACHE = "the worker's response cache"
+ROUTER_CACHE = "the router's response cache"
 
 _SAMPLE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)"
@@ -661,6 +670,7 @@ class Leg:
     served_models: set[str]
     entrypoints: list[str]
     cache_writes: int
+    backend_completions: int
     timings: dict
 
     def __str__(self) -> str:
@@ -672,6 +682,7 @@ class Leg:
             f"served models {sorted(self.served_models)}, "
             f"entrypoints {self.entrypoints} with {self.cache_writes} response-"
             "cache writes; "
+            f"{self.backend_completions} backend completions in the window; "
             f"router response-cache hits {self.cache_hit_delta} counted / "
             f"{self.logged_cache_hits} logged; timings {self.timings}"
         )
@@ -746,6 +757,7 @@ def _run_leg(
         served_models=served,
         entrypoints=sorted(traffic.entrypoint_by_request[r] for r in mine),
         cache_writes=sum(1 for r in mine if r in traffic.cache_written),
+        backend_completions=len(traffic.latency_ms_by_request),
         timings={
             "dispatch_s": round(dispatch_s, 2),
             "backend_completion_ms": [
@@ -768,6 +780,22 @@ def _shown(value):
     return value
 
 
+def _repeat_branch(leg: Leg, routed: int) -> str:
+    """Which cache answered a repeated query, read off its routed calls.
+
+    The runtime's LM response cache is per worker process: a repeat served by
+    the worker that answered the original routes nothing, and one served by
+    any other worker routes every call site's call again, each answered from
+    the router's response cache.
+    """
+    calls = sum(leg.mine_by_role.values())
+    if calls == 0:
+        return WORKER_CACHE
+    if calls == routed:
+        return ROUTER_CACHE
+    return f"neither cache: {calls} routed calls"
+
+
 def _leg_verdict(
     leg: Leg,
     *,
@@ -777,9 +805,13 @@ def _leg_verdict(
     routing: DeployedRouting,
     routed: int,
     expected_served: set[str],
+    previous: Leg | None = None,
 ) -> list[str]:
     """Every way the leg departs from what the tier and the deployed routing
-    require; empty when the leg is exactly as expected."""
+    require; empty when the leg is exactly as expected.
+
+    A repeat (``repeat=True``) needs ``previous``, the leg it repeats, and is
+    held to whichever branch ``_repeat_branch`` reads off it."""
     problems: list[str] = []
 
     def check(name: str, actual, expected) -> None:
@@ -787,15 +819,47 @@ def _leg_verdict(
             problems.append(f"{name}: {_shown(actual)!r} != {_shown(expected)!r}")
 
     check("calls cut by the client's timeout", leg.timed_out, 0)
+    if repeat:
+        branch = _repeat_branch(leg, routed)
+        if branch not in (WORKER_CACHE, ROUTER_CACHE):
+            problems.append(f"repeat answered by {branch}, not 0 or {routed}")
+        hits = 0 if branch == WORKER_CACHE else routed
+        check(
+            "this tenant's authz matches",
+            leg.mine_by_role,
+            Counter({policy.role_by_tier[tier]: hits}) if hits else Counter(),
+        )
+        # A response-cache hit is answered before a routing decision is
+        # logged or an upstream is dialled.
+        check("decision tiers", [policy.tier_by_decision[n] for n in leg.decisions], [])
+        check("clusters", leg.clusters, [])
+        check("entrypoints", leg.entrypoints, [])
+        check("response-cache writes", leg.cache_writes, 0)
+        check("backend completions", leg.backend_completions, 0)
+        check("response-cache hits counted", leg.cache_hit_delta, hits)
+        check("response-cache hits logged", leg.logged_cache_hits, hits)
+        # Each hit still counts the decisions the original call matched.
+        check(
+            "counter deltas",
+            leg.deltas,
+            {
+                decision: leg.expected_deltas[decision]
+                + (previous.deltas[decision] if hits else 0)
+                for decision in policy.decisions
+            },
+        )
+        check("served models", leg.served_models, expected_served)
+        return problems
+
     check(
         "this tenant's authz matches",
         leg.mine_by_role,
-        Counter() if repeat else Counter({policy.role_by_tier[tier]: routed}),
+        Counter({policy.role_by_tier[tier]: routed}),
     )
     check(
         "decision tiers",
         [policy.tier_by_decision[name] for name in leg.decisions],
-        [] if repeat else [tier] * routed,
+        [tier] * routed,
     )
     check(
         "selected models",
@@ -808,7 +872,7 @@ def _leg_verdict(
         [routing.cluster_for(model) for model in leg.selected_models],
     )
     check("served models", leg.served_models, expected_served)
-    check("entrypoints", leg.entrypoints, [] if repeat else DISPATCH_ENTRYPOINTS)
+    check("entrypoints", leg.entrypoints, DISPATCH_ENTRYPOINTS)
     # Every routed call is a miss the router writes to its response cache.
     check("response-cache writes", leg.cache_writes, len(leg.decisions))
     check("counter deltas", leg.deltas, leg.expected_deltas)
@@ -822,7 +886,9 @@ def test_the_stored_tier_steers_the_deployed_router(
     """Each tier set through the admin route changes the decision the deployed
     router matches, the cluster Envoy dials and the model that answers, for
     the next query on the production dispatch path; a repeated query never
-    reaches the router at all."""
+    reaches the upstream model: the worker that answered it replays it without
+    routing, and any other worker's routed calls are each answered from the
+    router's response cache on the previous leg's tier."""
     policy = _router_policy()
     routing = _deployed_routing()
     assert set(policy.tier_by_decision.values()) == set(ROUTER_TIERS)
@@ -860,7 +926,16 @@ def test_the_stored_tier_steers_the_deployed_router(
             routing,
             expected_served,
         )
-        timings.append({"leg": index, "tier": tier, "repeat": repeat, **leg.timings})
+        branch = _repeat_branch(leg, routed) if repeat else None
+        timings.append(
+            {
+                "leg": index,
+                "tier": tier,
+                "repeat": repeat,
+                "repeat_branch": branch,
+                **leg.timings,
+            }
+        )
         print(f"\nTIER LEG TIMING {json.dumps(timings[-1])}")
         verdict = _leg_verdict(
             leg,
@@ -874,6 +949,7 @@ def test_the_stored_tier_steers_the_deployed_router(
                 if expected_served is not None
                 else {routing.served_model_by_catalog[m] for m in leg.selected_models}
             ),
+            previous=previous,
         )
         assert verdict == [], f"leg {index} on tier {tier!r} (repeat={repeat}): {leg}"
         if not repeat:
@@ -968,6 +1044,7 @@ def _synthetic_pro_leg() -> Leg:
         served_models={"student-model", "teacher-model"},
         entrypoints=list(DISPATCH_ENTRYPOINTS),
         cache_writes=2,
+        backend_completions=2,
         timings={},
     )
 
@@ -1177,3 +1254,193 @@ def test_the_tier_refresh_does_not_stall_the_event_loop(request):
     # The refresh resolved the tier the admin write stored, so the offload
     # cannot be achieved by skipping the read.
     assert _get_tier(TENANT_ID) == declared
+
+
+# The deployed run's last two legs, as it reported them: leg 3 on the default
+# tier, and its repeat, which landed on another worker. The repeat's line is
+# the failure message that run printed, verbatim; leg 3 passed, so it is the
+# leg its timing line and the verdict then in force pin.
+_LIVE_LEG_3_TIMING = (
+    'TIER LEG TIMING {"leg": 3, "tier": "default", "repeat": false, '
+    '"dispatch_s": 3.81, "backend_completion_ms": [661, 1572], '
+    '"envoy_duration_ms": [663, 1574], "envoy_flags": ["-", "-"], '
+    '"served_model_read_s": 0.02}'
+)
+_LIVE_LEG_4_REPORTED = (
+    "counter deltas {'pro-technical-keyword': 0, 'pro-technical-domain': 0, "
+    "'pro-default': 0, 'free-default': 0, 'base-default': 1, "
+    "'classification-pro': 0, 'classification-free': 0, "
+    "'classification-base': 1, 'vision-pro': 0, 'vision-free': 0, "
+    "'vision-base': 0, 'short-reasoning-pro': 0, 'short-reasoning-free': 0, "
+    "'short-reasoning-base': 0} vs {'pro-technical-keyword': 0, "
+    "'pro-technical-domain': 0, 'pro-default': 0, 'free-default': 0, "
+    "'base-default': 0, 'classification-pro': 0, 'classification-free': 0, "
+    "'classification-base': 0, 'vision-pro': 0, 'vision-free': 0, "
+    "'vision-base': 0, 'short-reasoning-pro': 0, 'short-reasoning-free': 0, "
+    "'short-reasoning-base': 0} derived from the log; this tenant's routed "
+    "calls Counter({'base_tier': 2}) -> decisions [] on models [] via "
+    "clusters [] (0 cut by the client), served models "
+    "['google/gemma-4-e4b-it'], entrypoints [] with 0 response-cache writes; "
+    "router response-cache hits 2 counted / 2 logged; timings "
+    "{'dispatch_s': 1.13, 'backend_completion_ms': [], "
+    "'envoy_duration_ms': [], 'envoy_flags': [], 'served_model_read_s': 0.02}"
+)
+_LIVE_SERVED = {"google/gemma-4-e4b-it"}
+
+
+def _live_deltas(**moved: int) -> dict[str, int]:
+    return {
+        decision: moved.get(decision.replace("-", "_"), 0)
+        for decision in _router_policy().decisions
+    }
+
+
+def _live_leg_3() -> Leg:
+    timings = json.loads(_LIVE_LEG_3_TIMING.split(" ", 3)[3])
+    deltas = _live_deltas(classification_base=1, base_default=1)
+    return Leg(
+        deltas=deltas,
+        expected_deltas=dict(deltas),
+        cache_hit_delta=0,
+        logged_cache_hits=0,
+        mine_by_role=Counter({"base_tier": 2}),
+        decisions=["classification-base", "base-default"],
+        selected_models=["basic-chat", "basic-chat"],
+        clusters=["llm_upstream", "llm_upstream"],
+        timed_out=0,
+        served_models=set(_LIVE_SERVED),
+        entrypoints=list(DISPATCH_ENTRYPOINTS),
+        cache_writes=2,
+        backend_completions=len(timings["backend_completion_ms"]),
+        timings={k: timings[k] for k in timings if k not in ("leg", "tier", "repeat")},
+    )
+
+
+def _live_leg_4() -> Leg:
+    return Leg(
+        deltas=_live_deltas(classification_base=1, base_default=1),
+        expected_deltas=_live_deltas(),
+        cache_hit_delta=2,
+        logged_cache_hits=2,
+        mine_by_role=Counter({"base_tier": 2}),
+        decisions=[],
+        selected_models=[],
+        clusters=[],
+        timed_out=0,
+        served_models=set(_LIVE_SERVED),
+        entrypoints=[],
+        cache_writes=0,
+        backend_completions=0,
+        timings={
+            "dispatch_s": 1.13,
+            "backend_completion_ms": [],
+            "envoy_duration_ms": [],
+            "envoy_flags": [],
+            "served_model_read_s": 0.02,
+        },
+    )
+
+
+def _live_repeat_verdict(leg: Leg) -> list[str]:
+    return _leg_verdict(
+        leg,
+        tier=DEFAULT_ROUTER_TIER,
+        repeat=True,
+        policy=_router_policy(),
+        routing=_SYNTHETIC_ROUTING,
+        routed=len(DISPATCH_CALL_SITES),
+        expected_served=_live_leg_3().served_models,
+        previous=_live_leg_3(),
+    )
+
+
+def test_the_live_legs_are_the_ones_the_run_reported():
+    assert str(_live_leg_4()).replace("0 backend completions in the window; ", "") == (
+        _LIVE_LEG_4_REPORTED
+    )
+    assert _live_leg_3().timings == {
+        "dispatch_s": 3.81,
+        "backend_completion_ms": [661, 1572],
+        "envoy_duration_ms": [663, 1574],
+        "envoy_flags": ["-", "-"],
+        "served_model_read_s": 0.02,
+    }
+    assert _live_leg_3().backend_completions == 2
+
+
+def test_the_live_repeat_was_answered_by_the_router_cache_and_is_accepted():
+    leg = _live_leg_4()
+    assert _repeat_branch(leg, len(DISPATCH_CALL_SITES)) == ROUTER_CACHE
+    assert _live_repeat_verdict(leg) == []
+
+
+def test_a_repeat_the_worker_cache_answered_is_accepted():
+    leg = replace(
+        _live_leg_4(),
+        deltas=_live_deltas(),
+        cache_hit_delta=0,
+        logged_cache_hits=0,
+        mine_by_role=Counter(),
+    )
+    assert _repeat_branch(leg, len(DISPATCH_CALL_SITES)) == WORKER_CACHE
+    assert _live_repeat_verdict(leg) == []
+
+
+def test_a_repeat_that_dialled_upstream_is_rejected():
+    """The repeat's calls routed as misses: decided, dialled, completed and
+    written to the cache, exactly as the original leg was."""
+    leg = replace(
+        _live_leg_4(),
+        expected_deltas=_live_deltas(classification_base=1, base_default=1),
+        cache_hit_delta=0,
+        logged_cache_hits=0,
+        decisions=["classification-base", "base-default"],
+        selected_models=["basic-chat", "basic-chat"],
+        clusters=["llm_upstream", "llm_upstream"],
+        entrypoints=list(DISPATCH_ENTRYPOINTS),
+        cache_writes=2,
+        backend_completions=2,
+    )
+    assert _repeat_branch(leg, len(DISPATCH_CALL_SITES)) == ROUTER_CACHE
+    assert _live_repeat_verdict(leg) == [
+        "decision tiers: ['default', 'default'] != []",
+        "clusters: ['llm_upstream', 'llm_upstream'] != []",
+        "entrypoints: ['auto', 'cogniverse-classification'] != []",
+        "response-cache writes: 2 != 0",
+        "backend completions: 2 != 0",
+        "response-cache hits counted: 0 != 2",
+        "response-cache hits logged: 0 != 2",
+        f"counter deltas: "
+        f"{_live_deltas(classification_base=1, base_default=1)!r} != "
+        f"{_live_deltas(classification_base=2, base_default=2)!r}",
+    ]
+
+
+def test_a_repeat_routed_on_another_tier_is_rejected():
+    leg = replace(_live_leg_4(), mine_by_role=Counter({"free_tier": 2}))
+    assert _live_repeat_verdict(leg) == [
+        "this tenant's authz matches: Counter({'free_tier': 2}) != "
+        "Counter({'base_tier': 2})"
+    ]
+
+
+def test_a_repeat_routing_only_one_call_is_neither_branch():
+    leg = replace(
+        _live_leg_4(),
+        mine_by_role=Counter({"base_tier": 1}),
+        cache_hit_delta=1,
+        logged_cache_hits=1,
+        deltas=_live_deltas(base_default=1),
+    )
+    assert _repeat_branch(leg, len(DISPATCH_CALL_SITES)) == (
+        "neither cache: 1 routed calls"
+    )
+    assert _live_repeat_verdict(leg) == [
+        "repeat answered by neither cache: 1 routed calls, not 0 or 2",
+        "this tenant's authz matches: Counter({'base_tier': 1}) != "
+        "Counter({'base_tier': 2})",
+        "response-cache hits counted: 1 != 2",
+        "response-cache hits logged: 1 != 2",
+        f"counter deltas: {_live_deltas(base_default=1)!r} != "
+        f"{_live_deltas(classification_base=1, base_default=1)!r}",
+    ]
