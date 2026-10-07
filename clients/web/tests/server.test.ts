@@ -188,6 +188,8 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenants/acme:prod%2F..%2F..%2Fharness%2Fkeys'],
       ['DELETE', '/admin/tenant/acme:prod/memories/x%2F..%2F..%2F..%2Fharness%2Fkeys'],
       ['POST', '/v1/chat/completions'],
+      ['POST', '/ingestion/start'],
+      ['GET', '/events/ingestion/job-1'],
     ]) {
       const response = await app.request(`/api/runtime${path}`, { method });
       expect(response.status).toBe(404);
@@ -202,7 +204,7 @@ describe('runtime proxy', () => {
       res.write('data: {"state":"running"}\n\n');
       release = () => res.end('data: {"state":"done"}\n\n');
     });
-    const response = await createApp(config(url)).request('/api/runtime/events/ingestion/job-1');
+    const response = await createApp(config(url)).request('/api/runtime/ingestion/job-1/events');
     expect(response.headers.get('content-type')).toBe('text/event-stream');
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();

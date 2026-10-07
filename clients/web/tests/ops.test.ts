@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { errorMessage } from '../src/client/ops/http';
+import { parseSse } from '../src/client/ops/sse';
 import { parseRoute, routeHash } from '../src/client/route';
 
 describe('errorMessage', () => {
@@ -88,5 +89,24 @@ describe('JSON form fields', () => {
     expect(sameJson({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(true);
     expect(sameJson({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
     expect(sameJson({ a: 1 }, { a: 1, b: null })).toBe(false);
+  });
+});
+
+describe('parseSse', () => {
+  it('returns complete frames with their ids and keeps the unfinished tail', () => {
+    expect(
+      parseSse('id: 1-0\ndata: {"state":"queued"}\n\n: keep-alive\n\nid: 2-0\ndata: {"state":"run'),
+    ).toEqual({ frames: [{ id: '1-0', data: '{"state":"queued"}' }], rest: 'id: 2-0\ndata: {"state":"run' });
+  });
+
+  it('joins multi-line data, accepts CRLF and frames without ids', () => {
+    expect(parseSse('data: a\r\ndata: b\r\n\r\ndata:c\n\n')).toEqual({
+      frames: [{ data: 'a\nb' }, { data: 'c' }],
+      rest: '',
+    });
+  });
+
+  it('drops heartbeats and data-less frames', () => {
+    expect(parseSse(': keep-alive\n\nid: 3-0\n\n')).toEqual({ frames: [], rest: '' });
   });
 });

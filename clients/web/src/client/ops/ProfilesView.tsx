@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, ConfirmDelete, Panel, useAction, useLoad } from './common';
 import { jsonText, parseJsonObject, sameJson, type JsonObject } from './forms';
 import { runtimeJson, seg } from './http';
+import { TenantChooser } from './tenants';
 
 interface ProfileSummary {
   profile_name: string;
@@ -38,25 +39,7 @@ interface Deployment {
 
 const EMBEDDING_TYPES = ['multi_vector', 'single_vector'];
 
-async function knownTenants(signal: AbortSignal): Promise<string[]> {
-  const { organizations } = await runtimeJson<{ organizations: { org_id: string }[] }>(
-    '/admin/organizations',
-    { signal },
-  );
-  const lists = await Promise.all(
-    organizations.map((org) =>
-      runtimeJson<{ tenants: { tenant_full_id: string }[] }>(
-        `/admin/organizations/${seg(org.org_id)}/tenants`,
-        { signal },
-      ),
-    ),
-  );
-  return lists.flatMap((list) => list.tenants.map((tenant) => tenant.tenant_full_id)).sort();
-}
-
 export function ProfilesView() {
-  const known = useLoad(knownTenants, []);
-  const [draft, setDraft] = useState('');
   const [tenant, setTenant] = useState('');
   const [selected, setSelected] = useState<string>();
   const [version, setVersion] = useState(0);
@@ -69,36 +52,14 @@ export function ProfilesView() {
 
   return (
     <div className="ops-view">
-      <Panel title="Tenant">
-        <form
-          className="inline-form"
-          aria-label="Choose tenant"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setTenant(draft.trim());
-            setSelected(undefined);
-            setNotice('');
-          }}
-        >
-          <label>
-            Tenant ID
-            <input
-              required
-              list="profile-tenants"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="acme:production"
-            />
-            <datalist id="profile-tenants">
-              {(known.data ?? []).map((id) => (
-                <option key={id} value={id} />
-              ))}
-            </datalist>
-          </label>
-          <button type="submit">Show profiles</button>
-          {known.error && <Alert>Tenant suggestions are unavailable: {known.error}</Alert>}
-        </form>
-      </Panel>
+      <TenantChooser
+        action="Show profiles"
+        onChoose={(chosen) => {
+          setTenant(chosen);
+          setSelected(undefined);
+          setNotice('');
+        }}
+      />
       {notice && <Alert tone="ok">{notice}</Alert>}
       {tenant && (
         <>
