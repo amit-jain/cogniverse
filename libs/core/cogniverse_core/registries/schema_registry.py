@@ -910,7 +910,10 @@ class SchemaRegistry:
         schema loader supplies is redeployed with the loaded definition; its
         registration keeps the stored ``config`` unless one is passed.
         All intents stay pending until every registration succeeds. The backend
-        owns package reconstruction and the single convergence wait.
+        owns package reconstruction and the single convergence wait. The batch
+        registers under the backend's deployment lease and is refused with
+        :class:`TenantDeletedError` once the tenant is marked deleted; its
+        intents then stay for the tenant's delete to remove.
         """
         from collections import Counter
 
@@ -1132,42 +1135,68 @@ class SchemaRegistry:
                     raise
                 raise deployment_error from exc
 
-            for registration in registrations:
-                name = registration["full_schema_name"]
-                intent = intents.get(name)
-                try:
-                    if intent:
-                        self.register_schema(
-                            **registration, expected_version=intent["registry_version"]
-                        )
-                    else:
-                        self.register_schema(
-                            **registration, expected_version=decided_versions[name]
-                        )
-                except Exception as exc:
-                    if intents:
-                        detail = "Durable registration recovery is pending; the schema is preserved."
-                    elif isinstance(exc, RegistryConflictError):
-                        try:
-                            peer_revision = self._peer_revision(
-                                tenant_id, registration["base_schema_name"]
-                            )
-                        except Exception as read_exc:
-                            raise SchemaRevisionConflictError(
-                                name, "unknown", activated=True
-                            ) from read_exc
-                        raise SchemaRevisionConflictError(
-                            name, peer_revision, activated=True
-                        ) from exc
-                    else:
-                        self._rollback_deployment(previous_schemas, name)
-                        detail = "Existing-schema deployment rollback was requested."
-                    raise RegistryStorageError(
-                        f"Failed to register schema '{name}' in ConfigStore: {exc}. {detail}"
-                    ) from exc
-            for intent in intents.values():
-                self._deployment_intents.complete(intent)
+            # Registration runs under the deployment lease a tenant delete reads
+            # the registry and drops the schemas under, after the delete's
+            # marker is re-checked: it lands before the delete reads, or is
+            # refused and the delete drops the live, unregistered schema.
+            with self._backend.deployment_lease():
+                raise_if_tenant_deleted(self._config_manager.store, tenant_id)
+                for registration in registrations:
+                    self._register_deployed(
+                        registration,
+                        intents,
+                        decided_versions,
+                        previous_schemas,
+                        tenant_id,
+                    )
+                for intent in intents.values():
+                    self._deployment_intents.complete(intent)
         return result()
+
+    def _register_deployed(
+        self,
+        registration: Dict[str, Any],
+        intents: Dict[str, Dict[str, Any]],
+        decided_versions: Dict[str, int],
+        previous_schemas: List[Dict[str, Any]],
+        tenant_id: str,
+    ) -> None:
+        """Register one schema ``deploy_schemas`` activated, conditional on
+        the revision its deploy was decided from."""
+        name = registration["full_schema_name"]
+        intent = intents.get(name)
+        try:
+            if intent:
+                self.register_schema(
+                    **registration, expected_version=intent["registry_version"]
+                )
+            else:
+                self.register_schema(
+                    **registration, expected_version=decided_versions[name]
+                )
+        except Exception as exc:
+            if intents:
+                detail = (
+                    "Durable registration recovery is pending; the schema is preserved."
+                )
+            elif isinstance(exc, RegistryConflictError):
+                try:
+                    peer_revision = self._peer_revision(
+                        tenant_id, registration["base_schema_name"]
+                    )
+                except Exception as read_exc:
+                    raise SchemaRevisionConflictError(
+                        name, "unknown", activated=True
+                    ) from read_exc
+                raise SchemaRevisionConflictError(
+                    name, peer_revision, activated=True
+                ) from exc
+            else:
+                self._rollback_deployment(previous_schemas, name)
+                detail = "Existing-schema deployment rollback was requested."
+            raise RegistryStorageError(
+                f"Failed to register schema '{name}' in ConfigStore: {exc}. {detail}"
+            ) from exc
 
     def _peer_revision(self, tenant_id: str, base_schema_name: str) -> str:
         """``"tombstone"`` when the stored row is a deletion, else

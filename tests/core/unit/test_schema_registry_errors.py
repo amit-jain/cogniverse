@@ -1,13 +1,39 @@
 """SchemaRegistry raises typed, chained errors for schema-load failures."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
 
 from cogniverse_core.registries.exceptions import SchemaLoadError
-from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+from cogniverse_core.registries.schema_registry import (
+    SCHEMA_REGISTRY_SERVICE,
+    SchemaRegistry,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@contextmanager
+def _deployment_lease(store):
+    """The deployment lease a backend holds, taken over ``store``."""
+    lease = SchemaDeployLease(store)
+    lease.acquire()
+    try:
+        yield lease
+    finally:
+        lease.release()
+
+
+def _backend(store, deploy):
+    """A backend activating through ``deploy`` and leasing through ``store``,
+    as ``Backend.deployment_lease`` does."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        deploy_schemas=deploy, deployment_lease=lambda: _deployment_lease(store)
+    )
 
 
 def test_deploy_schema_load_failure_raises_typed_chained_error():
@@ -55,7 +81,7 @@ def test_failed_intent_retirement_preserves_deployment_error_and_pending_record(
 
     registry = SchemaRegistry(
         config_manager=SimpleNamespace(store=store),
-        backend=SimpleNamespace(deploy_schemas=deploy),
+        backend=_backend(store, deploy),
         schema_loader=SimpleNamespace(load_schema=lambda _: {"name": "wiki_pages"}),
     )
     with pytest.raises(BackendDeploymentError) as failure:
@@ -141,7 +167,7 @@ def test_batch_reloads_definition_when_peer_deletes_cached_schema():
 
     registry = SchemaRegistry(
         config_manager=SimpleNamespace(store=store),
-        backend=SimpleNamespace(deploy_schemas=deploy),
+        backend=_backend(store, deploy),
         schema_loader=SimpleNamespace(load_schema=lambda base: {"name": base}),
     )
     assert registry.deploy_schema("acme:prod", "wiki_pages") == "wiki_pages_acme_prod"
@@ -192,7 +218,7 @@ def _registry_with_peer(peer_action):
 
     registry = SchemaRegistry(
         config_manager=SimpleNamespace(store=store),
-        backend=SimpleNamespace(deploy_schemas=deploy_then_peer_acts),
+        backend=_backend(store, deploy_then_peer_acts),
         schema_loader=loader,
     )
     registry.register_schema(
@@ -213,6 +239,80 @@ def _row(store, tenant, base):
         service="schema_registry",
         config_key=f"schema_{base}",
     )
+
+
+def test_a_new_schema_of_a_tenant_deleted_after_activation_is_not_registered():
+    """A delete on another process marks the tenant after this deploy
+    activated a new schema: the registration is refused, no registry row is
+    written and the deploy's intent stays pending for the delete to remove
+    with the live schema."""
+    from types import SimpleNamespace
+
+    from cogniverse_core.common.tenant_utils import (
+        TenantDeletedError,
+        mark_tenant_deleted,
+    )
+    from cogniverse_core.registries.schema_deployment_intents import (
+        SchemaDeploymentIntents,
+    )
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    tenant = "acme:prod"
+    packages = []
+
+    def activate_then_tenant_deleted(schemas):
+        packages.append([schema["name"] for schema in schemas])
+        mark_tenant_deleted(store, tenant)
+        return True
+
+    registry = SchemaRegistry(
+        config_manager=SimpleNamespace(store=store),
+        backend=_backend(store, activate_then_tenant_deleted),
+        schema_loader=SimpleNamespace(load_schema=lambda base: {"name": base}),
+    )
+
+    with pytest.raises(TenantDeletedError) as caught:
+        registry.deploy_schema(tenant, "provenance")
+
+    assert str(caught.value) == (
+        "Tenant 'acme:prod' has been deleted; its schemas and memories are not "
+        "written until the tenant is created again"
+    )
+    assert packages == [["provenance_acme_prod"]]
+    assert _row(store, tenant, "provenance") is None
+    assert [
+        record["registration"]["full_schema_name"]
+        for record in SchemaDeploymentIntents(store).pending_for_tenant(tenant)
+    ] == ["provenance_acme_prod"]
+
+
+def test_a_redefined_schema_of_a_tenant_deleted_after_activation_keeps_its_row():
+    """A redeploy of a registered schema activates, then a delete on another
+    process marks the tenant: the registration is refused, the stored row
+    keeps the definition it had for the delete to tombstone, and nothing is
+    rolled back into the application for the deleted tenant."""
+    import json
+
+    from cogniverse_core.common.tenant_utils import (
+        TenantDeletedError,
+        mark_tenant_deleted,
+    )
+
+    registry, store, packages, (tenant, base, name) = _registry_with_peer(
+        lambda _peer, tenant, _base, _name: mark_tenant_deleted(store, tenant)
+    )
+
+    with pytest.raises(TenantDeletedError):
+        registry.deploy_schema(tenant, base)
+
+    assert packages == [[name]]
+    row = _row(store, tenant, base)
+    assert (row.version, row.config_value.get("deleted", False)) == (1, False)
+    assert json.loads(row.config_value["schema_definition"]) == {
+        "name": name,
+        "document": {"fields": ["v1"]},
+    }
 
 
 def test_a_peer_tombstone_after_activation_is_never_overwritten():
@@ -306,7 +406,9 @@ def test_a_failed_peer_revision_read_keeps_the_conflict_as_the_error():
         return saved
 
     def failing_read_after_conflict(*args, **kwargs):
-        if conflicted:
+        # Registry rows only: the deployment lease the registration runs
+        # under reads its own row from the same store.
+        if conflicted and kwargs["service"] == SCHEMA_REGISTRY_SERVICE:
             reads_after_conflict.append(kwargs["config_key"])
             if len(reads_after_conflict) > 1:
                 raise store_error
