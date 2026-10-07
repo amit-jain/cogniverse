@@ -392,6 +392,49 @@ class TestWikiFactoryRetiresAFailedBuildAtomically:
         assert deployed == ["acme:acme", "acme:acme"]
 
 
+class TestWikiFactoryReleasesADeletedTenant:
+    """The tenant delete's release on every worker drops the tenant's cached
+    wiki manager, so the next access after the tenant is created again
+    deploys its wiki schema instead of feeding a schema the delete dropped."""
+
+    def test_the_next_access_after_a_delete_deploys_again(self, monkeypatch):
+        import cogniverse_agents.wiki.wiki_manager as wm
+        from cogniverse_runtime.admin.tenant_manager import release_deleted_tenant
+        from cogniverse_runtime.main import build_wiki_manager_factory
+
+        class _FakeWiki:
+            def __init__(self, **kw):
+                self.kw = kw
+
+        monkeypatch.setattr(wm, "WikiManager", _FakeWiki)
+
+        deployed: list[str] = []
+
+        class _Reg:
+            def deploy_schema(self, tenant_id, base_schema_name):
+                deployed.append(tenant_id)
+
+        class _Backend:
+            schema_registry = _Reg()
+
+            def get_tenant_schema_name(self, tenant_id, base):
+                return f"{base}_{tenant_id.replace(':', '_')}"
+
+        factory = build_wiki_manager_factory(
+            lambda: _Backend(), MagicMock(), MagicMock()
+        )
+
+        before = factory("acme:prod")
+        assert factory("acme:prod") is before
+        released = release_deleted_tenant({"tenant_id": "acme:prod"})
+        after = factory("acme:prod")
+
+        assert released["cache_entries"] == 1
+        assert after is not before
+        assert deployed == ["acme:prod", "acme:prod"]
+        assert after.kw["schema_name"] == "wiki_pages_acme_prod"
+
+
 @pytest.mark.unit
 class TestWikiProfileReaffirmation:
     """Startup re-affirms the shipped system profiles by READING the loaded

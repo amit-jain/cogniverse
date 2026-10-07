@@ -823,6 +823,9 @@ def _configure_library_module_defaults(
     get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
 
 
+WIKI_MANAGER_CACHE_CAPACITY = 64
+
+
 def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     """Build the per-tenant ``WikiManager`` factory the runtime installs.
 
@@ -843,15 +846,19 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     concurrent first touches would otherwise each run one. Waiters share the
     owner's outcome, failure included, and a failed build caches nothing — a
     manager bound to a schema that was never deployed answers every later read
-    with a backend error no retry can clear.
+    with a backend error no retry can clear. The cache is released for a
+    tenant on its delete, so the tenant created again deploys its schema anew.
     """
     import threading
     from concurrent.futures import Future
 
     from cogniverse_agents.wiki.wiki_manager import WikiManager
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
 
-    managers: dict = {}
+    managers: TenantLRUCache[WikiManager] = register_tenant_cache(
+        TenantLRUCache(capacity=WIKI_MANAGER_CACHE_CAPACITY)
+    )
     inflight: dict = {}
     lock = threading.Lock()
 
@@ -898,7 +905,7 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
             raise
         else:
             with lock:
-                managers[tenant_id] = mgr
+                managers.set(tenant_id, mgr)
                 inflight.pop(tenant_id, None)
                 pending.set_result(mgr)
             return mgr
