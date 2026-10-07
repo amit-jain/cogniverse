@@ -117,6 +117,7 @@ class TestProfileMultiTenantIsolation:
             "schema_name": "video_test",
             "embedding_model": "model_a",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "description": "Tenant A's profile",
         }
 
@@ -127,6 +128,7 @@ class TestProfileMultiTenantIsolation:
             "schema_name": "video_test",
             "embedding_model": "model_b",
             "embedding_type": "single_vector",
+            "model_loader": "xclip",
             "description": "Tenant B's profile",
         }
 
@@ -167,6 +169,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -179,6 +182,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -192,6 +196,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_b",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -233,6 +238,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "secret_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -255,6 +261,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "description": "Original description",
             },
         )
@@ -285,6 +292,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -312,6 +320,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
         # Should fail validation or use default tenant
@@ -331,6 +340,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_a",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "description": "Version 1",
             },
         )
@@ -351,6 +361,7 @@ class TestProfileMultiTenantIsolation:
                 "schema_name": "video_test",
                 "embedding_model": "model_b",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "description": "Tenant B version",
             },
         )

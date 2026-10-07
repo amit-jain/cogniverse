@@ -78,7 +78,7 @@ class LocalSystemConfig:
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
-            config_value=system_config.to_dict(),
+            config_value=system_config.to_dict(redact=False),
             version=1,
             created_at=stamp,
             updated_at=stamp,

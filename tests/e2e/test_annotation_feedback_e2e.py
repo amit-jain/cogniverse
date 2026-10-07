@@ -34,6 +34,7 @@ import pytest
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from tests.e2e.cluster import KUBECTL_CONTEXT
 from tests.e2e.test_api_e2e import PROFILE
+from tests.utils.profile_payload import profile_create_payload
 
 NAMESPACE = "cogniverse"
 PHOENIX_HTTP = "http://localhost:33006"  # phoenix.service nodePort
@@ -227,20 +228,7 @@ def _provision_run_tenant() -> None:
         (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
     )
     profile_def = config["backend"]["profiles"][profile_name]
-    payload = {
-        "profile_name": profile_name,
-        "tenant_id": CANONICAL_TENANT,
-        "type": profile_def.get("type", "video"),
-        "description": profile_def.get("description", ""),
-        "schema_name": profile_def.get("schema_name", profile_name),
-        "embedding_model": profile_def.get("embedding_model", ""),
-        "pipeline_config": profile_def.get("pipeline_config", {}),
-        "strategies": profile_def.get("strategies", {}),
-        "embedding_type": profile_def.get("embedding_type", "multi_vector"),
-        "schema_config": profile_def.get("schema_config", {}),
-        "model_specific": profile_def.get("model_specific"),
-        "deploy_schema": True,
-    }
+    payload = profile_create_payload(profile_name, profile_def, CANONICAL_TENANT)
     create = httpx.post(f"{RUNTIME_URL}/admin/profiles", json=payload, timeout=300.0)
     if create.status_code != 201:
         # The create route reports an existing profile as a 400 validation

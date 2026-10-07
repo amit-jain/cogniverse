@@ -39,6 +39,7 @@ from tests.e2e.test_api_e2e import (
     PROFILE,
     _served_document_windows,
 )
+from tests.utils.profile_payload import profile_create_payload
 
 SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 60_000
@@ -101,20 +102,7 @@ def _deploy_schema(client: httpx.Client, profile_name: str, tenant_id: str) -> d
     if profile_def:
         client.post(
             "/admin/profiles",
-            json={
-                "profile_name": profile_name,
-                "tenant_id": tenant_id,
-                "type": profile_def.get("type", "video"),
-                "description": profile_def.get("description", ""),
-                "schema_name": profile_def.get("schema_name", profile_name),
-                "embedding_model": profile_def.get("embedding_model", ""),
-                "pipeline_config": profile_def.get("pipeline_config", {}),
-                "strategies": profile_def.get("strategies", {}),
-                "embedding_type": profile_def.get("embedding_type", ""),
-                "schema_config": profile_def.get("schema_config", {}),
-                "model_specific": profile_def.get("model_specific"),
-                "deploy_schema": True,
-            },
+            json=profile_create_payload(profile_name, profile_def, tenant_id),
             timeout=60,
         )
 

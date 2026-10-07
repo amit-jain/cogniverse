@@ -76,6 +76,7 @@ def test_search_backends_hold_no_profiles_a_profile_write_must_update():
     changes."""
     assert sorted(SearchBackend.__abstractmethods__) == [
         "batch_get_documents",
+        "export_embeddings",
         "get_document",
         "get_embedding_requirements",
         "get_statistics",

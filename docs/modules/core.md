@@ -2339,9 +2339,15 @@ validator = ProfileValidator(config_manager, schema_templates_dir=Path("configs/
 errors = validator.validate_profile(profile, tenant_id="acme", is_update=False)
 ```
 
-`VALID_EMBEDDING_TYPES = ["multi_vector", "single_vector"]` and
-`VALID_PROFILE_TYPES = ["video", "image", "audio", "document", "code"]` are
-the only values accepted for the corresponding profile fields.
+`VALID_EMBEDDING_TYPES = ["multi_vector", "single_vector"]` are the accepted
+embedding types. Profile types are the types of the shipped profiles in
+`configs/config.json` `backend.profiles`. `model_loader` must be one of
+`model_loaders.EMBEDDING_MODEL_LOADERS` (`colbert`, `colpali`, `colqwen`,
+`xclip`), and is required for every type whose shipped profiles all name one,
+so a profile ingestion cannot embed with is refused at creation.
+`process_type`, when set, must be one of `unified_config.PROCESS_TYPES`
+(`direct_video`, `frame_based`, `video_chunks`), and `extra_config` keys may
+not name a profile field.
 
 ### FilesystemSchemaLoader (schemas/filesystem_loader.py)
 

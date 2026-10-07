@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -28,6 +28,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_runtime.http_errors import failure_response, upstream_rejection
 from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 logger = logging.getLogger(__name__)
 
@@ -694,10 +695,8 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
     logger.info("Deleted CronWorkflow: %s", name)
 
 
-# Modes accepted by POST /{tenant_id}/optimize. Matches the `--mode` choices
-# declared by cogniverse_runtime.optimization_cli (minus `triggered` and
-# `cleanup`, which aren't intended for interactive dashboard use, and
-# `synthetic` which has its own scheduled CronWorkflow).
+# Modes accepted by POST /{tenant_id}/optimize: the `--mode` choices of
+# cogniverse_runtime.optimization_cli meant for an operator to start.
 _MANUAL_OPTIMIZE_MODES = {
     "gateway-thresholds",
     "simba",
@@ -705,7 +704,10 @@ _MANUAL_OPTIMIZE_MODES = {
     "profile",
     "entity-extraction",
     "llm-annotate",
+    "synthetic",
 }
+_SYNTHETIC_MODE = "synthetic"
+_DEFAULT_LOOKBACK_HOURS = 48.0
 
 
 def _sanitize_label_value(value: str) -> str:
@@ -740,9 +742,23 @@ def _cron_workflow_name(tenant_id: str, job_id: str) -> str:
 
 
 def _build_optimization_workflow_manifest(
-    tenant_id: str, mode: str, namespace: str
+    tenant_id: str,
+    mode: str,
+    namespace: str,
+    *,
+    lookback_hours: float = _DEFAULT_LOOKBACK_HOURS,
+    agents: Optional[List[str]] = None,
 ) -> dict:
-    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``."""
+    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``;
+    ``agents`` becomes its ``--agents`` (the synthetic mode's optimizer
+    types)."""
+    parameters = [
+        {"name": "mode", "value": mode},
+        {"name": "tenant-id", "value": tenant_id},
+        {"name": "lookback-hours", "value": f"{lookback_hours:g}"},
+    ]
+    if agents:
+        parameters.append({"name": "agents", "value": ",".join(agents)})
     if not get_workflow_settings().optimization_template:
         raise HTTPException(
             status_code=503,
@@ -777,13 +793,7 @@ def _build_optimization_workflow_manifest(
             "workflowTemplateRef": {
                 "name": get_workflow_settings().optimization_template,
             },
-            "arguments": {
-                "parameters": [
-                    {"name": "mode", "value": mode},
-                    {"name": "tenant-id", "value": tenant_id},
-                    {"name": "lookback-hours", "value": "48"},
-                ],
-            },
+            "arguments": {"parameters": parameters},
         },
     }
 
@@ -815,6 +825,19 @@ async def _submit_workflow(manifest: dict) -> dict:
 
 class ManualOptimizeRequest(BaseModel):
     mode: str
+    lookback_hours: float = Field(
+        _DEFAULT_LOOKBACK_HOURS,
+        gt=0,
+        le=8760,
+        description="Hours of span history the run reads",
+    )
+    optimizers: Optional[List[str]] = Field(
+        None,
+        description=(
+            "The synthetic mode's optimizer types to generate training data "
+            "for; required for it and refused for every other mode"
+        ),
+    )
 
 
 class ManualOptimizeResponse(BaseModel):
@@ -894,12 +917,41 @@ def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
 
 class OptimizeModes(BaseModel):
     modes: List[str]
+    synthetic_optimizers: List[str]
 
 
 @router.get("/optimize-modes", response_model=OptimizeModes)
 async def list_optimization_modes():
-    """The modes ``POST /{tenant_id}/optimize`` accepts, sorted."""
-    return OptimizeModes(modes=sorted(_MANUAL_OPTIMIZE_MODES))
+    """The modes ``POST /{tenant_id}/optimize`` accepts and the optimizer
+    types its synthetic mode generates data for, sorted."""
+    return OptimizeModes(
+        modes=sorted(_MANUAL_OPTIMIZE_MODES),
+        synthetic_optimizers=sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER),
+    )
+
+
+def _synthetic_optimizers(body: ManualOptimizeRequest) -> Optional[List[str]]:
+    """The request's optimizer types, validated against its mode."""
+    supported = sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+    if body.mode != _SYNTHETIC_MODE:
+        if body.optimizers is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="optimizers apply only to the synthetic mode",
+            )
+        return None
+    if not body.optimizers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The synthetic mode needs optimizers, from: {supported}",
+        )
+    unknown = sorted(set(body.optimizers) - set(supported))
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown optimizers {unknown}; supported: {supported}",
+        )
+    return sorted(set(body.optimizers))
 
 
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
@@ -924,8 +976,13 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
             ),
         )
 
+    optimizers = _synthetic_optimizers(body)
     manifest = _build_optimization_workflow_manifest(
-        tenant_id, body.mode, get_workflow_settings().namespace
+        tenant_id,
+        body.mode,
+        get_workflow_settings().namespace,
+        lookback_hours=body.lookback_hours,
+        agents=optimizers,
     )
     response = await _submit_workflow(manifest)
 

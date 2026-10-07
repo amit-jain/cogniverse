@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, ConfirmDelete, Panel, useAction, useLoad } from './common';
 import { jsonText, parseJsonObject, sameJson, type JsonObject } from './forms';
 import { runtimeJson, seg } from './http';
+import { fieldsFromTemplate, shippedValues, type ProfileFields } from './profiles';
 import { TenantChooser } from './tenants';
 
 interface ProfileSummary {
@@ -25,9 +26,17 @@ interface ProfileDetail {
   embedding_type: string;
   schema_config: JsonObject;
   model_specific: JsonObject | null;
+  model_loader: string;
+  process_type: string | null;
+  extra_config: JsonObject;
   schema_deployed: boolean;
   tenant_schema_name: string | null;
   version: number;
+}
+
+interface ProfileTemplate {
+  profile_name: string;
+  config: JsonObject;
 }
 
 interface Deployment {
@@ -167,11 +176,19 @@ function ProfilePanel({
             <dd>{profile.embedding_model}</dd>
             <dt>Embedding type</dt>
             <dd>{profile.embedding_type}</dd>
+            <dt>Model loader</dt>
+            <dd>{profile.model_loader || 'none'}</dd>
+            <dt>Process type</dt>
+            <dd>{profile.process_type ?? 'inferred'}</dd>
             <dt>Config version</dt>
             <dd>{profile.version}</dd>
             <dt>Schema config</dt>
             <dd>
               <pre>{jsonText(profile.schema_config)}</pre>
+            </dd>
+            <dt>Extra config</dt>
+            <dd>
+              {Object.keys(profile.extra_config).length ? <pre>{jsonText(profile.extra_config)}</pre> : 'none'}
             </dd>
           </dl>
           <EditProfile tenant={tenant} profile={profile} onSaved={(notice) => onChanged(notice)} />
@@ -323,6 +340,21 @@ function DeleteProfile({
   );
 }
 
+const EMPTY_FIELDS: ProfileFields = {
+  type: 'video',
+  description: '',
+  schemaName: '',
+  embeddingModel: '',
+  embeddingType: EMBEDDING_TYPES[0],
+  modelLoader: '',
+  processType: '',
+  pipeline: '',
+  strategies: '',
+  schemaConfig: '',
+  modelSpecific: '',
+  extraConfig: '',
+};
+
 function CreateProfile({
   tenant,
   onCreated,
@@ -330,20 +362,23 @@ function CreateProfile({
   tenant: string;
   onCreated: (notice: string, select: string) => void;
 }) {
+  const templates = useLoad(
+    (signal) =>
+      runtimeJson<{ templates: ProfileTemplate[] }>(`/admin/profile-templates?tenant_id=${seg(tenant)}`, {
+        signal,
+      }).then((body) => body.templates),
+    [tenant],
+  );
   const [name, setName] = useState('');
-  const [type, setType] = useState('video');
-  const [description, setDescription] = useState('');
-  const [schemaName, setSchemaName] = useState('');
-  const [embeddingModel, setEmbeddingModel] = useState('');
-  const [embeddingType, setEmbeddingType] = useState(EMBEDDING_TYPES[0]);
-  const [pipeline, setPipeline] = useState('');
-  const [strategies, setStrategies] = useState('');
-  const [schemaConfig, setSchemaConfig] = useState('');
-  const [modelSpecific, setModelSpecific] = useState('');
+  const [template, setTemplate] = useState('');
+  const [fields, setFields] = useState<ProfileFields>(EMPTY_FIELDS);
   const [deploy, setDeploy] = useState(false);
   const action = useAction();
+  const set = (key: keyof ProfileFields) => (value: string) => setFields((current) => ({ ...current, [key]: value }));
+  const shipped = templates.data ?? [];
   return (
     <Panel title={`New profile for ${tenant}`}>
+      {templates.error && <Alert>{templates.error}</Alert>}
       <form
         className="stacked-form"
         aria-label="Create profile"
@@ -353,15 +388,18 @@ function CreateProfile({
             const body = {
               profile_name: name.trim(),
               tenant_id: tenant,
-              type: type.trim(),
-              description,
-              schema_name: schemaName.trim(),
-              embedding_model: embeddingModel.trim(),
-              embedding_type: embeddingType,
-              pipeline_config: parseJsonObject('Pipeline config', pipeline) ?? {},
-              strategies: parseJsonObject('Strategies', strategies) ?? {},
-              schema_config: parseJsonObject('Schema config', schemaConfig) ?? {},
-              model_specific: parseJsonObject('Model-specific parameters', modelSpecific) ?? null,
+              type: fields.type.trim(),
+              description: fields.description,
+              schema_name: fields.schemaName.trim(),
+              embedding_model: fields.embeddingModel.trim(),
+              embedding_type: fields.embeddingType,
+              model_loader: fields.modelLoader.trim(),
+              process_type: fields.processType.trim() || null,
+              pipeline_config: parseJsonObject('Pipeline config', fields.pipeline) ?? {},
+              strategies: parseJsonObject('Strategies', fields.strategies) ?? {},
+              schema_config: parseJsonObject('Schema config', fields.schemaConfig) ?? {},
+              model_specific: parseJsonObject('Model-specific parameters', fields.modelSpecific) ?? null,
+              extra_config: parseJsonObject('Extra config', fields.extraConfig) ?? {},
               deploy_schema: deploy,
             };
             const created = await runtimeJson<{
@@ -380,6 +418,25 @@ function CreateProfile({
           });
         }}
       >
+        <label>
+          Start from shipped profile
+          <select
+            value={template}
+            disabled={!templates.data}
+            onChange={(e) => {
+              setTemplate(e.target.value);
+              const chosen = shipped.find((t) => t.profile_name === e.target.value);
+              setFields(chosen ? fieldsFromTemplate(chosen.config) : EMPTY_FIELDS);
+            }}
+          >
+            <option value="">Blank profile</option>
+            {shipped.map((t) => (
+              <option key={t.profile_name} value={t.profile_name}>
+                {t.profile_name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="inline-form">
           <label>
             Profile name
@@ -387,14 +444,14 @@ function CreateProfile({
           </label>
           <label>
             Type
-            <input required value={type} onChange={(e) => setType(e.target.value)} />
+            <input required value={fields.type} onChange={(e) => set('type')(e.target.value)} />
           </label>
           <label>
             Schema name
             <input
               required
-              value={schemaName}
-              onChange={(e) => setSchemaName(e.target.value)}
+              value={fields.schemaName}
+              onChange={(e) => set('schemaName')(e.target.value)}
               placeholder="video_colpali_smol500_mv_frame"
             />
           </label>
@@ -402,28 +459,57 @@ function CreateProfile({
             Embedding model
             <input
               required
-              value={embeddingModel}
-              onChange={(e) => setEmbeddingModel(e.target.value)}
+              value={fields.embeddingModel}
+              onChange={(e) => set('embeddingModel')(e.target.value)}
               placeholder="TomoroAI/tomoro-colqwen3-embed-4b"
             />
           </label>
           <label>
             Embedding type
-            <select value={embeddingType} onChange={(e) => setEmbeddingType(e.target.value)}>
+            <select value={fields.embeddingType} onChange={(e) => set('embeddingType')(e.target.value)}>
               {EMBEDDING_TYPES.map((value) => (
                 <option key={value}>{value}</option>
               ))}
             </select>
           </label>
+          <label>
+            Model loader
+            <input
+              list="model-loaders"
+              value={fields.modelLoader}
+              onChange={(e) => set('modelLoader')(e.target.value)}
+              placeholder="colpali"
+            />
+            <datalist id="model-loaders">
+              {shippedValues(shipped, 'model_loader').map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+          </label>
+          <label>
+            Process type
+            <input
+              list="process-types"
+              value={fields.processType}
+              onChange={(e) => set('processType')(e.target.value)}
+              placeholder="inferred"
+            />
+            <datalist id="process-types">
+              {shippedValues(shipped, 'process_type').map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+          </label>
         </div>
         <label>
           Description
-          <input value={description} onChange={(e) => setDescription(e.target.value)} />
+          <input value={fields.description} onChange={(e) => set('description')(e.target.value)} />
         </label>
-        <JsonField label="Pipeline config" value={pipeline} onChange={setPipeline} />
-        <JsonField label="Strategies" value={strategies} onChange={setStrategies} />
-        <JsonField label="Schema config" value={schemaConfig} onChange={setSchemaConfig} />
-        <JsonField label="Model-specific parameters" value={modelSpecific} onChange={setModelSpecific} />
+        <JsonField label="Pipeline config" value={fields.pipeline} onChange={set('pipeline')} />
+        <JsonField label="Strategies" value={fields.strategies} onChange={set('strategies')} />
+        <JsonField label="Schema config" value={fields.schemaConfig} onChange={set('schemaConfig')} />
+        <JsonField label="Model-specific parameters" value={fields.modelSpecific} onChange={set('modelSpecific')} />
+        <JsonField label="Extra config" value={fields.extraConfig} onChange={set('extraConfig')} />
         <label className="check">
           <input type="checkbox" checked={deploy} onChange={(e) => setDeploy(e.target.checked)} />
           Deploy the schema now

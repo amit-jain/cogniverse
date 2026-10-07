@@ -40,6 +40,8 @@ from cogniverse_runtime.routers import (
     admin,
     agents,
     approvals,
+    config_entries,
+    embedding_atlas,
     ingestion,
     orchestration_annotations,
     routing_decisions,
@@ -122,12 +124,14 @@ def serve_ops_runtime(
 
     app = FastAPI(lifespan=cluster_events)
     app.include_router(admin.router, prefix="/admin")
+    app.include_router(config_entries.router, prefix="/admin")
     app.include_router(tm.router, prefix="/admin")
     app.include_router(tenant.router, prefix="/admin/tenant")
     app.include_router(approvals.router, prefix="/admin/tenant")
     app.include_router(orchestration_annotations.router, prefix="/admin/tenant")
     app.include_router(telemetry_metrics.router, prefix="/admin/tenant")
     app.include_router(routing_decisions.router, prefix="/admin/tenant")
+    app.include_router(embedding_atlas.router, prefix="/admin/tenant")
     app.include_router(agents.router, prefix="/agents")
     app.include_router(ingestion.router, prefix="/ingestion")
     app.include_router(status_api.router, prefix="/ingestion")

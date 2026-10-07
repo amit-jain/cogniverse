@@ -33,6 +33,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant
 from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.argo_api import apply_manifest, argo_api_server, set_workflow_status
 from tests.utils.http_fault_proxy import InterceptFaultProxy
@@ -809,11 +810,15 @@ def test_every_listed_optimization_mode_submits_a_run_carrying_it(argo_cluster):
         assert listed.status_code == 200, listed.text
         modes = listed.json()["modes"]
         assert modes == sorted(tenant._MANUAL_OPTIMIZE_MODES)
+        assert listed.json()["synthetic_optimizers"] == sorted(
+            APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+        )
         submitted = {}
         for mode in modes:
-            response = client.post(
-                f"/admin/tenant/{tenant_id}/optimize", json={"mode": mode}
-            )
+            body = {"mode": mode}
+            if mode == "synthetic":
+                body["optimizers"] = ["profile"]
+            response = client.post(f"/admin/tenant/{tenant_id}/optimize", json=body)
             assert response.status_code == 200, response.text
             submitted[response.json()["workflow_name"]] = mode
         deadline = time.monotonic() + 60
@@ -825,3 +830,86 @@ def test_every_listed_optimization_mode_submits_a_run_carrying_it(argo_cluster):
             time.sleep(0.5)
         assert {run["workflow_name"]: run["mode"] for run in runs} == submitted
         assert {run["trigger"] for run in runs} == {"manual"}
+
+
+def _submitted_parameters(argo_url: str, workflow_name: str) -> dict:
+    stored = httpx.get(f"{argo_url}/api/v1/workflows/cogniverse/{workflow_name}")
+    assert stored.status_code == 200, stored.text
+    return {
+        p["name"]: p["value"] for p in stored.json()["spec"]["arguments"]["parameters"]
+    }
+
+
+@pytest.mark.integration
+def test_a_run_carries_its_lookback_and_a_synthetic_run_its_optimizers(argo_cluster):
+    _configure_workflow(api_url=argo_cluster["url"])
+    tenant_id = "optruns:params"
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        simba = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "simba", "lookback_hours": 6},
+        )
+        assert simba.status_code == 200, simba.text
+        synthetic = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "synthetic", "optimizers": ["routing", "profile", "routing"]},
+        )
+        assert synthetic.status_code == 200, synthetic.text
+
+    assert _submitted_parameters(
+        argo_cluster["url"], simba.json()["workflow_name"]
+    ) == {
+        "mode": "simba",
+        "tenant-id": tenant_id,
+        "lookback-hours": "6",
+    }
+    assert _submitted_parameters(
+        argo_cluster["url"], synthetic.json()["workflow_name"]
+    ) == {
+        "mode": "synthetic",
+        "tenant-id": tenant_id,
+        "lookback-hours": "48",
+        "agents": "profile,routing",
+    }
+
+
+@pytest.mark.integration
+def test_optimizer_choices_are_refused_where_they_do_not_apply(argo_cluster):
+    _configure_workflow(api_url=argo_cluster["url"])
+    tenant_id = "optruns:refused"
+    supported = sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        refusals = [
+            (
+                {"mode": "synthetic"},
+                400,
+                f"The synthetic mode needs optimizers, from: {supported}",
+            ),
+            (
+                {"mode": "synthetic", "optimizers": ["profile", "workflow"]},
+                400,
+                f"Unknown optimizers ['workflow']; supported: {supported}",
+            ),
+            (
+                {"mode": "simba", "optimizers": ["profile"]},
+                400,
+                "optimizers apply only to the synthetic mode",
+            ),
+        ]
+        for body, status, detail in refusals:
+            response = client.post(f"/admin/tenant/{tenant_id}/optimize", json=body)
+            assert (response.status_code, response.json()["detail"]) == (
+                status,
+                detail,
+            )
+        zero = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "simba", "lookback_hours": 0},
+        )
+        assert zero.status_code == 422
+        runs = client.get(f"/admin/tenant/{tenant_id}/optimize/runs")
+        assert runs.json()["runs"] == []

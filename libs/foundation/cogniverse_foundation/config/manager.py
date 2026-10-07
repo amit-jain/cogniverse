@@ -25,7 +25,7 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
-from cogniverse_sdk.interfaces.config_store import ConfigScope, ConfigStore
+from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,8 @@ class ConfigManager:
             scope=ConfigScope.SYSTEM,
             service="system",
             config_key="system_config",
-            config_value=system_config.to_dict(),
+            # Persist the real key, not the display-redacted "***".
+            config_value=system_config.to_dict(redact=False),
         )
         # Hold what was written, detaching any read in flight, so no read
         # that began before the write is served after it.
@@ -346,6 +347,39 @@ class ConfigManager:
         self._scoped_configs.invalidate(
             lambda key: key[0] == scope and key[1] == tenant_id
         )
+
+    def forget_held_configs(self, tenant_id: str) -> None:
+        """Drop everything held for ``tenant_id`` (the system config for the
+        system tenant), so the next read of each comes from the store."""
+        if tenant_id == self._SYSTEM_TENANT_ID:
+            self._system_config.invalidate(lambda key: True)
+        self._scoped_configs.invalidate(lambda key: key[1] == tenant_id)
+
+    def compare_and_set_entry(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+        *,
+        expected_version: int,
+    ) -> Optional[ConfigEntry]:
+        """Store ``config_value`` as the next version when the stored one is
+        ``expected_version`` (0: none stored); None when another write landed
+        first. Either way this manager next reads the entry from the store.
+        """
+        try:
+            return self.store.compare_and_set_config(
+                tenant_id,
+                scope,
+                service,
+                config_key,
+                config_value,
+                expected_version=expected_version,
+            )
+        finally:
+            self.forget_held_configs(tenant_id)
 
     # ========== Tenant Instructions ==========
 

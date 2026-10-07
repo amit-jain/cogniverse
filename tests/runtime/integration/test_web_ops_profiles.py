@@ -123,6 +123,7 @@ def _fill_create(
     pipeline: str = "",
     strategies: str = "",
     schema_config: str = "",
+    loader: str = "colpali",
     deploy: bool = False,
 ):
     form = page.get_by_role("form", name="Create profile")
@@ -131,6 +132,7 @@ def _fill_create(
     form.get_by_label("Schema name").fill(schema)
     form.get_by_label("Embedding model").fill(model)
     form.get_by_label("Embedding type").select_option("multi_vector")
+    form.get_by_label("Model loader").fill(loader)
     form.get_by_label("Description").fill(description)
     form.get_by_label("Pipeline config", exact=True).fill(pipeline)
     form.get_by_label("Strategies", exact=True).fill(strategies)
@@ -166,6 +168,7 @@ def _create_through_api(runtime_url: str, tenant: str, name: str) -> None:
             "schema_name": BASE_SCHEMA,
             "embedding_model": MODEL,
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "strategies": STRATEGIES,
         },
     )
@@ -212,6 +215,7 @@ class TestProfileLifecycle:
                 "schema_name",
                 "embedding_model",
                 "embedding_type",
+                "model_loader",
                 "pipeline_config",
                 "strategies",
                 "schema_config",
@@ -223,6 +227,7 @@ class TestProfileLifecycle:
             "schema_name": BASE_SCHEMA,
             "embedding_model": MODEL,
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "pipeline_config": PIPELINE,
             "strategies": STRATEGIES,
             "schema_config": SCHEMA_CONFIG,
@@ -317,6 +322,7 @@ class TestProfileLifecycle:
             schema=schema,
             model=shipped["embedding_model"],
             strategies=json.dumps(shipped["strategies"]),
+            loader=shipped["model_loader"],
             deploy=True,
         )
         notice = page.get_by_role("status")
@@ -344,6 +350,68 @@ class TestProfileLifecycle:
         )
         assert _detail(runtime_url, tenant, name).status_code == 404
         assert not _schema_deployed(config_manager, schema_loader, tenant, schema)
+
+
+class TestStartFromShippedProfile:
+    def test_a_profile_started_from_a_shipped_one_carries_all_its_keys(
+        self, page, web_url, runtime_url, tenant
+    ):
+        """Every key of the shipped profile, the ones ingestion reads beside
+        the named fields included, lands in the created profile."""
+        template = "document_text_semantic"
+        shipped = SHIPPED_PROFILES[template]
+        name = f"web_{uuid.uuid4().hex[:8]}"
+        _profiles_view(page, web_url, tenant)
+
+        form = page.get_by_role("form", name="Create profile")
+        form.get_by_label("Start from shipped profile").select_option(template)
+        expect(form.get_by_label("Model loader")).to_have_value("colbert")
+        expect(form.get_by_label("Schema name")).to_have_value(shipped["schema_name"])
+        assert json.loads(
+            form.get_by_label("Extra config", exact=True).input_value()
+        ) == {
+            "result_granularity": "source",
+            "inference_services": {"embedding": "colbert_pylate"},
+        }
+        form.get_by_label("Profile name").fill(name)
+        form.get_by_role("button", name="Create profile").click()
+        expect(page.get_by_role("status")).to_contain_text(f"Created profile {name} ")
+
+        created = _detail(runtime_url, tenant, name).json()
+        assert {
+            "type": created["type"],
+            "description": created["description"],
+            "schema_name": created["schema_name"],
+            "embedding_model": created["embedding_model"],
+            "pipeline_config": created["pipeline_config"],
+            "strategies": created["strategies"],
+            "embedding_type": created["embedding_type"],
+            "model_loader": created["model_loader"],
+            "schema_config": created["schema_config"],
+            **created["extra_config"],
+        } == shipped
+        assert created["process_type"] is None
+
+        detail = page.get_by_role("region", name=f"Profile {name}")
+        expect(detail.locator("dt:text-is('Model loader') + dd")).to_have_text(
+            "colbert"
+        )
+        expect(detail.locator("dt:text-is('Process type') + dd")).to_have_text(
+            "inferred"
+        )
+        _delete_through_api(runtime_url, tenant, name)
+
+        # A shipped name the tenant has its own profile under is not offered.
+        _create_through_api(runtime_url, tenant, "image_colpali_mv")
+        page.reload()
+        _profiles_view(page, web_url, tenant)
+        options = page.get_by_role("form", name="Create profile").get_by_label(
+            "Start from shipped profile"
+        )
+        expect(options.locator("option")).to_have_text(
+            ["Blank profile", *sorted(set(SHIPPED_PROFILES) - {"image_colpali_mv"})]
+        )
+        _delete_through_api(runtime_url, tenant, "image_colpali_mv")
 
 
 class TestRefusedCreate:
@@ -442,6 +510,13 @@ class TestFaultContract:
                 )
                 expect(profiles.get_by_role("alert")).to_have_text(unreachable)
                 expect(profiles.get_by_role("table")).to_have_count(0)
+                create = page.get_by_role(
+                    "region", name="New profile for acme:production"
+                )
+                expect(create.get_by_role("alert")).to_have_text(unreachable)
+                expect(
+                    create.get_by_label("Start from shipped profile")
+                ).to_be_disabled()
                 expect(
                     profiles.get_by_text("No profiles created for acme:production.")
                 ).to_have_count(0)

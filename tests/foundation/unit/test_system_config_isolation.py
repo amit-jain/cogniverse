@@ -62,3 +62,17 @@ def test_setter_input_mutation_does_not_poison_cache():
     config.llm_model = "caller-mutated-model"
 
     assert cm.get_system_config().llm_model == "persisted-model"
+
+
+def test_a_saved_system_api_key_is_stored_and_read_back_whole():
+    """set_system_config persists the real key; another manager over the
+    store reads it, not the display redaction."""
+    store = InMemoryConfigStore()
+    ConfigManager(store=store).set_system_config(
+        SystemConfig(llm_api_key="sk-live-123", llm_model="m")
+    )
+
+    reread = ConfigManager(store=store).get_system_config()
+    assert (reread.llm_api_key, reread.llm_model) == ("sk-live-123", "m")
+    assert SystemConfig(llm_api_key="sk-live-123").to_dict()["llm_api_key"] == "***"
+    assert SystemConfig().to_dict()["llm_api_key"] is None

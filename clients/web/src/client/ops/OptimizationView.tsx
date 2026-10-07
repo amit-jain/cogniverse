@@ -80,15 +80,24 @@ export function OptimizationView() {
   );
 }
 
+interface OptimizeModes {
+  modes: string[];
+  synthetic_optimizers: string[];
+}
+
+const SYNTHETIC_MODE = 'synthetic';
+
 function StartRun({ tenant, onStarted }: { tenant: string; onStarted: (notice: string, select: string) => void }) {
   const modes = useLoad(
-    (signal) =>
-      runtimeJson<{ modes: string[] }>('/admin/tenant/optimize-modes', { signal }).then((body) => body.modes),
+    (signal) => runtimeJson<OptimizeModes>('/admin/tenant/optimize-modes', { signal }),
     [],
   );
   const [mode, setMode] = useState('');
+  const [lookback, setLookback] = useState('48');
+  const [optimizers, setOptimizers] = useState<string[]>([]);
   const action = useAction();
-  const chosen = mode || modes.data?.[0] || '';
+  const chosen = mode || modes.data?.modes[0] || '';
+  const synthetic = chosen === SYNTHETIC_MODE;
   return (
     <Panel title="Run an optimization">
       {modes.error && <Alert>{modes.error}</Alert>}
@@ -99,9 +108,12 @@ function StartRun({ tenant, onStarted }: { tenant: string; onStarted: (notice: s
           onSubmit={(e) => {
             e.preventDefault();
             action.run(async () => {
+              const hours = Number(lookback);
+              if (!lookback.trim() || !(hours > 0)) throw new Error('Lookback hours must be a number above 0.');
+              if (synthetic && !optimizers.length) throw new Error('Choose the optimizers to generate data for.');
               const run = await runtimeJson<{ workflow_name: string; mode: string }>(runsPath(tenant), {
                 method: 'POST',
-                body: { mode: chosen },
+                body: { mode: chosen, lookback_hours: hours, ...(synthetic ? { optimizers } : {}) },
               });
               onStarted(`Started a ${run.mode} run: ${run.workflow_name}.`, run.workflow_name);
             });
@@ -109,17 +121,43 @@ function StartRun({ tenant, onStarted }: { tenant: string; onStarted: (notice: s
         >
           <label>
             Mode
-            <select value={chosen} onChange={(e) => setMode(e.target.value)}>
-              {modes.data.map((value) => (
+            <select aria-label="Mode" value={chosen} onChange={(e) => setMode(e.target.value)}>
+              {modes.data.modes.map((value) => (
                 <option key={value}>{value}</option>
               ))}
             </select>
           </label>
+          <label>
+            Lookback hours
+            <input inputMode="decimal" value={lookback} onChange={(e) => setLookback(e.target.value)} />
+          </label>
+          {synthetic && (
+            <fieldset>
+              <legend>Generate training data for</legend>
+              {modes.data.synthetic_optimizers.map((value) => (
+                <label key={value} className="check">
+                  <input
+                    type="checkbox"
+                    checked={optimizers.includes(value)}
+                    onChange={(e) =>
+                      setOptimizers((current) =>
+                        e.target.checked ? [...current, value] : current.filter((item) => item !== value),
+                      )
+                    }
+                  />
+                  {value}
+                </label>
+              ))}
+            </fieldset>
+          )}
           <button type="submit" disabled={action.pending}>
             {action.pending ? 'Starting…' : 'Start run'}
           </button>
           {action.error && <Alert>{action.error}</Alert>}
         </form>
+      )}
+      {synthetic && (
+        <p className="muted">Generated examples wait in the Approvals view for review before training uses them.</p>
       )}
     </Panel>
   );

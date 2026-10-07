@@ -224,6 +224,7 @@ def _profile_body(tenant_id: str, profile_name: str, *, deploy_schema: bool) -> 
         "pipeline_config": {},
         "strategies": {},
         "embedding_type": "single_vector",
+        "model_loader": "xclip",
         "schema_config": {"embedding_dims": EMBEDDING_DIMS},
         "deploy_schema": deploy_schema,
     }

@@ -110,6 +110,7 @@ def valid_profile() -> BackendProfileConfig:
         embedding_type="multi_vector",
         schema_config={"embedding_dim": 128},
         model_specific=None,
+        model_loader="colpali",
     )
 
 
@@ -277,6 +278,126 @@ class TestProfileTypeValidation:
         assert errors == [
             "Profile type validation failed: no backend profile types are "
             "configured in configs/config.json backend.profiles"
+        ]
+
+
+def _shipped_loader_types() -> set[str]:
+    """Profile types whose every shipped profile names a model_loader."""
+    profiles = json.loads(SHIPPED_CONFIG_PATH.read_text())["backend"]["profiles"]
+    return {
+        profile["type"]
+        for profile in profiles.values()
+        if all(
+            other.get("model_loader")
+            for other in profiles.values()
+            if other["type"] == profile["type"]
+        )
+    }
+
+
+class TestModelLoaderValidation:
+    """A profile ingestion cannot embed with must not be created."""
+
+    def test_every_shipped_loader_is_one_ingestion_embeds_with(self):
+        from cogniverse_core.common.models.model_loaders import (
+            EMBEDDING_MODEL_LOADERS,
+            ModelLoaderFactory,
+        )
+
+        profiles = json.loads(SHIPPED_CONFIG_PATH.read_text())["backend"]["profiles"]
+        shipped = {
+            p["model_loader"] for p in profiles.values() if p.get("model_loader")
+        }
+        assert shipped == {"colbert", "colpali", "colqwen", "xclip"}
+        assert shipped == EMBEDDING_MODEL_LOADERS
+        assert EMBEDDING_MODEL_LOADERS <= set(ModelLoaderFactory.REMOTE_LOADERS)
+
+    def test_loader_required_types_are_derived_from_the_shipped_profiles(
+        self, validator: ProfileValidator
+    ):
+        assert validator._model_loader_types == frozenset(_shipped_loader_types())
+        assert validator._model_loader_types == frozenset(
+            {"video", "image", "audio", "document", "code"}
+        )
+
+    def test_a_type_with_a_loaderless_shipped_profile_does_not_require_one(
+        self, config_manager: ConfigManager, temp_schema_dir: Path, tmp_path: Path
+    ):
+        """Mutating the shipped config moves the requirement with it."""
+        config = json.loads(SHIPPED_CONFIG_PATH.read_text())
+        config["backend"]["profiles"]["video_colpali_smol500_mv_frame"].pop(
+            "model_loader"
+        )
+        mutated = tmp_path / "config.json"
+        mutated.write_text(json.dumps(config))
+        with patch.object(profile_validator_module, "SHIPPED_CONFIG_PATH", mutated):
+            validator = ProfileValidator(
+                config_manager=config_manager, schema_templates_dir=temp_schema_dir
+            )
+        assert "video" not in validator._model_loader_types
+        assert "image" in validator._model_loader_types
+
+    def test_missing_loader_on_an_embedded_type_is_refused(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
+        valid_profile.model_loader = ""
+        assert validator._validate_model_loader(valid_profile) == [
+            "Profile type 'video' requires a model_loader, one of: "
+            "['colbert', 'colpali', 'colqwen', 'xclip']"
+        ]
+
+    def test_missing_loader_on_a_loaderless_type_passes(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
+        valid_profile.type = "wiki"
+        valid_profile.model_loader = ""
+        assert validator._validate_model_loader(valid_profile) == []
+
+    def test_unknown_loader_is_refused(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
+        valid_profile.model_loader = "whisper"
+        assert validator._validate_model_loader(valid_profile) == [
+            "Invalid model_loader 'whisper'. Must be one of: "
+            "['colbert', 'colpali', 'colqwen', 'xclip']"
+        ]
+
+    @pytest.mark.parametrize("process_type", [None, "direct_video", "video_chunks"])
+    def test_known_process_types_pass(self, validator: ProfileValidator, process_type):
+        assert validator._validate_process_type(process_type) == []
+
+    def test_unknown_process_type_is_refused(self, validator: ProfileValidator):
+        assert validator._validate_process_type("chunks") == [
+            "Invalid process_type 'chunks'. Must be one of: "
+            "['direct_video', 'frame_based', 'video_chunks']"
+        ]
+
+    def test_extra_config_cannot_shadow_a_profile_field(
+        self, validator: ProfileValidator
+    ):
+        assert validator._validate_extra_config(
+            {"inference_services": {}, "model_loader": "x", "type": "y"}
+        ) == [
+            "extra_config keys ['model_loader', 'type'] are profile fields; "
+            "set them as fields instead"
+        ]
+        assert validator._validate_extra_config({"semantic_model": "m"}) == []
+
+    def test_full_validation_reports_each_new_error(
+        self, validator: ProfileValidator, valid_profile: BackendProfileConfig
+    ):
+        valid_profile.model_loader = "nope"
+        valid_profile.process_type = "nope"
+        valid_profile.extra_config = {"strategies": {}}
+        with patch.object(validator, "_strategy_class_exists", return_value=True):
+            errors = validator.validate_profile(valid_profile, tenant_id="t")
+        assert errors == [
+            "Invalid model_loader 'nope'. Must be one of: "
+            "['colbert', 'colpali', 'colqwen', 'xclip']",
+            "Invalid process_type 'nope'. Must be one of: "
+            "['direct_video', 'frame_based', 'video_chunks']",
+            "extra_config keys ['strategies'] are profile fields; "
+            "set them as fields instead",
         ]
 
 

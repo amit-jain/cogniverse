@@ -345,6 +345,7 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
         profile = await client.get(_profile_path(tenant))
         rlm = await client.get(f"/admin/tenant/{tenant}/telemetry/rlm-ab")
         traces = await client.get(_traces_path(tenant))
+        causes = await client.get(_root_causes_path(tenant))
     assert [
         (
             response.status_code,
@@ -353,7 +354,7 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
                 for k in ("error", "message", "tenant_id")
             },
         )
-        for response in (profile, rlm, traces)
+        for response in (profile, rlm, traces, causes)
     ] == [
         (
             502,
@@ -369,6 +370,14 @@ async def test_an_unreadable_telemetry_backend_answers_502(app, phoenix_proxy):
             {
                 "error": "telemetry_unavailable",
                 "message": f"Could not read the rlm.ab_compare spans of tenant {tenant}.",
+                "tenant_id": tenant,
+            },
+        ),
+        (
+            502,
+            {
+                "error": "telemetry_unavailable",
+                "message": f"Could not read the traces of tenant {tenant}.",
                 "tenant_id": tenant,
             },
         ),
@@ -446,6 +455,104 @@ async def test_traces_are_the_root_spans_with_their_statistics(telemetry, app):
                 "error_rate": 0.0,
             },
         ],
+    }
+
+
+def _root_causes_path(tenant, **params):
+    return _traces_path(tenant, **params).replace("/traces?", "/root-causes?")
+
+
+async def test_root_causes_name_the_failed_and_slow_traces(telemetry, app):
+    tenant = _tenant("rootcauses")
+    expected = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+    failed = next(row["trace_id"] for row in expected if row["error"])
+    slowest = next(row["trace_id"] for row in expected if row["duration_ms"] == 400)
+
+    async with _client(app) as client:
+        await _until(client, _traces_path(tenant), _requests(6))
+        body = (await client.get(_root_causes_path(tenant, slow_percentile=75))).json()
+        searches = (
+            await client.get(
+                _root_causes_path(tenant, operation="agent", include_slow="false")
+            )
+        ).json()
+
+    # Successful durations 50, 100, 200, 300, 400: P75 is 300, so the 400 ms
+    # search is the one slow trace.
+    assert (
+        body["traces"],
+        body["failed"],
+        body["slow"],
+        body["failure_rate"],
+        body["slow_threshold_ms"],
+    ) == (6, 1, 1, pytest.approx(1 / 6), pytest.approx(300.0))
+    # One failure with an error matching no known issue and spread over no
+    # pattern yields no failure hypothesis; the slow search yields two.
+    assert (body["root_causes"], body["recommendations"]) == (
+        [
+            {
+                "hypothesis": f"Operation '{SEARCH}' experiencing performance "
+                "degradation",
+                "confidence": 0.9,
+                "category": "performance",
+                "evidence": [
+                    "1 slow traces for this operation",
+                    "Average duration: 400.0ms",
+                    "Duration range: 400.0-400.0ms",
+                    "Slowdown factor: 2.5x",
+                ],
+                "affected_traces": [slowest],
+                "suggested_action": f"Optimize '{SEARCH}' operation or increase "
+                "resources",
+            },
+            {
+                "hypothesis": "Profile 'video_colpali' has performance issues",
+                "confidence": 0.85,
+                "category": "configuration",
+                "evidence": ["1 slow traces with this profile", "Mean latency: 400ms"],
+                "affected_traces": [slowest],
+                "suggested_action": "Review 'video_colpali' configuration and "
+                "resource allocation",
+            },
+        ],
+        [
+            {
+                "priority": "medium",
+                "category": "performance",
+                "recommendation": "Optimize slow operations",
+                "details": [
+                    "Profile slow operations",
+                    "Add caching where appropriate",
+                    "Consider asynchronous processing",
+                ],
+                "affected_components": [
+                    f"Optimize '{SEARCH}' operation or increase resources"
+                ],
+            },
+            {
+                "priority": "medium",
+                "category": "configuration",
+                "recommendation": "Review configuration settings",
+                "details": ["Check Profile 'video_colpali' has performance issues"],
+                "affected_components": [
+                    "Review 'video_colpali' configuration and resource allocation"
+                ],
+            },
+        ],
+    )
+    assert failed not in {
+        trace for cause in body["root_causes"] for trace in cause["affected_traces"]
+    }
+
+    assert searches == {
+        "traces": 1,
+        "failed": 0,
+        "slow": 0,
+        "failure_rate": 0.0,
+        "slow_threshold_ms": None,
+        "root_causes": [],
+        "recommendations": [],
     }
 
 
