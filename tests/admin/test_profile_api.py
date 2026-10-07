@@ -1186,6 +1186,7 @@ class TestProfileAPISchemaDeployment:
                 "schema_name": "video_deploy_test2",
                 "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "deploy_schema": True,
             },
         )
