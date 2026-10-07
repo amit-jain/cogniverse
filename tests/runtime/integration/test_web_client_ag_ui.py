@@ -505,6 +505,41 @@ def test_a_down_runtime_fails_the_run_and_the_agent_list(
     }
 
 
+def test_the_server_announces_itself_only_once_it_is_listening(
+    web_client_dir, telemetry_sink
+):
+    """Callers connect as soon as the server prints its listening line, so the
+    line is printed only once the port is bound: a server that cannot bind
+    exits with the bind error and never prints it."""
+    node = shutil.which("node")
+    assert node is not None, "node is required to run the web client"
+    taken = socket.create_server(("127.0.0.1", 0))
+    port = taken.getsockname()[1]
+    try:
+        run = subprocess.run(
+            [node, "--import", "tsx", "src/server/index.ts"],
+            cwd=web_client_dir,
+            env=node_env(
+                node,
+                COGNIVERSE_RUNTIME_URL=f"http://127.0.0.1:{free_port()}",
+                COGNIVERSE_API_KEY=KEY,
+                PORT=str(port),
+                COPILOTKIT_TELEMETRY_URL=telemetry_sink[0],
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    finally:
+        taken.close()
+    assert (run.returncode, run.stdout) == (1, "")
+    assert (
+        f"Error: listen EADDRINUSE: address already in use 127.0.0.1:{port}\n"
+        in run.stderr
+    ), run.stderr
+    assert telemetry_sink[1] == []
+
+
 def test_the_server_stops_after_a_grace_period_with_a_request_in_flight(
     web_client_dir, telemetry_sink
 ):
