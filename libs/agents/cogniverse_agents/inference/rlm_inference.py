@@ -19,6 +19,7 @@ References:
 """
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -250,7 +251,8 @@ class RLMInference:
                 "RLM events must be tenant-scoped"
             )
         self._tenant_id = tenant_id
-        self._rlm = None  # Lazy initialization
+        self._rlm = None  # Built on first use, under _rlm_lock
+        self._rlm_lock = threading.Lock()
 
     def _create_lm(self):
         """Create DSPy LM via centralized factory."""
@@ -263,30 +265,32 @@ class RLMInference:
         """Get or create DSPy RLM instance.
 
         Uses InstrumentedRLM if event_queue is provided for real-time
-        progress tracking. Otherwise uses standard dspy.RLM.
+        progress tracking. Otherwise uses standard dspy.RLM. Concurrent
+        first calls build it once.
         """
-        if self._rlm is None:
-            self._lm = self._create_lm()
+        with self._rlm_lock:
+            if self._rlm is None:
+                self._lm = self._create_lm()
 
-            # Use InstrumentedRLM if event_queue provided for progress tracking
-            if self._event_queue:
-                self._rlm = InstrumentedRLM(
-                    "context, query -> answer",
-                    max_iterations=self.max_iterations,
-                    max_llm_calls=self.max_llm_calls,
-                    verbose=False,
-                    event_queue=self._event_queue,
-                    task_id=self._task_id,
-                    tenant_id=self._tenant_id,
-                )
-            else:
-                self._rlm = TolerantRLM(
-                    "context, query -> answer",
-                    max_iterations=self.max_iterations,
-                    max_llm_calls=self.max_llm_calls,
-                    verbose=False,
-                )
-        return self._rlm
+                # Use InstrumentedRLM if event_queue provided for progress tracking
+                if self._event_queue:
+                    self._rlm = InstrumentedRLM(
+                        "context, query -> answer",
+                        max_iterations=self.max_iterations,
+                        max_llm_calls=self.max_llm_calls,
+                        verbose=False,
+                        event_queue=self._event_queue,
+                        task_id=self._task_id,
+                        tenant_id=self._tenant_id,
+                    )
+                else:
+                    self._rlm = TolerantRLM(
+                        "context, query -> answer",
+                        max_iterations=self.max_iterations,
+                        max_llm_calls=self.max_llm_calls,
+                        verbose=False,
+                    )
+            return self._rlm
 
     def _execute_rlm(self, rlm, full_query: str, context: str) -> tuple:
         """Execute RLM and return (result, total_tokens).
@@ -382,7 +386,9 @@ class RLMInference:
                         f"RLM interpreter subprocess died ({e}); retrying "
                         f"with a fresh instance"
                     )
-                    self._rlm = None
+                    with self._rlm_lock:
+                        if self._rlm is rlm:
+                            self._rlm = None
                     rlm = self._get_rlm()
 
             answer = result.answer if hasattr(result, "answer") else str(result)
