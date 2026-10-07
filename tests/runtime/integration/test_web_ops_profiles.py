@@ -18,6 +18,7 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
+from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 from tests.utils.web_client import (
     build_web_client,
     free_port,
@@ -354,7 +355,7 @@ class TestProfileLifecycle:
 
 class TestStartFromShippedProfile:
     def test_a_profile_started_from_a_shipped_one_carries_all_its_keys(
-        self, page, web_url, runtime_url, tenant
+        self, page, web_url, runtime_url, tenant, config_manager
     ):
         """Every key of the shipped profile, the ones ingestion reads beside
         the named fields included, lands in the created profile."""
@@ -408,8 +409,19 @@ class TestStartFromShippedProfile:
         options = page.get_by_role("form", name="Create profile").get_by_label(
             "Start from shipped profile"
         )
+        # Tenants also inherit the profiles stored under the system tenant.
+        system_profiles = set(
+            config_manager.get_stored_backend_config(
+                tenant_id=SYSTEM_TENANT_ID
+            ).profiles
+        )
         expect(options.locator("option")).to_have_text(
-            ["Blank profile", *sorted(set(SHIPPED_PROFILES) - {"image_colpali_mv"})]
+            [
+                "Blank profile",
+                *sorted(
+                    (set(SHIPPED_PROFILES) | system_profiles) - {"image_colpali_mv"}
+                ),
+            ]
         )
         _delete_through_api(runtime_url, tenant, "image_colpali_mv")
 
