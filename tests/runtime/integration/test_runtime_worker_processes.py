@@ -869,17 +869,29 @@ class TestSignals:
             log,
             _,
         ):
+            # Each worker is signalled as soon as uvicorn reports it started,
+            # when its lifespan has only begun. Waiting for both first would
+            # let the faster worker finish its lifespan and register the
+            # handler while the slower one is still importing the app.
+            signalled: list[int] = []
+
+            def signal_started_workers() -> bool:
+                for pid in _started_worker_pids(log):
+                    if pid not in signalled:
+                        os.kill(pid, signal.SIGUSR1)
+                        signalled.append(pid)
+                return len(signalled) == WORKERS
+
             _until(
-                lambda: len(_started_worker_pids(log)) == WORKERS,
+                signal_started_workers,
                 process,
                 log,
                 BOOT_TIMEOUT_S,
                 "both workers loading the app",
             )
-            assert _records(log, MAIN_LOGGER, "INFO").count(registered) == 0
-            for pid in _worker_processes(process.pid):
-                os.kill(pid, signal.SIGUSR1)
             workers = _serving(process, log)
+
+            assert sorted(signalled) == workers
 
             assert sorted(_started_worker_pids(log)) == workers
             assert _records(log, MAIN_LOGGER, "INFO").count(registered) == WORKERS
