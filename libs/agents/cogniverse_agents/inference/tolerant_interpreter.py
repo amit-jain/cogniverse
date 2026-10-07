@@ -27,6 +27,8 @@ from dspy.primitives.python_interpreter import (
     CodeInterpreterError,
     PythonInterpreter,
 )
+from dspy.primitives.repl_types import REPLHistory
+from dspy.utils.exceptions import AdapterParseError
 
 from cogniverse_agents.inference.deno_check import is_deno_available
 
@@ -125,6 +127,15 @@ class RLMTimeoutError(TimeoutError):
     """Raised when RLM processing exceeds the configured timeout."""
 
 
+def _malformed_turn_output(error: AdapterParseError) -> str:
+    fields = ", ".join(error.signature.output_fields)
+    return (
+        "[Error] Your previous response could not be parsed: it must contain "
+        f"the fields [{fields}]. It may have been cut off at the output token "
+        "limit; respond again with both fields and keep the reasoning brief."
+    )
+
+
 class TolerantRLM(dspy.RLM):
     """dspy.RLM whose default REPL is :class:`TolerantPythonInterpreter`.
 
@@ -141,6 +152,14 @@ class TolerantRLM(dspy.RLM):
     rather than merely abandoned. The deadline is thread-local, so one
     caller's expiry never truncates another's concurrent call on the same
     instance.
+
+    A model turn that does not parse into ``reasoning`` and ``code`` (an
+    ``AdapterParseError``, typically a reply cut off at the token limit) is
+    recorded as a failed iteration whose output tells the model what was
+    wrong, the same way dspy.RLM records code that fails to run. It spends one
+    iteration of ``max_iterations``; when every iteration fails this way the
+    run ends in fallback extraction. An endpoint failure is not a model turn
+    and propagates unchanged.
     """
 
     def __init__(self, *args, max_iterations: int | None = None, **kwargs):
@@ -175,13 +194,35 @@ class TolerantRLM(dspy.RLM):
                 f"{self._deadline_state.timeout_seconds}s"
             )
 
-    def _execute_iteration(self, *args, **kwargs):
+    def _execute_iteration(self, repl, variables, history, iteration, *args):
         self._raise_if_expired()
-        return super()._execute_iteration(*args, **kwargs)
+        try:
+            return super()._execute_iteration(
+                repl, variables, history, iteration, *args
+            )
+        except AdapterParseError as e:
+            return self._record_malformed_turn(history, iteration, e)
 
-    async def _aexecute_iteration(self, *args, **kwargs):
+    async def _aexecute_iteration(self, repl, variables, history, iteration, *args):
         self._raise_if_expired()
-        return await super()._aexecute_iteration(*args, **kwargs)
+        try:
+            return await super()._aexecute_iteration(
+                repl, variables, history, iteration, *args
+            )
+        except AdapterParseError as e:
+            return self._record_malformed_turn(history, iteration, e)
+
+    def _record_malformed_turn(
+        self, history: REPLHistory, iteration: int, error: AdapterParseError
+    ) -> REPLHistory:
+        logger.warning(
+            "RLM iteration %d/%d: unparseable model reply recorded as a failed "
+            "iteration: %.200r",
+            iteration + 1,
+            self.max_iters,
+            error.lm_response,
+        )
+        return history.append(code="", output=_malformed_turn_output(error))
 
     def _make_llm_tools(self, *args, **kwargs) -> dict[str, Callable]:
         return {

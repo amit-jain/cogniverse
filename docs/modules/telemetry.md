@@ -556,6 +556,12 @@ class DatasetStore(ABC):
 `ValueError` so existing `except ValueError` callers keep working, while letting
 callers distinguish a genuinely missing dataset from a backend outage.
 
+`PhoenixDatasetStore` uploads each row through `upload_dataset_rows`
+(`cogniverse_telemetry_phoenix.provider`), storing every value as the string the
+frame's CSV rendering holds for it (an empty cell is `""`). A value has no size
+limit: optimizer versions whose content or ledger exceeds 128 KiB (a week of
+consumed span ids) round-trip byte-for-byte.
+
 The telemetry provider exposes these store interfaces. `replace_dataset` is the
 safe helper for stable-name overwrites: same-name writers are serialized only
 within one store instance on one event loop, and a torn delete/create that

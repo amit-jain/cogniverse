@@ -6,6 +6,8 @@ code change. Deno is provisioned by the ``ensure_deno`` session fixture
 in ``tests/agents/integration/conftest.py`` when missing.
 """
 
+import dataclasses
+
 import pytest
 
 from cogniverse_agents.inference import deno_check
@@ -637,3 +639,345 @@ class TestWikiManagerMergeWithRLM:
         )
         assert _PYTHON_OLD in merged
         assert _PYTHON_NEW in merged
+
+
+# ---------------------------------------------------------------------------
+# Malformed model turns at the LM boundary
+# ---------------------------------------------------------------------------
+#
+# The RLM's LM endpoint is fronted by a local OpenAI-compatible relay that
+# forwards every request to the Modal-served model, except the ones a test
+# chooses to answer itself: a reply cut off at the token limit (what the
+# model returned in the failing A/B run) or an HTTP error. Every query
+# carries a fresh nonce so no request is ever answered from the LM cache.
+
+_PLANETS_QUERY = "Count how many planets are mentioned and list them by name."
+_PLANETS_CONTEXT = (
+    "Our solar system has eight planets: Mercury, Venus, Earth, Mars, "
+    "Jupiter, Saturn, Uranus, Neptune. Pluto was reclassified as a "
+    "dwarf planet in 2006."
+)
+# A reply truncated mid-reasoning: no ``code`` field, no closing brace.
+_TRUNCATED_REPLY = (
+    '{\n  "reasoning": "The goal is to count the planets mentioned in the '
+    "context. Plan: 1. Print the context. 2. Extract the names after "
+    "'planets:'"
+)
+_MALFORMED_ACTION_OUTPUT = (
+    "[Error] Your previous response could not be parsed: it must contain "
+    "the fields [reasoning, code]. It may have been cut off at the output "
+    "token limit; respond again with both fields and keep the reasoning "
+    "brief."
+)
+
+
+def _iteration_turn(text: str, nonce: str, iteration: int | None) -> bool:
+    """True for an action turn of the query tagged ``nonce`` — for
+    ``iteration`` only when given, else for every iteration."""
+    import re
+
+    if nonce not in text or "[[ ## iteration ## ]]" not in text:
+        return False
+    if iteration is None:
+        return True
+    return re.search(rf"\[\[ ## iteration ## \]\]\s*{iteration}/\d+", text) is not None
+
+
+def _extract_turn(text: str, nonce: str) -> bool:
+    return nonce in text and "extract the final outputs now" in text
+
+
+class _LMRelay:
+    """Local OpenAI-compatible endpoint in front of the Modal model."""
+
+    def __init__(self, upstream_api_base: str):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        import httpx
+
+        self.upstream = upstream_api_base.rstrip("/")
+        # (text) -> ("malformed", content) | ("status", code) | None to forward
+        self.rule = lambda text: None
+        self.served: list[str] = []
+        self._lock = threading.Lock()
+        relay = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                import json
+
+                raw = self.rfile.read(int(self.headers["Content-Length"]))
+                body = json.loads(raw)
+                text = "\n".join(
+                    str(m.get("content", "")) for m in body.get("messages", [])
+                )
+                decision = relay.rule(text)
+                if decision is None:
+                    headers = {
+                        k: v
+                        for k, v in self.headers.items()
+                        if k.lower()
+                        not in ("host", "content-length", "accept-encoding")
+                    }
+                    upstream = httpx.post(
+                        relay.upstream + self.path.removeprefix("/v1"),
+                        content=raw,
+                        headers=headers,
+                        timeout=300,
+                    )
+                    relay._record("forwarded")
+                    self._reply(upstream.status_code, upstream.content)
+                    return
+                kind, value = decision
+                relay._record(kind)
+                if kind == "status":
+                    self._reply(value, b'{"error": {"message": "relay outage"}}')
+                    return
+                completion = {
+                    "id": "chatcmpl-relay",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": body["model"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": value},
+                            "finish_reason": "length",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 512,
+                        "total_tokens": 522,
+                    },
+                }
+                self._reply(200, json.dumps(completion).encode())
+
+            def _reply(self, status: int, payload: bytes):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.api_base = f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+        self._thread = threading.Thread(target=self._server.serve_forever)
+        self._thread.daemon = True
+        self._thread.start()
+
+    def _record(self, kind: str) -> None:
+        with self._lock:
+            self.served.append(kind)
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.fixture
+def lm_relay(gemma_inference_endpoint):
+    from tests.agents.integration.conftest import _gemma_llm_config
+
+    config = _gemma_llm_config(gemma_inference_endpoint)
+    relay = _LMRelay(config.api_base)
+    relay.config = dataclasses.replace(config, api_base=relay.api_base, max_tokens=512)
+    yield relay
+    relay.close()
+
+
+class TestRLMMalformedModelTurn:
+    """A reply that does not parse is one failed REPL iteration, not a crash."""
+
+    def test_ab_run_survives_a_truncated_first_action_turn(self, lm_relay):
+        import uuid
+
+        from cogniverse_agents.inference.ab_harness import RLMABRunner
+
+        nonce = uuid.uuid4().hex
+        lm_relay.rule = lambda text: (
+            ("malformed", _TRUNCATED_REPLY) if _iteration_turn(text, nonce, 1) else None
+        )
+        runner = RLMABRunner(
+            llm_config=lm_relay.config,
+            timeout_seconds=600,
+            rlm_max_iterations=2,
+            rlm_max_llm_calls=4,
+        )
+
+        result = runner.run(
+            query=f"[{nonce}] {_PLANETS_QUERY}", context=_PLANETS_CONTEXT
+        )
+
+        # The chat adapter's reply and the JSON adapter's retry both came
+        # back truncated; that turn is iteration 1 of the trajectory.
+        assert lm_relay.served.count("malformed") == 2
+        assert result.with_rlm.metadata["trajectory_summary"][0] == {
+            "iteration": 1,
+            "reasoning": "",
+            "code": "",
+            "output": _MALFORMED_ACTION_OUTPUT,
+        }
+        assert result.with_rlm.metadata["ab_id"] == result.ab_id
+        assert result.without_rlm.metadata["ab_id"] == result.ab_id
+
+    def test_every_action_turn_malformed_ends_in_extraction(self, lm_relay):
+        """Malformed turns spend the iteration budget, then the run falls
+        back to extraction exactly as an unfinished REPL loop does."""
+        import uuid
+
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+
+        nonce = uuid.uuid4().hex
+        lm_relay.rule = lambda text: (
+            ("malformed", _TRUNCATED_REPLY)
+            if _iteration_turn(text, nonce, None)
+            else None
+        )
+        rlm = RLMInference(
+            llm_config=lm_relay.config,
+            max_iterations=2,
+            max_llm_calls=4,
+            timeout_seconds=600,
+            cache=False,
+        )
+
+        result = rlm.process(
+            query=f"[{nonce}] {_PLANETS_QUERY}",
+            context=_PLANETS_CONTEXT,
+            include_trajectory=True,
+        )
+
+        assert lm_relay.served == ["malformed"] * 4 + ["forwarded"]
+        assert result.was_fallback is True
+        assert result.trajectory == [
+            {
+                "iteration": 1,
+                "reasoning": "",
+                "code": "",
+                "output": _MALFORMED_ACTION_OUTPUT,
+            },
+            {
+                "iteration": 2,
+                "reasoning": "",
+                "code": "",
+                "output": _MALFORMED_ACTION_OUTPUT,
+            },
+        ]
+
+    def test_malformed_extraction_raises_with_the_reply(self, lm_relay):
+        """With no parseable turn at all there is no answer: the run raises
+        naming the reply rather than returning an empty answer."""
+        import uuid
+
+        from dspy.utils.exceptions import AdapterParseError
+
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+
+        nonce = uuid.uuid4().hex
+        lm_relay.rule = lambda text: (
+            ("malformed", _TRUNCATED_REPLY)
+            if _iteration_turn(text, nonce, None) or _extract_turn(text, nonce)
+            else None
+        )
+        rlm = RLMInference(
+            llm_config=lm_relay.config,
+            max_iterations=2,
+            max_llm_calls=4,
+            timeout_seconds=600,
+            cache=False,
+        )
+
+        with pytest.raises(AdapterParseError) as err:
+            rlm.process(query=f"[{nonce}] {_PLANETS_QUERY}", context=_PLANETS_CONTEXT)
+
+        assert err.value.lm_response == _TRUNCATED_REPLY
+        assert sorted(err.value.signature.output_fields) == ["answer"]
+        assert lm_relay.served == ["malformed"] * 6
+
+    def test_endpoint_outage_mid_run_is_not_absorbed(self, lm_relay):
+        """An HTTP failure is the endpoint's, not the model's: it propagates
+        after the endpoint's own retry budget instead of being recorded as
+        a failed iteration."""
+        import uuid
+
+        import litellm
+
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+
+        nonce = uuid.uuid4().hex
+        lm_relay.rule = lambda text: (
+            ("status", 503) if _iteration_turn(text, nonce, 1) else None
+        )
+        rlm = RLMInference(
+            llm_config=dataclasses.replace(lm_relay.config, num_retries=0),
+            max_iterations=2,
+            max_llm_calls=4,
+            timeout_seconds=600,
+            cache=False,
+        )
+
+        with pytest.raises(litellm.ServiceUnavailableError) as err:
+            rlm.process(query=f"[{nonce}] {_PLANETS_QUERY}", context=_PLANETS_CONTEXT)
+
+        assert "relay outage" in str(err.value)
+        assert lm_relay.served == ["status"]
+
+    def test_concurrent_runs_keep_their_own_malformed_turns(self, lm_relay):
+        """Two runs start at once on one fresh RLMInference: it is built once,
+        and only the run whose turn was malformed records it."""
+        import threading
+        import uuid
+        from concurrent.futures import ThreadPoolExecutor
+
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+
+        bad, good = uuid.uuid4().hex, uuid.uuid4().hex
+        lm_relay.rule = lambda text: (
+            ("malformed", _TRUNCATED_REPLY) if _iteration_turn(text, bad, 1) else None
+        )
+        rlm = RLMInference(
+            llm_config=lm_relay.config,
+            max_iterations=2,
+            max_llm_calls=4,
+            timeout_seconds=600,
+            cache=False,
+        )
+        builds = []
+        create_lm = rlm._create_lm
+
+        def counted_create_lm():
+            builds.append(threading.get_ident())
+            return create_lm()
+
+        rlm._create_lm = counted_create_lm
+        barrier = threading.Barrier(2)
+
+        def run(nonce: str):
+            barrier.wait()
+            return rlm.process(
+                query=f"[{nonce}] {_PLANETS_QUERY}",
+                context=_PLANETS_CONTEXT,
+                include_trajectory=True,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            bad_result, good_result = pool.map(run, [bad, good])
+
+        assert bad_result.trajectory[0] == {
+            "iteration": 1,
+            "reasoning": "",
+            "code": "",
+            "output": _MALFORMED_ACTION_OUTPUT,
+        }
+        assert good_result.trajectory[0]["iteration"] == 1
+        assert [entry["output"] for entry in good_result.trajectory].count(
+            _MALFORMED_ACTION_OUTPUT
+        ) == 0
+        assert lm_relay.served.count("malformed") == 2
+        # Both first touches raced the lazy build; exactly one built the RLM.
+        assert len(builds) == 1

@@ -3810,7 +3810,8 @@ libs/agents/cogniverse_agents/
 │   ├── rlm_inference.py          # RLMInference wrapper, RLMResult
 │   └── tolerant_interpreter.py   # TolerantPythonInterpreter/TolerantRLM: skip
 │                                 # stale id-null messages on the Deno channel;
-│                                 # RLMTimeoutError and the iteration deadline
+│                                 # RLMTimeoutError and the iteration deadline;
+│                                 # unparseable model turns as failed iterations
 ├── mixins/
 │   ├── __init__.py
 │   └── rlm_aware_mixin.py        # RLMAwareMixin for agents
@@ -4581,6 +4582,15 @@ reached after expiry, so the computation stops rather than continuing
 unobserved. The overrun is therefore bounded by the model call in flight when
 the deadline passes. The same check guards `aforward`/`acall`. `process` is
 synchronous; async callers run it through `asyncio.to_thread`.
+
+A model reply that does not parse into `reasoning` and `code` (dspy's
+`AdapterParseError`, typically a reply cut off at `max_tokens`) is recorded as
+a failed iteration: its trajectory entry has empty `reasoning` and `code` and an
+`output` telling the model which fields to send, and the next iteration sees it.
+Each such turn spends one of `max_iterations`; when all of them fail the run ends
+in fallback extraction (`was_fallback=True`), and an unparseable extraction
+reply raises `AdapterParseError`. Endpoint failures (HTTP errors, timeouts,
+connection errors) propagate from `process` unchanged.
 
 ```text
 from cogniverse_agents.inference import RLMTimeoutError
