@@ -478,6 +478,7 @@ tenant's semantic-router tier.
 | `DELETE /admin/tenants/{tenant_id}` | Delete the tenant, its schemas and its data |
 | `GET /admin/tenants/{tenant_id}/tier` | The tenant's semantic-router tier |
 | `PUT /admin/tenants/{tenant_id}/tier` | Set it |
+| `GET /admin/router-tiers` | The tiers a tenant can be set to, and the default |
 
 **Router tier.** The tier rides on the semantic router's group header and
 selects which routing decisions a tenant's LLM calls can match. It is a

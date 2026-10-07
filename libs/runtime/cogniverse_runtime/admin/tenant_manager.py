@@ -1027,6 +1027,17 @@ async def _assert_tenant_exists(canonical: str) -> None:
         raise HTTPException(status_code=404, detail=f"Tenant {canonical} not found")
 
 
+@router.get("/router-tiers")
+async def list_router_tiers() -> Dict:
+    """The tiers a tenant can be set to, and the one it reads as when unset."""
+    from cogniverse_foundation.config.unified_config import (
+        DEFAULT_ROUTER_TIER,
+        ROUTER_TIERS,
+    )
+
+    return {"tiers": sorted(ROUTER_TIERS), "default": DEFAULT_ROUTER_TIER}
+
+
 @router.get("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
 async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """The tenant's semantic-router tier.
