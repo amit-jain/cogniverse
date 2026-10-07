@@ -4,7 +4,9 @@ The tenant admin, tenant self-service, approvals, orchestration annotation,
 profile admin, agents and ingestion routers are mounted at the paths the
 runtime mounts them on, over the caller's real config store and schema loader,
 with a cluster-events channel of their own so tenant deletes and session
-closes reach this worker the way they reach a runtime replica.
+closes reach this worker the way they reach a runtime replica, and a task
+event store on the same Redis that uploads open their tasks in and tenant
+deletes cancel them through.
 The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL``, as a worker pod runs it.
@@ -49,6 +51,7 @@ from cogniverse_runtime.routers import (
     tenant,
 )
 from cogniverse_runtime.shared_state import connect_shared_state_redis
+from cogniverse_runtime.task_events import TaskEventStore
 from tests.utils.web_client import serve_app
 
 
@@ -86,9 +89,14 @@ def serve_ops_runtime(
             channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
         )
         await events.start()
-        tm.set_cluster_events(events)
-        admin.set_cluster_events(events)
         shared_state = await connect_shared_state_redis(redis_url)
+        task_events = TaskEventStore(shared_state)
+        task_events.start()
+        agents.set_task_event_store(task_events)
+        ingestion.set_task_event_store(task_events)
+        tm.set_cluster_events(events)
+        tm.set_task_event_store(task_events)
+        admin.set_cluster_events(events)
         agents.set_annotation_queue(
             AnnotationQueue(
                 shared_state,
@@ -117,9 +125,13 @@ def serve_ops_runtime(
                 await asyncio.wait_for(worker, timeout=20)
             await close_redis()
             agents.set_annotation_queue(None)
-            await shared_state.aclose()
             tm.set_cluster_events(None)
+            tm.set_task_event_store(None)
             admin.set_cluster_events(None)
+            agents.set_task_event_store(None)
+            ingestion.set_task_event_store(None)
+            await task_events.close()
+            await shared_state.aclose()
             await events.close()
 
     app = FastAPI(lifespan=cluster_events)
