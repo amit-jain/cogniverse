@@ -76,7 +76,7 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/backends/unit/test_backend_config.py": (
         "Configuration serialization and tenant merge fixtures",
-        "base_schema new_schema schema1 schema2 schema_a schema_b system_schema tenant_custom_schema tenant_schema test test_schema video_profile",
+        "base_schema fresh_schema held_schema new_schema schema1 schema2 schema_a schema_b system_schema tenant_custom_schema tenant_schema test test_schema video_profile",
     ),
     "tests/backends/unit/test_backend_registry_tenant.py": (
         "Backend double profile mutation fixtures",
@@ -205,6 +205,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/charts/test_phoenix_backup_restore.py": (
         "Postgres system view queried while pg_dump holds its lock",
         "pg_stat_activity",
+    ),
+    "tests/runtime/integration/test_approval_routes.py": (
+        "Pydantic training example type identity",
+        "RoutingExperienceSchema",
     ),
     "tests/runtime/integration/test_tenant_provisioning_schemas.py": (
         "Unresolvable base schema and phantom tenant schema the provisioning step must reject",

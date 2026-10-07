@@ -837,6 +837,28 @@ class ApprovalStorageImpl(ApprovalStorage):
             f"provider: {self.provider.name})"
         )
 
+    @classmethod
+    def from_system_config(
+        cls, config_manager, telemetry_manager, tenant_id: str
+    ) -> "ApprovalStorageImpl":
+        """The store for ``tenant_id`` at the telemetry and Redis endpoints the
+        system config names; raises ``ValueError`` without a ``redis_url``."""
+        system_config = config_manager.get_system_config()
+        if not system_config.redis_url:
+            raise ValueError(
+                "redis_url is required to persist synthetic review batches"
+            )
+        grpc_endpoint = system_config.telemetry_collector_endpoint
+        if not grpc_endpoint.startswith("http"):
+            grpc_endpoint = f"http://{grpc_endpoint}"
+        return cls(
+            grpc_endpoint=grpc_endpoint,
+            http_endpoint=system_config.telemetry_url,
+            tenant_id=tenant_id,
+            telemetry_manager=telemetry_manager,
+            redis_url=system_config.redis_url,
+        )
+
     async def save_batch(self, batch: ApprovalBatch) -> str:
         """
         Save approval batch as telemetry span tree

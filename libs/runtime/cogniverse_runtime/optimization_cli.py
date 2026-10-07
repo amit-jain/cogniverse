@@ -3234,18 +3234,8 @@ def _approval_storage(config_manager, telemetry_manager, tenant_id: str):
     """The store every review batch a run produces is persisted through."""
     from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 
-    system_config = config_manager.get_system_config()
-    if not system_config.redis_url:
-        raise ValueError("redis_url is required to persist synthetic review batches")
-    grpc_endpoint = system_config.telemetry_collector_endpoint
-    if not grpc_endpoint.startswith("http"):
-        grpc_endpoint = f"http://{grpc_endpoint}"
-    return ApprovalStorageImpl(
-        grpc_endpoint=grpc_endpoint,
-        http_endpoint=system_config.telemetry_url,
-        tenant_id=tenant_id,
-        telemetry_manager=telemetry_manager,
-        redis_url=system_config.redis_url,
+    return ApprovalStorageImpl.from_system_config(
+        config_manager, telemetry_manager, tenant_id
     )
 
 

@@ -8,6 +8,7 @@ Supports any domain via dependency injection pattern.
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
 from cogniverse_agents.approval.orchestrator import DecisionOrchestrator
+from cogniverse_agents.approval.replacement_store import ReviewDecisionConflictError
 from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
@@ -29,4 +30,5 @@ __all__ = [
     "HumanApprovalAgent",
     "ApprovalStorageImpl",
     "DecisionOrchestrator",
+    "ReviewDecisionConflictError",
 ]

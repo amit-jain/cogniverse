@@ -13,7 +13,6 @@ from typing import Dict
 
 import pandas as pd
 import streamlit as st
-from pydantic import BaseModel, ValidationError
 
 # Import approval system components
 from cogniverse_agents.approval import (
@@ -31,49 +30,20 @@ from cogniverse_agents.optimizer.entity_self_consistency import (
     SAMPLES_KEY,
     SELF_CONSISTENCY_METADATA_KEY,
 )
-from cogniverse_core.approval.training_schema import (
-    validate_approved_training_values,
-)
 from cogniverse_synthetic.approval import (
     SyntheticDataConfidenceExtractor,
     SyntheticDataFeedbackHandler,
 )
-from cogniverse_synthetic.dspy_modules import ValidatedSyntheticExampleRegenerator
-from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_SCHEMA
-from cogniverse_synthetic.schemas import (
-    EntityExtractionExampleSchema,
-    ProfileSelectionExampleSchema,
-    QueryEnhancementExampleSchema,
-    RoutingExperienceSchema,
-    WorkflowExecutionSchema,
+from cogniverse_synthetic.approval.corrections import (
+    correction_template,
+    parse_corrections,
+    review_reasoning,
+    schema_for_item_data,
 )
 
 logger = logging.getLogger(__name__)
 
 _APPROVAL_DECISION_TIMEOUT_SECONDS = 900.0
-
-
-_SCHEMA_CORRECTION_FIELDS: dict[type[BaseModel], tuple[str, ...]] = {
-    ProfileSelectionExampleSchema: tuple(ProfileSelectionExampleSchema.model_fields),
-    QueryEnhancementExampleSchema: tuple(QueryEnhancementExampleSchema.model_fields),
-    EntityExtractionExampleSchema: ("entities", "relationships"),
-    RoutingExperienceSchema: ("entities", "relationships", "chosen_agent"),
-    WorkflowExecutionSchema: tuple(WorkflowExecutionSchema.model_fields),
-}
-
-
-def _schema_for_item_data(data: dict) -> type[BaseModel]:
-    if "workflow_id" in data:
-        return WorkflowExecutionSchema
-    if "available_profiles" in data or "selected_profile" in data:
-        return ProfileSelectionExampleSchema
-    if "chosen_agent" in data:
-        return RoutingExperienceSchema
-    if "entities" in data or "relationships" in data:
-        return EntityExtractionExampleSchema
-    if "enhanced_query" in data:
-        return QueryEnhancementExampleSchema
-    raise ValueError("item data does not match an advertised synthetic example schema")
 
 
 def _self_consistency_lines(metadata: dict) -> list[str]:
@@ -90,153 +60,13 @@ def _self_consistency_lines(metadata: dict) -> list[str]:
     ]
 
 
-def _review_reasoning(data: dict) -> str:
-    schema = _schema_for_item_data(data)
-    if schema in {ProfileSelectionExampleSchema, QueryEnhancementExampleSchema}:
-        reasoning = data.get("reasoning", "")
-    else:
-        metadata = data.get("metadata", {})
-        generation_metadata = metadata.get("_generation_metadata", {})
-        reasoning = generation_metadata.get("reasoning", "")
-    return reasoning if isinstance(reasoning, str) else ""
-
-
-def _validate_schema_record(schema: type[BaseModel], data: dict) -> None:
-    unknown_fields = sorted(set(data) - set(schema.model_fields))
-    if unknown_fields:
-        raise ValueError(
-            f"{schema.__name__} unsupported item fields: " + ", ".join(unknown_fields)
-        )
-    try:
-        schema.model_validate(data)
-    except ValidationError as exc:
-        raise ValueError(f"invalid {schema.__name__} record: {exc}") from exc
-
-
-def _canonical_entities(value) -> list[dict[str, str]]:
-    if not isinstance(value, list) or not value:
-        raise ValueError("entities must be a non-empty list of entity objects")
-
-    entities = []
-    for index, entity in enumerate(value):
-        if not isinstance(entity, dict) or set(entity) != {"text", "type"}:
-            raise ValueError(
-                f"entities[{index}] must contain only text and type strings"
-            )
-        text = entity["text"]
-        entity_type = entity["type"]
-        if (
-            not isinstance(text, str)
-            or not text.strip()
-            or not isinstance(entity_type, str)
-            or not entity_type.strip()
-        ):
-            raise ValueError(
-                f"entities[{index}] must contain only text and type strings"
-            )
-        entities.append({"text": text.strip(), "type": entity_type.strip()})
-    return entities
-
-
-def _canonical_relationships(
-    value,
-    *,
-    entity_texts: list[str],
-) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        raise ValueError("relationships must be a list of relationship objects")
-
-    relationships = []
-    for index, relationship in enumerate(value):
-        if not isinstance(relationship, dict) or set(relationship) != {
-            "source",
-            "target",
-            "type",
-        }:
-            raise ValueError(
-                f"relationships[{index}] must contain only source, target, "
-                "and type strings"
-            )
-        canonical = {}
-        for field in ("source", "target", "type"):
-            field_value = relationship[field]
-            if not isinstance(field_value, str) or not field_value.strip():
-                raise ValueError(
-                    f"relationships[{index}] must contain only source, target, "
-                    "and type strings"
-                )
-            canonical[field] = field_value.strip()
-        for endpoint in ("source", "target"):
-            if canonical[endpoint] not in entity_texts:
-                raise ValueError(
-                    f"relationships[{index}].{endpoint} {canonical[endpoint]!r} "
-                    f"is not one of the corrected entity texts {entity_texts!r}"
-                )
-        relationships.append(canonical)
-    return relationships
-
-
 def _parse_schema_corrections(item_data: dict, raw_value: str) -> dict:
-    schema = _schema_for_item_data(item_data)
-    _validate_schema_record(schema, item_data)
     try:
         corrections = json.loads(raw_value)
     except json.JSONDecodeError as exc:
+        schema = schema_for_item_data(item_data)
         raise ValueError(f"{schema.__name__} corrections must be valid JSON") from exc
-    if not isinstance(corrections, dict) or not corrections:
-        raise ValueError(
-            f"{schema.__name__} corrections must be a non-empty JSON object"
-        )
-
-    allowed_fields = _SCHEMA_CORRECTION_FIELDS[schema]
-    unsupported_fields = sorted(set(corrections) - set(allowed_fields))
-    if unsupported_fields:
-        raise ValueError(
-            f"{schema.__name__} unsupported correction fields: "
-            + ", ".join(unsupported_fields)
-        )
-
-    candidate = item_data | corrections
-    if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
-        entities = _canonical_entities(candidate["entities"])
-        relationships = _canonical_relationships(
-            candidate.get("relationships", []),
-            entity_texts=[entity["text"] for entity in entities],
-        )
-        candidate["entities"] = entities
-        candidate["relationships"] = relationships
-        if "entities" in corrections:
-            corrections["entities"] = entities
-        if "relationships" in corrections:
-            corrections["relationships"] = relationships
-
-    _validate_schema_record(schema, candidate)
-    agent_type = APPROVED_TRAINING_AGENT_BY_SCHEMA.get(schema)
-    if agent_type is not None:
-        validate_approved_training_values(
-            candidate,
-            agent_type,
-            context=f"{schema.__name__} corrected record",
-        )
-    return corrections
-
-
-def _schema_correction_template(item_data: dict) -> tuple[str, dict]:
-    schema = _schema_for_item_data(item_data)
-    _validate_schema_record(schema, item_data)
-    template = {
-        field: item_data[field]
-        for field in _SCHEMA_CORRECTION_FIELDS[schema]
-        if field in item_data
-    }
-    if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
-        template["entities"] = [
-            {"text": entity.get("text"), "type": entity.get("type")}
-            for entity in item_data.get("entities", [])
-            if isinstance(entity, dict)
-        ]
-        template["relationships"] = item_data.get("relationships", [])
-    return schema.__name__, template
+    return parse_corrections(item_data, corrections)
 
 
 def render_approval_queue_tab():
@@ -300,24 +130,7 @@ def _ensure_approval_agent_for_current_tenant():
 
 def _build_feedback_handler(config_manager, tenant_id: str):
     """Build an isolated regeneration handler from the tenant's primary LM."""
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
-    from cogniverse_foundation.config.utils import get_config
-
-    primary = (
-        get_config(
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-        )
-        .get_llm_config()
-        .primary
-    )
-    lm = create_dspy_lm(primary)
-    generator = ValidatedSyntheticExampleRegenerator(max_retries=3)
-    generator.lm = lm
-    return SyntheticDataFeedbackHandler(
-        generator=generator,
-        generation_timeout_seconds=primary.request_timeout,
-    )
+    return SyntheticDataFeedbackHandler.for_tenant(config_manager, tenant_id)
 
 
 def _initialize_approval_agent(tenant_id: str):
@@ -409,7 +222,7 @@ def _render_review_item(item, idx: int):
     entities = data.get("entities", [])
     metadata = data.get("metadata", {})
     generation_metadata = metadata.get("_generation_metadata", {})
-    reasoning = _review_reasoning(data)
+    reasoning = review_reasoning(data)
 
     col1, col2 = st.columns([2, 1])
 
@@ -456,7 +269,7 @@ def _render_review_item(item, idx: int):
         )
 
         try:
-            schema_name, correction_template = _schema_correction_template(data)
+            schema_name, template = correction_template(data)
         except ValueError as exc:
             st.error(str(exc))
             return
@@ -464,7 +277,7 @@ def _render_review_item(item, idx: int):
         corrected_fields = st.text_area(
             f"{schema_name} Corrections (JSON)",
             key=f"schema_corrections_{idx}",
-            value=json.dumps(correction_template, indent=2, default=str),
+            value=json.dumps(template, indent=2, default=str),
             help="Submit only fields defined by this synthetic example schema.",
         )
 

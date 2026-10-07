@@ -211,6 +211,27 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             f"(max_attempts: {max_regeneration_attempts})"
         )
 
+    @classmethod
+    def for_tenant(
+        cls, config_manager, tenant_id: str
+    ) -> "SyntheticDataFeedbackHandler":
+        """A handler regenerating with ``tenant_id``'s primary LM, bounded by
+        that LM's request timeout."""
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.utils import get_config
+
+        primary = (
+            get_config(tenant_id=tenant_id, config_manager=config_manager)
+            .get_llm_config()
+            .primary
+        )
+        generator = ValidatedSyntheticExampleRegenerator(max_retries=3)
+        generator.lm = create_dspy_lm(primary)
+        return cls(
+            generator=generator,
+            generation_timeout_seconds=primary.request_timeout,
+        )
+
     async def process_rejection(
         self, item: ReviewItem, decision: ReviewDecision
     ) -> ReviewItem:
