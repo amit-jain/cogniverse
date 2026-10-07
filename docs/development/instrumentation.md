@@ -361,7 +361,7 @@ The shipped `TelemetryProvider` implementation, registered under the `phoenix` e
 
 #### Key Classes
 - `PhoenixProvider(name="phoenix")` — `initialize(config)` requires `tenant_id`, `http_endpoint`, `grpc_endpoint`; `configure_span_export(...)` builds a `TracerProvider` via `phoenix.otel.register()`, swapping in a `BatchSpanProcessor` sized from `BatchExportConfig` when `use_batch_export=True`
-- `PhoenixTraceStore.get_spans(...)` — pushes `filters={"name": ..., "span_id": ...}` down to a server-side `SpanQuery` predicate (`name` a single name or list, `span_id` one span) instead of pulling the whole project window and filtering client-side, and raises `ValueError` on any other filter key; always passes `timeout=120` (the client method's own default is 5s)
+- `PhoenixTraceStore.get_spans(...)` — pushes `filters={"name": ..., "span_id": ...}` down to a server-side `SpanQuery` predicate (`name` a single name or list, `span_id` a list of span ids) instead of pulling the whole project window and filtering client-side, and raises `ValueError` on any other filter key or a `span_id` given as one string; always passes `timeout=120` (the client method's own default is 5s)
 - `PhoenixAnnotationStore`, `PhoenixDatasetStore` — remaining store implementations
 - AsyncClient instances are memoized per `(running event loop, endpoint)` in a `WeakKeyDictionary`, since a client's connection pool binds to the loop that created it (Streamlit runs a fresh loop per interaction)
 

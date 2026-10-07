@@ -165,7 +165,7 @@ async def persist_result_relevance(
         raise ValueError(f"unknown relevance label: {relevance_label!r}")
     spans = await provider.traces.get_spans(
         project=project,
-        filters={"span_id": span_id},
+        filters={"span_id": [span_id]},
         limit=1,
     )
     if spans.empty or span_id not in set(spans["context.span_id"]):

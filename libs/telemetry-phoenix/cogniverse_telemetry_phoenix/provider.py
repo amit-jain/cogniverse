@@ -494,8 +494,8 @@ class PhoenixTraceStore(TraceStore):
                 (``name in ['a', 'b']``) — the list form is required when the
                 caller reconstructs an object from more than one span type in
                 the returned frame (e.g. approval batch + its item children).
-                ``span_id`` takes one id or a list of ids and returns only
-                those spans. Any other key raises ``ValueError``.
+                ``{"span_id": [<id>, ...]}`` returns only those spans. Any
+                other key raises ``ValueError``.
             limit: Maximum number of spans to return
             columns: Optional projection of standardized columns to return.
                 Phoenix selects only the requested columns when supported;
@@ -514,6 +514,10 @@ class PhoenixTraceStore(TraceStore):
             raise ValueError(
                 f"Phoenix span queries do not support filters {sorted(unsupported_filters)}"
             )
+        if isinstance((filters or {}).get("span_id"), str):
+            raise ValueError(
+                "Phoenix span_id filters take a list of span ids, not one string"
+            )
         try:
             client = self._get_client()
 
@@ -526,14 +530,9 @@ class PhoenixTraceStore(TraceStore):
 
             # Pass time filters directly to Phoenix API for efficient server-side filtering
             query = None
-            span_id_filter = (filters or {}).get("span_id") or ()
             predicate = _build_span_query_condition(
                 name_filter=(filters or {}).get("name"),
-                span_ids=(
-                    (span_id_filter,)
-                    if isinstance(span_id_filter, str)
-                    else span_id_filter
-                ),
+                span_ids=(filters or {}).get("span_id") or (),
             )
             if predicate:
                 from phoenix.client.types.spans import SpanQuery

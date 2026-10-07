@@ -654,13 +654,20 @@ class TestGetSpansNameFilterRealPhoenix:
                 return []
             return list(zip(frame["context.span_id"], frame["name"]))
 
-        assert spans(span_id=span_ids[1]) == [(span_ids[1], "op_1")]
-        assert spans(span_id=span_ids[1], name="op_1") == [(span_ids[1], "op_1")]
-        assert spans(span_id=span_ids[1], name="op_2") == []
+        assert spans(span_id=[span_ids[1]]) == [(span_ids[1], "op_1")]
+        assert sorted(spans(span_id=[span_ids[2], span_ids[0]])) == sorted(
+            [(span_ids[0], "op_0"), (span_ids[2], "op_2")]
+        )
+        assert spans(span_id=[span_ids[1]], name="op_1") == [(span_ids[1], "op_1")]
+        assert spans(span_id=[span_ids[1]], name="op_2") == []
         # A span of another project is not found through this one.
-        assert spans(span_id=foreign_span_id) == []
+        assert spans(span_id=[foreign_span_id]) == []
         # A quote in the id stays inside the literal.
-        assert spans(span_id="x' or name == 'op_0") == []
+        assert spans(span_id=["x' or name == 'op_0"]) == []
+        with pytest.raises(ValueError, match="take a list of span ids, not one string"):
+            asyncio.run(
+                store.get_spans(project=project, filters={"span_id": span_ids[1]})
+            )
         with pytest.raises(ValueError, match=r"do not support filters \['trace_id'\]"):
             asyncio.run(store.get_spans(project=project, filters={"trace_id": "t"}))
 
