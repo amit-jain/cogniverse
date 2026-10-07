@@ -63,6 +63,9 @@ dependencies = [
     # A2A Protocol
     "a2a-sdk[http-server]==0.3.26",
 
+    # AG-UI protocol (web UI event stream)
+    "ag-ui-protocol==1.0.0",
+
     # Sandbox runtime (OpenShell) for coding agent code execution.
     # Pinned to match the host gateway version — the SDK and gateway must
     # be version-compatible for mTLS and the gRPC protocol.

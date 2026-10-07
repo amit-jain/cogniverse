@@ -94,6 +94,7 @@ cogniverse_runtime/
 │   ├── agents.py                    # Agent orchestration + inbound messaging
 │   ├── events.py                    # SSE streaming for real-time updates
 │   ├── admin.py                     # Admin / tenant management
+│   ├── ag_ui.py                     # AG-UI /ag-ui surface for web clients
 │   ├── debug.py                     # Debug + diagnostic endpoints
 │   ├── graph.py                     # Graph traversal API
 │   ├── knowledge.py                 # Knowledge-graph query API
@@ -521,6 +522,7 @@ app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
+app.include_router(ag_ui.router, prefix="/ag-ui", tags=["ag-ui"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 ```
 
@@ -1504,6 +1506,52 @@ re-derives from the replayed transcript. A store that does not answer fails
 the turn: 503 with `error.code="service_unavailable"` and
 `error_type="SessionStateUnavailable"`, or an SSE error frame with the same
 code.
+
+### AG-UI Endpoints (`/ag-ui`)
+
+`routers/ag_ui.py` serves the [AG-UI](https://docs.ag-ui.com) protocol so a
+web client (CopilotKit's `HttpAgent`) runs cogniverse agents directly. It uses
+the `/v1` surface's bearer keys, dispatcher and continuation store, so one key
+serves both surfaces for the same tenant.
+
+**POST /ag-ui/{agent_name}** — one run of a registered agent. The body is an
+AG-UI `RunAgentInput`; the client holds the conversation and sends all of it,
+so a run is a self-contained turn exactly as a `/v1` request is. Messages map
+onto the `/v1` transcript: developer messages become system messages, image
+parts (a URL or base64 data) become attachments, and activity and reasoning
+messages are left out. The run's `tools` reach the agent as its external
+tools. The response is SSE, one AG-UI event per `data:` line:
+
+| Event | When |
+|---|---|
+| `RUN_STARTED` | first, with the client's `threadId` and `runId` |
+| `STEP_STARTED` / `STEP_FINISHED` | around each agent phase |
+| `CUSTOM` `cogniverse.status` | each progress event, `value: {phase, message}` |
+| `TEXT_MESSAGE_START` / `_CONTENT` / `_END` | the reply, one message per run |
+| `TOOL_CALL_START` / `_ARGS` / `_END` | one sequence per frontend tool the agent suspends on |
+| `STATE_SNAPSHOT` | the final payload, `snapshot: {agent, result}` |
+| `RUN_FINISHED` | last; `outcome.pendingToolCallIds` lists a suspended run's calls |
+| `RUN_ERROR` | last, in place of `RUN_FINISHED`, when the turn failed |
+
+Token streaming, the answer-field filter and the reconciliation with the final
+payload are the `/v1` live-token path (`openai_compat.answer_token_events`); an
+agent without `streams_answer_tokens`, or a run resuming a tool exchange, runs
+on the dispatch path and its reply arrives as one content event. A suspended
+run stores its `continuation_state` in the shared store; the client runs the
+tools and starts a new run with the tool messages appended, which resumes the
+turn on whichever replica receives it.
+
+Status contract: an unknown key is 401, a key-store outage 503, an unregistered
+agent 404, a body that is not a `RunAgentInput` or a content part other than
+text or an image 400 naming the field or the message and part index, an unwired
+dispatcher or an unreachable agent registry 503. A failure inside the run ends
+it on `RUN_ERROR` with a server-authored message naming the agent and the
+exception type (`code` `internal_error`, `service_unavailable` for an
+unanswering continuation store, `run_cancelled` for a cancelled run). A client
+that hangs up cancels the turn behind its run.
+
+The browser UI in `clients/web` drives this surface through a CopilotKit
+runtime that holds the harness key; see its [README](../../clients/web/README.md).
 
 ### Events Endpoints (SSE Streaming)
 

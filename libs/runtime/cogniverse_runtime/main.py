@@ -74,6 +74,7 @@ from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.routers import (
     admin,
+    ag_ui,
     agents,
     debug,
     events,
@@ -1986,6 +1987,7 @@ app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
+app.include_router(ag_ui.router, prefix="/ag-ui", tags=["ag-ui"])
 
 # Queue-driven ingestion. When REDIS_URL is set, /ingestion/upload
 # streams uploaded bytes to MinIO and submits to the redis queue, and
