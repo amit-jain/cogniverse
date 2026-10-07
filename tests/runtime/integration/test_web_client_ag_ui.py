@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
 import socket
 import subprocess
@@ -43,6 +42,7 @@ from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, open_session_redis
 from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.node_env import node_env
 
 pytestmark = [
     pytest.mark.integration,
@@ -272,17 +272,6 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _node_env(node: str, **extra: str) -> dict:
-    """The subprocess environment, named entry by entry, so an ambient
-    COGNIVERSE_* or COPILOTKIT_* variable cannot decide the outcome."""
-    env = {
-        "PATH": f"{Path(node).parent.as_posix()}:/usr/bin:/bin",
-        "HOME": os.environ["HOME"],
-    }
-    env.update(extra)
-    return env
-
-
 @pytest.fixture(scope="module")
 def web_client_dir(tmp_path_factory):
     """The client's sources with its lockfile installed beside them."""
@@ -311,7 +300,7 @@ def web_client_dir(tmp_path_factory):
     install = subprocess.run(
         [npm, "ci", "--no-fund", "--no-audit"],
         cwd=root,
-        env=_node_env(node),
+        env=node_env(node),
         capture_output=True,
         text=True,
         timeout=600,
@@ -423,7 +412,7 @@ def _serve_web(client_dir: Path, runtime_url: str, key: str, telemetry_url: str)
     proc = subprocess.Popen(
         [node, "--import", "tsx", str(client_dir / "src" / "server" / "index.ts")],
         cwd=client_dir,
-        env=_node_env(
+        env=node_env(
             node,
             COGNIVERSE_RUNTIME_URL=runtime_url,
             COGNIVERSE_API_KEY=key,
@@ -471,7 +460,7 @@ def _drive(client_dir: Path, web_url: str, **scenario: str):
         capture_output=True,
         text=True,
         timeout=180,
-        env=_node_env(node, WEB_URL=web_url, QUERY=QUERY, **scenario),
+        env=node_env(node, WEB_URL=web_url, QUERY=QUERY, **scenario),
     )
     assert proc.returncode == 0, (
         f"web driver failed:\nstdout={proc.stdout}\nstderr={proc.stderr}"
