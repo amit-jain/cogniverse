@@ -65,7 +65,6 @@ COMMON_RATCHET_KEYS = {
     "keyframe_extraction_method",
     "keyword",
     "keyword_config",
-    "llm_auto_annotator",
     "llm_judge",
     "log_file",
     "log_level",
