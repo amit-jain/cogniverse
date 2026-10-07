@@ -9,8 +9,11 @@ result cards.
 
 The browser talks only to this package's Node server. The server hosts the
 CopilotKit runtime at `/api/copilotkit` and holds one harness key, which it
-sends to the Cogniverse runtime on every run; the key decides the tenant. There
-is no user login.
+sends to the Cogniverse runtime on every run; the key decides the tenant. The
+operations views reach the runtime's admin, ingestion and event routes through
+`/api/runtime/*`, which forwards an allowlist of those routes (`src/server/proxy.ts`)
+and streams their server-sent events. There is no user login, so anyone who can
+reach the server can use those routes.
 
 ## Setup
 
