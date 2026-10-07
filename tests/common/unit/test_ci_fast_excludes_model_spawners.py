@@ -1,7 +1,8 @@
-"""``ci_fast`` CI selections must not reach a fixture that starts a model server.
+"""``ci_fast`` CI selections must not reach a fixture that needs a model server.
 
-The fast CI runner has 7 GB of RAM; a vLLM sidecar's weights do not fit, so a
-``ci_fast`` test that resolves one fails in CI while passing on a dev host.
+Models are served remotely (the cogniverse-e2e cluster, Modal), which the fast
+CI runner cannot reach, so a ``ci_fast`` test that resolves one fails in CI
+while passing on a dev host.
 """
 
 from __future__ import annotations
@@ -21,10 +22,10 @@ from tests.fixtures.ci_workflows import gating_selections, load_workflows
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
-# Fixtures that start a model server. Every fixture that provisions one does so
+# Fixtures that resolve a model server. Every fixture that needs one does so
 # through one of these, and pytest resolves the whole closure, so naming the
 # roots catches a test that reaches them through any chain of intermediates.
-MODEL_SPAWNING_FIXTURES = frozenset({"vllm_sidecar", "ensure_host_ollama"})
+MODEL_SPAWNING_FIXTURES = frozenset({"remote_inference", "ensure_host_ollama"})
 
 _PLUGIN = """
 import json, pytest
@@ -120,8 +121,8 @@ def test_the_detector_reports_a_ci_fast_test_that_reaches_a_spawner(
         "[pytest]\nmarkers =\n    ci_fast: fast\n    integration: integration\n"
     )
     (tmp_path / "conftest.py").write_text(
-        "import pytest\n\n\n@pytest.fixture\ndef vllm_sidecar():\n    return object()\n"
-        "\n\n@pytest.fixture\ndef indirect(vllm_sidecar):\n    return vllm_sidecar\n"
+        "import pytest\n\n\n@pytest.fixture\ndef remote_inference():\n    return object()\n"
+        "\n\n@pytest.fixture\ndef indirect(remote_inference):\n    return remote_inference\n"
     )
     (tmp_path / "test_synthetic.py").write_text(
         "import pytest\n\n\n"
@@ -132,7 +133,7 @@ def test_the_detector_reports_a_ci_fast_test_that_reaches_a_spawner(
     )
     offenders = collect_offenders(["."], "integration and ci_fast", rootdir=tmp_path)
     assert offenders == [
-        ["test_synthetic.py::test_reaches_spawner_indirectly", ["vllm_sidecar"]]
+        ["test_synthetic.py::test_reaches_spawner_indirectly", ["remote_inference"]]
     ]
 
 

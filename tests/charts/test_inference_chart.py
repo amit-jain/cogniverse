@@ -412,6 +412,7 @@ def test_default_colbert_pylate_serves_lateon_via_pylate():
         "MAX_INPUT_CHARS": "2000000",
         "ENCODE_BATCH_SIZE": "32",
         "HF_HOME": "/root/.cache/huggingface",
+        "HF_HUB_OFFLINE": "1",
     }
     assert container["ports"] == [{"name": "http", "containerPort": 8000}]
 
@@ -576,12 +577,11 @@ def test_vllm_asr_serves_whisper_turbo_transcription():
     dep = _inference_deployments(docs)["vllm_asr"]
     assert dep["metadata"]["name"] == "cogniverse-vllm-asr"
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    assert c["image"].startswith("vllm/vllm-openai")
-    # The transcription engine renders a single shell command string that
-    # pip-installs the audio extras then execs `vllm serve <model>`.
-    cmd = " ".join(c["args"])
-    assert "vllm serve 'openai/whisper-large-v3-turbo'" in cmd
-    assert "'--runner' \\\n  'generate'" in cmd
+    # The audio packages are baked into the image; the pod runs vLLM directly.
+    assert c["image"] == "cogniverse/vllm-audio-cpu:0.1.0"
+    assert c["command"] == ["vllm"]
+    assert c["args"][:2] == ["serve", "openai/whisper-large-v3-turbo"]
+    assert c["args"][-4:] == ["--runner", "generate", "--max-model-len", "448"]
     urls = _service_urls(docs)
     assert urls["vllm_asr"] == "http://cogniverse-vllm-asr:8000"
 
@@ -705,6 +705,46 @@ def test_chart_visual_profiles_serve_tomoro():
         assert p["inference_services"]["embedding"] == "vllm_colpali", name
 
 
+# Document token pooling factor each shipped visual profile declares: 1, no
+# pooling, for all four. On the exported production frame corpus and golden
+# set, pooling at factor 3 lowered MRR and R@1 of every binary-MaxSim strategy
+# with paired 95% CIs below zero (binary_binary MRR -0.052, hybrid_binary_bm25
+# -0.056, hybrid_bm25_binary -0.051), and at factor 2 the two binary hybrids
+# still lost MRR (-0.028, -0.030). The chunk corpus (34 documents) was level
+# with its binary strategies trending the same way, and the image and
+# document-visual profiles have no evaluation corpus.
+SHIPPED_TOKEN_POOL_FACTORS = {
+    "video_colpali_smol500_mv_frame": 1,
+    "video_colqwen_omni_mv_chunk_30s": 1,
+    "image_colpali_mv": 1,
+    "document_visual_colpali": 1,
+}
+
+
+def test_shipped_visual_profiles_declare_their_token_pool_factor():
+    local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+    example = json.loads(
+        (REPO_ROOT / "configs" / "examples" / "config.example.json").read_text()
+    )
+    chart = _rendered_chart_config()
+
+    for name, config in (("local", local), ("chart", chart), ("example", example)):
+        profiles = config["backend"]["profiles"]
+        declared = {
+            profile: profiles[profile]["model_config"]["token_pool_factor"]
+            for profile in SHIPPED_TOKEN_POOL_FACTORS
+            if profile in profiles
+        }
+        expected = {
+            profile: factor
+            for profile, factor in SHIPPED_TOKEN_POOL_FACTORS.items()
+            if profile in profiles
+        }
+        assert declared == expected, name
+    assert set(SHIPPED_TOKEN_POOL_FACTORS) <= set(local["backend"]["profiles"])
+    assert set(SHIPPED_TOKEN_POOL_FACTORS) <= set(chart["backend"]["profiles"])
+
+
 def test_shipped_video_chunk_profile_has_one_exact_colqwen3_contract():
     profile_name = "video_colqwen_omni_mv_chunk_30s"
     local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
@@ -723,7 +763,7 @@ def test_shipped_video_chunk_profile_has_one_exact_colqwen3_contract():
             "service. 320-dim per-patch multi-vector embeddings."
         )
         assert profile["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
-        assert profile["model_config"] == {"token_pool_factor": 3}
+        assert profile["model_config"] == {"token_pool_factor": 1}
         assert profile["model_loader"] == "colqwen"
         assert profile["inference_services"] == {
             "embedding": "vllm_colpali",
@@ -1623,18 +1663,26 @@ def test_vllm_embed_serve_args_pin_the_revision():
     ]
 
 
-def test_vllm_transcription_serve_script_pins_the_revision():
-    """The transcription engine renders a shell script rather than an argv
-    list; the pinned whisper revision lands on the exec'd serve line."""
+def test_vllm_transcription_serve_args_pin_the_revision():
+    """The pinned whisper revision precedes the engine's own flags."""
     docs = _render("inference.vllm_asr.enabled=true")
     c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
         "containers"
     ][0]
-    assert (
-        "exec vllm serve 'openai/whisper-large-v3-turbo' \\\n"
-        "  --host 0.0.0.0 --port 8000 \\\n"
-        "  --revision '41f01f3fe87f28c78e2fbf8b568835947dd65ed9' \\\n"
-    ) in "".join(c["args"])
+    assert c["args"] == [
+        "serve",
+        "openai/whisper-large-v3-turbo",
+        "--revision",
+        "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "generate",
+        "--max-model-len",
+        "448",
+    ]
 
 
 def test_service_without_a_pinned_revision_renders_no_revision_flag():
@@ -1656,10 +1704,19 @@ def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
     c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
         "containers"
     ][0]
-    script = "".join(c["args"])
-    assert "exec vllm serve 'openai/whisper-tiny' \\\n" in script
-    assert "--revision" not in script
-    assert "41f01f3fe87f28c78e2fbf8b568835947dd65ed9" not in script
+    assert c["image"] == "cogniverse/vllm-audio-cpu:0.1.0"
+    assert c["args"] == [
+        "serve",
+        "openai/whisper-tiny",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "generate",
+        "--max-model-len",
+        "448",
+    ]
 
 
 def _runtime_container(docs: list[dict]) -> dict:
@@ -1705,8 +1762,10 @@ def test_k3s_rocm_clap_embed_pod_is_cpu_only():
     }
     assert {e["name"]: e["value"] for e in container["env"]} == {
         "CLAP_EMBED_MODEL": "laion/clap-htsat-unfused",
+        "CLAP_EMBED_MODEL_REVISION": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
         "CLAP_EMBED_SAMPLE_RATE": "48000",
         "HF_HOME": "/root/.cache/huggingface",
+        "HF_HUB_OFFLINE": "1",
         "HOST": "0.0.0.0",
         "PORT": "8000",
     }
@@ -1786,18 +1845,22 @@ def test_external_url_skips_the_model_cache_pvc():
     assert "cogniverse-denseon-model-cache" in pvcs
 
 
-def test_external_url_predecessor_does_not_gate_its_successor():
-    """In the rocm startup chain denseon waits on vllm_asr; a Modal-hosted
-    vllm_asr deploys no local Service, so denseon must start ungated instead
-    of waiting on a /health that can never answer."""
+def test_external_url_predecessor_is_skipped_by_its_successors_gate():
+    """In the rocm startup chain denseon follows vllm_asr; a Modal-hosted
+    vllm_asr deploys no local Service, so denseon waits on the nearest earlier
+    entry with a pod (vllm_llm_student) rather than on a /health that can
+    never answer, and rather than starting ungated."""
     docs = _render(
         "inference.vllm_asr.externalUrl=https://amit--cogniverse-vllm-asr.modal.run",
         values="values.rocm.yaml",
     )
     deps = _inference_deployments(docs)
     assert "vllm_asr" not in deps
-    inits = deps["denseon"]["spec"]["template"]["spec"].get("initContainers", [])
-    assert [c["name"] for c in inits if c["name"] == "startup-gate"] == []
+    inits = deps["denseon"]["spec"]["template"]["spec"]["initContainers"]
+    gates = [c for c in inits if c["name"] == "startup-gate"]
+    assert [
+        {e["name"]: e["value"] for e in gate["env"]}["GATE_URL"] for gate in gates
+    ] == ["http://cogniverse-vllm-llm-student:8000/health"]
 
 
 def test_external_url_on_denseon_redirects_the_semantic_embed_url():

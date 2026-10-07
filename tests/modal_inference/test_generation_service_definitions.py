@@ -237,7 +237,7 @@ def test_insecure_modal_generation_url_is_rejected_before_request(monkeypatch):
     assert requests == []
 
 
-def test_non_modal_generation_url_remains_available_to_cluster_discovery(monkeypatch):
+def test_non_modal_generation_url_is_not_a_modal_endpoint(monkeypatch):
     monkeypatch.setenv(
         "INFERENCE_SERVICE_URLS",
         json.dumps({"vllm_llm_student": "http://127.0.0.1:31846"}),
@@ -246,15 +246,6 @@ def test_non_modal_generation_url_remains_available_to_cluster_discovery(monkeyp
     endpoint = agents_conftest._resolve_modal_generation_endpoint("vllm_llm_student")
 
     assert endpoint is None
-
-    class Item:
-        _cogniverse_lm_roles = frozenset({"primary"})
-        fixturenames = ["ensure_host_ollama", "dspy_lm"]
-
-    item = Item()
-    agents_conftest.pytest_collection_modifyitems([item])
-
-    assert item.fixturenames == ["ensure_host_ollama", "dspy_lm"]
 
 
 def test_live_modal_selection_requires_an_explicit_opt_in(monkeypatch):
@@ -348,65 +339,6 @@ def test_gemma_fixture_injects_the_exact_authenticated_dspy_contract():
     assert config.max_tokens == 800
 
 
-def test_modal_collection_substitutes_only_resolvable_gemma_fixture(
-    monkeypatch, pytester
-):
-    spec = get_inference_service_spec("vllm_llm_student")
-    monkeypatch.setenv(
-        "INFERENCE_SERVICE_URLS",
-        json.dumps({spec.name: "https://gemma.modal.run"}),
-    )
-
-    pytester.makeconftest(
-        """
-        import pytest
-        from tests.agents.integration import conftest as agent_fixtures
-
-        @pytest.fixture
-        def ensure_host_ollama():
-            return "local-endpoint"
-
-        def pytest_collection_modifyitems(items):
-            for item in items:
-                item._cogniverse_lm_roles = frozenset({"primary"})
-                item.fixturenames.append("ensure_host_ollama")
-            agent_fixtures.pytest_collection_modifyitems(items)
-        """
-    )
-    pytester.makepyfile(
-        shared_fixtures="""
-        import pytest
-
-        @pytest.fixture
-        def gemma_inference_endpoint():
-            return "gemma-endpoint"
-        """
-    )
-    for suite, fixture_name, expected in (
-        ("agents", "gemma_inference_endpoint", "gemma-endpoint"),
-        ("memory", "gemma_inference_endpoint", "gemma-endpoint"),
-        ("runtime", "ensure_host_ollama", "local-endpoint"),
-    ):
-        suite_path = pytester.path / suite
-        suite_path.mkdir()
-        if fixture_name == "gemma_inference_endpoint":
-            (suite_path / "conftest.py").write_text(
-                "from shared_fixtures import gemma_inference_endpoint\n"
-            )
-        (suite_path / f"test_{suite}.py").write_text(
-            "def test_endpoint(request):\n"
-            "    assert [name for name in request.fixturenames "
-            "if name in {'ensure_host_ollama', 'gemma_inference_endpoint'}] "
-            f"== [{fixture_name!r}]\n"
-            f"    assert request.getfixturevalue({fixture_name!r}) == {expected!r}\n"
-        )
-
-    result = pytester.runpytest("--tb=long", "-q")
-
-    result.assert_outcomes(passed=3)
-    assert result.ret == pytest.ExitCode.OK
-
-
 def test_gemma_fixture_publishes_and_restores_the_resolved_endpoint(monkeypatch):
     spec = get_inference_service_spec("vllm_llm_student")
     endpoint = agents_conftest.ResolvedInferenceEndpoint(
@@ -417,10 +349,12 @@ def test_gemma_fixture_publishes_and_restores_the_resolved_endpoint(monkeypatch)
         model_id=spec.model_id,
         model_revision=spec.model_revision,
     )
+    from tests.utils import hermetic_llm
+
     monkeypatch.setattr(
-        agents_conftest,
-        "_resolve_modal_generation_endpoint",
-        lambda service: endpoint,
+        hermetic_llm,
+        "ensure_llm_endpoint",
+        lambda model: endpoint if model == spec.model_id else None,
     )
     original_environment = {
         "TEST_LLM_API_BASE": "https://original.test/v1",
@@ -431,7 +365,7 @@ def test_gemma_fixture_publishes_and_restores_the_resolved_endpoint(monkeypatch)
     }
     for name, value in original_environment.items():
         monkeypatch.setenv(name, value)
-    fixture = agents_conftest.gemma_inference_endpoint.__wrapped__(object())
+    fixture = agents_conftest.gemma_inference_endpoint.__wrapped__()
 
     assert next(fixture) == endpoint
     assert {
@@ -456,55 +390,32 @@ def test_gemma_fixture_publishes_and_restores_the_resolved_endpoint(monkeypatch)
     } == original_environment
 
 
-def test_whisper_fixture_fallback_uses_the_exact_production_arguments(monkeypatch):
+def test_whisper_fixture_falls_back_to_the_cluster_service(monkeypatch):
     monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    spec = get_inference_service_spec("vllm_asr")
+    resolved = agents_conftest.ResolvedInferenceEndpoint(
+        service=spec.name,
+        provider="e2e",
+        base_url="http://127.0.0.1:33905",
+        headers={},
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+    )
 
-    class Sidecar:
+    class Remote:
         def __init__(self):
-            self.calls: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = []
+            self.calls: list[str] = []
 
-        def spawn(
-            self,
-            *,
-            model,
-            model_revision,
-            required_snapshot_files,
-            extra_args,
-        ):
-            self.calls.append(
-                (
-                    model,
-                    model_revision,
-                    tuple(required_snapshot_files),
-                    tuple(extra_args),
-                )
-            )
-            return "http://127.0.0.1:31845/"
+        def resolve(self, service):
+            self.calls.append(service)
+            return resolved
 
-    sidecar = Sidecar()
+    remote = Remote()
 
-    endpoint = agents_conftest._resolve_whisper_inference_endpoint(sidecar)
+    endpoint = agents_conftest._resolve_whisper_inference_endpoint(remote)
 
-    assert sidecar.calls == [
-        (
-            "openai/whisper-large-v3-turbo",
-            "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
-            (
-                "added_tokens.json",
-                "config.json",
-                "generation_config.json",
-                "merges.txt",
-                "model.safetensors",
-                "normalizer.json",
-                "preprocessor_config.json",
-                "special_tokens_map.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "vocab.json",
-            ),
-            ("--runner", "generate", "--max-model-len", "448"),
-        )
-    ]
+    assert remote.calls == ["vllm_asr"]
+    assert endpoint is resolved
     assert (
         endpoint.service,
         endpoint.provider,
@@ -514,8 +425,8 @@ def test_whisper_fixture_fallback_uses_the_exact_production_arguments(monkeypatc
         endpoint.model_revision,
     ) == (
         "vllm_asr",
-        "local",
-        "http://127.0.0.1:31845",
+        "e2e",
+        "http://127.0.0.1:33905",
         {},
         "openai/whisper-large-v3-turbo",
         "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
@@ -524,15 +435,10 @@ def test_whisper_fixture_fallback_uses_the_exact_production_arguments(monkeypatc
 
 @pytest.mark.integration
 def test_real_gemma_factory_preserves_concurrent_exact_answers():
-    from tests.fixtures.llm import resolve_api_key
-    from tests.utils.hermetic_llm import ensure_llm
+    from tests.utils.hermetic_llm import ensure_llm_endpoint
 
     spec = get_inference_service_spec("vllm_llm_student")
-    endpoint = agents_conftest._resolve_verified_local_endpoint(
-        "vllm_llm_student",
-        base_url=ensure_llm(model="google/gemma-4-e4b-it"),
-        api_key=resolve_api_key(),
-    )
+    endpoint = ensure_llm_endpoint(spec.model_id)
     config = replace(
         agents_conftest._gemma_llm_config(endpoint),
         temperature=0.0,
@@ -612,7 +518,7 @@ def test_gemma_serving_process_failure_is_contextual(monkeypatch):
 
 @pytest.mark.integration
 def test_real_whisper_agent_returns_the_exact_normalized_transcript(
-    vllm_sidecar,
+    remote_inference,
     tmp_path,
 ):
     source = httpx.get(
@@ -644,7 +550,7 @@ def test_real_whisper_agent_returns_the_exact_normalized_transcript(
         check=True,
         timeout=30,
     )
-    endpoint = agents_conftest._resolve_whisper_inference_endpoint(vllm_sidecar)
+    endpoint = agents_conftest._resolve_whisper_inference_endpoint(remote_inference)
     from cogniverse_foundation.config.manager import ConfigManager
     from tests.utils.memory_store import InMemoryConfigStore
 

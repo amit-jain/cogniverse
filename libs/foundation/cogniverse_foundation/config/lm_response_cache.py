@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Optional
 from dspy.clients.cache import Cache
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.lm_deadline import LMCallDeadlineExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +140,13 @@ class TenantScopedLMCache:
     def _report_failure(
         self, exc: BaseException, *, tenant_id: str, model: str, key: str
     ) -> None:
-        """Name the failed request, and leave the provider's error alone."""
-        logger.error(
+        """Name the failed request, and leave the provider's error alone.
+
+        A call stopped at its caller's deadline is the caller's to report: it
+        is named at INFO, not as an LM failure.
+        """
+        logger.log(
+            logging.INFO if isinstance(exc, LMCallDeadlineExceeded) else logging.ERROR,
             "LM call failed for tenant=%s model=%s key_digest=%s; "
             "nothing cached: %s: %s",
             tenant_id,

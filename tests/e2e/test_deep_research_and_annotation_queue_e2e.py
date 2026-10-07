@@ -10,6 +10,7 @@ Features tested:
 3. Content rails — blocked query returns error via routing agent
 """
 
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -21,6 +22,30 @@ from cogniverse_core.agents.rlm_options import RLMOptions
 from tests.e2e.cluster import RUNTIME, TENANT_ID
 from tests.e2e.conftest import GATEWAY_VIDEO_QUERIES, expected_gateway_routing
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
+
+
+def _replayed_workflow_events(workflow_id: str) -> list[dict]:
+    """A finished workflow's task events, replayed from the start up to and
+    including its terminal event."""
+    events: list[dict] = []
+    with httpx.stream(
+        "GET", f"{RUNTIME}/events/workflows/{workflow_id}", timeout=60.0
+    ) as stream:
+        assert stream.status_code == 200, stream.read()[:500]
+        for line in stream.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line.removeprefix("data: "))
+            if event.get("type") == "connected":
+                assert event["task_id"] == workflow_id, event
+                continue
+            events.append(event)
+            if event["event_type"] in ("complete", "error") or event.get("state") in (
+                "failed",
+                "cancelled",
+            ):
+                break
+    return events
 
 
 @pytest.mark.e2e
@@ -46,7 +71,22 @@ class TestDeepResearchE2E:
             f"Expected 200, got {resp.status_code}: {resp.text[:500]}"
         )
         data = resp.json()
-        assert set(data) == {"status", "agent", "message", "result", "answer"}, data
+        assert set(data) == {
+            "status",
+            "agent",
+            "message",
+            "result",
+            "answer",
+            "workflow_id",
+        }, data
+        # The run reports progress as task events under the id it returns.
+        events = _replayed_workflow_events(data["workflow_id"])
+        assert events, data["workflow_id"]
+        assert {event["task_id"] for event in events} == {data["workflow_id"]}
+        assert {event["tenant_id"] for event in events} == {TENANT_ID}
+        assert events[-1]["event_type"] == "complete", events[-1]
+        assert events[-1]["result"] == {"status": "success"}, events[-1]
+        assert events[-1]["summary"] == data["message"], events[-1]
         # The dispatch envelope carries the canonical answer text; for this
         # agent it is the output's summary field.
         assert data["answer"] == data["result"]["summary"]

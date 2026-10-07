@@ -743,6 +743,17 @@ class TelemetryManager:
             ),
         }
 
+    def preload_span_export(self) -> None:
+        """Discover the telemetry provider and import what its span export
+        loads, so a tenant's first span builds its exporter from loaded
+        modules. Run it before serving and off the event loop; it is a no-op
+        when telemetry is disabled."""
+        if not self.config.enabled:
+            return
+        from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+
+        self.get_provider(tenant_id=SYSTEM_TENANT_ID).preload_span_export()
+
     def get_provider(self, tenant_id: str, project_name: Optional[str] = None):
         """
         Get telemetry provider for querying spans/annotations/datasets.

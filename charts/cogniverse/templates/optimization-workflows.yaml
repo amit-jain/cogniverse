@@ -475,6 +475,9 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
 {{ include "cogniverse.optimizationWorkflowEnv" . | nindent 8 }}
@@ -570,6 +573,9 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
         resources:
@@ -659,6 +665,9 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
 {{ include "cogniverse.optimizationWorkflowEnv" . | nindent 8 }}

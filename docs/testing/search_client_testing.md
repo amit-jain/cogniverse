@@ -21,8 +21,8 @@ The test fixture chain builds the full real backend on demand:
 - **Real Vespa**: `vespa_instance` fixture is a compatibility shim backed by
   the session-scoped `shared_vespa` container (see `tests/conftest.py`), with
   `video_colpali_smol500_mv_frame_test_unit` deployed at test setup.
-- **Real vLLM ColPali**: `vllm_sidecar` fixture spawns
-  `vllm/vllm-openai-cpu:v0.23.0` serving `TomoroAI/tomoro-colqwen3-embed-4b`
+- **Real vLLM ColPali**: `remote_inference` resolves the cogniverse-e2e
+  cluster's `vllm_colpali` service serving `TomoroAI/tomoro-colqwen3-embed-4b`
   (pooling runner, `embed` convert mode, 320-dim per-token embeddings) and
   binds `RemoteColPaliLoader` against it.
 - **Real seed corpus**: three documents with real per-token ColPali
@@ -51,17 +51,10 @@ Each case asserts on the returned `List[SearchResult]`:
 
 ## Prerequisites
 
-- `docker` available (vLLM and Vespa run in containers).
-- The test-owned HuggingFace cache at `~/.cache/cogniverse-tests/huggingface`
-  (created automatically; mounted into test containers, which run as the
-  invoking user, so `tomoro-colqwen3-embed-4b` weights are reused across
-  runs and every cache entry stays user-owned — the personal
-  `~/.cache/huggingface` is never mounted into test containers).
-- Host RAM headroom for the vLLM CPU sidecar: `tests/utils/vllm_sidecar.py`
-  sets `VLLM_CPU_MEMORY_UTILIZATION=0.05` and `VLLM_CPU_KVCACHE_SPACE=2`
-  (GiB) on the container, plus a merged `--gpu-memory-utilization 0.10`
-  and (for colqwen3 models) `--limit-mm-per-prompt {"video":0,"image":1}`
-  to avoid a vision-tower startup OOM.
+- `docker` available (Vespa runs in a container).
+- The cogniverse-e2e cluster serving `vllm_colpali`
+  (`kubectl --context k3d-cogniverse-e2e -n cogniverse get deploy cogniverse-vllm-colpali`);
+  tests never start a model on this host.
 - Environment variables `BACKEND_URL` / `BACKEND_PORT` set (or a
   `configs/config.json` with `backend.url`/`backend.port`) if constructing
   a `ConfigManager` via `create_default_config_manager()` outside the test
@@ -137,7 +130,7 @@ for result in results:
 
 # Visual / hybrid — pass pre-computed embeddings via `query_embeddings`
 # (see test_ranking_strategies_real.py for how to encode a query through
-# the vLLM sidecar: RemoteColPaliLoader(...).load_model() returns a client
+# the cluster's vLLM service: RemoteColPaliLoader(...).load_model() returns a client
 # whose .process_queries is bound to RemoteInferenceClient.process_queries_vllm).
 ```
 

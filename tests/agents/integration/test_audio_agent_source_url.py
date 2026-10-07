@@ -144,14 +144,22 @@ def audio_wav_files(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def acoustic_embeddings(audio_wav_files):
+def clap_url(remote_inference):
+    """The cluster's CLAP service, which both the feed and the queries use."""
+    return remote_inference.resolve("clap_embed").base_url
+
+
+@pytest.fixture(scope="module")
+def acoustic_embeddings(audio_wav_files, clap_url):
     """CLAP vectors for the same WAVs the pipeline embedded.
 
     The model is deterministic, so these are the vectors sitting in
     ``acoustic_embedding`` — an acoustic query built from one of them is the
     clip searching for itself.
     """
-    generator = AudioEmbeddingGenerator(clap_model=ACOUSTIC_MODEL)
+    generator = AudioEmbeddingGenerator(
+        clap_model=ACOUSTIC_MODEL, clap_endpoint_url=clap_url
+    )
     return {
         clip_id: generator.generate_acoustic_embedding(audio_path=wav_path)
         for clip_id, wav_path in audio_wav_files.items()
@@ -159,7 +167,7 @@ def acoustic_embeddings(audio_wav_files):
 
 
 @pytest.fixture(scope="module")
-def audio_schema(shared_vespa, pylate_server, audio_wav_files):
+def audio_schema(shared_vespa, pylate_server, clap_url, audio_wav_files):
     """Deploy the tenant audio schema and fill it through the ingest pipeline.
 
     Feed path (identical to production ingestion):
@@ -198,6 +206,7 @@ def audio_schema(shared_vespa, pylate_server, audio_wav_files):
                 "schema_name": BASE_SCHEMA,
                 "inference_services": {"embedding": EMBEDDING_SERVICE},
                 "remote_inference_url": pylate_server,
+                "clap_endpoint_url": clap_url,
             },
             backend_client=IngestionBackendAdapter(client),
         )

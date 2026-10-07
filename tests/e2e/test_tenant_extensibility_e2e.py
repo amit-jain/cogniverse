@@ -91,13 +91,15 @@ def _memory_rows_in_vespa(tenant_id: str, agent_name: str) -> int:
 USER_MEMORY_AGENT = "_user_memories"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def owned_tenant():
-    """A tenant this module creates, mutates and deletes.
+    """A tenant each test creates, mutates and deletes.
 
     Instructions, jobs and memories are tenant-wide state; writing them on the
     shared tenant leaks into every other module and makes their counts depend
-    on what earlier runs left behind.
+    on what earlier runs left behind. One tenant per test keeps each test's
+    exact counts free of what another test wrote (the strategy-listing test
+    leaves its preference memory in place), whatever order they run in.
     """
     org_id = unique_id("tenant_ext")
     tenant_id = f"{org_id}:t1"

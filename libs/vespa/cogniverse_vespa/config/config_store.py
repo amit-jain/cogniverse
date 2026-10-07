@@ -3,6 +3,8 @@ Vespa-based configuration storage with multi-tenant support.
 Stores configurations directly in Vespa backend for unified storage.
 """
 
+import base64
+import binascii
 import json
 import logging
 import time
@@ -31,6 +33,22 @@ from cogniverse_vespa._yql import yql_quote
 logger = logging.getLogger(__name__)
 
 _MAX_VERSION_ALLOCATION_ATTEMPTS = 64
+# Each config's version counter lives in one document under this namespace.
+# Pruning deletes version documents, and Vespa applies a conditional put with
+# ``create`` to a missing document whatever its condition says, so a version
+# document's absence cannot tell "never written" from "written and pruned".
+# The counter document is never pruned, so a conditional update of it hands
+# out each version exactly once. Document v1 visits are scoped to the
+# config_metadata namespace and the counter carries no config_id, so no
+# config read or prune query ever sees it.
+_VERSION_COUNTER_NAMESPACE = "config_version_counter"
+# A reservation whose version document has not appeared after this long is
+# treated as abandoned (its writer died between the two writes), so
+# ``compare_and_set_config`` may reserve past it instead of reporting
+# contention forever. A writer that was only slow still cannot report a
+# version it lost: its own read-back sees the newer version.
+_ABANDONED_RESERVATION_SECONDS = 30.0
+_COUNTER_REREAD_EVERY_MISSES = 8
 
 _CONFIG_STORE_READ_MAX_ATTEMPTS = 5
 _CONFIG_STORE_READ_INITIAL_BACKOFF_SECONDS = 0.25
@@ -115,6 +133,47 @@ def _literal_glob_suffix(suffix: str) -> str:
             "globs cannot escape one"
         )
     return suffix
+
+
+_IMMUTABLE_CURSOR_PREFIX = "v1."
+
+
+def _encode_immutable_cursor(
+    visit_continuation: Optional[str], pending_keys: List[str]
+) -> Optional[str]:
+    """The page cursor: where the visit resumes, plus the config keys a visit
+    already returned beyond the last page.
+
+    A visit's ``wantedDocumentCount`` is a hint; one visit can return more
+    documents than asked. Those extras are carried here by key and served
+    first on the next page, so a page never exceeds its size and no record is
+    skipped or repeated.
+    """
+    if visit_continuation is None and not pending_keys:
+        return None
+    body = json.dumps(
+        {"visit": visit_continuation, "pending": pending_keys},
+        separators=(",", ":"),
+    ).encode()
+    return _IMMUTABLE_CURSOR_PREFIX + base64.urlsafe_b64encode(body).decode()
+
+
+def _decode_immutable_cursor(cursor: str) -> tuple[Optional[str], List[str]]:
+    if not cursor.startswith(_IMMUTABLE_CURSOR_PREFIX):
+        raise ValueError("continuation is not a config-store page cursor")
+    try:
+        body = json.loads(
+            base64.urlsafe_b64decode(cursor[len(_IMMUTABLE_CURSOR_PREFIX) :])
+        )
+        visit = body["visit"]
+        pending = body["pending"]
+    except (binascii.Error, ValueError, KeyError, TypeError) as exc:
+        raise ValueError("continuation is not a config-store page cursor") from exc
+    if not (visit is None or isinstance(visit, str)) or not (
+        isinstance(pending, list) and all(isinstance(key, str) for key in pending)
+    ):
+        raise ValueError("continuation is not a config-store page cursor")
+    return visit, pending
 
 
 def _config_store_read_json(
@@ -476,6 +535,24 @@ class VespaConfigStore(ImmutableConfigStore):
     ) -> tuple[List[ConfigEntry], Optional[str]]:
         if not 1 <= page_size <= 1000:
             raise ValueError("page_size must be between 1 and 1000")
+        visit_continuation: Optional[str] = None
+        pending: List[str] = []
+        if continuation is not None:
+            visit_continuation, pending = _decode_immutable_cursor(continuation)
+        if pending:
+            # Records an earlier visit returned past its page. One that was
+            # deleted since is simply gone; the rest are served in order.
+            page = [
+                entry
+                for key in pending[:page_size]
+                if (entry := self.get_immutable_config(tenant_id, scope, service, key))
+                is not None
+            ]
+            return page, _encode_immutable_cursor(
+                visit_continuation, pending[page_size:]
+            )
+        if continuation is not None and visit_continuation is None:
+            return [], None
         path = f"{self.vespa_app.url}/document/v1/{self.schema_name}/{self.schema_name}/docid/"
         params = {
             "wantedDocumentCount": page_size,
@@ -489,14 +566,17 @@ class VespaConfigStore(ImmutableConfigStore):
                 ]
             ),
         }
-        if continuation is not None:
-            params["continuation"] = continuation
+        if visit_continuation is not None:
+            params["continuation"] = visit_continuation
         payload = _config_store_read_json(path, params=params, timeout=5)
         if payload is None:
             return [], None
-        return (
-            [self._entry_from_fields(doc["fields"]) for doc in payload["documents"]],
+        entries = [
+            self._entry_from_fields(doc["fields"]) for doc in payload["documents"]
+        ]
+        return entries[:page_size], _encode_immutable_cursor(
             payload.get("continuation"),
+            [entry.config_key for entry in entries[page_size:]],
         )
 
     def _get_latest_version(
@@ -546,6 +626,146 @@ class VespaConfigStore(ImmutableConfigStore):
         )
         return entry
 
+    def _read_counter(self, config_id: str) -> Optional[tuple[int, datetime]]:
+        """The config's highest reserved version and when it was reserved.
+
+        Read over the store's persistent session: a contended key re-reads
+        its counter on every lost reservation, and a fresh connection per
+        read exhausts the backend's connection handling under that load.
+        """
+        for attempt in range(1, _CONFIG_STORE_READ_MAX_ATTEMPTS + 1):
+            try:
+                response = self.vespa_app.get_data(
+                    schema=self.schema_name,
+                    namespace=_VERSION_COUNTER_NAMESPACE,
+                    data_id=config_id,
+                    raise_on_not_found=False,
+                )
+            except Exception as exc:
+                if (
+                    not _config_store_is_retryable(exc)
+                    or attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS
+                ):
+                    raise ConfigStoreUnavailableError(
+                        f"Failed to read the version counter of config "
+                        f"{config_id}: {type(exc).__name__}: {exc}"
+                    ) from exc
+                time.sleep(_config_store_visit_backoff_seconds(attempt))
+                continue
+            status = response.status_code
+            if status == _CONFIG_STORE_READ_MISSING_HTTP_STATUS:
+                return None
+            if status == 200:
+                fields = response.get_json().get("fields")
+                if not isinstance(fields, dict):
+                    raise ConfigStoreUnavailableError(
+                        f"Version counter of config {config_id} came back "
+                        f"without fields: {response.get_json()}"
+                    )
+                return (
+                    int(fields["version"]),
+                    datetime.fromisoformat(fields["updated_at"]),
+                )
+            # An overloaded backend answers a document GET with 429 or 5xx
+            # and an error body; that read is retried like any other.
+            retryable = (
+                status == 429 or _CONFIG_STORE_READ_RETRYABLE_HTTP_STATUS_MIN <= status
+            )
+            if not retryable or attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS:
+                raise ConfigStoreUnavailableError(
+                    f"Failed to read the version counter of config {config_id} "
+                    f"after {attempt} attempts: HTTP {status}: "
+                    f"{response.get_json()}"
+                )
+            time.sleep(_config_store_visit_backoff_seconds(attempt))
+        raise AssertionError("unreachable")
+
+    def _counter(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_id: str,
+    ) -> tuple[int, datetime]:
+        """Read the version counter, creating it at the stored latest version.
+
+        Creation is conditional on the counter not existing, so concurrent
+        first writers create it once and every one of them then reads it.
+        """
+        counter = self._read_counter(config_id)
+        if counter is not None:
+            return counter
+        latest = self._get_latest_version(tenant_id, scope, service, config_key)
+        try:
+            self.vespa_app.feed_data_point(
+                schema=self.schema_name,
+                namespace=_VERSION_COUNTER_NAMESPACE,
+                data_id=config_id,
+                fields={
+                    "version": latest,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                condition=f"{self.schema_name}.version < 0",
+                create=True,
+            )
+        except Exception as error:
+            if not _is_condition_miss(error):
+                raise
+        counter = self._read_counter(config_id)
+        if counter is None:
+            raise ConfigStoreUnavailableError(
+                f"Version counter for config {config_id} was not readable after "
+                "it was created"
+            )
+        return counter
+
+    def _reserve(self, config_id: str, current: int, version: int) -> bool:
+        """Move the counter from ``current`` to ``version``; False if it moved."""
+        try:
+            self.vespa_app.update_data(
+                schema=self.schema_name,
+                namespace=_VERSION_COUNTER_NAMESPACE,
+                data_id=config_id,
+                fields={
+                    "version": version,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                condition=f"{self.schema_name}.version == {current}",
+            )
+        except Exception as error:
+            if _is_condition_miss(error):
+                return False
+            raise
+        return True
+
+    def _write_reserved_version(self, entry: ConfigEntry) -> bool:
+        """Write a reserved version's document; False if it already exists.
+
+        The reservation makes this writer the only one assigned the version,
+        so the condition only misses when the document was written by a
+        writer that reserved the version before the counter was reset by
+        ``delete_config``; the caller then reserves another version.
+        """
+        config_id = entry.get_config_id()
+        fields = entry.to_dict()
+        fields["config_id"] = config_id
+        fields["config_value"] = json.dumps(entry.config_value)
+        try:
+            self.vespa_app.feed_data_point(
+                schema=self.schema_name,
+                data_id=f"{self.schema_name}::{config_id}::{entry.version}",
+                fields=fields,
+                condition=f"{self.schema_name}.version < {entry.version}",
+                create=True,
+            )
+        except Exception as error:
+            if _is_condition_miss(error):
+                return False
+            logger.error(f"Failed to store config in Vespa: {error}")
+            raise
+        return True
+
     def _append_version(
         self,
         tenant_id: str,
@@ -554,13 +774,28 @@ class VespaConfigStore(ImmutableConfigStore):
         config_key: str,
         config_value: Dict[str, Any],
     ) -> ConfigEntry:
-        """Write the next version of a configuration without pruning."""
-        config_id = self._create_document_id(tenant_id, scope, service, config_key)
-        candidate_version = (
-            self._get_latest_version(tenant_id, scope, service, config_key) + 1
-        )
+        """Write the next version of a configuration without pruning.
 
-        for _attempt in range(_MAX_VERSION_ALLOCATION_ATTEMPTS):
+        The version is reserved on the config's counter document first, then
+        written; the counter is never pruned, so no two writers are handed
+        the same version however long either stalls between its steps.
+        """
+        config_id = self._create_document_id(tenant_id, scope, service, config_key)
+        floor = 0
+        current, _ = self._counter(tenant_id, scope, service, config_key, config_id)
+        for attempt in range(1, _MAX_VERSION_ALLOCATION_ATTEMPTS + 1):
+            version = max(current, floor) + 1
+            if not self._reserve(config_id, current, version):
+                # The counter only moves forward, so the next value to try is
+                # one past the one that missed; a re-read every few misses
+                # catches up with a counter far ahead.
+                if attempt % _COUNTER_REREAD_EVERY_MISSES == 0:
+                    current, _ = self._counter(
+                        tenant_id, scope, service, config_key, config_id
+                    )
+                else:
+                    current += 1
+                continue
             now = datetime.now(timezone.utc)
             entry = ConfigEntry(
                 tenant_id=tenant_id,
@@ -568,42 +803,15 @@ class VespaConfigStore(ImmutableConfigStore):
                 service=service,
                 config_key=config_key,
                 config_value=config_value,
-                version=candidate_version,
+                version=version,
                 created_at=now,
                 updated_at=now,
             )
-            doc_id = f"{self.schema_name}::{config_id}::{candidate_version}"
-            fields = {
-                "config_id": config_id,
-                "tenant_id": tenant_id,
-                "scope": scope.value,
-                "service": service,
-                "config_key": config_key,
-                "config_value": json.dumps(config_value),
-                "version": candidate_version,
-                "created_at": entry.created_at.isoformat(),
-                "updated_at": entry.updated_at.isoformat(),
-            }
-
-            try:
-                self.vespa_app.feed_data_point(
-                    schema=self.schema_name,
-                    data_id=doc_id,
-                    fields=fields,
-                    condition=f"{self.schema_name}.version < {candidate_version}",
-                    create=True,
-                )
-            except Exception as error:
-                if _is_condition_miss(error):
-                    candidate_version += 1
-                    continue
-                logger.error(f"Failed to store config in Vespa: {error}")
-                raise
-
-            logger.info(
-                f"Set config {entry.get_config_id()} v{candidate_version} in Vespa"
-            )
-            return entry
+            if self._write_reserved_version(entry):
+                logger.info(f"Set config {config_id} v{version} in Vespa")
+                return entry
+            floor = self._get_latest_version(tenant_id, scope, service, config_key)
+            current = version
 
         raise RuntimeError(
             f"Could not allocate a version for config {config_id} after "
@@ -622,15 +830,31 @@ class VespaConfigStore(ImmutableConfigStore):
     ) -> Optional[ConfigEntry]:
         """Append exactly the next version, or return None on contention.
 
-        Version zero requires an absent key. The immutable version document
-        is the conditional-write boundary. Strong reads also reject a stale
-        writer whose version slot has already been pruned from history.
+        Version zero requires an absent key. The version is reserved on the
+        config's counter only while no other writer holds a reservation past
+        ``expected_version``; a reservation older than
+        ``_ABANDONED_RESERVATION_SECONDS`` whose version never appeared is
+        reserved past. The write is reported only when a strong read then
+        shows it as the latest version.
         """
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
         current = self.get_config(tenant_id, scope, service, config_key)
         actual_version = 0 if current is None else current.version
         if actual_version != expected_version:
+            return None
+        config_id = self._create_document_id(tenant_id, scope, service, config_key)
+        reserved, reserved_at = self._counter(
+            tenant_id, scope, service, config_key, config_id
+        )
+        if (
+            reserved > expected_version
+            and (datetime.now(timezone.utc) - reserved_at).total_seconds()
+            < _ABANDONED_RESERVATION_SECONDS
+        ):
+            return None
+        version = max(reserved, expected_version) + 1
+        if not self._reserve(config_id, reserved, version):
             return None
         now = datetime.now(timezone.utc)
         entry = ConfigEntry(
@@ -639,26 +863,12 @@ class VespaConfigStore(ImmutableConfigStore):
             service=service,
             config_key=config_key,
             config_value=config_value,
-            version=expected_version + 1,
+            version=version,
             created_at=now,
             updated_at=now,
         )
-        config_id = entry.get_config_id()
-        fields = entry.to_dict()
-        fields["config_id"] = config_id
-        fields["config_value"] = json.dumps(config_value)
-        try:
-            self.vespa_app.feed_data_point(
-                schema=self.schema_name,
-                data_id=f"{self.schema_name}::{config_id}::{entry.version}",
-                fields=fields,
-                condition=f"{self.schema_name}.version < {entry.version}",
-                create=True,
-            )
-        except Exception as exc:
-            if _is_condition_miss(exc):
-                return None
-            raise
+        if not self._write_reserved_version(entry):
+            return None
         latest = self.get_config(tenant_id, scope, service, config_key)
         self._prune_old_versions(config_id, keep=self.keep_versions)
         if latest is None or latest.version != entry.version:
@@ -967,6 +1177,7 @@ class VespaConfigStore(ImmutableConfigStore):
         )
 
         if not history:
+            self._delete_counter(config_id)
             return False
 
         # Delete each version
@@ -995,7 +1206,17 @@ class VespaConfigStore(ImmutableConfigStore):
                 f"for {tenant_id}:{scope.value}:{service}:{config_key}: {details}"
             ) from failures[0][1]
 
+        self._delete_counter(config_id)
         return True
+
+    def _delete_counter(self, config_id: str) -> None:
+        """Remove the version counter once no version of the config remains,
+        so a recreated config starts again at version 1."""
+        self.vespa_app.delete_data(
+            schema=self.schema_name,
+            namespace=_VERSION_COUNTER_NAMESPACE,
+            data_id=config_id,
+        )
 
     def export_configs(
         self,

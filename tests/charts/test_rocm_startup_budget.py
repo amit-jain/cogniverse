@@ -2,7 +2,6 @@
 
 import bisect
 import json
-import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -229,21 +228,17 @@ def test_tomoro_query_steps_run_at_a_fixed_set_of_gemm_sizes():
 
 def test_whisper_rocm_startup_caps_sequences_and_batched_tokens():
     container = _rocm_inference_containers()["vllm_asr"]
-    command = container["args"][0]
-    serve_command = command[command.index("exec ") + len("exec ") :].replace(
-        "\\\n", " "
-    )
-
-    assert shlex.split(serve_command) == [
+    assert container["image"] == "cogniverse/vllm-audio-rocm:0.1.0"
+    assert [*container["command"], *container["args"]] == [
         "vllm",
         "serve",
         "openai/whisper-large-v3-turbo",
+        "--revision",
+        "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
         "--host",
         "0.0.0.0",
         "--port",
         "8000",
-        "--revision",
-        "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
         "--runner",
         "generate",
         "--max-model-len",
@@ -254,4 +249,5 @@ def test_whisper_rocm_startup_caps_sequences_and_batched_tokens():
         "1",
         "--max-num-batched-tokens",
         "2048",
+        "--async-scheduling",
     ]

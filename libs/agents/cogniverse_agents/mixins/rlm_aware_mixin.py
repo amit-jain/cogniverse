@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from cogniverse_agents.inference.rlm_inference import (
     RLMInference,
     RLMResult,
+    rlm_endpoint,
     route_rlm_endpoint,
 )
 from cogniverse_core.agents.base import ConfigManagerAware
@@ -195,15 +196,10 @@ class RLMAwareMixin(ConfigManagerAware):
         Returns:
             RLMResult with answer and telemetry data
         """
-        # Build LLMEndpointConfig from RLMOptions
-        model_name = rlm_options.model or "gpt-4o"
-        # Ensure provider prefix is present
-        if "/" not in model_name:
-            model_name = f"{rlm_options.backend}/{model_name}"
-        rlm_llm_config = LLMEndpointConfig(
-            model=model_name,
-            api_base=rlm_options.api_base,
-            api_key=rlm_options.api_key,
+        rlm_llm_config = rlm_endpoint(
+            rlm_options,
+            config_manager=self.config_manager,
+            tenant_id=self._require_rlm_tenant(tenant_id),
         )
 
         rlm = self.get_rlm(

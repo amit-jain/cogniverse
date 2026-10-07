@@ -29,7 +29,6 @@ from cogniverse_agents.search.service import SearchService
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.utils import get_config
-from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
@@ -47,7 +46,6 @@ from tests.backends.integration.test_source_grouped_search import (
     _video_fields,
     _wait_for_count,
 )
-from tests.fixtures.inference import LocalEndpointProvider
 from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_manager
 
 pytestmark = [pytest.mark.integration]
@@ -60,12 +58,8 @@ MINORITY = [f"restminor{j}" for j in range(5)]
 
 
 @pytest.fixture(scope="module")
-def video_embed_url():
-    provider = LocalEndpointProvider()
-    try:
-        yield provider.resolve(get_inference_service_spec("video_embed")).base_url
-    finally:
-        provider.close()
+def video_embed_url(remote_inference):
+    return remote_inference.resolve("video_embed").base_url
 
 
 @pytest.fixture(scope="module")

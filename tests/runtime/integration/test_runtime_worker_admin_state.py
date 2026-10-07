@@ -36,8 +36,17 @@ MAX_CONNECTIONS = 200
 
 
 @pytest.fixture(scope="module")
-def runtime(tmp_path_factory, workflow_state_redis_url, vespa_instance):
-    with _runtime(tmp_path_factory.mktemp("admin_state"), workflow_state_redis_url) as (
+def runtime(
+    tmp_path_factory, workflow_state_redis_url, vespa_instance, semantic_embedder_env
+):
+    with _runtime(
+        tmp_path_factory.mktemp("admin_state"),
+        workflow_state_redis_url,
+        # No inference service is configured: the invite test asserts the
+        # Mem0 refusal that names exactly this empty set.
+        extra_env={"INFERENCE_SERVICE_URLS": json.dumps({})},
+        embedder_env=semantic_embedder_env,
+    ) as (
         process,
         log,
         port,
@@ -443,6 +452,10 @@ class TestTenantDeleteAcrossWorkers:
         pinned = _pinned(runtime, 1)
         try:
             deleted = _request(pinned[first][0], "DELETE", f"/admin/tenants/{tenant}")
+        finally:
+            _close(pinned)
+        pinned = _pinned(runtime, 1)
+        try:
             refused = _request(
                 pinned[second][0],
                 "POST",
@@ -475,11 +488,18 @@ class TestTenantDeleteAcrossWorkers:
         assert store.get_immutable_config(
             "__system__", ConfigScope.SYSTEM, "tenant_deletions", tenant
         ).config_value == {"deleted": True}
+        # Every step completed: the delete is no longer pending.
+        assert (
+            store.get_immutable_config(
+                "__system__", ConfigScope.SYSTEM, "tenant_deletions_pending", tenant
+            )
+            is None
+        )
 
 
 class TestSessionCloseAcrossWorkers:
     def test_a_session_close_is_swept_by_every_worker_of_every_replica(
-        self, tmp_path, owned_redis, vespa_instance
+        self, tmp_path, owned_redis, vespa_instance, semantic_embedder_env
     ):
         """Two runtimes of their own on one Redis, as two replicas are: no
         earlier request has warmed a memory manager on any of their workers,
@@ -487,8 +507,12 @@ class TestSessionCloseAcrossWorkers:
         session_id = f"sess-{uuid.uuid4().hex[:8]}"
         redis_url = owned_redis["url"]
         with (
-            _runtime(tmp_path, redis_url, "replica_a") as (process_a, log_a, port_a),
-            _runtime(tmp_path, redis_url, "replica_b") as (process_b, log_b, _),
+            _runtime(
+                tmp_path, redis_url, "replica_a", embedder_env=semantic_embedder_env
+            ) as (process_a, log_a, port_a),
+            _runtime(
+                tmp_path, redis_url, "replica_b", embedder_env=semantic_embedder_env
+            ) as (process_b, log_b, _),
         ):
             replica_a = SimpleNamespace(port=port_a, workers=_serving(process_a, log_a))
             replica_b_workers = _serving(process_b, log_b)
@@ -762,3 +786,139 @@ class TestProfileWritesAcrossWorkers:
             tenant, ConfigScope.BACKEND, "backend", "backend_config"
         )
         assert stored.version == last["version"]
+
+
+def _listed(answer: tuple[int, dict]) -> tuple[int, list[str]]:
+    status, body = answer
+    return status, sorted(summary["profile_name"] for summary in body["profiles"])
+
+
+class TestProfileReadsAcrossWorkers:
+    """Each worker has listed and read the tenant's profiles, so it holds the
+    backend config from before another worker's write; its admin list and get
+    answer what the store holds the moment that write returns."""
+
+    def test_a_profile_written_on_one_worker_is_listed_and_read_on_the_other(
+        self, runtime, store
+    ):
+        tenant = _tenant("reads")
+        first, second = runtime.workers
+        listing = f"/admin/profiles?tenant_id={tenant}"
+        detail = f"/admin/profiles/read_profile?tenant_id={tenant}"
+        missing = {"detail": f"Profile 'read_profile' not found for tenant '{tenant}'"}
+        pinned = _pinned(runtime, 1)
+        try:
+            held_list = _request(pinned[second][0], "GET", listing)
+            held_get = _request(pinned[second][0], "GET", detail)
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "read_profile"),
+            )
+            list_after_create = _request(pinned[second][0], "GET", listing)
+            get_after_create = _request(pinned[second][0], "GET", detail)
+            updated = _request(
+                pinned[first][0],
+                "PUT",
+                "/admin/profiles/read_profile",
+                {"tenant_id": tenant, "description": "set on the first worker"},
+            )
+            get_after_update = _request(pinned[second][0], "GET", detail)
+            deleted = _request(pinned[first][0], "DELETE", detail)
+            list_after_delete = _request(pinned[second][0], "GET", listing)
+            get_after_delete = _request(pinned[second][0], "GET", detail)
+        finally:
+            _close(pinned)
+
+        assert held_list == (
+            200,
+            {"profiles": [], "total_count": 0, "tenant_id": tenant},
+        )
+        assert held_get == (404, missing)
+        assert (created[0], updated[0], deleted[0]) == (201, 200, 200)
+        assert _listed(list_after_create) == (200, ["read_profile"])
+        assert get_after_create[0] == 200, get_after_create
+        assert (
+            get_after_create[1]["profile_name"],
+            get_after_create[1]["version"],
+        ) == ("read_profile", created[1]["version"])
+        assert get_after_update[0] == 200, get_after_update
+        assert (
+            get_after_update[1]["description"],
+            get_after_update[1]["version"],
+        ) == ("set on the first worker", updated[1]["version"])
+        assert list_after_delete == (
+            200,
+            {"profiles": [], "total_count": 0, "tenant_id": tenant},
+        )
+        assert get_after_delete == (404, missing)
+        assert _stored_profiles(store, tenant) == {}
+
+    def test_concurrent_writes_on_both_workers_are_listed_by_every_worker(
+        self, runtime, store
+    ):
+        tenant = _tenant("readsall")
+        per_worker = 3
+        listing = f"/admin/profiles?tenant_id={tenant}"
+        readers = _pinned(runtime, 1)
+        try:
+            held = {
+                pid: _request(readers[pid][0], "GET", listing)
+                for pid in runtime.workers
+            }
+        finally:
+            _close(readers)
+        names = [
+            f"concurrent_{worker}_{index}"
+            for worker in range(len(runtime.workers))
+            for index in range(per_worker)
+        ]
+        pinned = _pinned(runtime, per_worker)
+        connections = [c for pid in runtime.workers for c in pinned[pid]]
+        try:
+            created = _concurrently(
+                [
+                    lambda connection=connection, name=name: _request(
+                        connection,
+                        "POST",
+                        "/admin/profiles",
+                        _profile_body(tenant, name),
+                    )
+                    for connection, name in zip(connections, names)
+                ]
+            )
+            listed_after_create = {
+                pid: _listed(_request(pinned[pid][0], "GET", listing))
+                for pid in runtime.workers
+            }
+            deleted = _concurrently(
+                [
+                    lambda connection=connection, name=name: _request(
+                        connection,
+                        "DELETE",
+                        f"/admin/profiles/{name}?tenant_id={tenant}",
+                    )
+                    for connection, name in zip(connections, names[::2])
+                ]
+            )
+            listed_after_delete = {
+                pid: _listed(_request(pinned[pid][0], "GET", listing))
+                for pid in runtime.workers
+            }
+        finally:
+            _close(pinned)
+
+        assert held == {
+            pid: (200, {"profiles": [], "total_count": 0, "tenant_id": tenant})
+            for pid in runtime.workers
+        }
+        assert [status for status, _ in created] == [201] * len(names), created
+        assert listed_after_create == {
+            pid: (200, sorted(names)) for pid in runtime.workers
+        }
+        assert [status for status, _ in deleted] == [200] * len(names[::2]), deleted
+        assert listed_after_delete == {
+            pid: (200, sorted(names[1::2])) for pid in runtime.workers
+        }
+        assert sorted(_stored_profiles(store, tenant)) == sorted(names[1::2])

@@ -29,6 +29,7 @@ from cogniverse_runtime.ingestion.pipeline_builder import (
 def stub_pipeline(tmp_path):
     """Pipeline shell with locator + config + logger, no I/O."""
     pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
+    pipeline.retain_job_scratch = False
     pipeline.tenant_id = "acme"
     pipeline.config = PipelineConfig(video_dir=tmp_path)
     pipeline.locator = MediaLocator(

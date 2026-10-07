@@ -215,6 +215,7 @@ class VideoIngestionPipeline:
         debug_mode: bool = False,
         event_queue: Optional[EventQueue] = None,
         max_concurrent: int = 3,
+        retain_job_scratch: bool = False,
     ):
         """
         Initialize the video ingestion pipeline with async support
@@ -228,6 +229,10 @@ class VideoIngestionPipeline:
             schema_name: Schema/profile name
             debug_mode: Enable debug logging
             event_queue: Optional EventQueue for real-time progress notifications
+            retain_job_scratch: Keep each run's scratch directory (keyframe
+                images and other generated media) after the run returns,
+                until ``release_retained_scratch``, for a caller that reads
+                the generated files after the pipeline
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -240,6 +245,8 @@ class VideoIngestionPipeline:
         self.schema_loader = schema_loader
         self.event_queue = event_queue
         self.max_concurrent = max_concurrent
+        self.retain_job_scratch = retain_job_scratch
+        self._retained_scratch: list[Path] = []
         self.job_id: Optional[str] = None  # Set when processing starts
 
         if config is None:
@@ -1167,7 +1174,15 @@ class VideoIngestionPipeline:
 
             return results
         finally:
-            self._release_job_scratch(pipeline_context.profile_output_dir)
+            if self.retain_job_scratch:
+                self._retained_scratch.append(pipeline_context.profile_output_dir)
+            else:
+                self._release_job_scratch(pipeline_context.profile_output_dir)
+
+    def release_retained_scratch(self) -> None:
+        """Remove the scratch directories kept by ``retain_job_scratch``."""
+        while self._retained_scratch:
+            self._release_job_scratch(self._retained_scratch.pop())
 
     def _release_job_scratch(self, scratch_dir: Path) -> None:
         """Remove the media this run generated on the pod's own disk.
@@ -1235,8 +1250,12 @@ class VideoIngestionPipeline:
         Returns:
             Dict with job_id and list of results for each video
         """
-        # Generate job_id for this batch
-        self.job_id = f"ingestion_{uuid.uuid4().hex[:8]}"
+        # The batch's job id: the task its event queue reports on, else new.
+        self.job_id = (
+            self.event_queue.task_id
+            if self.event_queue is not None
+            else f"ingestion_{uuid.uuid4().hex[:8]}"
+        )
         start_time = time.time()
 
         # An empty batch is "nothing to do", not a failure — short-circuit

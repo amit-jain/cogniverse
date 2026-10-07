@@ -12,8 +12,12 @@ import requests
 
 
 class HTTPFaultProxy:
-    def __init__(self, upstream):
+    """Forward every request to ``upstream(path)``; an armed request is held
+    until ``release`` is set, for at most ``hold_s`` seconds."""
+
+    def __init__(self, upstream, *, hold_s: float = 3.0):
         self.upstream = upstream
+        self.hold_s = hold_s
         self.entered = threading.Event()
         self.release = threading.Event()
         self.expired = threading.Event()
@@ -48,7 +52,7 @@ class HTTPFaultProxy:
                         proxy._predicate = None
                 if gated:
                     proxy.entered.set()
-                    if not proxy.release.wait(3):
+                    if not proxy.release.wait(proxy.hold_s):
                         proxy.expired.set()
                     if proxy._failure and not proxy._after_upstream:
                         self._refuse()

@@ -52,20 +52,36 @@ def _l2_normalise(vec: np.ndarray) -> np.ndarray:
 def _agglomerative_cosine(vecs: np.ndarray, distance_threshold: float) -> np.ndarray:
     """Run cosine-distance average-linkage agglomerative clustering.
 
-    Returns an int ndarray of cluster labels parallel to ``vecs``.
-    Deterministic given identical input (sklearn's implementation is).
-    Imported inside the function so the import cost isn't paid by
-    consumers that never reach the clustering path.
+    Returns an int ndarray of cluster labels parallel to ``vecs``: two faces
+    share a label when they end up in one cluster after repeatedly merging
+    the closest pair of clusters, by mean pairwise cosine distance, while
+    that distance is below ``distance_threshold``. Deterministic given
+    identical input: a tie goes to the lowest row index.
     """
-    from sklearn.cluster import AgglomerativeClustering  # noqa: PLC0415
-
-    model = AgglomerativeClustering(
-        n_clusters=None,
-        metric="cosine",
-        linkage="average",
-        distance_threshold=distance_threshold,
-    )
-    return model.fit_predict(vecs)
+    n = len(vecs)
+    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+    unit = np.divide(vecs, norms, out=np.zeros_like(vecs), where=norms > 0)
+    distance = np.clip(1.0 - unit @ unit.T, 0.0, 2.0)
+    np.fill_diagonal(distance, np.inf)
+    sizes = np.ones(n)
+    labels = np.arange(n)
+    while True:
+        flat = int(np.argmin(distance))
+        i, j = divmod(flat, n)
+        if not distance[i, j] < distance_threshold:
+            break
+        i, j = min(i, j), max(i, j)
+        merged = (sizes[i] * distance[i] + sizes[j] * distance[j]) / (
+            sizes[i] + sizes[j]
+        )
+        distance[i, :] = merged
+        distance[:, i] = merged
+        distance[i, i] = np.inf
+        distance[j, :] = np.inf
+        distance[:, j] = np.inf
+        sizes[i] += sizes[j]
+        labels[labels == j] = i
+    return labels
 
 
 def cluster_faces(
@@ -83,7 +99,7 @@ def cluster_faces(
 
     Members within each cluster are themselves sorted by
     ``(ts_start, segment_id, bbox)`` so byte-equal goldens hold across
-    re-runs without depending on sklearn's internal label assignment.
+    re-runs without depending on the clustering's label values.
     """
     if not face_mentions:
         return []

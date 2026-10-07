@@ -7,6 +7,9 @@ import os
 from cogniverse_agents._rlm_promotion import configure_rlm_promotion
 from cogniverse_agents.inference.deno_check import configure_deno_check
 from cogniverse_core.common.cache.backends.s3 import configure_s3_backend_defaults
+from cogniverse_core.common.models.semantic_embedder import (
+    configure_semantic_embedder_defaults,
+)
 
 _RLM_PROMOTION_DEFAULT_FRACTION = 0.75
 
@@ -33,6 +36,20 @@ def _resolve_tenant_cache_capacity() -> int:
         return 16
 
 
+def _resolve_semantic_embed_url() -> str | None:
+    """``COGNIVERSE_SEMANTIC_EMBED_URL``, else the ``denseon`` entry of
+    ``INFERENCE_SERVICE_URLS``: the chart renders the service map into every
+    process that runs cogniverse code, the explicit URL only into the
+    runtime."""
+    explicit = os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL")
+    if explicit:
+        return explicit
+    from cogniverse_runtime.inference_services import parse_inference_service_urls
+
+    services = parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
+    return (services or {}).get("denseon")
+
+
 def resolve_library_env_defaults() -> dict[str, str | int | float | bool | None]:
     """Read the process env values used by runtime entrypoints exactly once."""
     return {
@@ -41,7 +58,7 @@ def resolve_library_env_defaults() -> dict[str, str | int | float | bool | None]
         "minio_secret_key": os.environ.get("MINIO_SECRET_KEY"),
         "telemetry_otlp_endpoint": os.environ.get("TELEMETRY_OTLP_ENDPOINT"),
         "telemetry_http_endpoint": os.environ.get("TELEMETRY_HTTP_ENDPOINT"),
-        "semantic_embed_url": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL"),
+        "semantic_embed_url": _resolve_semantic_embed_url(),
         "semantic_embed_model": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_MODEL"),
         "tenant_cache_capacity": _resolve_tenant_cache_capacity(),
         "rlm_promotion_enabled": (
@@ -75,3 +92,7 @@ def configure_runtime_library_defaults(
         fraction=runtime_defaults["rlm_promotion_fraction"],
     )
     configure_deno_check(skip=runtime_defaults["rlm_skip_deno_check"])
+    configure_semantic_embedder_defaults(
+        remote_url=runtime_defaults["semantic_embed_url"],
+        model_name=runtime_defaults["semantic_embed_model"],
+    )

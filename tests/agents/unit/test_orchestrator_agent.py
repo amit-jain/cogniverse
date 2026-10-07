@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -26,8 +27,15 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorOutput,
     _search_results_from_completed,
 )
+from cogniverse_core.events import (
+    InMemoryEventQueue,
+    TaskCancelled,
+    bind_event_queue,
+    current_event_queue,
+)
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
+    RoutingConfigUnified,
     SemanticRouterConfig,
     SystemConfig,
 )
@@ -65,7 +73,19 @@ def _make_mock_config_manager() -> Mock:
     return ``Mock`` instances that can't be ``range()``'d / compared.
     """
     cm = Mock()
-    cm.get_system_config = Mock(return_value=SystemConfig())
+    # GLiNER is configured as a service nothing answers (the session's dead
+    # sentinel port), so query analysis takes its named extractor-outage
+    # degrade without loading a model in-process.
+    cm.get_system_config = Mock(
+        return_value=SystemConfig(
+            inference_service_urls={"gliner": "http://127.0.0.1:29071"}
+        )
+    )
+    cm.get_routing_config = Mock(
+        side_effect=lambda tenant_id=None, service="gateway_agent": (
+            RoutingConfigUnified(tenant_id=tenant_id)
+        )
+    )
     return cm
 
 
@@ -417,11 +437,10 @@ class TestOrchestratorAgent:
         assert len(orchestrator_agent.registry.agents) == 8
 
     def test_agent_initialization_with_optional_deps(self, mock_agent_registry):
-        """Test agent initializes with event_queue, workflow_intelligence"""
+        """Test agent initializes with workflow_intelligence"""
         with patch("dspy.ChainOfThought"):
             deps = OrchestratorDeps()
             mock_config_manager = _make_mock_config_manager()
-            mock_event_queue = Mock()
             mock_workflow_intelligence = Mock()
 
             agent = OrchestratorAgent(
@@ -429,11 +448,9 @@ class TestOrchestratorAgent:
                 registry=mock_agent_registry,
                 config_manager=mock_config_manager,
                 port=8013,
-                event_queue=mock_event_queue,
                 workflow_intelligence=mock_workflow_intelligence,
             )
 
-            assert agent.event_queue is mock_event_queue
             assert agent.workflow_intelligence is mock_workflow_intelligence
 
     @pytest.mark.asyncio
@@ -1708,30 +1725,56 @@ class TestOrchestratorIntelligence:
         assert "video_search_agent" in agents
 
     @pytest.mark.asyncio
-    async def test_event_queue_emit(self, mock_agent_registry):
-        """Test that events are emitted to event queue"""
-        with patch("dspy.ChainOfThought"):
-            mock_queue = AsyncMock()
-            mock_queue.enqueue = AsyncMock()
+    async def test_report_phase_publishes_on_the_request_queue(
+        self, orchestrator_agent
+    ):
+        """A phase report lands on the event queue bound to the request,
+        not on any queue the shared agent instance holds."""
+        queue = InMemoryEventQueue(task_id="wf-1", tenant_id="acme:acme")
 
-            agent = OrchestratorAgent(
-                deps=OrchestratorDeps(),
-                registry=mock_agent_registry,
-                config_manager=_make_mock_config_manager(),
-                port=8013,
-                event_queue=mock_queue,
+        with bind_event_queue(queue):
+            await orchestrator_agent.report_phase(
+                "planning", "Creating execution plan..."
             )
+        await orchestrator_agent.report_phase("unbound", "no queue for this one")
+        await queue.close()
+        published = [event async for event in queue.subscribe()]
 
-        event = {"type": "test", "data": "test_data"}
-        await agent._emit_event(event)
-        mock_queue.enqueue.assert_called_once_with(event)
+        assert [
+            (event.event_type, event.state, event.phase, event.message)
+            for event in published
+        ] == [("status", "working", "planning", "Creating execution plan...")]
+        assert current_event_queue() is None
 
     @pytest.mark.asyncio
-    async def test_emit_event_noop_without_queue(self, orchestrator_agent):
-        """Test _emit_event is a noop when no queue configured"""
-        assert orchestrator_agent.event_queue is None
-        # Should not raise
-        await orchestrator_agent._emit_event({"type": "test"})
+    async def test_report_phase_stops_a_cancelled_run(self, orchestrator_agent):
+        queue = InMemoryEventQueue(task_id="wf-2", tenant_id="acme:acme")
+        queue.cancel("operator stop")
+
+        with bind_event_queue(queue), pytest.raises(TaskCancelled) as stopped:
+            await orchestrator_agent.report_phase("planning", "Creating plan...")
+
+        assert (stopped.value.task_id, stopped.value.reason) == (
+            "wf-2",
+            "operator stop",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_run_takes_the_workflow_id_of_its_bound_queue(
+        self, orchestrator_agent
+    ):
+        queue = InMemoryEventQueue(task_id="wf-bound", tenant_id="acme:acme")
+
+        with bind_event_queue(queue):
+            bound = await orchestrator_agent._process_impl(
+                OrchestratorInput(query="", tenant_id="acme:acme")
+            )
+        unbound = await orchestrator_agent._process_impl(
+            OrchestratorInput(query="", tenant_id="acme:acme")
+        )
+
+        assert bound.workflow_id == "wf-bound"
+        assert re.fullmatch(r"workflow_[0-9a-f]{8}", unbound.workflow_id)
 
 
 class TestOrchestratorArtifactLoading:

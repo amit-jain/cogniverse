@@ -542,6 +542,8 @@ async def shared_search_agent(shared_memory_vespa, shared_denseon):
     agent_name = f"bg_shared_{uuid.uuid4().hex[:8]}"
     agent = _memoryless(SearchAgent)
     agent.active_profile = "p1"
+    # No profile names an inference service, so the stub encoder is used as is.
+    agent.search_config = {}
     agent.query_encoder = SimpleNamespace(encode=lambda q: [[0.0] * 4])
     agent._build_date_filter = lambda *a, **k: None
     agent._search_backend = lambda query_dict: [_FakeHit("d1")]

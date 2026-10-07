@@ -28,6 +28,7 @@ if _bootstrap_os.environ.get("OPENINFERENCE_DSPY") == "1":
         print(f"OpenInference DSPy instrument failed: {_exc}")
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -46,9 +47,6 @@ from fastapi.routing import iter_route_contexts
 from cogniverse_core.common.media.config import MediaConfig
 from cogniverse_core.common.media.locator import (
     prewarm_s3_filesystem as _prewarm_s3_filesystem,
-)
-from cogniverse_core.common.models.semantic_embedder import (
-    configure_semantic_embedder_defaults,
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import affirm_memory_profile
@@ -812,14 +810,12 @@ def _configure_library_module_defaults(
             "rlm_promotion_enabled": rlm_promotion_enabled,
             "rlm_promotion_fraction": rlm_promotion_fraction,
             "rlm_skip_deno_check": rlm_skip_deno_check,
+            "semantic_embed_url": semantic_embed_url,
+            "semantic_embed_model": semantic_embed_model,
         }
     )
     if minio_endpoint:
         _prewarm_s3_filesystem(MediaConfig.for_object_store(minio_endpoint))
-    configure_semantic_embedder_defaults(
-        remote_url=semantic_embed_url,
-        model_name=semantic_embed_model,
-    )
     configure_text_analysis_agent_tenant_cache_capacity(tenant_cache_capacity)
     configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
     configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
@@ -1061,6 +1057,34 @@ def configure_ambient_dspy(primary_lm: Any) -> None:
     from cogniverse_foundation.dspy import LenientJSONAdapter
 
     dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
+
+
+def preload_lm_client_modules() -> None:
+    """Import, before the worker serves, the modules its first LM call would
+    otherwise import on the LM thread mid-request: LiteLLM, which DSPy loads
+    lazily, and the OpenAI client's resource modules, which the client loads
+    on first use. Both build hundreds of pydantic models; while they do, the
+    serving loop waits for the interpreter at every socket read and write, so
+    liveness and every other request on the worker stall for that time."""
+    import importlib
+
+    # Reading an attribute executes LiteLLM if DSPy registered it lazily.
+    _ = importlib.import_module("litellm").completion
+    importlib.import_module("openai.resources")
+
+
+def freeze_startup_heap() -> None:
+    """Exclude the objects startup created from every later collection.
+
+    A worker holds about half a million objects once its agents, models'
+    clients and routes are loaded. A full (generation 2) collection scans all
+    of them and holds the interpreter for 0.3 to 0.5 s; whichever thread's
+    allocation triggers it, the serving loop answers nothing meanwhile. These
+    objects live as long as the process, so collecting them once and freezing
+    them leaves later full collections only the objects made since.
+    """
+    gc.collect()
+    gc.freeze()
 
 
 @asynccontextmanager
@@ -1343,38 +1367,47 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     replica_id = (
         f"{os.environ.get('HOSTNAME', 'runtime')}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     )
-    # Agent registrations, annotation requests and /ingestion/start job
-    # status are shared by every worker process and replica through Redis.
+    # Agent registrations, annotation requests, /ingestion/start job status,
+    # conversation turn order and suspended /v1 turns are shared by every
+    # worker process and replica through Redis, on one client and connection
+    # pool per process.
     from cogniverse_agents.routing.annotation_queue import AnnotationQueue
-    from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
-    from cogniverse_runtime.ingestion_jobs import IngestionJobStore
-    from cogniverse_runtime.shared_state import connect_shared_state_redis
-
-    shared_state_redis = await connect_shared_state_redis(redis_url)
-    agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
-    agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
-    ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
-    # Conversation turn order and suspended /v1 turns live in the same Redis,
-    # so every worker and replica serves any session's next request.
     from cogniverse_runtime.agent_dispatcher import (
         CONVERSATION_PERSIST_FAILURE_CAPACITY,
         CONVERSATION_SAVE_LEASE_S,
     )
-    from cogniverse_runtime.session_state import (
-        ContinuationStore,
-        ConversationLedger,
-        open_session_redis,
+    from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
+    from cogniverse_runtime.ingestion_jobs import IngestionJobStore
+    from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
+    from cogniverse_runtime.shared_state import (
+        SHARED_STATE_REDIS_CLIENT_NAME,
+        connect_shared_state_redis,
     )
 
-    session_redis = await open_session_redis(redis_url)
+    shared_state_redis = await connect_shared_state_redis(
+        redis_url, client_name=f"{SHARED_STATE_REDIS_CLIENT_NAME}:{replica_id}"
+    )
+    agent_registry.set_store(RedisAgentRegistryStore(shared_state_redis))
+    agents.set_annotation_queue(AnnotationQueue(shared_state_redis))
+    ingestion.set_job_store(IngestionJobStore(shared_state_redis, owner=replica_id))
     agents.set_conversation_ledger(
         ConversationLedger(
-            session_redis,
+            shared_state_redis,
             save_lease_s=CONVERSATION_SAVE_LEASE_S,
             failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
         )
     )
-    openai_compat.set_continuation_store(ContinuationStore(session_redis))
+    openai_compat.set_continuation_store(ContinuationStore(shared_state_redis))
+    # Workflow and ingestion progress, cancellations and the active-task index
+    # (/events) live in the same Redis; this process's poller renews the leases
+    # of the tasks it runs and delivers their cancellations.
+    from cogniverse_runtime.task_events import TaskEventStore
+
+    task_events = TaskEventStore(shared_state_redis)
+    task_events.start()
+    events.set_task_event_store(task_events)
+    agents.set_task_event_store(task_events)
+    ingestion.set_task_event_store(task_events)
 
     def system_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
@@ -1569,6 +1602,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning(f"DSPy ambient configure skipped: {exc}")
     else:
         logger.info("DSPy ambient LM already configured for this process")
+    await asyncio.to_thread(preload_lm_client_modules)
+    await asyncio.to_thread(get_telemetry_manager().preload_span_export)
     # NOTE: OpenInference DSPy instrumentation runs at module-top
     # bootstrap (see the top of this file) so DSPy classes are
     # wrapped BEFORE any agent imports bind references to the
@@ -1651,16 +1686,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 10. Optimization runs via Argo CronWorkflows (not as background task).
     # See: charts/cogniverse/templates/optimization-workflows.yaml
     # CLI: python -m cogniverse_runtime.optimization_cli --mode once
-
-    # 11. Start the InMemoryQueueManager cleanup loop. Every search / ingestion /
-    # mem0 operation creates a task queue holding up to max_buffer_size events
-    # (~1 KB each). Without this loop, queues live forever — the suite creates
-    # thousands over a run and the runtime OOMs on the accumulated buffers.
-    from cogniverse_core.events import get_queue_manager
-
-    queue_manager = get_queue_manager()
-    await queue_manager.start_cleanup_loop(interval_seconds=60)
-    logger.info("Event queue cleanup loop started")
 
     # 12. Start the OpenShell gateway health probe (only when sandbox is not
     # disabled). Each probe records availability + latency as a Phoenix span
@@ -1811,6 +1836,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     await cluster_events.start()
     tenant_manager.set_cluster_events(cluster_events)
+    tenant_manager.set_task_event_store(task_events)
     admin.set_cluster_events(cluster_events)
     app.state.cluster_events = cluster_events
     logger.info("Cluster events subscribed as %s", replica_id)
@@ -1837,6 +1863,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         (time.perf_counter() - route_build_started) * 1000,
     )
 
+    freeze_startup_heap()
     logger.info("Cogniverse Runtime started successfully")
 
     # Tenant schemas registered with a definition other than the shipped one
@@ -1868,11 +1895,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await drain_conversation_saves()
     await a2a_protocol.close()
     tenant_manager.set_cluster_events(None)
+    tenant_manager.set_task_event_store(None)
     admin.set_cluster_events(None)
     await cluster_events.close()
     agents.set_conversation_ledger(None)
     openai_compat.set_continuation_store(None)
-    await session_redis.aclose()
+    events.set_task_event_store(None)
+    agents.set_task_event_store(None)
+    ingestion.set_task_event_store(None)
+    await task_events.close()
     # After the A2A drain: executions it let finish queue memory writes too.
     from cogniverse_agents import background_memory_writes
 
@@ -1893,7 +1924,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await cert_rotator.stop()
     if lifecycle_scheduler is not None:
         await lifecycle_scheduler.stop()
-    await queue_manager.stop_cleanup_loop()
     # Tear down pooled OpenShell sessions so a restart doesn't orphan one live
     # gateway container per agent_type. close() does gateway RPCs — off the loop.
     try:

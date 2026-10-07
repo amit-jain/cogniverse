@@ -39,6 +39,12 @@ _ALL_STRATEGIES_CACHE: Dict[
 _ALL_STRATEGIES_LOCK = threading.Lock()
 
 
+# A rank profile declaring ``"candidates": TEXT_MATCH_CANDIDATES`` ranks the
+# documents that match the query text and no others, even when its first
+# phase also scores an embedding.
+TEXT_MATCH_CANDIDATES = "text_matches"
+
+
 class SearchStrategyType(Enum):
     """Types of search strategies"""
 
@@ -60,11 +66,13 @@ class RankingStrategyInfo:
     nearestneighbor_field: Optional[str] = None
     nearestneighbor_tensor: Optional[str] = None
     first_phase_embedding_field: Optional[str] = None
+    text_candidates_only: bool = False
     embedding_field: Optional[str] = None
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
     description: str = ""
     inputs: Dict[str, str] = field(default_factory=dict)
+    input_fields: Dict[str, str] = field(default_factory=dict)
     query_tensors_needed: List[str] = field(default_factory=list)
     schema_name: str = ""
 
@@ -124,14 +132,30 @@ class RankingStrategyExtractor:
         else:
             first_phase_expr = str(first_phase)
 
+        expanded_first_phase = self._expanded_first_phase(profile)
         needs_text_query = (
             "bm25" in profile_name.lower()
-            or "bm25(" in first_phase_expr
+            or "bm25(" in expanded_first_phase
+            or "nativeRank(" in expanded_first_phase
             or "userInput" in first_phase_expr
             # Token match — a bare substring test classified any name merely
             # embedding the letters (e.g. "context_boost") as text-seeking.
             or "text" in profile_name.lower().split("_")
         )
+
+        candidates = profile.get("candidates")
+        if candidates not in (None, TEXT_MATCH_CANDIDATES):
+            raise ValueError(
+                f"Rank profile '{profile_name}' declares candidates "
+                f"{candidates!r}; the only declarable candidate set is "
+                f"{TEXT_MATCH_CANDIDATES!r}"
+            )
+        text_candidates_only = candidates == TEXT_MATCH_CANDIDATES
+        if text_candidates_only and not needs_text_query:
+            raise ValueError(
+                f"Rank profile '{profile_name}' ranks text matches only but "
+                "reads no query text"
+            )
 
         if needs_text_query and not (needs_float_embeddings or needs_binary_embeddings):
             strategy_type = SearchStrategyType.PURE_TEXT
@@ -167,7 +191,7 @@ class RankingStrategyExtractor:
                 if ann_field
                 else None
             )
-            if cell is not None:
+            if cell is not None and not text_candidates_only:
                 want_int8 = cell == "int8"
                 for input_name, input_type in inputs.items():
                     if ("int8" in input_type) == want_int8:
@@ -205,6 +229,9 @@ class RankingStrategyExtractor:
         )
 
         query_tensors_needed = list(inputs.keys())
+        input_fields = self._input_fields(
+            profile, inputs, nearestneighbor_field, nearestneighbor_tensor
+        )
 
         return RankingStrategyInfo(
             name=profile_name,
@@ -216,14 +243,74 @@ class RankingStrategyExtractor:
             nearestneighbor_field=nearestneighbor_field,
             nearestneighbor_tensor=nearestneighbor_tensor,
             first_phase_embedding_field=first_phase_embedding_field,
+            text_candidates_only=text_candidates_only,
             embedding_field=embedding_field,
             query_tensor_name=query_tensor_name,
             timeout=profile.get("timeout", 2.0),
             description=description,
             inputs=inputs,
+            input_fields=input_fields,
             query_tensors_needed=query_tensors_needed,
             schema_name=schema_name,
         )
+
+    @staticmethod
+    def _input_fields(
+        profile: Dict[str, Any],
+        inputs: Dict[str, str],
+        nearestneighbor_field: Optional[str],
+        nearestneighbor_tensor: Optional[str],
+    ) -> Dict[str, str]:
+        """The document field each query input is scored against.
+
+        The nearestNeighbor input pairs with the field it searches. Any other
+        input pairs with the one attribute a phase expression reads beside it,
+        functions expanded; an input read beside several attributes is left
+        unpaired.
+        """
+        paired = {}
+        if nearestneighbor_tensor and nearestneighbor_field:
+            paired[nearestneighbor_tensor] = nearestneighbor_field
+        for phase in ("first_phase", "second_phase", "global_phase"):
+            expr = RankingStrategyExtractor._expanded_phase(profile, phase)
+            attributes = set(re.findall(r"attribute\((\w+)\)", expr))
+            if len(attributes) != 1:
+                continue
+            (attribute,) = attributes
+            for name in re.findall(r"query\((\w+)\)", expr):
+                if name in inputs:
+                    paired.setdefault(name, attribute)
+        return paired
+
+    @staticmethod
+    def _expanded_first_phase(profile: Dict[str, Any]) -> str:
+        """The first-phase expression with every profile function substituted
+        by its body (``visual_sim + text_sim`` -> the two bodies)."""
+        return RankingStrategyExtractor._expanded_phase(profile, "first_phase")
+
+    @staticmethod
+    def _expanded_phase(profile: Dict[str, Any], phase: str) -> str:
+        """A phase expression with every profile function substituted by its
+        body; empty when the profile declares no such phase."""
+        functions = {
+            f.get("name", ""): f.get("expression", "")
+            for f in profile.get("functions", [])
+        }
+        expression = profile.get(phase, profile.get(phase.replace("_", "-"), ""))
+        if isinstance(expression, dict):
+            expr = expression.get("expression", "")
+        else:
+            expr = str(expression or "")
+
+        for _ in range(4):  # bounded function-indirection depth
+            expanded = expr
+            for name, body in functions.items():
+                if name:
+                    expanded = re.sub(rf"\b{re.escape(name)}\b", f"({body})", expanded)
+            if expanded == expr:
+                break
+            expr = expanded
+        return expr
 
     def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
         """Embedding attribute the FIRST phase scores against, or None.
@@ -235,24 +322,7 @@ class RankingStrategyExtractor:
         vector rerank on top of a bm25 first phase must not switch retrieval
         to ANN.
         """
-        functions = {
-            f.get("name", ""): f.get("expression", "")
-            for f in profile.get("functions", [])
-        }
-        first_phase = profile.get("first_phase", profile.get("first-phase", ""))
-        if isinstance(first_phase, dict):
-            expr = first_phase.get("expression", "")
-        else:
-            expr = str(first_phase or "")
-
-        for _ in range(4):  # bounded function-indirection depth
-            expanded = expr
-            for name, body in functions.items():
-                if name:
-                    expanded = re.sub(rf"\b{re.escape(name)}\b", f"({body})", expanded)
-            if expanded == expr:
-                break
-            expr = expanded
+        expr = self._expanded_first_phase(profile)
 
         m = re.search(r"closeness\(field,\s*(\w+)\)", expr)
         if m:
@@ -330,8 +400,8 @@ class RankingStrategyExtractor:
             "phased": "Two-phase ranking: binary first, float reranking",
             "hybrid_float_bm25": "Combined visual (float) and text search",
             "hybrid_binary_bm25": "Combined visual (binary) and text search",
-            "hybrid_bm25_binary": "Text-first search with visual reranking",
-            "hybrid_bm25_float": "Text-first search with visual reranking",
+            "hybrid_bm25_binary": "Text-first search reranked by visual and text",
+            "hybrid_bm25_float": "Text-first search reranked by visual and text",
         }
 
         # Check for no_description variant
@@ -428,11 +498,13 @@ def save_ranking_strategies(
                 "nearestneighbor_field": strategy_info.nearestneighbor_field,
                 "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
                 "first_phase_embedding_field": strategy_info.first_phase_embedding_field,
+                "text_candidates_only": strategy_info.text_candidates_only,
                 "embedding_field": strategy_info.embedding_field,
                 "query_tensor_name": strategy_info.query_tensor_name,
                 "timeout": strategy_info.timeout,
                 "description": strategy_info.description,
                 "inputs": strategy_info.inputs,
+                "input_fields": strategy_info.input_fields,
                 "query_tensors_needed": strategy_info.query_tensors_needed,
                 "schema_name": strategy_info.schema_name,
             }

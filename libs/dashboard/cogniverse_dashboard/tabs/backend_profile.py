@@ -169,7 +169,9 @@ def render_backend_profile_tab():
 
     # Profile list
     try:
-        profiles_dict = manager.list_backend_profiles(tenant_id, service="backend")
+        profiles_dict = manager.get_stored_backend_config(
+            tenant_id, service="backend"
+        ).profiles
         profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
     except Exception as e:
         st.error(f"Failed to load profiles: {e}")
@@ -431,9 +433,9 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
     """Render profile details with edit/delete/deploy options"""
 
     try:
-        profile = manager.get_backend_profile(
-            profile_name=profile_name, tenant_id=tenant_id, service="backend"
-        )
+        profile = manager.get_stored_backend_config(
+            tenant_id=tenant_id, service="backend"
+        ).get_profile(profile_name)
     except Exception as e:
         st.error(f"Failed to load profile: {e}")
         return

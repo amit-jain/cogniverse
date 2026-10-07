@@ -16,16 +16,11 @@ import fcntl
 import json
 import os
 import subprocess
-from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
 
-from tests.utils.vllm_sidecar import (
-    _EXACT_MODEL_LEASE_DIR,
-    EXACT_MODEL_LABEL,
-    reap_dead_owner_containers,
-)
+from tests.utils.vllm_sidecar import reap_dead_owner_containers
 
 DEFAULT_LOCK_PATH = "/tmp/cogniverse_e2e_run.lock"
 _TEST_CONTAINER_PREFIX = "cogniverse-test-"
@@ -120,75 +115,6 @@ def _run_docker(
         ) from exc
 
 
-def _exact_model_rows() -> list[tuple[str, str]]:
-    result = _run_docker(
-        [
-            "docker",
-            "ps",
-            "-a",
-            "--filter",
-            f"label={EXACT_MODEL_LABEL}",
-            "--format",
-            "{{.ID}}\t{{.Names}}",
-        ]
-    )
-    if result.returncode != 0:
-        detail = _docker_detail(result)
-        raise RuntimeError(
-            f"docker could not list exact-model containers: "
-            f"{detail or f'exit {result.returncode}'}"
-        )
-    rows: list[tuple[str, str]] = []
-    for line in result.stdout.splitlines():
-        parts = line.split("\t")
-        if len(parts) != 2:
-            continue
-        rows.append((parts[0], parts[1]))
-    return rows
-
-
-def _live_exact_model_leases() -> dict[str, int]:
-    try:
-        entries = sorted(_EXACT_MODEL_LEASE_DIR.iterdir())
-    except FileNotFoundError:
-        return {}
-    leases: dict[str, int] = {}
-    for entry in entries:
-        container, _, holder_pid = entry.name.rpartition(".")
-        if not container or not holder_pid.isdigit():
-            continue
-        if os.path.exists(f"/proc/{holder_pid}"):
-            leases[container] = int(holder_pid)
-        else:
-            entry.unlink(missing_ok=True)
-    return leases
-
-
-def classify_exact_model_containers(
-    rows: Iterable[tuple[str, str]],
-    live_leases: set[str],
-) -> tuple[set[str], set[str]]:
-    leased: set[str] = set()
-    unleased: set[str] = set()
-    for _container_id, name in rows:
-        if name in live_leases:
-            leased.add(name)
-        else:
-            unleased.add(name)
-    return leased, unleased
-
-
-def _remove_exact_model_container(container: str) -> None:
-    result = _run_docker(["docker", "rm", "-f", container])
-    detail = _docker_detail(result)
-    if result.returncode == 0 or "No such container" in detail:
-        return
-    raise RuntimeError(
-        f"docker could not remove exact-model container {container!r}: "
-        f"{detail or f'exit {result.returncode}'}"
-    )
-
-
 _GPU_DEVICE_PATHS = ("/dev/kfd", "/dev/dri")
 _CLUSTER_CONTAINER_PREFIX = "k3d-"
 
@@ -268,27 +194,11 @@ def stray_gpu_device_holders() -> dict[str, list[str]]:
 def ensure_e2e_gpu_residency() -> None:
     """Drop stale test-owned GPU residents before the cluster starts.
 
-    Reaps dead-owner containers, removes unleased exact-model sidecars, refuses
-    on a live lease, then refuses if any non-k3d container still holds a GPU
-    device — the cluster's own model pods live inside the k3d node and are
-    expected to hold GPU memory when the launcher warms them first.
+    Reaps dead-owner containers, then refuses if any non-k3d container still
+    holds a GPU device — the cluster's own model pods live inside the k3d node
+    and are expected to hold GPU memory when the launcher warms them first.
     """
     reap_dead_owner_containers()
-
-    exact_rows = _exact_model_rows()
-    live_leases = _live_exact_model_leases()
-    leased, unleased = classify_exact_model_containers(exact_rows, set(live_leases))
-
-    for container in sorted(unleased):
-        _remove_exact_model_container(container)
-
-    if leased:
-        container = sorted(leased)[0]
-        pytest.fail(
-            f"exact-model sidecar {container!r} is leased by live pytest pid "
-            f"{live_leases[container]}; refusing to start the e2e stack",
-            pytrace=False,
-        )
 
     holders = stray_gpu_device_holders()
     if holders:

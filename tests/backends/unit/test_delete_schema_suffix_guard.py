@@ -282,8 +282,9 @@ class TestBulkDeleteSuffixAndRefuseGuards:
         mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
         captured: dict = {}
 
-        def _capture(targets):
+        def _capture(targets, dropped_tenants):
             captured["targets"] = set(targets)
+            captured["dropped_tenants"] = dropped_tenants
             return sorted(set(targets) & set(deployed))
 
         mgr._redeploy_dropping = _capture
@@ -421,6 +422,31 @@ class TestBulkDeleteKeepsInFlightDeploys:
             imminent,
         ]
 
+    def test_a_deleted_tenants_imminent_schema_is_not_carried(self):
+        """The deleted tenant's own activation in flight is left out of the
+        package, while a peer tenant's is carried."""
+        own = "wiki_pages_acme_acme"
+        peer = "wiki_pages_globex_globex"
+        deployed = ["knowledge_graph_acme_acme", *METADATA_SCHEMAS]
+        mgr, packages = self._manager(
+            registered=[*METADATA_SCHEMAS],
+            deployed=deployed,
+            reserved={
+                own: {**_registration(own), "tenant_id": "acme:acme"},
+                peer: _registration(peer),
+            },
+        )
+
+        assert mgr.delete_tenant_schemas_bulk(["acme"]) == ["knowledge_graph_acme_acme"]
+
+        assert [schema.name for schema in packages[0].schemas] == [
+            "organization_metadata",
+            "tenant_metadata",
+            "config_metadata",
+            "adapter_registry",
+            peer,
+        ]
+
     def test_delete_orphan_schemas_refuses_reserved_target(self):
         in_flight = "wiki_pages_globex_globex"
         mgr, packages = self._manager(
@@ -452,8 +478,9 @@ def test_single_tenant_delete_uses_canonical_suffix_only():
     ]
     captured = {}
 
-    def capture_targets(targets):
+    def capture_targets(targets, dropped_tenants):
         captured["targets"] = set(targets)
+        captured["dropped_tenants"] = dropped_tenants
         return []
 
     mgr._redeploy_dropping = capture_targets
@@ -461,6 +488,7 @@ def test_single_tenant_delete_uses_canonical_suffix_only():
     mgr.delete_tenant_schemas("acme")
 
     assert captured["targets"] == {"knowledge_graph_acme_acme"}
+    assert captured["dropped_tenants"] == frozenset({"acme:acme"})
 
 
 def test_tenant_tombstone_retries_even_when_vespa_schema_is_already_gone():
@@ -472,7 +500,7 @@ def test_tenant_tombstone_retries_even_when_vespa_schema_is_already_gone():
     mgr._schema_registry = registry
     mgr._logger = logging.getLogger("test_tombstone_retry")
     mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
-    mgr._redeploy_dropping = lambda _targets: []
+    mgr._redeploy_dropping = lambda _targets, _dropped_tenants: []
 
     assert mgr.delete_tenant_schemas("acme") == []
     assert registry.unregistered == [("acme", "video")]
@@ -672,7 +700,7 @@ class TestTombstoneRefusalNamesEarlierFailures:
         mgr._logger = logging.getLogger("test_tombstone_refusal_note")
         mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
         mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid}_{tid}"
-        mgr._redeploy_dropping = lambda _targets: []
+        mgr._redeploy_dropping = lambda _targets, _dropped_tenants: []
         lease = _OwnedOnceLease()
         registry.deployment_lease = lambda **kwargs: lease
         return mgr

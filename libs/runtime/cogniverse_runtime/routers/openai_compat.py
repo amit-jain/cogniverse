@@ -63,6 +63,7 @@ from cogniverse_runtime.harness_turn import (
 )
 from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_runtime.session_state import ContinuationStore, SessionStateUnavailable
+from cogniverse_runtime.task_events import TaskEventsUnavailable
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 
 __all__ = ["derive_request_seed", "extract_answer_text", "to_openai_tool_calls"]
@@ -837,7 +838,7 @@ def _chunk(
 
 
 def _error_frame(exc: BaseException, agent_name: str) -> str:
-    unavailable = isinstance(exc, SessionStateUnavailable)
+    unavailable = isinstance(exc, (SessionStateUnavailable, TaskEventsUnavailable))
     return _sse(
         {
             "error": {
@@ -1433,6 +1434,9 @@ async def chat_completions(
     except SessionStateUnavailable as exc:
         logger.warning("chat.completions turn lost its session state: %s", exc)
         return dependency_unavailable(exc, "session state store")
+    except TaskEventsUnavailable as exc:
+        logger.warning("chat.completions workflow could not be reported: %s", exc)
+        return dependency_unavailable(exc, "task event store")
     except Exception as exc:
         llm_failure = llm_dependency_failure(exc)
         if llm_failure is not None:

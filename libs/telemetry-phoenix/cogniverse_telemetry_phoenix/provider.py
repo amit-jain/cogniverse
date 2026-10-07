@@ -377,6 +377,7 @@ def _build_span_query_condition(
     name_filter: Optional[Any],
     excluded_span_ids: Sequence[str] = (),
     roots_only: bool = False,
+    span_ids: Sequence[str] = (),
 ) -> Optional[str]:
     predicate_parts: List[str] = []
 
@@ -407,6 +408,12 @@ def _build_span_query_condition(
 
     if roots_only:
         predicate_parts.append("parent_id is None")
+    if span_ids:
+        joined = ", ".join(
+            f"'{_escape_phoenix_query_literal(span_id)}'"
+            for span_id in sorted(set(span_ids))
+        )
+        predicate_parts.append(f"span_id in [{joined}]")
 
     return " and ".join(predicate_parts) if predicate_parts else None
 
@@ -487,8 +494,8 @@ class PhoenixTraceStore(TraceStore):
                 (``name in ['a', 'b']``) — the list form is required when the
                 caller reconstructs an object from more than one span type in
                 the returned frame (e.g. approval batch + its item children).
-                ``span_id`` selects one span (``span_id == '...'``). Any other
-                key raises ``ValueError``.
+                ``span_id`` takes one id or a list of ids and returns only
+                those spans. Any other key raises ``ValueError``.
             limit: Maximum number of spans to return
             columns: Optional projection of standardized columns to return.
                 Phoenix selects only the requested columns when supported;
@@ -517,27 +524,21 @@ class PhoenixTraceStore(TraceStore):
             if end_time is not None and end_time.tzinfo is None:
                 end_time = end_time.replace(tzinfo=timezone.utc)
 
-            def _esc(n: object) -> str:
-                # Backslash first, then quote — quoting first would let a
-                # trailing backslash re-escape the closing quote.
-                return str(n).replace("\\", "\\\\").replace("'", "\\'")
-
             # Pass time filters directly to Phoenix API for efficient server-side filtering
-            predicates = []
-            if filters and filters.get("name"):
-                name_filter = filters["name"]
-                if isinstance(name_filter, (list, tuple, set)):
-                    joined = ", ".join(f"'{_esc(n)}'" for n in name_filter)
-                    predicates.append(f"name in [{joined}]")
-                else:
-                    predicates.append(f"name == '{_esc(name_filter)}'")
-            if filters and "span_id" in filters:
-                predicates.append(f"span_id == '{_esc(filters['span_id'])}'")
             query = None
-            if predicates:
+            span_id_filter = (filters or {}).get("span_id") or ()
+            predicate = _build_span_query_condition(
+                name_filter=(filters or {}).get("name"),
+                span_ids=(
+                    (span_id_filter,)
+                    if isinstance(span_id_filter, str)
+                    else span_id_filter
+                ),
+            )
+            if predicate:
                 from phoenix.client.types.spans import SpanQuery
 
-                query = SpanQuery().where(" and ".join(predicates))
+                query = SpanQuery().where(predicate)
             if columns is not None:
                 from phoenix.client.types.spans import SpanQuery
 
@@ -1347,6 +1348,19 @@ class PhoenixProvider(TelemetryProvider):
             f"Initialized Phoenix provider for tenant {tenant_id} "
             f"(http={http_endpoint}, grpc={grpc_endpoint})"
         )
+
+    def preload_span_export(self) -> None:
+        """Import Phoenix's OTel registration and the gRPC span exporter,
+        which ``configure_span_export`` otherwise imports on a project's
+        first span."""
+        import importlib
+
+        for module in (
+            "phoenix.otel",
+            "opentelemetry.exporter.otlp.proto.grpc.trace_exporter",
+            "opentelemetry.sdk.trace.export",
+        ):
+            importlib.import_module(module)
 
     def configure_span_export(
         self,

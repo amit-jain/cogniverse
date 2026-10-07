@@ -203,7 +203,7 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     profiles = multi_profile_vespa["profiles"]
 
     # Tomoro is remote-only; route the query encoder for every Tomoro-backed
-    # profile through the spawned sidecar before the SearchAgent reads config.
+    # profile through the resolved service before the SearchAgent reads config.
     inject_tomoro_url(config_manager, tomoro_inference_url)
 
     schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))

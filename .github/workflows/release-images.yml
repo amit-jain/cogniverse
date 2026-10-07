@@ -62,6 +62,18 @@ jobs:
             dockerfile: deploy/face_embed/Dockerfile
             context: .
             backend: ""
+          - repo: vllm-audio-cpu
+            dockerfile: deploy/vllm_audio/Dockerfile
+            context: .
+            backend: cpu
+          - repo: vllm-audio-cuda
+            dockerfile: deploy/vllm_audio/Dockerfile
+            context: .
+            backend: cuda
+          - repo: vllm-audio-rocm
+            dockerfile: deploy/vllm_audio/Dockerfile
+            context: .
+            backend: rocm
     steps:
       - uses: actions/checkout@v4
 

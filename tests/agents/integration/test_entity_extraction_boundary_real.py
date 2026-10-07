@@ -76,13 +76,15 @@ def _telemetry_capture():
 
 
 @pytest.fixture(scope="module")
-def entity_agent():
+def entity_agent(gliner_url):
     from cogniverse_foundation.config.manager import ConfigManager
     from tests.utils.memory_store import InMemoryConfigStore
 
     store = InMemoryConfigStore()
     store.initialize()
-    agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19150)
+    agent = EntityExtractionAgent(
+        deps=EntityExtractionDeps(gliner_inference_url=gliner_url), port=19150
+    )
     agent.bind_config_manager(ConfigManager(store=store))
     return agent
 
@@ -209,7 +211,7 @@ async def test_dead_port_lm_falls_back_to_fast_path_and_emits_span(
             {
                 "text": "Barack Obama",
                 "type": "PERSON",
-                "confidence": 0.9916797280311584,
+                "confidence": 0.9916796088218689,
                 "context": "Barack Obama in Chicago",
             },
             {
@@ -242,7 +244,7 @@ async def test_dead_port_lm_falls_back_to_fast_path_and_emits_span(
                 {
                     "text": "Barack Obama",
                     "type": "PERSON",
-                    "confidence": 0.9916797280311584,
+                    "confidence": 0.9916796088218689,
                     "context": "Barack Obama in Chicago",
                 },
                 {
@@ -306,7 +308,7 @@ async def test_confidence_is_served_only_by_the_path_that_scores(entity_agent):
         {
             "text": "Barack Obama",
             "type": "PERSON",
-            "confidence": 0.9916797280311584,
+            "confidence": 0.9916796088218689,
             "context": query,
         },
         {

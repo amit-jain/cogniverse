@@ -25,7 +25,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def admin_pin_client(memory_manager, admin_phoenix_endpoints):
+def admin_pin_client(memory_manager, admin_phoenix_endpoints, config_manager):
     """TestClient with the admin router mounted.
 
     Mem0MemoryManager is a tenant-keyed singleton — once the
@@ -36,7 +36,13 @@ def admin_pin_client(memory_manager, admin_phoenix_endpoints):
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
-    yield TestClient(app), memory_manager
+    # Pin quotas are read from the config store the admin router is wired to.
+    previous = admin._config_manager
+    admin.set_config_manager(config_manager)
+    try:
+        yield TestClient(app), memory_manager
+    finally:
+        admin._config_manager = previous
     # Clean up any pin records this test created so the next test sees
     # an empty pin list.
     try:

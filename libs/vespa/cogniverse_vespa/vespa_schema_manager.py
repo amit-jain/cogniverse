@@ -39,6 +39,10 @@ _DEPLOY_LEASE_STATE = threading.local()
 # _DEPLOY_LOCK that wedges every deploy in the process.
 DEPLOY_REQUEST_TIMEOUT_S = (10, 300)
 
+# How long a schema removal waits for every service, the content nodes among
+# them, to run the generation that removed it.
+REMOVAL_CONVERGENCE_TIMEOUT_S = 120.0
+
 # Age bound on unflushed proton data, hence on every DocumentDB's retained
 # transaction log (Vespa default 111600s).
 FLUSH_COMPONENT_MAXAGE_S = 1800
@@ -115,6 +119,25 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
     )
 
 
+# Float MaxSim per query token over the in-code image schema's patches.
+_IMAGE_MAX_SIM = (
+    "reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), "
+    "max, patch)"
+)
+
+
+def _angular_closeness(query: str, field: str, dim: str) -> str:
+    """``closeness(field, <field>)`` under the angular metric, computed from
+    the attribute, so it also scores documents that no nearestNeighbor term
+    retrieved."""
+    cosine = (
+        f"sum(query({query}) * attribute({field}), {dim}) / "
+        f"sqrt(sum(query({query}) * query({query}), {dim}) * "
+        f"sum(attribute({field}) * attribute({field}), {dim}))"
+    )
+    return f"1 / (1 + acos(min(1, max(-1, {cosine}))))"
+
+
 class VespaSchemaManager:
     """Deploy and manage Vespa schemas, including per-tenant lifecycle."""
 
@@ -176,7 +199,6 @@ class VespaSchemaManager:
                 Function,
                 RankProfile,
                 Schema,
-                SecondPhaseRanking,
             )
 
             schema_objects = []
@@ -225,29 +247,39 @@ class VespaSchemaManager:
                                 type="array<string>",
                                 indexing=["summary", "attribute"],
                             ),
-                            # ColPali multi-vector embedding (same as video frames)
+                            # ColPali multi-vector embedding, mapped per patch
+                            # as in configs/schemas/image_colpali_mv_schema.json.
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<float>(x[1024],d[320])",
+                                type="tensor<bfloat16>(patch{}, v[320])",
                                 indexing=["attribute"],
-                                attribute=["distance-metric:prenormalized-angular"],
                             ),
                         ]
                     ),
                     rank_profiles=[
                         RankProfile(
                             name="colpali_similarity",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
-                            first_phase="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
+                            first_phase=f"sum({_IMAGE_MAX_SIM}, querytoken)",
                         ),
                         RankProfile(
                             name="hybrid_image",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
-                            first_phase="bm25(image_description)",
-                            second_phase=SecondPhaseRanking(
-                                expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
-                                rerank_count=100,
-                            ),
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
+                            ],
+                            functions=[
+                                Function(
+                                    name="visual_sim",
+                                    expression=f"reduce({_IMAGE_MAX_SIM}, avg, querytoken)",
+                                ),
+                                Function(
+                                    name="text_sim",
+                                    expression="nativeRank(image_description)",
+                                ),
+                            ],
+                            first_phase="visual_sim + text_sim",
                         ),
                     ],
                 )
@@ -329,15 +361,22 @@ class VespaSchemaManager:
                         RankProfile(
                             name="transcript_search", first_phase="bm25(transcript)"
                         ),
-                        # Hybrid: BM25 + semantic embeddings
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_audio",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
-                            first_phase="bm25(transcript)",
-                            second_phase=SecondPhaseRanking(
-                                expression="closeness(field, semantic_embedding)",
-                                rerank_count=100,
-                            ),
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "semantic_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(transcript)"
+                                ),
+                            ],
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )
@@ -506,15 +545,22 @@ class VespaSchemaManager:
                             inputs=[("query(q)", "tensor<float>(d[768])")],
                             first_phase="closeness(field, document_embedding)",
                         ),
-                        # Hybrid: BM25 recall -> semantic re-ranking
+                        # Hybrid: text matches by semantic similarity plus text
                         RankProfile(
                             name="hybrid_bm25_semantic",
                             inputs=[("query(q)", "tensor<float>(d[768])")],
-                            first_phase="bm25(full_text)",
-                            second_phase=SecondPhaseRanking(
-                                expression="closeness(field, document_embedding)",
-                                rerank_count=100,
-                            ),
+                            functions=[
+                                Function(
+                                    name="semantic_sim",
+                                    expression=_angular_closeness(
+                                        "q", "document_embedding", "d"
+                                    ),
+                                ),
+                                Function(
+                                    name="text_sim", expression="nativeRank(full_text)"
+                                ),
+                            ],
+                            first_phase="semantic_sim + text_sim",
                         ),
                     ],
                 )
@@ -739,6 +785,11 @@ class VespaSchemaManager:
 
                 if response is not None and response.status_code == 200:
                     self._logger.info("Successfully deployed application package")
+                    if allow_schema_removal:
+                        # Still under the lease, so no deploy that re-adds a
+                        # removed schema can activate before every content node
+                        # has dropped its documents.
+                        self._wait_until_removal_applied()
                 else:
                     status = (
                         response.status_code if response is not None else "no-response"
@@ -756,6 +807,80 @@ class VespaSchemaManager:
         except Exception as e:
             self._logger.error(f"Failed to deploy package: {str(e)}")
             raise
+
+    def _wait_until_removal_applied(
+        self, timeout: float = REMOVAL_CONVERGENCE_TIMEOUT_S
+    ) -> None:
+        """Block until every service runs the generation just activated.
+
+        A content node drops a removed document type's documents only when it
+        applies a generation without the type. If a later generation re-adds
+        the type before the node has applied the removal, the node can go
+        straight to the later one and keep serving the removed documents
+        under the re-added schema. So a removal returns only once the
+        config server's ``serviceconverge`` reports every service at the
+        activated generation. Raises ``RuntimeError`` naming the services
+        still behind when ``timeout`` passes.
+        """
+        import requests
+
+        base_url = re.sub(r":\d+$", "", self.backend_endpoint)
+        converge_url = (
+            f"{base_url}:{self.backend_port}/application/v2/tenant/default/"
+            "application/default/environment/prod/region/default/instance/"
+            "default/serviceconverge"
+        )
+        deadline = time.monotonic() + timeout
+        wanted = None
+        failure = "serviceconverge was never queried"
+        with requests.Session() as session:
+            while True:
+                budget = deadline - time.monotonic()
+                if budget <= 0:
+                    raise RuntimeError(
+                        f"Schema removal not applied by every service after "
+                        f"{timeout:.0f}s: {failure}"
+                    )
+                try:
+                    # Each request ends by the deadline, so the wait as a
+                    # whole never outlasts ``timeout``.
+                    response = session.get(
+                        converge_url,
+                        params={"timeout": str(max(1, int(min(4.0, budget))))},
+                        timeout=min(5.0, budget),
+                    )
+                except requests.RequestException as exc:
+                    failure = f"serviceconverge request failed: {exc}"
+                else:
+                    if response.status_code != 200:
+                        failure = (
+                            f"serviceconverge returned HTTP {response.status_code}"
+                        )
+                    else:
+                        body = response.json()
+                        if wanted is None:
+                            wanted = body.get("wantedGeneration")
+                        services = body.get("services", [])
+                        lagging = sorted(
+                            f"{service.get('type')}={service.get('currentGeneration')}"
+                            for service in services
+                            if not isinstance(service.get("currentGeneration"), int)
+                            or not isinstance(wanted, int)
+                            or service["currentGeneration"] < wanted
+                        )
+                        if services and not lagging:
+                            self._logger.info(
+                                "Schema removal applied: every service runs "
+                                "generation %s",
+                                wanted,
+                            )
+                            return
+                        failure = (
+                            f"services behind generation {wanted}: {lagging}"
+                            if services
+                            else "serviceconverge listed no services"
+                        )
+                time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
 
     def _get_existing_tenant_schemas(self):
         """
@@ -1170,8 +1295,14 @@ class VespaSchemaManager:
 
         return target
 
-    def _redeploy_dropping(self, deletion_targets: set) -> list:
+    def _redeploy_dropping(
+        self, deletion_targets: set, dropped_tenants: frozenset = frozenset()
+    ) -> list:
         """Redeploy the application package without ``deletion_targets``.
+
+        A pending activation of a schema of ``dropped_tenants`` (canonical
+        ids of tenants being deleted) is not carried as a survivor: carrying
+        it would activate a schema of a tenant whose delete is removing them.
 
         Enumerates every Vespa-deployed schema, excludes the deletion targets
         and metadata schemas, reconstructs each remaining survivor from the
@@ -1231,8 +1362,10 @@ class VespaSchemaManager:
             survivor_names.extend(
                 sorted(
                     name
-                    for name in reserved
-                    if name not in deployed and name not in deletion_targets
+                    for name, registration in reserved.items()
+                    if name not in deployed
+                    and name not in deletion_targets
+                    and registration["tenant_id"] not in dropped_tenants
                 )
             )
 
@@ -1351,7 +1484,9 @@ class VespaSchemaManager:
 
             # Refuse (via _redeploy_dropping) rather than cascade into dropping a
             # peer-tenant orphan we cannot confirm is dead.
-            deleted = self._redeploy_dropping(deletion_targets)
+            deleted = self._redeploy_dropping(
+                deletion_targets, frozenset({canonical_tenant_id(tenant_id)})
+            )
             if deleted:
                 self._logger.info(
                     f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
@@ -1447,7 +1582,10 @@ class VespaSchemaManager:
             # tenants cannot be reconstructed — dropping a schema we cannot confirm
             # is an orphan would wipe a healthy peer. Same contract as the
             # per-tenant path.
-            deleted = self._redeploy_dropping(deletion_targets)
+            deleted = self._redeploy_dropping(
+                deletion_targets,
+                frozenset(canonical_tenant_id(tid) for tid in tenant_ids),
+            )
             if deleted:
                 self._logger.info(
                     f"Successfully removed schemas for {len(tenant_ids)} tenants "

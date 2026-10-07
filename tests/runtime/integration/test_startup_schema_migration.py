@@ -12,6 +12,7 @@ makes the migration retry until it returns.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import multiprocessing
@@ -128,6 +129,90 @@ class _OnlyShips(FilesystemSchemaLoader):
 
             raise SchemaNotFoundException(schema_name)
         return super().load_schema(schema_name)
+
+
+class _OwnRelease(FilesystemSchemaLoader):
+    """Ships configs/schemas plus schemas of the operator's own that
+    configs/schemas does not ship: ``own`` maps each base to a builder of its
+    definition. Only tenants that registered one of these bases can drift on
+    it, so a run under this release changes no other test's tenants."""
+
+    def __init__(self, own: dict):
+        super().__init__(SCHEMAS_DIR)
+        self._own = own
+
+    def load_schema(self, schema_name):
+        build = self._own.get(schema_name)
+        if build is None:
+            return super().load_schema(schema_name)
+        return {**build(), "name": schema_name}
+
+
+def _string_chunk_index_text() -> dict:
+    return _chunk_index_as_string(_shipped(TEXT))
+
+
+def _titled_string_chunk_index_text() -> dict:
+    """The string ``chunk_index`` text schema with one more rank profile: a
+    change Vespa applies to a schema registered without it."""
+    definition = _string_chunk_index_text()
+    definition["rank_profiles"].append(dict(OWN_PROFILE))
+    return definition
+
+
+def _string_page_number_visual() -> dict:
+    """The visual schema with ``page_number`` a string, so the shipped int is
+    a field type change Vespa refuses without a validation override."""
+    definition = _shipped(VISUAL)
+    for field in definition["document"]["fields"]:
+        if field["name"] == "page_number":
+            field["type"] = "string"
+    return definition
+
+
+def _own_bases(run: str) -> tuple[str, str]:
+    """The text-derived and visual-derived bases of the operator's own one
+    test run registers."""
+    return f"own_text_{run}", f"own_visual_{run}"
+
+
+def _refusing_release(run: str) -> _OwnRelease:
+    """The run's own bases as the shipped text and visual schemas: a field
+    type change from what the run registered, which Vespa refuses."""
+    own_text, own_visual = _own_bases(run)
+    return _OwnRelease(
+        {own_text: lambda: _shipped(TEXT), own_visual: lambda: _shipped(VISUAL)}
+    )
+
+
+def _registering_release(run: str) -> _OwnRelease:
+    own_text, own_visual = _own_bases(run)
+    return _OwnRelease(
+        {own_text: _string_chunk_index_text, own_visual: _string_page_number_visual}
+    )
+
+
+def _digest(definition: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(definition, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _recorded_refusals(manager, names) -> dict:
+    """Each recorded migration refusal among the full schema ``names``:
+    schema -> (tenant, SHA-256 of the definition it was refused)."""
+    return {
+        record.config_key: (
+            record.config_value["tenant_id"],
+            record.config_value["definition_sha256"],
+        )
+        for record in manager.store.list_configs(
+            tenant_id=SYSTEM_TENANT_ID,
+            scope=ConfigScope.SCHEMA,
+            service=SCHEMA_REFUSALS_SERVICE,
+        )
+        if record.config_key in names
+    }
 
 
 def test_the_older_frame_definition_differs_only_in_its_binary_maxsim():
@@ -1198,3 +1283,437 @@ async def test_the_drift_listing_answers_503_when_its_store_cannot_be_read(
         if record.name == "cogniverse_runtime.http_errors"
     ]
     assert logged.startswith(f"schema_drift_unavailable: {failure}: {cause}"), logged
+
+
+def _schema_registry_errors(caplog, names) -> list[str]:
+    from cogniverse_core.registries import schema_registry as schema_registry_module
+
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == schema_registry_module.logger.name
+        and record.levelno >= logging.ERROR
+        and any(name in record.getMessage() for name in names)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_removed_once_its_schema_migrates_or_is_dropped(
+    migration_vespa, caplog
+):
+    """Three tenants each carry a schema whose redeploy Vespa refused, and the
+    first run records the three refusals. Before the next run one tenant's
+    schema is dropped, and the next release ships a change Vespa accepts for
+    another's. The next run migrates that schema and removes both stale
+    refusals; the third tenant's schema is refused again and its refusal
+    stays."""
+    connect, manager, _ports = migration_vespa
+    run = uuid.uuid4().hex[:8]
+    own_text, own_visual = _own_bases(run)
+    migrates, dropped, refused = (
+        f"migclean_{run}:{name}" for name in ("migrates", "dropped", "refused")
+    )
+    registered = _registering_release(run)
+    owners = {
+        tenant: connect(tenant, registered) for tenant in (migrates, dropped, refused)
+    }
+    schemas = {
+        migrates: owners[migrates].schema_registry.deploy_schema(migrates, own_text),
+        dropped: owners[dropped].schema_registry.deploy_schema(dropped, own_text),
+        refused: owners[refused].schema_registry.deploy_schema(refused, own_visual),
+    }
+    ours = set(schemas.values())
+    accepting = _OwnRelease(
+        {
+            own_text: _titled_string_chunk_index_text,
+            own_visual: lambda: _shipped(VISUAL),
+        }
+    )
+    caplog.set_level(logging.INFO)
+    try:
+        first = await asyncio.to_thread(
+            connect(
+                "system", _refusing_release(run)
+            ).schema_registry.redeploy_drifted_schemas
+        )
+        assert sorted(
+            refusal.schema_name
+            for refusal in first.refused
+            if refusal.schema_name in ours
+        ) == sorted(ours)
+        assert _recorded_refusals(manager, ours) == {
+            schemas[migrates]: (
+                migrates,
+                _digest(_named(_shipped(TEXT), schemas[migrates])),
+            ),
+            schemas[dropped]: (
+                dropped,
+                _digest(_named(_shipped(TEXT), schemas[dropped])),
+            ),
+            schemas[refused]: (
+                refused,
+                _digest(_named(_shipped(VISUAL), schemas[refused])),
+            ),
+        }
+        owners[dropped].schema_manager.delete_schema(dropped, own_text)
+        assert schemas[dropped] in _recorded_refusals(manager, ours)
+
+        second = await asyncio.to_thread(
+            connect("system", accepting).schema_registry.redeploy_drifted_schemas
+        )
+
+        assert [name for name in second.redeployed if name in ours] == [
+            schemas[migrates]
+        ]
+        assert [
+            refusal.schema_name
+            for refusal in second.refused
+            if refusal.schema_name in ours
+        ] == [schemas[refused]]
+        assert _registered_definition(manager, migrates, own_text) == _named(
+            _titled_string_chunk_index_text(), schemas[migrates]
+        )
+        assert _recorded_refusals(manager, ours) == {
+            schemas[refused]: (
+                refused,
+                _digest(_named(_shipped(VISUAL), schemas[refused])),
+            )
+        }
+        assert _schema_registry_errors(caplog, ours) == []
+    finally:
+        owners[migrates].schema_manager.delete_schema(migrates, own_text)
+        owners[refused].schema_manager.delete_schema(refused, own_visual)
+
+
+def _refusing_deletes_of_refusals(method: str, path: str, _body: bytes):
+    if method == "DELETE" and _touches_refusals(path):
+        return 500, {"message": "injected storage failure"}
+    return None
+
+
+def _assert_cleanup_failure_logged(caplog, tenant: str, schema: str) -> None:
+    [logged] = _schema_registry_errors(caplog, [schema])
+    assert logged.startswith(
+        f"Cannot delete the recorded migration refusal of '{schema}' for tenant "
+        f"'{tenant}' (RuntimeError: Failed to delete 1 of 1 versions for "
+    ), logged
+    assert logged.endswith("; the next migration removes it"), logged
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_cannot_be_removed_is_left_for_the_next_run(
+    migration_vespa, caplog
+):
+    """The config store refuses to delete the refusal of a schema the run has
+    just migrated. The run still completes and reports the migration, the
+    failure is logged at ERROR by tenant and schema, and the refusal stays
+    until the next run, which removes it."""
+    connect, manager, ports = migration_vespa
+    run = uuid.uuid4().hex[:8]
+    own_text, _ = _own_bases(run)
+    tenant = f"migclean_{run}:acme"
+    owner = connect(tenant, _registering_release(run))
+    schema = owner.schema_registry.deploy_schema(tenant, own_text)
+    accepting = _OwnRelease({own_text: _titled_string_chunk_index_text})
+    recorded = {schema: (tenant, _digest(_named(_shipped(TEXT), schema)))}
+    caplog.set_level(logging.INFO)
+    try:
+        await asyncio.to_thread(
+            connect(
+                "system", _refusing_release(run)
+            ).schema_registry.redeploy_drifted_schemas
+        )
+        assert _recorded_refusals(manager, {schema}) == recorded
+
+        with InterceptFaultProxy(
+            f"http://127.0.0.1:{ports['http_port']}", _refusing_deletes_of_refusals
+        ) as proxy:
+            proxied = _proxied_manager(proxy.port)
+            try:
+                migrated = await asyncio.to_thread(
+                    connect(
+                        "system", accepting, store_manager=proxied
+                    ).schema_registry.redeploy_drifted_schemas
+                )
+            finally:
+                proxied.store.close()
+
+        assert [name for name in migrated.redeployed if name == schema] == [schema]
+        assert _registered_definition(manager, tenant, own_text) == _named(
+            _titled_string_chunk_index_text(), schema
+        )
+        _assert_cleanup_failure_logged(caplog, tenant, schema)
+        assert _recorded_refusals(manager, {schema}) == recorded
+
+        caplog.clear()
+        after = await asyncio.to_thread(
+            connect("system", accepting).schema_registry.redeploy_drifted_schemas
+        )
+        assert [name for name in after.redeployed if name == schema] == []
+        assert _recorded_refusals(manager, {schema}) == {}
+        assert _schema_registry_errors(caplog, [schema]) == []
+    finally:
+        owner.schema_manager.delete_schema(tenant, own_text)
+
+
+@pytest.fixture
+async def wire_tenant_manager(workflow_state_redis_url, shared_state_redis):
+    """``wire(config_manager, schema_loader)``: tenant_manager deleting through
+    that store and loader, with this process as the one runtime worker on its
+    own cluster-events channel and a task event store of its own. Returns the
+    worker id; module seams restored after."""
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_runtime.admin import tenant_manager as tm
+    from cogniverse_runtime.cluster_events import ClusterEvents
+    from cogniverse_runtime.task_events import TaskEventStore
+
+    events = ClusterEvents(
+        workflow_state_redis_url,
+        f"migration-worker-{uuid.uuid4().hex[:6]}",
+        {"tenant_deleted": tm.release_deleted_tenant},
+        channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+    )
+    await events.start()
+    prefix = f"test:task-events:{uuid.uuid4().hex}"
+    task_events = TaskEventStore(
+        shared_state_redis,
+        key_prefix=prefix,
+        ingestion_stream_prefix=f"{prefix}:ingest:",
+    )
+    previous = (
+        tm._config_manager,
+        tm._schema_loader,
+        tm._cluster_events,
+        tm._task_events,
+    )
+
+    def wire(config_manager, schema_loader):
+        # A backend is bound to the store it was built with.
+        BackendRegistry.get_instance().clear_instances()
+        tm.set_config_manager(config_manager)
+        tm.set_schema_loader(schema_loader)
+        tm.set_cluster_events(events)
+        tm.set_task_event_store(task_events)
+        return events.worker_id
+
+    yield wire
+    tm.set_config_manager(previous[0])
+    tm.set_schema_loader(previous[1])
+    tm.set_cluster_events(previous[2])
+    tm.set_task_event_store(previous[3])
+    BackendRegistry.get_instance().clear_instances()
+    await events.close()
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_delete_whose_refusal_cleanup_fails_still_completes(
+    migration_vespa, wire_tenant_manager, caplog
+):
+    """The config store refuses to delete a deleted tenant's recorded
+    refusal: the delete still answers exactly as it does without a refusal,
+    the failure is logged at ERROR by tenant and schema, and the next
+    migration run removes the refusal of the dropped schema."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    connect, manager, ports = migration_vespa
+    run = uuid.uuid4().hex[:8]
+    own_text, _ = _own_bases(run)
+    tenant = f"migclean_{run}:acme"
+    registered = _registering_release(run)
+    owner = connect(tenant, registered)
+    schema = owner.schema_registry.deploy_schema(tenant, own_text)
+    recorded = {schema: (tenant, _digest(_named(_shipped(TEXT), schema)))}
+    caplog.set_level(logging.INFO)
+    await asyncio.to_thread(
+        connect(
+            "system", _refusing_release(run)
+        ).schema_registry.redeploy_drifted_schemas
+    )
+    assert _recorded_refusals(manager, {schema}) == recorded
+
+    with InterceptFaultProxy(
+        f"http://127.0.0.1:{ports['http_port']}", _refusing_deletes_of_refusals
+    ) as proxy:
+        proxied = _proxied_manager(proxy.port)
+        worker = wire_tenant_manager(proxied, registered)
+        try:
+            result = await tm.delete_tenant_internal(tenant)
+        finally:
+            proxied.store.close()
+
+    assert result == {
+        "status": "deleted",
+        "tenant_full_id": tenant,
+        "schemas_deleted": 1,
+        "deleted_schemas": [schema],
+        "organization_deleted": False,
+        "workers_released": [worker],
+    }
+    _assert_cleanup_failure_logged(caplog, tenant, schema)
+    assert _recorded_refusals(manager, {schema}) == recorded
+
+    caplog.clear()
+    await asyncio.to_thread(connect("system").schema_registry.redeploy_drifted_schemas)
+    assert _recorded_refusals(manager, {schema}) == {}
+    assert _schema_registry_errors(caplog, [schema]) == []
+
+
+def _runtime_migrating_while_deleted(
+    http_port, config_port, run, doomed, barrier, refused, outcomes
+):
+    """One runtime process running the startup migration under the release
+    that refuses this run's own schemas. Its refusal of the doomed tenant's
+    schema is announced on ``refused`` and recorded only once the tenant's
+    delete has marked it, so the record lands after that delete began.
+    Reports how many such refusals it held and its migration log records."""
+    import os
+
+    from cogniverse_core.common.tenant_utils import (
+        canonical_tenant_id,
+        tenant_is_deleted,
+    )
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_runtime import main as runtime_main
+    from cogniverse_vespa.backend import VespaBackend
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(backend_url="http://127.0.0.1", backend_port=http_port)
+    manager = ConfigManager(store=store)
+    loader = _refusing_release(run)
+    backend = VespaBackend(
+        BackendConfig(
+            backend_type="vespa",
+            url="http://127.0.0.1",
+            port=http_port,
+            tenant_id="system",
+        ),
+        schema_loader=loader,
+        config_manager=manager,
+    )
+    backend._initialize_backend({"config_port": config_port})
+    backend.schema_registry = SchemaRegistry(manager, backend, loader)
+    backend.schema_manager._schema_registry = backend.schema_registry
+    held = []
+    record = SchemaRegistry._record_refusal
+
+    def recorded_once_marked(self, tenant_id, base_schema_name, shipped, exc):
+        if canonical_tenant_id(tenant_id) == doomed:
+            held.append(base_schema_name)
+            refused.set()
+            deadline = time.monotonic() + 300
+            while not tenant_is_deleted(store, doomed):
+                if time.monotonic() > deadline:
+                    raise AssertionError(f"{doomed} was never marked deleted")
+                time.sleep(0.1)
+        return record(self, tenant_id, base_schema_name, shipped, exc)
+
+    SchemaRegistry._record_refusal = recorded_once_marked
+    records = []
+
+    class Recorder(logging.Handler):
+        def emit(self, record):
+            records.append((record.levelname, record.getMessage()))
+
+    from cogniverse_core.registries import schema_registry as schema_registry_module
+
+    recorder = Recorder(level=logging.ERROR)
+    schema_registry_module.logger.addHandler(recorder)
+    runtime_main.logger.addHandler(Recorder())
+    runtime_main.logger.setLevel(logging.INFO)
+    barrier.wait(timeout=300)
+    asyncio.run(runtime_main._migrate_drifted_schemas(lambda: backend.schema_registry))
+    outcomes.put({"pid": os.getpid(), "held": held, "logs": records})
+    backend.close()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_two_runtimes_migrating_while_a_tenant_is_deleted_leave_no_refusal_of_it(
+    migration_vespa, wire_tenant_manager, caplog
+):
+    """Two runtime processes run the startup migration together while one
+    tenant is deleted. Vespa refuses the doomed tenant's schema, and that
+    refusal is recorded only after the delete has marked the tenant. Once
+    both runs and the delete complete, no refusal of the doomed tenant is
+    left, nothing failed, and the other tenant's refusal stands."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    connect, manager, ports = migration_vespa
+    run = uuid.uuid4().hex[:8]
+    own_text, own_visual = _own_bases(run)
+    doomed, kept = f"migdel_{run}:doomed", f"migdel_{run}:kept"
+    registered = _registering_release(run)
+    doomed_owner = connect(doomed, registered)
+    kept_owner = connect(kept, registered)
+    doomed_schema = doomed_owner.schema_registry.deploy_schema(doomed, own_text)
+    kept_schema = kept_owner.schema_registry.deploy_schema(kept, own_visual)
+    ours = {doomed_schema, kept_schema}
+    worker = wire_tenant_manager(manager, registered)
+    caplog.set_level(logging.INFO)
+    spawn = multiprocessing.get_context("spawn")
+    barrier = spawn.Barrier(2)
+    refused = spawn.Event()
+    outcomes = spawn.Queue()
+    runtimes = [
+        spawn.Process(
+            target=_runtime_migrating_while_deleted,
+            args=(
+                ports["http_port"],
+                ports["config_port"],
+                run,
+                doomed,
+                barrier,
+                refused,
+                outcomes,
+            ),
+        )
+        for _ in range(2)
+    ]
+    result = None
+    try:
+        for runtime in runtimes:
+            runtime.start()
+        assert await asyncio.to_thread(refused.wait, 900) is True
+
+        result = await tm.delete_tenant_internal(doomed)
+
+        reports = [await asyncio.to_thread(outcomes.get, True, 900) for _ in runtimes]
+        for runtime in runtimes:
+            await asyncio.to_thread(runtime.join, 120)
+
+        assert [runtime.exitcode for runtime in runtimes] == [0, 0]
+        assert result == {
+            "status": "deleted",
+            "tenant_full_id": doomed,
+            "schemas_deleted": 1,
+            "deleted_schemas": [doomed_schema],
+            "organization_deleted": False,
+            "workers_released": [worker],
+        }
+        assert sorted(report["held"] for report in reports) == [[], [own_text]]
+        assert _recorded_refusals(manager, ours) == {
+            kept_schema: (kept, _digest(_named(_shipped(VISUAL), kept_schema)))
+        }
+        prefix = "Migration of drifted schemas could not redeploy "
+        assert sorted(
+            message.split(" for tenant ", 1)[0].removeprefix(prefix)
+            for report in reports
+            for level, message in report["logs"]
+            if level in ("WARNING", "ERROR") and any(name in message for name in ours)
+        ) == sorted([doomed_schema, kept_schema, kept_schema])
+        assert all(
+            message.startswith(prefix)
+            for report in reports
+            for level, message in report["logs"]
+            if level in ("WARNING", "ERROR") and any(name in message for name in ours)
+        )
+        assert _schema_registry_errors(caplog, ours) == []
+    finally:
+        for runtime in runtimes:
+            if runtime.is_alive():
+                runtime.kill()
+        if result is None:
+            await tm.delete_tenant_internal(doomed)
+        kept_owner.schema_manager.delete_schema(kept, own_visual)

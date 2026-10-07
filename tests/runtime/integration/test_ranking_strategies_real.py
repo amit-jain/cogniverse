@@ -6,7 +6,7 @@ test that:
 
 - Spins up a real Vespa container via the existing ``vespa_instance``
   fixture (deploys ``video_colpali_smol500_mv_frame_test_unit``).
-- Spins up a real vLLM ColPali sidecar via ``vllm_sidecar`` and binds
+- Resolves the cluster's vLLM ColPali service via ``remote_inference`` and binds
   ``RemoteColPaliLoader`` against it.
 - Seeds three documents with real per-token ColPali embeddings.
 - Drives every rank profile in the schema through the production
@@ -94,18 +94,8 @@ def _manual_embedding(scale_x: float, scale_y: float, dim: int) -> np.ndarray:
 
 
 @pytest.fixture(scope="module")
-def vllm_colpali_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=COLPALI_MODEL_NAME,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+def vllm_colpali_url(remote_inference):
+    return remote_inference.resolve("vllm_colpali").base_url
 
 
 @pytest.fixture(scope="module")

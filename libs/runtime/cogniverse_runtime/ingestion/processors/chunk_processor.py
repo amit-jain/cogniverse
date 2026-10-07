@@ -14,6 +14,12 @@ from typing import Any
 
 from ..processor_base import BaseProcessor
 
+# Decoder and encoder threads per chunk. Left to ffmpeg, both size their
+# thread pools from the host's cores rather than the container's CPU limit;
+# on a 32-core node re-encoding one 720p chunk then peaks at 253 MiB
+# resident, against 110 MiB with 4 threads in the same wall time.
+FFMPEG_THREADS = 4
+
 
 class ChunkProcessor(BaseProcessor):
     """Handles video chunk extraction."""
@@ -245,6 +251,8 @@ class ChunkProcessor(BaseProcessor):
             cmd = [
                 "ffmpeg",
                 "-y",  # Overwrite output file
+                "-threads",
+                str(FFMPEG_THREADS),
                 "-ss",
                 str(start_time),
                 "-i",
@@ -257,6 +265,8 @@ class ChunkProcessor(BaseProcessor):
                 "0:a?",
                 "-c:v",
                 "libx264",
+                "-threads",
+                str(FFMPEG_THREADS),
                 "-preset",
                 "ultrafast",
                 "-pix_fmt",

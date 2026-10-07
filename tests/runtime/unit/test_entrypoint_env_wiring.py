@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from redis.asyncio import Redis
 
 from cogniverse_agents.optimizer import dspy_agent_optimizer as dspy_optimizer
 from cogniverse_core.common.cache.backends import s3 as s3_backend
@@ -35,6 +36,19 @@ def _restore_rlm_library_defaults(monkeypatch):
     monkeypatch.setattr(
         _rlm_promotion, "_promotion_fraction", _rlm_promotion._promotion_fraction
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_semantic_embedder_defaults():
+    from cogniverse_core.common.models.semantic_embedder import (
+        configure_semantic_embedder_defaults,
+        reset_semantic_embedder_cache,
+    )
+
+    configure_semantic_embedder_defaults(remote_url=None, model_name=None)
+    yield
+    reset_semantic_embedder_cache()
+    configure_semantic_embedder_defaults(remote_url=None, model_name=None)
 
 
 @pytest.fixture(autouse=True)
@@ -259,7 +273,9 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
 
     async def _fake_get_redis(url):
         events.append(f"redis:{url}")
-        return object()
+        # A real client that never connects: run() builds the worker's task
+        # event store on it.
+        return Redis.from_url("redis://stub")
 
     async def _fake_close_redis():
         events.append("close")
@@ -426,6 +442,15 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
         access_key="minio-access",
         secret_key="minio-secret",
     )
+    from cogniverse_core.common.models.semantic_embedder import (
+        get_semantic_embedder,
+    )
+
+    embedder = get_semantic_embedder()
+    assert (embedder._base_url, embedder._model) == (
+        "http://embed.internal:8000",
+        "embed-model",
+    )
 
 
 def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
@@ -433,7 +458,8 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.setattr(runtime_main, "get_telemetry_manager", lambda *a, **k: None)
     monkeypatch.setattr(
-        runtime_main, "configure_semantic_embedder_defaults", lambda **k: None
+        "cogniverse_runtime.entrypoint_env.configure_semantic_embedder_defaults",
+        lambda **k: None,
     )
     monkeypatch.setattr(
         "cogniverse_agents.text_analysis_agent.configure_tenant_cache_capacity",
@@ -600,9 +626,74 @@ class TestRlmKnobResolution:
                 "rlm_promotion_enabled": False,
                 "rlm_promotion_fraction": 0.1,
                 "rlm_skip_deno_check": True,
+                "semantic_embed_url": None,
+                "semantic_embed_model": None,
             }
         )
 
         assert _rlm_promotion._promotion_enabled is False
         assert _rlm_promotion._promotion_fraction == 0.1
         assert deno_check._skip_deno_check is True
+
+
+class TestSemanticEmbedderResolution:
+    """Every entrypoint configures the remote semantic embedder; none falls
+    back to loading a model in-process."""
+
+    def test_the_explicit_url_wins(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://explicit:8000")
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS", '{"denseon": "http://denseon-service:8000"}'
+        )
+
+        resolved = runtime_main._resolve_library_env_defaults()
+
+        assert resolved["semantic_embed_url"] == "http://explicit:8000"
+
+    def test_the_service_maps_denseon_entry_is_the_fallback(self, monkeypatch):
+        monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            '{"gliner": "http://gliner:8000", "denseon": "http://denseon:8000"}',
+        )
+
+        resolved = runtime_main._resolve_library_env_defaults()
+
+        assert resolved["semantic_embed_url"] == "http://denseon:8000"
+
+    def test_neither_setting_resolves_no_url(self, monkeypatch):
+        monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
+        monkeypatch.setenv("INFERENCE_SERVICE_URLS", '{"gliner": "http://gliner:8000"}')
+
+        resolved = runtime_main._resolve_library_env_defaults()
+
+        assert resolved["semantic_embed_url"] is None
+
+    def test_configure_sets_the_remote_embedder_every_entrypoint_uses(
+        self, monkeypatch
+    ):
+        from cogniverse_core.common.models.semantic_embedder import (
+            RemoteOpenAIEmbedder,
+            get_semantic_embedder,
+        )
+        from cogniverse_runtime.entrypoint_env import (
+            configure_runtime_library_defaults,
+        )
+
+        monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS", '{"denseon": "http://denseon:8000"}'
+        )
+        monkeypatch.setattr(
+            "cogniverse_core.common.cache.backends.s3.configure_s3_backend_defaults",
+            lambda **kwargs: None,
+        )
+
+        configure_runtime_library_defaults(runtime_main._resolve_library_env_defaults())
+        embedder = get_semantic_embedder()
+
+        assert isinstance(embedder, RemoteOpenAIEmbedder)
+        assert (embedder._base_url, embedder._model) == (
+            "http://denseon:8000",
+            "lightonai/DenseOn",
+        )

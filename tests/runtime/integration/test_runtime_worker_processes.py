@@ -27,9 +27,12 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import pytest
+import redis
 
 from cogniverse_core.conversation import CONVERSATION_AGENT_NAME
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
@@ -39,11 +42,14 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     AnswerGrounding,
 )
-from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
+from cogniverse_runtime.shared_state import (
+    SHARED_STATE_REDIS_CLIENT_NAME,
+    SHARED_STATE_REDIS_TIMEOUT_SECONDS,
+)
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.docker_utils import generate_unique_ports
-from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.http_fault_proxy import HTTPFaultProxy, InterceptFaultProxy
 from tests.utils.vespa_test_helpers import (
     DegradeConfigQueries,
     deploy_tenant_schema,
@@ -227,6 +233,8 @@ def _runtime(
     redis_url: str,
     name: str = "runtime",
     extra_env: dict[str, str] | None = None,
+    *,
+    embedder_env: dict[str, str],
 ):
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
@@ -248,6 +256,7 @@ def _runtime(
         COGNIVERSE_MEMORY_LIFECYCLE_DISABLED="1",
         LOG_LEVEL="INFO",
         PYTHONUNBUFFERED="1",
+        **embedder_env,
         **(extra_env or {}),
     )
     log = tmp_path / f"{name}.log"
@@ -294,9 +303,13 @@ def redis_url(workflow_state_redis_url):
 
 class TestTwoWorkersServe:
     def test_each_worker_runs_its_own_lifespan_on_its_own_socket(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
-        with _runtime(tmp_path, redis_url) as (process, log, port):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             workers = _serving(process, log)
 
             assert len(workers) == WORKERS
@@ -340,12 +353,16 @@ class TestTwoWorkersServe:
             )
 
     def test_concurrent_connections_reach_every_worker(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
         """32 clients connecting at once are spread over both workers, and every
         request on every connection is answered."""
         clients = 32
-        with _runtime(tmp_path, redis_url) as (process, log, port):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             workers = _serving(process, log)
             barrier = threading.Barrier(clients)
             connections = [
@@ -426,38 +443,59 @@ def _conversation_rows(
     return sorted(rows, key=lambda row: float(row["metadata"]["seq"]))
 
 
+def _conversation_tenant(shared_vespa) -> tuple[str, str]:
+    """A tenant of its own whose memory schema is deployed, and whose one
+    profile embeds through DenseOn but whose schema is never deployed; returns
+    the tenant and the summarizer's fixed answer for it."""
+    tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
+    config_manager = make_config_manager(shared_vespa)
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant_id,
+        base_schema_name="agent_memories",
+        config_manager=config_manager,
+    )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            UNDEPLOYED_PROFILE,
+            {
+                **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
+                "inference_services": {"embedding": "denseon"},
+            },
+        ),
+        tenant_id=tenant_id,
+    )
+    expected_answer = AnswerGrounding(
+        hits=[],
+        state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+        undeployed_profiles=(UNDEPLOYED_PROFILE,),
+    ).unanswerable_text(tenant_id)
+    return tenant_id, expected_answer
+
+
+def _turn(tenant_id: str, context_id: str, query: str) -> dict:
+    return {
+        "agent_name": "summarizer_agent",
+        "query": query,
+        "context": {"tenant_id": tenant_id},
+        "context_id": context_id,
+    }
+
+
 class TestConversationAcrossWorkers:
     def test_each_turn_reads_the_turns_the_other_worker_answered(
-        self, tmp_path, redis_url, vespa_instance, shared_vespa, shared_denseon
+        self,
+        tmp_path,
+        redis_url,
+        vespa_instance,
+        shared_vespa,
+        shared_denseon,
+        semantic_embedder_env,
     ):
         """Consecutive turns of one context alternate between the workers; each
         reads every turn answered before it, though the reply before it came
         back while that turn's save was still landing on the other worker."""
-        # A tenant of its own: its memory schema is deployed, and its one
-        # profile embeds through DenseOn but its schema is never deployed.
-        tenant_id = f"workers{uuid.uuid4().hex[:8]}:unit"
-        config_manager = make_config_manager(shared_vespa)
-        deploy_tenant_schema(
-            shared_vespa,
-            tenant_id=tenant_id,
-            base_schema_name="agent_memories",
-            config_manager=config_manager,
-        )
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(
-                UNDEPLOYED_PROFILE,
-                {
-                    **SHIPPED_PROFILES[UNDEPLOYED_PROFILE],
-                    "inference_services": {"embedding": "denseon"},
-                },
-            ),
-            tenant_id=tenant_id,
-        )
-        expected_answer = AnswerGrounding(
-            hits=[],
-            state=GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
-            undeployed_profiles=(UNDEPLOYED_PROFILE,),
-        ).unanswerable_text(tenant_id)
+        tenant_id, expected_answer = _conversation_tenant(shared_vespa)
         context_id = f"workers-{uuid.uuid4().hex}"
         # Three turns cover both directions (first to second worker and back)
         # and stay below the turn count that files a wiki page.
@@ -466,7 +504,9 @@ class TestConversationAcrossWorkers:
             "INFERENCE_SERVICE_URLS": json.dumps({"denseon": shared_denseon}),
             "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
         }
-        with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, port):
+        with _runtime(
+            tmp_path, redis_url, extra_env=env, embedder_env=semantic_embedder_env
+        ) as (process, log, port):
             workers = _serving(process, log)
             served = []
             # A connection per turn: a turn waits out the previous turn's save,
@@ -478,12 +518,7 @@ class TestConversationAcrossWorkers:
                     status, body = _post(
                         connection,
                         "/agents/summarizer_agent/process",
-                        {
-                            "agent_name": "summarizer_agent",
-                            "query": query,
-                            "context": {"tenant_id": tenant_id},
-                            "context_id": context_id,
-                        },
+                        _turn(tenant_id, context_id, query),
                     )
                 finally:
                     connection.close()
@@ -533,9 +568,295 @@ class TestConversationAcrossWorkers:
         assert _records(log, CLI_LOGGER, "ERROR") == []
 
 
+def _replica_ids(log: Path) -> list[str]:
+    announced = "Cluster events subscribed as "
+    return sorted(
+        record[len(announced) :]
+        for record in _records(log, MAIN_LOGGER, "INFO")
+        if record.startswith(announced)
+    )
+
+
+def _state_connections(redis_url: str) -> dict[str, int]:
+    """Connections per shared-state client name, from Redis' CLIENT LIST."""
+    observer = redis.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        names = [row["name"] for row in observer.client_list()]
+    finally:
+        observer.close()
+    return dict(
+        Counter(
+            name
+            for name in names
+            if name.startswith(f"{SHARED_STATE_REDIS_CLIENT_NAME}:")
+        )
+    )
+
+
+class TestOneStateClientPerWorker:
+    def test_every_state_store_of_a_worker_uses_its_one_connection(
+        self,
+        tmp_path,
+        own_redis,
+        vespa_instance,
+        shared_vespa,
+        shared_denseon,
+        semantic_embedder_env,
+    ):
+        """Agent registrations and conversation turn order come from one
+        connection pool per worker: after startup, and after requests that use
+        the registry and the conversation ledger one after another on each
+        worker, every worker holds exactly one connection under its name."""
+        url, _, _ = own_redis
+        tenant_id, expected_answer = _conversation_tenant(shared_vespa)
+        context_id = f"pool-{uuid.uuid4().hex}"
+        agent = f"pool_agent_{uuid.uuid4().hex[:8]}"
+        env = {
+            "INFERENCE_SERVICE_URLS": json.dumps({"denseon": shared_denseon}),
+            "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+        }
+        with _runtime(
+            tmp_path, url, extra_env=env, embedder_env=semantic_embedder_env
+        ) as (process, log, port):
+            workers = _serving(process, log)
+            replicas = _replica_ids(log)
+            at_start = _state_connections(url)
+            senders = [_Worker(port, pid, workers) for pid in workers]
+            registered = senders[0](
+                "POST",
+                "/agents/register",
+                {"name": agent, "url": "http://pool:9000", "capabilities": ["pool"]},
+            )
+            seen = [send("GET", f"/agents/{agent}")[0] for send in senders]
+            turns = [
+                send(
+                    "POST",
+                    "/agents/summarizer_agent/process",
+                    _turn(tenant_id, context_id, f"summarize turn {index}"),
+                )
+                for index, send in enumerate(senders)
+            ]
+            connection = _connection_to(port, workers[0], workers)
+            try:
+                deadline = time.monotonic() + 2 * CONVERSATION_SAVE_TIMEOUT_S
+                rows = _conversation_rows(connection, tenant_id, context_id)
+                while len(rows) < 2 * WORKERS and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    rows = _conversation_rows(connection, tenant_id, context_id)
+            finally:
+                connection.close()
+            after = _state_connections(url)
+
+        one_each = {
+            f"{SHARED_STATE_REDIS_CLIENT_NAME}:{replica}": 1 for replica in replicas
+        }
+        assert len(one_each) == WORKERS
+        assert at_start == one_each
+        assert after == one_each
+        assert registered[0] == 201
+        assert seen == [200] * WORKERS
+        assert [status for status, _ in turns] == [200] * WORKERS
+        assert [body["conversation"] for _, body in turns] == [
+            {
+                "state": CONVERSATION_HISTORY_LOADED,
+                "turn_count": 2 * index,
+                "reason": None,
+            }
+            for index in range(WORKERS)
+        ]
+        assert [body["answer"] for _, body in turns] == [expected_answer] * WORKERS
+        assert [row["metadata"]["turn_role"] for row in rows] == [
+            "user",
+            "assistant",
+        ] * WORKERS
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
+def _sse_events(connection: http.client.HTTPConnection, path: str) -> list[dict]:
+    """Every ``data:`` event of the SSE stream at ``path``, read to its end."""
+    connection.request("GET", path)
+    response = connection.getresponse()
+    assert response.status == 200, response.read()
+    return [
+        json.loads(line[len(b"data: ") :])
+        for line in response
+        if line.startswith(b"data: ")
+    ]
+
+
+class TestWorkflowAcrossWorkers:
+    def test_a_workflow_is_streamed_and_cancelled_from_the_other_worker(
+        self,
+        tmp_path,
+        redis_url,
+        vespa_instance,
+        shared_vespa,
+        shared_denseon,
+        semantic_embedder_env,
+    ):
+        """A deep-research run on one worker is held at its memory search (its
+        embedding request to DenseOn waits at a gate). The other worker streams
+        its events and records a cancellation; once the search returns, the
+        run stops at its next phase boundary on the first worker, and the
+        stream on the second ends with the cancellation."""
+        tenant_id, _ = _conversation_tenant(shared_vespa)
+        workflow_id = f"wf-cross-{uuid.uuid4().hex}"
+        denseon = urlsplit(shared_denseon)
+        with HTTPFaultProxy(
+            lambda path: f"{denseon.scheme}://{denseon.netloc}", hold_s=60
+        ) as proxy:
+            env = {
+                "INFERENCE_SERVICE_URLS": json.dumps(
+                    {"denseon": f"http://127.0.0.1:{proxy.port}{denseon.path}"}
+                ),
+                "VESPA_CONFIG_PORT": str(vespa_instance["config_port"]),
+            }
+            with _runtime(
+                tmp_path, redis_url, extra_env=env, embedder_env=semantic_embedder_env
+            ) as (
+                process,
+                log,
+                port,
+            ):
+                workers = _serving(process, log)
+                runner, other = workers
+                proxy.arm(
+                    lambda method, path, body: (
+                        method == "POST" and path.endswith("/embeddings")
+                    )
+                )
+                answered: dict = {}
+
+                def run_workflow():
+                    connection = _connection_to(port, runner, workers)
+                    try:
+                        answered["process"] = _post(
+                            connection,
+                            "/agents/deep_research_agent/process",
+                            {
+                                "agent_name": "deep_research_agent",
+                                "query": "what changed in the demo",
+                                "context": {
+                                    "tenant_id": tenant_id,
+                                    "workflow_id": workflow_id,
+                                },
+                            },
+                        )
+                    finally:
+                        connection.close()
+
+                streamed: dict = {}
+
+                def stream_workflow():
+                    connection = _connection_to(port, other, workers)
+                    try:
+                        streamed["events"] = _sse_events(
+                            connection, f"/events/workflows/{workflow_id}"
+                        )
+                    finally:
+                        connection.close()
+
+                workflow = threading.Thread(target=run_workflow)
+                workflow.start()
+                assert proxy.entered.wait(120), (
+                    "the workflow never reached its memory search:\n"
+                    + log.read_text()[-20000:]
+                )
+                send = _Worker(port, other, workers)
+                running = send("GET", f"/events/queues/{workflow_id}")
+                reader = threading.Thread(target=stream_workflow)
+                reader.start()
+                cancelled = send(
+                    "POST",
+                    f"/events/workflows/{workflow_id}/cancel",
+                    {"reason": "operator stop"},
+                )
+
+                def runner_cancelled():
+                    return [
+                        record
+                        for record in _records(
+                            log, "cogniverse_runtime.task_events", "INFO"
+                        )
+                        if record.startswith(f"Task {workflow_id} was cancelled")
+                    ]
+
+                # The worker running the workflow picks the cancellation up
+                # while the workflow still waits at its memory search.
+                _until(
+                    runner_cancelled,
+                    process,
+                    log,
+                    30,
+                    "the cancellation reaching the running worker",
+                )
+                proxy.release.set()
+                workflow.join(120)
+                reader.join(120)
+                ended = send("GET", f"/events/queues/{workflow_id}")
+                active = send("GET", f"/events/queues?tenant_id={quote(tenant_id)}")
+
+        status, body = answered["process"]
+        message = f"Workflow {workflow_id} was cancelled: operator stop"
+        assert proxy.expired.is_set() is False
+        assert status == 200, body
+        assert {key: body[key] for key in ("status", "agent", "workflow_id")} == {
+            "status": "cancelled",
+            "agent": "deep_research_agent",
+            "workflow_id": workflow_id,
+        }
+        assert (body["message"], body["answer"]) == (message, message)
+        assert running == (
+            200,
+            {
+                "task_id": workflow_id,
+                "kind": "workflow",
+                "tenant_id": tenant_id,
+                "event_count": 1,
+                "subscriber_count": 0,
+                "is_closed": False,
+                "is_cancelled": False,
+                "created_at": running[1]["created_at"],
+            },
+        )
+        assert cancelled == (
+            200,
+            {
+                "task_id": workflow_id,
+                "cancelled": True,
+                "message": f"Workflow {workflow_id} cancellation requested",
+            },
+        )
+        events = streamed["events"]
+        assert {key: events[0][key] for key in ("type", "task_id", "offset")} == {
+            "type": "connected",
+            "task_id": workflow_id,
+            "offset": 0,
+        }
+        assert [
+            (event["event_type"], event["state"], event["phase"], event["message"])
+            for event in events[1:]
+        ] == [
+            ("status", "working", "started", "deep_research_agent started"),
+            ("status", "working", "decompose", "Decomposing research query..."),
+            ("status", "cancelled", "cancelled", "operator stop"),
+        ]
+        assert {event["task_id"] for event in events[1:]} == {workflow_id}
+        assert {key: ended[1][key] for key in ("is_closed", "is_cancelled")} == {
+            "is_closed": True,
+            "is_cancelled": True,
+        }
+        assert active == (200, [])
+        # The cancellation reached the worker running the workflow.
+        assert runner_cancelled() == [
+            f"Task {workflow_id} was cancelled: operator stop"
+        ]
+        assert _records(log, CLI_LOGGER, "ERROR") == []
+
+
 class TestSignals:
     def test_a_reload_signal_before_the_lifespan_handler_is_ignored(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
         """A reload request reaching a worker that is still starting must not
         terminate it: the worker's lifespan reads configuration afresh."""
@@ -543,7 +864,11 @@ class TestSignals:
             "SIGUSR1 hot-reload handler registered "
             "(send `kill -USR1 <pid>` to reload config + sandbox policies)"
         )
-        with _runtime(tmp_path, redis_url) as (process, log, _):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            _,
+        ):
             _until(
                 lambda: len(_started_worker_pids(log)) == WORKERS,
                 process,
@@ -567,9 +892,13 @@ class TestSignals:
             assert process.poll() is None
 
     def test_sigusr1_to_the_cli_reloads_every_worker(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
-        with _runtime(tmp_path, redis_url) as (process, log, _):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            _,
+        ):
             _serving(process, log)
             process.send_signal(signal.SIGUSR1)
             _until(
@@ -595,9 +924,13 @@ class TestSignals:
             assert process.poll() is None
 
     def test_sigterm_stops_every_worker_and_exits_zero(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
-        with _runtime(tmp_path, redis_url) as (process, log, port):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             workers = _serving(process, log)
             process.send_signal(signal.SIGTERM)
             code = process.wait(timeout=STOP_TIMEOUT_S)
@@ -629,7 +962,7 @@ def _system_config_version(http_port: int) -> int:
 
 class TestStartupThroughADegradedStore:
     def test_workers_start_while_every_config_query_answers_degraded(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
         """Every query on the config store answers as Vespa does while its
         content node is outside its ideal state. A worker's startup writes
@@ -651,7 +984,9 @@ class TestStartupThroughADegradedStore:
             ),
         ):
             env = {"BACKEND_URL": "http://127.0.0.1", "BACKEND_PORT": str(data_port)}
-            with _runtime(tmp_path, redis_url, extra_env=env) as (process, log, _):
+            with _runtime(
+                tmp_path, redis_url, extra_env=env, embedder_env=semantic_embedder_env
+            ) as (process, log, _):
                 workers = _serving(process, log)
                 waits = [
                     record
@@ -675,11 +1010,15 @@ class TestStartupThroughADegradedStore:
 
 class TestWorkerFailure:
     def test_a_worker_that_dies_stops_the_runtime(
-        self, tmp_path, redis_url, vespa_instance
+        self, tmp_path, redis_url, vespa_instance, semantic_embedder_env
     ):
         """The pod restarts as it would for a single process; the survivor
         shuts down through its lifespan, nothing is respawned."""
-        with _runtime(tmp_path, redis_url) as (process, log, port):
+        with _runtime(tmp_path, redis_url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             workers = _serving(process, log)
             killed, survivor = workers
             os.kill(killed, signal.SIGKILL)
@@ -700,7 +1039,7 @@ class TestWorkerFailure:
             assert _refuses(port)
 
     def test_a_worker_whose_startup_fails_stops_the_runtime(
-        self, tmp_path, vespa_instance
+        self, tmp_path, vespa_instance, semantic_embedder_env
     ):
         """An unreachable A2A Redis fails every worker's lifespan: the CLI exits
         non-zero after the first, instead of restarting workers forever while
@@ -708,7 +1047,11 @@ class TestWorkerFailure:
         with socket.socket() as reserved:
             reserved.bind(("127.0.0.1", 0))
             dead_redis = f"redis://127.0.0.1:{reserved.getsockname()[1]}/0"
-        with _runtime(tmp_path, dead_redis) as (process, log, port):
+        with _runtime(tmp_path, dead_redis, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             code = process.wait(timeout=BOOT_TIMEOUT_S)
 
             started = _started_worker_pids(log)
@@ -822,10 +1165,14 @@ def _annotation(span_id: str) -> dict:
 
 
 @pytest.fixture(scope="class")
-def two_workers(tmp_path_factory, workflow_state_redis_url, vespa_instance):
+def two_workers(
+    tmp_path_factory, workflow_state_redis_url, vespa_instance, semantic_embedder_env
+):
     """One runtime serving from two workers, and a request sender for each."""
     tmp_path = tmp_path_factory.mktemp("shared_state")
-    with _runtime(tmp_path, workflow_state_redis_url) as (process, log, port):
+    with _runtime(
+        tmp_path, workflow_state_redis_url, embedder_env=semantic_embedder_env
+    ) as (process, log, port):
         workers = _serving(process, log)
         assert len(workers) == WORKERS
         yield port, workers, [_Worker(port, pid, workers) for pid in workers], tmp_path
@@ -1053,12 +1400,93 @@ class TestSharedStateAcrossWorkers:
         assert first("GET", f"/ingestion/status/{job_id}") == status
 
 
+class TestIngestionEventsAcrossWorkers:
+    def test_an_ingestion_job_started_on_one_worker_streams_from_the_other(
+        self, two_workers
+    ):
+        port, workers, (first, second), tmp_path = two_workers
+        video_dir = tmp_path / "events-videos"
+        video_dir.mkdir()
+
+        started = first(
+            "POST",
+            "/ingestion/start",
+            {
+                "video_dir": str(video_dir),
+                "profile": "mp_unknown_profile",
+                "tenant_id": "__system__",
+            },
+        )
+        job_id = started[1]["job_id"]
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            info = second("GET", f"/events/queues/{job_id}")
+            if info[0] == 200 and info[1]["is_closed"]:
+                break
+            time.sleep(0.5)
+        connection = _connection_to(port, workers[1], workers)
+        try:
+            events = _sse_events(connection, f"/events/ingestion/{job_id}")
+        finally:
+            connection.close()
+
+        error = (
+            "Profile mp_unknown_profile missing 'strategies' configuration. "
+            "All profiles must use explicit strategy configuration."
+        )
+        assert info == (
+            200,
+            {
+                "task_id": job_id,
+                "kind": "ingestion",
+                "tenant_id": "__system__",
+                "event_count": 1,
+                "subscriber_count": 0,
+                "is_closed": True,
+                "is_cancelled": False,
+                "created_at": info[1]["created_at"],
+            },
+        )
+        assert events[0]["type"] == "connected"
+        assert [
+            {
+                key: event[key]
+                for key in (
+                    "event_type",
+                    "task_id",
+                    "tenant_id",
+                    "error_type",
+                    "error_message",
+                    "recoverable",
+                )
+            }
+            for event in events[1:]
+        ] == [
+            {
+                "event_type": "error",
+                "task_id": job_id,
+                "tenant_id": "__system__",
+                "error_type": "ValueError",
+                "error_message": error,
+                "recoverable": False,
+            }
+        ]
+        assert second("GET", f"/events/queues?tenant_id={quote('__system__')}") == (
+            200,
+            [],
+        )
+
+
 class TestSharedStateOutage:
     def test_a_paused_redis_answers_503_on_every_worker_and_recovers(
-        self, tmp_path, own_redis, vespa_instance
+        self, tmp_path, own_redis, vespa_instance, semantic_embedder_env
     ):
         url, pause, resume = own_redis
-        with _runtime(tmp_path, url) as (process, log, port):
+        with _runtime(tmp_path, url, embedder_env=semantic_embedder_env) as (
+            process,
+            log,
+            port,
+        ):
             workers = _serving(process, log)
             senders = [_Worker(port, worker, workers) for worker in workers]
             pause()

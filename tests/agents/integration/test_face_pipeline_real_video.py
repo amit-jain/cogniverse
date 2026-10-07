@@ -35,7 +35,6 @@ PRE-REQS (the test will fail loudly if any are missing)
 * ``cv2`` installed (``uv pip install opencv-python-headless``).
 """
 
-import base64
 import socket
 import time
 from pathlib import Path
@@ -116,8 +115,8 @@ def _warm_face_embed_model(face_embed_container):
 # --------------------------------------------------------------------- #
 
 
-def _extract_frame_b64(video_path: Path, ts: float) -> str:
-    """Pull the frame at exactly ``ts`` seconds and return base64-PNG bytes."""
+def _extract_frame_jpg(video_path: Path, ts: float) -> bytes:
+    """Pull the frame at exactly ``ts`` seconds and return its JPEG bytes."""
     import cv2  # noqa: PLC0415 — heavy dep, only needed at test time
 
     cap = cv2.VideoCapture(str(video_path))
@@ -130,35 +129,29 @@ def _extract_frame_b64(video_path: Path, ts: float) -> str:
     ok2, buf = cv2.imencode(".jpg", frame)
     if not ok2:
         pytest.fail("cv2.imencode failed")
-    return base64.b64encode(buf.tobytes()).decode("ascii")
+    return buf.tobytes()
 
 
 @pytest.fixture(scope="module")
-def processing_results():
-    """A processing_results dict with three real keyframes from the
-    sample video. ts=1.0, 2.5, 4.5 — all three known to contain
-    exactly one face when probed against the real model."""
-    return {
-        "keyframes": {
-            "items": [
-                {
-                    "segment_id": "frame_1_0",
-                    "ts_start": 1.0,
-                    "image_b64": _extract_frame_b64(SAMPLE_VIDEO, 1.0),
-                },
-                {
-                    "segment_id": "frame_2_5",
-                    "ts_start": 2.5,
-                    "image_b64": _extract_frame_b64(SAMPLE_VIDEO, 2.5),
-                },
-                {
-                    "segment_id": "frame_4_5",
-                    "ts_start": 4.5,
-                    "image_b64": _extract_frame_b64(SAMPLE_VIDEO, 4.5),
-                },
-            ]
-        }
-    }
+def processing_results(tmp_path_factory):
+    """``KeyframeProcessor``'s result shape for three real keyframes of the
+    sample video, written to disk as it writes them. ts=1.0, 2.5, 4.5 — all
+    three known to contain exactly one face when probed against the real
+    model; their segment ids are their indexes 0, 1, 2."""
+    directory = tmp_path_factory.mktemp("real-keyframes")
+    records = []
+    for index, ts in enumerate((1.0, 2.5, 4.5)):
+        filename = f"v_-D1gdv_gQyw_keyframe_{index:04d}.jpg"
+        (directory / filename).write_bytes(_extract_frame_jpg(SAMPLE_VIDEO, ts))
+        records.append(
+            {
+                "frame_number": int(ts * 30),
+                "timestamp": ts,
+                "filename": filename,
+                "path": str(directory / filename),
+            }
+        )
+    return {"keyframes": {"keyframes": records}}
 
 
 # --------------------------------------------------------------------- #
@@ -279,12 +272,14 @@ def test_real_face_extraction_detects_one_face_per_keyframe(
     processing_results, face_embed_container
 ):
     """The three real keyframes each contain exactly one face."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     assert len(records) == 3
     by_segment = {r.segment_id: r for r in records}
-    assert set(by_segment.keys()) == {"frame_1_0", "frame_2_5", "frame_4_5"}
+    assert set(by_segment.keys()) == {"0", "1", "2"}
     # All three vectors are 512-dim L2-normalised.
     for r in records:
         assert len(r.vec) == 512
@@ -302,9 +297,11 @@ def test_real_clustering_groups_same_subject_into_one_cluster(
     processing_results, face_embed_container
 ):
     """Three frames of the same on-camera person cluster into one identity."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
     # The three keyframes are within 4 seconds of the same single
     # speaker on camera. InsightFace embedding cosine for the same
@@ -320,9 +317,9 @@ def test_real_clustering_groups_same_subject_into_one_cluster(
     # Cluster IDs are deterministic: face_cluster::<segment_id>::<x1>_<y1>
     # using each member's bbox.
     assert sorted(c.cluster_id for c in clusters) == [
-        "face_cluster::frame_1_0::664_61",
-        "face_cluster::frame_2_5::355_258",
-        "face_cluster::frame_4_5::850_45",
+        "face_cluster::0::664_61",
+        "face_cluster::1::355_258",
+        "face_cluster::2::850_45",
     ]
 
 
@@ -335,9 +332,11 @@ def test_real_attribution_links_cluster_to_transcript_subject(
     processing_results, face_embed_container
 ):
     """Hand-built Person whose window covers the cluster's faces gets the same_as."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
 
     test_subject = Node(
@@ -371,9 +370,9 @@ def test_real_attribution_links_cluster_to_transcript_subject(
     assert len(edges) == 3
     by_source = {e.source: e for e in edges}
     assert sorted(by_source.keys()) == [
-        "face_cluster::frame_1_0::664_61",
-        "face_cluster::frame_2_5::355_258",
-        "face_cluster::frame_4_5::850_45",
+        "face_cluster::0::664_61",
+        "face_cluster::1::355_258",
+        "face_cluster::2::850_45",
     ]
     for e in edges:
         assert e.target == "test_subject"
@@ -383,9 +382,9 @@ def test_real_attribution_links_cluster_to_transcript_subject(
         assert e.evidence_span == "face_cluster_temporal"
         assert e.modality == "vlm"
     # Each edge anchored on the cluster's only member's ts.
-    assert by_source["face_cluster::frame_1_0::664_61"].ts_start == 1.0
-    assert by_source["face_cluster::frame_2_5::355_258"].ts_start == 2.5
-    assert by_source["face_cluster::frame_4_5::850_45"].ts_start == 4.5
+    assert by_source["face_cluster::0::664_61"].ts_start == 1.0
+    assert by_source["face_cluster::1::355_258"].ts_start == 2.5
+    assert by_source["face_cluster::2::850_45"].ts_start == 4.5
 
 
 # --------------------------------------------------------------------- #
@@ -397,9 +396,11 @@ def test_real_vespa_round_trip_persists_face_cluster_edge(
     processing_results, graph_manager_live, face_embed_container
 ):
     """Upsert face-cluster nodes + same_as edge to real Vespa, then visit."""
-    records = extract_faces_per_keyframe(
+    extraction = extract_faces_per_keyframe(
         processing_results, "v_D1gdv_gQyw", face_embed_container
     )
+    assert extraction.failed == []
+    records = extraction.mentions
     clusters = cluster_faces(records)
 
     test_subject = Node(

@@ -5,11 +5,13 @@ Tests image_content and audio_content Vespa schemas with test Vespa Docker insta
 Validates schema uploads, data ingestion, and search functionality.
 """
 
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
@@ -23,27 +25,17 @@ COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 
 @pytest.fixture(scope="module")
-def tomoro_client(vllm_sidecar):
+def tomoro_client(remote_inference):
     """Real vLLM-served Tomoro ColQwen3 via RemoteColPaliLoader.
 
     Tomoro (qwen3_vl) is remote-only — the image/document-visual ingestion and
     search paths route image and query embedding through this sidecar. Same
     ``--runner pooling --convert embed`` serving config the other real-boundary
-    visual fixtures use; cached across the session by the vllm_sidecar factory.
+    visual fixtures use; resolved once per session by ``remote_inference``.
     """
     from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 
-    url = vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     loader = RemoteColPaliLoader(
         model_name=COLPALI_MODEL,
         config={"remote_inference_url": url},
@@ -51,6 +43,24 @@ def tomoro_client(vllm_sidecar):
     )
     client, _ = loader.load_model()
     return {"client": client, "url": url}
+
+
+@pytest.fixture(scope="module")
+def denseon_embedder(remote_inference):
+    """The cluster's DenseOn, the 768-d semantic encoder the content-type
+    schemas' text and transcript embeddings hold."""
+    from cogniverse_core.common.models.semantic_embedder import RemoteOpenAIEmbedder
+
+    endpoint = remote_inference.resolve("denseon")
+    embedder = RemoteOpenAIEmbedder(
+        endpoint.base_url,
+        endpoint.model_id,
+        _resolved_headers=dict(endpoint.headers),
+    )
+    try:
+        yield embedder
+    finally:
+        embedder._close()
 
 
 @pytest.fixture(scope="module")
@@ -255,14 +265,9 @@ class TestContentTypeVespaSchemas:
         if embeddings_np.ndim == 3 and embeddings_np.shape[0] == 1:
             embeddings_np = embeddings_np[0]
 
-        # Pad or truncate to exactly 1024 patches
-        if embeddings_np.shape[0] < 1024:
-            padding = np.zeros((1024 - embeddings_np.shape[0], embeddings_np.shape[1]))
-            embeddings_np = np.vstack([embeddings_np, padding])
-        elif embeddings_np.shape[0] > 1024:
-            embeddings_np = embeddings_np[:1024]
-
-        colpali_embedding = embeddings_np.tolist()
+        colpali_embedding = {
+            "blocks": {str(i): patch.tolist() for i, patch in enumerate(embeddings_np)}
+        }
         print(f"✅ Generated embedding shape: {embeddings_np.shape}")
 
         sample_image = {
@@ -306,9 +311,10 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["image_id"] == "img_test_001"
         print("✅ Image document retrieved successfully")
 
-    @pytest.mark.requires_whisper
-    def test_audio_content_document_ingestion(self, test_vespa_manager):
-        """Test ingesting sample audio documents with real Whisper transcription and embeddings"""
+    def test_audio_content_document_ingestion(
+        self, test_vespa_manager, remote_inference, denseon_embedder
+    ):
+        """Ingest an audio document transcribed and embedded by the served models"""
         print("\n" + "-" * 80)
         print("Test: Audio Content Document Ingestion (Real Whisper + Embeddings)")
         print("-" * 80)
@@ -319,8 +325,8 @@ class TestContentTypeVespaSchemas:
         from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
             AudioEmbeddingGenerator,
         )
-        from cogniverse_runtime.ingestion.processors.audio_transcriber import (
-            AudioTranscriber,
+        from cogniverse_runtime.ingestion.processors.audio_processor import (
+            AudioProcessor,
         )
 
         # Create a simple test audio file (1 second of silence)
@@ -343,30 +349,39 @@ class TestContentTypeVespaSchemas:
 
         print(f"✅ Created test audio: {temp_audio.name}")
 
-        # Transcribe with Whisper
-        print("\n📦 Loading Whisper model...")
-        transcriber = AudioTranscriber(model_size="base")
-        print("✅ Whisper model loaded")
+        # Transcribe with the cluster's Whisper
+        asr = remote_inference.resolve("vllm_asr")
+        transcriber = AudioProcessor(
+            logging.getLogger(__name__),
+            model=asr.model_id,
+            language="auto",
+            endpoint=asr.base_url,
+        )
 
         print("\n🔊 Transcribing audio...")
-        result = transcriber.transcribe_audio(
-            video_path=Path(temp_audio.name), output_dir=None
-        )
+        result = transcriber.transcribe_audio(Path(temp_audio.name), output_dir=None)
         transcript = result.get("full_text", "")
         language = result.get("language", "unknown")
         print(f"✅ Transcription complete: '{transcript}' (language: {language})")
 
-        # Generate embeddings
-        print("\n🔢 Loading embedding models...")
-        embedding_generator = AudioEmbeddingGenerator()
-        print("✅ Embedding models loaded")
-
+        # Embed with the cluster's CLAP (acoustic) and DenseOn (semantic)
+        embedding_generator = AudioEmbeddingGenerator(
+            clap_endpoint_url=remote_inference.resolve("clap_embed").base_url
+        )
         print("\n🔢 Generating embeddings...")
-        acoustic_embedding, semantic_embedding = (
-            embedding_generator.generate_embeddings(
-                audio_path=Path(temp_audio.name),
-                transcript=transcript if transcript else "Test audio with silence",
-            )
+        acoustic_embedding = embedding_generator.generate_acoustic_embedding(
+            audio_path=Path(temp_audio.name)
+        )
+        semantic_embedding = np.asarray(
+            denseon_embedder.encode(
+                [transcript if transcript else "Test audio with silence"],
+                is_query=False,
+            )[0],
+            dtype=np.float32,
+        )
+        assert (acoustic_embedding.shape, semantic_embedding.shape) == (
+            (512,),
+            (768,),
         )
         print(
             f"✅ Generated embeddings: acoustic={acoustic_embedding.shape}, semantic={semantic_embedding.shape}"
@@ -591,14 +606,13 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["page_number"] == 1
         print("✅ Document page retrieved successfully (visual strategy)")
 
-    def test_document_text_ingestion(self, test_vespa_manager):
+    def test_document_text_ingestion(self, test_vespa_manager, denseon_embedder):
         """Test ingesting documents with text extraction and semantic embeddings"""
         print("\n" + "-" * 80)
         print("Test: Document Text Strategy Ingestion (Extraction + Semantic)")
         print("-" * 80)
 
         import requests
-        from sentence_transformers import SentenceTransformer
 
         # Sample extracted text (simulating PDF text extraction)
         sample_text = """
@@ -611,18 +625,13 @@ class TestContentTypeVespaSchemas:
         clustering, and neural networks.
         """
 
-        # Load text embedding model
-        print("\n📦 Loading text embedding model...")
-        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
-        print("✅ Text embedding model loaded")
-
-        # Generate semantic embedding
+        # Generate the semantic embedding with the cluster's DenseOn
         print("\n🔢 Generating semantic embedding...")
-        document_embedding = text_model.encode(
-            sample_text,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
+        document_embedding = np.asarray(
+            denseon_embedder.encode([sample_text], is_query=False)[0],
+            dtype=np.float32,
         )
+        assert document_embedding.shape == (768,)
         print(f"✅ Generated embedding shape: {document_embedding.shape}")
 
         # Sample document matching document_text schema
@@ -743,31 +752,23 @@ class TestContentTypeVespaSchemas:
         assert hits[0].get("relevance", 0.0) > 0
         print("✅ Ingested document page found in visual search results")
 
-    def test_document_text_search(self, test_vespa_manager):
+    def test_document_text_search(self, test_vespa_manager, denseon_embedder):
         """Test searching documents with text strategy (semantic + BM25)"""
         print("\n" + "-" * 80)
         print("Test: Document Text Search (Semantic + BM25)")
         print("-" * 80)
 
         import requests
-        from sentence_transformers import SentenceTransformer
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
         wait_for_vespa_indexing(delay=3)
 
-        # Load text embedding model
-        print("\n📦 Loading text embedding model...")
-        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
-        print("✅ Text embedding model loaded")
-
-        # Encode query
+        # Encode query with the cluster's DenseOn
         query = "machine learning algorithms"
         print(f"\n🔍 Encoding query: '{query}'")
-        query_embedding = text_model.encode(
-            query,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
+        query_embedding = np.asarray(
+            denseon_embedder.encode([query], is_query=True)[0], dtype=np.float32
         )
         print(f"✅ Query embedding generated: shape {query_embedding.shape}")
 
@@ -803,6 +804,159 @@ class TestContentTypeVespaSchemas:
             print("✅ Ingested document found in text search results")
         else:
             print("⚠️  No search results found (document may not be indexed yet)")
+
+
+# Vespa's nativeRank of a text field holding the one query term once, first.
+TERM_NATIVE_RANK = 0.3818623835995125
+
+
+def _image_case():
+    query = np.zeros((2, 320), np.float32)
+    query[0, 0] = 1.0
+    query[1, 1] = 0.5
+    near = np.zeros((2, 320), np.float32)
+    near[0, 0] = 0.75
+    near[1, :2] = [0.125, 0.25]
+    # MaxSim averaged over the query tokens: (0.75 + 0.125) / 2 and, for the
+    # negated patches, (-0.125 + 0) / 2.
+    return query, near, -near, 0.4375, -0.0625
+
+
+def _tensor(base, profile, embedding):
+    if profile != "hybrid_image":
+        return embedding.tolist()
+    return {"blocks": {str(i): row.tolist() for i, row in enumerate(embedding)}}
+
+
+def _query_input(profile, query):
+    if profile != "hybrid_image":
+        return {"input.query(q)": query.tolist()}
+    return {"input.query(qt)": {str(i): row.tolist() for i, row in enumerate(query)}}
+
+
+def _semantic_case():
+    query = np.zeros(768, np.float32)
+    query[:2] = [1.0, 1.0]
+    near = np.zeros(768, np.float32)
+    near[0] = 1.0
+    far = np.zeros(768, np.float32)
+    far[2] = 1.0
+    # Angular closeness 1/(1 + angle): 45 and 90 degrees from the query.
+    return query, near, far, 1 / (1 + np.pi / 4), 1 / (1 + np.pi / 2)
+
+
+IN_CODE_TEXT_FIRST_HYBRIDS = {
+    "hybrid_image": ("image_content", "image_description", "colpali_embedding"),
+    "hybrid_audio": ("audio_content", "transcript", "semantic_embedding"),
+    "hybrid_bm25_semantic": ("document_text", "full_text", "document_embedding"),
+}
+
+
+class TestInCodeTextFirstHybrids:
+    """The text-first hybrids of the in-code content type schemas rank their
+    text matches by the visual or semantic similarity plus nativeRank.
+
+    Each gets two documents holding the query term in its text field with
+    different embeddings, and one without the term: the two text matches come
+    back, each scored by its own similarity plus its nativeRank."""
+
+    @pytest.mark.parametrize("profile", sorted(IN_CODE_TEXT_FIRST_HYBRIDS))
+    def test_text_matches_rank_by_similarity_plus_native_rank(
+        self, test_vespa_manager, profile
+    ):
+        import requests
+
+        schema, text_field, embedding_field = IN_CODE_TEXT_FIRST_HYBRIDS[profile]
+        query, near, far, near_score, far_score = (
+            _image_case() if profile == "hybrid_image" else _semantic_case()
+        )
+        docs = {
+            f"{profile}_near": (near, "kestrel harbour notes"),
+            f"{profile}_far": (far, "kestrel harbour notes"),
+            f"{profile}_textless": (near, "harbour notes"),
+        }
+        base = f"{test_vespa_manager['base_url']}/document/v1/hybridtest/{schema}"
+        for doc_id, (embedding, text) in docs.items():
+            response = requests.post(
+                f"{base}/docid/{doc_id}",
+                json={
+                    "fields": {
+                        text_field: text,
+                        embedding_field: _tensor(schema, profile, embedding),
+                    }
+                },
+                timeout=30,
+            )
+            assert response.status_code == 200, response.text
+        try:
+            response = requests.post(
+                f"{test_vespa_manager['base_url']}/search/",
+                json={
+                    "yql": (
+                        f"select * from {schema} where "
+                        f'{{defaultIndex: "{text_field}"}}userInput(@userQuery)'
+                    ),
+                    "userQuery": "kestrel",
+                    "ranking": profile,
+                    **_query_input(profile, query),
+                    "hits": 10,
+                },
+                timeout=30,
+            )
+        finally:
+            for doc_id in docs:
+                requests.delete(f"{base}/docid/{doc_id}", timeout=30)
+
+        assert response.status_code == 200, response.text
+        hits = response.json()["root"]["children"]
+        assert [h["id"].rsplit("::", 1)[1] for h in hits] == [
+            f"{profile}_near",
+            f"{profile}_far",
+        ]
+        assert [h["relevance"] for h in hits] == pytest.approx(
+            [near_score + TERM_NATIVE_RANK, far_score + TERM_NATIVE_RANK], abs=1e-6
+        )
+
+    def test_image_similarity_is_maxsim_over_patches(self, test_vespa_manager):
+        """``colpali_similarity`` sums, over the query tokens, each token's
+        best dot product with a stored patch: (0.75 + 0.125) for the stored
+        patches, wherever the best patch sits."""
+        import requests
+
+        query, near, _, _, _ = _image_case()
+        stored = near[::-1].copy()
+        base = f"{test_vespa_manager['base_url']}/document/v1/hybridtest/image_content"
+        response = requests.post(
+            f"{base}/docid/maxsim_doc",
+            json={
+                "fields": {
+                    "image_id": "maxsim_doc",
+                    "colpali_embedding": _tensor(
+                        "image_content", "hybrid_image", stored
+                    ),
+                }
+            },
+            timeout=30,
+        )
+        assert response.status_code == 200, response.text
+        try:
+            response = requests.post(
+                f"{test_vespa_manager['base_url']}/search/",
+                json={
+                    "yql": 'select * from image_content where image_id contains "maxsim_doc"',
+                    "ranking": "colpali_similarity",
+                    **_query_input("hybrid_image", query),
+                    "hits": 10,
+                },
+                timeout=30,
+            )
+        finally:
+            requests.delete(f"{base}/docid/maxsim_doc", timeout=30)
+
+        assert response.status_code == 200, response.text
+        hits = response.json()["root"]["children"]
+        assert [h["id"].rsplit("::", 1)[1] for h in hits] == ["maxsim_doc"]
+        assert hits[0]["relevance"] == pytest.approx(0.875, abs=1e-6)
 
 
 if __name__ == "__main__":

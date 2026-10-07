@@ -106,9 +106,9 @@ cogniverse_core/
 │   └── vlm_interface.py         # Vision Language Model interface
 ├── events/                      # Real-time event notification system (see Event System section)
 │   ├── types.py                 # Event type definitions (StatusEvent, ProgressEvent, etc.)
-│   ├── queue.py                 # EventQueue and QueueManager protocols
+│   ├── queue.py                 # EventQueue/QueueManager protocols, TaskCancelled, per-request queue binding
 │   └── backends/                # Backend implementations
-│       └── memory.py            # In-memory EventQueue backend
+│       └── memory.py            # In-process EventQueue backend
 ├── durable/                     # Durable execution for long-running workflows (see Durable Execution section)
 │   ├── pipeline_checkpoint.py   # PipelineCheckpoint / PipelineCheckpointStatus / PipelineCheckpointConfig
 │   └── pipeline_checkpoint_storage.py # PipelineCheckpointStorage (span persist + resume lookup)
@@ -642,7 +642,8 @@ registry.register_schema(
     config={"profile": "video_content"}
 )
 
-# Check if schema exists
+# Check if schema exists: read from its stored row on every call, so a drop
+# or registration by another process is seen at once
 exists = registry.schema_exists("acme", "video_content")
 
 # Get all schemas for tenant
@@ -809,7 +810,10 @@ unregistered schema, fencing pending registration writes.
 replace a newer generation. An absent schema retires the intent without
 registering anything; the inactive record retains its definition for late
 activation. `retire(record)` applies the same rule to a deploy that failed
-before activation. A deploy that failed after activation
+before activation; it is conditional on the record's revision, so a record
+the tenant delete removed meanwhile is not written back.
+`tenant_names(tenant_id)` lists the names of a tenant's records and
+`delete(name)` removes one; the tenant delete uses them. A deploy that failed after activation
 (`SchemaConvergenceError`: the generation did not reach every service, or the
 new schema refused a feed, inside the budget) leaves the intent pending: the
 schema is live, every package built meanwhile carries it, and recovery
@@ -853,7 +857,14 @@ on its own is left as it is, live definition, registry row and documents
 alike, logged at WARNING and recorded under the system tenant (`SCHEMA` scope,
 `schema_migration_refusals` service, keyed by full schema name, with the
 SHA-256 of the definition it was refused); every later run attempts it
-again and records the refusal again. A peer's deletion landing before
+again and records the refusal again. A run that reaches the end removes,
+under the deployment lease, every recorded refusal whose schema is no longer
+registered with a drifted definition: one that has migrated since, or was
+dropped. `delete_tenant_refusals(config_manager, tenant_id)` deletes a
+tenant's refusals; the tenant delete calls it once the tenant's schemas are
+dropped, among the rest of the tenant's rows. Neither raises: a refusal that cannot be read or deleted is logged at
+ERROR by tenant and schema, the run or the delete completes, and the next run
+removes it. A peer's deletion landing before
 activation drops that schema from the tenant's deploy. A tenant marked
 deleted (see `mark_tenant_deleted`), whose delete has not completed, is never
 redeployed: `deploy_schemas` refuses it with `TenantDeletedError`, its
@@ -862,7 +873,8 @@ Any other error
 propagates, including the `LeaseWaitTimeout` (a `TimeoutError`) of a lease a
 peer held for the whole wait, and nothing is recorded against a tenant for
 it. `should_stop` is asked before each tenant's redeploy; once it answers
-True no further redeploy starts. It returns a `DriftedSchemaRedeploy`:
+True no further redeploy starts, and no refusal is removed. It returns a
+`DriftedSchemaRedeploy`:
 `redeployed` holds the full names it deployed, `refused` one
 `SchemaRefusal(tenant_id, base_schema_name, schema_name, error, refused_at)`
 per refused schema, `skipped` the drifted schemas a stop left, and `deleted`
@@ -929,6 +941,7 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 320-d patch multi-vector; local or remote (`inference_service_url`) |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
+| `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
@@ -940,6 +953,11 @@ and `inference_services` carries `embedding: colbert_pylate`,
 for the declared services raise `ValueError` naming the profile and service
 rather than silently falling back to a local load, so a misconfigured sidecar
 fails loud.
+The profile's query encoder is the ColBERT one; the acoustic input takes
+`QueryEncoderFactory.create_service_encoder(profile, "clap_embed", config)`,
+the cached text encoder of the service (`SERVICE_TEXT_ENCODERS`). A service
+with no text encoder, or with no configured URL, raises
+`EncoderNotConfiguredError`.
 Search agents (document/image) resolve their encoders through this factory,
 passing the merged config, so they route through the deployed sidecar exactly
 as the `/search` path does.
@@ -986,23 +1004,27 @@ their own budgets, `DOCUMENT_ENCODE_TIMEOUT_S` (120s) for a text batch and
 
 ## Event System
 
-`events/` defines the Pydantic event vocabulary and queue protocols the
-runtime uses to stream agent progress over SSE (see `AgentBase.emit_progress`
-/ `process(stream=True)`).
+`events/` defines the Pydantic event vocabulary, the queue protocols, and the
+per-request binding producers report on. The runtime's queues are Redis-backed
+(`cogniverse_runtime.task_events`, see [Events Module](./events.md)); the
+in-process ones here serve a library caller outside the runtime.
 
 ```python
-from cogniverse_core.events.types import TaskState, create_status_event
-from cogniverse_core.events.backends.memory import get_queue_manager
-
-manager = get_queue_manager()
-queue = await manager.get_or_create_queue(task_id="task-123", tenant_id="acme")
-await queue.enqueue(
-    create_status_event(
-        task_id="task-123", tenant_id="acme", state=TaskState.WORKING, message="starting"
-    )
+from cogniverse_core.events import (
+    InMemoryEventQueue,
+    TaskCancelled,
+    bind_event_queue,
+    publish_phase,
 )
-async for event in queue.subscribe():
-    ...  # stream to the client (SSE)
+
+queue = InMemoryEventQueue(task_id="task-123", tenant_id="acme:acme")
+with bind_event_queue(queue):
+    await publish_phase("planning", "Creating execution plan...")
+    queue.cancel("operator stop")
+    try:
+        await publish_phase("execution", "Executing...")
+    except TaskCancelled as stopped:
+        print(stopped.reason)  # "operator stop"
 ```
 
 | Component | Purpose |
@@ -1010,9 +1032,15 @@ async for event in queue.subscribe():
 | `EventType`, `TaskState` | Enums for event kind and A2A task lifecycle state |
 | `StatusEvent`, `ProgressEvent`, `ArtifactEvent`, `ErrorEvent`, `CompleteEvent` | `BaseEvent` subclasses emitted during processing |
 | `EventQueue` / `QueueManager` (Protocols) | Per-task event queue and queue-lifecycle contracts |
-| `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping |
-| `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | Default in-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
+| `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping; a queue records the event loop it was created on (`loop`) so a producer on a worker thread publishes through it |
+| `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | In-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
 | `CancellationToken` (`events/queue.py`) | Cooperative cancellation signal threaded through a running task |
+| `bind_event_queue(queue)` / `current_event_queue()` | Bind the queue a request reports to (a `ContextVar`, inherited by the tasks and threads the request starts), never held on a shared agent |
+| `publish_phase(phase, message, check_cancelled=True)` | Publish a working `StatusEvent` on the bound queue (no-op without one), then raise `TaskCancelled` when the task was cancelled |
+| `raise_if_cancelled(queue=None)` / `TaskCancelled` | Stop a producer at a boundary once its task was cancelled; carries `task_id` and `reason` |
+
+`AgentBase.report_phase(phase, message)` is `emit_progress` (the streaming
+caller's progress dict) plus `publish_phase`.
 
 ---
 
@@ -2161,28 +2189,67 @@ encoder) for such a model without `remote_inference_url` raises a clear
 ### Chunked Whisper transcription (whisper_transcription.py)
 
 `transcribe_in_chunks(samples, transcribe_chunk, *, language, source, logger)`
-sends 16 kHz mono PCM16 audio to an OpenAI-compatible Whisper endpoint one
-chunk per request and merges the answers into `full_text`, `language`,
-`duration` and `segments` (times from the start of the audio). Every remote
-Whisper client goes through it: `AudioProcessor`, `AudioAnalysisAgent` and
-`RemoteWhisperLoader`.
+sends 16 kHz mono PCM16 audio to an OpenAI-compatible Whisper endpoint chunk by
+chunk and merges the answers into `full_text`, `language`, `duration` and
+`segments` (times from the start of the audio). Every remote Whisper client
+goes through it: `AudioProcessor`, `AudioAnalysisAgent` and
+`RemoteWhisperLoader`. `transcribe_chunk(chunk, language, timestamps,
+temperature)` sends one request with `response_format(timestamps)` and
+`sampling_fields(temperature)` (`temperature`, and `seed` = `SAMPLING_SEED`).
 
 - `split_for_whisper(samples)` cuts where vLLM's Whisper server cuts a long
   file: audio of at most 30 s is one chunk; longer audio is cut every 30 s at
   the start of the quietest 0.1 s window in the chunk's last second.
-- With no language named, the first chunk's answer names it and every later
-  chunk is sent in it, as the server does for a whole file. Chunk texts join
-  with a space, or with nothing for `ja` and `zh`.
-- vLLM builds a `verbose_json` transcript only from text between timestamp
-  tokens, so a decode that emits none comes back as HTTP 200 with an empty
-  transcript: at random for any audio on the cluster's ROCm server, and every
-  time for some audio. A chunk whose loudest 25 ms frame reaches
-  `SILENCE_FLOOR_DBFS` (-60) and comes back empty is sent again; the last of
-  `TRANSCRIBE_ATTEMPTS` (3) requests asks for `json` (no timestamps), whose text
-  becomes one segment spanning the chunk. Still empty, it raises
-  `EmptyTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
-  `loudest_frame_dbfs`, `attempts`). A silent chunk may come back empty. A
-  request that fails is not repeated.
+- Each chunk is asked for `verbose_json` (timings). vLLM builds that transcript
+  only from text between two adjacent timestamp tokens: a decode with no such
+  pair comes back empty, text after the last pair is dropped, and a decode
+  ending on a pair before the end of the chunk leaves the rest undecoded. A
+  timed answer whose segments run to the chunk's end (`reaches_chunk_end`:
+  the last end within one 0.02 s timestamp step of it, since chunk lengths
+  are no multiple of the step) lost nothing and is kept as it is. Otherwise
+  the chunk is also asked for `json`, which keeps the whole decode, so a
+  transcription costs one or two ASR requests per 30 s chunk plus one per
+  answer asked again.
+- `align_text(text, timed, duration, *, no_space=False)` times the `json`
+  words with the `verbose_json` segments. Words are compared case- and
+  punctuation-blind (characters for `ja` and `zh`). A json word matching a
+  timed word takes its segment, and a timed word the json answer lacks stays in
+  its segment. Where the answers word the same stretch differently, the
+  rendering with more words is kept (the json one on a tie), so a json decode
+  that stops early or collapses cannot replace timed text. A json word the
+  timed answer lacks gets a segment spanning the untimed gap it falls in
+  (before the first segment, between two that do not meet, after the last), or
+  else joins the segment before it. With no timed segments the text is one
+  segment spanning the chunk. No segment runs past the chunk's duration, so
+  none reaches into the next chunk.
+- An answer is unusable when it is a repetition loop (`compression_ratio(text)`
+  above `GARBLED_COMPRESSION_RATIO`, 2.4) or empty for a chunk whose loudest
+  25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
+  unusable without segments. An unusable answer is asked again at the next of
+  `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
+  is 6). When neither a `json` answer nor a timed answer running to the end
+  is usable, the chunk raises
+  `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
+  `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
+  (`source`, `chunk_index`, `start_s`, `end_s`, `loudest_frame_dbfs`,
+  `attempts`). When no `verbose_json` answer is usable, the text spans the
+  chunk. A silent chunk may come back empty. A request that fails is not
+  repeated.
+- With no language named, the first chunk's timed answer names it and every
+  later request is sent in it, as the server does for a whole file. Chunk texts
+  join with a space, or with nothing for `ja` and `zh`.
+- `lenient_chunk_answer(body, chunk)` (the processor's and the loader's parser)
+  and the agent's strict parser clamp a segment time past the chunk's duration
+  to it with `clamp_to_duration`, which logs the original value at DEBUG
+  unless it is past by less than half a timestamp step (vLLM's `0.02 * n`
+  rounds 29.4 to 29.400000000000002):
+  Whisper times text into the padding after short audio (the live server gave
+  29.98 s on an 18.77 s chunk).
+- Limits: the loop check measures a whole answer, so a short repetition inside
+  an otherwise ordinary answer is kept (the live server's "DR. DR. DR. DR.
+  SOUDOS, ..." sat in a json answer whose ratio was 1.76). Text that both
+  answers miss over the same stretch, or that a timed answer running to the
+  chunk's end skipped, is not detected.
 - `decode_audio(path)` decodes any container's first audio stream to 16 kHz
   mono PCM16 (pyav); `pcm16_wav_samples` and `wav_bytes` convert to and from
   WAV.
@@ -2268,16 +2335,18 @@ its remote CLAP calls to it.
 
 ### SemanticEmbedder (semantic_embedder.py)
 
-Pluggable text embedder used by memory/dedup code paths that need a plain
-sentence embedding (not the multi-vector ColBERT/ColPali contract). Prefers a
-remote OpenAI-compatible `/v1/embeddings` endpoint, falls back to an in-process
-SentenceTransformer.
+Text embedder used by memory/dedup code paths that need a plain sentence
+embedding (not the multi-vector ColBERT/ColPali contract). It calls a remote
+OpenAI-compatible `/v1/embeddings` endpoint; no model is loaded in-process.
+With no endpoint it raises `SemanticEmbedderNotConfiguredError` naming the
+settings.
 
 ```python
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
-# Resolution order: explicit remote_url/model_name arg ->
-# COGNIVERSE_SEMANTIC_EMBED_URL / _MODEL env vars -> local SentenceTransformer.
+# Resolution order: explicit remote_url/model_name arg -> the entrypoint's
+# default (COGNIVERSE_SEMANTIC_EMBED_URL, else INFERENCE_SERVICE_URLS["denseon"];
+# COGNIVERSE_SEMANTIC_EMBED_MODEL, else DenseOn) -> SemanticEmbedderNotConfiguredError.
 embedder = get_semantic_embedder()
 vectors = embedder.encode(["find manufacturing defects"], is_query=True)  # (1, D)
 
@@ -2290,12 +2359,10 @@ modal_embedder = get_semantic_embedder(
 
 | Class | Backend |
 |---|---|
-| `LocalSentenceTransformerEmbedder` | In-process `sentence-transformers` model |
 | `RemoteOpenAIEmbedder` | Authenticated HTTP client for an OpenAI-compatible `/v1/embeddings` server; Modal URLs use `COGNIVERSE_INFERENCE_API_KEY`, non-Modal URLs may accept an exact bearer `Authorization` mapping, and DenseOn's `query: `/`document: ` prompt prefixes plus L2 normalization are applied client-side |
 
 Remote instances are cached module-level by `(remote_url, model,
-credential fingerprint)`; local instances are cached by `(backend, model)`.
-Concurrent agents therefore share only clients for the same endpoint, model,
+credential fingerprint)`. Concurrent agents therefore share only clients for the same endpoint, model,
 and authentication context; `reset_semantic_embedder_cache()` clears them for
 tests. Connection and timeout errors preserve their original `requests`
 exception type while adding the exact model and `/v1/embeddings` endpoint;

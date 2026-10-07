@@ -742,20 +742,30 @@ inferenceStartup:
   progressAllowanceSeconds: 900
 ```
 
-- Position 0 and any key absent from the list load immediately. An
+- The first entry that runs a pod and any key absent from the list load
+  immediately. An
   empty list disables pacing, which is the right setting for a
   discrete-GPU host with headroom.
 - Order the list by descending `--gpu-memory-utilization` so the
   largest allocation lands against an unfragmented pool.
-- The gate is skipped when the named predecessor is disabled, so its
-  successor starts rather than waiting on a Service that will never
-  have an endpoint.
+- Each pod waits on the nearest earlier entry that runs a pod in the
+  release. Entries that are disabled or served from an `externalUrl` are
+  skipped, never waited on, and never leave their successor ungated.
 - Waiting happens in an init container, so readiness and liveness —
   both measured from the main container's start — are unaffected, and
   a waiting pod never reports unhealthy.
+- The gate polls `/health` every 5 s with curl from `curlimages/curl:8.14.1`,
+  the image the chart's init Jobs use, and starts the model on an HTTP 200.
+  No cogniverse image is involved, so a runtime release leaves every gated
+  model pod's template unchanged and its model loaded. Air-gapped clusters
+  mirror the image with the rest of the third-party set.
 - Weight downloads run in the `model-warm` init container ahead of the
   gate; they touch network and disk rather than the GPU, so they still
-  run concurrently across pods.
+  run concurrently across pods. `model-warm` runs from the pod's own
+  server image, except with the MinIO mirror
+  (`hfCache.persistence.minio.enabled`), where it needs `boto3` and runs
+  from the runtime image; only then does a runtime release change, and
+  restart, the inference pods.
 - Position N gives up after `N x perLinkTimeoutSeconds`. The deadline
   scales with position because all init containers start together, so a
   flat deadline would release the whole tail of the chain at once. A
@@ -1054,6 +1064,22 @@ Every replica and worker shares the one Redis instance the chart deploys
 runtime's conversation ledger (`cogniverse_runtime/session_state.py`) updates a
 context's turn clock, its pending saves and the shared lost-turn record in one
 Lua script, and Redis Cluster refuses a script whose keys span hash slots.
+
+Each runtime worker reaches its shared and session state (agent registrations,
+annotations, `/ingestion/start` jobs, conversation order, `/v1` continuations,
+task events) through one client and connection pool of at most 128
+connections, named `cogniverse-runtime-state:<pod>:<pid>:<suffix>`; the A2A task
+store and the cluster-events channel hold their own connections. To count a
+pod's state connections:
+
+```bash
+kubectl -n cogniverse exec deploy/cogniverse-redis -- redis-cli CLIENT LIST \
+  | grep -o 'name=cogniverse-runtime-state:[^ ]*' | sort | uniq -c
+```
+
+Each worker shows one name. Its count is one after startup and grows to the
+most commands the worker has had in flight at once (pooled connections stay
+open), never past 128.
 
 ### Backup & Restore
 

@@ -72,6 +72,7 @@ video_rag_agent/
 # Debug files
 debug_*.py
 check_*.py
+!scripts/check_offline_model_pods.py
 
 # Model files
 *.bin

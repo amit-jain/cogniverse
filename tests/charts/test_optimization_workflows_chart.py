@@ -399,6 +399,7 @@ class TestProfileStepIsGatedOnUploadedGroundTruth:
             "BACKEND_PORT",
             "TELEMETRY_HTTP_ENDPOINT",
             "TELEMETRY_OTLP_ENDPOINT",
+            "INFERENCE_SERVICE_URLS",
             "COGNIVERSE_INFERENCE_API_KEY",
         }
 

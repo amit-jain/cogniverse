@@ -1,203 +1,135 @@
-"""How ``ensure_llm`` chooses between a remote endpoint and a local sidecar."""
+"""How ``ensure_llm`` resolves a chat model: Modal or an explicit URL, never local."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
+from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
 
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from tests.utils import hermetic_llm
 from tests.utils.hermetic_llm import (
-    _LOCAL_SPAWN_MIN_AVAILABLE_GB,
-    _SIDECARS,
     MODEL,
     TEACHER_MODEL,
-    LmResolution,
-    LocalModelWontFitError,
-    RemoteModelUnavailableError,
-    assert_local_spawn_fits,
-    available_ram_gb,
-)
-from tests.utils.test_vllm_sidecar import _isolated_exact_model_state, _models_server
-from tests.utils.vllm_sidecar import (
-    E2E_CONTEXT,
-    ModelEndpointDiscoveryError,
-    _free_port,
+    LlmEndpointMismatchError,
+    LlmResolver,
+    ModalLlmNotDeployedError,
 )
 
-
-class TestSpawnIsRefusedWhenItWouldNotFit:
-    def test_teacher_refused_and_names_model_numbers_and_remedy(self) -> None:
-        required = _LOCAL_SPAWN_MIN_AVAILABLE_GB[TEACHER_MODEL]
-        starved = required / 2
-        with pytest.raises(LocalModelWontFitError) as excinfo:
-            assert_local_spawn_fits(TEACHER_MODEL, available_gb=starved)
-        message = str(excinfo.value)
-        assert TEACHER_MODEL in message
-        assert f"{required:.1f} GiB" in message
-        assert f"{starved:.1f} GiB" in message
-        assert ".env/MODAL_TOKEN_ID.env" in message
-        assert "COGNIVERSE_LLM_SERVING=modal" in message
-
-    def test_boundary_exactly_at_requirement_is_allowed(self) -> None:
-        required = _LOCAL_SPAWN_MIN_AVAILABLE_GB[TEACHER_MODEL]
-        assert assert_local_spawn_fits(TEACHER_MODEL, available_gb=required) is None
-
-    def test_one_tenth_below_requirement_is_refused(self) -> None:
-        required = _LOCAL_SPAWN_MIN_AVAILABLE_GB[TEACHER_MODEL]
-        with pytest.raises(LocalModelWontFitError):
-            assert_local_spawn_fits(TEACHER_MODEL, available_gb=required - 0.1)
-
-    def test_small_model_allowed_where_teacher_is_refused(self) -> None:
-        headroom = _LOCAL_SPAWN_MIN_AVAILABLE_GB[MODEL] + 1.0
-        assert assert_local_spawn_fits(MODEL, available_gb=headroom) is None
-        with pytest.raises(LocalModelWontFitError):
-            assert_local_spawn_fits(TEACHER_MODEL, available_gb=headroom)
+STUDENT = get_inference_service_spec("vllm_llm_student")
+TEACHER = get_inference_service_spec("vllm_llm_teacher")
+API_KEY = "modal-inference-secret"
+MODAL_URL = "https://amit--cogniverse-vllm-llm-student-inference.modal.run"
+REMEDY = (
+    "Tests never start a model on this host; deploy it with "
+    "`uv run cogniverse inference modal deploy vllm_llm_student` (check with "
+    "`uv run cogniverse inference modal status vllm_llm_student`)."
+)
 
 
-class TestEverySpawnableSidecarDeclaresItsRequirement:
-    def test_requirement_table_covers_exactly_the_sidecar_table(self) -> None:
-        assert set(_LOCAL_SPAWN_MIN_AVAILABLE_GB) == set(_SIDECARS)
-
-    def test_unknown_model_is_refused_rather_than_silently_allowed(self) -> None:
-        with pytest.raises(LocalModelWontFitError) as excinfo:
-            assert_local_spawn_fits("someorg/not-a-sidecar", available_gb=1024.0)
-        assert "someorg/not-a-sidecar" in str(excinfo.value)
+def _model_list(model_id: str, revision: str | None) -> dict:
+    row = {"id": model_id, "object": "model", "owned_by": "cogniverse"}
+    if revision is not None:
+        row["revision"] = revision
+    return {"object": "list", "data": [row]}
 
 
-class TestAvailableRamComesFromTheKernel:
-    def test_matches_meminfo_memavailable(self) -> None:
-        with open("/proc/meminfo", encoding="utf-8") as handle:
-            match = re.search(
-                r"^MemAvailable:\s+(\d+) kB$", handle.read(), re.MULTILINE
-            )
-        assert match is not None
-        expected_gb = int(match.group(1)) / (1024 * 1024)
-        assert abs(available_ram_gb() - expected_gb) < 1.0
+class _ModalServing:
+    """The Modal deployment boundary: the web URL lookup and the HTTP app."""
 
-
-class TestEnsureLlmConsultsTheGuardBeforeSpawning:
-    def test_guard_reads_the_live_host_and_refuses(self) -> None:
-        from tests.utils import hermetic_llm
-
-        original = hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB[MODEL]
-        hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB[MODEL] = 10**6
-        try:
-            with pytest.raises(LocalModelWontFitError) as excinfo:
-                hermetic_llm._guard_local_spawn(MODEL)
-        finally:
-            hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB[MODEL] = original
-        assert "1000000.0 GiB" in str(excinfo.value)
-
-    @pytest.mark.integration
-    @pytest.mark.requires_docker
-    @pytest.mark.parametrize("existing", [False, True], ids=["fresh", "restart"])
-    @pytest.mark.parametrize("workers", [1, 4], ids=["single", "concurrent"])
-    def test_capacity_refusal_preserves_container_state(
-        self, monkeypatch, tmp_path, existing, workers
+    def __init__(
+        self,
+        model_id: str = STUDENT.model_id,
+        revision: str | None = STUDENT.model_revision,
+        *,
+        lookup_error: Exception | None = None,
     ) -> None:
-        sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
-        container = f"capacity-refusal-{uuid.uuid4().hex[:10]}"
-        marker = f"capacity-model-{uuid.uuid4().hex[:10]}"
-        monkeypatch.setattr(hermetic_llm, "EXACT_MODEL_LABEL", marker)
-        monkeypatch.setitem(
-            hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB, TEACHER_MODEL, 10**6
+        self.payload = _model_list(model_id, revision)
+        self.lookup_error = lookup_error
+        self.lookups: list[str] = []
+        self.requests: list[tuple[str, str | None]] = []
+        self.clients: list[float | None] = []
+        self._lock = threading.Lock()
+
+    def web_url(self, spec, credentials) -> str:
+        with self._lock:
+            self.lookups.append(spec.modal_app)
+        if self.lookup_error is not None:
+            raise self.lookup_error
+        return MODAL_URL
+
+    def client(self, spec) -> httpx.Client:
+        def answer(request: httpx.Request) -> httpx.Response:
+            with self._lock:
+                self.requests.append(
+                    (str(request.url), request.headers.get("Authorization"))
+                )
+            return httpx.Response(200, json=self.payload)
+
+        self.clients.append(spec.boot_deadline_seconds)
+        return httpx.Client(
+            transport=httpx.MockTransport(answer),
+            timeout=spec.boot_deadline_seconds,
         )
-        starts = tmp_path / "starts"
-        try:
-            if existing:
-                created = subprocess.run(
-                    [
-                        "docker",
-                        "run",
-                        "-d",
-                        "--name",
-                        container,
-                        "--label",
-                        f"{marker}={TEACHER_MODEL}",
-                        "--label",
-                        f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
-                        "-v",
-                        f"{tmp_path}:/events",
-                        "busybox:1.36",
-                        "sh",
-                        "-c",
-                        "echo started >> /events/starts",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=True,
-                )
-                assert created.returncode == 0
-                waited = subprocess.run(
-                    ["docker", "wait", container],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=True,
-                )
-                assert waited.stdout == "0\n"
-                assert hermetic_llm._container_state(container) == "exited"
-                assert starts.read_text() == "started\n"
 
-            attempts = []
-            with _models_server("unrelated-model", attempts=attempts) as url:
-                monkeypatch.setattr(
-                    hermetic_llm, "_configured_model_urls", lambda model: ()
-                )
-                monkeypatch.setitem(
-                    hermetic_llm._SIDECARS,
-                    TEACHER_MODEL,
-                    (container, urlparse(url).port),
-                )
-                start = threading.Barrier(workers, timeout=10)
+    def resolver(self) -> LlmResolver:
+        return LlmResolver(modal_web_url=self.web_url, http_client=self.client)
 
-                def resolve(_):
-                    start.wait()
-                    with pytest.raises(LocalModelWontFitError) as excinfo:
-                        hermetic_llm.ensure_llm(TEACHER_MODEL, deadline_s=0)
-                    return str(excinfo.value).split(" and this host has ")[0]
 
-                with ThreadPoolExecutor(max_workers=workers) as pool:
-                    refusals = list(pool.map(resolve, range(workers)))
+@contextmanager
+def _identity_server(model_id: str, revision: str | None):
+    """A real local OpenAI model-list endpoint for the explicit override."""
+    body = json.dumps(_model_list(model_id, revision)).encode()
+    seen: list[tuple[str, str | None]] = []
 
-            assert (
-                refusals
-                == [
-                    f"Refusing to spawn {TEACHER_MODEL!r} locally: it needs 1000000.0 GiB"
-                ]
-                * workers
-            )
-            assert attempts == []
-            if existing:
-                assert starts.read_text() == "started\n"
-            assert hermetic_llm._container_state(container) == (
-                "exited" if existing else None
-            )
-        finally:
-            hermetic_llm._remove_container(container)
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200 if self.path == "/v1/models" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def modal_env(monkeypatch):
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
 
 
 class TestRoleModelsDeriveFromShippedConfig:
-    """The LM roles the tests provision are whatever configs/config.json serves."""
+    """The LM roles the tests resolve are whatever configs/config.json serves."""
 
     @staticmethod
     def _shipped(role: str) -> str:
-        import json
-
-        from tests.utils.hermetic_llm import SOURCE_CONFIG
-
-        model = json.loads(SOURCE_CONFIG.read_text())["llm_config"][role]["model"]
+        model = json.loads(hermetic_llm.SOURCE_CONFIG.read_text())["llm_config"][role][
+            "model"
+        ]
         return model[len("openai/") :] if model.startswith("openai/") else model
 
     def test_primary_role_model_is_not_restated(self) -> None:
@@ -206,347 +138,252 @@ class TestRoleModelsDeriveFromShippedConfig:
     def test_teacher_role_model_is_not_restated(self) -> None:
         assert TEACHER_MODEL == self._shipped("teacher")
 
-    def test_the_two_roles_are_distinct_models(self) -> None:
-        assert MODEL != TEACHER_MODEL
+    def test_each_role_maps_to_its_chat_service(self) -> None:
+        assert hermetic_llm.service_for_model(MODEL) == STUDENT
+        assert hermetic_llm.service_for_model(TEACHER_MODEL) == TEACHER
+
+    def test_a_model_no_chat_service_serves_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"No chat inference service serves 'x/y'"):
+            hermetic_llm.service_for_model("x/y")
 
 
-class TestResolutionDecisionIsReported:
-    """Which endpoint a role resolved to, or why it fell through, is logged."""
-
-    def test_resolved_endpoint_is_logged_with_model_and_url(self, caplog) -> None:
-        from tests.utils import hermetic_llm
-
-        with caplog.at_level("INFO", logger="tests.utils.hermetic_llm"):
-            hermetic_llm._report_resolution(MODEL, "https://example.invalid", ())
-        assert [r.getMessage() for r in caplog.records] == [
-            f"LM role model {MODEL!r} resolved to https://example.invalid"
-        ]
-
-    def test_fallthrough_names_every_candidate_that_was_tried(self, caplog) -> None:
-        from tests.utils import hermetic_llm
-
-        tried = ("https://a.invalid", "https://b.invalid")
-        with caplog.at_level("WARNING", logger="tests.utils.hermetic_llm"):
-            hermetic_llm._report_resolution(TEACHER_MODEL, None, tried)
-        message = caplog.records[-1].getMessage()
-        assert TEACHER_MODEL in message
-        assert "https://a.invalid" in message
-        assert "https://b.invalid" in message
-        assert "local sidecar" in message
-
-    def test_fallthrough_with_no_candidates_says_so(self, caplog) -> None:
-        from tests.utils import hermetic_llm
-
-        with caplog.at_level("WARNING", logger="tests.utils.hermetic_llm"):
-            hermetic_llm._report_resolution(MODEL, None, ())
-        assert "no candidate endpoint was configured" in caplog.records[-1].getMessage()
-
-    def test_ensure_llm_reports_before_it_spawns(self) -> None:
-        import inspect
-
-        from tests.utils import hermetic_llm
-
-        source = inspect.getsource(hermetic_llm.ensure_llm)
-        assert source.index("_report_resolution(") < source.index("_guard_local_spawn(")
-
-
-def _record_docker_calls(monkeypatch, tmp_path):
-    """Put a recording ``docker`` ahead of the real one on PATH.
-
-    Every docker invocation the resolver makes still reaches the real daemon;
-    the shim only appends its argv to a log the test reads afterwards.
-    """
-    real_docker = shutil.which("docker")
-    if real_docker is None:
-        pytest.fail("the docker CLI is required: these tests drive the real daemon")
-    shim_dir = tmp_path / "docker-shim"
-    shim_dir.mkdir()
-    log = tmp_path / "docker-calls.log"
-    shim = shim_dir / "docker"
-    shim.write_text(
-        "#!/bin/sh\n"
-        f"printf '%s\\037' \"$@\" >> '{log}'\n"
-        f"printf '\\n' >> '{log}'\n"
-        f"exec '{real_docker}' \"$@\"\n"
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
-
-    def calls() -> list[list[str]]:
-        if not log.exists():
-            return []
-        return [line.split("\x1f")[:-1] for line in log.read_text().splitlines()]
-
-    return real_docker, calls
-
-
-def _containers_named(real_docker: str, name: str) -> list[str]:
-    listed = subprocess.run(
-        [
-            real_docker,
-            "ps",
-            "-a",
-            "--filter",
-            f"name=^{name}$",
-            "--format",
-            "{{.Names}}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=True,
-    )
-    return listed.stdout.split()
-
-
-def _resolve_in_isolation(monkeypatch, tmp_path, model, *, candidate):
-    """Resolve ``model`` with ``candidate`` as the only remote endpoint.
-
-    No kube context exists, so cluster discovery contributes nothing. The
-    sidecar slot is renamed and the capacity requirement raised past any host,
-    so a resolver that wrongly falls through to a spawn is refused before
-    ``docker run`` instead of starting a model.
-    """
-    _isolated_exact_model_state(monkeypatch, tmp_path)
-    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "no-clusters.kubeconfig"))
-    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-    if candidate is None:
-        monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
-        monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-    else:
-        monkeypatch.setenv("TEST_LLM_API_BASE", f"{candidate}/v1")
-        monkeypatch.setenv("TEST_LLM_MODEL", model)
-    container = f"spawn-contract-{uuid.uuid4().hex[:10]}"
-    monkeypatch.setitem(hermetic_llm._SIDECARS, model, (container, _free_port()))
-    monkeypatch.setitem(hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB, model, 10**6)
-    real_docker, docker_calls = _record_docker_calls(monkeypatch, tmp_path)
-    return container, real_docker, docker_calls
-
-
-class TestRemoteCandidatesAreNeverTradedForALocalSpawn:
-    """Discovered remote endpoints that do not serve the model are an outage.
-
-    Only a host with no remote candidate at all provisions a local sidecar.
-    """
-
-    def test_candidate_answering_503_on_every_attempt_raises_naming_it(
-        self, monkeypatch, tmp_path
+class TestModalResolution:
+    def test_the_modal_deployment_serving_the_exact_model_is_returned(
+        self, modal_env
     ) -> None:
-        attempts: list[str] = []
-        with _models_server(
-            MODEL, fail_first=10**6, fail_status=503, attempts=attempts
-        ) as url:
-            container, real_docker, docker_calls = _resolve_in_isolation(
-                monkeypatch, tmp_path, MODEL, candidate=url
+        modal = _ModalServing()
+
+        endpoint = modal.resolver().resolve(MODEL)
+
+        assert (
+            endpoint.service,
+            endpoint.provider,
+            endpoint.base_url,
+            dict(endpoint.headers),
+            endpoint.model_id,
+            endpoint.model_revision,
+        ) == (
+            "vllm_llm_student",
+            "modal",
+            MODAL_URL,
+            {"Authorization": f"Bearer {API_KEY}"},
+            STUDENT.model_id,
+            STUDENT.model_revision,
+        )
+        assert modal.lookups == ["cogniverse-vllm-llm-student"]
+        assert modal.requests == [(f"{MODAL_URL}/v1/models", f"Bearer {API_KEY}")]
+        # The identity request gets the deployment's cold-start budget.
+        assert modal.clients == [STUDENT.boot_deadline_seconds]
+
+    def test_the_teacher_role_resolves_its_own_deployment(self, modal_env) -> None:
+        modal = _ModalServing(TEACHER.model_id, TEACHER.model_revision)
+
+        endpoint = modal.resolver().resolve(TEACHER_MODEL)
+
+        assert (endpoint.service, endpoint.model_id) == (
+            "vllm_llm_teacher",
+            TEACHER.model_id,
+        )
+        assert modal.lookups == ["cogniverse-vllm-llm-teacher"]
+
+    def test_a_deployment_serving_another_model_is_refused(self, modal_env) -> None:
+        modal = _ModalServing(TEACHER.model_id, TEACHER.model_revision)
+
+        with pytest.raises(LlmEndpointMismatchError) as caught:
+            modal.resolver().resolve(MODEL)
+
+        assert str(caught.value) == (
+            f"vllm_llm_student ({MODEL}): modal cogniverse-vllm-llm-student "
+            f"endpoint {MODAL_URL} does not serve it exactly: ModelIdentityError: "
+            f"vllm_llm_student: expected model {MODEL!r}, got {TEACHER.model_id!r}. "
+            + REMEDY
+        )
+
+    def test_a_deployment_serving_another_revision_is_refused(self, modal_env) -> None:
+        modal = _ModalServing(STUDENT.model_id, "0" * 40)
+
+        with pytest.raises(LlmEndpointMismatchError) as caught:
+            modal.resolver().resolve(MODEL)
+
+        assert caught.value.detail == (
+            f"modal cogniverse-vllm-llm-student endpoint {MODAL_URL} does not "
+            "serve it exactly: ModelIdentityError: vllm_llm_student: expected "
+            f"revision {STUDENT.model_revision!r}, got {'0' * 40!r}"
+        )
+
+    def test_an_undeployed_app_raises_naming_the_deploy_command(
+        self, modal_env
+    ) -> None:
+        modal = _ModalServing(
+            lookup_error=ModalLifecycleError(
+                "vllm_llm_student: failed to read Modal endpoint: App "
+                "'cogniverse-vllm-llm-student' not found in environment 'main'."
             )
-            with pytest.raises(RemoteModelUnavailableError) as excinfo:
-                hermetic_llm.ensure_llm(MODEL, deadline_s=0)
-
-        outcome = "HTTP 503 on 3 of 3 attempts"
-        assert excinfo.value.model == MODEL
-        assert excinfo.value.outcomes == ((url, outcome),)
-        assert str(excinfo.value) == (
-            f"Refusing to start a local sidecar for {MODEL!r}: remote endpoints "
-            f"were discovered and none of them serves it. {url}: {outcome}"
-        )
-        assert attempts == ["/v1/models"] * 3
-        assert docker_calls() == []
-        assert _containers_named(real_docker, container) == []
-        assert hermetic_llm.resolution_log()[-1] == LmResolution(
-            model=MODEL,
-            decision="refused",
-            endpoint=None,
-            candidates=(f"{url}: {outcome}",),
-            reason="no discovered endpoint serves it",
         )
 
-    def test_candidate_serving_the_exact_model_is_returned(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        attempts: list[str] = []
-        with _models_server(MODEL, attempts=attempts) as url:
-            container, real_docker, docker_calls = _resolve_in_isolation(
-                monkeypatch, tmp_path, MODEL, candidate=url
-            )
-            resolved = hermetic_llm.ensure_llm(MODEL, deadline_s=0)
+        with pytest.raises(ModalLlmNotDeployedError) as caught:
+            modal.resolver().resolve(MODEL)
 
-        assert resolved == f"{url}/v1"
-        assert attempts == ["/v1/models"]
-        assert docker_calls() == []
-        assert _containers_named(real_docker, container) == []
-        assert hermetic_llm.resolution_log()[-1] == LmResolution(
-            model=MODEL,
-            decision="resolved-remote",
-            endpoint=url,
-            candidates=(url,),
+        assert str(caught.value) == (
+            f"vllm_llm_student ({MODEL}): Modal names no endpoint for "
+            "cogniverse-vllm-llm-student: vllm_llm_student: failed to read Modal "
+            "endpoint: App 'cogniverse-vllm-llm-student' not found in environment "
+            "'main'.. " + REMEDY
         )
-
-    def test_reachable_candidate_listing_only_another_model_raises(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        attempts: list[str] = []
-        with _models_server("unrelated-model", attempts=attempts) as url:
-            container, real_docker, docker_calls = _resolve_in_isolation(
-                monkeypatch, tmp_path, MODEL, candidate=url
-            )
-            with pytest.raises(RemoteModelUnavailableError) as excinfo:
-                hermetic_llm.ensure_llm(MODEL, deadline_s=0)
-
-        assert excinfo.value.outcomes == ((url, "lists ['unrelated-model']"),)
-        assert attempts == ["/v1/models"]
-        assert docker_calls() == []
-        assert _containers_named(real_docker, container) == []
-
-    def test_no_candidate_takes_the_spawn_path_behind_the_capacity_guard(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        container, real_docker, docker_calls = _resolve_in_isolation(
-            monkeypatch, tmp_path, MODEL, candidate=None
-        )
-        with pytest.raises(LocalModelWontFitError) as excinfo:
-            hermetic_llm.ensure_llm(MODEL, deadline_s=0)
-
-        assert str(excinfo.value).split(" and this host has ")[0] == (
-            f"Refusing to spawn {MODEL!r} locally: it needs 1000000.0 GiB"
-        )
-        assert docker_calls() == [["inspect", "-f", "{{.State.Status}}", container]]
-        assert _containers_named(real_docker, container) == []
-        refusal = hermetic_llm.resolution_log()[-1]
-        assert (refusal.model, refusal.decision, refusal.candidates) == (
+        assert (caught.value.service, caught.value.model) == (
+            "vllm_llm_student",
             MODEL,
-            "refused",
-            (),
         )
-        assert refusal.reason == str(excinfo.value).splitlines()[0]
+        assert modal.clients == []
 
-    def test_concurrent_callers_all_raise_and_none_spawns(
-        self, monkeypatch, tmp_path
+    def test_a_missing_inference_key_raises_before_asking_modal(
+        self, monkeypatch
     ) -> None:
-        workers = 4
-        attempts: list[str] = []
-        with _models_server(
-            MODEL, fail_first=10**6, fail_status=503, attempts=attempts
-        ) as url:
-            container, real_docker, docker_calls = _resolve_in_isolation(
-                monkeypatch, tmp_path, MODEL, candidate=url
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+        modal = _ModalServing()
+
+        with pytest.raises(ModalLlmNotDeployedError) as caught:
+            modal.resolver().resolve(MODEL)
+
+        assert str(caught.value) == (
+            f"vllm_llm_student ({MODEL}): COGNIVERSE_INFERENCE_API_KEY is not "
+            "set, so no Modal endpoint can be authenticated. Tests never start a "
+            "model on this host; put the key in "
+            ".env/COGNIVERSE_INFERENCE_API_KEY.env."
+        )
+        assert modal.lookups == []
+
+
+class TestExplicitOverride:
+    def test_an_explicit_url_is_used_instead_of_modal(self, monkeypatch) -> None:
+        modal = _ModalServing()
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+        with _identity_server(STUDENT.model_id, STUDENT.model_revision) as (
+            url,
+            seen,
+        ):
+            monkeypatch.setenv(
+                "INFERENCE_SERVICE_URLS", json.dumps({"vllm_llm_student": url})
             )
-            start = threading.Barrier(workers, timeout=30)
+            endpoint = LlmResolver(modal_web_url=modal.web_url).resolve(MODEL)
 
-            def resolve(_):
-                start.wait()
-                with pytest.raises(RemoteModelUnavailableError) as excinfo:
-                    hermetic_llm.ensure_llm(MODEL, deadline_s=0)
-                return excinfo.value.outcomes
+        assert (endpoint.provider, endpoint.base_url) == ("local", url)
+        assert seen == [("/v1/models", f"Bearer {API_KEY}")]
+        assert modal.lookups == []
 
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                outcomes = list(pool.map(resolve, range(workers)))
-
-        assert outcomes == [((url, "HTTP 503 on 3 of 3 attempts"),)] * workers
-        assert attempts == ["/v1/models"] * 3 * workers
-        assert docker_calls() == []
-        assert _containers_named(real_docker, container) == []
-
-    def test_a_kube_context_that_exists_but_cannot_answer_is_an_outage(
-        self, monkeypatch, tmp_path
+    def test_a_wrong_explicit_url_fails_without_falling_back_to_modal(
+        self, monkeypatch
     ) -> None:
-        container, real_docker, docker_calls = _resolve_in_isolation(
-            monkeypatch, tmp_path, MODEL, candidate=None
+        modal = _ModalServing()
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+        with _identity_server(TEACHER.model_id, TEACHER.model_revision) as (url, _):
+            monkeypatch.setenv(
+                "INFERENCE_SERVICE_URLS", json.dumps({"vllm_llm_student": url})
+            )
+            with pytest.raises(LlmEndpointMismatchError) as caught:
+                LlmResolver(modal_web_url=modal.web_url).resolve(MODEL)
+
+        assert caught.value.detail == (
+            f"INFERENCE_SERVICE_URLS endpoint {url} does not serve it exactly: "
+            f"ModelIdentityError: vllm_llm_student: expected model {MODEL!r}, "
+            f"got {TEACHER.model_id!r}"
         )
-        dead_port = _free_port()
-        kubeconfig = tmp_path / "unreachable.kubeconfig"
-        kubeconfig.write_text(
-            "apiVersion: v1\n"
-            "kind: Config\n"
-            "clusters:\n"
-            "- name: unreachable\n"
-            f"  cluster: {{server: 'http://127.0.0.1:{dead_port}'}}\n"
-            "users:\n"
-            "- name: nobody\n"
-            "  user: {token: none}\n"
-            "contexts:\n"
-            f"- name: {E2E_CONTEXT}\n"
-            "  context: {cluster: unreachable, user: nobody}\n"
-            f"current-context: {E2E_CONTEXT}\n"
+        assert modal.lookups == []
+
+
+class TestConcurrentResolution:
+    def test_concurrent_callers_share_one_resolution(self, modal_env) -> None:
+        modal = _ModalServing()
+        resolver = modal.resolver()
+        callers = 16
+        barrier = threading.Barrier(callers)
+
+        def resolve(_):
+            barrier.wait(timeout=10)
+            return resolver.resolve(MODEL)
+
+        with ThreadPoolExecutor(max_workers=callers) as pool:
+            endpoints = list(pool.map(resolve, range(callers)))
+
+        assert len({id(endpoint) for endpoint in endpoints}) == 1
+        assert endpoints[0].base_url == MODAL_URL
+        assert modal.lookups == ["cogniverse-vllm-llm-student"]
+        assert len(modal.requests) == 1
+
+    def test_concurrent_callers_all_get_the_one_typed_failure(self, modal_env) -> None:
+        modal = _ModalServing(lookup_error=ModalLifecycleError("App not found"))
+        resolver = modal.resolver()
+        callers = 16
+        barrier = threading.Barrier(callers)
+
+        def resolve(_):
+            barrier.wait(timeout=10)
+            try:
+                resolver.resolve(MODEL)
+            except ModalLlmNotDeployedError as exc:
+                return exc
+            raise AssertionError("resolution must fail")
+
+        with ThreadPoolExecutor(max_workers=callers) as pool:
+            errors = list(pool.map(resolve, range(callers)))
+
+        assert len({id(error) for error in errors}) == 1
+        assert modal.lookups == ["cogniverse-vllm-llm-student"]
+        assert modal.clients == []
+
+    def test_each_role_resolves_independently(self, modal_env) -> None:
+        student = _ModalServing()
+        teacher = _ModalServing(TEACHER.model_id, TEACHER.model_revision)
+
+        def web_url(spec, credentials):
+            serving = student if spec.name == "vllm_llm_student" else teacher
+            return serving.web_url(spec, credentials)
+
+        def client(spec):
+            serving = student if spec.name == "vllm_llm_student" else teacher
+            return serving.client(spec)
+
+        resolver = LlmResolver(modal_web_url=web_url, http_client=client)
+        barrier = threading.Barrier(2)
+
+        def resolve(model):
+            barrier.wait(timeout=10)
+            return resolver.resolve(model)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            primary, distilled = pool.map(resolve, (MODEL, TEACHER_MODEL))
+
+        assert (primary.service, distilled.service) == (
+            "vllm_llm_student",
+            "vllm_llm_teacher",
         )
-        monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
-
-        with pytest.raises(ModelEndpointDiscoveryError) as excinfo:
-            hermetic_llm.ensure_llm(MODEL, deadline_s=0)
-
-        assert excinfo.value.context == E2E_CONTEXT
-        assert str(excinfo.value) == (
-            f"Could not discover the endpoints kube context {E2E_CONTEXT!r} "
-            f"publishes, so whether it serves the model remotely is unknown: "
-            f"{excinfo.value.detail}"
-        )
-        assert excinfo.value.detail.startswith("kubectl: ")
-        assert f"127.0.0.1:{dead_port}" in excinfo.value.detail
-        assert docker_calls() == []
-        assert _containers_named(real_docker, container) == []
-        assert hermetic_llm.resolution_log()[-1] == LmResolution(
-            model=MODEL,
-            decision="refused",
-            endpoint=None,
-            candidates=(),
-            reason=str(excinfo.value).splitlines()[0],
-        )
-
-    def test_absent_kube_context_contributes_no_candidate(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        from tests.utils import vllm_sidecar
-
-        monkeypatch.setenv("KUBECONFIG", str(tmp_path / "no-clusters.kubeconfig"))
-        assert vllm_sidecar._discover_external_model_urls(context=E2E_CONTEXT) == ()
+        assert student.lookups == ["cogniverse-vllm-llm-student"]
+        assert teacher.lookups == ["cogniverse-vllm-llm-teacher"]
 
 
-class TestResolutionSummaryLines:
-    """The one-line form each decision takes in the terminal summary."""
+def test_ensure_llm_returns_the_openai_base_of_the_resolved_endpoint(
+    monkeypatch, modal_env
+) -> None:
+    monkeypatch.setattr(hermetic_llm, "_RESOLVER", _ModalServing().resolver())
 
-    def test_every_decision_renders_its_endpoint_and_candidates(self) -> None:
-        lines = [
-            LmResolution(
-                model=MODEL,
-                decision="resolved-remote",
-                endpoint="https://student.example",
-                candidates=("https://student.example", "https://teacher.example"),
-            ).summary_line(),
-            LmResolution(
-                model=MODEL,
-                decision="spawned-local",
-                endpoint="http://127.0.0.1:29110/v1",
-                candidates=(),
-                reason="container cogniverse-test-llm",
-            ).summary_line(),
-            LmResolution(
-                model=TEACHER_MODEL,
-                decision="refused",
-                endpoint=None,
-                candidates=("https://a.example: HTTP 503 on 3 of 3 attempts",),
-                reason="no discovered endpoint serves it",
-            ).summary_line(),
-        ]
-        assert lines == [
-            f"LM {MODEL}: resolved-remote https://student.example "
-            "[candidates: https://student.example; https://teacher.example]",
-            f"LM {MODEL}: spawned-local http://127.0.0.1:29110/v1 "
-            "(container cogniverse-test-llm) [candidates: none]",
-            f"LM {TEACHER_MODEL}: refused (no discovered endpoint serves it) "
-            "[candidates: https://a.example: HTTP 503 on 3 of 3 attempts]",
-        ]
+    assert hermetic_llm.ensure_llm() == f"{MODAL_URL}/v1"
+    assert hermetic_llm.ensure_llm_endpoint(MODEL).base_url == MODAL_URL
+
+
+class TestNothingIsStartedLocally:
+    def test_the_resolver_has_no_container_or_process_path(self) -> None:
+        source = hermetic_llm.__loader__.get_source(hermetic_llm.__name__)
+        assert re.findall(r"\b(subprocess|docker|Popen|vllm serve)\b", source) == []
 
 
 class TestDecisionsReachTheTerminalSummaryOfAPassingRun:
     """A real nested pytest session prints each decision, whatever the capture."""
 
     def test_resolved_and_refused_lines_are_printed(self, tmp_path) -> None:
-        repo_root = hermetic_llm.REPO_ROOT
-        attempts: list[str] = []
-        with (
-            _models_server(MODEL) as serving,
-            _models_server(
-                MODEL, fail_first=10**6, fail_status=503, attempts=attempts
-            ) as failing,
+        with _identity_server(STUDENT.model_id, STUDENT.model_revision) as (
+            serving,
+            _,
         ):
             session_dir = tmp_path / "session"
             session_dir.mkdir()
@@ -556,42 +393,39 @@ class TestDecisionsReachTheTerminalSummaryOfAPassingRun:
             (session_dir / "test_resolution.py").write_text(
                 textwrap.dedent(
                     f"""
+                    import json
+
                     import pytest
 
-                    from tests.utils import hermetic_llm, vllm_sidecar
+                    from tests.utils import hermetic_llm
 
 
-                    @pytest.fixture(autouse=True)
-                    def _own_provisioning_state(monkeypatch, tmp_path):
-                        monkeypatch.setattr(
-                            vllm_sidecar, "EXACT_MODEL_LOCK_PATH", tmp_path / "lock"
+                    def test_serving(monkeypatch):
+                        monkeypatch.setenv(
+                            "INFERENCE_SERVICE_URLS",
+                            json.dumps({{"vllm_llm_student": "{serving}"}}),
                         )
-                        monkeypatch.setattr(
-                            vllm_sidecar, "_EXACT_MODEL_LEASE_DIR", tmp_path / "leases"
+                        assert hermetic_llm.ensure_llm() == "{serving}/v1"
+
+
+                    def test_wrong_model(monkeypatch):
+                        monkeypatch.setenv(
+                            "INFERENCE_SERVICE_URLS",
+                            json.dumps({{"vllm_llm_teacher": "{serving}"}}),
                         )
-
-
-                    def test_serving_candidate(monkeypatch):
-                        monkeypatch.setenv("TEST_LLM_API_BASE", "{serving}/v1")
-                        assert hermetic_llm.ensure_llm(deadline_s=0) == "{serving}/v1"
-
-
-                    def test_unserving_candidate(monkeypatch):
-                        monkeypatch.setenv("TEST_LLM_API_BASE", "{failing}/v1")
-                        with pytest.raises(hermetic_llm.RemoteModelUnavailableError):
-                            hermetic_llm.ensure_llm(deadline_s=0)
+                        with pytest.raises(hermetic_llm.LlmEndpointMismatchError):
+                            hermetic_llm.ensure_llm(hermetic_llm.TEACHER_MODEL)
                     """
                 )
             )
             env = {
                 key: value
                 for key, value in os.environ.items()
-                if key not in {"INFERENCE_SERVICE_URLS", "TEST_LLM_API_BASE"}
+                if key != "INFERENCE_SERVICE_URLS"
             }
             env.update(
-                PYTHONPATH=str(repo_root),
-                KUBECONFIG=str(tmp_path / "no-clusters.kubeconfig"),
-                TEST_LLM_MODEL=MODEL,
+                PYTHONPATH=str(hermetic_llm.REPO_ROOT),
+                COGNIVERSE_INFERENCE_API_KEY=API_KEY,
             )
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"],
@@ -604,7 +438,6 @@ class TestDecisionsReachTheTerminalSummaryOfAPassingRun:
 
         output = result.stdout + result.stderr
         assert result.returncode == 0, output
-        assert re.search(r"^=+ 2 passed in [0-9.]+s =+$", output, re.MULTILINE), output
         lines = output.splitlines()
         starts = [
             index
@@ -617,9 +450,11 @@ class TestDecisionsReachTheTerminalSummaryOfAPassingRun:
             if line.startswith("="):
                 break
             section.append(line)
-        assert [line for line in section if line.startswith("LM ")] == [
-            f"LM {MODEL}: resolved-remote {serving} [candidates: {serving}]",
-            f"LM {MODEL}: refused (no discovered endpoint serves it) "
-            f"[candidates: {failing}: HTTP 503 on 3 of 3 attempts]",
+        assert [line for line in section if line] == [
+            f"LM {MODEL}: resolved-remote {serving} "
+            "[candidates: INFERENCE_SERVICE_URLS]",
+            f"LM {TEACHER_MODEL}: refused (INFERENCE_SERVICE_URLS endpoint {serving} "
+            "does not serve it exactly: ModelIdentityError: vllm_llm_teacher: "
+            f"expected model {TEACHER_MODEL!r}, got {MODEL!r}) "
+            "[candidates: INFERENCE_SERVICE_URLS]",
         ]
-        assert attempts == ["/v1/models"] * 3

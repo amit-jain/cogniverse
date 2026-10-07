@@ -90,3 +90,22 @@ def in_process_cluster_events(monkeypatch):
     monkeypatch.setattr(tenant_manager, "_cluster_events", events)
     monkeypatch.setattr(admin, "_cluster_events", events)
     return events
+
+
+@pytest.fixture
+async def tenant_task_events(monkeypatch, shared_state_redis):
+    """Wire tenant deletes to a task event store on the test Redis, under
+    keys of their own."""
+    import uuid
+
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.task_events import TaskEventStore
+
+    prefix = f"test:task-events:{uuid.uuid4().hex}"
+    store = TaskEventStore(
+        shared_state_redis,
+        key_prefix=prefix,
+        ingestion_stream_prefix=f"{prefix}:ingest:",
+    )
+    monkeypatch.setattr(tenant_manager, "_task_events", store)
+    return store

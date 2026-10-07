@@ -13,6 +13,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
+from cogniverse_runtime.admin.models import Tenant
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -125,8 +127,10 @@ def _delete_seam(monkeypatch, *, remaining_tenants, org_exists=True):
     backend.schema_manager.delete_tenant_schemas.return_value = []
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _org(_org_id):
         return MagicMock() if org_exists else None
@@ -148,7 +152,9 @@ def _org_deletes(backend):
     ]
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_deleting_last_tenant_deletes_the_auto_created_org(monkeypatch):
     """Tenant create auto-creates the org; deleting the org's last tenant
@@ -164,7 +170,9 @@ async def test_deleting_last_tenant_deletes_the_auto_created_org(monkeypatch):
     assert org_calls[0].kwargs["doc_id"] == "acme"
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_org_with_remaining_tenants_is_kept(monkeypatch):
     tm, backend = _delete_seam(monkeypatch, remaining_tenants=[MagicMock()])
@@ -176,7 +184,9 @@ async def test_org_with_remaining_tenants_is_kept(monkeypatch):
     assert _org_deletes(backend) == []
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_org_cleanup_failure_keeps_tenant_delete_successful(monkeypatch, caplog):
     """The tenant IS deleted by the time org cleanup runs; a backend blip
@@ -191,8 +201,10 @@ async def test_org_cleanup_failure_keeps_tenant_delete_successful(monkeypatch, c
     backend.schema_manager.list_deployed_document_types.return_value = []
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _boom(_org_id):
         raise HTTPException(status_code=503, detail="registry unavailable")
@@ -208,7 +220,9 @@ async def test_org_cleanup_failure_keeps_tenant_delete_successful(monkeypatch, c
     assert "Organization cleanup" in caplog.text
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, caplog):
     """delete_metadata_document returns False on a non-200 without raising;
@@ -230,7 +244,9 @@ async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, 
     assert "may remain" in caplog.text
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_tenant_schemas_dropped_in_one_offloaded_redeploy(monkeypatch):
     """All of a tenant's schemas go in ONE redeploy (delete_tenant_schemas),
@@ -253,8 +269,10 @@ async def test_tenant_schemas_dropped_in_one_offloaded_redeploy(monkeypatch):
     backend.schema_manager.delete_tenant_schemas.side_effect = _record_bulk
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _org(_org_id):
         return None
@@ -279,7 +297,9 @@ async def test_tenant_schemas_dropped_in_one_offloaded_redeploy(monkeypatch):
     assert all(t != loop_thread for t in call_threads)
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_schema_drop_failure_keeps_the_tenant(monkeypatch):
     """A refused or failed redeploy propagates: the tenant record stays and
@@ -293,8 +313,10 @@ async def test_schema_drop_failure_keeps_the_tenant(monkeypatch):
     )
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
 
@@ -304,7 +326,9 @@ async def test_schema_drop_failure_keeps_the_tenant(monkeypatch):
     backend.delete_metadata_document.assert_not_called()
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_raw_form_input_resolves_to_one_canonical_pass(monkeypatch):
     """A raw-form tenant id goes through exactly one canonical
@@ -316,8 +340,10 @@ async def test_raw_form_input_resolves_to_one_canonical_pass(monkeypatch):
     backend.schema_manager.delete_tenant_schemas.return_value = ["video_x_acme_acme"]
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = MagicMock()
+
     async def _tenant(_tid):
-        return MagicMock()
+        return tenant
 
     async def _org(_org_id):
         return None
@@ -454,7 +480,9 @@ async def test_org_delete_accepts_an_unreported_delete_that_removed_the_record(
     }
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
     """delete_metadata_document reports a non-200 as False without raising;
@@ -477,8 +505,16 @@ async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
     backend.schema_manager = schema_manager
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = Tenant(
+        tenant_full_id="acme:acme",
+        org_id="acme",
+        tenant_name="acme",
+        created_at=1757000000000,
+        created_by="unit",
+    )
+
     async def _tenant(_tid):
-        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+        return tenant
 
     monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
 
@@ -491,7 +527,9 @@ async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
     )
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_delete_tenant_reports_deleted_when_the_record_is_already_gone(
     monkeypatch,
@@ -510,8 +548,16 @@ async def test_delete_tenant_reports_deleted_when_the_record_is_already_gone(
     backend.schema_manager = schema_manager
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = Tenant(
+        tenant_full_id="acme:acme",
+        org_id="acme",
+        tenant_name="acme",
+        created_at=1757000000000,
+        created_by="unit",
+    )
+
     async def _tenant(_tid):
-        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+        return tenant
 
     async def _remaining(_org_id):
         return []
@@ -535,7 +581,9 @@ async def test_delete_tenant_reports_deleted_when_the_record_is_already_gone(
     }
 
 
-@pytest.mark.usefixtures("harness_key_config_store", "in_process_cluster_events")
+@pytest.mark.usefixtures(
+    "harness_key_config_store", "in_process_cluster_events", "tenant_task_events"
+)
 @pytest.mark.asyncio
 async def test_delete_tenant_reports_deleted_when_metadata_delete_confirms(
     monkeypatch,
@@ -549,8 +597,16 @@ async def test_delete_tenant_reports_deleted_when_metadata_delete_confirms(
     backend.schema_manager = schema_manager
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
+    tenant = Tenant(
+        tenant_full_id="acme:acme",
+        org_id="acme",
+        tenant_name="acme",
+        created_at=1757000000000,
+        created_by="unit",
+    )
+
     async def _tenant(_tid):
-        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+        return tenant
 
     async def _remaining(_org):
         return ["acme:other"]

@@ -317,15 +317,19 @@ reshape), matching DenseOn's dense-retrieval semantics.
 |---|---|
 | Chart key | `inference.vllm_asr` |
 | Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA, pinned revision `41f01f3f…` passed to `vllm serve --revision`; `openai/whisper-tiny` unpinned in the CPU overlay |
-| Image | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (CUSTOM, `deploy/vllm_audio/Dockerfile`: the device's `vllm/vllm-openai*:v0.23.0` image plus `soundfile` and `librosa`) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
 | Default state | enabled |
 
-vLLM's stock CPU and ROCm images don't ship the `[audio]` extras, so
-the chart's pod template runs `pip install soundfile librosa` at
-startup before exec-ing `vllm serve`. The endpoint is
-`/v1/audio/transcriptions` (OpenAI-compatible multipart upload).
+vLLM's stock images don't ship the audio packages, so the derived image
+installs them at build time and the pod runs `vllm serve` directly. The
+service's `device` selects the repository and the upstream image it derives
+from. The endpoint is
+`/v1/audio/transcriptions` (OpenAI-compatible multipart upload). The remote
+clients send each 30 s chunk as `verbose_json` (timings) and, unless the timed
+segments run to the end of the chunk, as `json` (text), plus one request per
+answer that comes back empty or as a repetition loop.
 
 ### CLAP acoustic embeddings (`clap_embed` sidecar)
 
@@ -402,9 +406,10 @@ half of the forward pass for a gateway-length query. The export writes
 `source.json` naming the checkpoint, and the server refuses to load an
 export of any other model or revision. `transformers` and `onnxruntime` are
 pinned in the Dockerfile because the graph traces one and runs on the other.
-`tests/cli/integration/test_gliner_image_serving.py` builds the image, runs
-it under the chart's CPU and memory limits, and checks its entities against
-the PyTorch checkpoint's.
+`tests/cli/integration/test_gliner_image_serving.py` checks the e2e
+cluster's gliner pod: the baked export's `source.json` names the pinned
+checkpoint, the server runs it on ONNX Runtime with as many threads as the
+pod's CPU limit, and its entities match the PyTorch checkpoint's.
 
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
@@ -428,15 +433,37 @@ model data on the first inference request. A load failure returns HTTP 503; its
 `detail` matches
 `face_embed: model buffalo_l load failed (<ExceptionType>): <cause>`.
 
+Only the detector and recogniser are loaded (the pack's landmark and
+gender/age models produce nothing `/embed` returns). On CPU each ONNX session
+runs `FACE_EMBED_INTRA_OP_THREADS` threads (chart value `"1"`, with clients
+keeping one request in flight per sidecar CPU); ONNX Runtime's own default
+sizes its pool from the node's cores, not the pod's CPU limit. At the chart's
+2-CPU limit a 640x480 frame of 5-7 faces takes 0.4-0.6 s, and at most 1.1 s
+with 4 requests in flight; with the default pool and all five models the same
+frames took 10-12 s each, and up to 43 s with 4 in flight. Boxes, vectors and
+scores are unchanged: `test_face_embed_reference_parity` compares the served
+faces with `tests/fixtures/model_references/face_embed.json`, recorded from the
+full pack with default sessions.
+
 The service is stateless — no persistence. The knowledge-graph face pipeline
-(`libs/agents/cogniverse_agents/graph/face_extractor.py`) POSTs one keyframe
-per request and clusters the returned 512-dim L2-normalized ArcFace vectors
+(`libs/agents/cogniverse_agents/graph/face_extractor.py`) reads each keyframe
+`KeyframeProcessor` wrote from its `path`, POSTs it as `image_b64`, one
+keyframe per request with one request per sidecar CPU in flight
+(`FACE_EMBED_MAX_CONCURRENCY`, set by the chart from
+`inference.face_embed.resources.limits.cpu`), retries a failed request once,
+and clusters the returned 512-dim L2-normalized ArcFace vectors
 per `source_doc_id` to discover anonymous identity groups, attributing each
 cluster to a temporally-aligned named person where possible. It's wired the
 same way as CLAP: opt-in via `inference_service_urls["face_embed"]`
 (`_lookup_face_embed_endpoint` in `libs/runtime/cogniverse_runtime/routers/ingestion.py`),
-additive — an unreachable sidecar degrades the pipeline rather than failing
-the whole ingest.
+additive — a keyframe that still fails is logged as a warning naming its
+segment and cause and the rest of the video's faces proceed, and an
+unreachable sidecar (every keyframe failing) is logged as a warning rather
+than failing the whole ingest. Each run logs its counts at INFO:
+`Face pipeline for source_doc_id=<id>: <n> faces in <k> keyframes, <f> failed
+keyframes, <c> clusters, <e> same_as edges, <a> anonymous face nodes`, or
+`no keyframes in the result` / `no faces in <k> keyframes, <f> failed
+keyframes`.
 
 ---
 
@@ -448,7 +475,7 @@ the whole ingest.
 | `vllm_llm_teacher` | same as student | No |
 | `vllm_colpali` (base and CPU/k3d dev composition; disabled) | `vllm/vllm-openai-cpu` | No |
 | `vllm_colpali` (ROCm 7.12+ / CUDA) | `vllm/vllm-openai-rocm` / `vllm/vllm-openai` | No |
-| `vllm_asr` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
+| `vllm_asr` | `cogniverse/vllm-audio-{cpu,cuda,rocm}` | **Yes** (`deploy/vllm_audio/Dockerfile`, one build per device) |
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
@@ -466,6 +493,32 @@ tag already exists on the host are not rebuilt, and tags already present in the
 k3d node are not re-imported. They are NOT published to a public registry —
 they're loaded from the host docker daemon into the cluster's containerd via
 `k3d image import`.
+
+### Starting without network access
+
+Every inference pod starts from its image and the model cache alone, so a
+node that comes back without DNS still serves:
+
+- No container installs packages or fetches from outside the cluster when it
+  starts; packages are baked in at image build time.
+- Each model server runs with `HF_HUB_OFFLINE=1` and loads its pinned
+  revision from the cache.
+- The `model-warm` init container puts that revision in the cache first. It
+  resolves the revision with `local_files_only=True` and makes no network
+  call when it is cached; only a missing revision is fetched (from the MinIO
+  mirror when configured, then the Hub). It covers every service that loads
+  Hub weights (`inference.<svc>.model` and `revision`/`modelRevision`);
+  GLiNER and InsightFace serve artifacts baked into their images.
+
+`tests/charts/test_model_pod_offline_startup.py` enforces this for every
+inference pod the chart renders. `scripts/check_offline_model_pods.py` applies
+the same checks to a running cluster, read-only, and also fails a pod that is
+not Ready or has restarted:
+
+```bash
+uv run python scripts/check_offline_model_pods.py [deployment ...] \
+    --context k3d-cogniverse-e2e --namespace cogniverse
+```
 
 ### Modal-hosted services (`inference.<svc>.externalUrl`)
 

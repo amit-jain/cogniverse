@@ -205,3 +205,89 @@ def test_a_json_value_that_is_not_an_object_is_raised():
     assert str(raised.value) == (
         f"{_OPERATION}: stdout is JSON list, not an object: {stdout!r}"
     )
+
+
+_RESET_TENANT = "reset_tenant:reset_tenant"
+
+
+def _profile_reset_script() -> str:
+    return batch_optimization._reset_module_artifact_script(
+        module_import=(
+            "from cogniverse_agents.profile_selection_agent import "
+            "ProfileSelectionModule"
+        ),
+        module_class="ProfileSelectionModule",
+        key_import="",
+        key_expr="'profile_selection'",
+        tenant_id=_RESET_TENANT,
+    )
+
+
+def test_the_artifact_reset_leaves_one_fresh_version_and_no_inherited_history(
+    monkeypatch, capsys
+):
+    """Run the in-pod reset against a real ArtifactManager over an in-memory
+    store holding two earlier profile runs: afterwards the lineage is the one
+    base version, so no earlier consumption can decay an example."""
+    import asyncio
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.example_selection import confirmation_stats
+    from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+    from cogniverse_foundation.telemetry import manager as telemetry_manager
+    from cogniverse_runtime import entrypoint_env
+    from tests.evaluation.fakes import InMemoryDatasetStore, StubTelemetryProvider
+
+    store = InMemoryDatasetStore()
+    provider = StubTelemetryProvider(store)
+
+    class _Manager:
+        def get_provider(self, tenant_id):
+            assert tenant_id == _RESET_TENANT
+            return provider
+
+    monkeypatch.setattr(
+        entrypoint_env,
+        "resolve_library_env_defaults",
+        lambda: {"telemetry_otlp_endpoint": "http://127.0.0.1:4317"},
+    )
+    monkeypatch.setattr(
+        telemetry_manager, "get_telemetry_manager", lambda **kwargs: _Manager()
+    )
+
+    earlier = ArtifactManager(provider, _RESET_TENANT)
+    for run in range(2):
+        _, version = asyncio.run(
+            earlier.save_blob_versioned(
+                "model",
+                "profile_selection",
+                json.dumps({"run": run}),
+                consumed_example_ids=[f"span:profile-label:{run}"],
+                decision="promote",
+                scored=False,
+                base_score=None,
+                candidate_score=None,
+            )
+        )
+        asyncio.run(earlier.activate_version("model", "profile_selection", version))
+    assert [
+        entry["consumed_example_ids"]
+        for entry in asyncio.run(
+            earlier.get_version_lineage("model", "profile_selection")
+        )
+    ] == [["span:profile-label:0"], ["span:profile-label:1"]]
+
+    exec(_profile_reset_script(), {})
+
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "__RESET__1:1"
+    after = ArtifactManager(provider, _RESET_TENANT)
+    lineage = asyncio.run(after.get_version_lineage("model", "profile_selection"))
+    assert [
+        (entry["version"], entry["consumed_example_ids"], entry["decision"])
+        for entry in lineage
+    ] == [(1, ["reset:base-module"], "rollback")]
+    assert set(confirmation_stats(lineage)) == {"reset:base-module"}
+    assert asyncio.run(after.active_blob_version("model", "profile_selection")) == 1
+    assert json.loads(
+        asyncio.run(after.load_blob("model", "profile_selection"))
+    ) == json.loads(json.dumps(ProfileSelectionModule().dump_state(), default=str))

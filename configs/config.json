@@ -855,7 +855,7 @@
         "result_granularity": "source",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
-          "token_pool_factor": 3
+          "token_pool_factor": 1
         },
         "pipeline_config": {
           "extract_keyframes": true,
@@ -913,7 +913,7 @@
         "schema_name": "image_colpali_mv",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
-          "token_pool_factor": 3
+          "token_pool_factor": 1
         },
         "pipeline_config": {
           "extract_keyframes": true,
@@ -1047,7 +1047,7 @@
         "schema_name": "document_visual",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
-          "token_pool_factor": 3
+          "token_pool_factor": 1
         },
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1138,7 +1138,7 @@
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "process_type": "video_chunks",
         "model_config": {
-          "token_pool_factor": 3
+          "token_pool_factor": 1
         },
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1318,6 +1318,7 @@
         "schema_name": "wiki_pages",
         "embedding_model": "lightonai/DenseOn",
         "embedding_type": "single_vector",
+        "encoder": "denseon",
         "schema_config": {
           "embedding_dims": 768
         }

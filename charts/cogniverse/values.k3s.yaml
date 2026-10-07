@@ -109,6 +109,19 @@ inference:
   vllm_asr:
     service:
       type: NodePort
+    image:
+      tag: "0.1.0-dev"
+      pullPolicy: Never
+    imagesByDevice:
+      cpu:
+        tag: "0.1.0-dev"
+        pullPolicy: Never
+      cuda:
+        tag: "0.1.0-dev"
+        pullPolicy: Never
+      rocm:
+        tag: "0.1.0-dev"
+        pullPolicy: Never
   vllm_llm_student:
     service:
       type: NodePort

@@ -219,7 +219,7 @@ class TestProcessImagesVllmConcurrent:
     returned embeddings must line up with the input image order regardless of
     completion order."""
 
-    def _client_with_recorded_posts(self, images):
+    def _client_with_recorded_posts(self, images, tokens=lambda index: 1):
         import base64
         import io
         import threading
@@ -256,7 +256,7 @@ class TestProcessImagesVllmConcurrent:
             resp = MagicMock()
             resp.raise_for_status.return_value = None
             resp.json.return_value = {
-                "data": [{"data": [[float(idx)] * 4]}],
+                "data": [{"data": [[float(idx)] * 4] * tokens(idx)}],
                 "model": "m",
                 "usage": {},
             }
@@ -281,6 +281,37 @@ class TestProcessImagesVllmConcurrent:
             assert float(np.asarray(embeddings[i])[0][0]) == float(i)
         # Multi-image batches must fan out over worker threads.
         assert len(threads) > 1
+
+    def test_equal_token_counts_stack_into_one_float32_array(self):
+        from PIL import Image as PILImage
+
+        images = [PILImage.new("RGB", (2, 2), color=(i, 0, 0)) for i in range(3)]
+        client, _ = self._client_with_recorded_posts(images, tokens=lambda i: 2)
+
+        embeddings = client.process_images_vllm(images, model_name="m")["embeddings"]
+
+        assert embeddings.dtype == np.float32
+        assert embeddings.tolist() == [
+            [[0.0] * 4, [0.0] * 4],
+            [[1.0] * 4, [1.0] * 4],
+            [[2.0] * 4, [2.0] * 4],
+        ]
+
+    def test_ragged_token_counts_keep_one_float32_array_per_image(self):
+        from PIL import Image as PILImage
+
+        images = [PILImage.new("RGB", (2, 2), color=(i, 0, 0)) for i in range(3)]
+        client, _ = self._client_with_recorded_posts(images, tokens=lambda i: i + 1)
+
+        embeddings = client.process_images_vllm(images, model_name="m")["embeddings"]
+
+        assert (embeddings.dtype, embeddings.shape) == (np.dtype(object), (3,))
+        assert [row.dtype for row in embeddings] == [np.float32] * 3
+        assert [row.tolist() for row in embeddings] == [
+            [[0.0] * 4],
+            [[1.0] * 4, [1.0] * 4],
+            [[2.0] * 4, [2.0] * 4, [2.0] * 4],
+        ]
 
     def test_single_image_returns_bare_array(self):
         from PIL import Image as PILImage

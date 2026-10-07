@@ -237,3 +237,59 @@ async def test_per_agent_annotations_isolated_by_name(real_telemetry):
         only_human_reviewed=False,
     )
     assert routing_rows == []
+
+
+@pytest.mark.asyncio
+async def test_the_project_pull_carries_span_ids_and_annotated_rows_their_attributes(
+    real_telemetry,
+):
+    """The quality monitor's annotation join pulls a whole 24 h project
+    window, up to 10,000 spans. Pulled with every attribute, the flywheel
+    tenant's window raised the monitor's resident peak by 1.5 GiB and the
+    pod died at its 3 GiB limit; the join needs only span ids, and only the
+    annotated spans' attributes are read."""
+    tenant_id = canonical_tenant_id(f"annpull{uuid4().hex[:8]}")
+    project = real_telemetry.config.get_project_name(tenant_id)
+    bulky = "x" * 200_000
+
+    span_ids = []
+    for query in ("find robot videos", "find cat videos"):
+        with real_telemetry.span(
+            name="GatewayAgent.process",
+            tenant_id=tenant_id,
+            attributes={
+                "routing.query": query,
+                "routing.chosen_agent": "video_search",
+                "routing.confidence": 0.9,
+                "output.value": bulky,
+            },
+        ) as span:
+            span_ids.append(format(span.get_span_context().span_id, "016x"))
+    real_telemetry.force_flush(timeout_millis=10000)
+
+    storage = RoutingAnnotationStorage(tenant_id=tenant_id)
+    assert await _wait_for_span(storage, project, span_ids[1])
+    assert await storage.store_human_annotation(
+        span_ids[0], AnnotationLabel.CORRECT_ROUTING, "looks right"
+    )
+
+    end = datetime.now(timezone.utc) + timedelta(minutes=1)
+    start = end - timedelta(hours=1)
+    pulled = await storage.fetch_project_spans(start, end)
+    assert list(pulled.columns) == ["context.span_id"]
+    assert sorted(pulled["context.span_id"]) == sorted(span_ids)
+
+    rows = []
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not rows:
+        rows = await storage.query_annotated_spans(
+            start_time=start,
+            end_time=end,
+            only_human_reviewed=True,
+            spans_df=pulled,
+        )
+        if not rows:
+            await asyncio.sleep(2)
+    assert [(r["span_id"], r["query"], r["chosen_agent"]) for r in rows] == [
+        (span_ids[0], "find robot videos", "video_search")
+    ]

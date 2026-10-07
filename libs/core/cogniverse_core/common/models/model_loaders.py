@@ -40,6 +40,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     decode_audio,
     lenient_chunk_answer,
     response_format,
+    sampling_fields,
     transcribe_in_chunks,
 )
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
@@ -386,6 +387,11 @@ class RemoteInferenceClient:
         endpoint takes one image per request, so concurrent requests are
         the batching mechanism: vLLM's continuous batching coalesces them
         into shared forward passes server-side.
+
+        ``embeddings`` is one float32 ``[T, D]`` array for one image, a
+        float32 ``[N, T, D]`` array when every image yields the same token
+        count, and otherwise an object array of ``N`` float32 ``[T, D]``
+        arrays.
         """
         import base64
         import io
@@ -393,7 +399,7 @@ class RemoteInferenceClient:
 
         from PIL import Image
 
-        def encode_and_post(img) -> Dict[str, Any]:
+        def encode_and_post(img) -> tuple[np.ndarray, Dict[str, Any]]:
             if isinstance(img, (str, Path)):
                 with Image.open(img) as pil_img:
                     buf = io.BytesIO()
@@ -426,7 +432,15 @@ class RemoteInferenceClient:
                 timeout=1800,
             )
             response.raise_for_status()
-            return response.json()
+            body = response.json()
+            # The server's vectors are float32 values; holding them as float32
+            # arrays straight away drops the parsed JSON (a Python float object
+            # per value) before the next response arrives.
+            vectors = np.asarray(
+                body.get("data", [{}])[0].get("data", []), dtype=np.float32
+            )
+            body.pop("data", None)
+            return vectors, body
 
         if len(images) <= 1:
             results = [encode_and_post(img) for img in images]
@@ -434,12 +448,17 @@ class RemoteInferenceClient:
             with ThreadPoolExecutor(max_workers=min(8, len(images))) as pool:
                 results = list(pool.map(encode_and_post, images))
 
-        per_image = [np.array(r.get("data", [{}])[0].get("data", [])) for r in results]
-        result = results[-1] if results else {}
+        per_image = [vectors for vectors, _ in results]
+        result = results[-1][1] if results else {}
 
-        embeddings = (
-            per_image[0] if len(per_image) == 1 else np.array(per_image, dtype=object)
-        )
+        if len(per_image) == 1:
+            embeddings = per_image[0]
+        elif len({v.shape for v in per_image}) == 1:
+            embeddings = np.stack(per_image)
+        else:
+            embeddings = np.empty(len(per_image), dtype=object)
+            for i, vectors in enumerate(per_image):
+                embeddings[i] = vectors
 
         return {
             "embeddings": embeddings,
@@ -979,19 +998,20 @@ class RemoteWhisperLoader(ModelLoader):
                 """Transcribe an audio file via vLLM /v1/audio/transcriptions.
 
                 Mirrors the OpenAI Whisper API contract: multipart upload
-                with ``file``, ``model``, optional ``language``, one
-                ``verbose_json`` request per chunk of at most 30 s. Returns
-                ``text``, ``language``, ``duration`` and ``segments``; a
-                chunk carrying sound that keeps coming back empty, the last
-                time asked without timestamps, raises
-                ``EmptyTranscriptError``.
+                with ``file``, ``model``, optional ``language``, a
+                ``verbose_json`` request per chunk of at most 30 s and a
+                ``json`` one unless the timed segments reach its end. Returns ``text``, ``language``, ``duration`` and
+                ``segments``; a chunk whose text keeps coming back empty or as
+                a repetition loop raises ``EmptyTranscriptError`` or
+                ``GarbledTranscriptError``.
                 """
                 name = Path(audio_path).name
 
-                def transcribe_chunk(chunk, chunk_language, timestamps):
+                def transcribe_chunk(chunk, chunk_language, timestamps, temperature):
                     data: Dict[str, Any] = {
                         "model": self.model_name,
                         "response_format": response_format(timestamps),
+                        **sampling_fields(temperature),
                     }
                     if chunk_language:
                         data["language"] = chunk_language
@@ -1530,6 +1550,13 @@ _gliner_cache: OrderedDict[Tuple[str, str, str, str], Any] = OrderedDict()
 
 
 GLINER_REQUEST_TIMEOUT_S = 240.0
+
+# The minimum score an extracted entity needs. Every entity-extraction caller
+# that sets no threshold of its own uses this one value, whether it reaches
+# GLiNER in-process or through the inference service; the service's own
+# request default (cogniverse_cli/modal_inference/servers/gliner.py) is the
+# same 0.4.
+GLINER_ENTITY_THRESHOLD = 0.4
 """Per-request budget for the GLiNER inference service.
 
 The first request per (service, model) cold-loads HF weights: measured
@@ -1615,7 +1642,7 @@ class RemoteGlinerClient:
         return entities
 
     def predict_entities(
-        self, text: str, labels: List[str], threshold: float = 0.4
+        self, text: str, labels: List[str], threshold: float = GLINER_ENTITY_THRESHOLD
     ) -> List[Dict[str, Any]]:
         payload = {
             "text": text,

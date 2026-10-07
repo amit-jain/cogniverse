@@ -46,8 +46,11 @@ DEFAULT_WAIT_SECONDS = 120.0
 #     being 5 attempts x (30 s connect + 30 s read) + 3.75 s backoff =
 #     303.75 s (VespaConfigStore visit reads);
 #   * 7 schema listings of 10 s connect + 10 s read = 20 s: two before the
-#     redeploy and one in every attempt's build.
-# 15 x 310 + 7.5 + 13 x 303.75 + 7 x 20 = 8746.25 s, rounded up to 2.5 hours.
+#     redeploy and one in every attempt's build;
+#   * 120 s for every service to apply the removal before the lease is
+#     released (REMOVAL_CONVERGENCE_TIMEOUT_S).
+# 15 x 310 + 7.5 + 13 x 303.75 + 7 x 20 + 120 = 8866.25 s, rounded up to 2.5
+# hours.
 # Not covered, each adding to that figure: 303.75 s per extra visit page,
 # per extra tenant in a bulk delete, and per extra tombstone, plus each
 # tombstone's own write (set_config's query, feed and prune). The requests

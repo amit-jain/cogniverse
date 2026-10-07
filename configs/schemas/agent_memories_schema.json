@@ -133,11 +133,11 @@
         }
       ],
       "first_phase": {
-        "expression": "0.7 * closeness(field, embedding) + 0.3 * bm25(text)"
+        "expression": "closeness(field, embedding) + nativeRank(text)"
       },
       "match_features": [
         "closeness(field, embedding)",
-        "bm25(text)"
+        "nativeRank(text)"
       ]
     }
   ]

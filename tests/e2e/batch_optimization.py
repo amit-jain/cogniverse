@@ -674,3 +674,72 @@ def _backdated_training_selection_script(
         asyncio.run(_go())
         """
     )
+
+
+def _reset_module_artifact_script(
+    *,
+    module_import: str,
+    module_class: str,
+    key_import: str,
+    key_expr: str,
+    tenant_id: str,
+) -> str:
+    """The in-pod script that serves ``module_class``'s base state as the
+    tenant's only version of the key.
+
+    It deletes every version of the key the tenant already holds, publishes
+    the base state as a fresh version, activates it, checks the lineage is
+    exactly that one version, and prints ``__RESET__<differs>:<version>``.
+    """
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"{module_import}; "
+        + (f"{key_import}; " if key_import else "")
+        + f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        f"base = json.dumps({module_class}().dump_state(), default=str); "
+        f"blob = asyncio.run(am.load_blob('model', {key_expr})); "
+        "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
+        f"stale = asyncio.run(am.list_versions('model', {key_expr})); "
+        "[asyncio.run(am._provider.datasets.delete_dataset(v['name'])) "
+        "for v in stale]; "
+        f"assert asyncio.run(am.list_versions('model', {key_expr})) == [], stale; "
+        "version = asyncio.run(am.save_blob_versioned("
+        f"kind='model', key={key_expr}, content=base, "
+        "consumed_example_ids=['reset:base-module'], decision='rollback', "
+        "scored=False, base_score=None, candidate_score=None))[1]; "
+        f"asyncio.run(am.activate_version('model', {key_expr}, version)); "
+        f"lineage = asyncio.run(am.get_version_lineage('model', {key_expr})); "
+        "assert [(e['version'], e['consumed_example_ids']) for e in lineage] == "
+        "[(version, ['reset:base-module'])], lineage; "
+        "print('__RESET__' + ('1' if differs else '0') + ':' + str(version))"
+    )
+    return script
+
+
+ARGO_TERMINAL_PHASES = ("Succeeded", "Failed", "Error")
+
+
+def argo_phases_between(before: str | None, after: str | None) -> tuple[str, ...]:
+    """Every phase a workflow can show between two reads, in Argo's order.
+
+    Argo moves a workflow Pending -> Running -> one terminal phase; an empty
+    phase is Pending. A read between ``before`` and ``after`` shows one of
+    the phases from ``before`` through ``after``. A pair Argo cannot produce
+    (a step backwards, or out of a terminal phase) raises.
+    """
+    order = {"Pending": 0, "Running": 1, **{p: 2 for p in ARGO_TERMINAL_PHASES}}
+    first, last = before or "Pending", after or "Pending"
+    if first not in order or last not in order:
+        raise ValueError(f"not an Argo workflow phase: {before!r} -> {after!r}")
+    if first == last:
+        return (first,)
+    if order[last] <= order[first]:
+        raise ValueError(f"Argo cannot move a workflow from {first} to {last}")
+    return tuple(
+        phase
+        for phase in ("Pending", "Running")
+        if order[first] <= order[phase] < order[last]
+    ) + (last,)

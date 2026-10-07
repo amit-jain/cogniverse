@@ -115,8 +115,8 @@ surface without repeating their implementation guides.
 | Model module | Public API | Purpose |
 | --- | --- | --- |
 | `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model`, `COLPALI_PROCESSOR_REVISIONS`, `EMBEDDING_MODEL_LOADERS` | Local loader contracts, concrete loaders, loader selection, cache lookup, the Hub processor revisions the ColPali loader pins, and the `model_loader` values ingestion embeds with. |
-| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner` | Authenticated remote inference clients and cached GLiNER resolution. |
-| `models.semantic_embedder` | `SemanticEmbedder`, `LocalSentenceTransformerEmbedder`, `RemoteOpenAIEmbedder`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | Local or OpenAI-compatible semantic embedding and cache control. |
+| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner`, `GLINER_ENTITY_THRESHOLD` | Authenticated remote inference clients, cached GLiNER resolution, and the one GLiNER entity threshold both paths use. |
+| `models.semantic_embedder` | `SemanticEmbedder`, `RemoteOpenAIEmbedder`, `SemanticEmbedderNotConfiguredError`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | OpenAI-compatible semantic embedding and cache control. |
 
 | Utility module | Public API | Purpose |
 | --- | --- | --- |
@@ -939,9 +939,10 @@ Beyond the four functions above, `tenant_utils` exports:
 | `sanitize_k8s_label_value(value)` | function | Makes a value legal as a Kubernetes label value (`([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]`, ≤63 chars): unsupported chars (e.g. the `:` in a canonical tenant_id) become `-`, edges are trimmed, empty results fall back to `"unknown"` (`"acme:acme"` → `"acme-acme"`). Shared by the tenant router's Argo CronWorkflow labels and `quality_monitor`'s optimization-workflow labels; the raw tenant_id still travels via CLI args / workflow parameters wherever the exact value matters. |
 | `invalidate_tenant_exists(tenant_id)` | function | Drops a tenant from the positive-only existence cache after deletion, so a deleted tenant doesn't keep passing `assert_tenant_exists` for the remainder of the TTL. |
 | `assert_tenant_exists(tenant_id)` | async function | Raises `HTTPException(404)` if `tenant_id` was never registered (looked up via `TenantManager.get_tenant_internal`). `SYSTEM_TENANT_ID` bypasses the check. Positive results are cached for 30 seconds since this runs on every search/ingestion/graph request. |
-| `mark_tenant_deleted(store, tenant_id)` | function | Writes the tenant's deletion marker (an immutable config record: `SYSTEM_TENANT_ID`, `ConfigScope.SYSTEM`, service `tenant_deletions`, key the canonical tenant id). Idempotent. The tenant delete writes it before dropping anything. |
+| `mark_tenant_deleted(store, tenant_id)` | function | Writes the tenant's deletion marker (an immutable config record: `SYSTEM_TENANT_ID`, `ConfigScope.SYSTEM`, service `tenant_deletions`, key the canonical tenant id), after a record under service `tenant_deletions_pending` that says its delete has not completed. Idempotent. The tenant delete writes them before dropping anything. |
+| `complete_tenant_delete(store, tenant_id)` / `tenant_delete_pending(store, tenant_id)` | functions | The first removes the pending record once every step of the delete has run; the marker stays. The second reads whether the tenant is marked and its delete still pending; tenant create finishes such a delete before creating. A pending record without the marker is no delete. |
 | `tenant_is_deleted(store, tenant_id)` / `raise_if_tenant_deleted(store, tenant_id)` | functions | Read the marker from the store now (one document point read); the second raises `TenantDeletedError`. A store outage raises rather than reading as "not deleted". `SchemaRegistry.deploy_schemas` checks it before deciding and again under the deploy lease before activating, and `Mem0MemoryManager.add_memory` / `update_memory` / `restore_archived_memory` check it before writing, so no process recreates a deleted tenant's schemas or memories. |
-| `clear_tenant_deleted(store, tenant_id)` | function | Removes the marker; tenant create calls it before deploying the tenant's schemas. Returns `False` when the tenant was not marked. |
+| `clear_tenant_deleted(store, tenant_id)` | function | Removes the marker and its pending record; tenant create calls it before deploying the tenant's schemas. Returns `False` when the tenant was not marked. |
 | `TenantDeletedError` | exception | A write or schema deploy for a tenant marked deleted; the admin deploy route answers it with 410 `tenant_deleted`. |
 
 ```python
@@ -1716,13 +1717,16 @@ provider order is:
 1. the `cogniverse-e2e` k3d workload;
 2. the `cogniverse` development k3d workload;
 3. Modal, only for a service explicitly marked with
-   `@pytest.mark.requires_modal_inference("<service>")`;
-4. a test-owned exact local service.
+   `@pytest.mark.requires_modal_inference("<service>")`.
 
-Generic `requires_inference` tests use e2e, then dev, then local. They never
-enter the Modal lifecycle merely because `COGNIVERSE_INFERENCE_API_KEY` is
-present. A `requires_modal_inference` service uses Modal as a hard requirement
-and does not fall through to either k3d cluster or a local process. E2E tests
+The chat services (`vllm_llm_student`, `vllm_llm_teacher`) are the exception:
+they resolve only through `tests/utils/hermetic_llm.py`, from their Modal
+deployment. Nothing is ever started on the test host; a service no provider
+serves raises `RemoteServiceUnavailable` naming it. Generic
+`requires_inference` tests never enter the Modal lifecycle merely because
+`COGNIVERSE_INFERENCE_API_KEY` is present. A `requires_modal_inference` service
+uses Modal as a hard requirement and does not fall through to either k3d
+cluster. E2E tests
 carrying that marker are selected only by `RUN_MODAL_INFERENCE_E2E=1` or an
 explicit `-m requires_modal_inference` test run.
 

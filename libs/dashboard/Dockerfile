@@ -124,6 +124,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+# litellm loads its bundled model cost map instead of fetching it from
+# GitHub on the first LM call.
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV STREAMLIT_SERVER_PORT=8501

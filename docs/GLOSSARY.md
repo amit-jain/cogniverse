@@ -122,7 +122,7 @@ Embedding subsystem that generates embeddings and feeds them to backends, handli
 Tiered A2A NER agent (`cogniverse_agents/entity_extraction_agent.py`) with DSPy primary path and GLiNER + SpaCy fallback. Registered under `agents.entity_extraction_agent`, enabled by default.
 
 ### EventQueue
-A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports pub/sub pattern, reconnection with replay, and graceful cancellation. Used by orchestrator and ingestion pipeline.
+A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports reconnection with replay and graceful cancellation. In the runtime each workflow (orchestration, deep research) and ingestion job reports on a Redis-backed queue (`RedisTaskEventQueue`, see TaskEventStore) bound to its request, so any runtime process streams, cancels and lists it.
 
 ### EventType
 Enum discriminator for event types: `STATUS`, `PROGRESS`, `ARTIFACT`, `ERROR`, `COMPLETE`. Corresponding event classes are `StatusEvent` (state transitions), `ProgressEvent` (incremental progress), `ArtifactEvent` (intermediate results), `ErrorEvent` (errors), `CompleteEvent` (task completion).
@@ -277,7 +277,7 @@ A2A agent (`cogniverse_agents/profile_selection_agent.py`) that uses DSPy LLM re
 A2A agent (`cogniverse_agents/query_enhancement_agent.py`) that expands and rewrites queries with synonyms, context, and RRF variants using DSPy. Registered under `agents.query_enhancement_agent`, enabled by default.
 
 ### QueueManager
-Lifecycle manager for EventQueues. Creates, retrieves, closes, and cleans up expired queues. Supports multi-tenant isolation via `tenant_id`.
+Lifecycle manager for EventQueues. Creates, retrieves, closes, and cleans up expired queues. Supports multi-tenant isolation via `tenant_id`. The in-process `InMemoryQueueManager` serves a library caller; the runtime uses `TaskEventStore`.
 
 ---
 
@@ -350,6 +350,9 @@ A2A agent (`cogniverse_agents/summarizer_agent.py`) that turns search results in
 
 ### TaskEvent
 Union type for all A2A-compatible events (StatusEvent, ProgressEvent, ArtifactEvent, ErrorEvent, CompleteEvent). All events extend BaseEvent which contains `event_id`, `task_id`, `tenant_id`, `timestamp`, and type-specific data.
+
+### TaskEventStore
+The runtime's Redis-backed store of task events (`cogniverse_runtime/task_events.py`): a task's events, its cancellation, the process lease of whoever runs it, and each tenant's active tasks. Behind the `/events` routes; every runtime process streams, cancels and lists any task.
 
 ### TaskState
 A2A-compatible workflow state: `pending`, `working`, `input-required`, `completed`, `failed`, `cancelled`.

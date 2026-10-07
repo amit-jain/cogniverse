@@ -316,10 +316,10 @@
         },
         {
           "name": "text_score",
-          "expression": "bm25(audio_title) + bm25(audio_transcript)"
+          "expression": "nativeRank(audio_title, audio_transcript)"
         }
       ],
-      "first_phase": "0.5 * acoustic_score + 0.5 * text_score",
+      "first_phase": "acoustic_score + text_score",
       "timeout": 2.0
     }
   ],

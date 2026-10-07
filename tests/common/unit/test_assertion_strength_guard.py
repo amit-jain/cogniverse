@@ -17,14 +17,27 @@ An assertion moved verbatim into a file the change creates (a helper moved
 to a new module) is not a loss: each such line in a created ``tests/`` file
 credits one identical removal elsewhere, and the per-commit check above keeps
 the created file from shedding it later.
+
+A net loss is accepted only when ``tests/common/assertion_waivers.toml``
+waives it: the lost assertions tested code that no longer exists. Each waiver
+names the test file, the largest net loss it may have, and the removed symbols
+(``path:Name``, a top-level name) the assertions tested. The guard checks every
+waiver: each symbol must be gone at HEAD and must have existed in HEAD's
+history, the file's net loss must not exceed the waived count, and a waiver
+whose file lost nothing fails as stale. A waiver applies only when one of its
+symbols existed at the base; one whose symbols were all gone before the range
+covered an earlier change and waives nothing.
 """
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
+import tomllib
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -246,9 +259,120 @@ def net_assertion_losses(diff: str) -> dict[str, dict[str, int]]:
     return losses
 
 
+WAIVERS_PATH = REPO_ROOT / "tests" / "common" / "assertion_waivers.toml"
+
+
+@dataclass(frozen=True)
+class Waiver:
+    """An accepted net assertion loss in one test file."""
+
+    file: str
+    max_net_loss: int
+    removed_symbols: tuple[str, ...]
+    reason: str
+
+
+def load_waivers(path: Path = WAIVERS_PATH) -> list[Waiver]:
+    entries = tomllib.loads(path.read_text(encoding="utf-8")).get("waiver", [])
+    waivers = []
+    for entry in entries:
+        if set(entry) != {"file", "max_net_loss", "removed_symbols", "reason"}:
+            raise ValueError(f"malformed assertion waiver: {entry!r}")
+        if not entry["removed_symbols"] or not entry["reason"].strip():
+            raise ValueError(f"waiver for {entry['file']} names no symbol or reason")
+        waivers.append(
+            Waiver(
+                file=entry["file"],
+                max_net_loss=int(entry["max_net_loss"]),
+                removed_symbols=tuple(entry["removed_symbols"]),
+                reason=entry["reason"],
+            )
+        )
+    return waivers
+
+
+def _defines(source: str, name: str) -> bool:
+    """Whether ``source`` binds ``name`` at module level."""
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                return True
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                return True
+    return False
+
+
+def symbol_defined(sha: str, symbol: str, repo: Path = REPO_ROOT) -> bool:
+    """Whether ``path:Name`` is a top-level binding of ``path`` at ``sha``."""
+    path, _, name = symbol.partition(":")
+    if not path or not name:
+        raise ValueError(f"waiver symbol must be 'path:Name', got {symbol!r}")
+    proc = subprocess.run(
+        ["git", "show", f"{sha}:{path}"], cwd=repo, capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        return False
+    return _defines(proc.stdout, name)
+
+
+def symbol_ever_defined(symbol: str, repo: Path = REPO_ROOT) -> bool:
+    """Whether any commit reachable from HEAD defined ``path:Name``."""
+    path = symbol.partition(":")[0]
+    commits = _run_git(["rev-list", "HEAD", "--", path], repo).split()
+    return any(symbol_defined(f"{sha}~1", symbol, repo) for sha in commits) or any(
+        symbol_defined(sha, symbol, repo) for sha in commits
+    )
+
+
+def apply_waivers(
+    losses: dict[str, dict[str, int]],
+    waivers: list[Waiver],
+    base: str,
+    repo: Path = REPO_ROOT,
+) -> tuple[dict[str, dict[str, int]], list[str]]:
+    """Return the losses no waiver covers and every waiver that fails its check."""
+    remaining = dict(losses)
+    errors: list[str] = []
+    for waiver in waivers:
+        removed_in_range = False
+        broken = False
+        for symbol in waiver.removed_symbols:
+            if symbol_defined("HEAD", symbol, repo):
+                errors.append(f"{waiver.file}: {symbol} still exists at HEAD")
+                broken = True
+            elif symbol_defined(base, symbol, repo):
+                removed_in_range = True
+            elif not symbol_ever_defined(symbol, repo):
+                errors.append(f"{waiver.file}: {symbol} never existed")
+                broken = True
+        if broken:
+            continue
+        if not removed_in_range:
+            # Every symbol was removed before this range: the waiver covered
+            # an earlier change and waives nothing here.
+            continue
+        loss = losses.get(waiver.file)
+        if loss is None:
+            errors.append(f"{waiver.file}: waiver is unused, the file lost nothing")
+            continue
+        net = loss["removed"] - loss["moved"] - loss["added"]
+        if net > waiver.max_net_loss:
+            errors.append(
+                f"{waiver.file}: net loss {net} exceeds the waived {waiver.max_net_loss}"
+            )
+            continue
+        remaining.pop(waiver.file)
+    return remaining, errors
+
+
 def test_no_net_assertion_loss_in_changed_tests():
     base = os.environ.get("ASSERTION_GUARD_BASE", "HEAD~1")
-    offenders = net_assertion_losses(_git_diff(base))
+    offenders, waiver_errors = apply_waivers(
+        net_assertion_losses(_git_diff(base)), load_waivers(), base
+    )
+    assert waiver_errors == [], f"assertion waivers fail their checks: {waiver_errors}"
     assert offenders == {}, (
         "these test files lost assertions; a fix may not reduce what a test "
         f"proves (base={base}): "
@@ -656,3 +780,129 @@ def test_a_created_file_outside_tests_credits_nothing():
     assert net_assertion_losses(diff) == {
         "tests/foo/test_x.py": {"removed": 2, "moved": 0, "added": 0}
     }
+
+
+def _waiver_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A branch that deletes ``Gone`` and the two assertions that tested it."""
+    repo = tmp_path / "waivers"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    _run_git(["init", "-q", "-b", "main", str(repo)], tmp_path)
+    _run_git(["config", "user.email", "guard@example.invalid"], repo)
+    _run_git(["config", "user.name", "Guard"], repo)
+    (repo / "src" / "lib.py").write_text(
+        "class Gone:\n    pass\n\n\ndef kept():\n    return 1\n"
+    )
+    (repo / "tests" / "test_lib.py").write_text(
+        "def test_lib():\n"
+        "    assert kept() == 1\n"
+        "    assert Gone().x == 1\n"
+        "    assert Gone().y == 2\n"
+    )
+    (repo / "tests" / "test_other.py").write_text(
+        "def test_other():\n    assert kept() == 1\n"
+    )
+    _run_git(["add", "."], repo)
+    _run_git(["commit", "-q", "-m", "Seed"], repo)
+    base = _run_git(["rev-parse", "HEAD"], repo).strip()
+    (repo / "src" / "lib.py").write_text("def kept():\n    return 1\n")
+    (repo / "tests" / "test_lib.py").write_text(
+        "def test_lib():\n    assert kept() == 1\n"
+    )
+    _run_git(["commit", "-q", "-am", "Remove Gone"], repo)
+    return repo, base
+
+
+def _waived(repo: Path, base: str, *waivers: Waiver):
+    losses = net_assertion_losses(_git_diff(base, repo))
+    return apply_waivers(losses, list(waivers), base, repo)
+
+
+def test_a_waiver_for_removed_code_accepts_the_loss(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    assert _waived(
+        repo, base, Waiver("tests/test_lib.py", 2, ("src/lib.py:Gone",), "removed")
+    ) == ({}, [])
+
+
+def test_a_waived_symbol_that_still_exists_fails(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    remaining, errors = _waived(
+        repo, base, Waiver("tests/test_lib.py", 2, ("src/lib.py:kept",), "removed")
+    )
+
+    assert remaining == {"tests/test_lib.py": {"removed": 2, "moved": 0, "added": 0}}
+    assert errors == ["tests/test_lib.py: src/lib.py:kept still exists at HEAD"]
+
+
+def test_a_waived_symbol_that_never_existed_fails(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    remaining, errors = _waived(
+        repo,
+        base,
+        Waiver(
+            "tests/test_lib.py",
+            2,
+            ("src/lib.py:Gone", "src/lib.py:Never"),
+            "removed",
+        ),
+    )
+
+    assert remaining == {"tests/test_lib.py": {"removed": 2, "moved": 0, "added": 0}}
+    assert errors == ["tests/test_lib.py: src/lib.py:Never never existed"]
+
+
+def test_a_waiver_settled_before_the_range_waives_nothing(tmp_path):
+    repo, _ = _waiver_repo(tmp_path)
+    (repo / "tests" / "test_other.py").write_text("def test_other():\n    pass\n")
+    _run_git(["commit", "-q", "-am", "Weaken another file"], repo)
+    base = _run_git(["rev-parse", "HEAD~1"], repo).strip()
+
+    assert _waived(
+        repo, base, Waiver("tests/test_other.py", 1, ("src/lib.py:Gone",), "removed")
+    ) == ({"tests/test_other.py": {"removed": 1, "moved": 0, "added": 0}}, [])
+
+
+def test_a_loss_over_the_waived_count_fails(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    remaining, errors = _waived(
+        repo, base, Waiver("tests/test_lib.py", 1, ("src/lib.py:Gone",), "removed")
+    )
+
+    assert remaining == {"tests/test_lib.py": {"removed": 2, "moved": 0, "added": 0}}
+    assert errors == ["tests/test_lib.py: net loss 2 exceeds the waived 1"]
+
+
+def test_an_unused_waiver_fails(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    remaining, errors = _waived(
+        repo,
+        base,
+        Waiver("tests/test_lib.py", 2, ("src/lib.py:Gone",), "removed"),
+        Waiver("tests/test_other.py", 1, ("src/lib.py:Gone",), "removed"),
+    )
+
+    assert remaining == {}
+    assert errors == ["tests/test_other.py: waiver is unused, the file lost nothing"]
+
+
+def test_an_unwaived_loss_is_still_reported(tmp_path):
+    repo, base = _waiver_repo(tmp_path)
+
+    assert _waived(repo, base) == (
+        {"tests/test_lib.py": {"removed": 2, "moved": 0, "added": 0}},
+        [],
+    )
+
+
+def test_a_malformed_waiver_file_is_rejected(tmp_path):
+    path = tmp_path / "waivers.toml"
+    path.write_text('[[waiver]]\nfile = "tests/x.py"\nmax_net_loss = 1\n')
+
+    with pytest.raises(ValueError, match="malformed assertion waiver"):
+        load_waivers(path)

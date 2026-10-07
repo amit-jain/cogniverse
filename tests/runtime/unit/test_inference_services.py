@@ -162,14 +162,13 @@ def test_worker_process_rejects_invalid_configuration_before_redis() -> None:
 def test_model_discovery_rejects_invalid_configuration_before_cluster_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.fixtures.inference import _build_resolver
     from tests.utils import vllm_sidecar
 
     def fail_if_cluster_is_consulted(model: str) -> tuple[str, ...]:
         raise AssertionError(f"cluster discovery was consulted for {model}")
 
     monkeypatch.setenv("INFERENCE_SERVICE_URLS", '{"denseon":"relative/path"}')
-    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
-    monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
     monkeypatch.setattr(
         vllm_sidecar,
         "_discover_e2e_model_urls",
@@ -181,5 +180,5 @@ def test_model_discovery_rejects_invalid_configuration_before_cluster_fallback(
         fail_if_cluster_is_consulted,
     )
 
-    with pytest.raises(ValueError, match="absolute HTTP or HTTPS URL"):
-        vllm_sidecar._configured_model_urls("TomoroAI/tomoro-colqwen3-embed-4b")
+    with pytest.raises(ValueError, match="endpoint base_url must be a root HTTP"):
+        _build_resolver({"denseon"})

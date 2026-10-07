@@ -1849,7 +1849,11 @@ raised a typed encoder fault). Profiles sharing an embedding model share one
 `SharedQueryEncoder`, so one encode, and a leg encodes only when its ranking
 strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
-partial ensemble as partial. Every leg failing raises.
+partial ensemble as partial. Every leg failing raises. The legs run on a pool
+of their own that is shut down without waiting, so a caller whose budget
+cancels the ensemble gets control back at once while a leg blocked on its
+encoder or backend finishes in its worker thread; the event loop never waits
+on a leg.
 
 Both search paths rewrite the query once. `_rewrite_query_for_search` runs the
 DSPy rewrite (`SearchOptimizationSignature`) before the mode branch, so a
@@ -2620,14 +2624,19 @@ clip with CLAP and searches `acoustic_embedding`.
 `transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
 local path, decodes it to 16 kHz mono and POSTs it multipart to
 `{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
-Whisper), one chunk of at most 30 s per request, through
-`cogniverse_core.common.models.whisper_transcription`: an empty answer for a
-chunk carrying sound is asked again, the third time without timestamps, and
-raises `EmptyTranscriptError` if that is empty too. The merged answer is mapped
-to a `TranscriptionResult(text, segments, language, confidence)`.
+Whisper), each chunk of at most 30 s with timestamps and, unless the timed
+segments run to the end of the chunk, without, through
+`cogniverse_core.common.models.whisper_transcription`: the text comes from the
+untimed answer, timed by the timed answer's segments; an empty or looping
+answer is asked again at the next sampling temperature, and a chunk whose
+untimed text never comes back usable raises `EmptyTranscriptError` or
+`GarbledTranscriptError`. The merged answer is mapped to a
+`TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds
-before checking segment bounds.
+before checking segment bounds. A segment time past `duration` (Whisper times
+text into the padding after short audio) is clamped to it and logged at DEBUG
+with the original value.
 
 `whisper_endpoint` and `whisper_model` are fields on `AudioAnalysisDeps`.
 The runtime populates `whisper_endpoint` from
@@ -2654,6 +2663,20 @@ Per-keyframe face extraction obtains Modal credentials from
 mapping through `extract_faces_per_keyframe(..., headers=...)`. The internally
 owned HTTP client uses the resolved immutable headers for every concurrent
 keyframe request.
+
+`extract_faces_per_keyframe` reads the keyframes `KeyframeProcessor` wrote,
+`processing_results["keyframes"]["keyframes"]`, each
+`{frame_number, timestamp, filename, path}`. A keyframe's segment id is its
+index in that list, the id of its content document and of the transcript
+segment aligned to it. Each request reads the image at `path` and sends it as
+`image_b64`, with at most `max_concurrency` requests in flight (default
+`FACE_EMBED_MAX_CONCURRENCY`, which the chart sets to the sidecar's CPU count)
+and a 120 s budget per request. It returns a `FaceExtraction`: `mentions`, the
+faces sorted by `(segment_id, bbox)`, and `failed`, a `FailedKeyframe`
+(`segment_id`, `cause`) for each keyframe whose image could not be read or
+whose request failed on its retry; the other keyframes' faces are kept. A
+keyframe without a `path` or `timestamp` raises `ValueError`, and
+`RuntimeError` names every keyframe's cause when all of them failed.
 
 ---
 
@@ -2838,6 +2861,15 @@ print(output.summary, output.citations)
 Through the runtime, `POST /agents/deep_research_agent/process` forwards
 `context.max_iterations` into `DeepResearchInput.max_iterations`; a request
 without it runs on the field default (3).
+
+**Progress and cancellation:** through the runtime a run is a workflow task
+(`context.workflow_id`, or a new id the result's `workflow_id` names), streamed
+from `/events/workflows/{workflow_id}`. The agent reports `decompose`, then
+`search` and `evaluate` each iteration, `synthesize` and `rlm_synthesis`
+(`AgentBase.report_phase`); its RLM synthesis reports on the same task. A
+cancellation stops the run at its next phase boundary, or after the RLM
+synthesis, and the dispatch answers `{"status": "cancelled", "workflow_id",
+"message"}`.
 
 **Multimodal generation (keyframe injection):**
 
@@ -3845,9 +3877,14 @@ print(f"Latency: {result.latency_ms}ms")
 tenant_id="")` (same module) is the shared constructor used by the KG
 summariser agents (`FederatedQueryAgent`, `TemporalReasoningAgent`,
 `KnowledgeGraphTraversalAgent`, `KnowledgeSummarizationAgent`,
-`MultiDocumentSynthesisAgent`). It resolves the endpoint config — falling back
-to an `RLMOptions`-derived default model when the agent has none wired — and
-applies the option's iteration / call / timeout caps. When `config_manager` and
+`MultiDocumentSynthesisAgent`). It resolves the endpoint config through
+`rlm_endpoint` — the request's `rlm.model` (with its `api_base` and
+`api_key`) when it names one, else the agent's endpoint, else the tenant's
+configured endpoint for `rlm_inference` (the primary LM unless
+`llm_config.overrides` names one), and `RLMEndpointNotConfiguredError` when
+none is available — and applies the option's iteration / call / timeout caps.
+`RLMAwareMixin.process_with_rlm` resolves its endpoint the same way, so an RLM
+run that names no model never defaults to a provider's public API. When `config_manager` and
 `tenant_id` are supplied and gateway routing is enabled for that tenant, the
 resolved endpoint is routed through the gateway (task `rlm_inference`) before
 the RLM's LM is built; `tenant_id` is also threaded onto the `RLMInference` for
@@ -4980,70 +5017,55 @@ def test_tenant_isolation(config_manager):
 
 ### Overview
 
-The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
+An `OrchestratorAgent` run reports its progress as a workflow task on the
+runtime's shared task event store, so any runtime process streams, lists and
+cancels it:
 
 - **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
-- **Automatic Event Emission**: The sufficiency-gate `InstrumentedRLM` emits Status/Progress events per REPL iteration
-- **Graceful Cancellation**: Workflows can be cancelled at phase boundaries
+- **Phase Events**: Each phase boundary is a `StatusEvent`; the sufficiency-gate `InstrumentedRLM` adds Status/Progress events per REPL iteration
+- **Graceful Cancellation**: A cancelled workflow stops at its next phase boundary
 - **Reconnection with Replay**: Clients can resume from a specific event offset
 
-### Enabling EventQueue
+### Binding
+
+One cached `OrchestratorAgent` serves every request, so its queue is bound per
+request, never held on the agent. The runtime's dispatcher binds the run's
+queue (`AgentDispatcher.workflow_run`); a caller outside the runtime binds its
+own:
 
 ```text
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_core.events import get_queue_manager
+from cogniverse_core.events import InMemoryEventQueue, bind_event_queue
 
-# Create event queue for the workflow
-manager = get_queue_manager()
-queue = await manager.create_queue("workflow_123", "tenant1")
-
-# Create orchestrator with the event queue
-orchestrator = OrchestratorAgent(
-    deps=OrchestratorDeps(),
-    registry=registry,
-    config_manager=config_manager,
-    event_queue=queue,
-)
+queue = InMemoryEventQueue(task_id="workflow_123", tenant_id="acme:acme")
+with bind_event_queue(queue):
+    output = await orchestrator.process(OrchestratorInput(query="find cats", tenant_id="acme:acme"))
+assert output.workflow_id == "workflow_123"
 ```
 
 ### Event Flow
 
-`self.event_queue` on `OrchestratorAgent` reaches two channels — there is no
-per-phase "planning"/"executing" push beyond these:
+With a bound queue the orchestrator reports (`AgentBase.report_phase`, which
+also streams each phase to a `process(stream=True)` caller):
 
-1. **Sufficiency-gate RLM promotion** (evidence too large for a single
-   `ChainOfThought` call) runs through `InstrumentedRLM(event_queue=self.event_queue, ...)`,
-   which emits its own per-iteration `StatusEvent`/`ProgressEvent` sequence.
-2. **`OrchestratorAgent._emit_event()`** is a generic hook that enqueues onto
-   `event_queue` when one is configured (no-op otherwise), for ad-hoc events —
-   the sufficiency-gate RLM is the actual workflow-level emitter today.
+1. `memory_context`, `planning`, `execution` — then `retrieval_iteration` at
+   each iteration of the retrieval loop and `executing` at each plan step —
+   `aggregating` and `complete` (`deep_synthesis` for a deep-synthesis run)
+2. The sufficiency-gate `InstrumentedRLM` (evidence too large for a single
+   `ChainOfThought` call) emits its per-iteration `StatusEvent`/`ProgressEvent`
+   sequence on the same task
 
-Per-agent progress narration (`self.emit_progress("planning", ...)`,
-`"execution"`, `"aggregating"`, `"complete"`) is a separate, dict-based
-streaming channel consumed via `process(stream=True)` — see
-[Streaming API](#streaming-api) — it does not go through this `EventQueue`.
-`ArtifactEvent` and `CompleteEvent` are defined in `cogniverse_core.events.types`
-but `OrchestratorAgent` does not emit them today; `CompleteEvent` is emitted
-by the ingestion pipeline, not the orchestrator.
-
-### Subscribing to Events
-
-```text
-# Subscribe to workflow progress
-async for event in queue.subscribe():
-    print(f"[{event.event_type}] {event.phase}: {event.message}")
-    if event.event_type == "complete":
-        break
-```
+The run takes the bound queue's task id as its `workflow_id`. The runtime ends
+the task with a `CompleteEvent`, a cancelled `StatusEvent`, or an `ErrorEvent`.
 
 ### Cancellation
 
-```text
-# Cancel a running workflow
-await manager.cancel_task("workflow_123", reason="User requested")
-
-# Orchestrator checks cancellation at phase boundaries and aborts gracefully
-```
+A cancellation of the task (`POST /events/workflows/{workflow_id}/cancel`, on any
+runtime process) reaches the process running it; the orchestrator raises
+`TaskCancelled` at its next phase boundary (every boundary but `executing` and
+`complete`, and before each group of plan steps), and the dispatch answers
+`{"status": "cancelled", "workflow_id", "message"}`. An inbound `stop` message
+(`POST /agents/{name}/message`) is separate: it ends the retrieval loop with the
+evidence gathered so far and the run completes.
 
 See [Events Module](./events.md) for complete EventQueue documentation.
 
@@ -5389,12 +5411,11 @@ either URL. A configured endpoint with the wrong model, revision, or
 credentials fails immediately and never falls through to a local model.
 
 The Gemma fixture injects `openai/google/gemma-4-e4b-it`, the endpoint `/v1` URL, and
-the resolved bearer key into `LLMEndpointConfig`. When no Modal URL is present,
-it uses the test-owned exact-model LM. The Whisper fixture similarly prefers
-the validated `openai/whisper-large-v3-turbo` service and otherwise starts the
-test-owned vLLM sidecar with the production generate arguments. Session teardown
-returns test-owned local processes to their prior state; Modal lifecycle
-commands control remote warm-container counts independently.
+the resolved bearer key into `LLMEndpointConfig`; with no Modal URL configured it
+reads the Gemma deployment through the Modal lifecycle. The Whisper fixture
+prefers a configured Modal `openai/whisper-large-v3-turbo` and otherwise uses
+the cogniverse-e2e cluster's `vllm_asr` service. No model is started on the
+test host.
 
 ---
 

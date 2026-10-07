@@ -205,6 +205,22 @@ def _docker_platform() -> str:
     return "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
 
 
+@pytest_asyncio.fixture
+async def process_task_events(redis_container, monkeypatch):
+    """The ingestion router's task event store, as main.py wires it: the
+    store a submit lists its queued job in."""
+    import redis.asyncio as aioredis
+
+    from cogniverse_runtime.routers import ingestion as ingestion_router
+    from cogniverse_runtime.task_events import TaskEventStore
+
+    client = aioredis.from_url(redis_container, decode_responses=True)
+    store = TaskEventStore(client)
+    monkeypatch.setattr(ingestion_router, "_task_event_store", store)
+    yield store
+    await client.aclose()
+
+
 @pytest.fixture(scope="module")
 def redis_container():
     port = _free_port()
@@ -763,7 +779,9 @@ def test_upload_config_manager_restores_the_tenant_backend_config(
 
 
 @pytest_asyncio.fixture
-async def http_client(real_stack, _tenant_registration_cleanup, upload_config_manager):
+async def http_client(
+    real_stack, _tenant_registration_cleanup, upload_config_manager, process_task_events
+):
     """FastAPI ASGI client mounting the real ingestion router + status_api."""
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_runtime.ingestion_worker import status_api as ingest_status
@@ -993,7 +1011,7 @@ def _vespa_graph_documents(
 @pytest.mark.requires_docker
 @pytest.mark.asyncio
 async def test_omitted_profile_crosses_real_minio_redis_and_worker(
-    redis_container, minio_container, vespa_backend, monkeypatch
+    redis_container, minio_container, vespa_backend, monkeypatch, process_task_events
 ):
     """Concurrent tenant selections reach storage and claimed jobs unchanged."""
     import boto3
@@ -1156,7 +1174,7 @@ async def test_omitted_profile_crosses_real_minio_redis_and_worker(
 @pytest.mark.requires_docker
 @pytest.mark.asyncio
 async def test_profile_failures_leave_real_minio_and_redis_unchanged(
-    redis_container, minio_container, vespa_backend, monkeypatch
+    redis_container, minio_container, vespa_backend, monkeypatch, process_task_events
 ):
     """Invalid input and a broken config response precede object/queue writes."""
     import boto3
@@ -1295,7 +1313,7 @@ async def test_profile_failures_leave_real_minio_and_redis_unchanged(
 @pytest.mark.requires_docker
 @pytest.mark.asyncio
 async def test_redis_failure_after_real_minio_upload_keeps_truthful_side_effects(
-    redis_container, minio_container, vespa_backend, monkeypatch
+    redis_container, minio_container, vespa_backend, monkeypatch, process_task_events
 ):
     """A queue outage returns 503 after preserving the content-addressed object."""
     import boto3
@@ -1801,6 +1819,7 @@ class TestUploadRealStack:
         with the SAME source_url twice — the second call must return the first
         run's ingest_id instead of enqueuing a new one."""
         from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+        from cogniverse_runtime.task_events import TaskEventStore
 
         # First, upload once via /upload to get a real source_url.
         video_bytes = upload_video_path.read_bytes()
@@ -1829,6 +1848,7 @@ class TestUploadRealStack:
 
         result = await enqueue_ingestion(
             real_stack["redis"],
+            task_events=TaskEventStore(real_stack["redis"]),
             source_url=source_url,
             profile=PROFILE,
             tenant_id=require_tenant_id(TENANT_ID, source="test"),

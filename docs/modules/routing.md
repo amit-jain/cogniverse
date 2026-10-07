@@ -157,7 +157,9 @@ available, standalone model, not as an active pipeline stage.
 
 `ComposableQueryAnalysisModule` (in `routing/dspy_relationship_router.py`) is lazily built and cached by
 `OrchestratorAgent._get_query_analysis_module()` for reuse across iterations of the orchestrator's iterative
-retrieval loop — it is **not** part of `QueryEnhancementAgent`, which uses a separate, simpler DSPy module
+retrieval loop, one module per GLiNER model and endpoint. The model is the request tenant's
+`RoutingConfigUnified.gliner_model` (the setting the dispatcher also seeds the gateway with) and the endpoint is
+`SystemConfig.inference_service_urls["gliner"]`; a config read that fails raises. It is **not** part of `QueryEnhancementAgent`, which uses a separate, simpler DSPy module
 (see [QueryEnhancementAgent](#3-queryenhancementagent-query_enhancement_agentpy)).
 
 ```mermaid
@@ -704,7 +706,17 @@ Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
   `is_available()` answers the same question without raising, for callers that serve entities
   without relationships when the pipeline is absent.
 - **`RelationshipExtractorTool`**: combines both extractors, deduplicates relationships, and computes an
-  overall confidence score
+  overall confidence score. `gliner_inference_url` (also on `create_relationship_extractor`) routes
+  its GLiNER through the inference service, the `SystemConfig.inference_service_urls["gliner"]`
+  URL the other GLiNER callers use; without it GLiNER loads in-process.
+
+**Entity threshold.** `GLiNERRelationshipExtractor` keeps entities scoring at least its
+`threshold`, which defaults to `GLINER_ENTITY_THRESHOLD` (0.4, `cogniverse_core.common.models`)
+and is sent explicitly to whichever model answers, so the in-process model and the GLiNER service
+return the same entities. `RemoteGlinerClient.predict_entities` and the service's request default
+(`cogniverse_cli/modal_inference/servers/gliner.py`) use the same value. The gateway's routing
+`gliner_threshold` (0.3, `RoutingConfigUnified`) and the document graph extractor's 0.3 are
+separate settings each caller passes explicitly.
 
 ---
 

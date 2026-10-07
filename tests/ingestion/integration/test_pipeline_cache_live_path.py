@@ -94,6 +94,7 @@ def _make_pipeline(
         )
     )
     pipe = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
+    pipe.retain_job_scratch = False
     pipe.cache = PipelineArtifactCache(manager, ttl=0, profile="testprof")
     pipe.schema_name = "testprof"
     pipe.profile_output_dir = output_dir

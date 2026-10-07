@@ -1294,15 +1294,20 @@ class SearchAgent(
                 logger.error(f"Search failed for profile {profile_name}: {e}")
                 return profile_name, e
 
-        # Create shared thread pool and run searches in parallel
-        with concurrent.futures.ThreadPoolExecutor(
+        # One pool for the legs. It is shut down without waiting: when the
+        # caller's budget cancels this coroutine, a leg still blocked on its
+        # encoder or backend must not hold the event loop until it returns.
+        executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=len(encoder_by_profile)
-        ) as executor:
+        )
+        try:
             search_tasks = [
                 search_profile(profile, encoder, executor)
                 for profile, encoder in encoder_by_profile.items()
             ]
             profile_results_list = await asyncio.gather(*search_tasks)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         # A leg that raised returns its exception. If EVERY leg failed, that's a
         # backend outage — re-raise like the plain-text path instead of

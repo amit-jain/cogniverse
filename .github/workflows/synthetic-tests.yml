@@ -86,7 +86,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/synthetic/unit/ \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/synthetic/unit/ \
           -v --tb=short \
           --cov=libs/synthetic/cogniverse_synthetic \
           --cov-report=term-missing \
@@ -150,6 +150,6 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_synthetic.service import SyntheticDataService; print('SyntheticDataService import successful')"
+        uv run --no-sync python -c "from cogniverse_synthetic.service import SyntheticDataService; print('SyntheticDataService import successful')"
         echo "All synthetic imports successful"
 

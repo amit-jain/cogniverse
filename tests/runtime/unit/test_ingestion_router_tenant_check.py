@@ -17,6 +17,7 @@ correctly.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
@@ -31,22 +32,32 @@ from redis.asyncio import Redis
 from cogniverse_runtime.ingestion_jobs import IngestionJobStore
 from cogniverse_runtime.routers import graph as graph_router
 from cogniverse_runtime.routers import ingestion as ingestion_router
+from cogniverse_runtime.task_events import INGESTION, TaskEventStore
+
+
+def _task_events(redis) -> TaskEventStore:
+    prefix = f"test:task-events:{uuid.uuid4().hex}"
+    return TaskEventStore(
+        redis, key_prefix=prefix, ingestion_stream_prefix=f"{prefix}:ingest:"
+    )
 
 
 @pytest.fixture
 def job_store(shared_state_redis_url):
-    """A job store of its own on the test-owned Redis, injected into the
-    router. Its client connects lazily, on the loop that first uses it."""
+    """A job store and a task event store of their own on the test-owned
+    Redis, injected into the router. Their client connects lazily, on the
+    loop that first uses it."""
     redis = Redis.from_url(shared_state_redis_url, decode_responses=True)
     store = IngestionJobStore(
         redis, owner="test", key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}"
     )
-    previous = ingestion_router._job_store
+    previous = ingestion_router._job_store, ingestion_router._task_event_store
     ingestion_router.set_job_store(store)
+    ingestion_router.set_task_event_store(_task_events(redis))
     try:
         yield store
     finally:
-        ingestion_router._job_store = previous
+        ingestion_router._job_store, ingestion_router._task_event_store = previous
 
 
 @pytest.fixture
@@ -62,6 +73,19 @@ def unreachable_job_store(dead_redis_url):
         yield store
     finally:
         ingestion_router._job_store = previous
+
+
+@pytest.fixture
+def task_event_store(shared_state_redis_url):
+    """A task event store of its own on the test-owned Redis, injected into
+    the router."""
+    store = _task_events(Redis.from_url(shared_state_redis_url, decode_responses=True))
+    previous = ingestion_router._task_event_store
+    ingestion_router.set_task_event_store(store)
+    try:
+        yield store
+    finally:
+        ingestion_router._task_event_store = previous
 
 
 @pytest.fixture
@@ -457,6 +481,11 @@ class TestStartIngestionSuccess:
             # TestClient ran the background task before returning, so the
             # stored job record has reached its terminal state.
             status = client.get(f"/ingestion/status/{resp.json()['job_id']}")
+            events = client.portal.call(
+                lambda: ingestion_router.get_task_event_store().read(
+                    resp.json()["job_id"], kind=INGESTION
+                )
+            )
             client.portal.call(job_store._redis.aclose)
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -484,12 +513,32 @@ class TestStartIngestionSuccess:
             "errors": [],
         }
 
+        queue = recorded["pipeline_init"].pop("event_queue")
         assert recorded["pipeline_init"] == {
             "tenant_id": "acme:acme",
             "config_manager": cm,
             "schema_loader": sl,
             "schema_name": "video_colpali_smol500_mv_frame",
         }
+        # The pipeline reports to the job's own task, which ends with the
+        # recorded outcome.
+        assert (queue.kind, queue.task_id, queue.tenant_id) == (
+            INGESTION,
+            job_id,
+            "acme:acme",
+        )
+        assert events.closed is True
+        assert [json.loads(data) for _, _, data in events.events] == [
+            {
+                "state": "complete",
+                "ingest_id": job_id,
+                "result": {
+                    "status": "completed",
+                    "videos_processed": 2,
+                    "errors": [],
+                },
+            }
+        ]
         assert recorded["process_call"] == {
             "video_files": [str(tmp_path / "a.mp4"), str(tmp_path / "b.mp4")],
             "max_concurrent": 10,
@@ -500,7 +549,7 @@ class TestStartIngestionSuccess:
         }
 
     def test_start_without_a_job_store_is_503_and_runs_nothing(
-        self, monkeypatch, tmp_path, unreachable_job_store, caplog
+        self, monkeypatch, tmp_path, unreachable_job_store, task_event_store, caplog
     ):
         """A job that cannot be recorded is not started: no status request
         on any process could ever find it."""
@@ -516,9 +565,18 @@ class TestStartIngestionSuccess:
                     "content_type": "video",
                 },
             )
+            ended = client.portal.call(
+                lambda: task_event_store.read(
+                    resp.json()["detail"]["job_id"], kind=INGESTION
+                )
+            )
             client.portal.call(unreachable_job_store._redis.aclose)
+            client.portal.call(task_event_store._redis.aclose)
 
         assert resp.status_code == 503
+        # The job's task, opened first, ends failed: nothing will run it.
+        assert ended.closed is True
+        assert [json.loads(data)["state"] for _, _, data in ended.events] == ["failed"]
         [logged] = [
             record.getMessage()
             for record in caplog.records
@@ -694,6 +752,9 @@ async def test_partial_batch_failure_lands_in_job_status(
         key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}",
     )
     await store.create("j-partial")
+    events = await _task_events(shared_state_redis).open_task(
+        INGESTION, "j-partial", "acme:acme"
+    )
     req = ing.IngestionRequest(
         video_dir=str(tmp_path),
         profile="video_colpali_smol500_mv_frame",
@@ -706,9 +767,86 @@ async def test_partial_batch_failure_lands_in_job_status(
         config_manager=MagicMock(),
         schema_loader=MagicMock(),
         job_store=store,
+        events=events,
     )
     job = ing.IngestionStatus(**await store.get("j-partial"))
     assert job.status == "completed_with_errors"
     assert job.errors == ["bad.mp4: schema mismatch"]
     assert job.videos_processed == 2
     assert job.videos_total == 3
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_job_ends_cancelled_after_its_outcome(
+    monkeypatch, tmp_path, shared_state_redis
+):
+    """A cancellation recorded for a running job reaches the pipeline through
+    the job's event queue; the job records ``cancelled`` and its task ends
+    with that outcome and the reason."""
+    from cogniverse_runtime.routers import ingestion as ing
+
+    task_events = _task_events(shared_state_redis)
+    events = await task_events.open_task(INGESTION, "j-cancel", "acme:acme")
+
+    class _StubPipeline:
+        def __init__(self, **kwargs):
+            self.event_queue = kwargs["event_queue"]
+
+        async def process_videos_concurrent(self, video_files, max_concurrent):
+            # Another process records the cancellation; this process's
+            # poller delivers it to the job's queue.
+            await task_events.cancel(INGESTION, "j-cancel", "operator stop")
+            await task_events.poll_once()
+            cancelled = self.event_queue.cancellation_token.is_cancelled
+            return {
+                "status": "cancelled" if cancelled else "completed",
+                "successful": 1,
+                "results": [
+                    {"video_path": "a.mp4", "status": "completed"},
+                    {"video_path": "b.mp4", "status": "cancelled"},
+                ],
+            }
+
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline",
+        _StubPipeline,
+    )
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.strategies.discover_ingestible_files",
+        lambda d, ct: ["a.mp4", "b.mp4"],
+    )
+    store = IngestionJobStore(
+        shared_state_redis,
+        owner="test",
+        key_prefix=f"test:ingestion-job:{uuid.uuid4().hex}",
+    )
+    await store.create("j-cancel")
+    request = ing.IngestionRequest(
+        video_dir=str(tmp_path),
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="acme:acme",
+        content_type="video",
+    )
+
+    await ing.run_ingestion(
+        "j-cancel",
+        request,
+        config_manager=MagicMock(),
+        schema_loader=MagicMock(),
+        job_store=store,
+        events=events,
+    )
+    job = await store.get("j-cancel")
+    ended = await task_events.read("j-cancel", kind=INGESTION)
+
+    assert job["status"] == "cancelled"
+    assert ended.closed is True
+    assert [json.loads(data) for _, _, data in ended.events] == [
+        {
+            "state": "cancelled",
+            "ingest_id": "j-cancel",
+            "result": {"status": "cancelled", "videos_processed": 1, "errors": []},
+            "reason": "operator stop",
+        }
+    ]
+    assert await task_events.list_active("acme:acme") == []

@@ -27,6 +27,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     lenient_chunk_answer,
     pcm16_wav_samples,
     response_format,
+    sampling_fields,
     transcribe_in_chunks,
 )
 from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
@@ -297,8 +298,10 @@ class AudioProcessor(BaseProcessor):
         vLLM's Whisper endpoint rejects raw video containers ("Invalid
         or unsupported audio file") and requires 16 kHz mono PCM. We
         extract the audio stream via pyav and resample on the fly, then
-        send it one chunk of at most 30 s per request. A chunk carrying
-        sound that keeps coming back empty raises ``EmptyTranscriptError``.
+        send each chunk of at most 30 s with timestamps and, unless the timed
+        segments reach its end, without. A chunk
+        whose untimed text keeps coming back empty or as a repetition loop
+        raises ``EmptyTranscriptError`` or ``GarbledTranscriptError``.
         """
 
         import requests
@@ -314,12 +317,16 @@ class AudioProcessor(BaseProcessor):
         )
 
         def transcribe_chunk(
-            chunk: AudioChunk, language: str | None, timestamps: bool
+            chunk: AudioChunk,
+            language: str | None,
+            timestamps: bool,
+            temperature: float,
         ) -> ChunkTranscript:
             audio_bytes = chunk.wav()
             data: dict[str, Any] = {
                 "model": served,
                 "response_format": response_format(timestamps),
+                **sampling_fields(temperature),
             }
             if language:
                 data["language"] = language

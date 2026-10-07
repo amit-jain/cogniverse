@@ -233,6 +233,40 @@ class SchemaDeploymentIntents:
             f"Cannot transition deployment intent for {record['registration']['full_schema_name']!r}: concurrent writers"
         )
 
+    def tenant_names(self, tenant_id: str) -> list[str]:
+        """Full schema names of every record the tenant owns, in any state."""
+        tenant_id = canonical_tenant_id(tenant_id)
+        try:
+            entries = self._store.list_all_configs(
+                scope=ConfigScope.SCHEMA,
+                service=_SERVICE,
+                config_key_suffix=f"_{tenant_id.replace(':', '_')}",
+            )
+        except Exception as exc:
+            raise RegistryStorageError(
+                f"Cannot read deployment intents of tenant {tenant_id!r}: {exc}"
+            ) from exc
+        return sorted(
+            entry.config_key
+            for entry in entries
+            if entry.tenant_id == SYSTEM_TENANT_ID
+            and entry.config_value.get("registration", {}).get("tenant_id") == tenant_id
+        )
+
+    def delete(self, name: str) -> None:
+        """Delete the record reserved for ``name``; absent is a no-op."""
+        try:
+            self._store.delete_config(
+                tenant_id=SYSTEM_TENANT_ID,
+                scope=ConfigScope.SCHEMA,
+                service=_SERVICE,
+                config_key=name,
+            )
+        except Exception as exc:
+            raise RegistryStorageError(
+                f"Cannot delete deployment intent for {name!r}: {exc}"
+            ) from exc
+
     def retire(self, record: dict[str, Any]) -> dict[str, Any] | None:
         """Clear an unsuccessful activation's marker, retaining late-write recovery."""
         return self._transition(record, "absent")

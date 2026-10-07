@@ -35,9 +35,9 @@ from tests.fixtures.inference import (
     EndpointValidator,
     InferenceEndpointEnvironment,
     InferenceSessionResolver,
-    LocalEndpointProvider,
     ModalEndpointProvider,
     ProviderUnavailable,
+    RemoteServiceUnavailable,
     SessionInferenceEndpoints,
     collect_required_inference_services,
     derive_service_dependencies,
@@ -52,7 +52,7 @@ DENSEON = get_inference_service_spec("denseon")
 CLAP = get_inference_service_spec("clap_embed")
 VIDEO_EMBED = get_inference_service_spec("video_embed")
 ASR = get_inference_service_spec("vllm_asr")
-TEACHER = get_inference_service_spec("vllm_llm_teacher")
+FACE = get_inference_service_spec("face_embed")
 API_KEY = "shared-inference-secret"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -516,13 +516,13 @@ def test_discovered_custom_server_rejects_obsolete_ok_health_status():
 
 
 @pytest.mark.unit
-def test_locally_started_sidecar_health_must_carry_the_model_key():
-    """A ``/health`` body without ``model`` is rejected for a locally started
-    sidecar, the way the runtime's boot probe rejects it.
+def test_deployment_evidenced_health_must_carry_the_model_key():
+    """A ``/health`` body without ``model`` is rejected for an endpoint whose
+    revision came from its deployment, the way the runtime's boot probe
+    rejects it.
 
-    ``LocalEndpointProvider.resolve`` stamps every container/vLLM it starts
-    with ``DEPLOYMENT`` evidence, and every non-modal non-vLLM service is
-    probed at ``/health``. The runtime's ``_extract_model_from_health`` reads
+    Cluster discovery stamps a workload's rendered revision as ``DEPLOYMENT``
+    evidence, and every non-modal non-vLLM service is probed at ``/health``. The runtime's ``_extract_model_from_health`` reads
     ``body["model"]`` and nothing else, so a sidecar that omits the key can
     never be identified and the runtime refuses to boot for every profile
     bound to it.
@@ -576,37 +576,6 @@ def test_provider_does_not_close_injected_validator():
         ("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}"),
         ("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}"),
     ]
-
-
-@pytest.mark.unit
-def test_local_provider_closes_validator_when_sidecar_teardown_fails(monkeypatch):
-    with _model_server(
-        model=COLPALI.model_id,
-        revision=None,
-    ) as (base_url, requests):
-        provider = LocalEndpointProvider()
-        owned_client = provider._validator._client
-        monkeypatch.setattr(
-            provider._vllm,
-            "spawn",
-            lambda model, *, extra_args, env: base_url,
-        )
-
-        def fail_teardown() -> None:
-            raise TimeoutError("sidecar teardown timed out")
-
-        monkeypatch.setattr(provider._vllm, "teardown", fail_teardown)
-        endpoint = provider.resolve(COLPALI)
-
-        with pytest.raises(
-            RuntimeError,
-            match="inference cleanup failed: sidecar teardown timed out",
-        ):
-            provider.close()
-
-    assert endpoint.base_url == base_url
-    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
-    assert owned_client.is_closed
 
 
 @pytest.mark.unit
@@ -696,7 +665,7 @@ def test_explicit_endpoint_publishes_exact_url_and_immutable_headers(monkeypatch
 
 
 @pytest.mark.unit
-def test_generic_resolution_uses_e2e_dev_local_without_modal():
+def test_generic_resolution_uses_e2e_then_dev_without_modal():
     calls: list[str] = []
 
     class Provider(_Provider):
@@ -706,23 +675,81 @@ def test_generic_resolution_uses_e2e_dev_local_without_modal():
 
     providers = (
         Provider("e2e"),
-        Provider("dev"),
+        Provider(
+            "dev",
+            _resolved("vllm_colpali", "dev", "http://127.0.0.1:34120"),
+        ),
         Provider(
             "modal",
             error=AssertionError("generic inference must not warm Modal"),
-        ),
-        Provider(
-            "local",
-            _resolved("vllm_colpali", "local", "http://127.0.0.1:34120"),
         ),
     )
     resolver = InferenceSessionResolver(providers=providers)
 
     endpoint = resolver.resolve("vllm_colpali")
 
-    assert calls == ["e2e", "dev", "local"]
-    assert endpoint.provider == "local"
+    assert calls == ["e2e", "dev"]
+    assert endpoint.provider == "dev"
     assert endpoint.base_url == "http://127.0.0.1:34120"
+
+
+@pytest.mark.unit
+def test_no_remote_endpoint_raises_typed_error_naming_service_and_remedy():
+    """With no cluster endpoint the resolver raises; nothing is started."""
+    providers = (
+        _Provider("e2e"),
+        _Provider("dev", error=ProviderUnavailable("dev: refused a connection")),
+    )
+    resolver = InferenceSessionResolver(providers=providers)
+
+    with pytest.raises(RemoteServiceUnavailable) as caught:
+        resolver.resolve("colbert_pylate")
+
+    assert caught.value.service == "colbert_pylate"
+    assert caught.value.providers == ("e2e", "dev")
+    assert caught.value.failures == ("dev: refused a connection",)
+    assert str(caught.value) == (
+        "colbert_pylate: no remote endpoint serves lightonai/LateOn in provider "
+        "order e2e -> dev: dev: refused a connection. Tests never start a model "
+        "on this host; deploy the cogniverse-e2e cluster with this service "
+        "enabled (see docs/testing/TESTING_GUIDE.md)."
+    )
+    assert [provider.calls for provider in providers] == [
+        ["colbert_pylate"],
+        ["colbert_pylate"],
+    ]
+
+
+@pytest.mark.unit
+def test_modal_marked_service_names_the_modal_deploy_command():
+    resolver = InferenceSessionResolver(
+        providers=(_Provider("modal"),), modal_services={"vllm_asr"}
+    )
+
+    with pytest.raises(RemoteServiceUnavailable) as caught:
+        resolver.resolve("vllm_asr")
+
+    assert str(caught.value) == (
+        "vllm_asr: no remote endpoint serves openai/whisper-large-v3-turbo in "
+        "provider order modal. Tests never start a model on this host; deploy "
+        "it with `uv run cogniverse inference modal deploy vllm_asr`."
+    )
+
+
+@pytest.mark.unit
+def test_build_resolver_has_no_local_provider():
+    from tests.fixtures import inference as inference_fixture
+
+    resolver = inference_fixture._build_resolver({"vllm_colpali"})
+    try:
+        assert [provider.name for provider in resolver._providers] == [
+            "llm",
+            "e2e",
+            "dev",
+            "modal",
+        ]
+    finally:
+        resolver.close()
 
 
 @pytest.mark.unit
@@ -776,7 +803,7 @@ def test_api_key_does_not_warm_modal_for_generic_cluster_resolution(monkeypatch)
         )
         resolver = inference_fixture._build_resolver({"vllm_colpali"})
         endpoint = resolver.resolve("vllm_colpali")
-        monkeypatch.setattr(inference_fixture.subprocess, "run", unexpected_subprocess)
+        monkeypatch.setattr(subprocess, "run", unexpected_subprocess)
 
         resolver.close()
 
@@ -969,366 +996,6 @@ def test_concurrent_resolution_selects_and_validates_once(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("service", "expected_model", "expected_args", "expected_env"),
-    [
-        (
-            "vllm_colpali",
-            "TomoroAI/tomoro-colqwen3-embed-4b",
-            (
-                "--revision",
-                "bf790bd8780b098b86453444632a184bb770be1a",
-                "--max-model-len",
-                "4096",
-                "--runner",
-                "pooling",
-                "--convert",
-                "embed",
-                "--limit-mm-per-prompt",
-                '{"video":0,"image":1}',
-            ),
-            None,
-        ),
-        (
-            "vllm_llm_student",
-            "google/gemma-4-e4b-it",
-            (
-                "--revision",
-                "ee0ef6023621cff504d758262d4e04895a5af4a2",
-                "--max-model-len",
-                "8192",
-                "--enforce-eager",
-                "--max-num-seqs",
-                "1",
-                "--limit-mm-per-prompt",
-                '{"video":0,"image":4}',
-            ),
-            None,
-        ),
-    ],
-)
-@pytest.mark.unit
-def test_local_vllm_launch_matches_production_contract(
-    monkeypatch,
-    service,
-    expected_model,
-    expected_args,
-    expected_env,
-):
-    spec = get_inference_service_spec(service)
-    spawn_calls: list[tuple[str, tuple[str, ...], object]] = []
-    with _model_server(
-        model=spec.model_id,
-        revision=None,
-    ) as (base_url, requests):
-        provider = LocalEndpointProvider()
-
-        def spawn(model, *, extra_args, env):
-            spawn_calls.append((model, tuple(extra_args), env))
-            return base_url
-
-        monkeypatch.setattr(
-            provider._vllm,
-            "spawn",
-            spawn,
-        )
-        monkeypatch.setattr(provider._vllm, "teardown", lambda: None)
-
-        endpoint = provider.resolve(spec)
-        provider.close()
-
-    assert spawn_calls == [(expected_model, expected_args, expected_env)]
-    assert endpoint.base_url == base_url
-    assert dict(endpoint.headers) == {
-        "Authorization": f"Bearer {TEST_INFERENCE_API_KEY}"
-    }
-    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
-
-
-@pytest.mark.unit
-def test_local_llm_provisioning_failure_preserves_error_and_retries_release(
-    monkeypatch,
-):
-    release_calls = 0
-
-    def ensure(model: str, revision: str) -> str:
-        raise RuntimeError(f"provisioning failed for {model}@{revision}")
-
-    def release() -> None:
-        nonlocal release_calls
-        release_calls += 1
-        if release_calls == 1:
-            raise OSError("controlled LLM release failure")
-
-    provider = LocalEndpointProvider(
-        llm_ensurer=ensure,
-        llm_active=lambda model, revision: False,
-        llm_releaser=release,
-    )
-    monkeypatch.setattr(provider._vllm, "teardown", lambda: None)
-
-    with pytest.raises(RuntimeError, match="provisioning failed") as caught:
-        provider.resolve(get_inference_service_spec("vllm_llm_student"))
-
-    assert caught.value.__notes__ == [
-        "vllm_llm_student cleanup failed: OSError: controlled LLM release failure"
-    ]
-    assert provider._owns_llm is True
-    provider.close()
-    assert provider._owns_llm is False
-    assert release_calls == 2
-
-
-@pytest.mark.parametrize(
-    ("service", "relative_dockerfile", "relative_context"),
-    [
-        ("gliner", "deploy/gliner/Dockerfile", "."),
-        ("clap_embed", "deploy/clap_embed/Dockerfile", "."),
-        ("face_embed", "deploy/face_embed/Dockerfile", "."),
-        ("video_embed", "deploy/video_embed/Dockerfile", "."),
-        ("colbert_pylate", "deploy/pylate/Dockerfile", "."),
-        ("code_colbert_pylate", "deploy/pylate/Dockerfile", "."),
-    ],
-)
-@pytest.mark.unit
-def test_local_container_rebuilds_its_declared_docker_context(
-    monkeypatch,
-    service,
-    relative_dockerfile,
-    relative_context,
-):
-    from tests.fixtures import inference as inference_fixture
-
-    commands: list[list[str]] = []
-
-    def run(command, **kwargs):
-        commands.append(list(command))
-        return subprocess.CompletedProcess(command, 0)
-
-    class Healthy:
-        status_code = 200
-
-    monkeypatch.setattr(inference_fixture.subprocess, "run", run)
-    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 39123)
-    monkeypatch.setattr(
-        inference_fixture.httpx, "get", lambda *args, **kwargs: Healthy()
-    )
-    provider = LocalEndpointProvider()
-    spec = get_inference_service_spec(service)
-
-    assert provider._start_container(spec) == "http://127.0.0.1:39123"
-
-    repo = inference_fixture.Path(inference_fixture.__file__).resolve().parents[2]
-    assert not any(
-        command[:3] == ["docker", "image", "inspect"] for command in commands
-    )
-    build = next(command for command in commands if command[:2] == ["docker", "build"])
-    assert build == [
-        "docker",
-        "build",
-        "-f",
-        str(repo / relative_dockerfile),
-        "-t",
-        inference_fixture._CONTAINER_SPECS[service].image,
-        str((repo / relative_context).resolve()),
-    ]
-
-
-def _exposed_port(dockerfile: Path) -> int:
-    exposed = [
-        int(line.split()[1])
-        for line in dockerfile.read_text().splitlines()
-        if line.startswith("EXPOSE ")
-    ]
-    assert len(exposed) == 1, f"{dockerfile}: expected one EXPOSE, got {exposed}"
-    return exposed[0]
-
-
-@pytest.mark.unit
-def test_local_container_specs_run_the_images_the_deploy_builds():
-    """Every test-owned sidecar runs the image family `cogniverse up` builds:
-    same repository, same Dockerfile, same repository-root context, on the
-    port the Dockerfile exposes. video_embed pins the spec's checkpoint and
-    revision so the container serves exactly what the validator demands."""
-    from cogniverse_cli.images import LOCAL_IMAGE_BUILDS
-
-    from tests.fixtures import inference as inference_fixture
-
-    specs = inference_fixture._CONTAINER_SPECS
-    assert set(specs) == {
-        "gliner",
-        "clap_embed",
-        "face_embed",
-        "video_embed",
-        "colbert_pylate",
-        "code_colbert_pylate",
-    }
-    for service, container in specs.items():
-        repo, dockerfile, context = LOCAL_IMAGE_BUILDS[service]
-        assert container.image == f"{repo}:0.1.0-dev", service
-        assert container.dockerfile == dockerfile, service
-        assert container.build_context == context, service
-        assert container.port == _exposed_port(REPO_ROOT / dockerfile), service
-
-    assert dict(specs["video_embed"].environment) == {
-        "VIDEO_EMBED_MODEL": VIDEO_EMBED.model_id,
-        "VIDEO_EMBED_MODEL_REVISION": VIDEO_EMBED.model_revision,
-    }
-
-
-@pytest.mark.unit
-def test_local_pylate_container_runs_as_invoking_user_with_pinned_model(
-    monkeypatch,
-):
-    """The colbert_pylate container carries the pinned model identity and
-    runs as the invoking user against the test-owned cache — container
-    writes must never land root-owned files in a cache the host-side
-    oracle reads."""
-    import os as os_mod
-
-    from tests.fixtures import inference as inference_fixture
-    from tests.utils.vllm_sidecar import CONTAINER_HF_CACHE, TEST_HF_CACHE
-
-    commands: list[list[str]] = []
-
-    def run(command, **kwargs):
-        commands.append(list(command))
-        return subprocess.CompletedProcess(command, 0)
-
-    class Healthy:
-        status_code = 200
-
-    monkeypatch.setattr(inference_fixture.subprocess, "run", run)
-    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 39123)
-    monkeypatch.setattr(
-        inference_fixture.httpx, "get", lambda *args, **kwargs: Healthy()
-    )
-    provider = LocalEndpointProvider()
-    spec = get_inference_service_spec("colbert_pylate")
-
-    assert provider._start_container(spec) == "http://127.0.0.1:39123"
-
-    run_command = next(
-        command for command in commands if command[:2] == ["docker", "run"]
-    )
-    container_name = run_command[4]
-    assert run_command == [
-        "docker",
-        "run",
-        "-d",
-        "--name",
-        container_name,
-        "--label",
-        f"cogniverse-test-owner-pid={os_mod.getpid()}",
-        "-p",
-        "39123:8080",
-        "--oom-score-adj=500",
-        "--user",
-        f"{os_mod.getuid()}:{os_mod.getgid()}",
-        "-e",
-        f"HOME={CONTAINER_HF_CACHE}",
-        "-e",
-        f"HF_HOME={CONTAINER_HF_CACHE}",
-        "-e",
-        "LOGNAME=cogniverse",
-        "-e",
-        "USER=cogniverse",
-        "-v",
-        f"{TEST_HF_CACHE}:{CONTAINER_HF_CACHE}",
-        "-e",
-        "MODEL_NAME=lightonai/LateOn",
-        "-e",
-        "MODEL_REVISION=c01907b70557ee5c7753680d4819a5cce1674b83",
-        "-e",
-        "DEVICE=cpu",
-        "cogniverse/pylate:0.1.0-dev",
-    ]
-
-
-@pytest.mark.unit
-def test_local_container_build_failure_names_service_dockerfile_and_context(
-    monkeypatch,
-):
-    """A build that fails on both attempts surfaces the dockerfile, context,
-    and the final cause — a persistent failure is never retried forever."""
-    from tests.fixtures import inference as inference_fixture
-
-    build_attempts = 0
-
-    def run(command, **kwargs):
-        if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(command, 1)
-        nonlocal build_attempts
-        build_attempts += 1
-        raise subprocess.CalledProcessError(17, command, stderr="missing server.py")
-
-    monkeypatch.setattr(inference_fixture.subprocess, "run", run)
-    provider = LocalEndpointProvider()
-    repo = inference_fixture.Path(inference_fixture.__file__).resolve().parents[2]
-    expected_command = [
-        "docker",
-        "build",
-        "-f",
-        str(repo / "deploy/face_embed/Dockerfile"),
-        "-t",
-        "cogniverse/face-embed:0.1.0-dev",
-        str(repo),
-    ]
-
-    with pytest.raises(ProviderUnavailable) as caught:
-        provider._start_container(get_inference_service_spec("face_embed"))
-
-    assert build_attempts == 2
-    cause = caught.value.__cause__
-    assert isinstance(cause, subprocess.CalledProcessError)
-    assert cause.cmd == expected_command
-    assert cause.returncode == 17
-    assert cause.stderr == "missing server.py"
-    assert str(caught.value) == (
-        "face_embed: Docker image build failed twice using "
-        f"{repo / 'deploy/face_embed/Dockerfile'} with context {repo} "
-        f"(CalledProcessError: {cause})"
-    )
-
-
-@pytest.mark.unit
-def test_local_container_build_retries_once_after_transient_failure(monkeypatch):
-    """A single transient registry/PyPI failure mid-build must not sink the
-    session: the second attempt runs (cached layers make it cheap) and the
-    container starts normally."""
-    from tests.fixtures import inference as inference_fixture
-
-    build_attempts = 0
-    run_commands: list[list[str]] = []
-
-    def run(command, **kwargs):
-        run_commands.append(list(command))
-        if command[:2] == ["docker", "build"]:
-            nonlocal build_attempts
-            build_attempts += 1
-            if build_attempts == 1:
-                raise subprocess.CalledProcessError(
-                    2, command, stderr="Read timed out."
-                )
-        return subprocess.CompletedProcess(command, 0)
-
-    class Healthy:
-        status_code = 200
-
-    monkeypatch.setattr(inference_fixture.subprocess, "run", run)
-    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 39124)
-    monkeypatch.setattr(
-        inference_fixture.httpx, "get", lambda *args, **kwargs: Healthy()
-    )
-    provider = LocalEndpointProvider()
-
-    url = provider._start_container(get_inference_service_spec("face_embed"))
-
-    assert url == "http://127.0.0.1:39124"
-    assert build_attempts == 2
-    assert any(command[:2] == ["docker", "run"] for command in run_commands)
-
-
-@pytest.mark.parametrize(
     "failure",
     [
         "authentication rejected",
@@ -1492,37 +1159,6 @@ def test_close_waits_for_inflight_resolution_and_that_resolution_fails():
         teardown.result(timeout=3)
 
     assert events == ["resolve-started", "resolve-finished", "provider-closed"]
-
-
-@pytest.mark.unit
-def test_failed_container_cleanup_remains_tracked_and_second_close_retries(
-    monkeypatch,
-):
-    from tests.fixtures import inference as inference_fixture
-
-    provider = LocalEndpointProvider()
-    provider._containers.append("cogniverse-face-embed-test-deadbeef")
-    monkeypatch.setattr(provider._vllm, "teardown", lambda: None)
-    attempts = 0
-
-    def remove(command, **kwargs):
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise subprocess.TimeoutExpired(command, timeout=30)
-        return subprocess.CompletedProcess(command, 0, stdout="removed", stderr="")
-
-    monkeypatch.setattr(inference_fixture.subprocess, "run", remove)
-    resolver = InferenceSessionResolver(providers=(provider,))
-
-    with pytest.raises(RuntimeError, match="TimeoutExpired"):
-        resolver.close()
-    assert provider._containers == ["cogniverse-face-embed-test-deadbeef"]
-
-    resolver.close()
-
-    assert attempts == 2
-    assert provider._containers == []
 
 
 @pytest.mark.unit
@@ -1780,7 +1416,7 @@ def test_borrowed_cluster_endpoint_is_not_mutated_during_teardown(monkeypatch):
         )
         resolver = inference_fixture._build_resolver({"vllm_colpali"})
         endpoint = resolver.resolve("vllm_colpali")
-        monkeypatch.setattr(inference_fixture.subprocess, "run", unexpected_subprocess)
+        monkeypatch.setattr(subprocess, "run", unexpected_subprocess)
 
         resolver.close()
 
@@ -1986,9 +1622,11 @@ def test_validate_maps_a_refused_connection_to_provider_unavailable():
     validator.close()
 
 
-TEACHER_REASON = (
-    "vllm_llm_teacher: no exact endpoint in provider order e2e -> dev -> local: "
-    "vllm_llm_teacher: no exact test-owned local service is defined"
+FACE_REASON = (
+    "face_embed: no remote endpoint serves buffalo_l in provider order "
+    "e2e -> dev. Tests never start a model on this host; deploy the "
+    "cogniverse-e2e cluster with this service enabled "
+    "(see docs/testing/TESTING_GUIDE.md)."
 )
 
 _SCOPED_SESSION_CONFTEST = """
@@ -2061,7 +1699,7 @@ MODULE_FIXTURE_LOG = Path(__file__).with_name("module_fixture.log")
 
 
 @pytest.fixture(scope="module")
-def module_setup_without_teacher():
+def module_setup_without_face_embed():
     MODULE_FIXTURE_LOG.write_text("ran")
 
 
@@ -2073,9 +1711,9 @@ def environment_at_module_setup():
     )
 
 
-@pytest.mark.requires_inference("vllm_llm_teacher")
-def test_missing_first(module_setup_without_teacher):
-    raise AssertionError("must not run without vllm_llm_teacher")
+@pytest.mark.requires_inference("face_embed")
+def test_missing_first(module_setup_without_face_embed):
+    raise AssertionError("must not run without face_embed")
 
 
 def test_no_requirement(inference_endpoints):
@@ -2103,9 +1741,9 @@ def test_available(
     assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "cogniverse-test-inference"
 
 
-@pytest.mark.requires_inference("vllm_llm_teacher")
-def test_missing_again(module_setup_without_teacher):
-    raise AssertionError("must not run without vllm_llm_teacher")
+@pytest.mark.requires_inference("face_embed")
+def test_missing_again(module_setup_without_face_embed):
+    raise AssertionError("must not run without face_embed")
 """
 
 
@@ -2136,28 +1774,34 @@ def test_unresolvable_service_errors_only_the_tests_that_declared_it(
         "PASSED test_scope.py::test_no_requirement",
         "PASSED test_scope.py::test_available",
     ]
-    error_prefix = "tests.fixtures.inference.ProviderUnavailable: "
+    error_prefix = "tests.fixtures.inference.RemoteServiceUnavailable: "
     assert [line for line in result.outlines if line.startswith("ERROR ")] == [
-        f"ERROR test_scope.py::test_missing_first - {error_prefix}{TEACHER_REASON}",
-        f"ERROR test_scope.py::test_missing_again - {error_prefix}{TEACHER_REASON}",
+        f"ERROR test_scope.py::test_missing_first - {error_prefix}{FACE_REASON}",
+        f"ERROR test_scope.py::test_missing_again - {error_prefix}{FACE_REASON}",
     ]
-    assert result.outlines.count(f"E       {error_prefix}{TEACHER_REASON}") == 2
+    assert result.outlines.count(f"E       {error_prefix}{FACE_REASON}") == 2
     assert (pytester.path / "discovery.log").read_text().splitlines() == [
-        f"e2e {TEACHER.model_id}",
-        f"dev {TEACHER.model_id}",
+        f"e2e {FACE.model_id}",
+        f"dev {FACE.model_id}",
+        # The explicit clap URL is matched against the workloads that may
+        # publish it, for their rendered revision.
+        f"e2e {CLAP.model_id}",
+        f"dev {CLAP.model_id}",
     ]
     assert not (pytester.path / "module_fixture.log").exists()
 
 
-LOCAL_VIDEO_EMBED_REASON = (
-    "video_embed: no exact endpoint in provider order local: "
-    "video_embed: no exact test-owned local service is defined"
+E2E_VIDEO_EMBED_REASON = (
+    "video_embed: no remote endpoint serves microsoft/xclip-large-patch14 in "
+    "provider order e2e: video_embed: e2e publishes no endpoint for it. Tests "
+    "never start a model on this host; deploy the cogniverse-e2e cluster with "
+    "this service enabled (see docs/testing/TESTING_GUIDE.md)."
 )
 
 
 class _ServiceProvider(_Provider):
     """Resolves the services in ``endpoints``; every other service is
-    unavailable with the local provider's reason."""
+    unavailable with the e2e provider's reason."""
 
     def __init__(self, name: str, endpoints: dict[str, ResolvedInferenceEndpoint]):
         super().__init__(name)
@@ -2173,13 +1817,13 @@ class _ServiceProvider(_Provider):
             return self.endpoints[spec.name]
         except KeyError:
             raise ProviderUnavailable(
-                f"{spec.name}: no exact test-owned local service is defined"
+                f"{spec.name}: e2e publishes no endpoint for it"
             ) from None
 
 
 @pytest.mark.unit
 def test_concurrent_failed_resolution_consults_the_provider_once():
-    provider = _ServiceProvider("local", {})
+    provider = _ServiceProvider("e2e", {})
     resolver = InferenceSessionResolver(providers=(provider,))
     simultaneous = Barrier(12)
 
@@ -2200,12 +1844,12 @@ def test_concurrent_failed_resolution_consults_the_provider_once():
         messages = [attempt.result(timeout=3) for attempt in attempts]
 
     assert not simultaneous.broken
-    assert messages == [LOCAL_VIDEO_EMBED_REASON] * 12
+    assert messages == [E2E_VIDEO_EMBED_REASON] * 12
     assert provider.calls == ["video_embed"]
 
     with pytest.raises(ProviderUnavailable) as later:
         resolver.resolve("video_embed")
-    assert str(later.value) == LOCAL_VIDEO_EMBED_REASON
+    assert str(later.value) == E2E_VIDEO_EMBED_REASON
     assert provider.calls == ["video_embed"]
     resolver.close()
     assert provider.close_calls == 1
@@ -2213,7 +1857,7 @@ def test_concurrent_failed_resolution_consults_the_provider_once():
 
 @pytest.mark.unit
 def test_cached_failure_is_reraised_without_growing_its_traceback():
-    provider = _ServiceProvider("local", {})
+    provider = _ServiceProvider("e2e", {})
     provider.release.set()
     resolver = InferenceSessionResolver(providers=(provider,))
     depths: list[int] = []
@@ -2251,7 +1895,7 @@ def test_session_endpoints_build_and_resolve_once_under_concurrent_first_touch(
     monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
     monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
     colpali = _resolved("vllm_colpali", "local", "http://127.0.0.1:34140", API_KEY)
-    provider = _ServiceProvider("local", {"vllm_colpali": colpali})
+    provider = _ServiceProvider("e2e", {"vllm_colpali": colpali})
     builds: list[int] = []
     endpoints = _session_endpoints(provider, {"vllm_colpali"}, builds)
     simultaneous = Barrier(12)
@@ -2293,7 +1937,7 @@ def test_session_endpoints_scope_each_outcome_to_the_service_that_asked(
     monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
     monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
     clap = _resolved("clap_embed", "local", "http://127.0.0.1:34141", API_KEY)
-    provider = _ServiceProvider("local", {"clap_embed": clap})
+    provider = _ServiceProvider("e2e", {"clap_embed": clap})
     provider.release.set()
     builds: list[int] = []
     endpoints = _session_endpoints(provider, {"clap_embed", "video_embed"}, builds)
@@ -2305,14 +1949,14 @@ def test_session_endpoints_scope_each_outcome_to_the_service_that_asked(
     assert dict(endpoints.require({"clap_embed"})) == {"clap_embed": clap}
     with pytest.raises(ProviderUnavailable) as first:
         endpoints.require({"video_embed"})
-    assert str(first.value) == LOCAL_VIDEO_EMBED_REASON
+    assert str(first.value) == E2E_VIDEO_EMBED_REASON
     with pytest.raises(ProviderUnavailable) as both:
         endpoints.require({"video_embed", "clap_embed"})
-    assert str(both.value) == LOCAL_VIDEO_EMBED_REASON
+    assert str(both.value) == E2E_VIDEO_EMBED_REASON
     assert endpoints.get("clap_embed") is clap
     with pytest.raises(ProviderUnavailable) as via_get:
         endpoints.get("video_embed")
-    assert str(via_get.value) == LOCAL_VIDEO_EMBED_REASON
+    assert str(via_get.value) == E2E_VIDEO_EMBED_REASON
     with pytest.raises(KeyError, match="'gliner'"):
         endpoints["gliner"]
     assert endpoints.get("gliner") is None
@@ -2347,7 +1991,7 @@ def test_session_endpoints_reject_a_second_credential_without_recording_it(
     monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
     colpali = _resolved("vllm_colpali", "local", "http://127.0.0.1:34142", API_KEY)
     denseon = _resolved("denseon", "local", "http://127.0.0.1:34143", "other-secret")
-    provider = _ServiceProvider("local", {"vllm_colpali": colpali, "denseon": denseon})
+    provider = _ServiceProvider("e2e", {"vllm_colpali": colpali, "denseon": denseon})
     provider.release.set()
     builds: list[int] = []
     endpoints = _session_endpoints(provider, {"vllm_colpali", "denseon"}, builds)
@@ -2367,3 +2011,328 @@ def test_session_endpoints_reject_a_second_credential_without_recording_it(
     assert provider.calls == ["vllm_colpali", "denseon"]
     endpoints.close()
     assert "INFERENCE_SERVICE_URLS" not in os.environ
+
+
+@pytest.mark.unit
+def test_concurrent_fixtures_resolve_each_cluster_service_once(monkeypatch):
+    """Many fixtures asking for several services at once: each service is
+    discovered and validated once, every caller gets that one endpoint, and a
+    service the cluster does not serve fails every caller with one typed error
+    without ever being started."""
+    from tests.fixtures import inference as inference_fixture
+    from tests.utils import vllm_sidecar
+
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+    discoveries: list[str] = []
+    discovery_lock = Lock()
+    with (
+        _model_server(
+            model=COLPALI.model_id, revision=COLPALI.model_revision, token=API_KEY
+        ) as (colpali_url, colpali_requests),
+        _model_server(
+            model=DENSEON.model_id, revision=DENSEON.model_revision, token=API_KEY
+        ) as (denseon_url, denseon_requests),
+    ):
+        served = {COLPALI.model_id: colpali_url, DENSEON.model_id: denseon_url}
+
+        def discover_e2e(model):
+            with discovery_lock:
+                discoveries.append(f"e2e {model}")
+            url = served.get(model)
+            return () if url is None else (_discovered(url, None),)
+
+        def discover_dev(model):
+            with discovery_lock:
+                discoveries.append(f"dev {model}")
+            return ()
+
+        def no_local_process(*args, **kwargs):
+            raise AssertionError("cluster resolution must not start anything")
+
+        monkeypatch.setattr(vllm_sidecar, "_discover_e2e_model_urls", discover_e2e)
+        monkeypatch.setattr(vllm_sidecar, "_discover_dev_model_urls", discover_dev)
+        monkeypatch.setattr(subprocess, "run", no_local_process)
+        monkeypatch.setattr(subprocess, "Popen", no_local_process)
+        resolver = inference_fixture._build_resolver(
+            {"vllm_colpali", "denseon", "face_embed"}
+        )
+        services = ["vllm_colpali", "denseon", "face_embed"] * 8
+        barrier = Barrier(len(services))
+
+        def resolve(service):
+            barrier.wait(timeout=10)
+            try:
+                return resolver.resolve(service)
+            except RemoteServiceUnavailable as exc:
+                return exc
+
+        try:
+            with ThreadPoolExecutor(max_workers=len(services)) as pool:
+                outcomes = list(pool.map(resolve, services))
+        finally:
+            resolver.close()
+
+    by_service: dict[str, set[int]] = {}
+    for service, outcome in zip(services, outcomes):
+        by_service.setdefault(service, set()).add(id(outcome))
+    assert {service: len(ids) for service, ids in by_service.items()} == {
+        "vllm_colpali": 1,
+        "denseon": 1,
+        "face_embed": 1,
+    }
+    colpali, denseon, face = outcomes[:3]
+    assert (colpali.provider, colpali.base_url) == ("e2e", colpali_url)
+    assert (denseon.provider, denseon.base_url) == ("e2e", denseon_url)
+    assert isinstance(face, RemoteServiceUnavailable)
+    assert face.service == "face_embed"
+    assert sorted(discoveries) == sorted(
+        [
+            f"e2e {COLPALI.model_id}",
+            f"e2e {DENSEON.model_id}",
+            f"e2e {FACE.model_id}",
+            f"dev {FACE.model_id}",
+        ]
+    )
+    assert colpali_requests == [("/v1/models", f"Bearer {API_KEY}")]
+    assert denseon_requests == [("/v1/models", f"Bearer {API_KEY}")]
+
+
+def _explicit_candidate(url: str) -> CandidateEndpoint:
+    return CandidateEndpoint(
+        provider="local",
+        base_url=url,
+        credentials=EndpointCredentials(bearer_token=TEST_INFERENCE_API_KEY),
+        identity_evidence=EndpointIdentityEvidence.ENDPOINT,
+    )
+
+
+@pytest.mark.unit
+def test_explicit_cluster_url_takes_its_revision_from_the_workload():
+    """vLLM's /v1/models carries no revision: an explicit URL a cluster
+    workload publishes is verified against that workload's --revision."""
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, requests):
+        discovered: list[str] = []
+
+        def discover(spec):
+            discovered.append(spec.name)
+            return (
+                _discovered("http://127.0.0.1:1", COLPALI.model_revision),
+                _discovered(url, COLPALI.model_revision),
+            )
+
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)}, discover=discover
+        )
+        try:
+            endpoint = provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert (endpoint.provider, endpoint.base_url, endpoint.model_revision) == (
+        "local",
+        url,
+        COLPALI.model_revision,
+    )
+    assert discovered == ["vllm_colpali"]
+    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
+
+
+@pytest.mark.unit
+def test_explicit_cluster_url_with_another_workload_revision_is_refused():
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, requests):
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)},
+            discover=lambda spec: (_discovered(url, "0" * 40),),
+        )
+        try:
+            with pytest.raises(ModelIdentityError) as caught:
+                provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert str(caught.value) == (
+        f"vllm_colpali: deployment revision {'0' * 40!r} does not match "
+        f"expected {COLPALI.model_revision!r}"
+    )
+    assert requests == []
+
+
+@pytest.mark.unit
+def test_explicit_url_no_workload_publishes_must_report_its_revision():
+    from tests.fixtures.inference import ExplicitEndpointProvider
+
+    with _model_server(model=COLPALI.model_id, revision=None) as (url, _):
+        provider = ExplicitEndpointProvider(
+            {"vllm_colpali": _explicit_candidate(url)},
+            discover=lambda spec: (
+                _discovered("http://127.0.0.1:1", COLPALI.model_revision),
+            ),
+        )
+        try:
+            with pytest.raises(ModelIdentityError) as caught:
+                provider.resolve(COLPALI)
+        finally:
+            provider.close()
+
+    assert str(caught.value) == (
+        f"vllm_colpali: expected revision {COLPALI.model_revision!r}, got None"
+    )
+
+
+@pytest.mark.unit
+def test_an_explicit_resolution_is_reported_in_the_session_summary():
+    from tests.utils.model_resolution import ModelResolution, resolution_counts
+
+    with _model_server(model=COLPALI.model_id, revision=COLPALI.model_revision) as (
+        url,
+        _,
+    ):
+        resolver = InferenceSessionResolver(
+            providers=(),
+            explicit_endpoints={"vllm_colpali": _explicit_candidate(url)},
+        )
+        try:
+            resolver.resolve("vllm_colpali")
+        finally:
+            resolver.close()
+
+    assert (
+        ModelResolution(
+            "inference vllm_colpali",
+            "resolved-remote",
+            url,
+            ("explicit",),
+            "INFERENCE_SERVICE_URLS",
+        ).summary_line()
+        == f"inference vllm_colpali: resolved-remote {url} (INFERENCE_SERVICE_URLS) "
+        "[candidates: explicit]"
+    )
+    assert [
+        resolution
+        for resolution, _ in resolution_counts()
+        if resolution.endpoint == url
+    ] == [
+        ModelResolution(
+            "inference vllm_colpali",
+            "resolved-remote",
+            url,
+            ("explicit",),
+            "INFERENCE_SERVICE_URLS",
+        )
+    ]
+
+
+_ITEM_SCOPED_CONFTEST = """
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+
+import pytest
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
+from tests.utils import vllm_sidecar
+
+CLAP = get_inference_service_spec("clap_embed")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(
+            {
+                "status": "ready",
+                "model": CLAP.model_id,
+                "model_revision": CLAP.model_revision,
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+Thread(target=_server.serve_forever, daemon=True).start()
+CLAP_URL = f"http://127.0.0.1:{_server.server_address[1]}"
+
+
+def _discover(model):
+    if model == CLAP.model_id:
+        return (vllm_sidecar._DiscoveredClusterEndpoint(CLAP_URL, None),)
+    return ()
+
+
+vllm_sidecar._discover_e2e_model_urls = _discover
+vllm_sidecar._discover_dev_model_urls = lambda model: ()
+
+
+@pytest.fixture
+def clap_url():
+    return CLAP_URL
+"""
+
+_ITEM_SCOPED_TESTS = """
+import json
+import os
+
+import pytest
+
+
+def test_before_any_resolution():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.requires_inference("clap_embed")
+def test_publishes_its_own_endpoints(clap_url):
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {"clap_embed": clap_url}
+    assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "cogniverse-test-inference"
+
+
+def test_after_a_publishing_test():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.requires_inference("clap_embed")
+def test_a_later_test_gets_the_cached_endpoint_published_again(clap_url):
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {"clap_embed": clap_url}
+
+
+def test_after_the_second_publishing_test():
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+"""
+
+
+@pytest.mark.unit
+def test_published_endpoints_never_outlive_the_test_that_declared_them(
+    pytester, monkeypatch
+):
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    pytester.makeconftest(_ITEM_SCOPED_CONFTEST)
+    pytester.makepyfile(test_scope=_ITEM_SCOPED_TESTS)
+
+    result = pytester.runpytest_subprocess(
+        "-p", "tests.fixtures.inference", "-p", "no:cacheprovider", "-rA"
+    )
+
+    result.assert_outcomes(passed=5)
+    assert [line for line in result.outlines if line.startswith("PASSED ")] == [
+        "PASSED test_scope.py::test_before_any_resolution",
+        "PASSED test_scope.py::test_publishes_its_own_endpoints",
+        "PASSED test_scope.py::test_after_a_publishing_test",
+        "PASSED test_scope.py::test_a_later_test_gets_the_cached_endpoint_published_again",
+        "PASSED test_scope.py::test_after_the_second_publishing_test",
+    ]

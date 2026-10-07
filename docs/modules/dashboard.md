@@ -449,7 +449,7 @@ render_approval_queue_tab()
 
 - Upload a test video and select one or more processing profiles plus pipeline options (max frames, chunk duration, transcription, descriptions, keyframe method, embedding precision)
 
-- Synchronous per-profile processing with a progress bar, calling `POST /ingestion/start` (`action: process_video`) via `call_agent_async`; results and per-profile analysis are shown after each call completes
+- Synchronous per-profile processing with a progress bar: `submit_video_ingestion` (`cogniverse_dashboard/ingestion.py`) uploads the video to `POST /ingestion/upload` and polls `GET /ingestion/{ingest_id}/status` until the job is `complete`, `failed` or `cancelled`; results and per-profile analysis are shown after each job ends
 
 ### Interactive Search Tab
 
@@ -567,7 +567,9 @@ render_rlm_ab_compare_tab()
 
 **Purpose:** CRUD interface for backend profiles via ConfigManager. Not one of
 the 16 top-level tabs — it's a standalone module embedded inside the
-Configuration Management tab's "Backend Profiles" sub-tab.
+Configuration Management tab's "Backend Profiles" sub-tab. The profile list and
+detail read the tenant's stored backend config (`get_stored_backend_config`),
+so a profile the runtime created, updated or deleted shows as it is at once.
 
 **Functions:**
 

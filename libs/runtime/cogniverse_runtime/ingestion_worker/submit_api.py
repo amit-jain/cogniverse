@@ -19,11 +19,14 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import redis.asyncio as aioredis
 
 from cogniverse_runtime.ingestion_worker import backpressure, idempotency, queue
+
+if TYPE_CHECKING:
+    from cogniverse_runtime.task_events import TaskEventStore
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +157,8 @@ async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> WaitOutcome:
     """Long-poll the status stream until a terminal event is observed or
-    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed}``.
+    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed,
+    cancelled}``.
 
     On timeout the outcome carries the newest event the stream held, so the
     caller reports what the worker was actually doing. Raises
@@ -175,7 +179,7 @@ async def _wait_for_terminal(
         for message_id, event in events:
             last_id = message_id
             last_event = event
-            if event.get("state") in ("complete", "failed"):
+            if event.get("state") in queue.TERMINAL_STATUS_STATES:
                 return WaitOutcome(terminal=event, last_event=event)
     if last_event is None:
         raise StatusStreamUnavailable(
@@ -216,9 +220,40 @@ async def _restore_status_trail(
     )
 
 
+async def _register_queued_task(
+    task_events: "TaskEventStore", ingest_id: str, tenant_id: str
+) -> None:
+    """List the queued job as an active ingestion task, so it is cancellable
+    before a worker claims it.
+
+    The job is already queued: a worker that claims it records the task
+    itself, so a registration the store refuses is logged, not raised.
+    """
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_runtime.task_events import (
+        TaskAlreadyExists,
+        TaskEventsUnavailable,
+    )
+
+    try:
+        await task_events.register_queued(ingest_id, canonical_tenant_id(tenant_id))
+    except TaskAlreadyExists:
+        # A worker claimed the job first and recorded its task.
+        pass
+    except TaskEventsUnavailable as exc:
+        logger.warning(
+            "Queued ingest %s not listed as an active task until a worker "
+            "claims it: %s (cause: %r)",
+            ingest_id,
+            exc,
+            exc.__cause__,
+        )
+
+
 async def enqueue_ingestion(
     redis: aioredis.Redis,
     *,
+    task_events: "TaskEventStore",
     source_url: str,
     profile: str,
     tenant_id: str,
@@ -227,6 +262,9 @@ async def enqueue_ingestion(
     wait_timeout: int = 300,
 ) -> EnqueueResult:
     """Enqueue an ingestion or return the existing run.
+
+    A new job is listed as a queued ingestion task in ``task_events``, the
+    calling process's task event store.
 
     Raises ``BackpressureError`` when either backpressure axis is
     exceeded. Caller (the HTTP route) maps it to 429.
@@ -391,6 +429,7 @@ async def enqueue_ingestion(
         profile,
         source_url,
     )
+    await _register_queued_task(task_events, ingest_id, tenant_id)
 
     if not wait:
         return EnqueueResult(

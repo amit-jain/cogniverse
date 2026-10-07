@@ -452,37 +452,40 @@ def test_audio_generator_preserves_fixed_audio_embeddings(monkeypatch, tmp_path)
     assert float(np.dot(first, other)) < 0.00001
 
 
-def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch):
+def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch, tmp_path):
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
     face_server._MODEL = _ImageSignatureFaceModel()
     app = _modal_asgi_app(face_modal_app)
-    frame = _video_frame_b64(VIDEO_A)
-    unrelated = _video_frame_b64(VIDEO_B)
-    processing_results = {
-        "keyframes": {
-            "items": [
-                {"segment_id": "same-a", "ts_start": 1.0, "image_b64": frame},
-                {"segment_id": "same-b", "ts_start": 2.0, "image_b64": frame},
-                {
-                    "segment_id": "unrelated",
-                    "ts_start": 3.0,
-                    "image_b64": unrelated,
-                },
-            ]
-        }
-    }
+    frame = base64.b64decode(_video_frame_b64(VIDEO_A))
+    unrelated = base64.b64decode(_video_frame_b64(VIDEO_B))
+    keyframes = []
+    for index, (timestamp, image) in enumerate(
+        [(1.0, frame), (2.0, frame), (3.0, unrelated)]
+    ):
+        path = tmp_path / f"fixed_keyframe_{index:04d}.jpg"
+        path.write_bytes(image)
+        keyframes.append(
+            {
+                "frame_number": index,
+                "timestamp": timestamp,
+                "filename": path.name,
+                "path": str(path),
+            }
+        )
+    processing_results = {"keyframes": {"keyframes": keyframes}}
 
     with _live_server(app) as endpoint:
         identity = httpx.get(
             f"{endpoint}/v1/models",
             headers=_authorization(),
         )
-        records = extract_faces_per_keyframe(
+        extraction = extract_faces_per_keyframe(
             processing_results,
             "fixed-videos",
             endpoint,
             headers=_authorization(),
         )
+        records = extraction.mentions
 
     assert identity.json() == {
         "data": [
@@ -496,11 +499,8 @@ def test_face_extractor_preserves_fixed_image_embeddings(monkeypatch):
         ],
         "object": "list",
     }
-    assert [record.segment_id for record in records] == [
-        "same-a",
-        "same-b",
-        "unrelated",
-    ]
+    assert extraction.failed == []
+    assert [record.segment_id for record in records] == ["0", "1", "2"]
     assert [record.bbox for record in records] == [
         (320, 180, 960, 540),
         (320, 180, 960, 540),
@@ -579,8 +579,17 @@ def test_face_concurrent_cold_health_requests_build_one_gpu_model(
     _face_artifact(tmp_path)
 
     class _FaceAnalysis:
-        def __new__(cls, *, name: str, root: str, providers: list[str]):
-            events.append(("construct", name, root, tuple(providers)))
+        def __new__(
+            cls,
+            *,
+            name: str,
+            root: str,
+            allowed_modules: list[str],
+            providers: list[str],
+        ):
+            events.append(
+                ("construct", name, root, tuple(allowed_modules), tuple(providers))
+            )
             time.sleep(0.05)
             return SimpleNamespace(
                 prepare=lambda *, ctx_id, det_size: events.append(
@@ -606,7 +615,13 @@ def test_face_concurrent_cold_health_requests_build_one_gpu_model(
             )
 
     assert events == [
-        ("construct", "buffalo_l", str(tmp_path), ("CUDAExecutionProvider",)),
+        (
+            "construct",
+            "buffalo_l",
+            str(tmp_path),
+            ("detection", "recognition"),
+            ("CUDAExecutionProvider",),
+        ),
         ("prepare", 0, (640, 640)),
     ]
     assert [response.status_code for response in responses] == [200] * 12
@@ -684,12 +699,17 @@ def test_face_health_load_failure_is_not_ready_and_next_request_retries(
     attempts = 0
 
     class _FaceAnalysis:
-        def __init__(self, *, name: str, root: str):
+        def __init__(self, *, name: str, root: str, allowed_modules: list[str]):
             nonlocal attempts
             attempts += 1
-            assert (name, root) == ("buffalo_l", str(tmp_path))
+            assert (name, root, allowed_modules) == (
+                "buffalo_l",
+                str(tmp_path),
+                ["detection", "recognition"],
+            )
             if attempts == 1:
                 raise OSError("recognizer graph is unreadable")
+            self.models = {}
 
         def prepare(self, *, ctx_id: int, det_size: tuple[int, int]) -> None:
             assert (ctx_id, det_size) == (-1, (640, 640))

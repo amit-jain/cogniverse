@@ -15,6 +15,7 @@ Requires: docker, k3d, kubectl, helm installed.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -527,13 +528,49 @@ def deployed_llm_serving_mode(
         return None
 
 
+def e2e_llm_serving_mode() -> str:
+    """Where the deploy serves the chat models: the env, else the release, else local."""
+    from cogniverse_cli.config import LLM_SERVING_LOCAL
+
+    return (
+        os.environ.get("COGNIVERSE_LLM_SERVING")
+        or deployed_llm_serving_mode()
+        or LLM_SERVING_LOCAL
+    )
+
+
+def _extra_set_enablement_overlay(extra_set: dict[str, str] | None) -> Path | None:
+    """A values file carrying the ``inference.<svc>.enabled`` flags of *extra_set*.
+
+    Image builds and tag overrides follow the sidecars the values files
+    enable. A sidecar switched on or off only by ``--set`` must count too, or
+    it deploys on the chart's static tag, which was never built.
+    """
+    import hashlib
+    import tempfile
+
+    flags: dict[str, dict[str, bool]] = {}
+    for key, value in (extra_set or {}).items():
+        parts = key.split(".")
+        if len(parts) == 3 and parts[0] == "inference" and parts[2] == "enabled":
+            flags[parts[1]] = {"enabled": str(value).lower() == "true"}
+    if not flags:
+        return None
+    content = yaml.safe_dump({"inference": flags}, sort_keys=True)
+    digest = hashlib.sha256(content.encode()).hexdigest()[:16]
+    overlay = Path(tempfile.gettempdir()) / f"cogniverse-e2e-enabled-{digest}.yaml"
+    if not overlay.exists() or overlay.read_text() != content:
+        overlay.write_text(content)
+    return overlay
+
+
 def deployment_helm_inputs(
     project_root,
     *,
     extra_set: dict[str, str] | None = None,
 ) -> dict:
     """Resolve the exact backend, overlays, image tags, and Helm overrides."""
-    from cogniverse_cli.config import LLM_SERVING_LOCAL, compose_values_files
+    from cogniverse_cli.config import compose_values_files
     from cogniverse_cli.images import (
         detect_torch_backend,
         dev_image_set_values,
@@ -551,12 +588,12 @@ def deployment_helm_inputs(
     helm_values = compose_values_files(
         use_k3d=True,
         backend=backend,
-        serving=os.environ.get("COGNIVERSE_LLM_SERVING")
-        or deployed_llm_serving_mode()
-        or LLM_SERVING_LOCAL,
+        serving=e2e_llm_serving_mode(),
         project_root=project_root,
     )
     assert helm_values[0] == values_file, helm_values
+    enablement_overlay = _extra_set_enablement_overlay(extra_set)
+    image_values = helm_values + ([enablement_overlay] if enablement_overlay else [])
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,
@@ -572,7 +609,7 @@ def deployment_helm_inputs(
         dev_image_set_values(
             project_root,
             torch_backend=backend,
-            values_files=helm_values,
+            values_files=image_values,
             versions=image_versions,
         )
     )
@@ -585,10 +622,12 @@ def deployment_helm_inputs(
         "image_tags": dev_image_tags(
             project_root,
             torch_backend=backend,
-            values_files=helm_values,
+            values_files=image_values,
             versions=image_versions,
         ),
         "helm_values": helm_values,
+        # helm_values plus the enablement --set overrides, for image work only.
+        "image_values": image_values,
         "helm_set_overrides": helm_set_overrides,
     }
 
@@ -675,6 +714,29 @@ def dump_pod_state(namespace: str) -> None:
     print("================================================\n", file=sys.stdout)
 
 
+# Vespa blocks every external feed once its disk passes 75% (its default
+# disk resource limit), and the e2e cluster's Vespa data lives on the host
+# disk that image builds fill: a deploy that starts above the limit leaves
+# the new runtime unable to write its config and crash-looping.
+E2E_DEPLOY_DISK_LIMIT = 0.75
+E2E_DEPLOY_DISK_PATH = Path("/var/lib")
+"""A path on the filesystem holding docker's data, and with it Vespa's."""
+
+
+def refuse_deploy_on_a_full_disk(path: Path = E2E_DEPLOY_DISK_PATH) -> None:
+    """Fail before building when the host disk is at Vespa's feed-block limit."""
+    usage = shutil.disk_usage(path)
+    used = usage.used / usage.total
+    if used >= E2E_DEPLOY_DISK_LIMIT:
+        raise RuntimeError(
+            f"host disk at {path} is {used:.1%} used "
+            f"({usage.free / 1024**3:.0f} GiB free), at or above Vespa's "
+            f"{E2E_DEPLOY_DISK_LIMIT:.0%} feed-block limit, so the deployed "
+            "runtime could not write to Vespa. Free space first, e.g. "
+            "`docker builder prune -f`, then rerun."
+        )
+
+
 def deploy_stack(
     cluster_name: str,
     namespace: str,
@@ -688,6 +750,7 @@ def deploy_stack(
     """
     from pathlib import Path
 
+    refuse_deploy_on_a_full_disk()
     project_root = Path(__file__).parent.parent.parent.parent
     chart_path = project_root / "charts" / "cogniverse"
     deployment_inputs = deployment_helm_inputs(project_root, extra_set=extra_set)
@@ -708,13 +771,13 @@ def deploy_stack(
     built_tags = build_images(
         project_root,
         torch_backend=backend,
-        values_files=deployment_inputs["helm_values"],
+        values_files=deployment_inputs["image_values"],
         versions=image_versions,
     )
     import_images(cluster_name, built_tags)
     verify_local_images_cover_deploy(
         project_root,
-        deployment_inputs["helm_values"],
+        deployment_inputs["image_values"],
         built_tags=built_tags,
         versions=image_versions,
         torch_backend=backend,
@@ -823,7 +886,7 @@ def deploy_stack(
     # later as ErrImageNeverPull on a pod, far from its cause.
     from cogniverse_cli.images import enabled_sidecars
 
-    sidecars = enabled_sidecars(project_root, helm_values)
+    sidecars = enabled_sidecars(project_root, deployment_inputs["image_values"])
     unpinned = [
         svc
         for svc in sidecars

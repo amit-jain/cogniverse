@@ -17,8 +17,18 @@ import dataclasses
 import logging
 import threading
 import time
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, get_args
+import uuid
+from contextlib import asynccontextmanager, contextmanager
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    get_args,
+)
 
 from cogniverse_agents.optimizer.artifact_manager import (
     ARTIFACT_LOAD_ERROR,
@@ -34,13 +44,27 @@ from cogniverse_core.conversation import (
     ConversationStore,
     is_transient_turn_write_error,
 )
+from cogniverse_core.events import (
+    TaskCancelled,
+    TaskState,
+    bind_event_queue,
+    create_complete_event,
+    create_error_event,
+    create_status_event,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
 from cogniverse_runtime.session_state import (
-    SESSION_REDIS_TIMEOUT_SECONDS,
     ConversationLedger,
     ConversationPersistFailed,
     SessionStateUnavailable,
+)
+from cogniverse_runtime.shared_state import SHARED_STATE_REDIS_TIMEOUT_SECONDS
+from cogniverse_runtime.task_events import (
+    WORKFLOW,
+    RedisTaskEventQueue,
+    TaskEventStore,
+    TaskEventsUnavailable,
 )
 
 if TYPE_CHECKING:
@@ -124,7 +148,9 @@ CONVERSATION_PERSIST_FAILURE_CAPACITY = 256
 # How long a turn stays pending in the shared ledger: its save budget plus one
 # Redis command to settle it. A turn whose process died before settling it
 # stops holding the context's next turn once this lapses.
-CONVERSATION_SAVE_LEASE_S = CONVERSATION_SAVE_TIMEOUT_S + SESSION_REDIS_TIMEOUT_SECONDS
+CONVERSATION_SAVE_LEASE_S = (
+    CONVERSATION_SAVE_TIMEOUT_S + SHARED_STATE_REDIS_TIMEOUT_SECONDS
+)
 
 # Shutdown waits longer than one save lease, so a save accepted as shutdown
 # begins still lands and settles.
@@ -165,6 +191,59 @@ RELOAD_RETRY_COOLDOWN_S = 10.0
 CONVERSATION_HISTORY_LOADED = "loaded"
 CONVERSATION_HISTORY_INCOMPLETE = "incomplete"
 CONVERSATION_HISTORY_UNAVAILABLE = "unavailable"
+
+
+# The dispatch context key a caller names its workflow's task id with, so it
+# can stream (/events/workflows/{id}) or cancel the workflow while it runs.
+WORKFLOW_ID_CONTEXT_KEY = "workflow_id"
+
+# Agents whose runs report progress as workflow tasks.
+WORKFLOW_CAPABILITIES = frozenset({"orchestration", "planning", "deep_research"})
+
+
+@dataclasses.dataclass
+class WorkflowRun:
+    """One workflow run reported on the shared task event store.
+
+    ``result`` and ``summary`` become its completion event; ``error`` names
+    the failure a streamed run reported as an event instead of raising.
+    """
+
+    queue: RedisTaskEventQueue
+    result: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    summary: Optional[str] = None
+    error: Optional[str] = None
+
+    @property
+    def workflow_id(self) -> str:
+        return self.queue.task_id
+
+
+def cancelled_workflow_envelope(agent_name: str, cancelled: TaskCancelled) -> Dict:
+    """The dispatch result of a workflow that stopped at a cancellation."""
+    return {
+        "status": "cancelled",
+        "agent": agent_name,
+        "workflow_id": cancelled.task_id,
+        "message": (
+            f"Workflow {cancelled.task_id} was cancelled: "
+            f"{cancelled.reason or 'no reason given'}"
+        ),
+    }
+
+
+async def _end_workflow_quietly(queue: RedisTaskEventQueue, event) -> None:
+    """Write a failed or cancelled workflow's terminal event; a store that
+    cannot take it is logged, so the run's own outcome still propagates."""
+    try:
+        await asyncio.shield(queue.finish(event))
+    except Exception as exc:
+        logger.error(
+            "Workflow %s ended without its terminal event: %s (cause: %r)",
+            queue.task_id,
+            exc,
+            exc.__cause__,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -637,6 +716,7 @@ class AgentDispatcher:
         sandbox_manager: "SandboxManager | None" = None,
         artifact_manager_factory: Optional["Callable[[str], ArtifactManager]"] = None,
         conversation_ledger: Optional[ConversationLedger] = None,
+        task_events: Optional[TaskEventStore] = None,
     ) -> None:
         self._registry = agent_registry
         self._config_manager = config_manager
@@ -693,6 +773,8 @@ class AgentDispatcher:
         # Turn order, pending saves and lost turns of server-managed
         # conversations, shared by every process serving them.
         self._conversation_ledger = conversation_ledger
+        # Workflow progress and cancellations, shared by every process.
+        self._task_events = task_events
         # This process's saves still running, so shutdown can land them.
         self._conversation_saves: set["asyncio.Task[None]"] = set()
 
@@ -1280,7 +1362,9 @@ class AgentDispatcher:
         if self._artifact_manager_factory is None:
             return None
         try:
-            am = self._artifact_manager_factory(tenant_id)
+            # A tenant's first dispatch builds its manager and telemetry
+            # provider, which imports and constructs the provider's client.
+            am = await asyncio.to_thread(self._artifact_manager_factory, tenant_id)
         except Exception as exc:
             return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
 
@@ -1747,6 +1831,120 @@ class AgentDispatcher:
         if not mgr.memory:
             return None
         return ConversationStore(mgr, tenant_id)
+
+    def set_task_event_store(self, store: Optional[TaskEventStore]) -> None:
+        """Install the shared task event store workflows report to."""
+        self._task_events = store
+
+    def is_workflow_agent(self, agent_name: str) -> bool:
+        """Whether ``agent_name``'s runs report progress as workflow tasks."""
+        agent = self._registry.get_agent(agent_name)
+        return bool(agent and set(agent.capabilities) & WORKFLOW_CAPABILITIES)
+
+    @asynccontextmanager
+    async def workflow_run(
+        self, agent_name: str, context: Optional[Dict[str, Any]], tenant_id: str
+    ) -> AsyncIterator[Optional[WorkflowRun]]:
+        """Report the block's workflow run as a task on the task event store.
+
+        The task's id is the caller's ``context["workflow_id"]``, or a new one.
+        Its queue is bound to the request for the block, so the agent's phase
+        reports land on it and a cancellation stops the agent at its next
+        phase boundary. The task ends on the way out: cancelled when the
+        agent stopped at a cancellation (``TaskCancelled`` propagates) or the
+        request ended first, failed when the block raised, otherwise complete
+        with the run's ``result`` and ``summary``.
+
+        Without a configured store the block runs unreported, unless the
+        caller named a workflow id.
+
+        Raises:
+            TaskEventsUnavailable: The store did not answer, or a caller named
+                a workflow id and no store is configured.
+            TaskAlreadyExists: The caller's workflow id is taken.
+        """
+        requested = (context or {}).get(WORKFLOW_ID_CONTEXT_KEY)
+        store = self._task_events
+        if store is None:
+            if requested:
+                raise TaskEventsUnavailable(
+                    "task event store unavailable: workflow events need the "
+                    "shared task event store, and none is configured"
+                )
+            yield None
+            return
+        workflow_id = str(requested) if requested else f"workflow_{uuid.uuid4().hex}"
+        tenant = canonical_tenant_id(tenant_id)
+        queue = await store.open_task(WORKFLOW, workflow_id, tenant)
+        run = WorkflowRun(queue)
+        try:
+            await queue.enqueue(
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=tenant,
+                    state=TaskState.WORKING,
+                    phase="started",
+                    message=f"{agent_name} started",
+                )
+            )
+            with bind_event_queue(queue):
+                yield run
+        except TaskCancelled as cancelled:
+            await _end_workflow_quietly(
+                queue,
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=tenant,
+                    state=TaskState.CANCELLED,
+                    phase="cancelled",
+                    message=cancelled.reason,
+                ),
+            )
+            raise
+        except (asyncio.CancelledError, GeneratorExit):
+            await _end_workflow_quietly(
+                queue,
+                create_status_event(
+                    task_id=workflow_id,
+                    tenant_id=tenant,
+                    state=TaskState.CANCELLED,
+                    phase="cancelled",
+                    message="the request running the workflow ended before it finished",
+                ),
+            )
+            raise
+        except BaseException as exc:
+            await _end_workflow_quietly(
+                queue,
+                create_error_event(
+                    task_id=workflow_id,
+                    tenant_id=tenant,
+                    error_type=type(exc).__name__,
+                    error_message=f"{agent_name} failed with {type(exc).__name__}",
+                    recoverable=False,
+                ),
+            )
+            raise
+        else:
+            if run.error is not None:
+                await queue.finish(
+                    create_error_event(
+                        task_id=workflow_id,
+                        tenant_id=tenant,
+                        error_type=run.error,
+                        error_message=f"{agent_name} failed with {run.error}",
+                        recoverable=False,
+                    )
+                )
+            else:
+                await queue.finish(
+                    create_complete_event(
+                        task_id=workflow_id,
+                        tenant_id=tenant,
+                        result=run.result,
+                        summary=run.summary,
+                    )
+                )
 
     def set_conversation_ledger(self, ledger: Optional[ConversationLedger]) -> None:
         """Use ``ledger`` for the turn order and pending saves of server-managed
@@ -2602,8 +2800,8 @@ class AgentDispatcher:
         query_rewrite_timeout_s: Optional[float] = None,
     ) -> Dict[str, Any]:
         # Drift surfaces as a logged warning here; CNI is the kernel deny.
-        self.consult_egress_policy("search_agent")
-        self._verify_egress("search_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "search_agent")
+        await asyncio.to_thread(self._verify_egress, "search_agent", tenant_id)
 
         from cogniverse_agents.search_agent import (
             SearchInput,
@@ -3249,8 +3447,8 @@ class AgentDispatcher:
         the incoming query, output rails on the final response.
         """
         # Consult + verify routing_agent egress policy at dispatch.
-        self.consult_egress_policy("routing_agent")
-        self._verify_egress("routing_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "routing_agent")
+        await asyncio.to_thread(self._verify_egress, "routing_agent", tenant_id)
 
         from cogniverse_core.agents.rails import RailBlockedError
 
@@ -3378,22 +3576,13 @@ class AgentDispatcher:
         gateway_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute full orchestration pipeline via OrchestratorAgent."""
-        self.consult_egress_policy("orchestrator_agent")
-        self._verify_egress("orchestrator_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "orchestrator_agent")
+        await asyncio.to_thread(self._verify_egress, "orchestrator_agent", tenant_id)
 
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorInput,
             orchestration_status,
         )
-
-        # Cached per tenant: the agent, its WorkflowIntelligence corpus, and its
-        # policy http client are built once and TTL-reloaded, not rebuilt per
-        # complex query.
-        agent = await self._get_or_build_orchestrator(tenant_id)
-        # Apply per-request artefact overlay so OrchestratorAgent's planner DSPy
-        # module honors the canary/variant decision. Task-isolated ContextVar,
-        # never the shared cached instance, so concurrent requests don't bleed.
-        self._apply_artefact_overlay(agent, context)
 
         gateway_ctx = gateway_context or {}
         # Propagate the synthesis_depth opt-in from the caller's context.
@@ -3425,22 +3614,43 @@ class AgentDispatcher:
         )
 
         session_id = context.get("session_id")
-        with self._session_context(agent, tenant_id, session_id):
-            with self._scoped_session(agent, session_id):
-                result = await agent.process(input_data)
+        try:
+            async with self.workflow_run(
+                "orchestrator_agent", context, tenant_id
+            ) as run:
+                # Cached per tenant: the agent, its WorkflowIntelligence corpus,
+                # and its policy http client are built once and TTL-reloaded,
+                # not rebuilt per complex query.
+                agent = await self._get_or_build_orchestrator(tenant_id)
+                # Apply per-request artefact overlay so OrchestratorAgent's
+                # planner DSPy module honors the canary/variant decision.
+                # Task-isolated ContextVar, never the shared cached instance, so
+                # concurrent requests don't bleed.
+                self._apply_artefact_overlay(agent, context)
+                with self._session_context(agent, tenant_id, session_id):
+                    with self._scoped_session(agent, session_id):
+                        result = await agent.process(input_data)
 
-        orchestration_result = (
-            result.model_dump() if hasattr(result, "model_dump") else vars(result)
-        )
-        final_output = orchestration_result.get("final_output") or {}
-        return {
-            "status": orchestration_status(final_output),
-            "agent": "orchestrator_agent",
-            "message": final_output.get("message")
-            or f"Orchestrated '{query[:50]}' via A2A pipeline",
-            "orchestration_result": orchestration_result,
-            "gateway_context": gateway_context,
-        }
+                orchestration_result = (
+                    result.model_dump()
+                    if hasattr(result, "model_dump")
+                    else vars(result)
+                )
+                final_output = orchestration_result.get("final_output") or {}
+                envelope = {
+                    "status": orchestration_status(final_output),
+                    "agent": "orchestrator_agent",
+                    "message": final_output.get("message")
+                    or f"Orchestrated '{query[:50]}' via A2A pipeline",
+                    "orchestration_result": orchestration_result,
+                    "gateway_context": gateway_context,
+                }
+                if run is not None:
+                    run.result = {"status": envelope["status"]}
+                    run.summary = envelope["message"]
+        except TaskCancelled as cancelled:
+            return cancelled_workflow_envelope("orchestrator_agent", cancelled)
+        return envelope
 
     async def _execute_downstream_agent(
         self,
@@ -3532,8 +3742,8 @@ class AgentDispatcher:
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Consult + verifysummarizer_agent egress policy at dispatch.
-        self.consult_egress_policy("summarizer_agent")
-        self._verify_egress("summarizer_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "summarizer_agent")
+        await asyncio.to_thread(self._verify_egress, "summarizer_agent", tenant_id)
 
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
@@ -3933,38 +4143,48 @@ class AgentDispatcher:
             DeepResearchInput,
         )
 
-        behavior = await asyncio.to_thread(
-            self._agent_behavior_kwargs, tenant_id, "deep_research_agent"
-        )
-        deps = DeepResearchDeps(
-            tenant_id=tenant_id,
-            multimodal_generation_enabled=behavior.get("visual_analysis_enabled", True),
-        )
-
         async def search_fn(query: str, tenant_id: str):
             grounding = await self._resolve_answer_search_results(
                 query, tenant_id, None, top_k=10
             )
             return grounding.hits
 
-        agent = DeepResearchAgent(
-            deps=deps, search_fn=search_fn, config_manager=self._config_manager
-        )
-        await asyncio.to_thread(
-            self._init_agent_memory, agent, "deep_research_agent", tenant_id
-        )
-
-        input_data = typed_input_from_context(
-            DeepResearchInput, query=query, tenant_id=tenant_id, context=context
-        )
-        result = await agent.process(input_data)
-
-        return {
-            "status": "success",
-            "agent": "deep_research_agent",
-            "message": f"Research complete for '{query}'",
-            "result": result.model_dump(),
-        }
+        try:
+            async with self.workflow_run(
+                "deep_research_agent", context, tenant_id
+            ) as run:
+                behavior = await asyncio.to_thread(
+                    self._agent_behavior_kwargs, tenant_id, "deep_research_agent"
+                )
+                deps = DeepResearchDeps(
+                    tenant_id=tenant_id,
+                    multimodal_generation_enabled=behavior.get(
+                        "visual_analysis_enabled", True
+                    ),
+                )
+                agent = DeepResearchAgent(
+                    deps=deps, search_fn=search_fn, config_manager=self._config_manager
+                )
+                await asyncio.to_thread(
+                    self._init_agent_memory, agent, "deep_research_agent", tenant_id
+                )
+                input_data = typed_input_from_context(
+                    DeepResearchInput, query=query, tenant_id=tenant_id, context=context
+                )
+                result = await agent.process(input_data)
+                envelope = {
+                    "status": "success",
+                    "agent": "deep_research_agent",
+                    "message": f"Research complete for '{query}'",
+                    "result": result.model_dump(),
+                }
+                if run is not None:
+                    envelope["workflow_id"] = run.workflow_id
+                    run.result = {"status": "success"}
+                    run.summary = envelope["message"]
+        except TaskCancelled as cancelled:
+            return cancelled_workflow_envelope("deep_research_agent", cancelled)
+        return envelope
 
     async def _execute_coding_task(
         self,
@@ -3972,8 +4192,8 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        self.consult_egress_policy("coding_agent")
-        self._verify_egress("coding_agent", tenant_id)
+        await asyncio.to_thread(self.consult_egress_policy, "coding_agent")
+        await asyncio.to_thread(self._verify_egress, "coding_agent", tenant_id)
 
         import dspy
 

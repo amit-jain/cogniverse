@@ -124,7 +124,7 @@ tests/
 │   └── integration/
 ├── e2e/                             # Cross-package e2e (A2A gateway, canary, CLI, ...)
 │   └── deployment/
-├── fixtures/                        # Shared LM + sidecar fixtures (llm.py, sidecars.py)
+├── fixtures/                        # Shared model-endpoint fixtures (llm.py, inference.py, sidecars.py)
 ├── utils/                           # Shared test helpers (vespa_test_helpers, tenant_helpers,
 │                                     # docker_utils, vllm_sidecar, markers, memory_store, ...)
 └── conftest.py                      # Shared fixtures (shared_vespa, phoenix_container, etc.)
@@ -200,6 +200,13 @@ fingerprint again before reuse. A healthy, current cluster is reused as-is. A
 stale or unhealthy cluster fails the test session without deleting or replacing
 shared state; repair it, or perform the explicit reset below.
 
+k3d fixes the loadbalancer's published ports when the cluster is created, so a
+cluster created before a host-port mapping was added is unhealthy until it
+publishes it. The failure names the command that adds the missing mappings,
+for example
+`k3d cluster edit cogniverse-e2e --port-add 33912:29012@loadbalancer`; it
+recreates only the loadbalancer.
+
 Do not stop the cluster after an individual pytest command. Once every
 integration and end-to-end check in the campaign has finished, stop it
 explicitly to release its CPU, RAM, and accelerator allocations:
@@ -225,7 +232,14 @@ cluster before Helm installs the runtime, and deploys with
 `runtime.sandbox.enabled=true`, `runtime.sandbox.gatewayEndpoint` set to the
 gateway's own port and `runtime.sandbox.hostGatewayIP` set to the k3d network
 gateway (so `host.docker.internal` resolves in the runtime pod). Those values
-are part of the deploy identity. On reuse the sync runs again and a changed
+are part of the deploy identity. The gateway is the e2e stack's own, by name:
+`openshell` on port 28080 (`OPENSHELL_GATEWAY_HOST_PORT`). The deploy and the
+cert sync fail, naming the active gateway, when that gateway is unregistered,
+on another port, or not the host's active gateway, so no other gateway is ever
+deployed into the cluster. Integration tests that start their own gateway
+(`OpenShellTestGateway` in `tests/agents/integration/conftest.py`) register it
+under a private `XDG_CONFIG_HOME`, remove only their own container, and assert
+that the host's `~/.config/openshell` stays byte-identical. On reuse the sync runs again and a changed
 secret rolls the runtime deployment, because the pod mounts the files with
 `subPath`.
 
@@ -297,7 +311,7 @@ rejects any unregistered marker) plus a per-package override in
   `ENDPOINT` and must report the exact revision from `/v1/models`.
 - `requires_modal_inference("vllm_llm_student")` — explicitly opt an exact
   service into paid Modal provisioning; ordinary `requires_inference` tests
-  prefer reusable cluster endpoints and local fixture-owned services.
+  resolve the cluster's endpoint (see "Model endpoints" below).
 - `requires_whisper` — Whisper model dependency outside the exact inference
   fixture
 - `requires_teacher_model` — scales up the vllm-llm-teacher pod (off by default)
@@ -307,8 +321,8 @@ rejects any unregistered marker) plus a per-package override in
 - `timeout` — tests with custom timeout values
 
 `local_only` is an explicit run-on-demand policy, not a CI pass. In particular,
-the real image-search encoder test (Docker/model sidecar) and real ColPali
-image-encoding test (large CPU model) are intentionally excluded from normal
+the real image-search encoder test and real ColPali image-encoding test (both
+need the cluster's ColPali service) are intentionally excluded from normal
 CI and also carry `slow` plus their precise resource markers. Run them locally
 when changing their boundaries:
 
@@ -756,46 +770,105 @@ endpoint from, in order:
    ``tests/conftest.py``) are also accepted as a same-priority alternative.
 2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
    (gitignored; a ``test_llm.example.json`` is checked in).
-3. ``llm_config.primary`` from ``configs/config.json`` — if neither of the
-   above is set, the fixture first tries to self-provision the hermetic
-   test-LM sidecar (``tests/utils/hermetic_llm.ensure_llm``), which exports
-   ``COGNIVERSE_CONFIG`` pointing at a session config targeting the
-   sidecar; that config (or the project's own ``configs/config.json`` if
-   the sidecar can't start) is then read for ``llm_config.primary``.
-4. Otherwise, the fixture skips the test with a message explaining how to
+3. ``llm_config.primary`` of the session config ``ensure_host_ollama``
+   writes, which points at the Modal Gemma (see "Model endpoints" below).
+4. Otherwise, the fixture fails the test with a message explaining how to
    configure an endpoint.
 
 Hermetic session configs publish only roles whose exact model endpoint was
-provisioned and verified. A primary-only fixture removes any ``teacher`` entry
-in the source config instead of exposing an endpoint that the fixture did not
-check. Tests marked ``requires_teacher_model`` provision and verify the distinct
-teacher sidecar before adding that role. Accordingly, ``LLMConfig.teacher`` is
-optional; teacher-dependent code must call ``resolve_teacher()``, which fails
-explicitly when the role was not configured. It never falls back to the primary.
-Real optimizer integration tests that reach ``resolve_teacher()`` carry this
-marker so collection records the teacher role before the session config is
-materialized.
+resolved and verified. A primary-only session points the ``teacher`` entry at a
+dead port instead of exposing an endpoint the fixture did not check. Tests
+marked ``requires_teacher_model`` resolve and verify the distinct teacher
+before adding that role. Teacher-dependent code must call
+``resolve_teacher()``, which fails explicitly when the role was not configured;
+it never falls back to the primary. Real optimizer integration tests that reach
+``resolve_teacher()`` carry this marker so collection records the teacher role
+before the session config is materialized.
 
-``ensure_host_ollama`` resolves each role through ``ensure_llm``, which probes
-the endpoints it discovers: ``TEST_LLM_API_BASE`` when ``TEST_LLM_MODEL`` names
-the role's model, ``INFERENCE_SERVICE_URLS``, exact-model workloads in the
-``cogniverse-e2e`` and ``cogniverse`` k3d clusters, and the external endpoints
-(``LLM_ENDPOINT``, ``INFERENCE_SERVICE_URLS``) the e2e cluster's deployments
-publish. The first endpoint whose ``GET /v1/models`` lists the exact model is
-used. When endpoints were discovered and none serves the model, it raises
-``RemoteModelUnavailableError`` naming each candidate and its probe outcome;
-when a kube context that exists cannot be queried, it raises
-``ModelEndpointDiscoveryError``. Only a host where nothing is discovered starts
-the local sidecar (``cogniverse-test-llm`` on port 29110,
-``cogniverse-test-llm-teacher`` on 29111), and only after the host-memory guard
-passes. That sidecar carries the ``cogniverse-test-exact-model`` label instead of
-an owner pid: sessions reuse it, each live session that resolved to it holds a
-lease, and it is reclaimed once it is unleased and older than six hours.
+### Model endpoints
+
+No test starts a model on this host: no model container, no vLLM, Ollama or
+model-server process. Parallel test runs share the host's memory, and a local
+model copy holds gigabytes of it. Every model a test uses is served remotely:
+
+- **Chat LLMs** (the Gemma student, the Qwen teacher) are served on Modal.
+  ``ensure_llm`` (``tests/utils/hermetic_llm.py``), which ``ensure_host_ollama``,
+  ``gemma_inference_endpoint`` and ``requires_inference("vllm_llm_student")``
+  use, reads the role's deployment through ``ModalInferenceLifecycle.status``
+  and accepts it only when its authenticated ``/v1/models`` names the exact
+  model and revision. It does not depend on any cluster. An
+  ``INFERENCE_SERVICE_URLS`` entry for ``vllm_llm_student`` or
+  ``vllm_llm_teacher`` replaces the Modal lookup. A missing
+  ``COGNIVERSE_INFERENCE_API_KEY``, an undeployed app or a wrong model raises
+  ``ModalLlmNotDeployedError`` or ``LlmEndpointMismatchError`` naming the
+  deploy command; the test fails, never skips or falls back.
+- **Every other model** (ColPali/Tomoro, DenseOn, PyLate LateOn and the code
+  encoder, GLiNER, ASR, CLAP, video-embed, face-embed) is served by the
+  ``cogniverse-e2e`` cluster on GPU. ``remote_inference``
+  (``tests/fixtures/inference.py``) and the ``requires_inference`` marker
+  resolve a service from an explicit ``INFERENCE_SERVICE_URLS`` entry, else
+  the workload the ``cogniverse-e2e`` cluster (then the ``cogniverse`` dev
+  cluster) publishes through its load balancer, and validate its model
+  identity. With no endpoint it raises ``RemoteServiceUnavailable`` naming
+  the service.
+
+Containers that serve no model (Vespa, Redis, MinIO, Phoenix, the semantic
+router stack) are still started by the tests' own fixtures.
+
+Before a run that needs models:
+
+```bash
+# Modal credentials and the inference key live in .env/ (loaded by tests/conftest.py)
+ls .env/MODAL_TOKEN_ID.env .env/MODAL_TOKEN_SECRET.env .env/COGNIVERSE_INFERENCE_API_KEY.env
+
+# The chat models must be deployed on Modal
+uv run cogniverse inference modal status vllm_llm_student vllm_llm_teacher
+uv run cogniverse inference modal deploy vllm_llm_student   # if status fails
+
+# The other models come from the cogniverse-e2e cluster
+kubectl --context k3d-cogniverse-e2e -n cogniverse get deploy,svc
+```
+
+When the deploy serves the chat models from Modal, the e2e session runs
+``cogniverse inference modal warm vllm_llm_student`` before its first test and
+``release`` at teardown: the query rewrite gives the student 2.8 s, which a
+runner starting from zero cannot meet. A failed warm fails the session. The
+deploy itself refuses to build when the host disk holding docker's data is at
+or above 75%, Vespa's feed-block limit; free space (``docker builder prune -f``)
+and rerun.
+
+The cluster is deployed through the e2e path (``tests/e2e/deployment``), not a
+plain ``cogniverse up``. ``tests/common/unit/test_no_local_model_servers.py``
+fails any test code that runs a model image's container, launches a
+vLLM/Ollama server, or loads a model in-process (``SentenceTransformer``,
+PyLate ``ColBERT``, ``from_pretrained`` on a model class, Whisper,
+faster-whisper, ``FaceAnalysis``).
+
+No test loads model weights into the pytest process either: the session
+plugin ``tests/fixtures/no_local_models.py`` replaces the weight-loading entry
+points of transformers, sentence-transformers (and so PyLate), GLiNER, the
+Hugging Face hub mixin, Whisper, faster-whisper, InsightFace and open_clip with
+a refusal (``LocalModelLoadForbidden``), however the call is reached. Product
+code that degrades when a model is missing keeps degrading; a test whose result
+needs the model fails on its assertions. Every refused load is listed, by test,
+in the session's ``refused in-process model loads`` summary. A test that needs
+a model's output uses the cluster service that serves it (``remote_inference``,
+``gliner_url``, ``served_semantic_embedder``).
+
+Parity tests compare the served model against reference outputs recorded once,
+on CPU, from the model's own library at the pinned revision:
+``tests/fixtures/model_references/{lateon,denseon}.json`` carry the model,
+revision, library versions, device and inputs beside the outputs. Tests never
+run the recorder; re-record after a pinned revision changes:
+
+```bash
+uv run python scripts/record_model_references.py
+```
 
 Every pytest session prints a ``test sidecars`` section in its terminal summary,
-captured output or not: each ``ensure_llm`` decision (``resolved-remote``,
-``reused-local``, ``spawned-local``, ``refused``) with its candidates, and the
-dead-owner containers the session reaped when it started.
+captured output or not: each model resolution (``resolved-remote`` with its
+endpoint and provider, or ``refused`` with the reason) and the dead-owner
+containers the session reaped when it started.
 
 Examples:
 
@@ -810,8 +883,7 @@ COGNIVERSE_TEST_LLM_PROVIDER_URI="vllm/Qwen/Qwen2.5-7B-Instruct" \
 COGNIVERSE_TEST_LLM_BASE_URL="http://vllm.internal:8000/v1" \
 uv run pytest tests/evaluation/integration/
 
-# No env vars set: the fixture self-provisions the hermetic test-LM sidecar
-# (or falls back to configs/config.json's llm_config.primary) automatically.
+# No env vars set: the fixture uses the Modal Gemma ensure_host_ollama resolves.
 uv run pytest tests/evaluation/integration/test_visual_judge_e2e.py
 ```
 
@@ -893,7 +965,7 @@ and two manual/release workflows not tied to a single module:
 | `agents-tests.yml` | cogniverse-agents | unit + integration | Vespa (ci_fast subset) |
 | `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
 | `cli-tests.yml` | cogniverse-cli | unit + integration | None |
-| `core-tests.yml` | cogniverse-core (incl. `tests/core/*`, `tests/memory/*` and the `ci_fast` files under `tests/utils/`; the rest of memory integration is local-tier — it needs the vLLM DenseOn sidecar) | unit + integration | Vespa |
+| `core-tests.yml` | cogniverse-core (incl. `tests/core/*`, `tests/memory/*` and the `ci_fast` files under `tests/utils/`; the rest of memory integration is local-tier — it needs the cluster's DenseOn service) | unit + integration | Vespa |
 | `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
@@ -937,13 +1009,45 @@ close that:
   filter; and every test that walks a tree outside its own package runs in a
   workflow that fires on changes to that tree.
 - `tests/common/unit/test_ci_fast_excludes_model_spawners.py` — no `ci_fast`
-  selection reaches a fixture that starts a model server.
+  selection reaches a fixture that needs a model server.
 
 All three read the selections from `tests/fixtures/ci_workflows.py`, which
 parses `.github/workflows/*.yml`; a tag-only workflow gates no commit and its
 selections do not count. `test-integrity.yml` runs the whole-tree guards with
 no `paths` filter, since any filter would skip them on the commits they exist
 to catch.
+
+### Assertion-strength guard and its waivers
+
+`tests/common/unit/test_assertion_strength_guard.py` fails a change that
+leaves any `tests/` file with fewer assertions than before (net of assertions
+moved verbatim into a file the change creates), or that adds a skip, an xfail
+or an unbounded assertion form. CI compares against the pull request's base or
+the push's previous commit (`ASSERTION_GUARD_BASE`); locally it defaults to
+`HEAD~1`:
+
+```bash
+ASSERTION_GUARD_BASE=$(git merge-base HEAD main) \
+  uv run pytest tests/common/unit/test_assertion_strength_guard.py
+```
+
+The one accepted loss is of assertions that tested code the change deletes.
+Each is declared in `tests/common/assertion_waivers.toml`:
+
+```toml
+[[waiver]]
+file = "tests/utils/test_vllm_sidecar.py"   # the test file that lost assertions
+max_net_loss = 173                          # its largest accepted net loss
+removed_symbols = ["tests/utils/vllm_sidecar.py:VllmSidecarFactory"]  # path:Name
+reason = "Tests of the local vLLM sidecar launch, removed with it."
+```
+
+The guard checks every waiver against the compared range: each named
+top-level symbol must be gone at HEAD and must have existed in HEAD's history,
+the file's net loss must not exceed `max_net_loss`, and a waiver for a file
+that lost nothing fails as stale. A waiver applies only when at least one of
+its symbols existed at the base; one whose symbols were all gone before the
+range covered an earlier change and waives nothing.
 
 ### CI Fast Integration Tests
 

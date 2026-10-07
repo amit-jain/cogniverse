@@ -557,7 +557,10 @@ def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
             image = c.get("image", "")
             if not image.startswith("cogniverse/"):
                 continue
-            if "/pylate" in image or "/clap" in image or "/gliner" in image:
+            if any(
+                server in image
+                for server in ("/pylate", "/clap", "/gliner", "/vllm-audio")
+            ):
                 continue  # model servers, not application code
             found[f"{name}/{c['name']}"] = {
                 e["name"]: e.get("value") for e in c.get("env", [])

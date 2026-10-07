@@ -87,10 +87,12 @@ from tests.e2e.batch_optimization import (
     _record_batch_job_duration,
     _replayed_optimizer_capture_counts,
     _replayed_optimizer_workflow_result,
+    _reset_module_artifact_script,
     _seeded_enhancement_queries,
     _subprocess_failure_message,
     _synthetic_top_up_counts,
     _wait_for_seeded_span_lower_bound_in_pod,
+    argo_phases_between,
     optimization_cli_document,
 )
 from tests.e2e.cluster import IN_POD_TELEMETRY_PRELUDE, KUBECTL_CONTEXT, TENANT_ID
@@ -1323,11 +1325,15 @@ class SimbaSelectionTenant:
         return len(self.seeded_queries)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
     """Create a dedicated tenant for gateway-threshold optimization runs and
     drive exactly BATCH_SPAN_COUNT (default 20) simple video decisions
-    through its gateway, recording each one so the calibration is exact."""
+    through its gateway, recording each one so the calibration is exact.
+
+    Class-scoped: a class that drives more gateway traffic to its tenant (the
+    round-trip test's post-restart query) never adds to another class's
+    recorded decisions, whatever order the classes run in."""
     org_id = unique_id("opt_gw")
     suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
@@ -1555,9 +1561,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     _seed_profile_selection_ground_truth()
     # The tenant's optimizer artifacts are this module's own state: seed from
     # the base modules, not from whatever an earlier optimization run left
-    # persisted (and loaded into the pod). Both resets run; bounce once.
+    # persisted (and loaded into the pod). Every reset runs; bounce once.
+    # Each test that reads one of these artifacts then finds it whatever
+    # order the module's classes run in.
     reset_qe, reset_qe_version = _reset_query_enhancement_artifact_in_pod()
     reset_entity, reset_entity_version = _reset_entity_extraction_artifact_in_pod()
+    reset_profile, reset_profile_version = _reset_profile_selection_artifact_in_pod()
     # The reset publishes base as a version and activates it, so the ledger's
     # active version and the blob the pod serves name the same artifact.
     assert _active_blob_version_in_pod("model", SIMBA_ARTIFACT_KEY) == reset_qe_version
@@ -1565,7 +1574,11 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         _active_blob_version_in_pod("model", "entity_extraction")
         == reset_entity_version
     )
-    if reset_qe or reset_entity:
+    assert (
+        _active_blob_version_in_pod("model", "profile_selection")
+        == reset_profile_version
+    )
+    if reset_qe or reset_entity or reset_profile:
         _bounce_runtime_pod()
 
     # Per-agent span count used by the live re-record path. BootstrapFewShot
@@ -2302,6 +2315,19 @@ def _reset_entity_extraction_artifact_in_pod(
     )
 
 
+def _reset_profile_selection_artifact_in_pod(
+    tenant_id: str = TENANT_ID,
+) -> tuple[bool, int]:
+    return _reset_module_artifact_in_pod(
+        module_import="from cogniverse_agents.profile_selection_agent import ProfileSelectionModule",
+        module_class="ProfileSelectionModule",
+        key_import="",
+        key_expr="'profile_selection'",
+        label="profile_selection",
+        tenant_id=tenant_id,
+    )
+
+
 def _reset_module_artifact_in_pod(
     *,
     module_import: str,
@@ -2311,7 +2337,8 @@ def _reset_module_artifact_in_pod(
     label: str,
     tenant_id: str,
 ) -> tuple[bool, int]:
-    """Serve the base state of ``module_class`` as the tenant's active artifact.
+    """Serve the base state of ``module_class`` as the tenant's active artifact,
+    with a version lineage that starts here.
 
     An artifact left by an earlier run carries the signature it was compiled
     under (DSPy ``load_state`` restores instructions and field descs), so the
@@ -2322,28 +2349,24 @@ def _reset_module_artifact_in_pod(
     the served blob alone left the ledger pointing at the last promoted
     version while the pod served base.
 
+    The tenant outlives this module, so its lineage holds every version any
+    earlier session wrote, and training selection decays an example whose
+    first consumption in that lineage is older than ``downweight_age_days``.
+    The reset deletes those versions first: every consumed id the module's
+    runs see was consumed in this session, so no test inherits decay from
+    history it did not write.
+
     Returns ``(differs, version)``: ``differs`` is True when the previously
     served artifact was not the base state (the running pod, which loaded it
     at start, must be bounced before it serves traffic), ``version`` is the
     now-active version.
     """
-    script = IN_POD_TELEMETRY_PRELUDE + (
-        "import asyncio, json; "
-        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
-        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
-        f"{module_import}; "
-        + (f"{key_import}; " if key_import else "")
-        + f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
-        f"am = ArtifactManager(tp, {tenant_id!r}); "
-        f"base = json.dumps({module_class}().dump_state(), default=str); "
-        f"blob = asyncio.run(am.load_blob('model', {key_expr})); "
-        "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
-        "version = asyncio.run(am.save_blob_versioned("
-        f"kind='model', key={key_expr}, content=base, "
-        "consumed_example_ids=['reset:base-module'], decision='rollback', "
-        "scored=False, base_score=None, candidate_score=None))[1]; "
-        f"asyncio.run(am.activate_version('model', {key_expr}, version)); "
-        "print('__RESET__' + ('1' if differs else '0') + ':' + str(version))"
+    script = _reset_module_artifact_script(
+        module_import=module_import,
+        module_class=module_class,
+        key_import=key_import,
+        key_expr=key_expr,
+        tenant_id=tenant_id,
     )
     result = subprocess.run(
         [
@@ -3515,9 +3538,10 @@ class TestSimbaOptimization:
 
         _assert_simba_served_the_best_module(result, blob_before)
 
-    def test_simba_second_run_is_consistent_with_the_first(self):
-        """A rerun scores the artifact the first run persisted as ``current``
-        and again serves the best module."""
+    def test_simba_rerun_is_consistent_with_the_served_artifact(self):
+        """A run scores the artifact the tenant serves now as ``current`` and
+        again serves the best module; when it keeps that artifact, the served
+        state is unchanged."""
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
         first = json.loads(blob_before)
 
@@ -4397,7 +4421,7 @@ class TestProfileSelectionArtifactReload:
 
     def test_profile_agent_loads_optimized_module_after_restart(self):
         blob_before = _load_blob_in_pod("model", "profile_selection")
-        assert blob_before != "", "Profile artifact blob is empty before restart"
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
@@ -4829,6 +4853,9 @@ class TestEntityExtractionOptimization:
 
         from cogniverse_agents.optimizer.entity_self_consistency import (
             NO_UNANIMOUS_KEY,
+            NON_VOTES_KEY,
+            RETRIES_KEY,
+            SELF_CONSISTENCY_MAX_TOKENS,
             SELF_CONSISTENCY_SAMPLES,
             SELF_CONSISTENCY_TEMPERATURE,
         )
@@ -4837,8 +4864,11 @@ class TestEntityExtractionOptimization:
         assert set(self_consistency) == {
             "samples",
             "temperature",
+            "max_tokens",
             "examples_sampled",
             "examples_requested",
+            RETRIES_KEY,
+            NON_VOTES_KEY,
             "rows_needing_review",
             "batch_id",
             "rows_queued",
@@ -4848,15 +4878,35 @@ class TestEntityExtractionOptimization:
         assert self_consistency["temperature"] == SELF_CONSISTENCY_TEMPERATURE, (
             self_consistency
         )
+        assert self_consistency["max_tokens"] == SELF_CONSISTENCY_MAX_TOKENS, (
+            self_consistency
+        )
         # The pass draws the teacher for exactly the examples the bootstrap
-        # trains on, and a healthy run completes every draw.
+        # trains on, and accounts for every one: each is sampled, or is a
+        # non-vote naming the query and why its draw never completed. Whether
+        # a sampled draw loops (about 1 in 100 for some queries on the served
+        # teacher) is the model's; that none goes unaccounted is not.
         assert self_consistency["examples_requested"] == result["training_examples"], (
             self_consistency
         )
+        non_votes = self_consistency[NON_VOTES_KEY]
         assert (
-            self_consistency["examples_sampled"]
+            self_consistency["examples_sampled"] + len(non_votes)
             == self_consistency["examples_requested"]
         ), self_consistency
+        assert [set(vote) for vote in non_votes] == [{"query", "cause"}] * len(
+            non_votes
+        ), self_consistency
+        assert [
+            vote["cause"].startswith(
+                f"self-consistency sampling failed for query {vote['query']!r}: "
+            )
+            for vote in non_votes
+        ] == [True] * len(non_votes), self_consistency
+        non_vote_queries = [vote["query"] for vote in non_votes]
+        assert sorted(set(non_vote_queries)) == sorted(non_vote_queries), (
+            self_consistency
+        )
         # Every example the teacher was not unanimous on reaches a reviewer,
         # including the ones it agreed on no mention in.
         assert (
@@ -4878,6 +4928,8 @@ class TestEntityExtractionOptimization:
             for row in [*batch["ground_truth_rows"], *approved_examples]
         }
         assert set(no_unanimous) <= population_queries, self_consistency
+        assert set(non_vote_queries) <= population_queries, self_consistency
+        assert not set(non_vote_queries) & set(no_unanimous), self_consistency
 
         assert set(ledger) == {
             "version",
@@ -4925,6 +4977,13 @@ class TestEntityExtractionOptimization:
         version_blob = batch["version_blob"]
 
         assert result["status"] == "success", result
+        # The module setup serves the base module, and only this job writes
+        # the tenant's entity_extraction artifact, so the served artifact is
+        # the module the baseline scored: the job scores it as the baseline,
+        # never rolls back to that same state, and its version holds the
+        # compiled candidate whose demos the bootstrap report counts.
+        assert result["current_score"] == result["baseline_score"], result
+        assert result["decision"] in {"promote", "keep"}, result
         artifact = json.loads(version_blob)
         assert list(artifact) == ["extractor.predict"], artifact
         module = artifact["extractor.predict"]
@@ -4990,10 +5049,15 @@ class TestEntityExtractionOptimization:
                 <= bootstrap["attempts"]
                 <= bootstrap["examples_walked"] * bootstrap["max_rounds"]
             ), bootstrap
-        assert bootstrap["errors"] == 0, bootstrap
-        # The count and the causes are the same record of the same failures:
-        # a run that drops an example carries why.
-        assert bootstrap["error_causes"] == [], bootstrap
+        # The bootstrap walk itself drops nothing; the only errors are the
+        # self-consistency draws that never parsed after their retry, each
+        # recorded with its cause. The count and the causes are the same
+        # record of the same failures.
+        non_vote_causes = [
+            vote["cause"] for vote in result["self_consistency"]["non_votes"]
+        ]
+        assert bootstrap["errors"] == len(non_vote_causes), bootstrap
+        assert bootstrap["error_causes"] == non_vote_causes, bootstrap
         assert len(bootstrap["error_causes"]) == bootstrap["errors"], bootstrap
         assert bootstrap["metric_values"] == sorted(bootstrap["metric_values"]), (
             bootstrap
@@ -5216,11 +5280,11 @@ class TestArtifactLoadingRoundTrip:
         )
 
     def test_simba_artifact_round_trip(self):
-        """Run simba after the pod bounce: the run honours its contract against
-        the artifact the earlier runs persisted, and the persisted state reads
-        back identically twice (it survived the restart)."""
+        """Run simba: the run honours its contract against the artifact the
+        tenant serves now, and the persisted state reads back identically
+        twice."""
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
-        assert blob_before != "", "earlier SIMBA runs persisted an artifact"
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("simba")
 
@@ -5342,9 +5406,7 @@ class TestArtifactLoadingRoundTrip:
     def test_profile_artifact_survives_restart(self):
         """Verify profile selection artifact is loadable after restart."""
         blob_before = _load_blob_in_pod("model", "profile_selection")
-        assert blob_before != "", (
-            "Profile selection artifact blob is empty before restart"
-        )
+        assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
@@ -6889,13 +6951,27 @@ class TestOptimizationRunListing:
         rendered_by = datetime.now(timezone.utc)
         runs_after = _runs_agreeing_with_status(owner, submitted)
 
-        # The newest run can start, or its age can cross a minute, while the
-        # page renders; the tile is the newest run as listed on either side of
-        # the render, aged at either end of it.
+        # The newest run can move through Argo's phases, and its age can cross
+        # a minute, while the page renders; the tile shows the newest run in
+        # one of the phases from the listing before the render through the
+        # listing after it, aged at either end of the render.
+        newest, newest_after = runs[0], runs_after[0]
+        assert newest["workflow_name"] == newest_after["workflow_name"], (
+            runs,
+            runs_after,
+        )
+        phases = argo_phases_between(newest["phase"], newest_after["phase"])
+        # The first phase starts as listed before the render; every later
+        # phase, Running included, has the start Argo listed after it.
+        started_ats = {phase: {newest_after["started_at"]} for phase in phases}
+        if len(phases) > 1:
+            started_ats[phases[0]] = {newest["started_at"]}
+        else:
+            started_ats[phases[0]].add(newest["started_at"])
         last_optimization = {
-            f"{_format_run_age(listed[0]['started_at'], at)} "
-            f"({listed[0]['phase'] or 'Pending'})"
-            for listed in (runs, runs_after)
+            f"{_format_run_age(started_at, at)} ({phase})"
+            for phase in phases
+            for started_at in started_ats[phase]
             for at in (rendered_from, rendered_by)
         }
         assert set(tiles) == {
@@ -6941,19 +7017,28 @@ class TestOptimizationRunListing:
             row.locator('[role="gridcell"]').all_text_contents()
             for row in grid.locator('tbody [role="row"]').all()
         ]
-        assert [row[:3] + row[4:5] for row in rows] == [
-            [
-                run["workflow_name"],
-                run["mode"] or "—",
-                run["trigger"],
-                run["started_at"] or "—",
-            ]
-            for run in runs
+        assert [row[:3] for row in rows] == [
+            [run["workflow_name"], run["mode"] or "—", run["trigger"]] for run in runs
         ], rows
-        # A run can move on while the page renders; its phase and finish are
-        # the listing's on either side of the render.
+        # A run can move on while the page renders: its phase, start and
+        # finish are the listing's on either side of the render, or a phase
+        # Argo passes through between them, which has the later listing's
+        # start and no finish yet.
         for row, before, after in zip(rows, runs, runs_after, strict=True):
-            assert (row[3], row[5]) in {
-                (listed["phase"] or "Pending", listed["finished_at"] or "—")
+            listed_states = {
+                (
+                    listed["phase"] or "Pending",
+                    listed["started_at"] or "—",
+                    listed["finished_at"] or "—",
+                )
                 for listed in (before, after)
-            }, (row, before, after)
+            }
+            passed_through = argo_phases_between(before["phase"], after["phase"])[1:-1]
+            listed_states |= {
+                (phase, after["started_at"] or "—", "—") for phase in passed_through
+            }
+            assert (row[3], row[4], row[5]) in listed_states, (
+                row,
+                before,
+                after,
+            )

@@ -122,7 +122,7 @@ jobs:
     - name: Run unit tests
       timeout-minutes: 35
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/unit/ \
           tests/admin/unit/ \
           tests/foundation/unit/ \
@@ -188,9 +188,9 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_runtime.main import app; print('Runtime app import successful')"
-        uv run python -c "from cogniverse_runtime.routers.search import router; print('Search router import successful')"
-        uv run python -c "from cogniverse_runtime.routers.health import router; print('Health router import successful')"
+        uv run --no-sync python -c "from cogniverse_runtime.main import app; print('Runtime app import successful')"
+        uv run --no-sync python -c "from cogniverse_runtime.routers.search import router; print('Search router import successful')"
+        uv run --no-sync python -c "from cogniverse_runtime.routers.health import router; print('Health router import successful')"
         echo "All runtime imports successful"
 
   integration-tests:

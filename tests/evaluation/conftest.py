@@ -505,23 +505,11 @@ def eval_vespa_instance(shared_vespa):  # noqa: F811
 
 
 @pytest.fixture(scope="module")
-def eval_colpali_url(vllm_sidecar):
+def eval_colpali_url(remote_inference):
     """Serve the production Tomoro embedding model through a real vLLM sidecar."""
     from cogniverse_core.query.encoders import QueryEncoderFactory
 
-    url = vllm_sidecar.spawn(
-        model=EVAL_COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-            "--gpu-memory-utilization",
-            "0.10",
-        ],
-    )
+    url = remote_inference.resolve("vllm_colpali").base_url
     QueryEncoderFactory._encoder_cache.clear()
     yield url
     QueryEncoderFactory._encoder_cache.clear()

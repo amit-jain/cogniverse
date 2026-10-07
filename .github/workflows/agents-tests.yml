@@ -77,7 +77,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -100,7 +100,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/unit -m unit \
           --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents.xml
@@ -172,7 +172,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -187,18 +187,18 @@ jobs:
     - name: Test agent modules
       run: |
         # Test agent module imports
-        uv run python -c "from cogniverse_agents.gateway_agent import GatewayAgent; print('GatewayAgent import successful')"
+        uv run --no-sync python -c "from cogniverse_agents.gateway_agent import GatewayAgent; print('GatewayAgent import successful')"
 
-        uv run python -c "from cogniverse_agents.orchestrator_agent import OrchestratorAgent; print('OrchestratorAgent import successful')"
+        uv run --no-sync python -c "from cogniverse_agents.orchestrator_agent import OrchestratorAgent; print('OrchestratorAgent import successful')"
 
-        uv run python -c "from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent; print('EntityExtractionAgent import successful')"
+        uv run --no-sync python -c "from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent; print('EntityExtractionAgent import successful')"
 
-        uv run python -c "from cogniverse_agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
+        uv run --no-sync python -c "from cogniverse_agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
 
-        uv run python -c "from cogniverse_agents.detailed_report_agent import DetailedReportAgent; print('DetailedReportAgent import successful')"
+        uv run --no-sync python -c "from cogniverse_agents.detailed_report_agent import DetailedReportAgent; print('DetailedReportAgent import successful')"
 
         # Test DSPy integration
-        uv run python -c "
+        uv run --no-sync python -c "
         from cogniverse_agents.optimizer.dspy_agent_optimizer import DSPyAgentPromptOptimizer
         optimizer = DSPyAgentPromptOptimizer()
         print('✅ DSPy optimizer import successful')
@@ -220,7 +220,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -247,9 +247,9 @@ jobs:
         echo "ℹ️ Running CI Fast integration tests (17/116 tests)"
         echo "⚡ These tests provide quick feedback without external dependencies"
         echo "📊 To run all integration tests locally:"
-        echo "   JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -v"
+        echo "   JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ -v"
         echo "🔧 To run with external services:"
-        echo "   JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
+        echo "   JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
     
     - name: Pre-pull Vespa Docker image
       run: |

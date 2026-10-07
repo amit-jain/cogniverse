@@ -38,6 +38,7 @@ from cogniverse_runtime.ingestion_worker.submit_api import (
     enqueue_ingestion,
 )
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
+from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -215,6 +216,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fake.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -246,10 +248,14 @@ class TestEnqueueAndWorker:
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
-            first = await enqueue_ingestion(env_redis, **kwargs)
+            first = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            second = await enqueue_ingestion(env_redis, **kwargs)
+            second = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             assert second.existing is True
             assert second.ingest_id == first.ingest_id
             assert second.sha == first.sha
@@ -273,10 +279,14 @@ class TestEnqueueAndWorker:
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
-            first = await enqueue_ingestion(env_redis, **kwargs)
+            first = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs
+            )
             await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            second = await enqueue_ingestion(env_redis, **kwargs, force=True)
+            second = await enqueue_ingestion(
+                env_redis, task_events=TaskEventStore(env_redis), **kwargs, force=True
+            )
             assert second.existing is False
             assert second.ingest_id != first.ingest_id
         finally:
@@ -291,6 +301,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/bad.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -325,6 +336,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -351,6 +363,7 @@ class TestEnqueueAndWorker:
             # Resubmit (no force) must re-enqueue, not dedupe to the failed run.
             second = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -370,6 +383,7 @@ class TestEnqueueAndWorker:
         try:
             submission = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/missing-generator.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -415,6 +429,7 @@ class TestEnqueueAndWorker:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/sync.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -441,6 +456,7 @@ class TestBackpressure:
         for i in range(5):
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -449,6 +465,7 @@ class TestBackpressure:
         with pytest.raises(BackpressureError) as exc:
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -460,6 +477,7 @@ class TestBackpressure:
         # Other tenant unaffected
         other = await enqueue_ingestion(
             env_redis,
+            task_events=TaskEventStore(env_redis),
             source_url="s3://bucket/other.mp4",
             profile="video_colpali_smol500_mv_frame",
             tenant_id="other",
@@ -472,6 +490,7 @@ class TestBackpressure:
         for i in range(3):
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id=f"t{i}",
@@ -480,6 +499,7 @@ class TestBackpressure:
         with pytest.raises(BackpressureError) as exc:
             await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="t4",
@@ -522,6 +542,33 @@ class TestSseEndpoints:
 
         await emitter
         assert seen_states == ["queued", "running", "complete"]
+
+    @pytest.mark.asyncio
+    async def test_sse_ends_by_itself_at_a_cancelled_job(self, client, env_redis):
+        """``cancelled`` is terminal: the server closes the stream there."""
+        ingest_id = f"ing_{uuid.uuid4().hex[:8]}"
+        await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
+        await queue.publish_status(
+            env_redis, ingest_id, {"state": "cancelled", "reason": "operator stop"}
+        )
+
+        started = time.monotonic()
+        async with client.stream(
+            "GET", f"/ingestion/{ingest_id}/events?timeout_seconds=30"
+        ) as resp:
+            payloads = [
+                json.loads(line[len("data: ") :])
+                async for line in resp.aiter_lines()
+                if line.startswith("data: ")
+            ]
+        elapsed = time.monotonic() - started
+
+        # Closed at the terminal event, not by the 30 s idle timeout.
+        assert elapsed < 5.0, elapsed
+        assert payloads == [
+            {"state": "queued"},
+            {"state": "cancelled", "reason": "operator stop"},
+        ]
 
     @pytest.mark.asyncio
     async def test_status_endpoint_returns_history_snapshot(self, client, env_redis):
@@ -638,6 +685,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/graph-stalls.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -685,6 +733,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/slow.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -714,6 +763,7 @@ class TestWaitTimeoutRendering:
         try:
             result = await enqueue_ingestion(
                 env_redis,
+                task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fast.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -726,6 +776,20 @@ class TestWaitTimeoutRendering:
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_job_ends_the_wait(self, env_redis):
+        from cogniverse_runtime.ingestion_worker.submit_api import _wait_for_terminal
+
+        ingest_id = f"ingest_{uuid.uuid4().hex}"
+        cancelled = {"state": "cancelled", "ingest_id": ingest_id, "reason": "stop"}
+        await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
+        await queue.publish_status(env_redis, ingest_id, cancelled)
+
+        outcome = await _wait_for_terminal(env_redis, ingest_id, 30)
+
+        assert (outcome.terminal, outcome.last_event) == (cancelled, cancelled)
+        assert outcome.timed_out is False
 
     @pytest.mark.asyncio
     async def test_wait_on_a_missing_status_stream_raises(self, env_redis):

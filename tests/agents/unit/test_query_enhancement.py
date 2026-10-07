@@ -549,69 +549,148 @@ class TestRelationshipExtraction:
 
     @pytest.mark.asyncio
     async def test_comprehensive_relationship_extraction(self):
-        """Test comprehensive relationship extraction workflow"""
-        try:
-            from cogniverse_agents.routing.relationship_extraction_tools import (
-                RelationshipExtractorTool,
-            )
+        """The tool reaches GLiNER through the inference service and builds
+        its analysis from the served entities plus spaCy's grammar."""
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-            tool = RelationshipExtractorTool()
-
-            # Test query with clear entities and relationships
-            test_query = "Show me videos of robots playing soccer with machine learning algorithms"
-
-            result = await tool.extract_comprehensive_relationships(test_query)
-
-            # Verify result structure
-            assert isinstance(result, dict)
-            required_keys = [
-                "entities",
-                "relationships",
-                "relationship_types",
-                "semantic_connections",
-                "query_structure",
-                "complexity_indicators",
-                "confidence",
-            ]
-            for key in required_keys:
-                assert key in result, f"Missing key: {key}"
-
-            # Verify data types
-            assert isinstance(result["entities"], list)
-            assert isinstance(result["relationships"], list)
-            assert isinstance(result["relationship_types"], list)
-            assert isinstance(result["semantic_connections"], list)
-            assert isinstance(result["complexity_indicators"], list)
-            assert isinstance(result["confidence"], (int, float))
-        except Exception as e:
-            # Should handle gracefully even if models aren't available
-            assert "error" in str(e).lower() or "not found" in str(e).lower()
-
-    def test_entity_extraction_fallback(self):
-        """Test entity extraction with fallback when models unavailable"""
         from cogniverse_agents.routing.relationship_extraction_tools import (
+            RelationshipExtractorTool,
+        )
+        from cogniverse_core.common.models import GLINER_ENTITY_THRESHOLD
+
+        query = (
+            "Show me videos of robots playing soccer with machine learning algorithms"
+        )
+        served = [
+            {
+                "text": "robots",
+                "label": "OBJECT",
+                "score": 0.91,
+                "start": 19,
+                "end": 25,
+            },
+            {"text": "soccer", "label": "SPORT", "score": 0.88, "start": 34, "end": 40},
+            {
+                "text": "machine learning algorithms",
+                "label": "TECHNOLOGY",
+                "score": 0.95,
+                "start": 46,
+                "end": 73,
+            },
+        ]
+        requests = []
+
+        class GLiNERService(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers["Content-Length"])
+                requests.append((self.path, json.loads(self.rfile.read(length))))
+                body = json.dumps(
+                    {"entities": served, "model": "urchade/gliner_large-v2.1"}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), GLiNERService)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            tool = RelationshipExtractorTool(
+                gliner_inference_url=f"http://127.0.0.1:{server.server_address[1]}"
+            )
+            result = await tool.extract_comprehensive_relationships(query)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert [(path, body["text"], body["threshold"]) for path, body in requests] == [
+            ("/predict_entities", query, GLINER_ENTITY_THRESHOLD)
+        ]
+        assert result["entities"] == [
+            {
+                "text": entity["text"],
+                "label": entity["label"],
+                "confidence": entity["score"],
+                "start_pos": entity["start"],
+                "end_pos": entity["end"],
+            }
+            for entity in served
+        ]
+        assert [
+            (rel["subject"], rel["relation"], rel["object"], rel["confidence"])
+            for rel in result["relationships"]
+        ] == [
+            ("soccer", "plays", "machine learning algorithms", 0.966),
+            ("robots", "plays", "soccer", 0.913),
+            ("robots", "plays", "machine learning algorithms", 0.815),
+            ("videos", "of", "robots", 0.7),
+            ("playing", "with", "learning", 0.7),
+        ]
+        assert sorted(result["relationship_types"]) == ["of", "plays", "with"]
+        assert result["semantic_connections"] == [
+            "soccer plays machine learning algorithms",
+            "robots plays soccer",
+            "robots plays machine learning algorithms",
+            "videos of robots",
+            "playing with learning",
+        ]
+        assert result["query_structure"] == "complex"
+        assert result["complexity_indicators"] == [
+            "Multiple relationships (5 relations)"
+        ]
+        assert result["confidence"] == 0.876
+        assert "fallback_reason" not in result
+
+    @staticmethod
+    def _unavailable(query):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNEREntityExtractionUnavailableError,
             GLiNERRelationshipExtractor,
         )
 
-        # Create extractor (may not have actual model loaded)
-        extractor = GLiNERRelationshipExtractor()
+        with pytest.raises(GLiNEREntityExtractionUnavailableError) as caught:
+            GLiNERRelationshipExtractor().extract_entities(query)
+        return caught.value
 
-        # Test extraction (should return empty list if model unavailable)
-        entities = extractor.extract_entities("test query")
-        assert isinstance(entities, list)
+    def test_an_entity_free_query_without_a_model_raises_naming_it(self):
+        """With no GLiNER service and no in-process model the extractor raises;
+        it never reports "no entities". The served model's entities are pinned
+        in tests/agents/integration/test_entity_extraction_served_gliner.py."""
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            DEFAULT_GLINER_MODEL,
+        )
 
-        # If model is available, should extract some entities from a rich query
-        test_query = "Apple Inc. develops iPhone using advanced technology"
-        entities = extractor.extract_entities(test_query)
-        assert isinstance(entities, list)
+        error = self._unavailable("test query")
 
-        # If model loaded and working, should find entities
-        if extractor.gliner_model and entities:
-            assert len(entities) > 0
-            for entity in entities:
-                assert "text" in entity
-                assert "label" in entity
-                assert "confidence" in entity
+        assert error.model_name == DEFAULT_GLINER_MODEL
+        assert error.inference_url is None
+        assert str(error).startswith(
+            f"GLiNER model {DEFAULT_GLINER_MODEL!r} could not be loaded "
+            "(inference_url=None): "
+        )
+
+    def test_a_rich_query_without_a_model_raises_instead_of_dropping_entities(
+        self,
+    ):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            DEFAULT_GLINER_MODEL,
+        )
+
+        error = self._unavailable(
+            "Apple Inc. develops iPhone using advanced technology"
+        )
+
+        assert error.model_name == DEFAULT_GLINER_MODEL
+        assert error.inference_url is None
+        assert type(error.__cause__) is RuntimeError
 
 
 @pytest.mark.unit

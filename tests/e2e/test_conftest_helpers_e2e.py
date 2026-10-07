@@ -90,15 +90,21 @@ _LEGACY_PREFIXES = (
 )
 
 
-_E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:19090"
+_E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:28080"
 _E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
 
 
-def _expected_e2e_sandbox_overrides() -> dict[str, str]:
+def _expected_e2e_sandbox_overrides(llm_serving: str = "local") -> dict[str, str]:
     overrides = {
         f"inference.{service}.enabled": "false"
-        for service in sorted(inference._E2E_DISABLED_INFERENCE_SERVICES)
+        for service in sorted(inference._e2e_disabled_inference_services(llm_serving))
     }
+    overrides.update(
+        {
+            f"inference.{service}.enabled": "true"
+            for service in sorted(inference._E2E_ENABLED_INFERENCE_SERVICES)
+        }
+    )
     overrides.update(
         {
             "runtime.sandbox.enabled": "true",
@@ -121,19 +127,31 @@ def _stack_request() -> SimpleNamespace:
     return request
 
 
-def _stub_stack_boundaries(monkeypatch) -> dict[str, list]:
+def _stub_stack_boundaries(
+    monkeypatch, *, modal_warmed: bool = False
+) -> dict[str, list]:
     """Record the boundaries ``e2e_stack`` crosses after the cluster decision:
-    the run lock, the GPU-residency reclaim, and the two corpus ingests. The
-    cluster-decision helpers are stubbed per scenario by the caller."""
+    the run lock, the GPU-residency reclaim, the Modal chat-model warm, and the
+    two corpus ingests. The cluster-decision helpers are stubbed per scenario
+    by the caller. ``modal_warmed`` is what the warm reports."""
     from tests.e2e import run_lock
 
     calls: dict[str, list] = {
         "acquire": [],
         "release": [],
         "residency": [],
+        "modal_warm": [],
         "ingest_documents": [],
         "ingest_evaluation_corpus": [],
     }
+    monkeypatch.setattr(
+        e2e_conftest,
+        "_warm_modal_chat_models",
+        lambda: calls["modal_warm"].append(True) or modal_warmed,
+    )
+    # The orphan-schema preflight posts to the live runtime; these drive the
+    # stack's control flow, so it must not depend on a runtime being up.
+    monkeypatch.setattr(e2e_conftest, "_reconcile_orphan_schemas", lambda: None)
     monkeypatch.setattr(
         run_lock, "acquire", lambda path: calls["acquire"].append(path) or True
     )
@@ -292,18 +310,44 @@ class TestCollectionOrdering:
             assert items[-1].nodeid == browser_item.nodeid, browser_item.nodeid
 
 
+def _register_gateway(root: Path, name: str, port: int) -> None:
+    gateway = root / "gateways" / name
+    gateway.mkdir(parents=True)
+    (gateway / "metadata.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "gateway_endpoint": f"https://127.0.0.1:{port}",
+                "is_remote": False,
+                "gateway_port": port,
+            }
+        )
+    )
+
+
+def _openshell_home(monkeypatch, tmp_path: Path, *, active: str | None) -> Path:
+    """A HOME whose OpenShell config registers the e2e gateway (``openshell``
+    on 28080) and a test gateway (``cogniverse-test-gw`` on 19090)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENSHELL_GATEWAY_HOST_PORT", raising=False)
+    root = tmp_path / ".config" / "openshell"
+    _register_gateway(root, "openshell", 28080)
+    _register_gateway(root, "cogniverse-test-gw", 19090)
+    if active is not None:
+        (root / "active_gateway").write_text(active)
+    return root
+
+
 class TestE2EDeploymentOverrides:
     """The e2e Helm overrides wire the host-mode sandbox from live sources: the
     active gateway's own port and the k3d network's gateway IP."""
 
-    def test_overrides_derive_endpoint_and_host_ip(self, monkeypatch):
-        import cogniverse_cli.sandbox as sandbox_mod
-
-        monkeypatch.setattr(
-            sandbox_mod,
-            "active_gateway_metadata",
-            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
-        )
+    @pytest.mark.parametrize("llm_serving", ["local", "modal"])
+    def test_overrides_derive_endpoint_and_host_ip(
+        self, monkeypatch, tmp_path, llm_serving
+    ):
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", llm_serving)
+        _openshell_home(monkeypatch, tmp_path, active="openshell")
         commands: list[list[str]] = []
 
         def fake_run(command, **kwargs):
@@ -313,7 +357,7 @@ class TestE2EDeploymentOverrides:
         monkeypatch.setattr(e2e_conftest.subprocess, "run", fake_run)
 
         assert e2e_conftest._e2e_deployment_overrides() == (
-            _expected_e2e_sandbox_overrides()
+            _expected_e2e_sandbox_overrides(llm_serving)
         )
         assert commands == [
             [
@@ -326,14 +370,9 @@ class TestE2EDeploymentOverrides:
             ]
         ]
 
-    def test_missing_network_gateway_is_an_error(self, monkeypatch):
-        import cogniverse_cli.sandbox as sandbox_mod
-
-        monkeypatch.setattr(
-            sandbox_mod,
-            "active_gateway_metadata",
-            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
-        )
+    def test_missing_network_gateway_is_an_error(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", "local")
+        _openshell_home(monkeypatch, tmp_path, active="openshell")
         monkeypatch.setattr(
             e2e_conftest.subprocess,
             "run",
@@ -345,6 +384,78 @@ class TestE2EDeploymentOverrides:
             RuntimeError, match="docker network gateway inspection failed"
         ):
             e2e_conftest._e2e_deployment_overrides()
+
+    def test_a_test_gateway_left_active_is_never_deployed(self, monkeypatch, tmp_path):
+        """A private test gateway left active on the host must not become the
+        cluster's sandbox endpoint."""
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", "local")
+        _openshell_home(monkeypatch, tmp_path, active="cogniverse-test-gw")
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda command, **kwargs: SimpleNamespace(
+                returncode=0, stdout="172.18.0.1\n", stderr=""
+            ),
+        )
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            e2e_conftest._e2e_deployment_overrides()
+
+        assert str(caught.value) == (
+            "the active OpenShell gateway is 'cogniverse-test-gw', not the e2e "
+            "gateway 'openshell'; refusing to deploy another gateway into the "
+            "cluster. Select it with `openshell gateway select openshell`."
+        )
+
+
+class TestE2EGatewayMetadata:
+    """The e2e stack's gateway is resolved by name and must be the active one."""
+
+    def test_the_active_e2e_gateway_is_returned(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active="openshell")
+
+        assert inference.e2e_gateway_metadata(root) == {
+            "name": "openshell",
+            "gateway_endpoint": "https://127.0.0.1:28080",
+            "is_remote": False,
+            "gateway_port": 28080,
+        }
+
+    def test_no_active_gateway_is_refused(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active=None)
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            inference.e2e_gateway_metadata(root)
+
+        assert str(caught.value).startswith(
+            "the active OpenShell gateway is None, not the e2e gateway 'openshell'"
+        )
+
+    def test_an_unregistered_e2e_gateway_is_refused(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("OPENSHELL_GATEWAY_HOST_PORT", raising=False)
+        root = tmp_path / ".config" / "openshell"
+        _register_gateway(root, "cogniverse-test-gw", 19090)
+        (root / "active_gateway").write_text("cogniverse-test-gw")
+
+        with pytest.raises(inference.E2EGatewayError) as caught:
+            inference.e2e_gateway_metadata(root)
+
+        assert str(caught.value) == (
+            "the e2e OpenShell gateway 'openshell' is not registered "
+            f"({root / 'gateways' / 'openshell' / 'metadata.json'} is missing); "
+            "the active gateway is 'cogniverse-test-gw'. Start it with "
+            "`openshell gateway start --port 28080`."
+        )
+
+    def test_an_e2e_gateway_on_another_port_is_refused(self, monkeypatch, tmp_path):
+        root = _openshell_home(monkeypatch, tmp_path, active="openshell")
+        monkeypatch.setenv("OPENSHELL_GATEWAY_HOST_PORT", "29999")
+
+        with pytest.raises(
+            inference.E2EGatewayError, match="expected 'openshell' on 29999"
+        ):
+            inference.e2e_gateway_metadata(root)
 
 
 def _expected_e2e_deployment_set_overrides() -> dict[str, str]:
@@ -1554,6 +1665,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -1821,6 +1933,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [],
             "ingest_evaluation_corpus": [],
         }
@@ -1934,6 +2047,126 @@ class TestSharedClusterOwnership:
             "unhealthy",
             "openai/whisper-large-v3-turbo is not served exactly at "
             "http://127.0.0.1:33905/v1/models",
+        )
+
+    def _reusable_cluster_up_to_ports(self, monkeypatch, port_bindings):
+        import cogniverse_cli.cluster as cluster_cli
+
+        monkeypatch.setattr(
+            cluster_cli,
+            "list_cluster_states",
+            lambda: [
+                {
+                    "name": "cogniverse-e2e",
+                    "servers_running": 1,
+                    "servers_count": 1,
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args, 0),
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_read_e2e_deploy_state", lambda: self._current_identity()
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deploy_reuse_state",
+            lambda repo_root, deployed_state, current_identity=None: (
+                "reusable",
+                "",
+            ),
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_semantic_router_ready", lambda: (True, "")
+        )
+        commands: list[list[str]] = []
+
+        def docker(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps(port_bindings), stderr=""
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", docker)
+        return commands
+
+    @staticmethod
+    def _bindings(mappings):
+        return {
+            f"{node}/tcp": [{"HostIp": "", "HostPort": str(host)}]
+            for host, node in mappings.items()
+        }
+
+    def test_cluster_missing_a_published_sidecar_port_is_not_reused(self, monkeypatch):
+        """A cluster created before video_embed's 33912:29012 mapping existed
+        serves every other port, so only the port check can tell."""
+        published = {
+            host: node
+            for host, node in e2e_conftest.E2E_HOST_PORTS.items()
+            if host != 33912
+        }
+        commands = self._reusable_cluster_up_to_ports(
+            monkeypatch, self._bindings(published)
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == (
+            "unhealthy",
+            "the loadbalancer does not publish 33912:29012; publish them with "
+            "`k3d cluster edit cogniverse-e2e --port-add "
+            "33912:29012@loadbalancer`, which recreates only the loadbalancer",
+        )
+        assert commands == [
+            [
+                "docker",
+                "inspect",
+                "k3d-cogniverse-e2e-serverlb",
+                "--format",
+                "{{json .HostConfig.PortBindings}}",
+            ]
+        ]
+
+    def test_cluster_publishing_every_mapping_is_reused(self, monkeypatch):
+        self._reusable_cluster_up_to_ports(
+            monkeypatch, self._bindings(e2e_conftest.E2E_HOST_PORTS)
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == ("reusable", "")
+
+    def test_a_sidecar_port_published_on_another_host_port_is_missing(
+        self, monkeypatch
+    ):
+        published = dict(e2e_conftest.E2E_HOST_PORTS)
+        del published[33912]
+        published[29012] = 29012
+        self._reusable_cluster_up_to_ports(monkeypatch, self._bindings(published))
+
+        state, detail = e2e_conftest._e2e_cluster_state()
+
+        assert state == "unhealthy"
+        assert "does not publish 33912:29012;" in detail, detail
+
+    def test_loadbalancer_inspection_failure_is_unhealthy(self, monkeypatch):
+        self._reusable_cluster_up_to_ports(monkeypatch, {})
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda command, **kwargs: subprocess.CompletedProcess(
+                command, 1, stdout="", stderr="No such object"
+            ),
+        )
+
+        assert e2e_conftest._e2e_cluster_state() == (
+            "unhealthy",
+            "loadbalancer port inspection failed: docker inspect "
+            "k3d-cogniverse-e2e-serverlb --format "
+            "'{{json .HostConfig.PortBindings}}'\nstderr: No such object",
         )
 
     def test_started_cluster_waits_for_cluster_runtime_models_and_state(
@@ -2101,6 +2334,7 @@ class TestSharedClusterOwnership:
         mid_build=None,
         calls: dict[str, list] | None = None,
         llm_serving_env: str | None = LLM_SERVING_LOCAL,
+        modal_warmed: bool = False,
     ):
         """Drive ``e2e_stack`` with every cluster boundary stubbed.
 
@@ -2267,11 +2501,24 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        calls["boundaries"] = _stub_stack_boundaries(monkeypatch)
+        calls["boundaries"] = _stub_stack_boundaries(
+            monkeypatch, modal_warmed=modal_warmed
+        )
         calls["request"] = _stack_request()
         stack = e2e_conftest.e2e_stack.__wrapped__(calls["request"], {})
         next(stack)
         return stack, calls
+
+    def test_a_warmed_modal_chat_model_is_released_with_the_session(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch, cluster_states=[], force_fresh=False, modal_warmed=True
+        )
+
+        assert calls["boundaries"]["modal_warm"] == [True]
+        assert calls["request"].finalizers[-1] is (
+            e2e_conftest._release_modal_chat_models
+        )
+        stack.close()
 
     def test_absent_shared_cluster_is_created_with_exact_deployment(self, monkeypatch):
         stack, calls = self._start_stack(
@@ -2283,6 +2530,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -2360,6 +2608,8 @@ class TestSharedClusterOwnership:
                 "runtime.imagesByBackend.rocm.tag": versions["runtime"],
                 "dashboard.imagesByBackend.rocm.tag": versions["dashboard"],
                 "inference.gliner.image.tag": versions["gliner"],
+                # Enabled by the e2e overrides alone, so pinned from them.
+                "inference.face_embed.image.tag": versions["face_embed"],
             },
             "image_tags": (
                 f"cogniverse/runtime-rocm:{versions['runtime']}",
@@ -2411,6 +2661,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2474,6 +2725,7 @@ class TestSharedClusterOwnership:
                     "runtime": base_version,
                     "dashboard": base_version,
                     "gliner": base_version,
+                    "face_embed": base_version,
                 },
                 llm_serving=llm_serving,
             ),
@@ -2482,6 +2734,7 @@ class TestSharedClusterOwnership:
                     "runtime": runtime_version,
                     "dashboard": base_version,
                     "gliner": base_version,
+                    "face_embed": base_version,
                 },
                 llm_serving=llm_serving,
             ),
@@ -2536,6 +2789,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2590,6 +2844,7 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
+                "face_embed": base_version,
             },
             llm_serving=llm_serving,
         )
@@ -2792,6 +3047,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [],
             "ingest_evaluation_corpus": [],
         }
@@ -2901,6 +3157,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -2917,6 +3174,7 @@ class TestSharedClusterOwnership:
             "acquire": [run_lock.default_lock_path()],
             "release": [],
             "residency": [True],
+            "modal_warm": [True],
             "ingest_documents": [True],
             "ingest_evaluation_corpus": [True],
         }
@@ -2957,6 +3215,208 @@ class TestSharedClusterOwnership:
             "Refusing to replace existing deployment-test cluster "
             "'cogniverse-deploy-test'"
         ) in str(raised.value)
+
+
+class TestDeployDiskPreflight:
+    """A deploy refuses to start on a host disk at Vespa's feed-block limit."""
+
+    @staticmethod
+    def _disk(monkeypatch, used_fraction):
+        from tests.e2e.deployment import conftest as deployment
+
+        total = 1000 * 1024**3
+        used = int(total * used_fraction)
+        seen: list[Path] = []
+
+        def disk_usage(path):
+            seen.append(path)
+            return SimpleNamespace(total=total, used=used, free=total - used)
+
+        monkeypatch.setattr(deployment.shutil, "disk_usage", disk_usage)
+        return deployment, seen
+
+    def test_a_disk_at_the_limit_fails_naming_usage_and_the_prune(self, monkeypatch):
+        deployment, seen = self._disk(monkeypatch, 0.80)
+
+        with pytest.raises(RuntimeError) as raised:
+            deployment.refuse_deploy_on_a_full_disk()
+
+        assert seen == [Path("/var/lib")]
+        assert str(raised.value) == (
+            "host disk at /var/lib is 80.0% used (200 GiB free), at or above "
+            "Vespa's 75% feed-block limit, so the deployed runtime could not "
+            "write to Vespa. Free space first, e.g. `docker builder prune -f`, "
+            "then rerun."
+        )
+
+    def test_exactly_the_limit_is_refused(self, monkeypatch):
+        deployment, _ = self._disk(monkeypatch, 0.75)
+
+        with pytest.raises(RuntimeError, match="75.0% used"):
+            deployment.refuse_deploy_on_a_full_disk()
+
+    def test_a_disk_below_the_limit_deploys(self, monkeypatch):
+        deployment, seen = self._disk(monkeypatch, 0.64)
+
+        deployment.refuse_deploy_on_a_full_disk()
+
+        assert seen == [Path("/var/lib")]
+
+    def test_the_preflight_runs_before_any_build(self, monkeypatch):
+        from tests.e2e.deployment import conftest as deployment
+
+        self._disk(monkeypatch, 0.9)
+        monkeypatch.setattr(
+            deployment,
+            "deployment_helm_inputs",
+            lambda *args, **kwargs: pytest.fail("deploy inputs resolved"),
+        )
+
+        with pytest.raises(RuntimeError, match="90.0% used"):
+            deployment.deploy_stack("cogniverse-e2e", "cogniverse")
+
+
+class TestModalChatModelWarm:
+    """The session holds a runner of the Modal chat model whose calls run
+    under latency budgets a cold start cannot meet, and lets it go after."""
+
+    @staticmethod
+    def _record_cli(monkeypatch, returncode=0, stderr=""):
+        commands: list[list[str]] = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, returncode, stdout="", stderr=stderr
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", run)
+        return commands
+
+    @staticmethod
+    def _serving(monkeypatch, mode):
+        from tests.e2e.deployment import conftest as deployment
+
+        monkeypatch.setattr(deployment, "e2e_llm_serving_mode", lambda: mode)
+
+    @staticmethod
+    def _cli(action):
+        return [
+            str(Path(e2e_conftest.sys.executable).with_name("cogniverse")),
+            "inference",
+            "modal",
+            action,
+            "vllm_llm_student",
+        ]
+
+    def test_modal_serving_warms_the_student(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_MODAL)
+        commands = self._record_cli(monkeypatch)
+
+        assert e2e_conftest._warm_modal_chat_models() is True
+        assert commands == [self._cli("warm")]
+
+    def test_local_serving_warms_nothing(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_LOCAL)
+        commands = self._record_cli(monkeypatch)
+
+        assert e2e_conftest._warm_modal_chat_models() is False
+        assert commands == []
+
+    def test_a_failed_warm_fails_the_session_naming_the_cause(self, monkeypatch):
+        self._serving(monkeypatch, LLM_SERVING_MODAL)
+        self._record_cli(monkeypatch, returncode=1, stderr="Token missing")
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            e2e_conftest._warm_modal_chat_models()
+
+        assert str(raised.value) == (
+            "Session pre-flight: warming the Modal chat models vllm_llm_student "
+            "failed (exit 1): Token missing"
+        )
+
+    def test_release_returns_the_student_to_scale_to_zero(self, monkeypatch):
+        commands = self._record_cli(monkeypatch)
+
+        e2e_conftest._release_modal_chat_models()
+
+        assert commands == [self._cli("release")]
+
+    def test_a_failed_release_fails_the_teardown(self, monkeypatch):
+        self._record_cli(monkeypatch, returncode=1, stderr="autoscaler update failed")
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            e2e_conftest._release_modal_chat_models()
+
+        assert str(raised.value) == (
+            "Session teardown: releasing the Modal chat models vllm_llm_student "
+            "failed (exit 1): autoscaler update failed"
+        )
+
+
+class TestSidecarsEnabledOnlyBySet:
+    """Image builds and tag overrides follow the enabled sidecars. A sidecar
+    switched by ``--set`` alone must count, or it deploys on the chart's
+    static tag, which no build produced."""
+
+    _CHART_INFERENCE = {
+        "inference": {
+            "face_embed": {"enabled": False, "image": {"tag": "0.1.0"}},
+            "colbert_pylate": {"enabled": True, "image": {"tag": "0.1.0"}},
+            "code_colbert_pylate": {"enabled": True, "image": {"tag": "0.1.0"}},
+        }
+    }
+
+    def _inputs(self, tmp_path, monkeypatch, extra_set):
+        from tests.e2e.deployment import conftest as deployment
+
+        repo_root, _ = TestSharedClusterOwnership._seed_git_repo(tmp_path)
+        TestSharedClusterOwnership._commit_change(
+            repo_root,
+            "charts/cogniverse/values.yaml",
+            yaml.safe_dump(self._CHART_INFERENCE),
+            "chart sidecars",
+        )
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(deployment, "e2e_llm_serving_mode", lambda: "modal")
+        inputs = deployment.deployment_helm_inputs(repo_root, extra_set=extra_set)
+        return inputs, images_mod.dev_versions(repo_root)
+
+    def test_a_sidecar_enabled_only_by_set_gets_its_dev_tag(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, versions = self._inputs(
+            tmp_path, monkeypatch, {"inference.face_embed.enabled": "true"}
+        )
+        dev_tag = versions["face_embed"].replace("+", "-")
+
+        overrides = inputs["helm_set_overrides"]
+        assert overrides["inference.face_embed.enabled"] == "true"
+        assert overrides["inference.face_embed.image.tag"] == dev_tag
+        assert dev_tag != "0.1.0"
+        assert f"cogniverse/face-embed:{dev_tag}" in inputs["image_tags"]
+
+    def test_a_sidecar_disabled_only_by_set_is_neither_built_nor_pinned(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, _ = self._inputs(
+            tmp_path, monkeypatch, {"inference.code_colbert_pylate.enabled": "false"}
+        )
+
+        overrides = inputs["helm_set_overrides"]
+        assert "inference.code_colbert_pylate.image.tag" not in overrides
+        # colbert_pylate shares the pylate image, so the image stays built.
+        assert "inference.colbert_pylate.image.tag" in overrides
+
+    def test_no_enablement_in_set_leaves_the_values_files_alone(
+        self, tmp_path, monkeypatch
+    ):
+        inputs, _ = self._inputs(
+            tmp_path, monkeypatch, {"runtime.sandbox.enabled": "true"}
+        )
+
+        assert inputs["image_values"] == inputs["helm_values"]
+        assert "inference.face_embed.image.tag" not in inputs["helm_set_overrides"]
 
 
 @pytest.mark.e2e

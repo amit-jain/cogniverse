@@ -97,8 +97,11 @@ class LoopProbeResult:
 class LoopProbe:
     """Polls ``GET /health/live`` on a second connection until stopped."""
 
-    def __init__(self, interval_s: float = POLL_INTERVAL_S) -> None:
+    def __init__(
+        self, interval_s: float = POLL_INTERVAL_S, base_url: str = RUNTIME
+    ) -> None:
         self._interval_s = interval_s
+        self._base_url = base_url
         self._samples: List[Tuple[int, float, float]] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -117,7 +120,9 @@ class LoopProbe:
     def _run(self) -> None:
         # One client for the whole window: a fresh connection per poll would
         # measure TCP setup rather than the loop's readiness to answer.
-        with httpx.Client(base_url=RUNTIME, timeout=readiness_timeout_s()) as client:
+        with httpx.Client(
+            base_url=self._base_url, timeout=readiness_timeout_s()
+        ) as client:
             while not self._stop.is_set():
                 started = time.monotonic()
                 try:

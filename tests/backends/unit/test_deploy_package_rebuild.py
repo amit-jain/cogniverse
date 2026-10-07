@@ -88,8 +88,17 @@ def test_conflict_reposts_the_survivor_set_read_after_the_conflict(monkeypatch):
     monkeypatch.setattr(
         "cogniverse_vespa.vespa_schema_manager.time.sleep", lambda _: None
     )
+    removal_waits: list[int] = []
+    monkeypatch.setattr(
+        manager,
+        "_wait_until_removal_applied",
+        lambda: removal_waits.append(len(posted)),
+    )
 
     manager._deploy_package(build_package, allow_schema_removal=True)
+
+    # The removal is awaited once, after the activation that succeeded.
+    assert removal_waits == [2]
 
     assert built == [
         ["knowledge_graph_acme_acme"],

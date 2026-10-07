@@ -16,13 +16,13 @@ stages would have produced. Locks the W1–W4 contract:
   produces byte-equal edge lists.
 """
 
-import base64
 import io
 import socket
 import sys
 import threading
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -76,11 +76,15 @@ class _ColorAwareFaceAnalysis:
         self,
         name: str = FACE_MODEL_NAME,
         root: str | None = None,
+        allowed_modules: list[str] | None = None,
         providers: list[str] | None = None,
     ) -> None:
         self.name = name
         self.root = root
+        self.allowed_modules = allowed_modules
         self.providers = providers
+        # No ONNX sessions to reopen: the stub answers from image colour.
+        self.models = {}
         type(self).last_root = root
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002
@@ -179,30 +183,33 @@ def face_embed_url(face_model_root):
 # --------------------------------------------------------------------- #
 
 
-def _solid_b64(color, size=(640, 480)) -> str:
+def _solid_png(color, size=(640, 480)) -> bytes:
     img = Image.new("RGB", size, color=color)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
 
 
-def _debate_keyframes_payload():
-    return {
-        "keyframes": {
-            "items": [
-                {
-                    "segment_id": "frame_5_0",
-                    "ts_start": 5.0,
-                    "image_b64": _solid_b64(_ALICE_COLOR),
-                },
-                {
-                    "segment_id": "frame_15_0",
-                    "ts_start": 15.0,
-                    "image_b64": _solid_b64(_BOB_COLOR),
-                },
-            ]
-        }
-    }
+@pytest.fixture(scope="module")
+def debate_keyframes(tmp_path_factory):
+    """``KeyframeProcessor``'s result shape: Alice's frame at 5.0 s and Bob's
+    at 15.0 s, their images on disk."""
+    directory = tmp_path_factory.mktemp("debate-keyframes")
+    records = []
+    for index, (timestamp, color) in enumerate(
+        [(5.0, _ALICE_COLOR), (15.0, _BOB_COLOR)]
+    ):
+        filename = f"debate_30s_keyframe_{index:04d}.png"
+        (directory / filename).write_bytes(_solid_png(color))
+        records.append(
+            {
+                "frame_number": int(timestamp * 30),
+                "timestamp": timestamp,
+                "filename": filename,
+                "path": str(directory / filename),
+            }
+        )
+    return {"keyframes": {"keyframes": records}}
 
 
 def _t_mention(seg_id, ts_start, ts_end, span):
@@ -244,28 +251,37 @@ def _debate_linked_extraction():
 
 
 def test_face_pipeline_emits_temporal_attribution_edges(
-    face_embed_url, face_model_root
+    face_embed_url, face_model_root, debate_keyframes, caplog
 ):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    edges, nodes = _run_face_pipeline(
-        processing_results=_debate_keyframes_payload(),
-        linked_extraction=_debate_linked_extraction(),
-        source_doc_id="debate_30s",
-        tenant_id="test",
-        face_embed_url=face_embed_url,
-    )
+    with caplog.at_level("INFO", logger="cogniverse_runtime.routers.ingestion"):
+        edges, nodes = _run_face_pipeline(
+            processing_results=debate_keyframes,
+            linked_extraction=_debate_linked_extraction(),
+            source_doc_id="debate_30s",
+            tenant_id="test",
+            face_embed_url=face_embed_url,
+        )
+    assert [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "cogniverse_runtime.routers.ingestion"
+    ] == [
+        "Face pipeline for source_doc_id=debate_30s: 2 faces in 2 keyframes, "
+        "0 failed keyframes, 2 clusters, 2 same_as edges, 0 anonymous face nodes"
+    ]
     # Two clusters (Alice@5, Bob@15) each overlap exactly one Person.
     assert len(edges) == 2
     # Both clusters got attributed → zero orphans → zero anonymous Nodes.
     assert nodes == []
     by_source = {e.source: e for e in edges}
     assert sorted(by_source.keys()) == [
-        "face_cluster::frame_15_0::80_40",
-        "face_cluster::frame_5_0::100_40",
+        "face_cluster::0::100_40",
+        "face_cluster::1::80_40",
     ]
-    alice_edge = by_source["face_cluster::frame_5_0::100_40"]
-    bob_edge = by_source["face_cluster::frame_15_0::80_40"]
+    alice_edge = by_source["face_cluster::0::100_40"]
+    bob_edge = by_source["face_cluster::1::80_40"]
     # Alice cluster (face@5.0) ∈ Alice's window [0,10] → confidence 1.0.
     assert alice_edge.target == "Alice Chen"
     assert alice_edge.confidence == 1.0
@@ -293,17 +309,104 @@ def test_sidecar_reports_pinned_model_revision(face_embed_url):
 # --------------------------------------------------------------------- #
 
 
-def test_empty_keyframes_yields_no_face_edges(face_embed_url):
+def test_empty_keyframes_yields_no_face_edges(face_embed_url, caplog):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    edges, nodes = _run_face_pipeline(
-        processing_results={"keyframes": {"items": []}},
-        linked_extraction=_debate_linked_extraction(),
-        source_doc_id="debate_30s",
-        tenant_id="test",
-        face_embed_url=face_embed_url,
-    )
+    with caplog.at_level("INFO", logger="cogniverse_runtime.routers.ingestion"):
+        edges, nodes = _run_face_pipeline(
+            processing_results={"keyframes": {"keyframes": []}},
+            linked_extraction=_debate_linked_extraction(),
+            source_doc_id="debate_30s",
+            tenant_id="test",
+            face_embed_url=face_embed_url,
+        )
     assert edges == []
+    assert nodes == []
+    assert [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "cogniverse_runtime.routers.ingestion"
+    ] == ["Face pipeline for source_doc_id=debate_30s: no keyframes in the result"]
+
+
+def test_keyframes_the_extractor_cannot_read_are_logged_as_a_failure(
+    face_embed_url, caplog
+):
+    from cogniverse_runtime.routers.ingestion import _run_face_pipeline
+
+    with caplog.at_level("INFO", logger="cogniverse_runtime.routers.ingestion"):
+        edges, nodes = _run_face_pipeline(
+            processing_results={
+                "keyframes": {
+                    "keyframes": [
+                        {"frame_number": 0, "timestamp": 0.0, "filename": "a.jpg"}
+                    ]
+                }
+            },
+            linked_extraction=_debate_linked_extraction(),
+            source_doc_id="debate_30s",
+            tenant_id="test",
+            face_embed_url=face_embed_url,
+        )
+    assert (edges, nodes) == ([], [])
+    assert [
+        (r.levelname, r.getMessage())
+        for r in caplog.records
+        if r.name == "cogniverse_runtime.routers.ingestion"
+    ] == [
+        (
+            "WARNING",
+            "Face extraction failed for source_doc_id=debate_30s; skipping face "
+            "pipeline: keyframe 0 has no readable path and timestamp: "
+            "['filename', 'frame_number', 'timestamp']",
+        )
+    ]
+
+
+def test_a_keyframe_that_fails_twice_is_logged_and_the_others_proceed(
+    face_embed_url, debate_keyframes, tmp_path, caplog
+):
+    """Bob's keyframe image is gone, so both of its attempts fail; Alice's
+    face is still clustered and attributed, and the failure is named."""
+    import copy
+    import shutil
+
+    from cogniverse_runtime.routers.ingestion import _run_face_pipeline
+
+    results = copy.deepcopy(debate_keyframes)
+    alice, bob = results["keyframes"]["keyframes"]
+    alice_copy = tmp_path / Path(alice["path"]).name
+    shutil.copyfile(alice["path"], alice_copy)
+    alice["path"] = str(alice_copy)
+    bob["path"] = str(tmp_path / "gone.png")
+
+    with caplog.at_level("INFO", logger="cogniverse_runtime.routers.ingestion"):
+        edges, nodes = _run_face_pipeline(
+            processing_results=results,
+            linked_extraction=_debate_linked_extraction(),
+            source_doc_id="debate_30s",
+            tenant_id="test",
+            face_embed_url=face_embed_url,
+        )
+
+    messages = [
+        (r.levelname, r.getMessage())
+        for r in caplog.records
+        if r.name == "cogniverse_runtime.routers.ingestion"
+    ]
+    gone = tmp_path / "gone.png"
+    assert [level for level, _ in messages] == ["WARNING", "INFO"]
+    assert messages[0][1].startswith(
+        "Face extraction for source_doc_id=debate_30s skipped keyframe "
+        f"segment_id=1: keyframe image for segment_id='1' is unreadable at {gone}: "
+    )
+    assert messages[1][1] == (
+        "Face pipeline for source_doc_id=debate_30s: 1 faces in 2 keyframes, "
+        "1 failed keyframes, 1 clusters, 1 same_as edges, 0 anonymous face nodes"
+    )
+    assert [(e.source, e.target) for e in edges] == [
+        ("face_cluster::0::100_40", "Alice Chen")
+    ]
     assert nodes == []
 
 
@@ -312,12 +415,12 @@ def test_empty_keyframes_yields_no_face_edges(face_embed_url):
 # --------------------------------------------------------------------- #
 
 
-def test_sidecar_failure_degrades_gracefully():
+def test_sidecar_failure_degrades_gracefully(debate_keyframes):
     """Unreachable URL → _run_face_pipeline returns ([], []) instead of raising."""
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
     edges, nodes = _run_face_pipeline(
-        processing_results=_debate_keyframes_payload(),
+        processing_results=debate_keyframes,
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
         tenant_id="test",
@@ -332,18 +435,18 @@ def test_sidecar_failure_degrades_gracefully():
 # --------------------------------------------------------------------- #
 
 
-def test_face_pipeline_is_idempotent(face_embed_url):
+def test_face_pipeline_is_idempotent(face_embed_url, debate_keyframes):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
     first_edges, first_nodes = _run_face_pipeline(
-        processing_results=_debate_keyframes_payload(),
+        processing_results=debate_keyframes,
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
         tenant_id="test",
         face_embed_url=face_embed_url,
     )
     second_edges, second_nodes = _run_face_pipeline(
-        processing_results=_debate_keyframes_payload(),
+        processing_results=debate_keyframes,
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
         tenant_id="test",

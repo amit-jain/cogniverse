@@ -40,6 +40,9 @@ MEMORY_BASE_SCHEMA = "agent_memories"
 PROVENANCE_BASE_SCHEMA = "provenance"
 MEMORY_EMBEDDING_DIMS = 768
 
+# ConfigStore service, under the system tenant, of each tenant's provenance
+# write lease, keyed by the canonical tenant id.
+PROVENANCE_WRITE_LEASE_SERVICE = "provenance_write_lease"
 # Hold time for the provenance write lease. A memory write is not a Vespa
 # application-package activation, so this is not sized like the deploy lease:
 # it covers one primary write, its read-back and the indexed provenance feed,
@@ -1040,7 +1043,7 @@ class Mem0MemoryManager:
                 store,
                 lease_seconds=PROVENANCE_LEASE_SECONDS,
                 wait_seconds=PROVENANCE_WAIT_SECONDS,
-                service="provenance_write_lease",
+                service=PROVENANCE_WRITE_LEASE_SERVICE,
                 config_key=self._storage_tenant_id,
                 purpose=f"provenance writes for {self._storage_tenant_id}",
             )

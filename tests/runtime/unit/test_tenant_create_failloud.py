@@ -66,9 +66,14 @@ class _RecordingBackend:
 
 
 def _prepare_create_tenant(monkeypatch, backend, *, org_exists=False):
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_runtime.admin import tenant_manager as tm
+    from tests.utils.memory_store import InMemoryConfigStore
 
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
+    monkeypatch.setattr(
+        tm, "_config_manager", ConfigManager(store=InMemoryConfigStore())
+    )
 
     async def _no_sleep(_seconds):
         return None

@@ -629,9 +629,9 @@ operations:
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids, schema_name)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope. When a shared search backend handles a batch read, the unified backend resolves the matching Document v1 namespace and passes both schema and namespace explicitly. |
 | `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. The registry and config-server enumeration, the merge and the activation all run under the cross-process deployment lease, so the package cannot be built from a snapshot another process has already moved past; the convergence wait below runs outside the lease. A package the config server refuses raises `BackendDeploymentError` carrying the server's reason; a 400 `INVALID_APPLICATION_PACKAGE`, which a change needing a validation override (a field type or indexing change that requires a refeed) gets, raises its subclass `SchemaChangeRefusedError`, since posting the same package again is refused the same way. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
 | `deployment_lease()` | Context manager holding the cross-process deployment lease on the calling thread (`VespaSchemaManager.deployment_lease`). A `deploy_schemas` made while it is held reuses it, so a caller keeps every other deployer out from its deploy decision through the registration after the convergence wait. |
-| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
+| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` reads the tenant's stored registry row on every call, never what this process's registry holds, so a schema another process dropped or registered is seen at once; it (and `validate_schema`) raises on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
-| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
+| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. Whether that tenant schema is deployed comes from the backend's own `DeployedSchemaNames`, with no config-store read per query: an undeployed schema answers no rows without a query, and another process's drop is seen within `DEPLOYED_SCHEMAS_MAX_STALENESS_S` (30 s). A query sent meanwhile that Vespa refuses because it cannot resolve the schema answers no rows when the stored registry row confirms the drop, and raises otherwise. |
 | `health_check()` / `close()` | Lifecycle management |
 
 ---
@@ -1525,7 +1525,14 @@ exists = schema_manager.tenant_schema_exists(
 # (SchemaRegistry.deployment_lease), with the deployed snapshot taken inside
 # it and retaken before every conflict retry, so no deploy or delete can
 # activate a package built from a stale survivor set. The lease covers target
-# selection and registry removal for single and bulk deletes.
+# selection and registry removal for single and bulk deletes. A redeploy that
+# removes a schema keeps the lease until the config server's serviceconverge
+# reports every service, the content nodes among them, at the generation that
+# removed it (REMOVAL_CONVERGENCE_TIMEOUT_S, 120 s, else RuntimeError): a
+# content node that skipped straight to a later generation re-adding the
+# schema would keep serving the removed documents under it. A pending
+# activation of a deleted tenant's schema (a deployment intent) is never
+# carried into the package as a survivor.
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 # Returns: List of deleted schema names (schemas removed from Vespa via redeployment)
 ```
@@ -1647,6 +1654,17 @@ than the multi-profile `config` dict shown above.
 | `query_embeddings` | numpy array | no | Pre-computed embeddings for visual/hybrid strategies |
 | `filters` | dict | no | Optional metadata filters |
 | `result_granularity` | str | no | `"source"` or `"segment"`; defaults from the profile |
+
+Without `query_embeddings`, a strategy that reads query tensors has the
+backend encode the query text, one encoder per input
+(`cogniverse_vespa.query_inputs.query_input_encodings`). An input scored
+against a field that the profile embeds with a service of its own, named under
+the field's name in `inference_services`, takes that service's text encoder:
+`acoustic_query`, scored against `acoustic_embedding`, takes the `clap_embed`
+CLAP text vector on `audio_clap_semantic`. Every other input takes the
+profile's query encoder, the `int8` inputs packing its float output. Each
+encoder encodes the query once. A caller's `query_embeddings` array binds to
+every input.
 
 ```python
 # Text search (tenant-scoped)
@@ -1796,19 +1814,41 @@ rank every document in one phase by a visual score plus a text score:
 For them `VespaSearchBackend` matches every document with
 `rank(true, {grammar: "any"}userInput(@userQuery))`: the query terms only rank,
 a document without a text match keeps its visual score, and each document's
-text match counts in full. On the single-vector `video_xclip_sv_chunk_6s`
-schema, `hybrid_float_bm25` adds `closeness` to `nativeRank`. Every hybrid
-that retrieves through `nearestNeighbor` matches
+text match counts in full. On the single-vector schemas the visual score is
+the dense similarity: `hybrid_float_bm25` on `video_xclip_sv_chunk_6s` adds the
+angular `closeness` to `nativeRank`, `hybrid_binary_bm25` the same closeness
+estimated from the Hamming distance `h` of the 768-bit codes, `1/(1 + πh/768)`,
+and `hybrid_acoustic_bm25` on `audio_content` the acoustic `closeness`; the
+`hybrid` profile of `agent_memories` adds `closeness` to `nativeRank(text)`.
+Every hybrid that retrieves through `nearestNeighbor` matches
 `({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`: the nearest
 neighbours and every document holding a query term are candidates, each with
-its full text features. The text-first `hybrid_bm25_*` profiles retrieve by
-text, rank by BM25 and rerank the top 100 by visual similarity.
+its full text features.
+
+The text-first `hybrid_bm25_*` profiles rank the matches weakAnd keeps for the
+query text, and no others, by the same visual score plus `nativeRank` in one
+phase. Their rank profile declares `"candidates": "text_matches"`, which the
+`RankingStrategyExtractor` reports as `text_candidates_only`: the backend then
+matches `userInput(@userQuery)` although the first phase scores an embedding,
+and never adds a `nearestNeighbor` term. On `video_xclip_sv_chunk_6s` they
+compute the visual score from the stored vector, as their query carries no
+`nearestNeighbor` term.
+
+`bm25_only`, `bm25_no_description` and the text-first hybrids match
+`userInput(@userQuery)`, Vespa's weakAnd: it walks the matching documents in
+the order they were first indexed and skips those that cannot beat its running
+threshold, so they rank the matches weakAnd keeps, not every document holding a
+query term. That set depends on the order the documents were fed and on the
+request's hit count: a source-grouped search sends `hits=0` and keeps weakAnd's
+default target, while a request for more hits than there are matches keeps them
+all.
 
 > **Where a strategy's phase order lives.** The ranking phases
 > (`first_phase` / `second_phase`) that define a strategy's actual behavior are
 > authoritative in the schema's `rank_profiles` (the schema JSON). By naming
-> convention `hybrid_binary_bm25*` ranks by binary visual similarity plus text
-> in one phase and `hybrid_bm25_binary*` ranks the text/BM25 phase first.
+> convention `hybrid_binary_bm25*` ranks every document by binary visual
+> similarity plus text and `hybrid_bm25_binary*` ranks the text matches alone by
+> the same sum.
 > `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
 > phase-agnostic metadata (which embeddings/tensors each strategy needs) —
 > `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,
@@ -2892,7 +2932,7 @@ per-attempt budget is 5s for a single document and for one bounded page,
 failures raise. A completed `set_config` is therefore immediately visible to
 those readers without sleeps or search-index convergence retries.
 
-A write first reads the key's latest version with the same visit `get_config` uses, so it never depends on search coverage: Vespa answers a query with partial coverage (`coverage.degraded.non-ideal-state`) for milliseconds while a concurrent write lands. A read the store does not answer raises `ConfigStoreUnavailableError` instead of reading as "no versions yet", which would write version 1 below the real latest; nothing is written. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors` or a `coverage.degraded` flag) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
+A write takes its version from the key's version counter: one document per config under the `config_version_counter` namespace, which pruning never deletes. The writer reads the counter, moves it one version forward with a conditional update (`version == <read>`), and only then writes that version's document, so no two writers are handed the same version however long either stalls. A version document's absence cannot grant a version: pruning deletes old version documents, and Vespa applies a conditional put with `create` to a missing document without evaluating its condition. A missing counter is created, conditionally on its absence, at the latest stored version, read with the same visit `get_config` uses. A counter or version read the store does not answer raises `ConfigStoreUnavailableError`; nothing is written. Visits run in the `config_metadata` namespace and the prune query matches on `config_id`, which the counter does not carry, so no reader sees a counter. `delete_config` removes the counter after the versions, so a recreated key starts at version 1. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors` or a `coverage.degraded` flag) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
 
 `compare_and_set_config(..., expected_version=n)` conditionally writes revision
 `n + 1` and returns `None` on contention. Its version checks and history retention
@@ -2918,9 +2958,8 @@ entry = store.set_config(
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
 )
-# Creates new version on each update. Concurrent writers use conditional
-# Document v1 puts, so each receives a distinct version instead of
-# overwriting a shared document ID.
+# Creates new version on each update. Concurrent writers reserve versions
+# on the key's version counter, so each receives a distinct version.
 
 # Retrieve latest version
 entry = store.get_config(
@@ -3091,6 +3130,7 @@ print(strategy.needs_text_query)        # True
 print(strategy.use_nearestneighbor)     # False (patch-based schema; True for global schemas)
 print(strategy.first_phase_embedding_field)  # "embedding"
 print(strategy.inputs)                  # {"qt": "tensor<float>(...)"}
+print(strategy.input_fields)            # {"qt": "embedding"}
 print(strategy.query_tensors_needed)    # ["qt"]
 ```
 
@@ -3098,6 +3138,9 @@ print(strategy.query_tensors_needed)    # ["qt"]
 
 - **needs_text_query**: Profile name contains "bm25" or "text" OR first-phase has "bm25(" OR "userInput"
 - **needs_float_embeddings**: Input types contain "float"
+- **input_fields**: the field each input is scored against: the field
+  `nearestNeighbor` searches for its input, else the one attribute a phase
+  reads beside the input, functions expanded
 - **needs_binary_embeddings**: Input types contain "int8"
 - **use_nearestneighbor**: Global schemas + visual strategies
 - **first_phase_embedding_field**: The tensor field a visual or hybrid strategy's first phase scores, resolved through profile functions; a text-seeking strategy that has one matches every document and ranks by the query terms

@@ -59,7 +59,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Storage mode determines if we create one doc per segment or one doc total
         self.storage_mode = self.profile_config.get("storage_mode", "multi_doc")
 
-        self._token_pool_factor = self.profile_config.get("token_pool_factor")
+        # Profiles set it under model_config (configs/config.json).
+        self._token_pool_factor = (self.profile_config.get("model_config") or {}).get(
+            "token_pool_factor"
+        )
 
         # Model and processor
         self.model = None
@@ -1331,7 +1334,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     # would collapse the token dim to (D,), which the multi-vector
                     # chunk schema rejects.
                     chunk_arr = (
-                        embeddings_arr.mean(axis=0) if n_frames > 1 else embeddings_arr
+                        embeddings_arr.mean(axis=0, dtype=np.float64)
+                        if n_frames > 1
+                        else embeddings_arr
                     )
                     if chunk_arr.ndim == 2 and chunk_arr.shape[0] > 1:
                         chunk_arr = pool_document_tokens(
@@ -1502,7 +1507,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     if embeddings_arr.size == 0:
                         return None
                     if len(frames) > 1 and embeddings_arr.ndim >= 2:
-                        embeddings_arr = embeddings_arr.mean(axis=0)
+                        embeddings_arr = embeddings_arr.mean(axis=0, dtype=np.float64)
                     if embeddings_arr.ndim == 2 and embeddings_arr.shape[0] > 1:
                         embeddings_arr = pool_document_tokens(
                             embeddings_arr, self._token_pool_factor

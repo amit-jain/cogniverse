@@ -64,7 +64,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/telemetry/unit -m "unit or not integration" \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/telemetry/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/telemetry-phoenix/cogniverse_telemetry_phoenix \
           --cov-report=term-missing \
@@ -128,7 +128,7 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_telemetry_phoenix.provider import PhoenixProvider; print('PhoenixProvider import successful')"
+        uv run --no-sync python -c "from cogniverse_telemetry_phoenix.provider import PhoenixProvider; print('PhoenixProvider import successful')"
         echo "All telemetry imports successful"
 
   integration-tests:

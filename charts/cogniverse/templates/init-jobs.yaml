@@ -41,7 +41,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: schema-deployment
-        image: curlimages/curl:8.14.1
+        image: {{ include "cogniverse.curlImage" . | quote }}
         command:
           - /bin/sh
           - -c
@@ -106,7 +106,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: model-pulling
-        image: curlimages/curl:8.14.1
+        image: {{ include "cogniverse.curlImage" . | quote }}
         command:
           - /bin/sh
           - -c

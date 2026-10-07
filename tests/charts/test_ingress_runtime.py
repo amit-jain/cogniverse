@@ -591,13 +591,15 @@ async def _serve_runtime(port, a2a_redis_url):
 
     import uvicorn
 
-    from cogniverse_core.events import get_queue_manager
     from cogniverse_runtime.main import (
         _a2a_settings_from_env,
         _build_shared_a2a_protocol,
         app,
     )
+    from cogniverse_runtime.routers import events as events_router
     from cogniverse_runtime.routers.openai_compat import set_api_keys, set_model_map
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
+    from cogniverse_runtime.task_events import WORKFLOW, TaskEventStore
 
     class _Registry:
         def list_agents(self):
@@ -620,8 +622,12 @@ async def _serve_runtime(port, a2a_redis_url):
         **_a2a_settings_from_env({}),
     )
     app.mount("/a2a", protocol.app)
+    state = await connect_shared_state_redis(a2a_redis_url)
+    store = TaskEventStore(state, key_prefix=f"test:task-events:{port}")
+    store.start()
+    events_router.set_task_event_store(store)
     for task in ("roundtrip", "left", "right", "fault"):
-        await get_queue_manager().create_queue(task_id=task, tenant_id=TENANT)
+        await store.open_task(WORKFLOW, task, TENANT)
     server = uvicorn.Server(
         uvicorn.Config(
             app, host="127.0.0.1", port=port, lifespan="off", log_level="info"
@@ -630,6 +636,8 @@ async def _serve_runtime(port, a2a_redis_url):
     try:
         await server.serve()
     finally:
+        await store.close()
+        await state.aclose()
         await protocol.close()
 
 

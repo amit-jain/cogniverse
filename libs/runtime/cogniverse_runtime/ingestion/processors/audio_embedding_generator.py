@@ -55,9 +55,8 @@ class AudioEmbeddingGenerator:
             clap_model: CLAP model for acoustic embeddings (512-dim)
             semantic_model: Override name for the semantic embedder. When
                 None, the shared ``get_semantic_embedder()`` factory picks
-                a default — DenseOn served by the denseon sidecar when
-                ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
-                in-process ``all-mpnet-base-v2``.
+                a default — DenseOn served by the denseon sidecar, and
+                raises when no embedder URL is configured.
             clap_endpoint_url: URL of the clap_embed sidecar. When set,
                 acoustic embeddings route over HTTP instead of loading
                 CLAP in-process — the deployed runtime image ships no
@@ -165,8 +164,7 @@ class AudioEmbeddingGenerator:
     def semantic_model(self):
         """Lazy-resolve the shared semantic embedder.
 
-        Returns a cached embedder — remote LM provider or local
-        SentenceTransformer — from the module-level factory. Every
+        Returns the cached remote embedder from the module-level factory. Every
         agent that calls this shares one backend instance instead of
         loading an independent ~400MB model per call site.
         """

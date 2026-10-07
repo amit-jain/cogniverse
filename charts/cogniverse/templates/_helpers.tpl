@@ -89,6 +89,15 @@ Return the proper image name
 {{- end -}}
 
 {{/*
+The small fixed image the chart runs curl from: the init Jobs and every
+inference pod's startup gate. Pinned, so a release of any cogniverse image
+never changes the pods that use it.
+*/}}
+{{- define "cogniverse.curlImage" -}}
+curlimages/curl:8.14.1
+{{- end -}}
+
+{{/*
 LLM endpoint URL. The chart talks to every LLM backend through the
 OpenAI-compatible HTTP shape (``/v1/chat/completions``,
 ``/v1/embeddings``); modern Ollama, vLLM, and external SaaS providers
@@ -550,6 +559,17 @@ stalling the request that first meets them.
 {{- end -}}
 
 {{/*
+Model-server env that keeps the Hugging Face libraries off the network. The
+model-warm init container has already put the pinned weights in the cache, so
+the server loads from there; without this, vLLM asks the Hub for a repo file
+listing on every start and fails to boot when DNS is down.
+*/}}
+{{- define "cogniverse.hubOfflineEnv" -}}
+- name: HF_HUB_OFFLINE
+  value: "1"
+{{- end -}}
+
+{{/*
 INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
 inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
 Modal endpoint service root) replaces the cluster-internal Service URL. The
@@ -711,4 +731,18 @@ runtime.workers reuses its values.
 
 {{- define "cogniverse.runtime.shutdown.a2aDrainSeconds" -}}
 {{- dig "shutdown" "a2aDrainSeconds" 30 .Values.runtime -}}
+{{- end -}}
+
+{{/*
+Face-embed requests a client keeps in flight: the sidecar's CPU limit in whole
+CPUs, at least 1. The sidecar runs one single-threaded inference per CPU, so
+more requests than CPUs only queue against their own timeouts.
+*/}}
+{{- define "cogniverse.faceEmbedConcurrency" -}}
+{{- $cpu := toString .Values.inference.face_embed.resources.limits.cpu -}}
+{{- if hasSuffix "m" $cpu -}}
+{{- max 1 (div (trimSuffix "m" $cpu | atoi) 1000) -}}
+{{- else -}}
+{{- max 1 (atoi $cpu) -}}
+{{- end -}}
 {{- end -}}

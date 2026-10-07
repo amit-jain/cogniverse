@@ -4,6 +4,7 @@ pytest_plugins = [
     "tests.fixtures.inference",
     "tests.fixtures.instafail",
     "tests.fixtures.llm",
+    "tests.fixtures.no_local_models",
     "tests.fixtures.sidecars",
     "tests.fixtures.telemetry_loss_guard",
 ]
@@ -41,112 +42,33 @@ def _restore_main_module():
 
 
 @pytest.fixture(scope="session")
-def face_embed_container():
-    """Self-provisioned face-embed sidecar container.
-
-    Builds the image from deploy/face_embed/Dockerfile when absent, runs
-    it with the shared HF/insightface cache volume, and yields the base
-    URL — integration tests never depend on a pre-started service.
-    """
-    import subprocess
-    import time as _time
-
-    import requests as _requests
-
-    repo = Path(__file__).resolve().parents[1]
-    # Same dev-tag scheme as the chart's sidecar builds (<appVersion>-dev),
-    # so the test image sits in the versioned family instead of an ad-hoc tag.
-    image = "cogniverse/face-embed:0.1.0-dev"
-    have = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
-    if have.returncode != 0:
-        subprocess.run(
-            [
-                "docker",
-                "build",
-                "-f",
-                str(repo / "deploy/face_embed/Dockerfile"),
-                "-t",
-                image,
-                str(repo),
-            ],
-            check=True,
-            timeout=1800,
-        )
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    name = f"face-embed-test-{port}"
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-    subprocess.run(
-        ["docker", "volume", "create", "face-embed-cache"], capture_output=True
-    )
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{port}:8080",
-            "-v",
-            "face-embed-cache:/root/.insightface",
-            "--oom-score-adj=500",
-            image,
-        ],
-        check=True,
-        timeout=120,
-    )
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = _time.time() + 120
-    while _time.time() < deadline:
-        try:
-            if _requests.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        _time.sleep(2)
-    else:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        pytest.fail("face-embed sidecar container did not become healthy")
-
-    try:
-        yield base_url
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+def face_embed_container(remote_inference):
+    """Base URL of the cluster's face-embed service."""
+    return remote_inference.resolve("face_embed").base_url
 
 
 @pytest.fixture(scope="session")
-def shared_denseon(vllm_sidecar):
-    """DenseOn served by a real vLLM container exposing the
-    OpenAI-compatible ``/v1/embeddings`` contract Mem0's openai provider
-    expects — session-scoped so the model loads once per test run.
-
-    Mirrors the chart's ``vllm_embed`` engine: ``--runner pooling
-    --convert embed`` pools to a single dense vector per input (no
-    per-token reshape), matching DenseOn's dense-retrieval semantics.
-    The chart pins float32 because DenseOn can emit NaNs for ordinary
-    document-prefixed text under vLLM's lower-precision CPU default.
-    """
-    return vllm_sidecar.spawn(
-        "lightonai/DenseOn",
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--dtype",
-            "float32",
-        ],
-    )
+def shared_denseon(remote_inference):
+    """DenseOn served by the cluster's vLLM ``vllm_embed`` engine, exposing
+    the OpenAI-compatible ``/v1/embeddings`` contract Mem0's openai provider
+    expects."""
+    return remote_inference.resolve("denseon").base_url
 
 
-# Credentials for remote inference. Without these, ensure_llm finds no
-# configured endpoint and builds a model container on this host instead.
+@pytest.fixture(scope="session")
+def semantic_embedder_env(remote_inference):
+    """The environment a runtime subprocess needs to embed text: the
+    cluster's DenseOn, which every entrypoint makes its embedder default.
+    The embedder has no in-process fallback, so a runtime started without
+    it fails on its first embedding."""
+    denseon = remote_inference.resolve("denseon")
+    return {
+        "COGNIVERSE_SEMANTIC_EMBED_URL": denseon.base_url,
+        "COGNIVERSE_SEMANTIC_EMBED_MODEL": denseon.model_id,
+    }
+
+
+# Credentials for the remote inference endpoints every model test resolves.
 from tests.env_secrets import load_env_secrets  # noqa: E402
 
 load_env_secrets()
@@ -841,72 +763,6 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
         del os.environ["COGNIVERSE_CONFIG"]
 
 
-_OLLAMA_RELEASE_BASE = "https://github.com/ollama/ollama/releases/latest/download"
-
-
-def _resolve_ollama_artefact() -> str:
-    import platform as _pl
-
-    system = _pl.system()
-    machine = _pl.machine().lower()
-    if system == "Linux" and machine in ("x86_64", "amd64"):
-        return "ollama-linux-amd64.tar.zst"
-    if system == "Linux" and machine in ("aarch64", "arm64"):
-        return "ollama-linux-arm64.tar.zst"
-    raise RuntimeError(f"Unsupported platform for Ollama install: {system}/{machine}")
-
-
-def _install_ollama_to_home() -> Path:
-    """Download the Ollama binary archive into ``~/.ollama/bin/ollama``.
-
-    No sudo required — the canary overlay test consumes this explicit
-    installer without coupling the session-wide LM fixture to Ollama.
-    """
-    import shutil as _sh
-    import subprocess as _sp
-    import tempfile as _tmp
-    import urllib.request as _ur
-
-    home_root = Path.home() / ".ollama"
-    home_bin = home_root / "bin"
-    home_bin.mkdir(parents=True, exist_ok=True)
-    bin_path = home_bin / "ollama"
-    if bin_path.exists():
-        return bin_path
-
-    artefact = _resolve_ollama_artefact()
-    url = f"{_OLLAMA_RELEASE_BASE}/{artefact}"
-    with _tmp.TemporaryDirectory() as td:
-        archive_path = Path(td) / artefact
-        with _ur.urlopen(url, timeout=600) as resp, open(archive_path, "wb") as f:
-            _sh.copyfileobj(resp, f)
-        # Ollama ships .tar.zst; needs --zstd (tar 1.31+) or zstd | tar.
-        extract_dir = Path(td) / "extracted"
-        extract_dir.mkdir()
-        _sp.run(
-            ["tar", "--zstd", "-xf", str(archive_path), "-C", str(extract_dir)],
-            check=True,
-            capture_output=True,
-        )
-        src_bin = extract_dir / "bin" / "ollama"
-        if not src_bin.exists():
-            raise RuntimeError(
-                f"ollama archive extracted but bin/ollama missing under "
-                f"{extract_dir}; archive layout may have changed"
-            )
-        _sh.copy2(src_bin, bin_path)
-        # Copy bundled libs (CUDA shims, llama.cpp shared libs) alongside the binary.
-        src_lib = extract_dir / "lib"
-        if src_lib.exists():
-            dst_lib = home_root / "lib"
-            if dst_lib.exists():
-                _sh.rmtree(dst_lib)
-            _sh.copytree(src_lib, dst_lib)
-
-    bin_path.chmod(bin_path.stat().st_mode | 0o755)
-    return bin_path
-
-
 def _complete_primary_only_lm_config(config_path: Path) -> None:
     """Keep the required LMConfig shape while provisioning only the primary."""
     try:
@@ -1206,9 +1062,9 @@ def workflow_store(telemetry_manager_with_phoenix, workflow_state_redis_url):
 @pytest.fixture
 async def session_redis(workflow_state_redis_url):
     """A client on the test Redis, opened the way the runtime opens its own."""
-    from cogniverse_runtime.session_state import open_session_redis
+    from cogniverse_runtime.shared_state import connect_shared_state_redis
 
-    client = await open_session_redis(workflow_state_redis_url)
+    client = await connect_shared_state_redis(workflow_state_redis_url)
     try:
         yield client
     finally:
@@ -1422,16 +1278,9 @@ def shared_vespa():
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
-    # Exact-model LLM sidecars are reused across sessions and carry no owner
-    # pid, so they are reclaimed by age instead: one left running for days
-    # holds its weights in host RAM and starves Vespa's memory pre-flight.
-    from tests.utils.vllm_sidecar import (
-        reap_dead_owner_containers,
-        reclaim_stale_exact_model_containers,
-    )
+    from tests.utils.vllm_sidecar import reap_dead_owner_containers
 
     reap_dead_owner_containers()
-    reclaim_stale_exact_model_containers()
 
     machine = platform.machine().lower()
     docker_platform = (

@@ -1,52 +1,47 @@
-"""Self-provisioned exact LLMs for integration tests.
+"""Exact chat LLMs for integration tests, served by Modal.
 
-``ensure_llm()`` reuses a discovered endpoint only when its OpenAI
-model-list contract names the requested production model exactly. When
-endpoints were discovered and none serves it, that is an outage and it
-raises. Only a host with no discovered endpoint provisions the identical
-model in a local vLLM sidecar. Every decision is recorded for the terminal
-summary (``resolution_log``). ``activate_llms()`` then writes the selected
-exact production roles into the session config.
-
-Each model has a fixed container name and is reused across pytest
-sessions, until it passes the reuse window that
-``reclaim_stale_exact_model_containers`` enforces. On a ROCm host the
-sidecar runs GPU-accelerated; elsewhere it falls back to CPU vLLM.
+``ensure_llm()`` resolves a role's model (``MODEL``, the primary student, or
+``TEACHER_MODEL``) to the service that serves it: an explicit
+``INFERENCE_SERVICE_URLS`` entry for that service when one is set, otherwise
+the service's Modal deployment, read through the repo's Modal lifecycle. The
+endpoint is accepted only when its authenticated model list names the exact
+model and revision. No model is ever started on this host: an absent
+deployment or a wrong model raises a typed ``LlmUnavailableError`` naming what
+to deploy. Each model resolves once per process; every decision is recorded
+for the terminal summary. ``activate_llms()`` then writes the selected roles
+into the session config.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
-import subprocess
 import threading
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
+from concurrent.futures import Future
 from pathlib import Path
+from typing import Callable
 
-from tests.utils.vllm_sidecar import (
-    EXACT_MODEL_LABEL,
-    ModelEndpointDiscoveryError,
-    ModelListProbe,
-    _configured_model_urls,
-    _server_base,
-    exact_model_provisioning_lock,
-    lease_exact_model_container,
-    listed_model_ids,
-    probe_exact_model_endpoints,
-    serves_exact_model,
+import httpx
+from cogniverse_cli.inference_endpoints import (
+    CandidateEndpoint,
+    EndpointCredentials,
+    EndpointIdentityEvidence,
+    EndpointResolutionError,
+    ResolvedInferenceEndpoint,
+    resolve_endpoint,
 )
 
-logger = logging.getLogger(__name__)
+from cogniverse_foundation.config.inference_auth import is_modal_inference_url
+from cogniverse_foundation.inference_specs import (
+    INFERENCE_SERVICE_SPECS,
+    InferenceServiceSpec,
+)
+from cogniverse_runtime.inference_services import parse_inference_service_urls
+from tests.utils.model_resolution import ModelResolution, record
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CONFIG = REPO_ROOT / "configs" / "config.json"
-CONTAINER = "cogniverse-test-llm"
-HOST_PORT = 29110
-TEACHER_CONTAINER = "cogniverse-test-llm-teacher"
-TEACHER_HOST_PORT = 29111
+CHAT_SERVICES = ("vllm_llm_student", "vllm_llm_teacher")
 
 
 def _role_model(role: str) -> str:
@@ -58,358 +53,162 @@ def _role_model(role: str) -> str:
 MODEL = _role_model("primary")
 TEACHER_MODEL = _role_model("teacher")
 HERMETIC_CONFIG_DIR = REPO_ROOT / "outputs" / ".hermetic"
-_HF_CACHE = str(Path.home() / ".cache" / "huggingface")
-_ENSURE_LOCK = threading.Lock()
-_SIDECARS = {
-    MODEL: (CONTAINER, HOST_PORT),
-    TEACHER_MODEL: (TEACHER_CONTAINER, TEACHER_HOST_PORT),
-}
-
-_LOCAL_SPAWN_MIN_AVAILABLE_GB = {
-    MODEL: 16.0,
-    TEACHER_MODEL: 20.0,
-}
 
 
-class LocalSpawnRefused(RuntimeError):
-    """Raised instead of starting a local sidecar."""
+class LlmUnavailableError(RuntimeError):
+    """No remote endpoint serves the requested chat model exactly."""
 
-
-class LocalModelWontFitError(LocalSpawnRefused):
-    """Raised instead of spawning a model the host cannot hold."""
-
-
-class RemoteModelUnavailableError(LocalSpawnRefused):
-    """Raised when endpoints were discovered and none of them serves the model."""
-
-    def __init__(self, model: str, probes: tuple[ModelListProbe, ...]) -> None:
+    def __init__(self, service: str, model: str, detail: str, remedy: str) -> None:
+        self.service = service
         self.model = model
-        self.outcomes = tuple((probe.base_url, probe.outcome()) for probe in probes)
-        described = "; ".join(f"{url}: {outcome}" for url, outcome in self.outcomes)
+        self.detail = detail
         super().__init__(
-            f"Refusing to start a local sidecar for {model!r}: remote endpoints "
-            f"were discovered and none of them serves it. {described}"
+            f"{service} ({model}): {detail}. Tests never start a model on this "
+            f"host; {remedy}."
         )
 
 
-@dataclass(frozen=True)
-class LmResolution:
-    """One ``ensure_llm`` decision, as the terminal summary reports it."""
-
-    model: str
-    decision: str
-    endpoint: str | None
-    candidates: tuple[str, ...]
-    reason: str = ""
-
-    def summary_line(self) -> str:
-        line = f"LM {self.model}: {self.decision}"
-        if self.endpoint is not None:
-            line += f" {self.endpoint}"
-        if self.reason:
-            line += f" ({self.reason})"
-        return f"{line} [candidates: {'; '.join(self.candidates) or 'none'}]"
+class ModalLlmNotDeployedError(LlmUnavailableError):
+    """Modal could not name an endpoint for the service."""
 
 
-_RESOLUTIONS: dict[LmResolution, int] = {}
-_RESOLUTIONS_LOCK = threading.Lock()
+class LlmEndpointMismatchError(LlmUnavailableError):
+    """An endpoint answered but did not serve the exact model and revision."""
 
 
-def _record(resolution: LmResolution) -> None:
-    with _RESOLUTIONS_LOCK:
-        calls = _RESOLUTIONS.pop(resolution, 0)
-        _RESOLUTIONS[resolution] = calls + 1
-
-
-def resolution_counts() -> tuple[tuple[LmResolution, int], ...]:
-    """Each distinct decision this process made and how often, latest last."""
-    with _RESOLUTIONS_LOCK:
-        return tuple(_RESOLUTIONS.items())
-
-
-def resolution_log() -> tuple[LmResolution, ...]:
-    """Each distinct decision this process made, latest last."""
-    return tuple(resolution for resolution, _ in resolution_counts())
-
-
-def available_ram_gb() -> float:
-    """Return the kernel's MemAvailable in GiB."""
-    with open("/proc/meminfo", encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) / (1024 * 1024)
-    raise RuntimeError("/proc/meminfo does not report MemAvailable")
-
-
-def _report_resolution(
-    model: str, resolved: str | None, tried: tuple[str, ...]
-) -> None:
-    """Record which endpoint served a role, or why a sidecar is being built."""
-    if resolved is not None:
-        logger.info("LM role model %r resolved to %s", model, resolved)
-        return
-    if tried:
-        logger.warning(
-            "No discovered endpoint serves %r exactly, so no local sidecar will "
-            "be built. Candidates tried: %s",
-            model,
-            "; ".join(tried),
-        )
-        return
-    logger.warning(
-        "LM role model %r: no candidate endpoint was configured, so a local "
-        "sidecar will be built.",
-        model,
+def service_for_model(model: str) -> InferenceServiceSpec:
+    """The chat service whose spec serves ``model`` exactly."""
+    for service in CHAT_SERVICES:
+        spec = INFERENCE_SERVICE_SPECS[service]
+        if spec.model_id == model:
+            return spec
+    raise ValueError(
+        f"No chat inference service serves {model!r}; served models: "
+        f"{sorted(INFERENCE_SERVICE_SPECS[s].model_id for s in CHAT_SERVICES)}"
     )
 
 
-def _guard_local_spawn(model: str) -> None:
-    assert_local_spawn_fits(model, available_ram_gb())
-
-
-def assert_local_spawn_fits(model: str, available_gb: float) -> None:
-    """Refuse a local spawn that would exhaust host memory."""
-    required = _LOCAL_SPAWN_MIN_AVAILABLE_GB.get(model)
-    if required is None:
-        raise LocalModelWontFitError(
-            f"Refusing to spawn {model!r} locally: no memory requirement is "
-            f"declared for it in _LOCAL_SPAWN_MIN_AVAILABLE_GB. Declare one, or "
-            f"serve the model remotely."
-        )
-    if available_gb < required:
-        raise LocalModelWontFitError(
-            f"Refusing to spawn {model!r} locally: it needs {required:.1f} GiB "
-            f"and this host has {available_gb:.1f} GiB available. Nothing was "
-            f"started.\n"
-            f"This happens when the model has no reachable remote endpoint. To "
-            f"serve it remotely instead, export COGNIVERSE_LLM_SERVING=modal and "
-            f"the Modal credentials from .env/MODAL_TOKEN_ID.env and "
-            f".env/MODAL_TOKEN_SECRET.env (scripts/run_e2e_batched.sh loads these "
-            f"for you). To run it locally, free {required - available_gb:.1f} GiB."
-        )
-
-
-_IMAGES = {
-    "rocm": "vllm/vllm-openai-rocm:v0.23.0",
-    "cpu": "vllm/vllm-openai-cpu:v0.23.0",
-}
-
-
-def _detect_device() -> str:
-    try:
-        from cogniverse_cli.images import detect_torch_backend
-
-        backend = detect_torch_backend()
-    except Exception:
-        backend = "cpu"
-    return "rocm" if backend == "rocm" else "cpu"
-
-
-def _healthy(base_url: str, model: str, timeout: float = 3.0) -> bool:
-    return serves_exact_model(base_url, model, timeout)
-
-
-def _container_state(container: str) -> str | None:
-    out = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Status}}", container],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+def _deploy_remedy(service: str) -> str:
+    return (
+        f"deploy it with `uv run cogniverse inference modal deploy {service}` "
+        f"(check with `uv run cogniverse inference modal status {service}`)"
     )
-    return out.stdout.strip() if out.returncode == 0 else None
 
 
-def _has_reclaim_marker(container: str, model: str) -> bool:
-    """Whether ``container`` carries the marker the age reclaim filters on."""
-    out = subprocess.run(
-        [
-            "docker",
-            "inspect",
-            "-f",
-            f'{{{{index .Config.Labels "{EXACT_MODEL_LABEL}"}}}}',
-            container,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    return out.returncode == 0 and out.stdout.strip() == model
+def _modal_web_url(spec: InferenceServiceSpec, credentials: EndpointCredentials):
+    from cogniverse_cli.modal_inference_lifecycle import ModalInferenceLifecycle
+
+    with ModalInferenceLifecycle(credentials=credentials) as lifecycle:
+        return lifecycle.status((spec.name,))[0].web_url
 
 
-def _container_logs(container: str) -> str:
-    try:
-        out = subprocess.run(
-            ["docker", "logs", "--tail", "200", container],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
+def _http_client(spec: InferenceServiceSpec) -> httpx.Client:
+    # A scaled-to-zero Modal app answers its first request after booting, so
+    # the identity request gets the deployment's own cold-start budget.
+    return httpx.Client(timeout=spec.boot_deadline_seconds)
+
+
+class LlmResolver:
+    """Resolve each chat model once per process; concurrent callers share it."""
+
+    def __init__(
+        self,
+        *,
+        modal_web_url: Callable[
+            [InferenceServiceSpec, EndpointCredentials], str
+        ] = _modal_web_url,
+        http_client: Callable[[InferenceServiceSpec], httpx.Client] = _http_client,
+    ) -> None:
+        self._modal_web_url = modal_web_url
+        self._http_client = http_client
+        self._lock = threading.Lock()
+        self._outcomes: dict[str, Future[ResolvedInferenceEndpoint]] = {}
+
+    def resolve(self, model: str) -> ResolvedInferenceEndpoint:
+        spec = service_for_model(model)
+        with self._lock:
+            future = self._outcomes.get(model)
+            owner = future is None
+            if owner:
+                future = Future()
+                self._outcomes[model] = future
+        if owner:
+            try:
+                future.set_result(self._resolve_once(spec))
+            except BaseException as exc:
+                future.set_exception(exc)
+        return future.result()
+
+    def _resolve_once(self, spec: InferenceServiceSpec) -> ResolvedInferenceEndpoint:
+        subject = f"LM {spec.model_id}"
+        token = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+        credentials = EndpointCredentials(bearer_token=token)
+        explicit = (
+            parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS")) or {}
+        ).get(spec.name)
+        source = (
+            "INFERENCE_SERVICE_URLS"
+            if explicit is not None
+            else f"modal {spec.modal_app}"
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return f"unable to read container logs: {exc}"
-    return "\n".join(part for part in (out.stdout, out.stderr) if part).strip()
-
-
-def _wait_for_container_absence(container: str, timeout: float = 30.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while True:
         try:
-            result = subprocess.run(
-                ["docker", "inspect", container],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RuntimeError(
-                f"docker could not verify removal of {container!r}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        detail = "\n".join(
-            part for part in (result.stdout, result.stderr) if part
-        ).strip()
-        if result.returncode != 0 and "No such" in detail:
-            return True
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"docker could not inspect exact-model container {container!r}: "
-                f"{detail or f'exit {result.returncode}'}"
-            )
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.25)
-
-
-def _remove_container(container: str) -> None:
-    try:
-        result = subprocess.run(
-            ["docker", "rm", "-f", container],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
+            if not token:
+                raise ModalLlmNotDeployedError(
+                    spec.name,
+                    spec.model_id,
+                    "COGNIVERSE_INFERENCE_API_KEY is not set, so no Modal "
+                    "endpoint can be authenticated",
+                    "put the key in .env/COGNIVERSE_INFERENCE_API_KEY.env",
+                )
+            if explicit is not None:
+                base_url = explicit
+            else:
+                try:
+                    base_url = self._modal_web_url(spec, credentials)
+                except Exception as exc:
+                    raise ModalLlmNotDeployedError(
+                        spec.name,
+                        spec.model_id,
+                        f"Modal names no endpoint for {spec.modal_app}: {exc}",
+                        _deploy_remedy(spec.name),
+                    ) from exc
+            try:
+                candidate = CandidateEndpoint(
+                    provider="modal" if is_modal_inference_url(base_url) else "local",
+                    base_url=base_url,
+                    credentials=credentials,
+                    identity_evidence=EndpointIdentityEvidence.ENDPOINT,
+                )
+                with self._http_client(spec) as client:
+                    endpoint = resolve_endpoint(spec, explicit=candidate, client=client)
+            except (EndpointResolutionError, ValueError, httpx.HTTPError) as exc:
+                raise LlmEndpointMismatchError(
+                    spec.name,
+                    spec.model_id,
+                    f"{source} endpoint {base_url} does not serve it exactly: "
+                    f"{type(exc).__name__}: {exc}",
+                    _deploy_remedy(spec.name),
+                ) from exc
+        except LlmUnavailableError as exc:
+            record(ModelResolution(subject, "refused", None, (source,), exc.detail))
+            raise
+        record(
+            ModelResolution(subject, "resolved-remote", endpoint.base_url, (source,))
         )
-    except subprocess.TimeoutExpired as exc:
-        if _wait_for_container_absence(container):
-            return
-        raise RuntimeError(
-            f"docker removal timed out and exact-model container "
-            f"{container!r} still exists"
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(
-            f"docker could not remove exact-model container {container!r}: "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-    if result.returncode == 0 or "No such container" in detail:
-        return
-    if "removal" in detail and "in progress" in detail:
-        if _wait_for_container_absence(container):
-            return
-        raise RuntimeError(
-            f"docker removal remained in progress and exact-model container "
-            f"{container!r} still exists"
-        )
-    raise RuntimeError(
-        f"docker could not remove exact-model container {container!r}: "
-        f"{detail or f'exit {result.returncode}'}"
-    )
+        return endpoint
 
 
-def _cleanup_container(container: str) -> str:
-    try:
-        _remove_container(container)
-    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
-        return f"cleanup failed: {type(exc).__name__}: {exc}"
-    return "cleanup completed"
+_RESOLVER = LlmResolver()
 
 
-def _exception_detail(exc: Exception) -> str:
-    details = [f"{type(exc).__name__}: {exc}"]
-    if isinstance(exc, subprocess.CalledProcessError):
-        details.extend(
-            str(part).strip()
-            for part in (exc.stdout, exc.stderr)
-            if part and str(part).strip()
-        )
-    return "\n".join(details)
+def ensure_llm_endpoint(model: str = MODEL) -> ResolvedInferenceEndpoint:
+    """The verified remote endpoint serving ``model`` exactly."""
+    return _RESOLVER.resolve(model)
 
 
-@contextmanager
-def _ensure_lock():
-    """Serialize exact-model provisioning across threads and pytest processes.
-
-    The age reclaim takes the same cross-process lock, so it cannot delete a
-    container while this process is deciding whether to serve tests from it.
-    """
-    with _ENSURE_LOCK, exact_model_provisioning_lock():
-        yield
-
-
-def _spawn(
-    model: str,
-    container: str,
-    host_port: int,
-    device: str,
-    gpu_utilization: float = 0.25,
-) -> None:
-    _guard_local_spawn(model)
-    cmd = [
-        "docker",
-        "run",
-        "-d",
-        "--init",
-        "--name",
-        container,
-        # Not the owner-pid label: this container outlives the session that
-        # spawns it on purpose. The marker lets the age reclaim find it.
-        "--label",
-        f"{EXACT_MODEL_LABEL}={model}",
-        "-p",
-        f"{host_port}:8000",
-        "-v",
-        f"{_HF_CACHE}:/root/.cache/huggingface",
-        # The host resolv.conf can point at a dead resolver (k3d node DNS
-        # breakage) — pin public resolvers so a fresh model download works.
-        "--dns",
-        "1.1.1.1",
-        "--dns",
-        "8.8.8.8",
-        # Short-lived relative to the session Vespa — prefer killing this
-        # over the shared containers under memory pressure.
-        "--oom-score-adj=400",
-    ]
-    if device == "rocm":
-        cmd += [
-            "--device",
-            "/dev/kfd",
-            "--device",
-            "/dev/dri",
-            "--group-add",
-            "video",
-            "--group-add",
-            "render",
-            "--security-opt",
-            "seccomp=unconfined",
-        ]
-        # 16384: the RLM long-doc tests carry a ~7400-token REPL prompt
-        # plus an 800-token output budget — smaller windows overflow by
-        # design of the tier's own consumers.
-        engine_args = [
-            "--max-model-len",
-            "16384",
-            "--gpu-memory-utilization",
-            str(gpu_utilization),
-        ]
-    else:
-        cmd += ["-e", "VLLM_CPU_KVCACHE_SPACE=4"]
-        engine_args = ["--max-model-len", "16384"]
-    cmd += [_IMAGES[device], "--model", model, *engine_args]
-    subprocess.run(cmd, check=True, timeout=120)
+def ensure_llm(model: str = MODEL) -> str:
+    """The OpenAI base URL (``…/v1``) of the endpoint serving ``model``."""
+    return f"{ensure_llm_endpoint(model).base_url}/v1"
 
 
 def _write_session_config(
@@ -427,8 +226,7 @@ def _write_session_config(
     # succeed even in primary-only sessions. Point an unprovisioned teacher
     # at the dead sentinel port (nothing ever listens there — see the
     # BACKEND_PORT fixture in tests/conftest.py) so any teacher call outside
-    # a requires_teacher_model test fails at connect, identically local and
-    # CI, instead of reaching a leftover teacher sidecar.
+    # a requires_teacher_model test fails at connect.
     teacher = llm.setdefault("teacher", {})
     teacher["model"] = f"openai/{TEACHER_MODEL}"
     teacher["api_base"] = teacher_api_base or "http://127.0.0.1:29071/v1"
@@ -441,6 +239,11 @@ def _write_session_config(
     finally:
         pending.unlink(missing_ok=True)
     return config_path
+
+
+def _server_base(url: str) -> str:
+    base = url.rstrip("/")
+    return base[: -len("/v1")] if base.endswith("/v1") else base
 
 
 def activate_llms(
@@ -463,163 +266,3 @@ def activate_llms(
     os.environ["TEST_LLM_MODEL"] = MODEL
     os.environ.setdefault("OPENAI_API_KEY", "not-required")
     return config_path
-
-
-def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
-    """Resolve or provision ``model`` exactly and return its OpenAI base URL.
-
-    Raises ``RemoteModelUnavailableError`` when endpoints were discovered and
-    none serves ``model``, and ``ModelEndpointDiscoveryError`` when discovery
-    itself failed: a local sidecar is built only when nothing was discovered.
-    """
-    try:
-        container, host_port = _SIDECARS[model]
-    except KeyError as exc:
-        raise ValueError(f"No exact local sidecar is configured for {model!r}") from exc
-
-    with _ensure_lock():
-        try:
-            candidate_urls = _configured_model_urls(model)
-        except ModelEndpointDiscoveryError as exc:
-            _record(LmResolution(model, "refused", None, (), str(exc).splitlines()[0]))
-            raise
-        probes = probe_exact_model_endpoints(model, candidate_urls)
-        configured = (
-            probes[-1].base_url if probes and probes[-1].serves(model) else None
-        )
-        _report_resolution(model, configured, candidate_urls)
-        if configured is not None:
-            _record(LmResolution(model, "resolved-remote", configured, candidate_urls))
-            return f"{configured}/v1"
-        if candidate_urls:
-            refusal = RemoteModelUnavailableError(model, probes)
-            _record(
-                LmResolution(
-                    model,
-                    "refused",
-                    None,
-                    tuple(f"{url}: {outcome}" for url, outcome in refusal.outcomes),
-                    "no discovered endpoint serves it",
-                )
-            )
-            raise refusal
-
-        local_base = f"http://127.0.0.1:{host_port}"
-        provisioning_deadline = time.monotonic() + deadline_s
-        # A pre-existing container gets a bounded slice of the budget, never
-        # all of it: a container that has already had minutes to warm up and
-        # still isn't serving is presumed wedged, and the remaining budget
-        # must stay available for replacing it with a fresh spawn.
-        preexisting_wait_s = min(180.0, deadline_s / 3)
-
-        def _local_endpoint(decision: str, how: str = "container") -> str:
-            # Hold the sidecar against the age reclaim for as long as this
-            # process lives: the reclaim only takes containers that no live
-            # pytest process has leased.
-            lease_exact_model_container(container)
-            endpoint = f"{local_base}/v1"
-            _record(LmResolution(model, decision, endpoint, (), f"{how} {container}"))
-            return endpoint
-
-        def _await_ready(until: float | None = None) -> bool:
-            wait_deadline = provisioning_deadline if until is None else until
-            while time.monotonic() < wait_deadline:
-                model_ids = listed_model_ids(local_base)
-                if model_ids is not None:
-                    return model in model_ids
-                if _container_state(container) != "running":
-                    return False
-                remaining = wait_deadline - time.monotonic()
-                if remaining > 0:
-                    time.sleep(min(5, remaining))
-            return False
-
-        try:
-            state = _container_state(container)
-            if state is not None and not _has_reclaim_marker(container, model):
-                # The age reclaim can only find marked containers, so reusing
-                # an unmarked one would keep its weights in host RAM with
-                # nothing able to reclaim them.
-                _remove_container(container)
-                state = None
-            if state == "running":
-                model_ids = listed_model_ids(local_base)
-                if model_ids is not None and model not in model_ids:
-                    _remove_container(container)
-                    state = None
-                elif _healthy(local_base, model):
-                    return _local_endpoint("reused-local")
-            if state == "running":
-                if _await_ready(time.monotonic() + preexisting_wait_s):
-                    return _local_endpoint("reused-local")
-                _remove_container(container)
-                state = None
-            if state is not None:
-                _guard_local_spawn(model)
-                subprocess.run(
-                    ["docker", "start", container],
-                    check=True,
-                    timeout=60,
-                    capture_output=True,
-                    text=True,
-                )
-                if _await_ready(time.monotonic() + preexisting_wait_s):
-                    return _local_endpoint("spawned-local", "restarted container")
-                _remove_container(container)
-
-            _guard_local_spawn(model)
-            device = _detect_device()
-            attempts = (
-                [("rocm", 0.25), ("rocm", 0.12), ("cpu", 0.0)]
-                if device == "rocm"
-                else [("cpu", 0.0)]
-            )
-            errors: list[str] = []
-            for dev, util in attempts:
-                _remove_container(container)
-                if time.monotonic() >= provisioning_deadline:
-                    errors.append(
-                        f"total {deadline_s}-second provisioning deadline exhausted"
-                    )
-                    break
-                try:
-                    _spawn(
-                        model,
-                        container,
-                        host_port,
-                        dev,
-                        gpu_utilization=util,
-                    )
-                    if _await_ready():
-                        return _local_endpoint("spawned-local")
-                    errors.append(
-                        f"{dev} sidecar did not serve {model!r}; "
-                        f"container logs:\n{_container_logs(container)}"
-                    )
-                except (OSError, subprocess.SubprocessError) as exc:
-                    errors.append(
-                        f"{dev} sidecar failed: {exc}; "
-                        f"container logs:\n{_container_logs(container)}"
-                    )
-                if time.monotonic() >= provisioning_deadline:
-                    errors.append(
-                        f"total {deadline_s}-second provisioning deadline exhausted"
-                    )
-                    break
-
-            detail = "; ".join(errors) or "no local launch attempt completed"
-            raise RuntimeError(
-                f"No configured endpoint or local vLLM sidecar served exact model "
-                f"{model!r}: {detail}"
-            )
-        except LocalSpawnRefused as exc:
-            _record(LmResolution(model, "refused", None, (), str(exc).splitlines()[0]))
-            raise
-        except Exception as exc:
-            logs = _container_logs(container)
-            cleanup = _cleanup_container(container)
-            raise RuntimeError(
-                f"Failed to provision exact model {model!r} in container "
-                f"{container!r}: {_exception_detail(exc)}\n"
-                f"container logs:\n{logs}\n{cleanup}"
-            ) from exc

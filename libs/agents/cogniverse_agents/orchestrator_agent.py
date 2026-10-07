@@ -23,7 +23,7 @@ import weakref
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import dspy
 import httpx
@@ -39,6 +39,11 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_core.events import (
+    current_event_queue,
+    publish_phase,
+    raise_if_cancelled,
+)
 from cogniverse_foundation.telemetry.context import trace_headers
 from cogniverse_foundation.telemetry.span_contract import (
     OP_ORCHESTRATION,
@@ -90,7 +95,6 @@ async def _resolve_inbound_registry_for_orchestrator(redis_url: str = ""):
 
 if TYPE_CHECKING:
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
-    from cogniverse_core.events import EventQueue
     from cogniverse_core.registries.agent_registry import AgentRegistry
     from cogniverse_foundation.config.manager import ConfigManager
 
@@ -672,7 +676,6 @@ class OrchestratorAgent(
         registry: "AgentRegistry",
         config_manager: "ConfigManager" = None,
         port: int = 8013,
-        event_queue: Optional["EventQueue"] = None,
         workflow_intelligence: Optional["WorkflowIntelligence"] = None,
         http_client: Optional[httpx.AsyncClient] = None,
     ):
@@ -684,7 +687,6 @@ class OrchestratorAgent(
             registry: AgentRegistry for dynamic agent discovery
             config_manager: ConfigManager instance (REQUIRED)
             port: Port for A2A server
-            event_queue: Optional EventQueue for real-time notifications
             workflow_intelligence: Optional WorkflowIntelligence for template matching
             http_client: Optional httpx client used for A2A sub-agent calls.
                 When provided (e.g. from
@@ -699,9 +701,6 @@ class OrchestratorAgent(
         self.bind_config_manager(config_manager)
         self.registry = registry
         self._http_client_override = http_client
-
-        # Event queue for external consumers
-        self.event_queue = event_queue
 
         # Workflow intelligence for template matching
         self.workflow_intelligence = workflow_intelligence
@@ -741,6 +740,8 @@ class OrchestratorAgent(
         # concurrent first requests each build a Mem0 stack and leak the losers.
         self._memory_initialized_tenants: set = set()
         self._memory_init_lock = threading.Lock()
+        self._query_analysis_modules: Dict[Tuple[str, Optional[str]], Any] = {}
+        self._query_analysis_lock = threading.Lock()
 
         logger.info(
             f"OrchestratorAgent initialized with {len(self.registry.agents)} registered agents"
@@ -858,11 +859,6 @@ class OrchestratorAgent(
                 f"Memory initialization failed for tenant '{tenant_id}': {e}. "
                 "Continuing without memory support."
             )
-
-    async def _emit_event(self, event) -> None:
-        """Emit event to EventQueue if configured."""
-        if self.event_queue is not None:
-            await self.event_queue.enqueue(event)
 
     def _build_deep_synthesis_workflow(self, tenant_id: str):
         """Construct a :class:`DeepSynthesisWorkflow` for opt-in deep mode.
@@ -991,7 +987,12 @@ class OrchestratorAgent(
 
         tenant_id = canonical_tenant_id(input.tenant_id)
         session_id = input.session_id
-        workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
+        # A run the runtime reports as a workflow task takes the task's id, so
+        # its result names the stream its progress was reported on.
+        bound = current_event_queue()
+        workflow_id = (
+            bound.task_id if bound is not None else f"workflow_{uuid.uuid4().hex[:8]}"
+        )
 
         if not query:
             return OrchestratorOutput(
@@ -1015,12 +1016,14 @@ class OrchestratorAgent(
         if (input.synthesis_depth or "").lower() == "deep":
             workflow = self._build_deep_synthesis_workflow(tenant_id)
             if workflow is not None:
-                workflow_id = f"deep_synthesis_{uuid.uuid4().hex[:8]}"
+                if bound is None:
+                    workflow_id = f"deep_synthesis_{uuid.uuid4().hex[:8]}"
                 telemetry_state.workflow_id = workflow_id
                 telemetry_state.agent_sequence = ["deep_synthesis"]
                 telemetry_state.execution_order = ["deep_synthesis"]
                 telemetry_state.pattern = "deep_synthesis"
                 try:
+                    await publish_phase("deep_synthesis", "Running deep synthesis")
                     seed_subagents = list(self.registry.list_agents())[:6]
                     result = await workflow.run(
                         query=query,
@@ -1200,7 +1203,7 @@ class OrchestratorAgent(
 
         # Get relevant context from memory (cross-session). Mem0 search is a
         # synchronous LLM/vector round trip — run it off the event loop.
-        self.emit_progress("memory_context", "Retrieving memory context...")
+        await self.report_phase("memory_context", "Retrieving memory context...")
         memory_context = await asyncio.to_thread(self.get_relevant_context, query)
         if memory_context:
             logger.info(f"Retrieved memory context for query: {query[:50]}...")
@@ -1212,7 +1215,7 @@ class OrchestratorAgent(
 
         # Planning: fold gateway classification + workflow template
         # matches into a single hints string for the DSPy planner.
-        self.emit_progress("planning", "Creating execution plan...")
+        await self.report_phase("planning", "Creating execution plan...")
         gateway_hints: List[str] = []
         if input.modality:
             gateway_hints.append(f"modality={input.modality}")
@@ -1263,7 +1266,9 @@ class OrchestratorAgent(
             # internally, once per iteration, and feeds the
             # sufficient-context gate between iterations. There is no
             # flag and no single-shot fallback.
-            self.emit_progress("execution", "Executing iterative retrieval loop...")
+            await self.report_phase(
+                "execution", "Executing iterative retrieval loop..."
+            )
             agent_results: Dict[str, Any] = {}
             telemetry_state.agent_results = agent_results
             loop_result = await self._iterative_retrieval_loop(
@@ -1297,7 +1302,7 @@ class OrchestratorAgent(
                     },
                 )
 
-            self.emit_progress("aggregating", "Merging results from all agents")
+            await self.report_phase("aggregating", "Merging results from all agents")
             final_output = self._aggregate_results(query, agent_results)
             # Cap the ranked evidence list at top-5 — anything beyond is
             # noise for the downstream eval harness, and a tighter cap
@@ -1383,7 +1388,9 @@ class OrchestratorAgent(
                 except Exception as e:
                     logger.warning(f"Failed to record workflow execution: {e}")
 
-            self.emit_progress("complete", "Orchestration finished")
+            await self.report_phase(
+                "complete", "Orchestration finished", check_cancelled=False
+            )
 
             return OrchestratorOutput(
                 query=query,
@@ -1664,6 +1671,9 @@ class OrchestratorAgent(
                 logger.info(f"Workflow {workflow_id} cancelled, stopping execution")
                 self._cancelled_workflows.discard(workflow_id)
                 break
+            # A cancellation of the reported workflow stops it before the next
+            # group of steps.
+            raise_if_cancelled()
 
             # Find steps ready to execute (all dependencies met)
             ready_steps = []
@@ -1693,6 +1703,11 @@ class OrchestratorAgent(
                     "executing",
                     f"Step {step_index}: {agent_name}",
                     {"step": step_index, "agent": agent_name},
+                )
+                await publish_phase(
+                    "executing",
+                    f"Step {step_index}: {agent_name}",
+                    check_cancelled=False,
                 )
 
                 # Discover agent from registry by name
@@ -1865,32 +1880,40 @@ class OrchestratorAgent(
     # ------------------------------------------------------------------
 
     def _get_query_analysis_module(self):
-        """Lazily build the ``ComposableQueryAnalysisModule`` reused per
-        iteration of the retrieval loop. Cached on the instance so the
-        GLiNER + spaCy extractors load once."""
-        if getattr(self, "_query_analysis_module", None) is not None:
-            return self._query_analysis_module
+        """Return the ``ComposableQueryAnalysisModule`` reused per iteration of
+        the retrieval loop, built once per configured GLiNER model and
+        endpoint so the GLiNER + spaCy extractors load once.
+
+        The model is the request tenant's ``RoutingConfigUnified.gliner_model``
+        (the setting the dispatcher also seeds the gateway with); the endpoint
+        is ``SystemConfig.inference_service_urls["gliner"]``, so the slim
+        runtime image (no in-process gliner/torch) routes extraction through
+        the inference service.
+        """
         from cogniverse_agents.routing.dspy_relationship_router import (
             create_composable_query_analysis_module,
         )
 
-        # Resolve the configured GLiNER model + remote endpoint so the slim
-        # runtime image (no in-process gliner/torch) routes extraction through
-        # the inference service instead of failing to import gliner.
-        gliner_model = None
-        gliner_inference_url = None
-        try:
-            sys_cfg = self._config_manager.get_system_config()
-            gliner_model = getattr(sys_cfg, "gliner_model", None)
-            gliner_inference_url = (sys_cfg.inference_service_urls or {}).get("gliner")
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("GLiNER config lookup failed for query analysis: %s", exc)
-
-        self._query_analysis_module = create_composable_query_analysis_module(
-            gliner_model=gliner_model,
-            gliner_inference_url=gliner_inference_url,
+        tenant_id = (
+            _request_tenant_id.get()
+            or getattr(self.deps, "tenant_id", None)
+            or SYSTEM_TENANT_ID
         )
-        return self._query_analysis_module
+        gliner_model = self._config_manager.get_routing_config(tenant_id).gliner_model
+        gliner_inference_url = (
+            self._config_manager.get_system_config().inference_service_urls or {}
+        ).get("gliner")
+
+        key = (gliner_model, gliner_inference_url)
+        with self._query_analysis_lock:
+            module = self._query_analysis_modules.get(key)
+            if module is None:
+                module = create_composable_query_analysis_module(
+                    gliner_model=gliner_model,
+                    gliner_inference_url=gliner_inference_url,
+                )
+                self._query_analysis_modules[key] = module
+        return module
 
     @staticmethod
     def _coerce_evidence_snippet(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -2253,11 +2276,19 @@ class OrchestratorAgent(
                 or getattr(self.deps, "tenant_id", None)
                 or SYSTEM_TENANT_ID
             )
+            # The gate's REPL iterations report on the workflow's own task.
+            event_queue = current_event_queue()
             return InstrumentedRLM(
                 SufficientContextSignature,
-                event_queue=self.event_queue,
-                task_id=f"sufficient_context_gate_{uuid.uuid4().hex[:8]}",
-                tenant_id=tenant_id,
+                event_queue=event_queue,
+                task_id=(
+                    event_queue.task_id
+                    if event_queue is not None
+                    else f"sufficient_context_gate_{uuid.uuid4().hex[:8]}"
+                ),
+                tenant_id=event_queue.tenant_id
+                if event_queue is not None
+                else tenant_id,
                 max_iterations=_ITER_GATE_RLM_MAX_ITERATIONS,
             )
         return dspy.ChainOfThought(SufficientContextSignature)
@@ -2628,6 +2659,9 @@ class OrchestratorAgent(
         )
         for iter_idx in range(_max_iter):
             iteration_started = time.monotonic()
+            await publish_phase(
+                "retrieval_iteration", f"Retrieval iteration {iter_idx + 1}"
+            )
 
             # Drain inbound messages BEFORE building the next iteration's
             # query so user-injected constraints land in this iter's
@@ -2640,22 +2674,6 @@ class OrchestratorAgent(
                     if "stop" in msg.tags:
                         exit_reason = "user_stop"
                         iterations_executed = iter_idx
-                        # Also signal the EventQueue's cancellation
-                        # token so any InstrumentedRLM currently
-                        # running inside a sub-agent's chain observes
-                        # the stop at its next REPL iteration and
-                        # raises RLMCancelledError(reason="user_stop").
-                        # The outer return path returns the partial
-                        # evidence already accumulated.
-                        event_queue = getattr(self, "event_queue", None)
-                        if event_queue is not None:
-                            try:
-                                event_queue.cancel(reason="user_stop")
-                            except Exception as exc:  # noqa: BLE001
-                                logger.warning(
-                                    "EventQueue.cancel failed during user_stop: %s",
-                                    exc,
-                                )
                         loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
                         return AccumulatedEvidence(
                             evidence=accumulated,

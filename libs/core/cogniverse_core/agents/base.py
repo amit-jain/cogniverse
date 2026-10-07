@@ -161,6 +161,8 @@ async def _call_in_lm_executor(fn, /, *args, **kwargs):
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from cogniverse_core.events.queue import TaskCancelled, publish_phase
+
 logger = logging.getLogger(__name__)
 
 # Per-invocation progress queue for streaming. A dispatcher CACHES agent
@@ -806,6 +808,20 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
             event["data"] = data
         queue.put_nowait(event)
 
+    async def report_phase(
+        self, phase: str, message: str, *, check_cancelled: bool = True
+    ) -> None:
+        """Report a workflow phase boundary.
+
+        Streams the phase to a streaming caller (``emit_progress``) and
+        publishes it as a status event on the task event queue bound to this
+        request, if one is. With ``check_cancelled`` it then raises
+        ``TaskCancelled`` when that task was cancelled, so the workflow stops
+        at this boundary.
+        """
+        self.emit_progress(phase, message)
+        await publish_phase(phase, message, check_cancelled=check_cancelled)
+
     async def call_dspy(
         self,
         module,
@@ -1106,12 +1122,16 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                     if type(leaf).__name__ not in leaf_names:
                         leaf_names.append(type(leaf).__name__)
                 agent_cls = type(self).__name__
-                logger.error(
-                    "%s streaming failed with %s",
-                    agent_cls,
-                    "; ".join(f"{type(le).__name__}: {le}" for le in leaves),
-                    exc_info=exc,
-                )
+                if isinstance(exc, TaskCancelled):
+                    # A cancelled workflow stopped where it was told to.
+                    logger.info("%s stopped at a cancellation: %s", agent_cls, exc)
+                else:
+                    logger.error(
+                        "%s streaming failed with %s",
+                        agent_cls,
+                        "; ".join(f"{type(le).__name__}: {le}" for le in leaves),
+                        exc_info=exc,
+                    )
                 # Exception text stays server-side: it can carry credentialed
                 # backend URLs. The client gets the leaf type(s), the agent,
                 # and the status of a request the LM rejected.

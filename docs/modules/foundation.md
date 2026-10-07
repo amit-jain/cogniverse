@@ -656,7 +656,7 @@ A 404 means the upstream has nothing deployed for the routed model: an undeploye
 
 A recheck still unanswered after `PROBE_VERDICT_S` (5s, five times the slowest measured 404 from an undeployed Modal app) is a cold start, and the calls behind it are sent too. A recheck that ends without an outcome (cancelled, past its caller's deadline) hands the recheck to the next call. The direct path raises `LMEndpointNotServing` (chained from the litellm `NotFoundError` on the call that got the 404); `RoutedLM` raises `UpstreamNotServing` chained from it. `not_serving_cause(exc)` finds either through `__cause__`, and `refusal(endpoint)` answers the fast failure a call would get without admitting one, for a caller deciding whether to prepare the call at all. Each not-serving call stamps `llm.endpoint.state`, `llm.endpoint.failed_fast` and `llm.endpoint.recheck_in_s` on its span (`LLM_ENDPOINT_*_ATTRIBUTE`). `lm_endpoint_availability().snapshot()` lists every endpoint's `state`, `upstream_status`, `failure`, `reason`, `observed_at` and `recheck_in_s` (credentials in the address stripped); the runtime's `/health` serves it. Nothing is probed in the background: any request to a deployed Modal endpoint boots a GPU container. At most `MAX_TRACKED_ENDPOINTS` (64) endpoints are tracked, least recently observed evicted first.
 
-A call made under a caller's deadline never outlives it. The caller binds an `LMCallDeadline` (`cogniverse_foundation.config.lm_deadline`, `bound_lm_call_deadline`); `BodyBoundedLM` sends nothing once the deadline has passed or the caller abandoned it and raises `LMCallDeadlineExceeded`, a `TimeoutError` naming the endpoint, the model and the deadline. An OpenAI-compatible request goes through `deadline_bound_openai_client(api_base, api_key)`, whose connects, writes and reads each wait at most the time left at that moment, and a caller joining an identical in-flight call waits no longer than its own deadline. `RoutedLM` starts no retry or student attempt past the deadline, and a failure under a deadline adds `endpoint=` and `deadline_s=` to its message.
+A call made under a caller's deadline never outlives it. The caller binds an `LMCallDeadline` (`cogniverse_foundation.config.lm_deadline`, `bound_lm_call_deadline`); `BodyBoundedLM` sends nothing once the deadline has passed or the caller abandoned it and raises `LMCallDeadlineExceeded`, a `TimeoutError` naming the endpoint, the model and the deadline. An OpenAI-compatible request goes through `deadline_bound_openai_client(api_base, api_key)`, whose connects, writes and reads each wait at most the time left at that moment, and a caller joining an identical in-flight call waits no longer than its own deadline. `RoutedLM` starts no retry or student attempt past the deadline, and a failure under a deadline adds `endpoint=` and `deadline_s=` to its message. A request the client hangs up on because the deadline passed or was abandoned raises `LMCallDeadlineExceeded` chained from the provider's timeout: it does not mark the endpoint `failing`, and the response cache names it at INFO, since the caller reports the overrun. A timeout or refused connection with no deadline behind it is the provider's own error, recorded as `failing` and, for a tenant-bound LM, logged at ERROR by the response cache; the "LM rejected the request" error is logged only for a status the endpoint actually answered.
 
 A pro free-form or short-reasoning call whose teacher raises `UpstreamUnavailable` with status
 502, 503, 504, a timeout (408), a transport failure (500 or no status), or
@@ -684,15 +684,17 @@ Configurations are organized by scope for isolation:
 | `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
 `VespaConfigStore.compare_and_set_config(tenant_id, scope, service, config_key,
-config_value, expected_version=...)` conditionally creates the immutable
-`expected_version + 1` version slot. The required keyword `expected_version`
-must be nonnegative: zero requires an absent key, and negative values raise
-`ValueError`. It returns the committed `ConfigEntry` after confirming it is
-the latest version, or `None` on a version mismatch or conditional-write
-conflict. Strong Document API reads before and after the write reject stale
-writers whose old version slots have been pruned. Every successful version
-write applies the same `keep_versions` history retention as `set_config`,
-including a stale candidate that loses the final read; pruning is best-effort.
+config_value, expected_version=...)` writes the version after
+`expected_version` when that is still the latest. The required keyword
+`expected_version` must be nonnegative: zero requires an absent key, and
+negative values raise `ValueError`. The version is reserved on the key's
+version counter only while no other writer holds an unwritten reservation;
+one older than 30 seconds is treated as abandoned and reserved past. It
+returns the committed `ConfigEntry` after a strong read confirms it is the
+latest version, or `None` on a version mismatch, a live reservation, or a
+conditional-write conflict. Every successful version write applies the same
+`keep_versions` history retention as `set_config`, including a stale write
+that loses the final read; pruning is best-effort.
 Read/write failures raise. Schema deployment journals and registration
 completion use this operation to fence stale writers and deletion tombstones.
 

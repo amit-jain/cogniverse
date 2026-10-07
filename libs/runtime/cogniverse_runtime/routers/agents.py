@@ -47,6 +47,11 @@ from cogniverse_runtime.session_state import (
     ConversationLedger,
     SessionStateUnavailable,
 )
+from cogniverse_runtime.task_events import (
+    TaskAlreadyExists,
+    TaskEventStore,
+    TaskEventsUnavailable,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 
@@ -92,6 +97,7 @@ _schema_loader: Optional[SchemaLoader] = None
 _dispatcher: Optional[AgentDispatcher] = None
 _sandbox_manager = None
 _conversation_ledger: Optional[ConversationLedger] = None
+_task_event_store: Optional[TaskEventStore] = None
 
 
 def set_agent_registry(registry: AgentRegistry) -> None:
@@ -120,6 +126,15 @@ def set_conversation_ledger(ledger: Optional[ConversationLedger]) -> None:
         "Conversation ledger %s agents router",
         "injected into" if ledger is not None else "removed from",
     )
+
+
+def set_task_event_store(store: Optional[TaskEventStore]) -> None:
+    """Inject the shared task event store workflows report to into the
+    dispatcher, built or not."""
+    global _task_event_store
+    _task_event_store = store
+    if _dispatcher is not None:
+        _dispatcher.set_task_event_store(store)
 
 
 def set_agent_dependencies(
@@ -190,6 +205,7 @@ def _ensure_dispatcher() -> AgentDispatcher:
         sandbox_manager=_sandbox_manager,
         artifact_manager_factory=_build_artifact_manager_factory(),
         conversation_ledger=_conversation_ledger,
+        task_events=_task_event_store,
     )
     return _dispatcher
 
@@ -768,6 +784,23 @@ async def process_agent_task(
             agent=agent_name,
             context_id=task.context_id,
             request_id=dispatch_context["request_id"],
+        )
+    except TaskEventsUnavailable as e:
+        # The shared store a workflow reports its progress to did not answer;
+        # the workflow is not run unreported.
+        raise failure_response(
+            503,
+            "task_events_unavailable",
+            f"Agent '{agent_name}' could not complete: the task event store did "
+            "not answer; retry.",
+            e,
+            agent=agent_name,
+            request_id=dispatch_context["request_id"],
+        )
+    except TaskAlreadyExists as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Workflow {e.task_id} already exists; name a new workflow_id",
         )
     except InferenceServiceUnavailableError as e:
         # The sidecar backing this capability isn't provisioned in this

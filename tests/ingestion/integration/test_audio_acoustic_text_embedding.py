@@ -14,8 +14,8 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 
-# local_only: loads the real CLAP model (weights download) — deliberately
-# excluded from the CI unit selection, run locally with the models present.
+# The cluster's CLAP service encodes the text, so the module runs where the
+# cogniverse-e2e cluster is reachable, outside the CI unit selection.
 pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.local_only]
 
 
@@ -24,8 +24,14 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 @pytest.fixture(scope="module")
-def generator():
-    return AudioEmbeddingGenerator()
+def generator(remote_inference):
+    generator = AudioEmbeddingGenerator(
+        clap_endpoint_url=remote_inference.resolve("clap_embed").base_url
+    )
+    try:
+        yield generator
+    finally:
+        generator.close()
 
 
 def test_acoustic_text_embedding_shape(generator):

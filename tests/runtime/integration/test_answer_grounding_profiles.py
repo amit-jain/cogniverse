@@ -741,13 +741,31 @@ class TestGroundingSearchIsBounded:
             dispatcher = _dispatcher_with_colpali_at(
                 retrieval_vespa, pylate_server, stub
             )
+            gaps = []
+            finished = asyncio.Event()
+
+            async def heartbeat():
+                last = time.perf_counter()
+                while not finished.is_set():
+                    await asyncio.sleep(0.05)
+                    now = time.perf_counter()
+                    gaps.append(now - last)
+                    last = now
+
+            beat = asyncio.create_task(heartbeat())
             started = time.perf_counter()
             with pytest.raises(AnswerGroundingUnavailable) as failure:
                 await dispatcher._resolve_answer_search_results(
                     HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
                 )
             elapsed = time.perf_counter() - started
+            finished.set()
+            await beat
         _reset_query_encoder_cache()
+
+        # The hung leg waits in a worker thread: the event loop that serves
+        # every other request keeps turning through the budget and after it.
+        assert max(gaps) < 1.0, f"event loop stalled for {max(gaps):.2f}s"
 
         assert list(failure.value.profiles) == FANOUT_PROFILES
         assert failure.value.tenant_id == TENANT_FANOUT

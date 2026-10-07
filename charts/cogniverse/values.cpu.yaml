@@ -19,10 +19,6 @@ inference:
     # overlay already makes.
     revision: null
     kvCacheGiB: 1
-    image:
-      repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
-      pullPolicy: IfNotPresent
     extraArgs:
       - "--runner"
       - "generate"

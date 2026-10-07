@@ -195,6 +195,7 @@ class TestVideoIngestionPipelineUtilityMethods:
             generate_embeddings=Mock(return_value={"embeddings": "mock"}),
         ):
             pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
+            pipeline.retain_job_scratch = False
             pipeline.config = pipeline_config
             pipeline.logger = Mock()
             pipeline.schema_name = "test_schema"
@@ -573,6 +574,7 @@ class TestLocalKeyframeCleanup:
 
     def _pipeline(self, output_dir: Path) -> VideoIngestionPipeline:
         pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
+        pipeline.retain_job_scratch = False
         pipeline.logger = Mock()
         pipeline.schema_name = "test_schema"
         pipeline.tenant_id = "acme"

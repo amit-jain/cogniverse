@@ -467,7 +467,6 @@ def test_profile_manager_reads_profiles_under_backend_service(monkeypatch):
 
     monkeypatch.setattr(backend_profile, "st", MagicMock())
     manager = MagicMock()
-    manager.get_backend_profile.return_value = {"name": "p1", "backend": "vespa"}
 
     try:
         backend_profile.render_profile_manager(manager, "acme:acme", "p1")
@@ -476,8 +475,8 @@ def test_profile_manager_reads_profiles_under_backend_service(monkeypatch):
         # profile READ happens first and is what this test pins.
         pass
 
-    manager.get_backend_profile.assert_called_once_with(
-        profile_name="p1", tenant_id="acme:acme", service="backend"
+    manager.get_stored_backend_config.assert_called_once_with(
+        tenant_id="acme:acme", service="backend"
     )
 
 
@@ -559,3 +558,103 @@ def test_create_form_offers_the_loaders_ingestion_embeds_with(monkeypatch):
     options = loader_calls[0].kwargs["options"]
     assert options == ["", *sorted(EMBEDDING_MODEL_LOADERS)]
     assert options[loader_calls[0].kwargs["index"]] == "colpali"
+
+
+class _SessionState(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
+def _runtime_and_dashboard_managers():
+    """Two processes' managers over one config store: the runtime's, which
+    writes profiles, and the dashboard's, which holds what it last read."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    return ConfigManager(store=store), ConfigManager(store=store)
+
+
+def _dashboard_profile(name: str):
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    return BackendProfileConfig(
+        profile_name=name,
+        type="video",
+        description="created through the runtime",
+        schema_name="video_colpali_smol500_mv_frame",
+        embedding_model="vidore/colsmol-500m",
+        embedding_type="multi_vector",
+    )
+
+
+def _info_messages(st_mock) -> list:
+    return [call.args[0] for call in st_mock.info.call_args_list]
+
+
+@pytest.mark.unit
+def test_profile_list_shows_what_the_runtime_stored_after_the_dashboard_listed(
+    monkeypatch,
+):
+    from unittest.mock import MagicMock
+
+    from cogniverse_dashboard.tabs import backend_profile
+
+    runtime_manager, dashboard_manager = _runtime_and_dashboard_managers()
+    tenant = "acme:acme"
+    rendered = []
+
+    def render() -> list:
+        st_mock = MagicMock()
+        st_mock.session_state = _SessionState(
+            current_tenant=tenant, config_manager=dashboard_manager
+        )
+        monkeypatch.setattr(backend_profile, "st", st_mock)
+        monkeypatch.setattr(
+            backend_profile, "render_create_profile_form", lambda *a: None
+        )
+        monkeypatch.setattr(backend_profile, "render_profile_manager", lambda *a: None)
+        backend_profile.render_backend_profile_tab()
+        return _info_messages(st_mock)
+
+    rendered.append(render())
+    runtime_manager.add_backend_profile(
+        _dashboard_profile("runtime_profile"), tenant_id=tenant
+    )
+    rendered.append(render())
+    runtime_manager.delete_backend_profile("runtime_profile", tenant_id=tenant)
+    rendered.append(render())
+
+    assert [messages[0] for messages in rendered] == [
+        f"Found 0 profile(s) for tenant '{tenant}'",
+        f"Found 1 profile(s) for tenant '{tenant}'",
+        f"Found 0 profile(s) for tenant '{tenant}'",
+    ]
+
+
+@pytest.mark.unit
+def test_profile_manager_does_not_show_a_profile_the_runtime_deleted(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from cogniverse_dashboard.tabs import backend_profile
+
+    runtime_manager, dashboard_manager = _runtime_and_dashboard_managers()
+    tenant = "acme:acme"
+    runtime_manager.add_backend_profile(
+        _dashboard_profile("runtime_profile"), tenant_id=tenant
+    )
+    held = dashboard_manager.get_backend_profile("runtime_profile", tenant_id=tenant)
+    runtime_manager.delete_backend_profile("runtime_profile", tenant_id=tenant)
+    st_mock = MagicMock()
+    monkeypatch.setattr(backend_profile, "st", st_mock)
+
+    backend_profile.render_profile_manager(dashboard_manager, tenant, "runtime_profile")
+
+    assert held.profile_name == "runtime_profile"
+    assert _info_messages(st_mock) == [
+        "No backend profile named `runtime_profile` found."
+    ]
+    assert st_mock.error.call_args_list == []

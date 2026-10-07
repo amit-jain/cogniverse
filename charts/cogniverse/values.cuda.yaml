@@ -69,11 +69,6 @@ inference:
   vllm_asr:
     device: cuda
     gpuCount: 1
-    imagesByDevice:
-      cuda:
-        repository: vllm/vllm-openai
-        tag: v0.23.0
-        pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: "2"

@@ -1657,9 +1657,21 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
      `assert_tenant_exists()` cache entry, every registered per-tenant cache,
      the warm `Mem0MemoryManager` and the tenant's queued background memory
      writes (`release_deleted_tenant`);
+   - cancels the tenant's running and queued tasks wherever they run
+     (`TaskEventStore.cancel_tenant`): a workflow stops at its next phase, an
+     ingestion run before its next video, and a queued ingestion job settles
+     cancelled without running. A task event store that does not answer is
+     logged at ERROR and the delete stays pending, so its retry or the next
+     create of the tenant cancels them;
    - discovers the tenant's schemas from the registry plus any
      canonical-suffix-matched Vespa orphans, redeploys without them (immediate
-     Vespa removal), and tombstones the `tenant_metadata` row.
+     Vespa removal), deletes every config-store row of the tenant — registry
+     tombstones, schema deployment intents, backend profiles, overrides, its
+     provenance write lease and the drift migration's refusals of its schemas
+     — and deletes the `tenant_metadata` row. A row it cannot delete is
+     logged at ERROR and the delete stays pending, so its retry or the next
+     create of the tenant removes it;
+   - records the delete complete (`complete_tenant_delete`).
    ```bash
    curl -X DELETE http://localhost:8000/admin/tenants/acme:acme
    ```
@@ -1669,7 +1681,12 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    `TENANT_DELETE_ACK_TIMEOUT_S` (15 s), or a Redis that cannot carry the
    event, answers 503 with the tenant marked and nothing dropped: its writes
    are already refused everywhere, and the retry completes the delete. The
-   marker stays until `POST /admin/tenants` creates the tenant again.
+   marker stays until `POST /admin/tenants` creates the tenant again; a create
+   of a tenant whose delete is still pending finishes that delete first, and
+   answers 503 `tenant_delete_incomplete` while it cannot. Creates and deletes
+   of one tenant hold the tenant's lease in the config store and run one at a
+   time on every replica; a delete only ever removes the tenant it found when
+   it arrived.
 
    The lower-level primitive it calls internally is also usable directly for
    scripted/manual cleanup:

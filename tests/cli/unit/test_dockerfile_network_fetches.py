@@ -1,9 +1,11 @@
-"""Build-time network fetches in every shipped Dockerfile retry and never pipe into a shell.
+"""Network fetches in every shipped Dockerfile happen at build time, retried, never piped into a shell.
 
 One un-retried download inside a RUN layer fails a 40-minute image build on a
 single dropped stream; a remote script piped into ``sh`` hides which download
-failed and runs whatever came back. Both shapes are refused in every Dockerfile
-the image tooling builds.
+failed and runs whatever came back. A fetch or package install in CMD or
+ENTRYPOINT runs on every container start, so the container cannot start
+without network access. All three shapes are refused in every Dockerfile the
+image tooling builds.
 """
 
 from __future__ import annotations
@@ -21,6 +23,12 @@ _REMOTE_FETCH = re.compile(
 )
 _RETRY_FLAG = re.compile(r"(?:^|\s)--retry(?:\s|=)")
 _PIPE_TO_SHELL = re.compile(r"\|\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:sh|bash)\b")
+_START_INSTRUCTION = re.compile(r"^\s*(CMD|ENTRYPOINT)\s+(.*)$")
+_INSTALL = re.compile(
+    r"\b(?:pip3?|uv\s+pip|-m\s+pip)\s+install\b"
+    r"|\bapt(?:-get)?\s+(?:-\S+\s+)*install\b"
+    r"|\bapk\s+add\b"
+)
 
 
 def _run_instructions(text: str) -> list[tuple[int, str]]:
@@ -54,6 +62,20 @@ def offenders(text: str) -> list[tuple[int, str]]:
     return found
 
 
+def start_offenders(text: str) -> list[tuple[int, str]]:
+    """Return ``(line, reason)`` for each CMD/ENTRYPOINT that installs or fetches when the container starts."""
+    found: list[tuple[int, str]] = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        match = _START_INSTRUCTION.match(raw)
+        if not match:
+            continue
+        if _INSTALL.search(match.group(2)):
+            found.append((number, f"{match.group(1)} installs packages at start"))
+        if _REMOTE_FETCH.search(match.group(2)):
+            found.append((number, f"{match.group(1)} fetches remotely at start"))
+    return found
+
+
 def _built_dockerfiles() -> list[str]:
     return sorted(
         {
@@ -79,6 +101,28 @@ def test_the_tooling_builds_exactly_the_dockerfiles_on_disk() -> None:
 def test_build_time_fetches_retry_and_never_pipe_into_a_shell(dockerfile: str) -> None:
     text = (_REPO_ROOT / dockerfile).read_text()
     assert offenders(text) == [], f"{dockerfile}: {offenders(text)}"
+
+
+@pytest.mark.parametrize("dockerfile", _dockerfiles_on_disk())
+def test_containers_start_without_installing_or_fetching(dockerfile: str) -> None:
+    text = (_REPO_ROOT / dockerfile).read_text()
+    assert start_offenders(text) == [], f"{dockerfile}: {start_offenders(text)}"
+
+
+class TestStartDetector:
+    def test_pip_install_before_exec_in_cmd_is_named(self) -> None:
+        text = 'FROM scratch\nCMD ["sh", "-c", "pip install soundfile && exec vllm serve m"]\n'
+        assert start_offenders(text) == [(2, "CMD installs packages at start")]
+
+    def test_entrypoint_download_is_named(self) -> None:
+        text = (
+            "ENTRYPOINT curl -fsSL --retry 5 https://example.com/w -o /w && exec srv\n"
+        )
+        assert start_offenders(text) == [(1, "ENTRYPOINT fetches remotely at start")]
+
+    def test_build_time_install_and_plain_server_start_are_clean(self) -> None:
+        text = 'RUN pip install fastapi\nCMD ["python", "server.py"]\n'
+        assert start_offenders(text) == []
 
 
 class TestDetector:

@@ -40,6 +40,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from vespa.exceptions import VespaError
 
 from cogniverse_vespa.backend import VespaBackend
 
@@ -268,7 +269,6 @@ def test_hits_raise_native_query_limits(
 def test_vespa_error_propagates(backend: VespaBackend) -> None:
     """The REAL non-2xx shape: pyvespa raise_for_status raises VespaError on
     4xx/5xx (only 404 returns) — it must propagate, not flatten to []."""
-    from vespa.exceptions import VespaError
 
     class _RaisingVespaClient:
         def query(self, **kwargs):
@@ -329,7 +329,7 @@ def test_metadata_query_returns_empty_when_tenant_schema_is_missing() -> None:
     backend._url = "http://vespa"
     backend._port = 8080
     backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
-    backend.schema_exists = MagicMock(return_value=False)
+    backend._read_path_deployed = MagicMock(return_value=False)
     backend._metadata_vespa_app = MagicMock()
 
     rows = backend.query_metadata_documents(
@@ -340,7 +340,7 @@ def test_metadata_query_returns_empty_when_tenant_schema_is_missing() -> None:
     )
 
     assert rows == []
-    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
+    backend._read_path_deployed.assert_called_once_with("acme:acme", "wiki_pages")
     backend._metadata_vespa_app.assert_not_called()
 
 
@@ -349,7 +349,7 @@ def test_metadata_query_raises_when_tenant_schema_lookup_fails() -> None:
     backend._url = "http://vespa"
     backend._port = 8080
     backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
-    backend.schema_exists = MagicMock(
+    backend._read_path_deployed = MagicMock(
         side_effect=RuntimeError("schema registry unavailable")
     )
     backend._metadata_vespa_app = MagicMock()
@@ -362,5 +362,70 @@ def test_metadata_query_raises_when_tenant_schema_lookup_fails() -> None:
             hits=2,
         )
 
-    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
+    backend._read_path_deployed.assert_called_once_with("acme:acme", "wiki_pages")
     backend._metadata_vespa_app.assert_not_called()
+
+
+def _stale_backend(query_error: Exception, stored_deployed: bool):
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://vespa"
+    backend._port = 8080
+    backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
+    backend._read_path_deployed = MagicMock(return_value=True)
+    backend._deployed_schema_names = MagicMock()
+    backend.schema_exists = MagicMock(return_value=stored_deployed)
+    client = MagicMock()
+    client.query.side_effect = query_error
+    backend._metadata_vespa_app = MagicMock(return_value=client)
+    return backend
+
+
+_UNRESOLVED = VespaError(
+    [
+        {
+            "code": 4,
+            "summary": "Invalid query parameter",
+            "message": "Could not resolve source ref 'wiki_pages_acme_acme'. "
+            "Valid source refs are cogniverse_content.tenant_metadata.",
+        }
+    ]
+)
+
+
+def test_a_query_on_a_schema_a_peer_dropped_answers_no_rows() -> None:
+    """Vespa no longer resolves the schema and the stored row no longer
+    registers it: no rows, and the read-path answer is dropped."""
+    backend = _stale_backend(_UNRESOLVED, stored_deployed=False)
+
+    rows = backend.query_metadata_documents(
+        schema="wiki_pages", tenant_id="acme:acme", hits=2
+    )
+
+    assert rows == []
+    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
+    backend._deployed_schema_names.invalidate.assert_called_once_with("acme:acme")
+
+
+def test_an_unresolved_schema_the_store_still_registers_raises() -> None:
+    backend = _stale_backend(_UNRESOLVED, stored_deployed=True)
+
+    with pytest.raises(VespaError) as caught:
+        backend.query_metadata_documents(
+            schema="wiki_pages", tenant_id="acme:acme", hits=2
+        )
+
+    assert caught.value is _UNRESOLVED
+    backend._deployed_schema_names.invalidate.assert_not_called()
+
+
+def test_any_other_query_failure_raises_without_reading_the_store() -> None:
+    other = VespaError([{"code": 12, "summary": "Timed out", "message": "timeout"}])
+    backend = _stale_backend(other, stored_deployed=False)
+
+    with pytest.raises(VespaError) as caught:
+        backend.query_metadata_documents(
+            schema="wiki_pages", tenant_id="acme:acme", hits=2
+        )
+
+    assert caught.value is other
+    backend.schema_exists.assert_not_called()

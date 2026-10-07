@@ -21,6 +21,7 @@ import re
 import shlex
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time as _time
@@ -65,8 +66,10 @@ from tests.e2e.cron_guard import (
     _suspend_cronworkflows_for_session,
 )
 from tests.e2e.inference import (
+    E2EGatewayError,
     _e2e_deployment_overrides,
     _e2e_required_model_probes,
+    e2e_gateway_metadata,
     e2e_required_health_probes,
 )
 from tests.e2e.report import E2E_REPORT_JSON, E2E_REPORT_MD, E2EReportCollector
@@ -1599,7 +1602,54 @@ def _e2e_cluster_state() -> tuple[str, str]:
     )
     if not semantic_router_ready:
         return "unhealthy", semantic_router_detail
+    try:
+        unpublished = _e2e_unpublished_host_ports()
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        return "unhealthy", str(exc)
+    if unpublished:
+        port_adds = " ".join(
+            f"--port-add {mapping}@loadbalancer" for mapping in unpublished
+        )
+        return (
+            "unhealthy",
+            f"the loadbalancer does not publish {', '.join(unpublished)}; "
+            f"publish them with `k3d cluster edit {E2E_CLUSTER_NAME} {port_adds}`, "
+            "which recreates only the loadbalancer",
+        )
     return "reusable", ""
+
+
+def _e2e_unpublished_host_ports() -> list[str]:
+    """``E2E_HOST_PORTS`` mappings the cluster's loadbalancer does not publish.
+
+    k3d fixes the loadbalancer's ports when the cluster is created, so a
+    cluster created before a mapping was added keeps serving without it and
+    every test that reaches that sidecar fails as if it were not deployed.
+    """
+    command = [
+        "docker",
+        "inspect",
+        f"k3d-{E2E_CLUSTER_NAME}-serverlb",
+        "--format",
+        "{{json .HostConfig.PortBindings}}",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"loadbalancer port inspection failed: {shlex.join(command)}\n"
+            f"stderr: {(result.stderr or '').strip()}"
+        )
+    published = {
+        (int(binding["HostPort"]), int(container_port.split("/", 1)[0]))
+        for container_port, bindings in (json.loads(result.stdout) or {}).items()
+        for binding in bindings or []
+        if binding.get("HostPort")
+    }
+    return [
+        f"{host}:{node}"
+        for host, node in E2E_HOST_PORTS.items()
+        if (host, node) not in published
+    ]
 
 
 def _wait_for_e2e_reuse_convergence(
@@ -1675,6 +1725,61 @@ def _reconcile_orphan_schemas() -> None:
             )
 
 
+# The chat model whose calls run under tight latency budgets: the query
+# rewrite gives it 2.8 s, and a Modal runner starting from zero takes minutes,
+# so a cold first call degrades the turn it serves. The teacher's calls carry
+# budgets a cold start fits in, so it is left to scale on demand.
+_MODAL_WARMED_CHAT_SERVICES = ("vllm_llm_student",)
+_MODAL_WARM_TIMEOUT_S = 1200
+
+
+def _modal_chat_lifecycle(action: str) -> subprocess.CompletedProcess:
+    command = [
+        str(Path(sys.executable).with_name("cogniverse")),
+        "inference",
+        "modal",
+        action,
+        *_MODAL_WARMED_CHAT_SERVICES,
+    ]
+    return subprocess.run(
+        command, capture_output=True, text=True, timeout=_MODAL_WARM_TIMEOUT_S
+    )
+
+
+def _warm_modal_chat_models() -> bool:
+    """Hold a runner of the Modal chat model for the session.
+
+    Only when the deploy serves the chat models from Modal. A failed warm
+    fails the session: its LLM results would otherwise depend on whether a
+    runner happened to be up.
+    """
+    from cogniverse_cli.config import LLM_SERVING_MODAL
+
+    from tests.e2e.deployment.conftest import e2e_llm_serving_mode
+
+    if e2e_llm_serving_mode() != LLM_SERVING_MODAL:
+        return False
+    result = _modal_chat_lifecycle("warm")
+    if result.returncode != 0:
+        pytest.fail(
+            "Session pre-flight: warming the Modal chat models "
+            f"{', '.join(_MODAL_WARMED_CHAT_SERVICES)} failed "
+            f"(exit {result.returncode}): {(result.stderr or result.stdout).strip()}"
+        )
+    return True
+
+
+def _release_modal_chat_models() -> None:
+    """Return the warmed chat models to scale-to-zero."""
+    result = _modal_chat_lifecycle("release")
+    if result.returncode != 0:
+        pytest.fail(
+            "Session teardown: releasing the Modal chat models "
+            f"{', '.join(_MODAL_WARMED_CHAT_SERVICES)} failed "
+            f"(exit {result.returncode}): {(result.stderr or result.stdout).strip()}"
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack(request, resolved_inference_endpoints):
     """Provide a healthy, bootstrapped e2e stack without replacing shared state.
@@ -1719,6 +1824,8 @@ def e2e_stack(request, resolved_inference_endpoints):
     if run_lock.acquire(run_lock.default_lock_path()):
         request.addfinalizer(lambda: run_lock.release(run_lock.default_lock_path()))
     run_lock.ensure_e2e_gpu_residency()
+    if _warm_modal_chat_models():
+        request.addfinalizer(_release_modal_chat_models)
 
     from cogniverse_cli.cluster import start_cluster
 
@@ -1909,8 +2016,7 @@ _TEST_TENANT_PREFIXES = (
     "search_e2e_",
     "ingest_e2e_",
     # Knowledge-system e2e prefixes (added with the Section A/B/C/D coverage).
-    # Each phase claims one prefix; tests mint via unique_id("<prefix>") so the
-    # session-end sweep at _cleanup_test_tenants reaps them automatically.
+    # Each phase claims one prefix; tests mint via unique_id("<prefix>").
     "know_",  # KnowledgeRegistry / lifecycle / pinning
     "prov_",  # Provenance round-trip
     "confl_",  # Contradiction detection
@@ -1986,84 +2092,6 @@ def _sweep_tenant_deletes(
         # Don't block on the queued/in-flight deletes — cancel the rest so a
         # large backlog can't hang session setup/teardown past the budget.
         pool.shutdown(wait=False, cancel_futures=True)
-
-
-def _cleanup_test_tenants() -> None:
-    """Delete every test-prefixed tenant AND parent org so the next run starts clean.
-
-    Tests mint per-test tenants and orgs and don't tear them down;
-    without this they accumulate. Symptoms observed:
-      * 321 orgs after a few days of runs — slows ``list_organizations``
-        and turns the daily-cleanup CronWorkflow into a 10-min crawl
-        because it instantiates one ``Mem0MemoryManager`` per tenant.
-      * Vespa orphan rollback trips on stale schemas left behind.
-
-    Only entities matching ``_TEST_TENANT_PREFIXES`` are touched —
-    real customer orgs / tenants must never be eligible.
-
-    Waits for the runtime to be ready before sweeping. Tests that
-    trigger a runtime rollout (e.g. the daily-gateway cron e2e) leave
-    the runtime mid-restart at teardown time; without this wait the
-    sweep would flood the log with ``Server disconnected without
-    sending a response`` for every test tenant.
-    """
-    import time as _t
-
-    deadline = _t.monotonic() + 180.0
-    while _t.monotonic() < deadline and not runtime_available():
-        _t.sleep(3.0)
-    # 1. Tenant sweep — query Vespa for every schema_registry row and
-    # delete via runtime so the registry tombstone + Vespa schema both
-    # land atomically.
-    vespa_url = backend_env.vespa_url()
-    yql = (
-        "select tenant_id from config_metadata "
-        'where scope contains "schema" '
-        'and service contains "schema_registry"'
-    )
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{vespa_url}/search/", params={"yql": yql, "hits": 400})
-            if resp.status_code != 200:
-                return
-            hits = resp.json().get("root", {}).get("children", []) or []
-    except (httpx.HTTPError, OSError):
-        return
-
-    tenants_seen: set[str] = set()
-    for hit in hits:
-        tid = (hit.get("fields") or {}).get("tenant_id", "")
-        if tid and any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
-            tenants_seen.add(tid)
-
-    _sweep_tenant_deletes(tenants_seen)
-
-    # 2. Org sweep — DELETE /admin/organizations/{org_id}. Tenants
-    # have been removed above so org delete is unblocked. Skip orgs
-    # whose id doesn't match a test prefix so flywheel_org / customer
-    # orgs survive.
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            r = client.get(f"{RUNTIME}/admin/organizations")
-            if r.status_code != 200:
-                return
-            orgs = (r.json() or {}).get("organizations") or []
-    except (httpx.HTTPError, OSError) as exc:
-        print(f"Cleanup failed listing organizations: {exc}")
-        return
-
-    org_ids = sorted(
-        o["org_id"]
-        for o in orgs
-        if o.get("org_id")
-        and any(o["org_id"].startswith(p) for p in _TEST_TENANT_PREFIXES)
-    )
-    for org_id in org_ids:
-        try:
-            with httpx.Client(timeout=60.0) as client:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-        except (httpx.HTTPError, OSError) as exc:
-            print(f"Cleanup failed for org {org_id}: {exc}")
 
 
 def _reconcile_vespa_orphans() -> None:
@@ -2169,6 +2197,10 @@ def _ensure_host_sandbox_gateway() -> None:
             "OpenShell host gateway bootstrap returned false; expected=True",
             pytrace=False,
         )
+    try:
+        e2e_gateway_metadata()
+    except E2EGatewayError as exc:
+        pytest.fail(str(exc), pytrace=False)
 
 
 def _openshell_mtls_fingerprint(kube_context: str) -> str:
@@ -2200,6 +2232,12 @@ def _sync_sandbox_into_cluster(kube_context: str, *, roll_runtime: bool) -> None
     """
     from cogniverse_cli.sandbox import sync_gateway_certs_to_cluster
 
+    # The sync copies the active gateway's certs: refuse unless that is the
+    # e2e stack's own gateway.
+    try:
+        e2e_gateway_metadata()
+    except E2EGatewayError as exc:
+        pytest.fail(str(exc), pytrace=False)
     before = _openshell_mtls_fingerprint(kube_context)
     try:
         synced = sync_gateway_certs_to_cluster(kube_context=kube_context)

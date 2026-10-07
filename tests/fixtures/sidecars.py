@@ -9,8 +9,9 @@ Either way it is registered once and its hooks run once per session:
 - ``pytest_sessionstart`` removes containers whose owning pytest process died
   without teardown, before collection, so a session that never provisions a
   sidecar still clears what a killed session left holding host RAM.
-- ``pytest_terminal_summary`` prints that reap and every LM endpoint decision
-  ``ensure_llm`` made, whatever the capture mode and whether tests passed.
+- ``pytest_terminal_summary`` prints that reap and every model endpoint
+  decision the session made (``tests/utils/model_resolution.py``), whatever
+  the capture mode and whether tests passed.
 """
 
 from __future__ import annotations
@@ -52,10 +53,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     reap = config.stash.get(_REAP_REPORT, None)
     if reap is not None:
         lines.append(reap)
-    # A process that never imported the resolver made no LM decision.
-    resolver = sys.modules.get("tests.utils.hermetic_llm")
-    if resolver is not None:
-        for resolution, calls in resolver.resolution_counts():
+    # A process that never imported the resolvers made no model decision.
+    resolutions = sys.modules.get("tests.utils.model_resolution")
+    if resolutions is not None:
+        for resolution, calls in resolutions.resolution_counts():
             line = resolution.summary_line()
             lines.append(line if calls == 1 else f"{line} x{calls}")
     if not lines:
@@ -66,60 +67,68 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
 
 
 @pytest.fixture(scope="session")
-def vllm_sidecar():
-    """Factory for spinning up real vLLM sidecars on demand. See
-    tests/utils/vllm_sidecar.py for usage details."""
-    from tests.utils.vllm_sidecar import VllmSidecarFactory
-
-    factory = VllmSidecarFactory()
-    try:
-        yield factory
-    finally:
-        factory.teardown()
-
-
-@pytest.fixture(scope="session")
-def pylate_server():
-    """LateOn served by the real PyLate sidecar container (deploy/pylate,
-    the same engine the chart deploys) exposing the production ``/pooling``
-    contract — session-scoped so LateOn loads once per run.
+def pylate_server(remote_inference):
+    """LateOn served by the cluster's PyLate service (deploy/pylate) exposing
+    the production ``/pooling`` contract.
 
     The service owns PyLate's exact encode for both directions: query
     expansion over masked padding positions and the document punctuation
     skiplist. Generic vLLM ``/pooling`` cannot reproduce the query side
-    because its request schema carries no attention mask. Integration tests
-    provision their own inference; the cluster belongs to the e2e tier.
+    because its request schema carries no attention mask.
     """
-    from cogniverse_foundation.inference_specs import get_inference_service_spec
-    from tests.fixtures.inference import LocalEndpointProvider
-
-    provider = LocalEndpointProvider()
-    try:
-        endpoint = provider.resolve(get_inference_service_spec("colbert_pylate"))
-        yield endpoint.base_url
-    finally:
-        provider.close()
+    return remote_inference.resolve("colbert_pylate").base_url
 
 
 @pytest.fixture(scope="module")
-def served_code_colbert():
-    """Serve the pinned code encoder through the test-owned CPU PyLate service."""
+def served_code_colbert(remote_inference):
+    """The pinned code encoder served by the cluster's PyLate service."""
     from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
-    from cogniverse_foundation.inference_specs import get_inference_service_spec
-    from tests.fixtures.inference import LocalEndpointProvider
 
-    provider = LocalEndpointProvider()
+    endpoint = remote_inference.resolve("code_colbert_pylate")
+    loader = RemoteColBERTLoader(
+        model_name=endpoint.model_id,
+        config={"remote_inference_url": endpoint.base_url},
+        _resolved_headers=dict(endpoint.headers),
+    )
+    model, _ = loader.load_model()
     try:
-        endpoint = provider.resolve(get_inference_service_spec("code_colbert_pylate"))
-        loader = RemoteColBERTLoader(
-            model_name=endpoint.model_id,
-            config={"remote_inference_url": endpoint.base_url},
-            _resolved_headers=dict(endpoint.headers),
-        )
-        model, _ = loader.load_model()
-        try:
-            yield model
-        finally:
-            model._close()
+        yield model
     finally:
-        provider.close()
+        model._close()
+
+
+def inject_gliner_url(config_manager, url: str) -> None:
+    """Register the GLiNER service URL the runtime's dispatcher and
+    orchestrator read from ``SystemConfig.inference_service_urls``, beside the
+    endpoints already configured."""
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["gliner"] = url
+    config_manager.set_system_config(sys_cfg)
+
+
+@pytest.fixture(scope="session")
+def gliner_url(remote_inference):
+    """Base URL of the cluster's GLiNER service, the production entity and
+    routing classifier."""
+    return remote_inference.resolve("gliner").base_url
+
+
+@pytest.fixture(scope="module")
+def served_semantic_embedder(remote_inference):
+    """Point the shared semantic embedder at the cluster's DenseOn, the way the
+    runtime entrypoint configures it, and restore the prior defaults after."""
+    from cogniverse_core.common.models import semantic_embedder as module
+
+    endpoint = remote_inference.resolve("denseon")
+    original = (module._CONFIGURED_REMOTE_URL, module._CONFIGURED_MODEL_NAME)
+    module.configure_semantic_embedder_defaults(
+        remote_url=endpoint.base_url, model_name=endpoint.model_id
+    )
+    try:
+        yield endpoint
+    finally:
+        module.configure_semantic_embedder_defaults(
+            remote_url=original[0], model_name=original[1]
+        )
+        module.reset_semantic_embedder_cache()
