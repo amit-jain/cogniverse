@@ -178,7 +178,13 @@ def _deploy_profile_for_tenant(
         json=profile_create_payload(profile_name, profile_def, tenant_id),
         timeout=TENANT_DEPLOY_TIMEOUT_S,
     )
-    assert resp.status_code in (200, 201, 409), resp.text
+    # The create refuses a profile the tenant already holds with 400 and
+    # exactly this error, so a second deploy of the same profile proceeds.
+    already_held = resp.status_code == 400 and resp.json().get("detail") == {
+        "message": "Profile validation failed",
+        "errors": [f"Profile '{profile_name}' already exists for tenant '{tenant_id}'"],
+    }
+    assert resp.status_code in (200, 201) or already_held, resp.text
 
     resp = client.post(
         f"/admin/profiles/{profile_name}/deploy",
