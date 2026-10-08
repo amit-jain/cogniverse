@@ -115,6 +115,7 @@ function RequestList({
         <table aria-label={`${title} requests`}>
           <thead>
             <tr>
+              <th>Time</th>
               <th>Span</th>
               <th>Tenant</th>
               <th>Query</th>
@@ -131,6 +132,7 @@ function RequestList({
           <tbody>
             {requests.map((request) => (
               <tr key={request.span_id} className={annotating === request.span_id ? 'selected' : undefined}>
+                <td>{new Date(request.timestamp).toLocaleString()}</td>
                 <td>{request.span_id}</td>
                 <td>{request.tenant_id ?? '—'}</td>
                 <td>{request.query}</td>
