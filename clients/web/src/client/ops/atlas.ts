@@ -135,11 +135,16 @@ export function selectedPoints(atlas: UmapAtlas, selection: Set<string> | null):
   return selection ? atlas.points.filter((p) => selection.has(p.id)) : atlas.points;
 }
 
-/** How many of ``points`` each cluster holds, clusters by id, the
- * unclustered last; clusters without a point are left out. */
-export function clusterCounts(atlas: UmapAtlas, points: UmapPoint[]): { label: string; value: number }[] {
+/** How many of ``points`` each cluster holds, keyed by cluster id,
+ * clusters by id, the unclustered last; clusters without a point are left
+ * out. */
+export function clusterCounts(
+  atlas: UmapAtlas,
+  points: UmapPoint[],
+): { key: number; label: string; value: number }[] {
   return [...atlas.clusters.map((c) => c.id), UNCLUSTERED]
     .map((cluster) => ({
+      key: cluster,
       label: clusterName(atlas, cluster),
       value: points.filter((p) => p.cluster === cluster).length,
     }))

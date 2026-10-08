@@ -6,6 +6,7 @@ import pytest
 from cogniverse_runtime.atlas_projection import (
     TooFewDocumentsError,
     automatic_clusters,
+    label_text,
     build_map,
     most_similar,
     unit_rows,
@@ -150,4 +151,80 @@ def test_unit_rows_leave_a_zero_row_at_zero():
     assert unit_rows(np.array([[3.0, 4.0], [0.0, 0.0]])).tolist() == [
         [0.6, 0.8],
         [0.0, 0.0],
+    ]
+
+
+def _three_blobs():
+    rng = np.random.default_rng(5)
+    return np.vstack(
+        [rng.normal(loc=(centre, 0), scale=0.2, size=(5, 2)) for centre in (-20, 0, 20)]
+    )
+
+
+def _names_by_group(labels, names):
+    """Each cluster's name keyed by the index of its first document."""
+    return {
+        min(i for i, x in enumerate(labels) if x == label): names[int(label)]
+        for label in set(labels)
+    }
+
+
+def test_label_text_keeps_the_words_of_file_names_and_drops_ids():
+    assert [
+        label_text(text)
+        for text in (
+            "for_bigger_blazes.mp4",
+            "rivers-1.txt",
+            "v_-6Os86HzwCs frame 12",
+            "Video: rivers_canyon.MP4 | Frame: lava",
+        )
+    ] == [
+        "for bigger blazes",
+        "rivers",
+        "v frame",
+        "Video: rivers canyon | Frame: lava",
+    ]
+
+
+def test_cluster_names_leave_out_file_extensions_and_ids():
+    texts = ["for_bigger_blazes.mp4 v_-6Os86HzwCs frame 12"] * 5 + [
+        "elephants-dream.mkv v_x9Abc12Q frame 3"
+    ] * 5
+    labels, names = automatic_clusters(_blobs(), texts)
+    assert _names_by_group(labels, names) == {
+        0: "bigger, blazes, frame",
+        5: "dream, elephants, frame",
+    }
+
+
+def test_clusters_whose_titles_collide_get_unique_names():
+    texts = (
+        ["for_bigger_blazes.mp4"] * 5
+        + ["for_bigger_blazes.mp4"] * 5
+        + ["elephants_dream.mp4"] * 5
+    )
+    labels, names = automatic_clusters(_three_blobs(), texts)
+    by_group = _names_by_group(labels, names)
+    assert sorted(by_group) == [0, 5, 10]
+    assert sorted(by_group.values()) == sorted(
+        [
+            "bigger, blazes",
+            f"bigger, blazes (cluster {max(int(labels[0]), int(labels[5])) + 1})",
+            "dream, elephants",
+        ]
+    )
+    assert len(set(names.values())) == len(names)
+
+
+def test_a_colliding_name_takes_the_clusters_next_terms_first():
+    texts = (
+        ["rivers carve canyons"] * 5
+        + ["rivers rivers carve carve canyons canyons valleys"] * 5
+        + ["volcanoes build islands"] * 5
+    )
+    labels, names = automatic_clusters(_three_blobs(), texts)
+    assert sorted(_names_by_group(labels, names).items()) == [
+        (0, "canyons, carve, rivers"),
+        (5, "canyons, carve, rivers, valleys"),
+        (10, "build, islands, volcanoes"),
     ]
