@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.utils.cluster_events import InProcessClusterEvents
+
 
 @pytest.fixture(autouse=True)
 def _default_telemetry_singleton():
@@ -56,23 +58,6 @@ def harness_key_config_store(monkeypatch):
     monkeypatch.setattr(tenant_manager, "_config_manager", ConfigManager(store=store))
     assert tenant_manager._config_manager.store is store
     return store
-
-
-class InProcessClusterEvents:
-    """The cluster-events channel with this process as its only worker: each
-    event runs its handler here and answers as one acknowledgement."""
-
-    worker_id = "unit-worker"
-
-    def __init__(self, handlers):
-        self._handlers = handlers
-        self.published: list = []
-
-    async def publish(self, kind, payload, *, timeout_s):
-        import asyncio
-
-        self.published.append((kind, payload))
-        return {self.worker_id: await asyncio.to_thread(self._handlers[kind], payload)}
 
 
 @pytest.fixture

@@ -60,7 +60,7 @@ class TestDashboardProfileIntegration:
         return schema_dir
 
     @pytest.fixture
-    def running_api(self, temp_schema_dir: Path, tmp_path: Path):
+    def running_api(self, temp_schema_dir: Path, tmp_path: Path, monkeypatch):
         """Start the FastAPI server for integration tests"""
         from fastapi.testclient import TestClient
 
@@ -69,8 +69,10 @@ class TestDashboardProfileIntegration:
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_runtime.cluster_events import CONFIG_EVENT_HANDLERS
         from cogniverse_runtime.main import app
         from cogniverse_runtime.routers import admin
+        from tests.utils.cluster_events import InProcessClusterEvents
         from tests.utils.memory_store import InMemoryConfigStore
 
         # Reset registries (including cached backend instances)
@@ -95,6 +97,10 @@ class TestDashboardProfileIntegration:
         admin.set_config_manager(config_manager)
         admin.set_schema_loader(schema_loader)
         admin.set_profile_validator_schema_dir(temp_schema_dir)
+        # Profile writes reach every worker on the config events channel,
+        # which the runtime's lifespan wires; this process is the one worker.
+        events = InProcessClusterEvents(CONFIG_EVENT_HANDLERS)
+        monkeypatch.setattr(admin, "_config_events", events)
 
         # Create test client
         client = TestClient(app)
