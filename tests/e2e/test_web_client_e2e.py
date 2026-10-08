@@ -1100,7 +1100,6 @@ class TestOptimizationRunsView:
             assert response.status_code == 200, response.text
             return response.json()
 
-        before = status()["phase"]
         row = runs.get_by_role("row").filter(
             has=page.get_by_role("button", name=name, exact=True)
         )
@@ -1112,7 +1111,10 @@ class TestOptimizationRunsView:
         expect(shown).to_have_text(re.compile(rf"^({'|'.join(ARGO_PHASES)})$"))
         rendered = shown.inner_text()
         after = status()["phase"]
-        assert rendered in argo_phases_between(before, after), (before, rendered, after)
+        # The page reads the run's phase when it starts the run and then every
+        # 5 s, so what it shows can be any phase from the run's creation
+        # (Pending) through the one the runtime answers now.
+        assert rendered in argo_phases_between("Pending", after), (rendered, after)
 
 
 class TestReviewViews:
