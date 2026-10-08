@@ -20,6 +20,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/evaluation\/(golden|datasets|dataset)$/,
   /^\/admin\/tenant\/[^/]+\/embeddings\/atlas(\/umap)?$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
+  /^\/admin\/tenant\/[^/]+\/routing-decisions\/(annotation-candidates|label-statistics)$/,
   /^\/ag-ui\/results\/relevance$/,
   /^\/ag-ui\/summarizer_agent$/,
   /^\/ag-ui\/threads\/[^/]+\/evaluation$/,

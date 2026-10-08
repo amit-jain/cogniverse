@@ -988,7 +988,7 @@ breaker-open state.
 
 ### Monitoring
 
-**Real telemetry span attributes** (emitted by `GatewayAgent._emit_gateway_span` / `_emit_routing_span`):
+**Real telemetry span attributes** (emitted by `GatewayAgent._emit_gateway_span` / `_emit_routing_span`). Both spans start when `_process_impl` began classifying (`started_ns`), so their duration is the decision's latency:
 
 ```python
 import time

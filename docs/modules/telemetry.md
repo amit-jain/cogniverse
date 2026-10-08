@@ -2346,6 +2346,12 @@ def test_sync_export():
     assert success
 ```
 
+`manager.span(name, tenant_id=..., start_time=time.time_ns())` starts the span
+at a moment already past (nanoseconds since the epoch) and ends it when the
+context exits, so a span written after the work it records still lasts as long
+as that work. The gateway records each routing decision this way, from when
+classification began.
+
 Normal spans remain non-raising when the exporter is unavailable. Synchronous
 worker code emits durable records with
 `manager.span(..., require_export=True)`. Checked exporters use always-on
