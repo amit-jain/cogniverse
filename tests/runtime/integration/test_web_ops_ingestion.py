@@ -352,7 +352,7 @@ class TestIngestion:
     def test_a_completion_that_fed_nothing_reads_as_a_failure(
         self, page, web_url, runtime_url, tenant, tmp_path
     ):
-        clip = tmp_path / f"unfed-{uuid.uuid4().hex[:6]}.txt"
+        clip = tmp_path / f"unfed-{uuid.uuid4().hex[:6]}.mp4"
         clip.write_text("unfed\nframe two\n")
         _ingestion_view(page, web_url, tenant)
         _upload(page, clip)
@@ -370,9 +370,9 @@ class TestIngestion:
         self, page, web_url, runtime_url, tenant, tmp_path
     ):
         _release.clear()
-        held = tmp_path / f"held-{uuid.uuid4().hex[:6]}.txt"
+        held = tmp_path / f"held-{uuid.uuid4().hex[:6]}.mp4"
         held.write_text("hold\n")
-        queued = tmp_path / f"queued-{uuid.uuid4().hex[:6]}.txt"
+        queued = tmp_path / f"queued-{uuid.uuid4().hex[:6]}.mp4"
         queued.write_text("frame\n")
         event_reads = []
         page.on(
@@ -405,7 +405,7 @@ class TestIngestion:
         # The stream ended on the terminal event and is not opened again.
         page.wait_for_timeout(3000)
         assert [url for url in event_reads if f"/{queued_id}/events" in url] == [
-            f"{web_url}/api/runtime/ingestion/{queued_id}/events"
+            f"{web_url}/ui-api/runtime/ingestion/{queued_id}/events"
         ]
 
 
