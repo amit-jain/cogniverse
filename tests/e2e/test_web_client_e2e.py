@@ -90,6 +90,10 @@ SPAN_SETTLE_S = 300.0
 ANNOTATION_SETTLE_S = 90.0
 VESPA_HTTP_PORT = 33080
 ARGO_PHASES = ("Pending", "Running", "Succeeded", "Failed", "Error")
+# The Memories table's ID column (MemoryView.tsx): Memory, Category, Created,
+# Updated, ID; a search adds a Score column after Memory.
+MEMORY_ID_COLUMN = "td:nth-child(5)"
+SEARCH_MEMORY_ID_COLUMN = "td:nth-child(6)"
 
 
 @pytest.fixture(scope="module")
@@ -234,8 +238,16 @@ class TestAgentSearch:
         expect(results.locator(".result-score")).to_have_text(
             [card["score"] for card in cards if card["score"] is not None]
         )
-        # One result list: a single agent's hits carry no group heading.
+        # One result list: a single agent's hits carry no group heading, and
+        # its line states what the search found for the question.
         expect(results.locator(".result-group")).to_have_count(0)
+        search = results.get_by_role(
+            "region", name=f"Search by {agent_label('search_agent')}", exact=True
+        )
+        expect(search.locator(".result-found")).to_have_text(
+            f"Found {len(cards)} result{'' if len(cards) == 1 else 's'} "
+            "for 'sports activity'."
+        )
         span_id = state["result"]["span_id"]
         assert re.fullmatch(r"[0-9a-f]{16}", span_id), span_id
         expect(results.get_by_role("group")).to_have_count(len(cards))
@@ -520,6 +532,16 @@ class TestTenantsView:
         tenants = page.get_by_role("region", name=f"Tenants of {org_id}")
         expect(tenants.get_by_text(f"No tenants in {org_id}.")).to_be_visible()
         tenant_form = page.get_by_role("form", name="Create tenant")
+        bases = httpx.get(f"{RUNTIME}/admin/base-schemas", timeout=60.0)
+        assert bases.status_code == 200, bases.text
+        offered = bases.json()
+        boxes = tenant_form.get_by_role("group", name="Base schemas")
+        expect(boxes.locator("label")).to_have_text(offered["schemas"])
+        assert [
+            schema
+            for schema in offered["schemas"]
+            if boxes.get_by_label(schema, exact=True).is_checked()
+        ] == [schema for schema in offered["schemas"] if schema in offered["default"]]
         tenant_form.get_by_label("Organization").fill(org_id)
         tenant_form.get_by_label("Tenant name").fill("production")
         tenant_form.get_by_role("button", name="Create tenant").click()
@@ -533,7 +555,13 @@ class TestTenantsView:
             f"Created {tenant_id} with schemas "
             f"{', '.join(created.json()['schemas_deployed'])}."
         )
+        assert sorted(created.json()["schemas_deployed"]) == sorted(
+            offered["default"]
+        ), created.json()
         expect(org_row.get_by_role("cell").nth(3)).to_have_text("1")
+        expect(tenants.get_by_label("Tenant count")).to_have_text(
+            f"1 tenant in {org_id}."
+        )
 
         tenant_row = tenants.get_by_role("row").filter(
             has=page.get_by_role("cell", name=tenant_id, exact=True)
@@ -608,7 +636,7 @@ class TestConfigurationView:
         form_name = f"Edit Routing config of {class_tenant}"
         for version, mode in enumerate(["direct", "adaptive"], start=1):
             form = page.get_by_role("form", name=form_name, exact=True)
-            form.get_by_label("routing_mode", exact=True).fill(mode)
+            form.get_by_label("routing_mode", exact=True).select_option(mode)
             form.get_by_role("button", name="Save").click()
             expect(page.get_by_role("status")).to_have_text(
                 f"Saved Routing config of {class_tenant} as version {version}.",
@@ -712,7 +740,27 @@ class TestConfigurationView:
             "region", name=f"Export and import for {destination}"
         )
         importer = transfer.get_by_role("form", name="Import configs")
+        expect(importer.get_by_role("button", name="Import configs")).to_be_disabled()
         importer.get_by_label("Export file").set_input_files(str(saved))
+        # Choosing the file previews it and writes nothing yet.
+        preview = importer.get_by_role("region", name="Import preview")
+        expect(preview.locator("p")).to_have_text(
+            f"{len(written)} configs exported from {decoy}; importing writes each "
+            f"into {destination}."
+        )
+        expect(preview.locator("tbody td")).to_have_text(
+            [
+                cell
+                for entry in exported["configs"]
+                for cell in (
+                    entry["scope"],
+                    entry["service"],
+                    entry["config_key"],
+                    str(entry["version"]),
+                )
+            ]
+        )
+        assert rows(destination) == set()
         importer.get_by_role("button", name="Import configs").click()
         expect(page.get_by_role("status")).to_have_text(
             f"Imported {len(written)} configs into {destination}.",
@@ -732,6 +780,17 @@ class TestConfigurationView:
         shown = facts(panel)
         assert set(shown) == {"Backend", "Configs", "Versions", "Tenants", "By scope"}
         assert shown["Backend"] == stats["storage_backend"] == "vespa"
+        health = page.get_by_role("region", name="Config store").locator(
+            'dl[aria-label="Config store health"]'
+        )
+        expect(health.locator("dd")).to_have_count(2, timeout=VIEW_TIMEOUT_MS)
+        served = httpx.get(f"{RUNTIME}/admin/config/health", timeout=60.0)
+        assert served.status_code == 200, served.text
+        assert served.json()["healthy"] is True, served.json()
+        assert facts(health) == {
+            "Store": served.json()["store"],
+            "Health": "healthy: it answers queries",
+        }
 
     def test_choosing_another_tenant_replaces_every_tenant_form(
         self, page, class_tenant
@@ -765,6 +824,13 @@ class TestBackendProfilesView:
         expect(region.locator("tbody tr")).to_have_count(
             len(profiles), timeout=VIEW_TIMEOUT_MS
         )
+        expect(
+            region.get_by_text(
+                f"{len(profiles)} {'profile' if len(profiles) == 1 else 'profiles'} "
+                f"created for {WEB_TENANT}.",
+                exact=True,
+            )
+        ).to_be_visible()
         assert [
             row.get_by_role("cell").all_inner_texts()
             for row in region.locator("tbody tr").all()
@@ -804,6 +870,15 @@ class TestMemoryView:
             .removeprefix("Saved memory ")
             .removesuffix(" to _user_memories.")
         )
+        saved = json.loads(page.get_by_label("Saved memory").inner_text())
+        assert {
+            key: saved[key] for key in ("status", "id", "agent_name", "category")
+        } == {
+            "status": "saved",
+            "id": memory_id,
+            "agent_name": "_user_memories",
+            "category": "ui",
+        }, saved
         listing = httpx.get(
             f"{RUNTIME}/admin/tenant/{class_tenant}/memories", timeout=60.0
         )
@@ -817,12 +892,12 @@ class TestMemoryView:
         rows = panel.get_by_role("table", name="Memories").locator("tbody tr")
         expect(rows.locator("td:nth-child(1)")).to_have_text([text])
         expect(rows.locator("td:nth-child(2)")).to_have_text(["ui"])
-        expect(rows.locator("td:nth-child(4)")).to_have_text([memory_id])
+        expect(rows.locator(MEMORY_ID_COLUMN)).to_have_text([memory_id])
 
         search = panel.get_by_role("form", name="Search memories")
         search.get_by_label("Query").fill("dark mode")
         search.get_by_role("button", name="Search").click()
-        expect(rows.locator("td:nth-child(4)")).to_have_text(
+        expect(rows.locator(SEARCH_MEMORY_ID_COLUMN)).to_have_text(
             [memory_id], timeout=VIEW_TIMEOUT_MS
         )
 
@@ -854,7 +929,7 @@ class TestMemoryView:
             "region", name=f"Memories of _user_memories in {tenant_id}"
         )
         rows = panel.get_by_role("table", name="Memories").locator("tbody tr")
-        expect(rows.locator("td:nth-child(4)")).to_have_text(
+        expect(rows.locator(MEMORY_ID_COLUMN)).to_have_text(
             [memory_id], timeout=VIEW_TIMEOUT_MS
         )
         expect(rows.locator("td:nth-child(1)")).to_have_text([text])
@@ -877,8 +952,26 @@ class TestIngestionView:
             timeout=VIEW_TIMEOUT_MS
         )
         form = page.get_by_role("form", name="Upload content")
+        listed = httpx.get(
+            f"{RUNTIME}/ingestion/profiles",
+            params={"tenant_id": tenant_id},
+            timeout=60.0,
+        )
+        assert listed.status_code == 200, listed.text
+        offered = [entry["name"] for entry in listed.json()["profiles"]]
+        assert PROFILE in offered, listed.json()
+        profiles = form.get_by_role("group", name="Profiles")
+        boxes = profiles.get_by_role("checkbox")
+        expect(boxes).to_have_count(len(offered), timeout=VIEW_TIMEOUT_MS)
+        assert [box.get_attribute("aria-label") for box in boxes.all()] == offered
+        for name in offered:
+            profiles.get_by_role("checkbox", name=name, exact=True).set_checked(
+                name == PROFILE
+            )
+        assert [
+            box.get_attribute("aria-label") for box in boxes.all() if box.is_checked()
+        ] == [PROFILE]
         form.get_by_label("File", exact=True).set_input_files(str(SAMPLE_VIDEO_PATH))
-        form.get_by_label("Profile").fill(PROFILE)
         form.get_by_role("button", name="Upload and ingest").click()
         notice = page.get_by_role("status")
         expect(notice).to_contain_text(
@@ -919,6 +1012,8 @@ class TestIngestionView:
         expect(row.get_by_role("cell")).to_have_text(
             [ingest_id, filename, PROFILE, "complete", outcome]
         )
+        batches = page.get_by_role("region", name="Batches").get_by_role("listitem")
+        expect(batches).to_have_text([f"{filename}: all 1 profile ingested."])
 
         # The documents the page reported are the documents the tenant serves.
         deadline = time.monotonic() + SEARCH_INDEX_SETTLE_S
@@ -949,6 +1044,7 @@ class TestIngestionView:
         expect(
             page.get_by_role("region", name="Ingests").get_by_role("row")
         ).to_have_count(2)
+        expect(batches).to_have_text([f"{filename}: all 1 profile ingested."] * 2)
 
     def test_the_upload_form_is_the_chosen_tenants(self, page):
         first = minted_tenant("webingesta")
@@ -1066,6 +1162,9 @@ class TestTelemetryViews:
         expect(table.locator("tbody tr td").nth(0)).to_have_text("video")
         expect(table.locator("tbody tr td").nth(1)).to_have_text(str(count))
         expect(table.locator("tbody tr td").nth(5)).to_have_text("100.0%")
+        cards = panel.get_by_role("list", name="Per-modality metrics", exact=True)
+        expect(cards.locator(".card-label")).to_have_text(["VIDEO"])
+        expect(cards.locator(".card-value")).to_have_text([str(count)])
         figure = page.get_by_role("figure", name="Selections per modality", exact=True)
         expect(figure.locator(".bar-label")).to_have_text(["video"])
         expect(figure.locator(".bar-value")).to_have_text([str(count)])
@@ -1123,6 +1222,11 @@ class TestTelemetryViews:
     ):
         open_view(page, "evaluation")
         choose_tenant(page, class_tenant, "Evaluate")
+        tabs = page.get_by_role("tablist", name="Evaluate against")
+        expect(tabs.get_by_role("tab")).to_have_text(["Golden set", "Phoenix datasets"])
+        expect(tabs.get_by_role("tab", name="Golden set")).to_have_attribute(
+            "aria-selected", "true"
+        )
         panel = page.get_by_role(
             "region", name=f"Golden set evaluation of {class_tenant}", exact=True
         )
@@ -1142,8 +1246,9 @@ class TestTelemetryViews:
             "region", name=f"RLM A/B comparisons of {class_tenant}", exact=True
         )
         expect(panel.locator("p.muted")).to_have_text(
-            "No comparisons in this window. Run cogniverse-optim --mode ab-compare "
-            "for this tenant to record some.",
+            "No rlm.ab_compare spans in this window. Run cogniverse-optim --mode "
+            f"ab-compare --tenant-id {class_tenant} --queries-dataset <name> to "
+            "populate.",
             timeout=VIEW_TIMEOUT_MS,
         )
 
@@ -1161,9 +1266,12 @@ class TestTelemetryViews:
         form.get_by_label("Profile").select_option(PROFILE)
         form.get_by_role("button", name="Show map").click()
         if served.status_code != 200:
-            # The page carries the runtime's own refusal, word for word.
+            # The page carries the runtime's own refusal, word for word: a
+            # plain detail, or a typed failure's message.
+            detail = served.json()["detail"]
             expect(form.get_by_role("alert")).to_have_text(
-                served.json()["detail"], timeout=RUN_TIMEOUT_MS
+                detail if isinstance(detail, str) else detail["message"],
+                timeout=RUN_TIMEOUT_MS,
             )
             expect(page.get_by_role("figure")).to_have_count(0)
             return
