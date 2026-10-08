@@ -759,3 +759,133 @@ def test_org_id_ignored_when_tenant_already_qualified(upload_client):
 
     assert resp.status_code == 200, resp.text
     assert captured["tenant_id"] == "acme:research"
+
+
+def test_profiles_lists_what_an_upload_can_go_to(upload_client):
+    """Every profile whose segmentation reads one uploaded file, with that
+    kind of file and its suffixes; profiles without usable segmentation are
+    left out, and the default is the profile an upload naming none uses."""
+    from cogniverse_core.common.media import DEFAULT_VIDEO_EXTENSIONS
+    from cogniverse_runtime.ingestion.strategies import (
+        AUDIO_EXTENSIONS,
+        DOCUMENT_EXTENSIONS,
+        IMAGE_EXTENSIONS,
+    )
+
+    client, _, _ = upload_client
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 200, resp.text
+    video = sorted(DEFAULT_VIDEO_EXTENSIONS)
+
+    def entry(name, profile_type, kind, extensions):
+        return {
+            "name": name,
+            "type": profile_type,
+            "kind": kind,
+            "extensions": sorted(extensions),
+        }
+
+    assert resp.json() == {
+        "tenant_id": "acme:acme",
+        "backend": "vespa",
+        "default_profile": _TENANT_DEFAULT_PROFILE,
+        "profiles": [
+            entry(_AUDIO_FILE_PROFILE, "audio", "audio", AUDIO_EXTENSIONS),
+            entry(_PDF_DOCUMENT_PROFILE, "document", "PDF", {".pdf"}),
+            entry(_TEXT_DOCUMENT_PROFILE, "document", "document", DOCUMENT_EXTENSIONS),
+            entry(_EXPLICIT_AUDIO_PROFILE, "audio", "video", video),
+            entry(_EXPLICIT_DOCUMENT_PROFILE, "document", "video", video),
+            entry(_EXPLICIT_IMAGE_PROFILE, "image", "video", video),
+            entry(_EXPLICIT_PROFILE, "video", "video", video),
+            entry(_IMAGE_FILE_PROFILE, "image", "image", IMAGE_EXTENSIONS),
+            entry(_CODE_PROFILE, "code", "source", {".py"}),
+            entry(_TENANT_DEFAULT_PROFILE, "video", "video", video),
+        ],
+    }
+
+
+def test_profiles_has_no_default_when_the_tenants_default_cannot_take_uploads(
+    upload_client,
+):
+    client, _, state = upload_client
+    state["tenant_defaults"]["acme:acme"] = _UNSEGMENTED_PROFILE
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_profile"] is None
+    assert _UNSEGMENTED_PROFILE not in [
+        profile["name"] for profile in resp.json()["profiles"]
+    ]
+
+
+def test_profiles_refuses_a_malformed_tenant(upload_client):
+    client, _, _ = upload_client
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "a:b:c"})
+
+    assert resp.status_code == 400
+    assert resp.json() == {
+        "detail": "Invalid tenant_id format: a:b:c. Expected 'org:tenant' with "
+        "single colon"
+    }
+
+
+def test_profiles_answers_503_when_the_config_store_is_down(upload_client):
+    client, _, _ = upload_client
+    application = client.app
+    broken = MagicMock()
+    broken.get_system_config.side_effect = ConnectionError("config store down")
+    application.dependency_overrides[ingestion_router.get_config_manager_dependency] = (
+        lambda: broken
+    )
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "detail": {
+            "error": "upload_profile_unavailable",
+            "message": "Upload profile configuration is unavailable for tenant "
+            "'acme:acme'; retry.",
+            "failure": "ConnectionError",
+            "tenant_id": "acme:acme",
+        }
+    }
+
+
+async def test_concurrent_profile_listings_each_name_their_tenants_default(
+    upload_client,
+):
+    """Both listings read their tenant's config at once (a two-party barrier
+    inside the config read) and each answers its own tenant's default."""
+    _client, _captured, state = upload_client
+    state["tenant_defaults"] = {
+        "alpha:alpha": _TENANT_DEFAULT_PROFILE,
+        "beta:beta": _EXPLICIT_PROFILE,
+    }
+    state["profile_barrier"] = threading.Barrier(2)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=state["application"]),
+        base_url="http://test",
+    ) as client:
+        responses = await asyncio.gather(
+            client.get("/ingestion/profiles", params={"tenant_id": "alpha:alpha"}),
+            client.get("/ingestion/profiles", params={"tenant_id": "beta:beta"}),
+        )
+
+    assert [
+        (
+            response.status_code,
+            response.json()["tenant_id"],
+            response.json()["default_profile"],
+        )
+        for response in responses
+    ] == [
+        (200, "alpha:alpha", _TENANT_DEFAULT_PROFILE),
+        (200, "beta:beta", _EXPLICIT_PROFILE),
+    ]
+    assert len(set(state["profile_threads"])) == 2

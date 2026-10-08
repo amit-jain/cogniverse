@@ -24,7 +24,7 @@ const ALLOWED = [
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,
   /^\/agents\/annotations\/queue(\/[^/]+\/(assign|complete))?$/,
-  /^\/ingestion\/upload$/,
+  /^\/ingestion\/(upload|profiles)$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,
 ];
 

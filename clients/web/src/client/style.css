@@ -146,4 +146,5 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .evaluation { display: grid; gap: 6px; }
 .evaluation label { display: flex; align-items: center; gap: 6px; }
 .summary-text { white-space: pre-line; }
+.check-list { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
 .results-heading { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
