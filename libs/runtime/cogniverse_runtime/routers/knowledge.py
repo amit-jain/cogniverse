@@ -25,9 +25,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +162,7 @@ class AuditExplainRequest(BaseModel):
 @router.post("/tenants/{tenant_id}/knowledge/audit/explain")
 async def audit_explain(tenant_id: str, body: AuditExplainRequest) -> Dict[str, Any]:
     """explain why a system answer was produced (read-only)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.audit_explanation_agent import (
         AuditExplanationAgent,
         AuditExplanationDeps,
@@ -200,7 +199,7 @@ class CitationTraceRequest(BaseModel):
 @router.post("/tenants/{tenant_id}/knowledge/citations/trace")
 async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str, Any]:
     """walk the provenance chain back to primary sources (read-only)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.citation_tracing_agent import (
         CitationTracingAgent,
         CitationTracingDeps,
@@ -237,7 +236,7 @@ async def knowledge_summarize(
     config_manager: ConfigManager = Depends(_get_config_manager),
 ) -> Dict[str, Any]:
     """distill a subject slice into a structured summary."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.knowledge_summarization_agent import (
         KnowledgeSummarizationAgent,
         KnowledgeSummarizationDeps,
@@ -282,7 +281,7 @@ async def contradiction_reconcile(
     tenant_id: str, body: ContradictionReconcileRequest
 ) -> Dict[str, Any]:
     """apply schema policy to a conflict set (read-only — returns the resolved view)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.contradiction_reconciliation_agent import (
         ContradictionReconciliationAgent,
         ContradictionReconciliationDeps,
@@ -334,7 +333,7 @@ async def multi_doc_synthesize(
     config_manager: ConfigManager = Depends(_get_config_manager),
 ) -> Dict[str, Any]:
     """synthesise an answer across N documents with citations."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.multi_document_synthesis_agent import (
         MultiDocSynthesisDeps,
         MultiDocSynthesisInput,
@@ -369,7 +368,7 @@ class KGTraverseRequest(BaseModel):
 @router.post("/tenants/{tenant_id}/knowledge/kg/traverse")
 async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]:
     """walk the entity / kg graph from a starting subject (read-only)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.kg_traversal_agent import (
         KGTraversalDeps,
         KGTraversalInput,
@@ -423,7 +422,7 @@ async def cross_tenant_compare(
     tenant_id: str, body: CrossTenantCompareRequest
 ) -> Dict[str, Any]:
     """compare knowledge across org tenants for a subject (admin)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.cross_tenant_comparison_agent import (
         CrossTenantComparisonAgent,
         CrossTenantComparisonDeps,
@@ -438,7 +437,7 @@ async def cross_tenant_compare(
     )
     agent.bind_config_manager(_runtime_config_manager())
     payload = body.model_dump()
-    payload["tenant_ids"] = [canonical_tenant_id(t) for t in payload["tenant_ids"]]
+    payload["tenant_ids"] = [canonical_tenant_or_400(t) for t in payload["tenant_ids"]]
     try:
         out = await agent._process_impl(
             CrossTenantComparisonInput(tenant_id=tenant_id, **payload)
@@ -469,7 +468,7 @@ async def federated_query(
     tenant_id: str, body: FederatedQueryRequest
 ) -> Dict[str, Any]:
     """issue a single query against multiple tenants (admin, read-only)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.federated_query_agent import (
         FederatedQueryAgent,
         FederatedQueryDeps,
@@ -488,7 +487,7 @@ async def federated_query(
             FederatedQueryInput(
                 tenant_id=tenant_id,
                 query=body.query,
-                tenant_ids=[canonical_tenant_id(t) for t in body.tenant_ids],
+                tenant_ids=[canonical_tenant_or_400(t) for t in body.tenant_ids],
                 actor_role=body.actor_role,
                 actor_id=body.actor_id,
                 top_k_per_tenant=body.top_k,
@@ -518,7 +517,7 @@ async def temporal_reason(
     tenant_id: str, body: TemporalReasonRequest
 ) -> Dict[str, Any]:
     """compare knowledge of a subject across time windows (read-only)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     from cogniverse_agents.temporal_reasoning_agent import (
         TemporalReasoningAgent,
         TemporalReasoningDeps,

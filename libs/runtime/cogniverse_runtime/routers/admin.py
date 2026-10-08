@@ -60,7 +60,11 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentResponse,
 )
 from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_runtime.http_errors import failure_response, record_failure
+from cogniverse_runtime.http_errors import (
+    canonical_tenant_or_400,
+    failure_response,
+    record_failure,
+)
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStoreUnavailableError,
@@ -544,7 +548,7 @@ async def get_profile(
         # pair the content with another write's version.
         config_entry = await asyncio.to_thread(
             config_manager.store.get_config,
-            tenant_id=canonical_tenant_id(tenant_id),
+            tenant_id=canonical_tenant_or_400(tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
             config_key="backend_config",
@@ -1436,7 +1440,7 @@ async def admin_delete_memory(tenant_id: str, memory_id: str):
     """Admin: delete any memory by ID, regardless of namespace."""
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
 
     def _delete() -> bool:
         mgr = Mem0MemoryManager(tenant_id)
@@ -1469,7 +1473,7 @@ async def admin_clear_memories(
     """Admin: clear memories by type. Can clear system memories (strategies)."""
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
 
     if type and type != "all":
         ns = _ADMIN_TYPE_TO_NAMESPACE.get(type)
@@ -1509,7 +1513,7 @@ async def admin_drop_session(tenant_id: str, session_id: str):
     if not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id must be non-empty")
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     registry = build_default_registry()
 
     def _drop() -> Dict[str, int]:
@@ -1818,7 +1822,7 @@ async def set_pin_quotas(
         # rejecting every org_admin pin for the tenant.
         raise HTTPException(400, "org_admin quota must be >= 0, or -1 for unlimited")
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     requested = {
         role: value
         for role, value in (
@@ -1858,7 +1862,7 @@ async def set_profile_selection_ground_truth(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_profile_selection_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -1915,7 +1919,7 @@ async def set_golden_set_ground_truth(
         )
         raise HTTPException(400, message) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_golden_set_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -1967,7 +1971,7 @@ async def set_entity_extraction_ground_truth(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_entity_extraction_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -2129,7 +2133,7 @@ async def pin_memory(
     pinned_by = _parse_pinnable(body.pinned_by)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
         record = await asyncio.to_thread(
@@ -2177,7 +2181,7 @@ async def unpin_memory(
     requester = _parse_pinnable(body.requester_role)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
         removed = await asyncio.to_thread(
@@ -2206,7 +2210,7 @@ async def unpin_memory(
 @router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
 async def list_pins(tenant_id: str) -> PinListResponse:
     """list all pin records for a tenant (audit + UI)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     records = await asyncio.to_thread(svc.list_pins, tenant_id)
     return PinListResponse(
@@ -2269,7 +2273,7 @@ async def promote_to_org_trunk(
             400, f"invalid actor_role {body.actor_role!r}; expected one of: {valid}"
         ) from exc
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     # Document point-GET: read-your-writes. The search-backed get_all lags
     # index visibility, so a freshly written memory would 404 here.
@@ -2364,7 +2368,7 @@ async def endorse_memory(
             f"unknown endorser_role={body.endorser_role!r}; valid: {valid}",
         )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     # Document point-GET: read-your-writes. The search-backed get_all lags
     # index visibility, so a freshly written memory would 404 here.
@@ -2446,7 +2450,7 @@ class RestoreMemoryResponse(BaseModel):
 )
 async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
     """clear the archived flag on a soft-deleted memory."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     ok = await asyncio.to_thread(source_mm.restore_archived_memory, memory_id)
     if not ok:
@@ -2525,7 +2529,7 @@ async def set_signature_variant(
         raise HTTPException(400, "variant_id must be non-empty")
     # Store under the canonical key so the dispatcher finds it whether the
     # tenant arrives as simple or colon form.
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     try:
         selections = await asyncio.to_thread(
             _update_override,
@@ -2719,7 +2723,7 @@ async def create_harness_key(
     request: HarnessKeyCreateRequest,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ):
-    tenant_id = canonical_tenant_id(request.tenant_id)
+    tenant_id = canonical_tenant_or_400(request.tenant_id)
     try:
         return await asyncio.to_thread(
             HarnessKeyStore(config_manager.store).create,

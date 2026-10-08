@@ -31,7 +31,6 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
     GoldenSetGroundTruthStoreUnavailableError,
     load_golden_set_ground_truth_rows,
 )
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.analysis.root_cause_analysis import RootCauseAnalyzer
 from cogniverse_evaluation.recorded_searches import (
     SEARCH_SPAN_NAME,
@@ -49,7 +48,7 @@ from cogniverse_foundation.telemetry.span_metrics import (
     trace_rows,
     trace_statistics,
 )
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.quality_monitor_cli import GOLDEN_SET_UPLOAD_ROUTE
 
 logger = logging.getLogger(__name__)
@@ -435,7 +434,7 @@ async def profile_selection(tenant_id: str, lookback_hours: int = Lookback):
     selections in the last ``lookback_hours``, the project they are read
     from, and how many selection spans the window holds (spans without a
     modality are counted there but not in ``modalities``)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     spans = await _window_spans(
         tenant_id, lookback_hours, span_name=SPAN_NAME_PROFILE_SELECTION
     )
@@ -450,7 +449,7 @@ async def profile_selection(tenant_id: str, lookback_hours: int = Lookback):
 async def rlm_ab(tenant_id: str, lookback_hours: float = Query(24, ge=0.1, le=24 * 30)):
     """The tenant's RLM A/B comparisons in the last ``lookback_hours``:
     averages, per queries dataset, and each compared row newest first."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     spans = await _window_spans(
         tenant_id, lookback_hours, span_name=AB_COMPARE_SPAN_NAME
     )
@@ -506,7 +505,7 @@ async def traces(
     match somewhere; ``profile`` and ``strategy`` keep traces with one of the
     given values. ``facets`` lists the values present in the whole window.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     pattern = _operation_pattern(operation)
     rows = trace_rows(
         await _window_spans(
@@ -707,7 +706,7 @@ async def root_causes(
     """Root-cause hypotheses for the failed (and slow) traces among the
     tenant's traces in the window, filtered as ``/telemetry/traces`` filters
     them."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     pattern = _operation_pattern(operation)
     rows = trace_rows(
         await _window_spans(
@@ -729,7 +728,7 @@ async def phoenix_links(tenant_id: str):
     address (``PHOENIX_UI_URL``) and the tenant's project
     page there. Either is ``null`` when the address is not set or Phoenix
     has no project for the tenant yet."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     manager = get_telemetry_manager()
     project = manager.config.get_project_name(tenant_id)
     ui_url = phoenix_ui_url()
@@ -803,7 +802,7 @@ async def golden_evaluation(
     """The tenant's searches of its golden queries in the last
     ``lookback_hours``, scored against its golden set: per profile and
     strategy, and per query for the latest search of each."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     golden_rows = await _golden_rows(tenant_id)
     spans = await _window_spans(tenant_id, lookback_hours, span_name=SEARCH_SPAN_NAME)
     return GoldenEvaluation(**score_recorded_searches(spans, golden_rows))
@@ -851,7 +850,7 @@ async def evaluation_datasets(tenant_id: str):
     """The evaluation datasets the tenant owns, newest first, and the
     address of the telemetry store's UI (``PHOENIX_UI_URL``; null when the
     runtime is not given one)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _, owned = await _tenant_datasets(tenant_id)
     return EvaluationDatasets(
         phoenix_url=phoenix_ui_url(),
@@ -868,7 +867,7 @@ async def dataset_evaluation(
     """The tenant's searches of the queries of its dataset ``dataset_id`` in
     the last ``lookback_hours``, scored against the dataset's expected
     sources as ``/evaluation/golden`` scores them against the golden set."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     provider, owned = await _tenant_datasets(tenant_id)
     summary = next((d for d in owned if d.id == dataset_id), None)
     if summary is None:

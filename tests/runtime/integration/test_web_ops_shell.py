@@ -490,6 +490,22 @@ class TestShell:
             expect(header.get_by_role("heading", level=1)).to_have_text(heading)
             expect(header.locator("p.view-description")).to_have_text(description)
 
+    def test_a_malformed_tenant_is_refused_and_the_active_one_kept(
+        self, page, web_url, tenants
+    ):
+        alpha, _ = tenants
+        page.goto(f"{web_url}/#/ops/tenants")
+        _use_tenant(page, alpha)
+        expect(_current(page)).to_have_text(f"Current tenant: {alpha}")
+        _use_tenant(page, "a:b:c")
+        notice = page.get_by_role("region", name="Active tenant").get_by_role("alert")
+        expect(notice).to_have_text(
+            "Tenant a:b:c cannot be used: Tenant ID 'a:b:c' is malformed: use "
+            "'<org>:<tenant>' or '<tenant>', with no empty part."
+        )
+        expect(_current(page)).to_have_text(f"Current tenant: {alpha}")
+
+
 class TestIngress:
     """The client served over plain http on a hostname other than localhost,
     as the cluster ingress serves it: not a secure context."""

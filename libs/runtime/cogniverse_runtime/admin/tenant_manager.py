@@ -71,7 +71,7 @@ from cogniverse_runtime.admin.models import (
 )
 from cogniverse_runtime.cluster_events import ClusterEventError, ClusterEvents
 from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.task_events import TaskEventStore, TaskEventsUnavailable
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
@@ -1059,8 +1059,10 @@ async def get_tenant(tenant_full_id: str) -> Tenant:
         Tenant details
 
     Raises:
+        HTTPException 400: The tenant ID is malformed
         HTTPException 404: Tenant not found
     """
+    canonical_tenant_or_400(tenant_full_id)
     tenant = await get_tenant_internal(tenant_full_id)
     if not tenant:
         raise HTTPException(
@@ -1179,7 +1181,7 @@ async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """
     from cogniverse_foundation.config.tenant_tiers import read_tenant_tier
 
-    canonical = canonical_tenant_id(tenant_full_id)
+    canonical = canonical_tenant_or_400(tenant_full_id)
     await _assert_tenant_exists(canonical)
     try:
         tier = await asyncio.to_thread(
@@ -1219,7 +1221,7 @@ async def set_tenant_tier_route(
         validate_router_tier,
     )
 
-    canonical = canonical_tenant_id(tenant_full_id)
+    canonical = canonical_tenant_or_400(tenant_full_id)
     try:
         validate_router_tier(request.tier)
     except ValueError as e:
@@ -1277,12 +1279,14 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         Deletion summary, with the workers that released the tenant
 
     Raises:
+        HTTPException 400: The tenant ID is malformed
         HTTPException 404: Tenant not found
         HTTPException 503: The marker could not be written, not every worker
             confirmed it released the tenant, or another create or delete of
             it held it too long; retry the delete
         HTTPException 500: Deletion failed
     """
+    canonical_tenant_or_400(tenant_full_id)
     try:
         result = await delete_tenant_internal(tenant_full_id)
         return result

@@ -26,7 +26,11 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
-from cogniverse_runtime.http_errors import failure_response, upstream_rejection
+from cogniverse_runtime.http_errors import (
+    canonical_tenant_or_400,
+    failure_response,
+    upstream_rejection,
+)
 from cogniverse_runtime.optimization_options import options_model
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
@@ -333,7 +337,7 @@ class MemoryHealth(BaseModel):
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
     """Save a memory with optional category, kind, metadata."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(request.agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     metadata: Dict[str, Any] = {}
@@ -406,7 +410,7 @@ async def list_memories(
     Use ``type`` to restrict to a single memory type and ``category`` to
     filter user-created memories by their category tag.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if agent_name:
@@ -469,7 +473,7 @@ async def memory_stats(
 
     The count reads the store, so a backend outage answers 503 rather than 0.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     try:
         stats = await asyncio.to_thread(
@@ -495,7 +499,7 @@ async def memory_health(
 ):
     """Whether the tenant's memory manager is up and its store answers a read
     of ``agent_name``; an unhealthy answer names the step that failed."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
 
     def _probe() -> Optional[str]:
         try:
@@ -533,7 +537,7 @@ async def delete_memory(
     Answers 404 unless the memory is this tenant's and in that namespace,
     and 403 for a system namespace.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
@@ -573,7 +577,7 @@ async def clear_memories(
 
     System namespaces answer 403.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
@@ -1735,7 +1739,7 @@ async def list_jobs(tenant_id: str):
     # param would read an empty namespace for any non-canonical tenant id.
     entries = await asyncio.to_thread(
         cm.store.list_configs,
-        tenant_id=canonical_tenant_id(tenant_id),
+        tenant_id=canonical_tenant_or_400(tenant_id),
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
     )

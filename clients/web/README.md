@@ -13,7 +13,9 @@ sidebar or in any operations view's Tenant form, is shared by every view and
 agent and kept across reloads. A choice is checked with the runtime's tenant
 registry (`GET /admin/tenants/{id}`): a registered tenant becomes active in
 its canonical `org:tenant` form, an unknown one is refused with how to
-register it, and one the registry cannot answer for is taken with a warning
+register it, a malformed one (an empty part or more than one `:`, which the
+runtime answers with 400) is refused with the runtime's reason, and one the
+registry cannot answer for is taken with a warning
 that names why (a tenant confirmed earlier keeps being used through such an
 outage). Changing the active tenant starts every view and conversation over
 for the new tenant, and a run's results show only while the tenant they were

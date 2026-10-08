@@ -32,7 +32,7 @@ from cogniverse_foundation.config.sections import (
     ConfigValueError,
     section_for,
 )
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.routers.admin import get_config_manager_dependency
 from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
@@ -589,7 +589,7 @@ async def export_configs(
 ) -> Dict[str, Any]:
     """A tenant's configs as the store exports them, secrets included: the
     export is a backup that ``/config/import`` restores whole."""
-    stored_tenant = canonical_tenant_id(tenant_id)
+    stored_tenant = canonical_tenant_or_400(tenant_id)
     try:
         return await asyncio.to_thread(
             config_manager.store.export_configs, stored_tenant, include_history
@@ -612,7 +612,7 @@ async def import_configs(
             dropping what it held
     """
     _require_config_change_channel()
-    stored_tenant = canonical_tenant_id(request.tenant_id)
+    stored_tenant = canonical_tenant_or_400(request.tenant_id)
 
     def _import() -> int:
         try:

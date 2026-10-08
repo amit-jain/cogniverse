@@ -25,11 +25,10 @@ from cogniverse_core.approval.interfaces import (
     ReviewItem,
     approved_synthetic_dataset_name,
 )
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import ApprovalConfig
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 from cogniverse_synthetic.approval.uploads import (
     MAX_UPLOADED_EXAMPLES,
@@ -111,7 +110,7 @@ async def upload_training_examples(tenant_id: str, body: TrainingExamplesUpload)
     way leaves the examples not yet approved awaiting review in the tenant's
     approval queue.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     reviewer = body.reviewer.strip()
     if not reviewer:
         raise HTTPException(status_code=400, detail="Name the reviewer.")
