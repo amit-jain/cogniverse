@@ -2,10 +2,18 @@
 
 Browser UI for the Cogniverse runtime, built on CopilotKit 1.77. Every agent in
 the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar; picking
-one opens a CopilotKit chat with it. Runs stream over the runtime's AG-UI
+one opens a CopilotKit chat with it. The gateway agent opens when the address
+names no agent; an address naming an agent the runtime does not serve opens the
+gateway with a warning naming it. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
-phases show above the chat. A run that fails says why in the conversation, and
-one that is stopped says it was cancelled.
+phases show above the chat, with the themes and draft summary an agent reports
+while it works. A run that fails says why in the conversation, and one that is
+stopped says it was cancelled. An empty message cannot be sent.
+
+The session bar shows the conversation's ID and turn count and the search
+settings every run sends: results per search (`top_k`, 1-20, sent as
+`forwardedProps.cogniverse.top_k`) and a minimum score below which hits are
+hidden. Settings are remembered in the browser.
 
 Each conversation is a thread named in the address (`#/agents/{agent}/{thread}`).
 The runtime saves every run's turn under its thread, and opening a thread
@@ -19,11 +27,26 @@ The run's final state renders beside the chat: search hits as result cards
 (video segments with their description and time, documents with their
 preview, images and audio with their text, each with its ranking score), the
 coding agent's files and the output of running them, and, for an orchestration,
-each planned agent's hits under its name. When a search recorded a telemetry
+each planned agent's hits under its name, with the orchestration's execution
+summary, and an answer agent's key points. Each search says what it found for
+the question ("Found 2 results for 'q'." or "No results for 'q'."), its result
+count, the run's latency, the profile or ensemble profiles searched and the
+search mode, and warns about each ensemble profile that did not run. A card
+shows the hit's video and document IDs. When a search recorded a telemetry
 span, each of its cards can be rated Highly Relevant, Somewhat Relevant or Not
 Relevant; the rating is stored on the search's span
 (`POST /ag-ui/results/relevance`), where the embedding triplet miner reads it,
 and a rating that was not stored shows its reason on the card.
+
+Below the results: "Summarize results" runs the summarizer agent grounded in
+the hits on screen (`POST /ag-ui/summarizer_agent` with
+`forwardedProps.cogniverse.search_results`) and shows its streamed summary and
+key points; the count of ratings saved in the conversation, with "Export
+annotations" downloading them as JSON; "Evaluate this conversation", which
+stores an outcome (success, partial, failure) and a 0-1 quality on each search
+span of the conversation (`POST /ag-ui/threads/{thread}/evaluation`); and the
+conversation's history, each run's question, result count and time. The
+browser keeps each conversation's run records and ratings by thread.
 
 The browser talks only to this package's Node server. The server hosts the
 CopilotKit runtime at `/ui-api/copilotkit` and holds one harness key, which it
@@ -97,13 +120,17 @@ npm run typecheck
 npm test
 ```
 
-Vitest covers the result parsing and rendering for each agent's payload, the
-run notices, error, route, JSON-field and event-stream parsing, the server's
+Vitest covers the result parsing and rendering for each agent's payload, search
+facts, key points and orchestration summaries, the conversation records,
+export and settings, the summarize stream, the default agent, the run notices, error, route, JSON-field and event-stream parsing, the server's
 configuration, agent listing and thread restore, and the runtime proxy against
 local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
 the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`
 drives the agent workspace in Chromium (run notices, threads restored from the
-runtime, each agent's results), and `tests/runtime/integration/test_web_ops_*.py`
+runtime, each agent's results, progress, navigation),
+`tests/runtime/integration/test_web_search_session.py` drives a search
+conversation against the dispatcher's own search agent and real Phoenix
+(settings, results, ratings export, summarize, evaluation), and `tests/runtime/integration/test_web_ops_*.py`
 drive each operations view, against the runtime's routers over real Vespa.

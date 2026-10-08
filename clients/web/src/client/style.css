@@ -131,3 +131,19 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .code-file figcaption, .code-run figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
 .code-result pre { margin: 0; font-size: 12px; overflow-x: auto; white-space: pre; }
 .code-stderr { color: #c0392b; }
+.alert.warning { color: #b7791f; }
+.session-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.session-bar label { display: flex; align-items: center; gap: 6px; }
+.session-bar input { width: 64px; }
+.progress-detail { padding: 6px 20px; border-bottom: 1px solid var(--border); }
+.draft-summary { margin: 4px 0 0; font-size: 13px; white-space: pre-line; }
+.search-group { margin-bottom: 12px; }
+.result-found { margin: 0 0 6px; font-size: 13px; }
+.result-metrics { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 8px; font-size: 12px; }
+.result-metrics dt { color: var(--muted); }
+.result-metrics dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.summary, .annotations, .evaluation, .history, .key-points, .orchestration-summary { margin-top: 12px; font-size: 13px; }
+.evaluation { display: grid; gap: 6px; }
+.evaluation label { display: flex; align-items: center; gap: 6px; }
+.summary-text { white-space: pre-line; }
+.results-heading { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }

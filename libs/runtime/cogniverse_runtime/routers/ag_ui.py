@@ -15,7 +15,8 @@ back, so a client restores a conversation from the runtime. A run streams:
 
 - ``RUN_STARTED`` with the client's thread and run ids;
 - ``STEP_STARTED`` / ``STEP_FINISHED`` around each phase, plus a ``CUSTOM``
-  ``cogniverse.status`` event carrying the phase's message: first the
+  ``cogniverse.status`` event carrying the phase's message (and the
+  ``themes`` / ``summary`` a partial result reports): first the
   ``starting`` step, sent before the agent runs, then every phase the agent
   reports as it reaches it, whichever path serves the turn;
 - the reply as one ``TEXT_MESSAGE_START`` / ``_CONTENT`` / ``_END`` sequence,
@@ -26,9 +27,17 @@ back, so a client restores a conversation from the runtime. A run streams:
 - ``RUN_FINISHED``, or ``RUN_ERROR`` when the turn failed or its reply could
   not be saved to the thread.
 
+Per-run parameters travel in ``forwardedProps.cogniverse``: ``top_k`` (how
+many hits a searching agent returns, 1-100) and ``search_results`` (hits the
+client already shows, which an answer agent such as the summarizer is grounded
+in instead of searching again). Any other key there is refused with 400.
+
 A search payload carries the ``span_id`` of the search; ``POST
 /ag-ui/results/relevance`` stores a reviewer's relevance label for one of its
 results as that span's ``result_relevance`` annotation, in the key's tenant.
+``POST /ag-ui/threads/{thread_id}/evaluation`` stores a reviewer's verdict on
+a whole conversation as a ``session_evaluation`` annotation on each search
+span of it the client names.
 
 Frontend tools: the run's ``tools`` reach the agent as its external tools. An
 agent that suspends on them streams one ``TOOL_CALL_START`` / ``_ARGS`` /
@@ -42,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from contextlib import aclosing
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
@@ -75,15 +85,17 @@ from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, Header, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from cogniverse_core.agents.base import collect_progress
 from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.span_contract import (
     RELEVANCE_SCORES,
+    SESSION_OUTCOMES,
     SpanNotInProjectError,
     persist_result_relevance,
+    persist_session_evaluation,
 )
 from cogniverse_runtime.routers.openai_compat import (
     UNAUTHORIZED,
@@ -97,6 +109,7 @@ from cogniverse_runtime.routers.openai_compat import (
     error_response,
     failure_body,
     in_flight_turn,
+    progress_details,
     resolve_tenant_off_loop,
     run_turn,
     split_answer_chunks,
@@ -114,9 +127,59 @@ STATUS_EVENT = "cogniverse.status"
 START_PHASE = "starting"
 
 
+# The forwardedProps key a client's per-run parameters travel under; the
+# rest of forwardedProps belongs to the client's framework.
+RUN_PARAMETERS_KEY = "cogniverse"
+MAX_TOP_K = 100
+MAX_THREADED_RESULTS = 50
+
+
 def thread_context_id(thread_id: str) -> str:
     """The conversation context an AG-UI thread's turns are saved under."""
     return f"ag-ui:{thread_id}"
+
+
+class RunParameters(BaseModel):
+    """A run's parameters from ``forwardedProps.cogniverse``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    top_k: Optional[StrictInt] = Field(default=None, ge=1, le=MAX_TOP_K)
+    search_results: Optional[List[Dict[str, Any]]] = Field(
+        default=None, min_length=1, max_length=MAX_THREADED_RESULTS
+    )
+
+    def context(self) -> Dict[str, Any]:
+        """The parameters placed on the dispatch context, where an agent's
+        input of the same field name reads them."""
+        return self.model_dump(exclude_none=True)
+
+
+def run_parameters(run_input: RunAgentInput) -> RunParameters:
+    """The run's parameters; none when the client sent none.
+
+    Raises:
+        RequestShapeError: ``forwardedProps.cogniverse`` is not an object of
+            known, valid parameters.
+    """
+    props = run_input.forwarded_props
+    if props is None:
+        return RunParameters()
+    if not isinstance(props, dict):
+        raise RequestShapeError("forwardedProps must be an object")
+    raw = props.get(RUN_PARAMETERS_KEY)
+    if raw is None:
+        return RunParameters()
+    try:
+        return RunParameters.model_validate(raw)
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'value'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise RequestShapeError(
+            f"forwardedProps.{RUN_PARAMETERS_KEY} is invalid: {problems}"
+        ) from exc
 
 
 def _openai_content(content: Any, where: str) -> Any:
@@ -239,7 +302,9 @@ class _RunWriter:
             RunStartedEvent(thread_id=self._thread_id, run_id=self._run_id)
         )
 
-    def status(self, phase: str, message: str) -> List[str]:
+    def status(
+        self, phase: str, message: str, details: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
         frames: List[str] = []
         if phase and phase != self._step:
             frames.extend(self._close_step())
@@ -248,7 +313,8 @@ class _RunWriter:
         frames.append(
             self._encode(
                 CustomEvent(
-                    name=STATUS_EVENT, value={"phase": phase, "message": message}
+                    name=STATUS_EVENT,
+                    value={"phase": phase, "message": message, **(details or {})},
                 )
             )
         )
@@ -362,7 +428,13 @@ def _progress_status(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "kind": "status",
         "phase": str(event.get("phase", "")),
         "message": str(event.get("message", "")),
+        **progress_details(event),
     }
+
+
+def _shown_details(event: Dict[str, Any]) -> Dict[str, Any]:
+    """The themes and summary a status event carries beside its message."""
+    return {key: event[key] for key in ("themes", "summary") if key in event}
 
 
 async def _dispatch_events(
@@ -371,6 +443,7 @@ async def _dispatch_events(
     dispatch_args: Dict[str, Any],
     tenant_id: str,
     external_tools: Optional[List[Dict[str, Any]]],
+    parameters: RunParameters,
 ) -> AsyncIterator[Dict[str, Any]]:
     """The dispatch path of one turn as events.
 
@@ -381,7 +454,15 @@ async def _dispatch_events(
     """
     with collect_progress() as progress:
         turn = asyncio.create_task(
-            run_turn(dispatcher, agent_name, dispatch_args, tenant_id, external_tools)
+            run_turn(
+                dispatcher,
+                agent_name,
+                dispatch_args,
+                tenant_id,
+                external_tools,
+                sampling=parameters.context(),
+                top_k=parameters.top_k,
+            )
         )
     next_event: Optional[asyncio.Future] = None
     try:
@@ -418,13 +499,20 @@ async def _stream_run(
     dispatch_args: Dict[str, Any],
     tenant_id: str,
     external_tools: Optional[List[Dict[str, Any]]],
+    parameters: RunParameters,
 ) -> AsyncIterator[str]:
     """One run as encoded AG-UI events."""
     writer = _RunWriter(run_input, agent_name)
     with in_flight_turn():
         async with aclosing(
             _run_frames(
-                writer, dispatcher, agent_name, dispatch_args, tenant_id, external_tools
+                writer,
+                dispatcher,
+                agent_name,
+                dispatch_args,
+                tenant_id,
+                external_tools,
+                parameters,
             )
         ) as frames:
             async for frame in frames:
@@ -438,6 +526,7 @@ async def _run_frames(
     dispatch_args: Dict[str, Any],
     tenant_id: str,
     external_tools: Optional[List[Dict[str, Any]]],
+    parameters: RunParameters,
 ) -> AsyncIterator[str]:
     """The run's frames; a failure ends the run on ``RUN_ERROR``."""
     query = dispatch_args["query"]
@@ -450,13 +539,20 @@ async def _run_frames(
         ):
             async with aclosing(
                 answer_token_events(
-                    dispatcher, agent_name, dispatch_args, tenant_id, external_tools
+                    dispatcher,
+                    agent_name,
+                    dispatch_args,
+                    tenant_id,
+                    external_tools,
+                    sampling=parameters.context(),
                 )
             ) as events:
                 async for event in events:
                     kind = event["kind"]
                     if kind == "status":
-                        frames = writer.status(event["phase"], event["message"])
+                        frames = writer.status(
+                            event["phase"], event["message"], _shown_details(event)
+                        )
                     elif kind == "text":
                         frames = writer.text(event["delta"])
                     elif kind == "error":
@@ -485,12 +581,19 @@ async def _run_frames(
         outcome: Dict[str, Any] = {}
         async with aclosing(
             _dispatch_events(
-                dispatcher, agent_name, dispatch_args, tenant_id, external_tools
+                dispatcher,
+                agent_name,
+                dispatch_args,
+                tenant_id,
+                external_tools,
+                parameters,
             )
         ) as events:
             async for event in events:
                 if event["kind"] == "status":
-                    for frame in writer.status(event["phase"], event["message"]):
+                    for frame in writer.status(
+                        event["phase"], event["message"], _shown_details(event)
+                    ):
                         yield frame
                 else:
                     outcome = event["outcome"]
@@ -576,6 +679,9 @@ async def _save_unanswered(
         )
 
 
+_SPAN_ID = re.compile(r"[0-9a-f]{16}")
+
+
 class RelevanceRequest(BaseModel):
     span_id: str = Field(pattern=r"^[0-9a-f]{16}$")
     result_id: str = Field(min_length=1)
@@ -654,6 +760,90 @@ async def rate_result(
     }
 
 
+class SessionEvaluationRequest(BaseModel):
+    outcome: Literal[SESSION_OUTCOMES]  # type: ignore[valid-type]
+    score: float = Field(ge=0.0, le=1.0)
+    span_ids: List[str] = Field(min_length=1, max_length=200)
+
+
+@router.post("/threads/{thread_id}/evaluation")
+async def evaluate_thread(
+    thread_id: str,
+    raw_request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Store a reviewer's verdict on one of the key's tenant's conversations:
+    its outcome (success, partial or failure) and a 0-1 quality score, as a
+    ``session_evaluation`` annotation on each search span of the conversation
+    the request names. Answers the verdict and the spans it was written on.
+    """
+    try:
+        tenant_id = await resolve_tenant_off_loop(authorization)
+    except ConfigStoreUnavailableError as exc:
+        logger.warning("harness key store unavailable on /ag-ui: %s", exc)
+        return dependency_unavailable(exc, "harness key store")
+    if tenant_id is None:
+        return error_response(**UNAUTHORIZED)
+    try:
+        request = SessionEvaluationRequest.model_validate(await raw_request.json())
+    except json.JSONDecodeError as exc:
+        return error_response(
+            400,
+            f"Invalid session evaluation: body is not JSON ({exc})",
+            "invalid_request",
+        )
+    except ValidationError as exc:
+        return _invalid_body(exc, "session evaluation")
+    malformed = [
+        span_id for span_id in request.span_ids if not _SPAN_ID.fullmatch(span_id)
+    ]
+    if malformed:
+        return error_response(
+            400,
+            f"Invalid session evaluation: span_ids {malformed} are not span ids",
+            "invalid_request",
+        )
+
+    try:
+        manager = get_telemetry_manager()
+        project = manager.config.get_project_name(tenant_id)
+        written = await persist_session_evaluation(
+            manager.get_provider(tenant_id=tenant_id, project_name=project),
+            project,
+            thread_id,
+            request.span_ids,
+            request.outcome,
+            request.score,
+        )
+    except SpanNotInProjectError as exc:
+        return error_response(
+            404,
+            f"Conversation {thread_id} names search spans this tenant does not "
+            f"have: {exc}.",
+            "span_not_found",
+        )
+    except Exception as exc:
+        logger.exception(
+            "evaluation of conversation %s for tenant %s was not stored",
+            thread_id,
+            tenant_id,
+        )
+        return error_response(
+            502,
+            f"The evaluation of conversation {thread_id} was not stored "
+            f"({type(exc).__name__}). See server logs for detail.",
+            "annotation_not_stored",
+            err_type="server_error",
+            error_type=type(exc).__name__,
+        )
+    return {
+        "thread_id": thread_id,
+        "outcome": request.outcome,
+        "score": request.score,
+        "span_ids": written,
+    }
+
+
 @router.get("/threads/{thread_id}")
 async def read_thread(
     thread_id: str,
@@ -722,6 +912,7 @@ async def run_agent(
         return _invalid_body(exc, "AG-UI run input")
     try:
         dispatch_args = build_dispatch_args(to_openai_messages(run_input))
+        parameters = run_parameters(run_input)
     except RequestShapeError as exc:
         return error_response(400, str(exc), "invalid_request")
 
@@ -752,6 +943,7 @@ async def run_agent(
             dispatch_args,
             tenant_id,
             to_external_tools(run_input),
+            parameters,
         ),
         media_type="text/event-stream",
     )

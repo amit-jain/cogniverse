@@ -34,6 +34,8 @@ describe('resultsOf', () => {
         snippet: 'a cat jumps',
         start: 75.4,
         end: 81,
+        videoId: 'v1',
+        documentId: 'id:video:video::v1_seg_3',
       },
       {
         id: 'v2_seg_0',
@@ -43,6 +45,8 @@ describe('resultsOf', () => {
         snippet: 'a dog',
         start: undefined,
         end: undefined,
+        videoId: 'v2',
+        documentId: 'id:video:video::v2_seg_0',
       },
     ]);
   });

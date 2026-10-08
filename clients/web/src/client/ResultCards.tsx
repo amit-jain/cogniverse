@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { agentLabel } from './api';
 import { messageOf } from './ops/common';
 import { runtimeJson } from './ops/http';
@@ -16,6 +16,9 @@ export interface ResultItem {
   /** Segment bounds in seconds, when the hit is a video segment. */
   start?: number;
   end?: number;
+  /** The video a segment belongs to, and the backend document it is. */
+  videoId?: string;
+  documentId?: string;
 }
 
 function text(value: unknown): string | undefined {
@@ -71,6 +74,8 @@ function hitOf(entry: unknown): ResultItem[] {
         text(metadata.description),
       start: number(temporal.start_time),
       end: number(temporal.end_time),
+      videoId: text(metadata.video_id) ?? text(hit.video_id),
+      documentId: text(hit.document_id) ?? text(hit.documentid),
     },
   ];
 }
@@ -98,19 +103,68 @@ function payloadsOf(state: unknown): { agent: string; payload: Record<string, un
   ];
 }
 
+/** What a search says about itself beside its hits. */
+export interface SearchFacts {
+  /** The profile searched, or none for an ensemble. */
+  profile?: string;
+  /** The profiles an ensemble searched. */
+  profiles: string[];
+  searchMode?: string;
+  /** Ensemble legs that did not run, each with its reason. */
+  degraded: { profile: string; reason: string }[];
+}
+
 export interface ResultGroup {
   agent: string;
   /** The span the agent's search recorded its hits under, when it has one. */
   spanId?: string;
   items: ResultItem[];
+  facts: SearchFacts;
+  /** The hits as the agent returned them, which an answer agent is grounded in. */
+  hits: Record<string, unknown>[];
 }
 
-/** The hits of a run's final state, grouped by the agent that found them. */
+function searchFactsOf(payload: Record<string, unknown>): SearchFacts {
+  const profiles = Array.isArray(payload.profiles) ? payload.profiles.flatMap((p) => text(p) ?? []) : [];
+  const degraded = Array.isArray(payload.degraded_profiles)
+    ? payload.degraded_profiles.flatMap((entry) => {
+        const leg = record(entry);
+        const profile = text(leg?.profile);
+        return profile ? [{ profile, reason: text(leg?.reason) ?? 'no reason given' }] : [];
+      })
+    : [];
+  return { profile: text(payload.profile), profiles, searchMode: text(payload.search_mode), degraded };
+}
+
+/** The searches of a run's final state, one per agent that searched, in
+ * plan order; a search that found nothing is a group without items. */
 export function resultGroupsOf(state: unknown): ResultGroup[] {
   return payloadsOf(state).flatMap(({ agent, payload }) => {
-    const items = resultsOf({ result: payload });
-    return items.length ? [{ agent, spanId: text(payload.span_id), items }] : [];
+    if (!Array.isArray(payload.results)) return [];
+    return [
+      {
+        agent,
+        spanId: text(payload.span_id),
+        items: resultsOf({ result: payload }),
+        facts: searchFactsOf(payload),
+        hits: payload.results.flatMap((hit): Record<string, unknown>[] => {
+          const entry = record(hit);
+          return entry ? [entry] : [];
+        }),
+      },
+    ];
   });
+}
+
+/** The key points an answer agent (the summarizer) gave with its reply. */
+export function keyPointsOf(state: unknown): string[] {
+  const points = record(record(state)?.result)?.key_points;
+  return Array.isArray(points) ? points.flatMap((point) => text(point) ?? []) : [];
+}
+
+/** An orchestration's readable account of what its agents did. */
+export function orchestrationSummaryOf(state: unknown): string | undefined {
+  return text(record(record(record(state)?.result)?.orchestration_result)?.execution_summary);
 }
 
 export interface CodingResult {
@@ -172,24 +226,140 @@ export function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-/** The hits and code of a run's final state, beside the chat. */
-export function ResultPanel({ state }: { state: unknown }) {
+/** A relevance rating that was stored. */
+export interface Rating {
+  spanId: string;
+  resultId: string;
+  relevance: string;
+  score: number;
+}
+
+/** What the panel knows about the run beside its final state. */
+export interface RunFacts {
+  /** The question the run answered. */
+  query?: string;
+  /** How long the run took, start to finish. */
+  latencyMs?: number;
+  /** Hits scoring below this are hidden. */
+  minScore?: number;
+}
+
+/** "Found 2 results for 'cats'" or "No results for 'cats'". */
+export function foundLine(count: number, query?: string): string {
+  const what = query ? ` for '${query}'` : '';
+  if (count === 0) return `No results${what}.`;
+  return `Found ${count} result${count === 1 ? '' : 's'}${what}.`;
+}
+
+/** The hits, code, key points and orchestration account of a run's final
+ * state, beside the chat; ``children`` follow them. */
+export function ResultPanel({
+  state,
+  run = {},
+  onRated,
+  children,
+}: {
+  state: unknown;
+  run?: RunFacts;
+  onRated?: (rating: Rating) => void;
+  children?: ReactNode;
+}) {
   const groups = resultGroupsOf(state);
   const coding = codingOf(state);
-  if (!groups.length && !coding.length) return null;
+  const keyPoints = keyPointsOf(state);
+  const orchestration = orchestrationSummaryOf(state);
   const labelled = groups.length > 1;
+  const empty = !groups.length && !coding.length && !keyPoints.length && !orchestration;
   return (
     <aside className="results" aria-label="Results">
+      {empty && !children && <p className="muted">Results of a run appear here.</p>}
+      {orchestration && (
+        <section className="orchestration-summary" aria-label="Orchestration summary">
+          <h2 className="results-heading">Orchestration</h2>
+          <p>{orchestration}</p>
+        </section>
+      )}
+      {keyPoints.length > 0 && (
+        <section className="key-points" aria-label="Key points">
+          <h2 className="results-heading">Key points</h2>
+          <ul>
+            {keyPoints.map((point, index) => (
+              <li key={index}>{point}</li>
+            ))}
+          </ul>
+        </section>
+      )}
       {coding.map((code) => (
         <CodePanel key={code.agent} code={code} />
       ))}
       {groups.map((group) => (
-        <Fragment key={`${group.agent}-${group.spanId ?? ''}`}>
-          {labelled && <h2 className="result-group">{agentLabel(group.agent)}</h2>}
-          <ResultCards results={group.items} spanId={group.spanId} />
-        </Fragment>
+        <SearchGroup
+          key={`${group.agent}-${group.spanId ?? ''}`}
+          group={group}
+          labelled={labelled}
+          run={run}
+          onRated={onRated}
+        />
       ))}
+      {children}
     </aside>
+  );
+}
+
+function SearchGroup({
+  group,
+  labelled,
+  run,
+  onRated,
+}: {
+  group: ResultGroup;
+  labelled: boolean;
+  run: RunFacts;
+  onRated?: (rating: Rating) => void;
+}) {
+  const label = agentLabel(group.agent);
+  const { facts } = group;
+  const minScore = run.minScore ?? 0;
+  const shown = group.items.filter((item) => item.score === undefined || item.score >= minScore);
+  const profile = facts.profile ?? (facts.profiles.length ? facts.profiles.join(', ') : undefined);
+  return (
+    <section className="search-group" aria-label={`Search by ${label}`}>
+      {labelled && <h2 className="result-group">{label}</h2>}
+      <p className="result-found">{foundLine(group.items.length, run.query)}</p>
+      <dl className="result-metrics">
+        <div>
+          <dt>Results</dt>
+          <dd>{group.items.length}</dd>
+        </div>
+        {run.latencyMs !== undefined && (
+          <div>
+            <dt>Latency</dt>
+            <dd>{`${Math.round(run.latencyMs)} ms`}</dd>
+          </div>
+        )}
+        {profile && (
+          <div>
+            <dt>Profile</dt>
+            <dd>{profile}</dd>
+          </div>
+        )}
+        {facts.searchMode && (
+          <div>
+            <dt>Search mode</dt>
+            <dd>{facts.searchMode}</dd>
+          </div>
+        )}
+      </dl>
+      {facts.degraded.map((leg) => (
+        <p key={leg.profile} className="alert warning" role="alert">
+          {`Partial results: ${leg.profile} did not run (${leg.reason}).`}
+        </p>
+      ))}
+      {shown.length < group.items.length && (
+        <p className="muted">{`Showing ${shown.length} of ${group.items.length}; the rest score below ${minScore}.`}</p>
+      )}
+      <ResultCards results={shown} spanId={group.spanId} onRated={onRated} />
+    </section>
   );
 }
 
@@ -224,7 +394,15 @@ function CodePanel({ code }: { code: CodingResult }) {
   );
 }
 
-export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId?: string }) {
+export function ResultCards({
+  results,
+  spanId,
+  onRated,
+}: {
+  results: ResultItem[];
+  spanId?: string;
+  onRated?: (rating: Rating) => void;
+}) {
   return (
     <ol className="result-list">
       {results.map((item, index) => (
@@ -243,15 +421,30 @@ export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId
               )}
             </div>
           )}
+          {(item.videoId || item.documentId) && (
+            <div className="result-id">
+              {[item.videoId && `Video ${item.videoId}`, item.documentId && `Document ${item.documentId}`]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          )}
           {item.snippet && <p className="result-snippet">{item.snippet}</p>}
-          {spanId && item.ratingId && <Relevance spanId={spanId} resultId={item.ratingId} />}
+          {spanId && item.ratingId && <Relevance spanId={spanId} resultId={item.ratingId} onRated={onRated} />}
         </li>
       ))}
     </ol>
   );
 }
 
-function Relevance({ spanId, resultId }: { spanId: string; resultId: string }) {
+function Relevance({
+  spanId,
+  resultId,
+  onRated,
+}: {
+  spanId: string;
+  resultId: string;
+  onRated?: (rating: Rating) => void;
+}) {
   const [rated, setRated] = useState<string>();
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState('');
@@ -259,11 +452,12 @@ function Relevance({ spanId, resultId }: { spanId: string; resultId: string }) {
     setPending(relevance);
     setError('');
     try {
-      const stored = await runtimeJson<{ relevance: string }>('/ag-ui/results/relevance', {
+      const stored = await runtimeJson<{ relevance: string; score: number }>('/ag-ui/results/relevance', {
         method: 'POST',
         body: { span_id: spanId, result_id: resultId, relevance },
       });
       setRated(stored.relevance);
+      onRated?.({ spanId, resultId, relevance: stored.relevance, score: stored.score });
     } catch (e) {
       setError(messageOf(e));
     } finally {

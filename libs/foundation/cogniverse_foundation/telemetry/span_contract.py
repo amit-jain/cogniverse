@@ -138,6 +138,13 @@ RELEVANCE_SCORES = {
 }
 
 
+# A reviewer's verdict on a whole conversation, read back by the trajectory
+# converter (cogniverse_finetuning trace_converter) under this name.
+SESSION_EVALUATION = "session_evaluation"
+SESSION_ID_META_KEY = "session_id"
+SESSION_OUTCOMES = ("success", "partial", "failure")
+
+
 class SpanNotInProjectError(LookupError):
     """The span to annotate is not a span of the project being written."""
 
@@ -185,6 +192,55 @@ async def persist_result_relevance(
         identifier=str(result_id),
     )
     return score
+
+
+async def persist_session_evaluation(
+    provider: Any,
+    project: str,
+    session_id: str,
+    span_ids: list,
+    outcome: str,
+    score: float,
+) -> list:
+    """Write a ``session_evaluation`` annotation (``outcome`` as its label,
+    ``score`` in 0-1) on each of ``span_ids``, the spans of one conversation,
+    in ``project`` and return the span ids written, sorted. Evaluating the
+    conversation again replaces its earlier verdict on each span.
+
+    Every span is read back from ``project`` before any is written, for the
+    reason ``persist_result_relevance`` gives. Raises ``ValueError`` on an
+    unknown outcome, a score outside 0-1 or no span ids, and
+    ``SpanNotInProjectError`` naming the spans the project does not hold.
+    """
+    if outcome not in SESSION_OUTCOMES:
+        raise ValueError(f"unknown session outcome: {outcome!r}")
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"session score must be between 0 and 1, got {score}")
+    wanted = sorted(set(span_ids))
+    if not wanted:
+        raise ValueError("no spans name the conversation to evaluate")
+    spans = await provider.traces.get_spans(
+        project=project,
+        filters={"span_id": wanted},
+        limit=len(wanted),
+    )
+    found = set() if spans.empty else set(spans["context.span_id"])
+    missing = [span_id for span_id in wanted if span_id not in found]
+    if missing:
+        raise SpanNotInProjectError(
+            f"spans {', '.join(missing)} are not in project {project}"
+        )
+    for span_id in wanted:
+        await provider.annotations.add_annotation(
+            span_id=span_id,
+            name=SESSION_EVALUATION,
+            label=outcome,
+            score=score,
+            metadata={SESSION_ID_META_KEY: session_id, "num_spans": len(wanted)},
+            project=project,
+            identifier=session_id,
+        )
+    return wanted
 
 
 _ATTR_PREFIX = "attributes."

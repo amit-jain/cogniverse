@@ -62,6 +62,10 @@ libs/foundation/cogniverse_foundation/telemetry/
   `persist_result_relevance(provider, project, span_id, result_id, label)`,
   which checks the span is in `project` (`SpanNotInProjectError` otherwise)
   and stores the rating under the result's own identifier.
+  `persist_session_evaluation(provider, project, session_id, span_ids,
+  outcome, score)` stores a conversation's verdict (`SESSION_OUTCOMES`) as a
+  `SESSION_EVALUATION` annotation on each of its spans, after reading every
+  one back from `project`, keyed by the session so a new verdict replaces it.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
   `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
