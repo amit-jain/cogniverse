@@ -306,7 +306,11 @@ async def run_profile_optimization(
     2. Derive (query, available_profiles) -> selected_profile labels from those
        rows with derive_profile_labels: the tenant's SearchService runs every
        query against each profile from
-       tenant_usable_profile_names(ConfigManager, tenant_id) at top_k=10. A
+       tenant_usable_profile_names(ConfigManager, tenant_id) at top_k=10. Each
+       candidate's schema and type are read from the tenant's profile catalog
+       (ConfigUtils.backend_profiles: shipped and system profiles with the
+       tenant's stored profiles on top), the catalog search resolves it from,
+       so a shipped profile the tenant serves but never stored is resolved. A
        result matches an expected video when the basename of its title,
        extension stripped, equals the expected id; the title field is the one
        the profile's schema names under document_mapping.title (video_title,

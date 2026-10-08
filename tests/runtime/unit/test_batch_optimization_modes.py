@@ -5010,6 +5010,82 @@ class TestProfileSelectionOptimization:
             f"Schema 'video_orphan' not found at {tmp_path / 'video_orphan_schema.json'}"
         )
 
+    def test_profile_selection_resolves_shipped_profiles_beside_the_tenants_own(
+        self,
+    ):
+        """A tenant storing only its own profiles still serves the shipped
+        video profile whose schema registration deployed; the derivation
+        resolves both the way search does."""
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.optimization_cli import (
+            SHIPPED_CONFIG_PATH,
+            _profile_selection_profile_types,
+            _profile_selection_title_fields,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped = json.loads(SHIPPED_CONFIG_PATH.read_text())["backend"]["profiles"]
+        config_manager = ConfigManager(store=InMemoryConfigStore())
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "cfg20_docs", dict(shipped["document_text_semantic"])
+            ),
+            tenant_id="acme:own",
+        )
+        candidates = ["cfg20_docs", "video_colpali_smol500_mv_frame"]
+
+        title_fields = _profile_selection_title_fields(
+            config_manager,
+            "acme:own",
+            candidates,
+            FilesystemSchemaLoader(SHIPPED_CONFIG_PATH.parent / "schemas"),
+        )
+        profile_types = _profile_selection_profile_types(
+            config_manager, "acme:own", candidates
+        )
+
+        assert (
+            config_manager.get_backend_profile(
+                "video_colpali_smol500_mv_frame", tenant_id="acme:own"
+            )
+            is None
+        )
+        assert title_fields == {
+            "cfg20_docs": "document_title",
+            "video_colpali_smol500_mv_frame": "video_title",
+        }
+        assert profile_types == {
+            "cfg20_docs": "document",
+            "video_colpali_smol500_mv_frame": "video",
+        }
+
+    def test_profile_selection_profiles_raise_when_the_config_store_is_down(self):
+        """An unreadable config store is an outage, never a profile the tenant
+        does not have."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_runtime.optimization_cli import (
+            _profile_selection_profile_types,
+        )
+        from cogniverse_sdk.interfaces.config_store import (
+            ConfigStoreUnavailableError,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        class DownStore(InMemoryConfigStore):
+            def get_config(self, *args, **kwargs):
+                raise ConfigStoreUnavailableError("config store did not answer")
+
+        with pytest.raises(ConfigStoreUnavailableError) as err:
+            _profile_selection_profile_types(
+                ConfigManager(store=DownStore()),
+                "acme:own",
+                ["video_colpali_smol500_mv_frame"],
+            )
+
+        assert str(err.value) == "config store did not answer"
+
     def test_shipped_label_reader_stays_removed(self):
         """Tenant ground-truth blobs are the sole label source. The shipped-file
         reader was deleted; re-adding any of its symbols re-opens the path where
