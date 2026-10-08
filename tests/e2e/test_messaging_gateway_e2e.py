@@ -83,15 +83,12 @@ def _assert_search_response(
     without_answer = {k: v for k, v in response.items() if k != "answer"}
     assert response["answer"] == extract_answer_text(without_answer), response
     assert response["results_count"] == len(response["results"]), response
-    # The searched query is the rewrite when one applied, else the query the
-    # history rewriter resolved, else the query as asked.
-    searched = response["query_rewrite"]["enhanced_query"] or response.get(
-        "rewritten_query", query
-    )
+    # The reply names the query as asked; a rewrite is reported under
+    # query_rewrite.
     assert response["message"] == (
-        f"Found {response['results_count']} results for '{searched}'"
+        f"Found {response['results_count']} results for '{query}'"
         if response["results_count"]
-        else f"No results found for '{searched}'"
+        else f"No results found for '{query}'"
     ), response
 
 

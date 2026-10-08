@@ -2,7 +2,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AGENT, chosenAgent } from '../src/client/App';
 import { turnRecord } from '../src/client/AgentWorkspace';
-import { ResultPanel, foundLine, keyPointsOf, orchestrationSummaryOf } from '../src/client/ResultCards';
+import {
+  ResultPanel,
+  entitiesOf,
+  enhancementsOf,
+  foundLine,
+  keyPointsOf,
+  orchestrationSummaryOf,
+  profileSelectionsOf,
+} from '../src/client/ResultCards';
 import { summarize } from '../src/client/SearchSession';
 import {
   annotationExport,
@@ -123,6 +131,167 @@ describe('ResultPanel: a search', () => {
         '<ul><li>Three clips show the tower</li><li>The clearest is at 0:42</li></ul></section>' +
         '</aside>',
     );
+  });
+});
+
+const ENTITY_STATE = {
+  agent: 'entity_extraction_agent',
+  tenant_id: 'acme:prod',
+  result: {
+    status: 'success',
+    agent: 'entity_extraction_agent',
+    query: "Daenerys burned the castle at King's Landing",
+    entities: [
+      { text: 'Daenerys', type: 'PERSON', context: 'Daenerys burned' },
+      { text: "King's Landing", type: 'PLACE' },
+      { text: '', type: 'CONCEPT' },
+    ],
+    relationships: [
+      { subject: 'Daenerys', relation: 'burn', object: 'castle', confidence: 0.8 },
+      { subject: 'Daenerys', relation: '', object: 'castle' },
+    ],
+    entity_count: 2,
+    has_entities: true,
+    answer: "Found 2 entities: Daenerys (person), King's Landing (place).",
+  },
+};
+
+const ENHANCEMENT_STATE = {
+  agent: 'query_enhancement_agent',
+  tenant_id: 'acme:prod',
+  result: {
+    status: 'success',
+    agent: 'query_enhancement_agent',
+    original_query: 'fire castle video',
+    enhanced_query: 'burning castle video footage',
+    expansion_terms: ['footage', 'blaze'],
+    synonyms: ['clip'],
+    context_additions: [],
+    query_variants: ['burning castle video footage', 'fire castle video footage blaze'],
+    confidence: 0.8,
+    reasoning: 'Spelled out the scene.',
+    path_used: 'lm',
+  },
+};
+
+const PROFILE_STATE = {
+  agent: 'profile_selection_agent',
+  tenant_id: 'acme:prod',
+  result: {
+    status: 'success',
+    agent: 'profile_selection_agent',
+    query: 'Which profile for a burning castle video?',
+    selected_profile: 'video_colpali_smol500_mv_frame',
+    confidence: 0.95,
+    reasoning: 'Frame-level video search.',
+    query_intent: 'video_search',
+    modality: 'video',
+    complexity: 'simple',
+    alternatives: [{ profile_name: 'video_videoprism_base_mv_chunk_30s', score: 0.4, reasoning: 'Chunk level.' }],
+  },
+};
+
+describe('enrichment panels', () => {
+  it("shows an entity extraction's entities and relationships", () => {
+    expect(entitiesOf(ENTITY_STATE)).toEqual([
+      {
+        agent: 'entity_extraction_agent',
+        entities: [
+          { text: 'Daenerys', type: 'PERSON' },
+          { text: "King's Landing", type: 'PLACE' },
+        ],
+        relationships: [{ subject: 'Daenerys', relation: 'burn', object: 'castle' }],
+      },
+    ]);
+    expect(renderToStaticMarkup(<ResultPanel state={ENTITY_STATE} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results">' +
+        '<section class="entities" aria-label="Entities"><h2 class="results-heading">Entities</h2>' +
+        '<ul><li>Daenerys<span class="entity-type"> person</span></li>' +
+        '<li>King&#x27;s Landing<span class="entity-type"> place</span></li></ul>' +
+        '<h3 class="results-subheading">Relationships</h3><ul><li>Daenerys → burn → castle</li></ul>' +
+        '</section></aside>',
+    );
+  });
+
+  it('shows the query as asked, the query searched and how it was enhanced', () => {
+    expect(renderToStaticMarkup(<ResultPanel state={ENHANCEMENT_STATE} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results">' +
+        '<section class="query-enhancement" aria-label="Query enhancement">' +
+        '<h2 class="results-heading">Query enhancement</h2><dl class="enrichment-facts">' +
+        '<div><dt>Asked</dt><dd>fire castle video</dd></div>' +
+        '<div><dt>Searched</dt><dd>burning castle video footage</dd></div>' +
+        '<div><dt>Expansion terms</dt><dd>footage, blaze</dd></div>' +
+        '<div><dt>Synonyms</dt><dd>clip</dd></div>' +
+        '<div><dt>Variants</dt><dd>burning castle video footage · fire castle video footage blaze</dd></div>' +
+        '<div><dt>Path</dt><dd>Language model</dd></div></dl>' +
+        '<p class="enrichment-reasoning">Spelled out the scene.</p></section></aside>',
+    );
+  });
+
+  it('says a query searched as asked is unchanged', () => {
+    const state = {
+      ...ENHANCEMENT_STATE,
+      result: {
+        ...ENHANCEMENT_STATE.result,
+        enhanced_query: 'fire castle video',
+        expansion_terms: [],
+        synonyms: [],
+        query_variants: [],
+        reasoning: 'Fallback enhancement with heuristic expansion',
+        path_used: 'heuristic_fallback',
+      },
+    };
+    expect(enhancementsOf(state)).toEqual([
+      {
+        agent: 'query_enhancement_agent',
+        original: 'fire castle video',
+        enhanced: 'fire castle video',
+        expansionTerms: [],
+        synonyms: [],
+        variants: [],
+        path: 'heuristic_fallback',
+        reasoning: 'Fallback enhancement with heuristic expansion',
+      },
+    ]);
+    expect(renderToStaticMarkup(<ResultPanel state={state} tenant="acme:prod" />)).toContain(
+      '<div><dt>Searched</dt><dd>Unchanged</dd></div><div><dt>Path</dt><dd>heuristic fallback</dd></div></dl>',
+    );
+  });
+
+  it('shows the profile chosen, why, and the runners-up', () => {
+    expect(profileSelectionsOf(PROFILE_STATE)).toEqual([
+      {
+        agent: 'profile_selection_agent',
+        profile: 'video_colpali_smol500_mv_frame',
+        confidence: 0.95,
+        intent: 'video_search',
+        modality: 'video',
+        complexity: 'simple',
+        reasoning: 'Frame-level video search.',
+        alternatives: [{ profile: 'video_videoprism_base_mv_chunk_30s', score: 0.4, reasoning: 'Chunk level.' }],
+      },
+    ]);
+    expect(renderToStaticMarkup(<ResultPanel state={PROFILE_STATE} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results">' +
+        '<section class="profile-selection" aria-label="Profile selection">' +
+        '<h2 class="results-heading">Profile selection</h2><dl class="enrichment-facts">' +
+        '<div><dt>Profile</dt><dd>video_colpali_smol500_mv_frame</dd></div>' +
+        '<div><dt>Confidence</dt><dd>0.95</dd></div>' +
+        '<div><dt>Intent</dt><dd>video search</dd></div>' +
+        '<div><dt>Modality</dt><dd>video</dd></div>' +
+        '<div><dt>Complexity</dt><dd>simple</dd></div></dl>' +
+        '<p class="enrichment-reasoning">Frame-level video search.</p>' +
+        '<h3 class="results-subheading">Alternatives</h3>' +
+        '<ul><li>video_videoprism_base_mv_chunk_30s (0.40): Chunk level.</li></ul></section></aside>',
+    );
+  });
+
+  it("hides another tenant's enrichment results", () => {
+    for (const state of [ENTITY_STATE, ENHANCEMENT_STATE, PROFILE_STATE])
+      expect(renderToStaticMarkup(<ResultPanel state={state} tenant="beta:dev" />)).toBe(
+        '<aside class="results" aria-label="Results"><p class="alert error" role="alert">' +
+          'These results belong to tenant acme:prod, not beta:dev; they are not shown.</p></aside>',
+      );
   });
 });
 

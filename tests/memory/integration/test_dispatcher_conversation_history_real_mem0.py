@@ -390,7 +390,10 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
             "agent": "search_agent",
             "message": answer,
             "results_count": 2,
-            "results": [{"document_id": "v1"}, {"document_id": "v2"}],
+            "results": [
+                {"document_id": "v1", "metadata": {"video_title": "pv_setup.mp4"}},
+                {"document_id": "v2", "metadata": {"video_title": "csi_volumes.mp4"}},
+            ],
             "profile": "p",
             "profiles": [],
             "degraded_profiles": [],
@@ -414,7 +417,10 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
     persisted = ConversationStore(mm, TENANT).get_history(ctx)
     assert persisted == [
         {"role": "user", "content": "show kubernetes storage"},
-        {"role": "assistant", "content": f"{answer}\n- v1\n- v2"},
+        {
+            "role": "assistant",
+            "content": f"{answer}\n- pv_setup.mp4\n- csi_volumes.mp4",
+        },
     ]
     assert persisted[1]["content"] == result["answer"]
 

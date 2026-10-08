@@ -251,9 +251,9 @@ class TestGatewayOrchestrationHandoff:
             "message": "Found 3 results for 'find videos of cats'",
             "results_count": 3,
             "results": [
-                {"document_id": "v1"},
-                {"document_id": "v2"},
-                {"document_id": "v3"},
+                {"document_id": "v1", "metadata": {"video_title": "cats_1.mp4"}},
+                {"document_id": "v2", "metadata": {"video_title": "cats_2.mp4"}},
+                {"document_id": "v3", "metadata": {"video_title": "cats_3.mp4"}},
             ],
             "profile": "video_colpali_smol500_mv_frame",
             "profiles": [],
@@ -292,7 +292,8 @@ class TestGatewayOrchestrationHandoff:
             ("user", "find videos of cats"),
             (
                 "assistant",
-                "Found 3 results for 'find videos of cats'\n- v1\n- v2\n- v3",
+                "Found 3 results for 'find videos of cats'\n"
+                "- cats_1.mp4\n- cats_2.mp4\n- cats_3.mp4",
             ),
         ]
         # What was stored is exactly what the caller was handed.

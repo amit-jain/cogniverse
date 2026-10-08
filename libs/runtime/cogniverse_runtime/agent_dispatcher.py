@@ -2950,12 +2950,13 @@ class AgentDispatcher:
 
         result_list = output.results
         result_count = len(result_list)
-        effective_query = output.enhanced_query or resolved_query
 
+        # The reply names the question as the caller asked it; the rewrite the
+        # search ran is reported under query_rewrite.
         if result_count > 0:
-            message = f"Found {result_count} results for '{effective_query}'"
+            message = f"Found {result_count} results for '{query}'"
         else:
-            message = f"No results found for '{effective_query}'"
+            message = f"No results found for '{query}'"
 
         response: Dict[str, Any] = {
             "status": "success",

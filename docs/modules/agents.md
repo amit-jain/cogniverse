@@ -1650,12 +1650,15 @@ async def _execute_plan(
 Cross-modal fusion of results from all agents. `aggregated_content` — the
 answer a reader sees — is built from each step's own answer text: the `answer`
 the serving runtime stamps on every completed dispatch (a search step's
-includes its hits), else the step's `message`; never a step's payload.
+includes its hits, each by title and time range), else the step's `message`;
+never a step's payload. A search step's line naming the query it searched (the
+plan's rewrite) is replaced by one naming `query`, the question as asked.
 Enrichment steps (`query_enhancement_agent`, `entity_extraction_agent`,
 `profile_selection_agent`) feed later steps and are fused only when the plan
 produced nothing else. The fusion strategy (SCORE_BASED, TEMPORAL,
 HIERARCHICAL, or SIMPLE) is selected from the query and the fused steps'
-modalities: SIMPLE joins the answers in execution order; SCORE_BASED puts each
+modalities: SIMPLE leads with the synthesized answers (a summary, a report)
+and follows with the search steps' hits, each group in execution order; SCORE_BASED puts each
 under `**<Agent>** (<modality>, confidence <share>)`, highest first;
 HIERARCHICAL groups them under `## <Modality> results` headings.
 

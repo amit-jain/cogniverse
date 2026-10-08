@@ -1404,17 +1404,23 @@ class TestOrchestratorFusion:
         }
 
     def test_fuse_simple(self, orchestrator_agent):
-        """The answers in execution order; a step with no text adds nothing."""
+        """The synthesized answers lead, then the search steps' hits, each in
+        execution order; a step with no text adds nothing."""
         task_results = {
-            "search_agent": {"text": "Found 1 results for 'q'", "confidence": 0.8},
+            "search_agent": {
+                "text": "Found 1 results for 'q'",
+                "retrieval": True,
+                "confidence": 0.8,
+            },
             "text_analysis_agent": {"text": "", "confidence": 0.6},
             "summarizer_agent": {"text": "A summary.", "confidence": 0.7},
+            "detailed_report_agent": {"text": "A report.", "confidence": 0.7},
         }
 
         fused = orchestrator_agent._fuse_simple(task_results)
 
         assert fused == {
-            "content": "Found 1 results for 'q'\n\nA summary.",
+            "content": "A summary.\n\nA report.\n\nFound 1 results for 'q'",
             "confidence": pytest.approx(0.7),
         }
 
@@ -1448,13 +1454,66 @@ class TestOrchestratorFusion:
         output = orchestrator_agent._aggregate_results("dogs", agent_results)
 
         assert output["aggregated_content"] == (
-            "Found 1 results for 'dogs'\n- v_2 · score 0.920\n\n"
-            "One clip shows a dog playing fetch."
+            "One clip shows a dog playing fetch.\n\n"
+            "Found 1 results for 'dogs'\n- v_2 · score 0.920"
         )
         assert output["fusion_quality"]["modalities"] == ["text"]
         assert output["fusion_strategy"] == "simple"
         assert output["status"] == "success"
         assert output["results"] == agent_results
+
+    def test_the_answer_leads_with_the_summary_and_names_the_question_asked(
+        self, orchestrator_agent
+    ):
+        """A live run: the search step searched the plan's rewrite of the
+        question, and its hits are listed under the question as asked, after
+        the summary."""
+        rewrite = "Videos of a burning castle, followed by a summary."
+        hit_lines = "- for_bigger_blazes.mp4 (0:05–0:06): A castle on fire."
+        agent_results = {
+            "search_agent": {
+                "status": "success",
+                "agent": "search_agent",
+                "message": f"Found 1 results for '{rewrite}'",
+                "results": [{"id": "57985f49_seg_3", "score": 14.826}],
+                "answer": f"Found 1 results for '{rewrite}'\n{hit_lines}",
+            },
+            "summarizer_agent": {
+                "status": "success",
+                "agent": "summarizer_agent",
+                "result": {"summary": "One promotional clip shows a castle burning."},
+                "answer": "One promotional clip shows a castle burning.",
+            },
+        }
+
+        output = orchestrator_agent._aggregate_results(
+            "Find videos of a burning castle and then summarize what they show",
+            agent_results,
+        )
+
+        assert output["aggregated_content"] == (
+            "One promotional clip shows a castle burning.\n\n"
+            "Found 1 results for 'Find videos of a burning castle and then "
+            "summarize what they show'\n"
+            f"{hit_lines}"
+        )
+
+    def test_a_search_that_found_nothing_names_the_question_asked(
+        self, orchestrator_agent
+    ):
+        agent_results = {
+            "search_agent": {
+                "status": "success",
+                "agent": "search_agent",
+                "message": "No results found for 'castle fire tutorial'",
+                "results": [],
+                "answer": "No results found for 'castle fire tutorial'",
+            },
+        }
+
+        output = orchestrator_agent._aggregate_results("castle fire", agent_results)
+
+        assert output["aggregated_content"] == "No results found for 'castle fire'"
 
     def test_a_plan_of_only_enrichment_answers_with_it(self, orchestrator_agent):
         agent_results = {
