@@ -17,12 +17,15 @@ export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
   });
   const copilotkit = createCopilotHonoHandler({
     runtime,
-    basePath: '/api/copilotkit',
+    basePath: '/ui-api/copilotkit',
     cors: { origin: [] },
   });
 
   const app = new Hono();
-  app.get('/api/agents', async (c) => {
+  // Liveness and readiness: answers while the process serves, whatever the
+  // runtime's state, so a runtime outage never restarts this pod.
+  app.get('/healthz', (c) => c.json({ status: 'ok' }));
+  app.get('/ui-api/agents', async (c) => {
     try {
       return c.json({ agents: await listAgents(config, fetchFn) });
     } catch (error) {
@@ -31,8 +34,8 @@ export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
       throw error;
     }
   });
-  app.all('/api/copilotkit/*', (c) => copilotkit.fetch(c.req.raw));
-  app.all('/api/runtime/*', (c) => forwardToRuntime(config, c.req.raw, '/api/runtime', fetchFn));
+  app.all('/ui-api/copilotkit/*', (c) => copilotkit.fetch(c.req.raw));
+  app.all('/ui-api/runtime/*', (c) => forwardToRuntime(config, c.req.raw, '/ui-api/runtime', fetchFn));
 
   if (existsSync(path.join(config.clientDir, 'index.html'))) {
     app.use('/*', serveStatic({ root: path.relative(process.cwd(), config.clientDir) }));
