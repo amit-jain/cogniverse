@@ -58,7 +58,9 @@ def _soft_timeout_response():
 
 
 def _empty_response():
-    return _FakeQueryResponse({"root": {"children": []}})
+    return _FakeQueryResponse(
+        {"root": {"id": "toplevel", "fields": {"totalCount": 0}, "children": []}}
+    )
 
 
 _UNFILLED_HIT_ID = "index:cogniverse_content/0/f77e1bada43e40c6eb59adf5"
@@ -140,6 +142,22 @@ class TestUnfilledHitsRaise:
             f"Vespa returned hit {_UNFILLED_HIT_ID} for adapter stats "
             "without summary fields ['tenant_id']"
         )
+
+
+def test_get_stats_raises_when_it_reads_fewer_adapters_than_matched():
+    rows = [
+        {
+            "id": f"id:adapter_registry:adapter_registry::a{n}",
+            "fields": {"tenant_id": "t"},
+        }
+        for n in range(2)
+    ]
+    response = _FakeQueryResponse(
+        {"root": {"id": "toplevel", "fields": {"totalCount": 3}, "children": rows}}
+    )
+    with pytest.raises(RuntimeError) as raised:
+        _store(response).get_stats()
+    assert str(raised.value) == "Adapter stats read 2 of 3 adapters"
 
 
 class TestGenuineAbsenceStillNone:

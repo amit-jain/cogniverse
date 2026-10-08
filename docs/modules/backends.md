@@ -2465,7 +2465,8 @@ store.initialize()
 `get_adapter`, `list_adapters`, `get_active_adapter` and `get_stats` raise
 `VespaQueryDegraded` on a degraded answer: `root.errors`, a `coverage.degraded`
 flag, or a hit without `adapter_id` (`tenant_id` for `get_stats`), the shape
-Vespa gives a row deleted between match and summary fill.
+Vespa gives a row deleted between match and summary fill. `get_stats` counts up
+to 1000 adapters and raises `RuntimeError` when more match.
 
 `set_active(adapter_id, tenant_id, agent_type)` verifies that the target
 adapter belongs to that exact tenant and agent type before changing either the

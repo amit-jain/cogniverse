@@ -20,6 +20,8 @@ from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
+_STATS_MAX_ADAPTERS = 1000
+
 
 class VespaAdapterStore(AdapterStore):
     """
@@ -468,15 +470,30 @@ class VespaAdapterStore(AdapterStore):
         Returns:
             Dictionary with storage statistics
         """
-        yql = f"select adapter_id, tenant_id, status from {self.schema_name} where true limit 1000"
+        yql = (
+            f"select adapter_id, tenant_id, status from {self.schema_name} "
+            f"where true limit {_STATS_MAX_ADAPTERS}"
+        )
         try:
-            response = self.vespa_app.query(yql=yql)
+            # The default query profile caps hits at 400.
+            response = self.vespa_app.query(
+                body={
+                    "yql": yql,
+                    "hits": _STATS_MAX_ADAPTERS,
+                    "maxHits": _STATS_MAX_ADAPTERS,
+                }
+            )
             raise_if_degraded(response, "adapter stats")
 
             rows = [
                 hit_fields(hit, ("tenant_id",), "adapter stats")
                 for hit in response.hits
             ]
+            matched = response.get_json()["root"]["fields"]["totalCount"]
+            if matched != len(rows):
+                raise RuntimeError(
+                    f"Adapter stats read {len(rows)} of {matched} adapters"
+                )
             total_adapters = len(rows)
             unique_tenants = len(set(fields["tenant_id"] for fields in rows))
 

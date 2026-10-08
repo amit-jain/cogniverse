@@ -366,6 +366,84 @@ class TestAdapterRegistryVespaIntegration:
 
 @pytest.mark.integration
 @pytest.mark.ci_fast
+class TestAdapterStoreUnfilledHits:
+    def test_stats_count_the_adapters_a_new_tenant_registers(
+        self, adapter_store, adapter_registry
+    ):
+        import uuid
+
+        tenant = f"stats_{uuid.uuid4().hex[:8]}"
+        before = adapter_store.get_stats()
+        ids = [
+            adapter_registry.register_adapter(
+                tenant_id=tenant,
+                name=f"stats_{n}",
+                version="1.0.0",
+                base_model="SmolLM-135M",
+                model_type="llm",
+                training_method="sft",
+                adapter_path=f"/tmp/stats_{n}",
+                agent_type="routing",
+            )
+            for n in range(2)
+        ]
+        try:
+            adapter_registry.activate_adapter(ids[0])
+
+            after = adapter_store.get_stats()
+
+            statuses = set(before["adapters_by_status"]) | set(
+                after["adapters_by_status"]
+            )
+            assert (
+                after["total_adapters"] - before["total_adapters"],
+                after["total_tenants"] - before["total_tenants"],
+                {
+                    status: after["adapters_by_status"].get(status, 0)
+                    - before["adapters_by_status"].get(status, 0)
+                    for status in statuses
+                    if after["adapters_by_status"].get(status, 0)
+                    != before["adapters_by_status"].get(status, 0)
+                },
+            ) == (2, 1, {"active": 1, "inactive": 1})
+        finally:
+            for adapter_id in ids:
+                adapter_store.delete_adapter(adapter_id)
+
+    def test_stats_over_a_hit_without_its_tenant_raise_degraded(self, adapter_store):
+        """An adapter row whose summary carries none of the stats fields comes
+        back from Vespa as a hit without fields and without ``root.errors``,
+        the shape a row deleted between match and summary fill takes."""
+        import uuid
+
+        from cogniverse_vespa._vespa_factory import VespaQueryDegraded
+
+        hole = f"hole_{uuid.uuid4().hex[:8]}"
+        adapter_store.vespa_app.feed_data_point(
+            schema="adapter_registry", data_id=hole, fields={"agent_type": hole}
+        )
+        try:
+            hits = adapter_store.vespa_app.query(
+                yql=(
+                    "select adapter_id, tenant_id, status from adapter_registry "
+                    f'where agent_type contains "{hole}"'
+                )
+            ).get_json()["root"]["children"]
+            assert [sorted(hit) for hit in hits] == [["id", "relevance", "source"]]
+
+            with pytest.raises(VespaQueryDegraded) as raised:
+                adapter_store.get_stats()
+
+            assert str(raised.value) == (
+                f"Vespa returned hit {hits[0]['id']} for adapter stats "
+                "without summary fields ['tenant_id']"
+            )
+        finally:
+            adapter_store.vespa_app.delete_data(schema="adapter_registry", data_id=hole)
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestInferenceIntegration:
     """Integration tests for inference helper functions."""
 
